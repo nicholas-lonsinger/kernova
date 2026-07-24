@@ -1356,7 +1356,7 @@ final class VsockClipboardService: ClipboardServicing {
         let byteCount: UInt64
         let isInline: Bool
         let isDirectory: Bool
-        /// Filename for the in-app progress bar's label (#426); `nil`-mapped when
+        /// Filename for the in-app progress bar's label (#354); `nil`-mapped when
         /// empty at the record site.
         let filename: String
         let generation: UInt64
@@ -1398,11 +1398,12 @@ final class VsockClipboardService: ClipboardServicing {
     /// state directly (the in-app bar clears via a `finishProgress` main hop).
     ///
     /// `onProgress` forwards the receiver's cumulative `(bytesTransferred,
-    /// totalBytes)` to the servicing-XPC push (the relay path passes a real
-    /// closure; the toggle-off sync paste passes the default no-op). Independently,
-    /// this records the same bytes into the window's in-app bar (#426, #354),
-    /// direction `.inbound`, cleared at every terminal (except supersession — the
-    /// #500 retry owns the shared `transferID` entry and clears it itself).
+    /// totalBytes)` to the relay's consumer — the paste readout (#643) — via the
+    /// passed closure (the relay path passes a real closure; the toggle-off sync
+    /// paste passes the default no-op). Independently, this records the same bytes
+    /// into the window's in-app bar (#354), direction `.inbound`, cleared at every
+    /// terminal (except supersession — the #500 retry owns the shared `transferID`
+    /// entry and clears it itself).
     nonisolated private func performBlockingPull(
         _ snapshot: LazyPullSnapshot,
         onProgress: @escaping @Sendable (UInt64, UInt64) -> Void = { _, _ in }
@@ -1434,10 +1435,10 @@ final class VsockClipboardService: ClipboardServicing {
             onComplete: { rep in coordinator.deliver(transferID, rep) },
             onAbort: { abort in coordinator.abort(transferID, abort) },
             // Re-arm the inactivity backstop on each chunk so a large still-
-            // streaming file is never timed out mid-transfer [large-paste]; push
-            // the bytes to the servicing-XPC channel (the extension's determinate
-            // download bar, #426); and record the same bytes into the window's
-            // in-app bar (#354/#426, direction `.inbound`).
+            // streaming file is never timed out mid-transfer [large-paste];
+            // forward the bytes to the relay's `onProgress` consumer (the paste
+            // readout, #643); and record the same bytes into the window's in-app
+            // bar (#354, direction `.inbound`).
             //
             // No resurrection gate is needed here (unlike the async `pull`, which
             // has off-transfer-queue resume racers): this `onProgress` and the

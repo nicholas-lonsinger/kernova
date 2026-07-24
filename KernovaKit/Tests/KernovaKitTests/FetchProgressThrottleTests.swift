@@ -3,39 +3,17 @@ import Testing
 
 @testable import KernovaKit
 
-/// Unit tests for `FetchProgressThrottle` (#426).
+/// Unit tests for `FetchProgressCoalescer` — the stateful watermarks the paste
+/// progress consumers share.
 ///
-/// The pure decision behind the servicing-XPC progress push coalescing,
-/// exercised in isolation so the throttle policy (forward progress required, ~1%
-/// byte quantum OR ~100 ms, and always the final chunk) is locked without
-/// standing up an XPC round trip.
-/// Unit tests for `FetchProgressCoalescer` — the stateful watermarks both
-/// per-pull progress consumers share (#634).
-///
-/// The pure policy is locked by `FetchProgressThrottleTests`; this covers the
-/// bookkeeping wrapped around it: advancing the last-forwarded byte count,
-/// stamping the first update (the file publisher's reveal-gate reference), and
-/// refusing a non-forward update.
+/// The pure policy behind it (forward progress required, ~1% byte quantum OR
+/// ~100 ms, always the final chunk) is `FetchProgressThrottle`, locked by
+/// `FetchProgressThrottleTests` below; this suite covers the bookkeeping wrapped
+/// around it: advancing the last-forwarded byte count and refusing a non-forward
+/// update.
 @Suite("FetchProgressCoalescer")
 struct FetchProgressCoalescerTests {
     private let total: UInt64 = 1_000_000
-
-    @Test("the first update always forwards and stamps the reveal-gate reference")
-    func firstUpdateForwardsAndStamps() {
-        let coalescer = FetchProgressCoalescer()
-        #expect(coalescer.firstUpdateTime == nil)
-        #expect(coalescer.shouldForward(bytesTransferred: 1, totalBytes: total))
-        #expect(coalescer.firstUpdateTime != nil)
-    }
-
-    @Test("the first-update stamp is set even when the update itself is refused")
-    func refusedFirstUpdateStillStamps() {
-        let coalescer = FetchProgressCoalescer()
-        // Zero bytes is not forward progress, so the throttle refuses it — but
-        // the pull has started, and the reveal gate measures from that moment.
-        #expect(!coalescer.shouldForward(bytesTransferred: 0, totalBytes: total))
-        #expect(coalescer.firstUpdateTime != nil)
-    }
 
     @Test("the watermark advances, so a repeated byte count is refused")
     func watermarkAdvances() {
@@ -47,15 +25,6 @@ struct FetchProgressCoalescerTests {
         #expect(!coalescer.shouldForward(bytesTransferred: 400_000, totalBytes: total))
         // The final chunk always forwards, however close to the last one.
         #expect(coalescer.shouldForward(bytesTransferred: total, totalBytes: total))
-    }
-
-    @Test("the reveal-gate stamp keeps the first update's time across later updates")
-    func firstUpdateStampIsStable() {
-        let coalescer = FetchProgressCoalescer()
-        _ = coalescer.shouldForward(bytesTransferred: 1, totalBytes: total)
-        let first = coalescer.firstUpdateTime
-        _ = coalescer.shouldForward(bytesTransferred: total, totalBytes: total)
-        #expect(coalescer.firstUpdateTime == first)
     }
 }
 

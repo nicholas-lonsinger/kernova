@@ -304,8 +304,8 @@ protocol HostClipboardFileRepProviding: AnyObject, Sendable {
     /// and is woken off-main by the stream receiver.
     ///
     /// `onProgress` is fed the receiver's cumulative `(bytesTransferred,
-    /// totalBytes)` per chunk, so the relay can drive the extension's determinate
-    /// download bar (#426). Fires off-main on the transfer's queue.
+    /// totalBytes)` per chunk, so the relay can drive the paste readout (#643) and
+    /// the window's in-app bar (#354). Fires off-main on the transfer's queue.
     func pullStagedFile(
         generation: UInt64, repIndex: Int,
         onProgress: @escaping @Sendable (UInt64, UInt64) -> Void

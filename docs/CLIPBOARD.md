@@ -405,67 +405,41 @@ Large transfers are streamed and take real time. Two obligations follow:
   promise on its own clock. For unbounded operations, **prefer an API with no host-OS deadline**
   (File Provider) over one where we must beat a clock we do not control.
 
-The File Provider paste path reports **determinate progress end to end** (#426, #634), in both
-directions. One per-chunk `(bytesTransferred, totalBytes)` callback from the receiver drives every
-indicator, over two owner-side channels:
+The File Provider paste path streams bytes with **no host-OS deadline**, so Kernova is free to
+surface progress on surfaces it owns rather than racing a clock. It once also tried to drive the
+OS-owned surfaces — Finder's copy dialog and the per-item materialization badge — over two
+owner-side channels fed by the receiver's per-chunk `(bytesTransferred, totalBytes)` callback: a
+coalesced `FileProviderControl.fetchProgressed` push that advanced the extension's `fetchContents`
+`Progress` (#426), and a cross-process published `NSProgress` keyed by the placeholder's
+user-visible URL that Finder's copy dialog was meant to subscribe to (#634).
 
-- **The extension's `fetchContents` `Progress`** (#426): the extension can't see the vsock
-  transfer, so the owner pushes the per-chunk counts to the sandboxed extension over the
-  *existing* servicing XPC connection — a one-way `FileProviderControl.fetchProgressed`, coalesced
-  by `FetchProgressThrottle` (~1% of the total or ~100 ms apart, always the final chunk) so a
-  multi-GB pull can't flood the pipe — which drives a byte-denominated `fetchContents` `Progress`
-  (`kind = .file`, `fileOperationKind = .downloading`). This feeds the framework's own
-  materialization bookkeeping (e.g. the item's Finder progress badge). A version-skewed peer
-  without the selector drops the push and degrades to no-progress without tearing down the
-  connection.
-- **A published `NSProgress` for Finder's copy dialog** (#634): on macOS 26 fileproviderd does
-  **not** bridge a third-party extension's `fetchContents` `Progress` into the copy dialog — the
-  dialog stays on the indeterminate "Preparing to copy…" slide no matter how that `Progress`
-  advances (verified live; iCloud Drive's dialog is determinate because Finder consumes a
-  *published* progress). So the owner also publishes a cross-process `NSProgress` per pull
-  (`FetchProgressFilePublisher`): `kind = .file`, `fileOperationKind = .downloading`,
-  `.fileURLKey` = the placeholder's user-visible URL under `~/Library/CloudStorage/…` — the
-  `Progress.publish()` / `addSubscriber(forFileURL:)` machinery Finder's dialog subscribes to by
-  source URL. Published lazily on the first chunk with a non-zero total once the pull has streamed
-  for 300 ms (the in-app bar's reveal convention — an instant transfer, or a folder copy's many
-  small children, never flashes a publish/unpublish cycle), advanced under the same throttle on
-  the main queue, unpublished at either reply terminal (which covers cancel — an
-  aborted pull surfaces as the failure reply). Folder children (D1b) publish per-child URLs, the
-  same shape first-party providers use for per-file downloads. The sandboxed host app can publish
-  for the CloudStorage URL because the domain host holds the domain root's security scope while
-  the root is current.
-
-**Consumption of the published progress by Finder's copy dialog has never been durably
-observed** (#639). Publication is log-proven full-duration in every live run (development- and
-Release/profile-signed builds alike), but every captured frame of the dialog — all paste shapes,
-clean host boot included — shows the indeterminate "Preparing to copy…" slide. Its sweep
-animation parks at the track's left edge each cycle and produces arbitrary-width segments, so
-one or two glances convincingly mimic a determinate fill; the determinate classifications
-recorded earlier (#638's test plan, #639's session notes) were exactly such sparse-glance
-observations, and no run ever recorded the label flip to a byte-count "Copying…" style that
-real consumption produces. Treat them as unverified: claim consumption only on a captured label
-flip or a dense, file-preserved frame sequence of slow monotonic growth. The dialog also
-dismisses itself tens of seconds into a multi-GB pull while materialization continues in the
-background; the `fetchContents` `Progress` channel keeps driving the framework's own bookkeeping
-for the full pull and payloads land intact. This is a **documented gap**, not a defect to
-engineer around: the publication is the API's supported shape (the one first-party providers'
-determinate dialogs consume), the degradation is only ever an indeterminate or absent bar
-(never a wrong one), and a folder-root aggregate `NSProgress` would not close it — no
-publication shape has been observed to render. What *does* close it is not another publication
-but a surface Kernova owns outright: the status-item readout below (#643).
+**Neither was ever durably observed rendering** (#639), and **#644 removed both.** Publication was
+log-proven full-duration in every live run (development- and Release/profile-signed builds alike),
+but every captured frame of Finder's copy dialog — all paste shapes, clean host boot included —
+showed the indeterminate "Preparing to copy…" slide, never the byte-count "Copying…" presentation
+real consumption produces. The dialog's sweep animation parks at the track's left edge each cycle
+and produces arbitrary-width segments, so one or two glances convincingly mimic a determinate fill;
+the determinate classifications recorded earlier (#638's test plan, #639's session notes) were
+exactly such sparse-glance observations, all since withdrawn. The dialog also dismisses itself tens
+of seconds into a multi-GB pull while materialization continues in the background. Because no OS
+surface was shown to consume either channel, keeping them only made the publication logs read as
+success next to a dialog that never rendered them — so both channels went. The extension's
+`fetchContents` still returns a `Progress` (it carries the fetch's cancellation token and presents
+the item as a file download), but it is no longer advanced per chunk: it is created at the declared
+size and completed in one step at materialization. What closes the legibility gap is not another
+publication but a surface Kernova owns outright: the status-item readout below (#643).
 
 The host clipboard window's in-app bar records the guest→host pull from the same per-chunk
 callback (`performBlockingPull`, direction `.inbound`); all indicators clear at every terminal.
-No vsock wire change — the channels are the servicing XPC and local `NSProgress` publication,
-never the transport.
+No vsock wire change — the per-chunk callback rides the transport that already exists.
 
-That bar is the **third consumer of the same throttle** (#636), and the paste readout below is
-the fourth. Its
+The in-app bar and the paste readout below are the **two consumers of that shared throttle**
+(#636/#643). The bar's
 `ClipboardTransferProgressTracker` holds one `FetchProgressCoalescer` per tracked transfer — the
 coalescer models a single byte stream, and a folder copy tracks several children at once — so a
 64 KiB-chunked pull republishes the `@MainActor` observable at the shared policy's rate (~1% of
-the total or ~100 ms, always the final chunk) instead of once per chunk. Every indicator
-therefore shares one policy: a rate change moves them together, and none of them can drift.
+the total or ~100 ms, always the final chunk) instead of once per chunk. Both indicators
+therefore share one policy: a rate change moves them together, and neither can drift.
 Terminal and reveal republishes bypass the throttle entirely (§13: an indicator must never stick),
 as does an unrevealed transfer, whose chunks schedule nothing because they cannot change what is
 on screen. A consumer that bypasses the throttle tells its coalescer so
@@ -478,7 +452,7 @@ copy dialog dismissed itself. It is rendered on the side where the bytes *land* 
 status item for a guest→host paste, the guest agent's for a host→guest one — because the user
 who pressed ⌘V is looking at that machine; the guest agent's status item is its only UI, and
 this is the first thing it renders beyond menu text. `PasteMaterializationTracker` is the
-per-chunk callback's fourth consumer, and the only one that also needs each pull's *start* and
+per-chunk callback's other consumer, and the only one that also needs each pull's *start* and
 *terminal*, because it aggregates many pulls into one session: the published manifest supplies
 the denominators (how many files will materialize — flat reps and folder file nodes alike — and
 total bytes across all of them) and the pulls supply the numerators, so a flat multi-file paste
@@ -547,7 +521,7 @@ fix, not just whether to fix it. (macOS-guest issues only; Linux/Windows out of 
 | **#392** — make host "Copy to Mac" write the pasteboard lazily | §3 Pay on consume | The one place inbound content is still eager. Convert to a provider so bytes are read only when the destination pastes — in both directions, laziness is the rule. ✓ **Resolved** — the host pasteboard write is a lazy provider (#408); every plain-file rep is routed through a host File Provider placeholder at paste time (#434 single-file, #559 multi-file). |
 | **#394** — inline payloads SHA-256'd redundantly and on the main thread | §8 Keep the thread free, §7 Integrity | Remove the **redundant** hashes and move the unavoidable one off the main actor (§8). Do **not** drop the end-to-end verify hash (§7) — redundant work goes, the only integrity check stays. ✓ **Resolved** — editor hashing moved off the main actor on a debounce (#413). |
 | **#377** — throughput is software-bound; validate on real vsock, then cut per-chunk overhead | Ordering (marginal overhead), Engineering practices | Capability is already met; this is pure §-ordering step 2. **Measure on real vsock first** (verify at the seam), then cut the avoidable per-chunk copy. Never ship a chunk-size bump without co-scaling the window. |
-| **#376** — File Provider domain for large-file paste (no 60 s deadline) | §2 Disk-as-fallback (on-demand), §13 OS deadlines, §11 Sandbox-forward | This is the canonical §2 mechanism: instant placeholder, on-demand `fetchContents`, write once at the destination, native progress, no deadline. Also killed #371's 2×-disk. Extension can't open vsock — relay through the agent (§11). **Partially shipped** — D1a (guest transport) landed in #425; the host-side "Copy to Mac" mirror (D2) is the separate issue #424, shipped in #434; D1b multi-file landed with the unified paste-time routing (§3's routing bullet — every eligible plain-file rep in an offer routes, not just a single one), and the host "Copy to Mac" mirror of that reshape landed in #559. Folders now cross via the placeholder-tree design too (D1b folders, negotiated `clipboard.dirtree.v1`, #422) — a directory rep pastes as a placeholder tree with per-child fetch on both directions, with the eager-archive path kept only as the capability-absent / toggle-off fallback (archived at request time). Progress (#426) landed. |
+| **#376** — File Provider domain for large-file paste (no 60 s deadline) | §2 Disk-as-fallback (on-demand), §13 OS deadlines, §11 Sandbox-forward | This is the canonical §2 mechanism: instant placeholder, on-demand `fetchContents`, write once at the destination, native progress, no deadline. Also killed #371's 2×-disk. Extension can't open vsock — relay through the agent (§11). **Partially shipped** — D1a (guest transport) landed in #425; the host-side "Copy to Mac" mirror (D2) is the separate issue #424, shipped in #434; D1b multi-file landed with the unified paste-time routing (§3's routing bullet — every eligible plain-file rep in an offer routes, not just a single one), and the host "Copy to Mac" mirror of that reshape landed in #559. Folders now cross via the placeholder-tree design too (D1b folders, negotiated `clipboard.dirtree.v1`, #422) — a directory rep pastes as a placeholder tree with per-child fetch on both directions, with the eager-archive path kept only as the capability-absent / toggle-off fallback (archived at request time). Determinate FP paste progress (#426/#634) was later removed as unrendered by any OS surface (#644); Kernova renders its own paste readout instead (#643). |
 | **#422** — a directory crosses as a fully materialized archive, staged whole on **both** sides (≈3N peak disk) | §2 (no reflexive intermediate copy), §3 (pay on consume), ordering (bounded peak), §12 (smarter wins) | ✓ **Resolved** — the folder placeholder-tree design (D1b folders, negotiated `clipboard.dirtree.v1`): a copied folder crosses as a File Provider placeholder *tree* — the producer retains the **source** folder and walks it on demand (a listing, then each child file over the SHA-verified stream), so **no archive is built at copy time on either side** and Kernova's own disk for the transfer approaches zero beyond the destination. The offer carries a stat-walk size *estimate* instead of the archive's exact byteCount+SHA. The toggle-off (or capability-absent) fallback keeps the capped archive path but archives at **request** time, not copy time; its intermediate is bounded because the deadline-safe total gate refuses a sync-bound directory set over `maxDeadlineSafeFileBytes` (§2) — that ≤`maxDeadlineSafeFileBytes` bound on the only path that still archives is what lets this close. Fidelity moved from AppleArchive to FP item metadata (§6). |
 | **#354** — clipboard transfer progress UI (bar + ring) | §13 Legibility, §9 bidirectional, §5 preview-only | Drive both indicators off existing transport progress, both directions; clear on terminal states. Progress is a window affordance — it must not touch the data path (§5). ✓ **Resolved** — progress bar + ring driven off transport progress (#417). |
 | **#82** — opt-in automatic clipboard passthrough | §4 One data plane | Passthrough is the gate-less mode of the **same** path — a change to *when consume is authorized*, not a parallel transport. ✓ **Resolved** — `ClipboardPassthroughCoordinator` (per VM, host-side only, no proto/`PolicyUpdate` change) polls the host pasteboard and funnels changes through the identical `ClipboardPasteboardIntake` → `grabIfChanged()` choke-point the window's Paste uses, and auto-invokes the shared `HostClipboardPublisher.publish` (the same lazy write "Copy to Mac" uses) on each new inbound offer. Marker filtering (§10) is inherited from the shared intake; echo is suppressed by the publisher's post-write `changeCount` (a digest can't be the key — inbound writes are lazy promises). Drives both transports; the `clipboardPassthroughEnabled` toggle requires explicit confirmation to enable and is hot-toggleable. |
@@ -560,9 +534,9 @@ fix, not just whether to fix it. (macOS-guest issues only; Linux/Windows out of 
 | **#561** — host→guest paste has no deadline-safe size cap, unlike guest→host | §2 Disk-as-fallback (deadline cap), §13 OS deadlines | The two directions were asymmetric: the host's synchronous fallback already refused an over-cap file, but the guest's `pullRepresentation` checked only staging disk capacity. ✓ **Resolved** — the guest's synchronous pasteboard-provider pull refuses when the paste's sync-bound reps (non-inline, minus File-Provider-routed) **total** over `maxDeadlineSafeFileBytes`, all-or-nothing (one `clipboard.paste.too.large` per offer, surfaced in the host's clipboard window — no piecemeal subset); the File Provider relay (`fetchStagedFile`, no deadline) stays uncapped via a `deadlineBound` parameter on the shared `pullRepresentation`. The host "Copy to Mac" total gate is now symmetric (#559, `syncBoundTotalBytes`). One asymmetry remains: the guest has no File-Provider escape hatch for folders yet (D1b folders), so every inbound directory rep rides this same deadline-bound path today, while the host's directory pull is eager and never deadline-bound (so host directories don't count toward its total). |
 | **#427** — File Provider placeholder scoped to the paste lifetime, not the offer | §3 Pay on consume, §2 (on-demand) | The placeholder existed for the whole offer lifetime — created the instant the host copied, lingering after a paste. ✓ **Resolved** — routing (and so placeholder creation) moved into the unified paste-time provider closure (§3's routing bullet): the folder stays empty until a real paste, and an offer that missed a ready domain re-checks on its next fire (deleting the #429 re-publish and #510 stale-pull refusal machinery). The trailing edge is deliberately supersession-scoped — post-paste eviction reclaims no physical disk (the pasted copy is an APFS clone) and dirent removal would dangle the pasteboard's cached URL, breaking second pastes and drag-out. The host side of this paste-scoping landed with #559. |
 | **#559** — host "Copy to Mac" routes only a single plain-file rep lazily (D2 scope limit) | §2 Disk-as-fallback (deadline cap), §3 Pay on consume | The host mirror of D1b: dissolve the single-file gate so every eligible plain-file rep routes, and move routing into the paste-time provider closure. ✓ **Resolved** — `materializeForCopy` defers every lazy-eligible plain-file rep as a `.lazyFile`; the pasteboard closure (`copyToMacFileURL`) tries the File Provider first (publishing all eligible reps together, latched on success) and falls back to a size-capped sync pull gated by the offer's plain-file **total** (`syncBoundTotalBytes`), all-or-nothing, with a copy-click advisory when the toggle is already known off. Placeholder creation is now paste-scoped (#427 host mirror); `CopyToMacDropReason.multipleFiles` and its "Only one file…" message are removed. |
-| **#426** — File Provider paste shows only an indeterminate "Preparing to copy…" bar, in both directions | §13 Legibility, §5 preview-only | Drive the native `fetchContents` `Progress` off the transport's existing byte-level progress, both directions; the extension can't see the vsock transfer, so carry it over the servicing XPC (never the data path — §5). ✓ **Resolved** — a one-way, coalesced `FileProviderControl.fetchProgressed(generation:repIndex:bytesTransferred:totalBytes:)` push from the owner (fed by the receiver's per-chunk callback via `FileProviderPullProvider.fetchStagedFile`'s new `onProgress`) drives a byte-denominated `fetchContents` `Progress` (`kind = .file`, `.downloading`), routed by an in-flight `(generation, repIndex)` registry in `FileProviderServiceSource` (a late push for a finished pull no-ops; a version-skewed peer lacking the selector degrades to no-progress without tearing down the connection). The host clipboard window's in-app bar records the guest→host FP pull from the same callback (`performBlockingPull` → `ClipboardTransferProgressTracker`, direction `.inbound`), cleared at every terminal. No vsock wire change (the ground-truth correction: the outbound in-app half already recorded via `handleRequest` — only the host receive side was the gap). |
-| **#634** — FP paste never shows determinate progress in Finder's *copy dialog*, despite #426's advancing `fetchContents` `Progress` | §13 Legibility, §5 preview-only | Live verification refuted the "shared callback never fires" hypothesis: every #426 link fires; the gap is that fileproviderd doesn't bridge a third-party extension's `fetchContents` `Progress` into the copy-dialog UI on macOS 26. The dialog consumes a *published* `NSProgress` keyed by the source file's URL. ✓ **Resolved** — the owner publishes one per pull (`FetchProgressFilePublisher`, fed from the same per-chunk callback, same `FetchProgressThrottle`, per-child URLs for D1b, unpublished at either reply terminal); see §13's published-progress bullet. Both directions, since the guest agent runs the same shared relay (guest agent version bump). |
-| **#643** — a multi-GB FP paste has no visible progress anywhere once Finder's copy dialog dismisses itself | §13 Legibility, §4 one data plane | The gap #639 settled is in a surface we don't own, so stop trying to drive that one: render our own. It must be *aggregate per paste* (not per pull) or a folder copy would flicker through thousands of children, and it must render on the side where the bytes land, since that is where the user who pressed ⌘V is looking. ✓ **Resolved** — `PasteMaterializationTracker` folds every pull of one paste into a single readout keyed off the published manifest, and each side's status item renders it as a determinate ring plus a live dropdown row that opens itself once per paste. A fourth consumer of the same per-chunk callback and the same throttle — not a replacement for the in-app bar or the toolbar indicator, and no change to the data path (§5). |
+| **#426** — File Provider paste shows only an indeterminate "Preparing to copy…" bar, in both directions | §13 Legibility, §5 preview-only | Drive the native `fetchContents` `Progress` off the transport's existing byte-level progress, both directions; the extension can't see the vsock transfer, so carry it over the servicing XPC (never the data path — §5). **Reverted by #644** — the coalesced `FileProviderControl.fetchProgressed` push and its `fetchContents`-`Progress` advancement were removed after #639 found no OS surface (copy dialog or per-item badge) ever durably rendered them. The `fetchContents` `Progress` remains as the API shape + cancellation token, completed once at materialization; the receiver's per-chunk callback (`FileProviderPullProvider.fetchStagedFile`'s `onProgress`) survives, now feeding only the in-app bar (#354/#636) and the paste readout (#643). |
+| **#634** — FP paste never shows determinate progress in Finder's *copy dialog*, despite #426's advancing `fetchContents` `Progress` | §13 Legibility, §5 preview-only | The theory: the copy dialog consumes a *published* `NSProgress` keyed by the source file's URL, so the owner published one per pull (`FetchProgressFilePublisher`). **Reverted by #644** — #639's corrected record found the publication was never durably observed rendering (every captured dialog frame stayed on "Preparing to copy…"; all determinate sightings withdrawn as shimmer misreads), so the published-`NSProgress` mechanism was removed. The gap is closed instead by a surface Kernova owns (#643). |
+| **#643** — a multi-GB FP paste has no visible progress anywhere once Finder's copy dialog dismisses itself | §13 Legibility, §4 one data plane | The gap #639 settled is in a surface we don't own, so stop trying to drive that one: render our own. It must be *aggregate per paste* (not per pull) or a folder copy would flicker through thousands of children, and it must render on the side where the bytes land, since that is where the user who pressed ⌘V is looking. ✓ **Resolved** — `PasteMaterializationTracker` folds every pull of one paste into a single readout keyed off the published manifest, and each side's status item renders it as a determinate ring plus a live dropdown row that opens itself once per paste. The other consumer of the same per-chunk callback and the same throttle (alongside the in-app bar) — not a replacement for the in-app bar or the toolbar indicator, and no change to the data path (§5). |
 
 ---
 

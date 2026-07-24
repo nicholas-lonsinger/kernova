@@ -37,9 +37,8 @@ final class ClipboardTransferProgressTracker: @unchecked Sendable {
         let label: String?
         var revealed: Bool
         /// This transfer's share of the republish-rate bound — the same
-        /// `FetchProgressThrottle` policy the File Provider pull's two progress
-        /// consumers use (~1% of the total or ~100 ms apart, always the final
-        /// chunk).
+        /// `FetchProgressThrottle` policy shared with the File Provider paste
+        /// readout (~1% of the total or ~100 ms apart, always the final chunk).
         ///
         /// Per entry, not per tracker: the coalescer models one byte stream with a
         /// byte watermark, and the tracker can hold several concurrent transfers
