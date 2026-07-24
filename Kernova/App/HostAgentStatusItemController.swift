@@ -190,29 +190,45 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             // so the click below would land on its dismissal handler instead of
             // opening the menu. The reminder has had its moment.
             dismissSoftQuitReminder()
-            // Deferred, and deliberately NOT via `Task { @MainActor }`:
-            // `performClick` parks inside a nested menu-tracking loop until the
-            // dropdown closes, and parking there from a main-queue block starves
-            // every later main-queue update — which froze both the ring and the
-            // readout for the whole time the auto-opened dropdown was up. See
-            // `performOnMainRunLoop`.
-            performOnMainRunLoop { [weak self] in
-                guard let self else { return }
-                // The paste can end inside that turn (a cancel lands as a pull
-                // failure); opening for a readout that is already gone would
-                // leave a dropdown nothing will close.
-                guard self.pasteProgress != nil else { return }
-                self.pendingAutoOpen = true
-                self.statusItem.button?.performClick(nil)
-                // `performClick` only returns once the dropdown closes, by which
-                // point `menuWillOpen` has consumed the flag. Clearing it here
-                // covers the click that opened nothing at all, which would
-                // otherwise leave the flag set to mislabel the *user's* next
-                // dropdown as ours and close it under them.
-                self.pendingAutoOpen = false
-            }
+            scheduleDropdownOpen()
         case .close:
             menu.cancelTracking()
+        }
+    }
+
+    /// Opens the dropdown from a run-loop callout — deferred, and deliberately
+    /// NOT via `Task`/`DispatchQueue.main.async`.
+    ///
+    /// `performClick` spins a nested menu-tracking run loop that does not
+    /// return until the dropdown closes. The deferral exists so this
+    /// observation callback isn't stranded inside it for the whole paste — but
+    /// the *kind* of deferral is load-bearing: the main queue is serial, so a
+    /// tracking session started from inside one of its work items (a `Task`
+    /// body, a `main.async` block) can never drain the queue again until the
+    /// menu closes, and every later main-actor callout — the tracker's snapshot
+    /// hops, the observation loops, `setIcon` — just piles up. Observed live as
+    /// #643's readout and icon ring freezing exactly while the auto-opened
+    /// dropdown showed them, then animating fine when the user reopened the
+    /// menu themselves (AppKit's own click starts tracking from an event
+    /// callout, leaving the queue free). A `RunLoop` block is a run-loop
+    /// callout, not a queue item, so the dispatch main-queue source keeps
+    /// firing during the tracking it starts — the same situation as a user
+    /// click.
+    private func scheduleDropdownOpen() {
+        RunLoop.main.perform { [weak self] in
+            guard let self else { return }
+            // The paste can end inside the deferral (a cancel lands as a pull
+            // failure); opening for a readout that is already gone would leave
+            // a dropdown nothing will close.
+            guard self.pasteProgress != nil else { return }
+            self.pendingAutoOpen = true
+            self.statusItem.button?.performClick(nil)
+            // `performClick` only returns once the dropdown closes, by which
+            // point `menuWillOpen` has consumed the flag. Clearing it here
+            // covers the click that opened nothing at all, which would
+            // otherwise leave the flag set to mislabel the *user's* next
+            // dropdown as ours and close it under them.
+            self.pendingAutoOpen = false
         }
     }
 
@@ -316,11 +332,11 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         // Deferred a tick: `dismissSoftQuitReminder` reattached the menu, but
         // popping it from inside the button-action callback that the same click
         // is still delivering re-enters menu tracking mid-event; the next
-        // runloop turn opens it cleanly. A run-loop block rather than a `Task`,
-        // for the same reason as the paste readout's automatic open — see
-        // `performOnMainRunLoop` — so a dropdown reached this way doesn't
-        // freeze whatever is updating behind it.
-        performOnMainRunLoop { [weak self] in
+        // runloop turn opens it cleanly. A run-loop callout rather than a
+        // `Task` for the same reason as `scheduleDropdownOpen` — a dropdown
+        // opened from a main-queue work item can't receive main-actor updates
+        // while it tracks, and this dropdown can carry the live paste readout.
+        RunLoop.main.perform { [weak self] in
             self?.statusItem.button?.performClick(nil)
         }
     }
