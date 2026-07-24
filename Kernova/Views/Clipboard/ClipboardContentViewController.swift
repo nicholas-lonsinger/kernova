@@ -113,16 +113,21 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private var editSeq: UInt64 = 0
     private var hasPendingEdit = false
 
-    /// Whether an edit the user made *here* has reached the buffer but not yet the
-    /// guest — the sole condition under which blur/close announces
+    /// Whether the user authored what is currently in the buffer — the sole
+    /// condition under which blur/close offers it to the guest
     /// (`flushAndAnnounceEdit`).
     ///
     /// Distinct from `hasPendingEdit`, which spans only the debounce window: a
     /// keystroke that has already committed off-actor is no longer "pending", but
-    /// it is still unannounced, and blurring right after typing must carry it.
-    /// Cleared by the announcement, and by an external update superseding the edit
-    /// (`cancelPendingEdit`).
-    private var hasUnannouncedEdit = false
+    /// it is still the user's content, and blurring after typing must carry it.
+    /// Set by both editor→buffer writes, cleared when an external update replaces
+    /// the edit (`cancelPendingEdit`).
+    ///
+    /// Deliberately *not* cleared by the announcement: whether the content already
+    /// reached the guest is the transport's dedup to answer, and it answers it
+    /// accurately — it knows whether the send succeeded, which this flag never
+    /// would.
+    private var hasUserEdit = false
 
     /// Quiet period before a keystroke burst commits off-actor.
     ///
@@ -439,7 +444,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         // safe — the newer writer owns the model.
         guard seq == editSeq, textView.string == text else { return }
         hasPendingEdit = false
-        hasUnannouncedEdit = true
+        hasUserEdit = true
         // Prime the digest before the write so the resulting observation pass
         // recognizes the content as already displayed (the editor IS the source)
         // and doesn't rebuild the view out from under the user.
@@ -458,52 +463,42 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         editDebounceTask = nil
         guard hasPendingEdit, let service = instance.clipboardService else { return }
         hasPendingEdit = false
-        hasUnannouncedEdit = true
-        // Supersede any commit already suspended in its off-actor hash: cancelling
-        // the task above doesn't stop one past its `Task.sleep`, and it would
-        // otherwise resume, pass the staleness guard (same seq, same text — this
-        // flush committed that very text), and re-arm `hasUnannouncedEdit` after
-        // the announcement it belongs to has already cleared it.
-        editSeq &+= 1
+        hasUserEdit = true
         let edited = ClipboardContent(text: textView.string)
         lastAppliedDigest = edited.digest
         service.clipboardContent = edited
     }
 
-    /// Commits a pending editor keystroke and announces the buffer to the guest
-    /// **only when the user edited it here** — the window's blur/close hand-off,
+    /// Commits a pending editor keystroke and offers the buffer to the guest
+    /// **only when the user authored it here** — the window's blur/close hand-off,
     /// called by `ClipboardWindowController`.
     ///
-    /// The editor is the one surface that puts content in the buffer without a
-    /// send of its own: a paste/drop is a complete gesture and announces at the
-    /// gesture (`apply(intake:)`), so blur exists to carry typed text, and
-    /// nothing else.
+    /// Two independent questions gate an announcement, and each needs its own
+    /// mechanism:
     ///
-    /// `grabIfChanged()`'s own digest check can't express that. It asks *did the
-    /// last announcement stick?*, not *did the user change this?* — and the two
-    /// diverge precisely when an announcement failed or never happened (a
-    /// transport that wasn't connected when the buffer was written, a send that
-    /// threw). Blurring then re-announced content nobody had touched, so merely
-    /// opening the clipboard window and clicking back to the VM could complete a
-    /// transfer that had silently failed, disguising the failure as "the
-    /// clipboard window fixed the paste".
+    /// - *Is this the user's content?* — `hasUserEdit`. The editor is the one
+    ///   surface that puts content in the buffer with no send of its own: a
+    ///   paste/drop is a complete gesture that announces at the gesture
+    ///   (`apply(intake:)`), and a passthrough forward or an inbound guest offer
+    ///   never comes through the editor at all — which is what settles the
+    ///   passthrough case with no mode check. Typing still sends in either mode;
+    ///   it is a deliberate edit.
+    /// - *Has this exact content already gone out?* — the transport's own dedup
+    ///   inside `grabIfChanged()`, which compares the buffer against the digest
+    ///   (or text) of its last **successful** send. Repeated blurs with no new
+    ///   typing therefore publish once, while a send that failed — or was never
+    ///   attempted, as with `SpiceClipboardService` before spice-vdagent
+    ///   announces, when the editor is already editable — is retried by the next
+    ///   blur.
     ///
-    /// Tracking the user's edit instead also settles the passthrough case with no
-    /// mode check: the coordinator's forwards and the guest's inbound offers both
-    /// write the buffer without going through the editor, so there is nothing to
-    /// announce and blur stays inert. Typing here still sends in either mode — it
-    /// is a deliberate edit.
-    /// The `isConnected` check keeps the edit owed when the transport was never in
-    /// a state to carry it: `SpiceClipboardService` exists — so the editor is
-    /// editable — from VM start but stays disconnected until spice-vdagent
-    /// announces, and `grabIfChanged()` is a silent no-op until then, so clearing
-    /// the flag here would drop the edit with nothing left to retry it.
+    /// Conflating the two is what made the window look like it fixed a stuck
+    /// paste. Asking the transport alone answers "differs from the last successful
+    /// send", which is equally true of content nobody touched whose announcement
+    /// failed, so blurring silently completed a failed transfer.
     func flushAndAnnounceEdit() {
         flushPendingEdit()
-        guard hasUnannouncedEdit, let service = instance.clipboardService, service.isConnected
-        else { return }
-        hasUnannouncedEdit = false
-        service.grabIfChanged()
+        guard hasUserEdit else { return }
+        instance.clipboardService?.grabIfChanged()
     }
 
     /// Drops any pending edit without committing it.
@@ -516,7 +511,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         editDebounceTask?.cancel()
         editDebounceTask = nil
         hasPendingEdit = false
-        hasUnannouncedEdit = false
+        hasUserEdit = false
     }
 
     #if DEBUG
