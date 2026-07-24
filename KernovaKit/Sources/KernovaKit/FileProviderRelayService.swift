@@ -5,7 +5,7 @@ import Foundation
 // per-pull progress machinery it drives (split out of FileProviderDomainHost.swift,
 // which owns registration/manifest/availability).
 //
-// One relay pull feeds two progress consumers, both from the same per-chunk
+// One relay pull feeds three progress consumers, all from the same per-chunk
 // `onProgress` callback:
 //  1. `FetchProgressPusher` — servicing-XPC pushes that drive the extension's
 //     byte-denominated `fetchContents` `Progress` (#426).
@@ -13,6 +13,9 @@ import Foundation
 //     keyed by the placeholder's user-visible URL, which is what Finder's copy
 //     dialog actually renders (#634); the `fetchContents` `Progress` alone does
 //     not reach that dialog on macOS 26.
+//  3. `PasteMaterializationTracker` — Kernova's own per-paste readout (#643),
+//     which unlike the two above also needs each pull's start and terminal, so
+//     it can aggregate many pulls into one session.
 
 /// The XPC-exported relay object.
 ///
@@ -35,11 +38,12 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
     private let pullQueue = DispatchQueue(
         label: "app.kernova.fileprovider.relay.pull", attributes: .concurrent)
 
-    /// Guards `visibleFileURLResolver`, which the domain host sets from its init
+    /// Guards the owner's wiring below, which the domain host sets from its init
     /// while the XPC queues may already read it on later pulls.
-    private let resolverLock = NSLock()
+    private let wiringLock = NSLock()
     private var visibleFileURLResolverStorage:
         (@Sendable (_ generation: UInt64, _ repIndex: Int, _ childSeq: UInt32?) -> URL?)?
+    private var materializationTrackerStorage: PasteMaterializationTracker?
 
     /// Resolves an in-flight pull's placeholder to its user-visible URL — the
     /// key the published Finder-copy-dialog progress is filed under (#634).
@@ -51,8 +55,18 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
     /// unaffected.
     var visibleFileURLResolver: (@Sendable (_ generation: UInt64, _ repIndex: Int, _ childSeq: UInt32?) -> URL?)?
     {
-        get { resolverLock.withLock { visibleFileURLResolverStorage } }
-        set { resolverLock.withLock { visibleFileURLResolverStorage = newValue } }
+        get { wiringLock.withLock { visibleFileURLResolverStorage } }
+        set { wiringLock.withLock { visibleFileURLResolverStorage = newValue } }
+    }
+
+    /// Receives each pull's start, byte counts, and terminal so the owner can
+    /// render one aggregate readout for the whole paste (#643).
+    ///
+    /// `nil` (a context that never registered a domain, e.g. most tests) simply
+    /// means no readout.
+    var materializationTracker: PasteMaterializationTracker? {
+        get { wiringLock.withLock { materializationTrackerStorage } }
+        set { wiringLock.withLock { materializationTrackerStorage = newValue } }
     }
 
     #if DEBUG
@@ -122,6 +136,10 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
         }
         let filePublisher = makeFilePublisher(
             generation: generation, repIndex: repIndex, childSeq: nil)
+        // Announced before the queue hop, so the readout can name this file from
+        // the moment the pull is asked for rather than from its first byte.
+        let tracker = materializationTracker
+        tracker?.pullBegan(generation: generation, repIndex: repIndex, childSeq: nil)
         // Off the XPC delivery queue: the File Provider read path has no 60s
         // deadline so a long block is safe, but it must not be *this* queue — see
         // `pullQueue`'s doc for why.
@@ -129,16 +147,23 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
             let onProgress: @Sendable (UInt64, UInt64) -> Void = { bytes, total in
                 pusher?.record(bytesTransferred: bytes, totalBytes: total)
                 filePublisher?.record(bytesTransferred: bytes, totalBytes: total)
+                tracker?.pullProgressed(
+                    generation: generation, repIndex: repIndex, childSeq: nil,
+                    bytesTransferred: bytes)
             }
             switch pullProvider.fetchStagedFile(
                 generation: generation, repIndex: repIndex, onProgress: onProgress)
             {
             case .success(let path):
                 filePublisher?.finish()
+                tracker?.pullEnded(
+                    generation: generation, repIndex: repIndex, childSeq: nil, succeeded: true)
                 logger.debug("Relay staged \(path, privacy: .public)")
                 reply(path, nil)
             case .failure(let error):
                 filePublisher?.finish()
+                tracker?.pullEnded(
+                    generation: generation, repIndex: repIndex, childSeq: nil, succeeded: false)
                 logger.error(
                     "Relay fetchFile failed: \(String(describing: error), privacy: .public)")
                 reply(nil, Self.nsError(for: error))
@@ -184,10 +209,15 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
         }
         let filePublisher = makeFilePublisher(
             generation: generation, repIndex: repIndex, childSeq: childSeq)
+        let tracker = materializationTracker
+        tracker?.pullBegan(generation: generation, repIndex: repIndex, childSeq: childSeq)
         pullQueue.async { [pullProvider, logger] in
             let onProgress: @Sendable (UInt64, UInt64) -> Void = { bytes, total in
                 pusher?.record(bytesTransferred: bytes, totalBytes: total)
                 filePublisher?.record(bytesTransferred: bytes, totalBytes: total)
+                tracker?.pullProgressed(
+                    generation: generation, repIndex: repIndex, childSeq: childSeq,
+                    bytesTransferred: bytes)
             }
             switch pullProvider.fetchStagedChild(
                 generation: generation, repIndex: repIndex, childSeq: childSeq,
@@ -195,10 +225,16 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
             {
             case .success(let path):
                 filePublisher?.finish()
+                tracker?.pullEnded(
+                    generation: generation, repIndex: repIndex, childSeq: childSeq,
+                    succeeded: true)
                 logger.debug("Relay staged child \(path, privacy: .public)")
                 reply(path, nil)
             case .failure(let error):
                 filePublisher?.finish()
+                tracker?.pullEnded(
+                    generation: generation, repIndex: repIndex, childSeq: childSeq,
+                    succeeded: false)
                 logger.error(
                     "Relay fetchChild failed: \(String(describing: error), privacy: .public)")
                 reply(nil, Self.nsError(for: error))
@@ -270,11 +306,12 @@ public enum FetchProgressThrottle {
 /// `FetchProgressThrottle` is the pure decision; this is the per-consumer
 /// bookkeeping around it (last-forwarded byte count, elapsed since the last
 /// forward, and the first-update timestamp the file publisher's reveal gate
-/// measures from). All three consumers of a pull's per-chunk progress — the
-/// servicing-XPC pusher, the published-`NSProgress` file publisher, and the host
+/// measures from). Every consumer of a pull's per-chunk progress — the
+/// servicing-XPC pusher, the published-`NSProgress` file publisher, the host
 /// app's in-app transfer bar (`ClipboardTransferProgressTracker`, one coalescer
-/// per tracked transfer) — share this instead of keeping parallel copies that
-/// could drift apart on a policy change.
+/// per tracked transfer), and the status-item paste readout
+/// (`PasteMaterializationTracker`, one per paste) — shares this instead of
+/// keeping parallel copies that could drift apart on a policy change.
 ///
 /// `@unchecked Sendable`: every stored property is guarded by `lock`, and
 /// `onProgress` fires from the receive lane.
@@ -293,6 +330,23 @@ public final class FetchProgressCoalescer: @unchecked Sendable {
     /// When the first update was recorded, or `nil` before any — the reveal
     /// gate's reference point.
     var firstUpdateTime: DispatchTime? { lock.withLock { firstUpdateAt } }
+
+    /// Records that an update was forwarded without asking `shouldForward` —
+    /// a consumer that bypasses the throttle for something the user must see
+    /// (a reveal, a terminal, an item finishing).
+    ///
+    /// Without this the watermarks would still describe the last *throttled*
+    /// forward, so the very next update would measure its delta from a byte
+    /// count that is already on screen and sail through the policy no matter how
+    /// small it was.
+    public func markForwarded(bytesTransferred: UInt64) {
+        lock.withLock {
+            let now = DispatchTime.now()
+            if firstUpdateAt == nil { firstUpdateAt = now }
+            lastForwardedBytes = max(lastForwardedBytes, bytesTransferred)
+            lastForwardAt = now
+        }
+    }
 
     /// Whether `(bytesTransferred, totalBytes)` should be forwarded now,
     /// advancing the watermarks when it should.

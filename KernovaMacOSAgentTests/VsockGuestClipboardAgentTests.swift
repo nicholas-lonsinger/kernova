@@ -265,6 +265,7 @@ final class FakeFileProviderPublisher: FileProviderPublishing, @unchecked Sendab
     private var publishedStorage: [Published] = []
     private var publishedFoldersStorage: [FileProviderPublishFolder] = []
     private var publishCallCountStorage = 0
+    private var publishedSourceNameStorage: String?
     private var clearCountStorage = 0
     private var prepareCountStorage = 0
     private var rootToReturnStorage: URL?
@@ -296,11 +297,12 @@ final class FakeFileProviderPublisher: FileProviderPublishing, @unchecked Sendab
     }
 
     func publishItems(
-        generation: UInt64, items: [FileProviderPublishItem],
+        generation: UInt64, sourceName: String, items: [FileProviderPublishItem],
         folders: [FileProviderPublishFolder], waitForPlaceholder: Bool
     ) -> [Int: URL]? {
         lock.withLock {
             publishCallCountStorage += 1
+            publishedSourceNameStorage = sourceName
             publishedStorage.append(
                 contentsOf: items.map {
                     Published(
@@ -326,6 +328,8 @@ final class FakeFileProviderPublisher: FileProviderPublishing, @unchecked Sendab
     var publishedFolders: [FileProviderPublishFolder] { lock.withLock { publishedFoldersStorage } }
     /// Number of `publishItems` calls (each may carry several items).
     var publishCallCount: Int { lock.withLock { publishCallCountStorage } }
+    /// Source name the most recent publish carried, for the paste readout.
+    var publishedSourceName: String? { lock.withLock { publishedSourceNameStorage } }
     var clearCount: Int { lock.withLock { clearCountStorage } }
     var prepareCount: Int { lock.withLock { prepareCountStorage } }
 }

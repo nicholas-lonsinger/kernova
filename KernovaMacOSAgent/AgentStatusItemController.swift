@@ -26,6 +26,13 @@ import os
 /// icon too, with its own non-dismissible explanatory line (no toggle to
 /// flip, so no enable/stop commands). Mirrors the host app's
 /// `HostAgentStatusItemController`.
+///
+/// While a host→guest paste is materializing through the File Provider it also
+/// carries that paste's progress (#643): a determinate ring around the icon, a
+/// live readout at the top of the dropdown, and a one-time automatic open of the
+/// dropdown. Rendering it here rather than on the host is deliberate — the user
+/// who pressed ⌘V is looking at the guest's screen, and this status item is the
+/// agent's only UI.
 @MainActor
 final class AgentStatusItemController: NSObject, NSMenuDelegate {
     private static let logger = Logger(subsystem: "app.kernova.macosagent", category: "AgentStatusItem")
@@ -41,6 +48,29 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     private let clipboardActivity: () -> ClipboardActivity
     private let fileProviderAvailability: () -> FileProviderAvailability
     private let onQuit: () -> Void
+
+    /// The paste currently materializing into the guest, or `nil` when none is
+    /// (#643).
+    private var pasteProgress: PasteMaterializationSnapshot?
+    /// The dropdown's live readout, built on first use and then kept so it
+    /// updates in place while the dropdown is open.
+    private lazy var pasteProgressView = PasteProgressMenuItemView()
+    private lazy var pasteProgressItem: NSMenuItem = {
+        let item = NSMenuItem()
+        item.view = pasteProgressView
+        item.isEnabled = false
+        return item
+    }()
+    private let pasteProgressSeparator = NSMenuItem.separator()
+    /// Decides when the readout opens and closes the dropdown by itself.
+    private var pasteAutoOpener = PasteProgressMenuAutoOpener()
+    /// Whether the dropdown is currently on screen, which `NSMenu` doesn't
+    /// expose and the auto-opener needs.
+    private var menuIsOpen = false
+    /// Set between asking for an automatic open and the resulting
+    /// `menuWillOpen`, so the opener can tell its own dropdown from one the user
+    /// summoned.
+    private var pendingAutoOpen = false
 
     init(
         version: String,
@@ -99,6 +129,77 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         setIcon(for: connectionState())
     }
 
+    // MARK: - Paste progress (#643)
+
+    /// Applies the paste readout the domain host just published — a snapshot to
+    /// render, or `nil` to clear it.
+    ///
+    /// Called by the app delegate from `FileProviderDomainHost
+    /// .setMaterializationObserver`, which delivers on main.
+    func materializationProgressChanged(_ snapshot: PasteMaterializationSnapshot?) {
+        pasteProgress = snapshot
+        if let snapshot { pasteProgressView.apply(snapshot) }
+        setIcon(for: connectionState())
+        syncPasteProgressItems()
+        applyPasteAutoOpen(hasReadout: snapshot != nil)
+    }
+
+    /// Adds or removes the readout rows from a dropdown that is already on
+    /// screen; a closed one is rebuilt by `menuNeedsUpdate` when it next opens.
+    private func syncPasteProgressItems() {
+        guard menuIsOpen else { return }
+        if pasteProgress != nil {
+            insertPasteProgressItems()
+        } else {
+            removePasteProgressItems()
+        }
+    }
+
+    private func insertPasteProgressItems() {
+        guard menu.index(of: pasteProgressItem) < 0 else { return }
+        menu.insertItem(pasteProgressItem, at: 0)
+        menu.insertItem(pasteProgressSeparator, at: 1)
+    }
+
+    private func removePasteProgressItems() {
+        for item in [pasteProgressSeparator, pasteProgressItem] where menu.index(of: item) >= 0 {
+            menu.removeItem(item)
+        }
+    }
+
+    /// Runs the auto-opener's decision for the current readout.
+    private func applyPasteAutoOpen(hasReadout: Bool) {
+        // macOS drops status items it can't fit in a crowded menu bar, and a
+        // dropdown popped from a hidden item would appear anchored to nothing.
+        let canOpen = statusItem.isVisible && statusItem.button?.window != nil
+        switch pasteAutoOpener.readoutChanged(
+            hasReadout: hasReadout, menuIsOpen: menuIsOpen, canOpen: canOpen)
+        {
+        case .none:
+            break
+        case .open:
+            // Deferred a turn: `performClick` spins a nested menu-tracking loop
+            // that doesn't return until the dropdown closes, which would strand
+            // this callback for the whole paste.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                // The paste can end inside that turn; opening for a readout that
+                // is already gone would leave a dropdown nothing will close.
+                guard self.pasteProgress != nil else { return }
+                self.pendingAutoOpen = true
+                self.statusItem.button?.performClick(nil)
+                // `performClick` only returns once the dropdown closes, by which
+                // point `menuWillOpen` has consumed the flag. Clearing it here
+                // covers the click that opened nothing at all, which would
+                // otherwise leave the flag set to mislabel the *user's* next
+                // dropdown as ours and close it under them.
+                self.pendingAutoOpen = false
+            }
+        case .close:
+            menu.cancelTracking()
+        }
+    }
+
     /// Whether the proactive status-item badge should currently show.
     ///
     /// Distinct from the always-present passive menu line below, which shows
@@ -137,6 +238,17 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         }
         image.isTemplate = true
         statusItem.button?.title = ""
+        // A materializing paste outranks the enablement badge: it is happening
+        // now and ends on its own, while the badge is a standing nudge that will
+        // still be there afterwards. The two barely overlap in practice — a
+        // paste only materializes through the File Provider while the domain is
+        // `.ready`, which is exactly when the badge is absent.
+        if let pasteProgress {
+            statusItem.button?.image = image.withProgressRing(
+                fraction: pasteProgress.fractionComplete)
+            statusItem.button?.toolTip = PasteProgressFormat.summary(pasteProgress)
+            return
+        }
         statusItem.button?.image = reminderActive ? image.withAttentionBadge() : image
         statusItem.button?.toolTip = reminderActive ? badgeSummary() : nil
     }
@@ -155,6 +267,10 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+
+        // A materializing paste leads: it is the only transient thing here, and
+        // the automatic open exists to put it in front of the user (#643).
+        if pasteProgress != nil { insertPasteProgressItems() }
 
         // Lead with live status. Identity + version/build are reached through
         // the About item below; only an actionable pending update surfaces here.
@@ -219,6 +335,19 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
             title: AgentMenuText.quit(), action: #selector(quitTapped), keyEquivalent: "")
         quit.target = self
         menu.addItem(quit)
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        menuIsOpen = true
+        pasteAutoOpener.menuOpened(automatically: pendingAutoOpen)
+        pendingAutoOpen = false
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        menuIsOpen = false
+        // A user dismissal lands here too, which is what stops a paste from
+        // re-opening the dropdown it was just told to go away from.
+        pasteAutoOpener.menuClosed()
     }
 
     // MARK: - About

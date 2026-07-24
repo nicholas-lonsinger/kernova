@@ -111,6 +111,11 @@ extension NSPasteboard: Pasteboard {
 final class VsockGuestClipboardAgent: @unchecked Sendable {
     private static let logger = KernovaLogger(subsystem: "app.kernova.macosagent", category: "VsockGuestClipboardAgent")
     private static let pollingInterval: TimeInterval = 0.5
+    /// What the paste progress readout calls the machine the bytes come from
+    /// (#643) — matching how the rest of the guest-facing copy names the host
+    /// ("…paste files from your Mac"), since the guest can't learn its actual
+    /// computer name over the control handshake.
+    private static let pasteSourceName = "Mac"
 
     private let client: VsockGuestClient
     private let pasteboard: Pasteboard
@@ -1145,8 +1150,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         guard !items.isEmpty || !folders.isEmpty else { return [:] }
         guard
             let urls = fileProvider.publishItems(
-                generation: promise.generation, items: items, folders: folders,
-                waitForPlaceholder: true)
+                generation: promise.generation, sourceName: Self.pasteSourceName, items: items,
+                folders: folders, waitForPlaceholder: true)
         else { return [:] }
         promise.fpRoutedURLs = urls
         Self.logger.notice(

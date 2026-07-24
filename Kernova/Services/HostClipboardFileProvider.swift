@@ -33,8 +33,11 @@ protocol HostClipboardDomainCoordinating: AnyObject {
     /// the relay pull source to `source` and waiting for the placeholders. Returns
     /// each rep's domain URL keyed by rep index, or `nil` when the File Provider
     /// isn't usable so the caller falls back to the size-capped synchronous pull.
+    ///
+    /// `sourceName` is the publishing VM's name, which the paste progress
+    /// readout shows as where the bytes are coming from (#643).
     func publishItemsForPaste(
-        source: any HostClipboardFileRepProviding, generation: UInt64,
+        source: any HostClipboardFileRepProviding, generation: UInt64, sourceName: String,
         items: [FileProviderPublishItem], folders: [FileProviderPublishFolder]
     ) -> [Int: URL]?
 
@@ -111,11 +114,24 @@ final class HostClipboardFileProvider: HostClipboardDomainCoordinating {
     /// restart.
     private(set) var availability: FileProviderAvailability = .inactive
 
+    /// The paste currently materializing through the host domain, or `nil` when
+    /// none is (#643).
+    ///
+    /// Observe it to render progress: the domain host's tracker aggregates every
+    /// pull of one paste into this single readout and clears it at the paste's
+    /// terminal, so a consumer never has to reason about individual pulls.
+    /// `HostAgentStatusItemController` is the consumer today (status-item ring +
+    /// dropdown readout).
+    private(set) var materializationProgress: PasteMaterializationSnapshot?
+
     private init() {
         let host = FileProviderDomainHost(config: .host(), pullProvider: router)
         domainHost = host
         host.setAvailabilityObserver { [weak self] availability in
             self?.availability = availability
+        }
+        host.setMaterializationObserver { [weak self] snapshot in
+            self?.materializationProgress = snapshot
         }
     }
 
@@ -149,12 +165,13 @@ final class HostClipboardFileProvider: HostClipboardDomainCoordinating {
     /// for the placeholder dirents (`waitForPlaceholder: true`) — the #427 host
     /// mirror: nothing exists in the domain until a paste.
     func publishItemsForPaste(
-        source: any HostClipboardFileRepProviding,
-        generation: UInt64, items: [FileProviderPublishItem], folders: [FileProviderPublishFolder]
+        source: any HostClipboardFileRepProviding, generation: UInt64, sourceName: String,
+        items: [FileProviderPublishItem], folders: [FileProviderPublishFolder]
     ) -> [Int: URL]? {
         router.setSource(source)
         return domainHost.publishItems(
-            generation: generation, items: items, folders: folders, waitForPlaceholder: true)
+            generation: generation, sourceName: sourceName, items: items, folders: folders,
+            waitForPlaceholder: true)
     }
 
     /// Clears the current offer, but only if `source` is the one that published
