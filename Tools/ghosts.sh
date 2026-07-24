@@ -170,16 +170,20 @@ kill_arena_appexes() {
     return 1
 }
 
-# Unregister every bundle inside the arena, then trash the folder. Unregister
-# first: a copy trashed while still registered keeps competing in the
-# election (#454) — the order matters.
+# Unregister every bundle inside the arena, then delete the folder outright.
+# Unregister first, so no dead registration lingers until the next sweep.
+# `rm -rf`, not `trash` (the exception to the trash-first file-operations
+# rule): a bundle sitting in the Trash is still a valid on-disk copy that
+# Launch Services can rediscover and re-elect until the Trash is emptied
+# (#454), so trashing just relocates the ghost — and an orphaned arena is
+# purely regenerable build products of a worktree that no longer exists,
+# with nothing user-authored to recover.
 evict_dd_arena() {
     local dir=$1 app
     while IFS= read -r app; do
         "$LSREGISTER" -u "$app" >/dev/null 2>&1
     done < <(find "$dir" -maxdepth 6 -name '*.app' -type d 2>/dev/null)
-    command -v trash >/dev/null 2>&1 || return 1
-    trash "$dir" 2>/dev/null
+    rm -rf "$dir" 2>/dev/null
 }
 
 # --sweep: the quiet, non-interactive subset for hooks — unregister dead
@@ -364,11 +368,9 @@ else
         fi
         if [ "$FIX" = 1 ]; then
             if evict_dd_arena "$dir"; then
-                fixed "unregistered bundles and trashed: $(pretty_path "$dir")"
-            elif ! command -v trash >/dev/null 2>&1; then
-                detail 'not evicted: the `trash` CLI is unavailable'
+                fixed "unregistered bundles and deleted: $(pretty_path "$dir")"
             else
-                detail "trash failed for $dir"
+                detail "delete failed for $dir"
             fi
         fi
     done
