@@ -56,10 +56,13 @@ protocol ClipboardServicing: AnyObject {
 
     /// The clipboard transfer currently being shown, or `nil` when none is.
     /// Drives the clipboard window's bottom progress bar and the toolbar button's
-    /// under-bar; both read this single source so they cannot disagree. Set once a
-    /// transfer crosses the reveal delay, cleared on every terminal state.
-    /// `nil` for transports without byte-level progress (the default below).
-    var transferProgress: ClipboardTransferProgress? { get }
+    /// under-bar; both read this single source so they cannot disagree, and the
+    /// menu-bar status item renders the same snapshot via the app-level
+    /// coordinator. Aggregate per *operation*, never per file: a multi-file paste
+    /// fills one bar once. Set once the operation crosses the reveal delay,
+    /// cleared at its terminal. `nil` for transports without byte-level progress
+    /// (the default below).
+    var transferProgress: ClipboardProgressSnapshot? { get }
 
     /// Monotonically increases each time a **new inbound guest offer** is
     /// published to `clipboardContent` — not on our own outbound writes, and not
@@ -152,7 +155,7 @@ extension ClipboardServicing {
 
     /// Transports without byte-level progress (SPICE text, fakes) never show a
     /// transfer bar.
-    var transferProgress: ClipboardTransferProgress? { nil }
+    var transferProgress: ClipboardProgressSnapshot? { nil }
 
     /// Transports that never receive (fakes) report no inbound offers.
     var inboundOfferSeq: UInt64 { 0 }

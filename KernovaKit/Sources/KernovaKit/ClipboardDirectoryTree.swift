@@ -219,9 +219,18 @@ public enum ClipboardDirectoryTree {
     /// a large tree never blocks the caller's run loop; `sender.startTransfer`
     /// then reads the source off its own transfer queue. Shared by the host
     /// (host→guest paste) and the guest agent (guest→host "Copy to Mac").
+    /// `onProgress`/`onComplete` mirror `ClipboardStreamSender.startTransfer`'s, so
+    /// the producer can measure what it is sending: a folder is usually the largest
+    /// thing that crosses, and without these its children would be the one transfer
+    /// the sending side's progress readout could not see. The reject paths report a
+    /// failed terminal rather than staying silent — a unit that never ends would
+    /// leave the session permanently "active", so its idle terminal would never
+    /// fire and the readout would stick on screen.
     public static func serveFetch(
         _ fetch: Kernova_V1_ClipboardTreeFetch, sourceURL: URL, sender: ClipboardStreamSender,
-        isCurrent: @escaping @Sendable (UInt64) -> Bool
+        isCurrent: @escaping @Sendable (UInt64) -> Bool,
+        onProgress: (@Sendable (_ bytesSent: Int, _ totalBytes: Int) -> Void)? = nil,
+        onComplete: (@Sendable (_ success: Bool) -> Void)? = nil
     ) {
         let transferID = fetch.transferID
         let generation = fetch.generation
@@ -236,13 +245,15 @@ public enum ClipboardDirectoryTree {
                     sender.rejectRequest(
                         transferID: transferID, code: "tree.error",
                         message: "Could not list the folder")
+                    onComplete?(false)
                     return
                 }
                 sender.startTransfer(
                     transferID: transferID, generation: generation,
                     representation: ClipboardContent.Representation(uti: treeListingUTI, data: data),
                     maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount,
-                    isInline: true, isCurrent: isCurrent)
+                    isInline: true, isCurrent: isCurrent, onProgress: onProgress,
+                    onComplete: onComplete)
             } else {
                 guard let childURL = resolveChildFile(root: sourceURL, relativePath: relativePath),
                     let size = try? childURL.resourceValues(forKeys: [.fileSizeKey]).fileSize
@@ -250,6 +261,7 @@ public enum ClipboardDirectoryTree {
                     sender.rejectRequest(
                         transferID: transferID, code: "tree.child.error",
                         message: "Could not open child \(relativePath)")
+                    onComplete?(false)
                     return
                 }
                 sender.startTransfer(
@@ -257,7 +269,8 @@ public enum ClipboardDirectoryTree {
                     representation: ClipboardContent.Representation(
                         uti: "public.data", fileURL: childURL, byteCount: size,
                         filename: (relativePath as NSString).lastPathComponent),
-                    maxAcceptByteCount: maxAccept, isInline: false, isCurrent: isCurrent)
+                    maxAcceptByteCount: maxAccept, isInline: false, isCurrent: isCurrent,
+                    onProgress: onProgress, onComplete: onComplete)
             }
         }
     }

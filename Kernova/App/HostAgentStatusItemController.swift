@@ -62,7 +62,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// Built lazily — most sessions never reveal one. The host dismisses its
     /// soft-quit reminder before an automatic open so the click reaches the
     /// menu rather than the reminder's dismissal handler.
-    private lazy var pasteProgressPresenter = PasteProgressStatusItemPresenter(
+    private lazy var pasteProgressPresenter = ClipboardProgressStatusItemPresenter(
         statusItem: statusItem, menu: menu,
         willAutoOpen: { [weak self] in self?.dismissSoftQuitReminder() })
 
@@ -314,7 +314,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         default: lines = ["Kernova — \(count) virtual machines running"]
         }
         if let snapshot = pasteProgressPresenter.snapshot {
-            lines.append(PasteProgressFormat.summary(snapshot))
+            lines.append(ClipboardProgressFormat.summary(snapshot))
         }
         if reminderActive { lines.append(badgeSummary()) }
         statusItem.button?.toolTip = lines.joined(separator: "\n")

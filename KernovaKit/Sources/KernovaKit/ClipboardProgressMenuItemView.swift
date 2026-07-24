@@ -12,7 +12,7 @@ import AppKit
 /// truncate rather than wrap — because a menu item that changed height while its
 /// menu was open would re-lay-out the dropdown under the user's cursor.
 @MainActor
-public final class PasteProgressMenuItemView: NSView {
+public final class ClipboardProgressMenuItemView: NSView {
     /// Content width.
     ///
     /// Wide enough for a headline naming a VM plus the byte-progress line with
@@ -50,7 +50,7 @@ public final class PasteProgressMenuItemView: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
-        fatalError("PasteProgressMenuItemView does not support NSCoder")
+        fatalError("ClipboardProgressMenuItemView does not support NSCoder")
     }
 
     /// Builds the row hierarchy and returns the outer stack, so the caller can
@@ -134,20 +134,22 @@ public final class PasteProgressMenuItemView: NSView {
 
     /// Applies a snapshot in place, so the readout keeps advancing while its
     /// menu is open.
-    public func apply(_ snapshot: PasteMaterializationSnapshot) {
-        headline.stringValue = PasteProgressFormat.headline(sourceName: snapshot.sourceName)
+    public func apply(_ snapshot: ClipboardProgressSnapshot) {
+        headline.stringValue = ClipboardProgressFormat.headline(
+            direction: snapshot.direction, peerName: snapshot.peerName,
+            isPaste: snapshot.isPasteSession)
         pendingFraction = snapshot.fractionComplete
         // Off screen, the value is only recorded — see `viewDidMoveToWindow`.
         if window != nil { bar.doubleValue = pendingFraction }
-        byteProgress.stringValue = PasteProgressFormat.byteProgress(
+        byteProgress.stringValue = ClipboardProgressFormat.byteProgress(
             bytesTransferred: snapshot.bytesTransferred,
             totalBytes: snapshot.totalBytes,
             bytesPerSecond: snapshot.bytesPerSecond)
         itemCounter.stringValue =
-            PasteProgressFormat.itemCounter(
+            ClipboardProgressFormat.itemCounter(
                 completed: snapshot.filesCompleted, total: snapshot.fileCount) ?? ""
         timeRemaining.stringValue =
-            PasteProgressFormat.timeRemaining(seconds: snapshot.secondsRemaining) ?? ""
-        setAccessibilityLabel(PasteProgressFormat.summary(snapshot))
+            ClipboardProgressFormat.timeRemaining(seconds: snapshot.secondsRemaining) ?? ""
+        setAccessibilityLabel(ClipboardProgressFormat.summary(snapshot))
     }
 }

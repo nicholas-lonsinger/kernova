@@ -3,7 +3,7 @@ import Testing
 
 @testable import KernovaKit
 
-/// Unit tests for `PasteMaterializationTracker` — the per-paste aggregation
+/// Unit tests for `ClipboardProgressTracker` — the per-paste aggregation
 /// behind the status-item progress readout (#643).
 ///
 /// Every wait is removed rather than made event-driven: the tracker takes its
@@ -11,8 +11,8 @@ import Testing
 /// by assignment and fires the idle terminal by hand. Emissions land
 /// synchronously on the calling thread, so assertions read the recorded list
 /// directly.
-@Suite("PasteMaterializationTracker")
-struct PasteMaterializationTrackerTests {
+@Suite("ClipboardProgressTracker")
+struct ClipboardProgressTrackerTests {
     // MARK: - Harness
 
     /// Drives a tracker with a controllable clock and scheduler, recording every
@@ -21,18 +21,18 @@ struct PasteMaterializationTrackerTests {
         private final class State: @unchecked Sendable {
             let lock = NSLock()
             var now: TimeInterval = 0
-            var emissions: [PasteMaterializationSnapshot?] = []
+            var emissions: [ClipboardProgressSnapshot?] = []
             var pending: [@Sendable () -> Void] = []
             var scheduledDelays: [TimeInterval] = []
         }
 
-        let tracker: PasteMaterializationTracker
+        let tracker: ClipboardProgressTracker
         private let state: State
 
         init(revealDelay: TimeInterval = 1, idleLinger: TimeInterval = 2) {
             let state = State()
             self.state = state
-            tracker = PasteMaterializationTracker(
+            tracker = ClipboardProgressTracker(
                 revealDelay: revealDelay, idleLinger: idleLinger,
                 now: { state.lock.withLock { state.now } },
                 schedule: { delay, work in
@@ -50,10 +50,10 @@ struct PasteMaterializationTrackerTests {
         }
 
         /// Every emission in order; a `nil` element is a "clear the readout".
-        var emissions: [PasteMaterializationSnapshot?] { state.lock.withLock { state.emissions } }
+        var emissions: [ClipboardProgressSnapshot?] { state.lock.withLock { state.emissions } }
 
         /// The most recent emission, or `nil` if nothing has been emitted.
-        var latest: PasteMaterializationSnapshot? { emissions.last ?? nil }
+        var latest: ClipboardProgressSnapshot? { emissions.last ?? nil }
 
         /// Whether the most recent emission was a "clear the readout".
         var lastEmissionClears: Bool {
@@ -125,7 +125,7 @@ struct PasteMaterializationTrackerTests {
             Self.manifest(items: [
                 Self.item(0, "a.bin", 1_000), Self.item(1, "b.bin", 3_000),
             ]),
-            sourceName: "macOS TEST")
+            peerName: "macOS TEST")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
         harness.now = 2
@@ -133,7 +133,7 @@ struct PasteMaterializationTrackerTests {
             generation: 1, repIndex: 0, childSeq: nil, bytesTransferred: 500)
 
         let snapshot = try #require(harness.latest)
-        #expect(snapshot.sourceName == "macOS TEST")
+        #expect(snapshot.peerName == "macOS TEST")
         #expect(snapshot.fileCount == 2)
         #expect(snapshot.totalBytes == 4_000)
         #expect(snapshot.bytesTransferred == 500)
@@ -155,7 +155,7 @@ struct PasteMaterializationTrackerTests {
                             Self.fileNode(3, "two.jpg", 300),
                         ])
                 ]),
-            sourceName: "macOS TEST")
+            peerName: "macOS TEST")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 1, childSeq: 1)
         harness.now = 2
@@ -175,7 +175,7 @@ struct PasteMaterializationTrackerTests {
     func fastPasteNeverReveals() {
         let harness = Harness(revealDelay: 1)
         harness.tracker.offerPublished(
-            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), sourceName: "VM")
+            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), peerName: "VM")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
         harness.now = 0.4
@@ -191,7 +191,7 @@ struct PasteMaterializationTrackerTests {
     func revealsAfterDelay() {
         let harness = Harness(revealDelay: 1)
         harness.tracker.offerPublished(
-            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), sourceName: "VM")
+            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), peerName: "VM")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
         harness.now = 0.9
@@ -215,7 +215,7 @@ struct PasteMaterializationTrackerTests {
             Self.manifest(items: [
                 Self.item(0, "a.bin", 1_000), Self.item(1, "b.bin", 1_000),
             ]),
-            sourceName: "VM")
+            peerName: "VM")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
         harness.now = 2
@@ -248,7 +248,7 @@ struct PasteMaterializationTrackerTests {
                         Self.fileNode(1, "one.jpg", 1_000), Self.fileNode(2, "two.jpg", 1_000),
                     ])
             ]),
-            sourceName: "VM")
+            peerName: "VM")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: 1)
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: 2)
@@ -277,7 +277,7 @@ struct PasteMaterializationTrackerTests {
                         Self.fileNode(1, "one.jpg", 1_000), Self.fileNode(2, "two.jpg", 1_000),
                     ])
             ]),
-            sourceName: "VM")
+            peerName: "VM")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: 1)
         harness.now = 2
@@ -297,7 +297,7 @@ struct PasteMaterializationTrackerTests {
             Self.manifest(
                 items: [Self.item(0, "a.bin", 1_000)],
                 folders: [Self.folder(1, "Empty", nodes: [Self.directoryNode(1, "sub")])]),
-            sourceName: "VM")
+            peerName: "VM")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
         harness.now = 2
@@ -317,7 +317,7 @@ struct PasteMaterializationTrackerTests {
     func idleLingerClearsTheReadout() {
         let harness = Harness(idleLinger: 2)
         harness.tracker.offerPublished(
-            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), sourceName: "VM")
+            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), peerName: "VM")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
         harness.now = 2
@@ -337,7 +337,7 @@ struct PasteMaterializationTrackerTests {
             Self.manifest(items: [
                 Self.item(0, "a.bin", 1_000), Self.item(1, "b.bin", 1_000),
             ]),
-            sourceName: "VM")
+            peerName: "VM")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
         harness.now = 2
@@ -353,7 +353,7 @@ struct PasteMaterializationTrackerTests {
     func failedPullDoesNotCompleteItsItem() throws {
         let harness = Harness()
         harness.tracker.offerPublished(
-            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), sourceName: "VM")
+            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), peerName: "VM")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
         harness.now = 2
@@ -370,7 +370,7 @@ struct PasteMaterializationTrackerTests {
     func lateProgressAfterTerminalStillClears() {
         let harness = Harness()
         harness.tracker.offerPublished(
-            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), sourceName: "VM")
+            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), peerName: "VM")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
         harness.now = 2
@@ -391,7 +391,7 @@ struct PasteMaterializationTrackerTests {
     func offerClearedClearsTheReadout() {
         let harness = Harness()
         harness.tracker.offerPublished(
-            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), sourceName: "VM")
+            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), peerName: "VM")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
         harness.now = 2
@@ -407,7 +407,7 @@ struct PasteMaterializationTrackerTests {
     func clearWithoutRevealEmitsNothing() {
         let harness = Harness()
         harness.tracker.offerPublished(
-            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), sourceName: "VM")
+            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), peerName: "VM")
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
 
         harness.tracker.offerCleared()
@@ -418,7 +418,7 @@ struct PasteMaterializationTrackerTests {
     func newOfferSupersedes() {
         let harness = Harness()
         harness.tracker.offerPublished(
-            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), sourceName: "VM")
+            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), peerName: "VM")
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
         harness.now = 2
         harness.tracker.pullProgressed(
@@ -427,7 +427,7 @@ struct PasteMaterializationTrackerTests {
 
         harness.tracker.offerPublished(
             Self.manifest(generation: 2, items: [Self.item(0, "c.bin", 500)]),
-            sourceName: "VM")
+            peerName: "VM")
         #expect(harness.lastEmissionClears)
     }
 
@@ -438,7 +438,7 @@ struct PasteMaterializationTrackerTests {
         let harness = Harness()
         harness.tracker.offerPublished(
             Self.manifest(generation: 2, items: [Self.item(0, "a.bin", 1_000)]),
-            sourceName: "VM")
+            peerName: "VM")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
         harness.now = 5
@@ -452,7 +452,7 @@ struct PasteMaterializationTrackerTests {
     func unknownRepIgnored() {
         let harness = Harness()
         harness.tracker.offerPublished(
-            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), sourceName: "VM")
+            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), peerName: "VM")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 9, childSeq: nil)
         harness.now = 5
@@ -479,7 +479,7 @@ struct PasteMaterializationTrackerTests {
     func retryDoesNotRegress() {
         let harness = Harness()
         harness.tracker.offerPublished(
-            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), sourceName: "VM")
+            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), peerName: "VM")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
         harness.now = 2
@@ -500,7 +500,7 @@ struct PasteMaterializationTrackerTests {
     func completionCreditsFullSize() {
         let harness = Harness()
         harness.tracker.offerPublished(
-            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), sourceName: "VM")
+            Self.manifest(items: [Self.item(0, "a.bin", 1_000)]), peerName: "VM")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
         harness.now = 2
@@ -530,7 +530,7 @@ struct PasteMaterializationTrackerTests {
             Self.manifest(items: [
                 Self.item(0, "a.bin", 100_000), Self.item(1, "b.bin", 100_000),
             ]),
-            sourceName: "VM")
+            peerName: "VM")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
         harness.now = 2
@@ -567,7 +567,7 @@ struct PasteMaterializationTrackerTests {
                         Self.fileNode(1, "one.jpg", 1_000), Self.fileNode(2, "two.jpg", 1_000),
                     ])
             ]),
-            sourceName: "VM")
+            peerName: "VM")
 
         // Whether the children run sequentially or overlap, the display name is
         // the folder's — concurrent children would otherwise flicker through
@@ -593,7 +593,7 @@ struct PasteMaterializationTrackerTests {
                 folders: [
                     Self.folder(1, "Photos", nodes: [Self.fileNode(1, "one.jpg", 100_000)])
                 ]),
-            sourceName: "VM")
+            peerName: "VM")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
         harness.tracker.pullBegan(generation: 1, repIndex: 1, childSeq: 1)
@@ -607,5 +607,199 @@ struct PasteMaterializationTrackerTests {
         harness.now = 3
         harness.tracker.pullEnded(generation: 1, repIndex: 1, childSeq: 1, succeeded: true)
         #expect(harness.latest?.currentItemName == "loose.bin")
+    }
+
+    // MARK: - Ad-hoc sessions
+
+    @Test("an ad-hoc session aggregates its transfers into one readout")
+    func adHocSessionAggregates() throws {
+        let harness = Harness()
+        let session = harness.tracker.openSession(
+            direction: .inbound, peerName: "VM",
+            units: [
+                ClipboardProgressTracker.PlannedUnit(id: 0, expectedBytes: 1_000, name: "a.bin"),
+                ClipboardProgressTracker.PlannedUnit(id: 1, expectedBytes: 3_000, name: "b.bin"),
+            ])
+
+        harness.tracker.unitBegan(session: session, id: 0)
+        harness.now = 2
+        harness.tracker.unitProgressed(session: session, id: 0, bytesTransferred: 500)
+
+        let snapshot = try #require(harness.latest)
+        #expect(snapshot.direction == .inbound)
+        #expect(snapshot.peerName == "VM")
+        #expect(snapshot.fileCount == 2)
+        #expect(snapshot.totalBytes == 4_000)
+        #expect(snapshot.bytesTransferred == 500)
+        #expect(snapshot.currentItemName == "a.bin")
+        // Only a File Provider paste may interrupt with a dropdown.
+        #expect(!snapshot.isPasteSession)
+    }
+
+    @Test("an ad-hoc session's transfers are addressed independently of any generation")
+    func adHocSessionsDoNotCollideWithTheManifest() throws {
+        // Inbound and outbound generations are independent counters that both
+        // start at 1, and a preview fetch shares the paste manifest's generation
+        // exactly — so anything keyed by generation would merge unrelated work.
+        let harness = Harness()
+        harness.tracker.offerPublished(
+            Self.manifest(items: [Self.item(0, "paste.bin", 10_000)]), peerName: "VM")
+        harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
+
+        let outbound = harness.tracker.openSession(direction: .outbound, peerName: "VM")
+        harness.tracker.unitBegan(
+            session: outbound, id: 0, expectedBytes: 1_000, name: "sending.bin")
+
+        harness.now = 2
+        harness.tracker.unitProgressed(session: outbound, id: 0, bytesTransferred: 900)
+        harness.tracker.pullProgressed(
+            generation: 1, repIndex: 0, childSeq: nil, bytesTransferred: 100)
+
+        // The paste has far more left to move, so it is what shows — and its
+        // numbers are its own, untouched by the outbound session's.
+        let snapshot = try #require(harness.latest)
+        #expect(snapshot.isPasteSession)
+        #expect(snapshot.direction == .inbound)
+        #expect(snapshot.totalBytes == 10_000)
+        #expect(snapshot.bytesTransferred == 100)
+    }
+
+    @Test("the readout follows whichever live session has the most left to move")
+    func projectionPicksTheMostSignificantSession() throws {
+        let harness = Harness()
+        let small = harness.tracker.openSession(direction: .inbound, peerName: "VM")
+        harness.tracker.unitBegan(session: small, id: 0, expectedBytes: 1_000, name: "small.bin")
+        harness.now = 2
+        harness.tracker.unitProgressed(session: small, id: 0, bytesTransferred: 900)
+        #expect(harness.latest?.currentItemName == "small.bin")
+
+        let large = harness.tracker.openSession(direction: .outbound, peerName: "VM")
+        harness.tracker.unitBegan(
+            session: large, id: 0, expectedBytes: 1_000_000, name: "large.bin")
+        harness.now = 3
+        harness.tracker.unitProgressed(session: large, id: 0, bytesTransferred: 10)
+
+        let snapshot = try #require(harness.latest)
+        #expect(snapshot.currentItemName == "large.bin")
+        #expect(snapshot.direction == .outbound)
+    }
+
+    @Test("a transfer's wire total replaces what the operation advertised")
+    func wireTotalOverridesTheAdvertisedEstimate() throws {
+        // A directory rep advertises a stat-walk estimate and then streams a
+        // compressed archive; with the estimate held fixed the bar would peg early
+        // or never reach the end.
+        let harness = Harness()
+        let session = harness.tracker.openSession(
+            direction: .outbound, peerName: "VM",
+            units: [
+                ClipboardProgressTracker.PlannedUnit(
+                    id: 0, expectedBytes: 10_000, name: "Photos")
+            ])
+        harness.tracker.unitBegan(session: session, id: 0)
+        harness.now = 2
+        harness.tracker.unitProgressed(
+            session: session, id: 0, bytesTransferred: 2_000, totalBytes: 4_000)
+
+        let snapshot = try #require(harness.latest)
+        #expect(snapshot.totalBytes == 4_000)
+        #expect(snapshot.fractionComplete == 0.5)
+    }
+
+    @Test("an outbound session grows as the peer asks for more, across separate waves")
+    func outboundSessionGrowsOnDemand() throws {
+        // The peer pulls what it wants, when it wants — preview reps at offer
+        // time, the file rep at paste. Declaring the whole offer up front would
+        // cap a partial pull at a fixed fraction forever.
+        let harness = Harness()
+        let session = harness.tracker.openSession(direction: .outbound, peerName: "VM")
+        harness.tracker.unitBegan(session: session, id: 0, expectedBytes: 1_000, name: "a.bin")
+        harness.now = 2
+        harness.tracker.unitEnded(session: session, id: 0, succeeded: true)
+        #expect(harness.latest?.fileCount == 1)
+        #expect(harness.latest?.fractionComplete == 1)
+
+        // A second request arrives inside the linger, so the readout bridges the
+        // gap rather than ending and restarting.
+        harness.tracker.unitBegan(session: session, id: 1, expectedBytes: 3_000, name: "b.bin")
+        harness.now = 3
+        harness.tracker.unitProgressed(session: session, id: 1, bytesTransferred: 1_000)
+
+        let snapshot = try #require(harness.latest)
+        #expect(snapshot.fileCount == 2)
+        #expect(snapshot.totalBytes == 4_000)
+        #expect(snapshot.bytesTransferred == 2_000)
+
+        harness.fireScheduledWork()
+        #expect(!harness.lastEmissionClears)
+    }
+
+    @Test("progress or a terminal for a session that never began is ignored")
+    func eventsWithoutABeganAreIgnored() {
+        // A chunk can land after its session closed. Minting a session for it
+        // would arm no idle terminal, so the readout it revealed would never
+        // clear.
+        let harness = Harness()
+        let session = harness.tracker.openSession(direction: .inbound, peerName: "VM")
+        harness.now = 2
+        harness.tracker.unitProgressed(session: session, id: 7, bytesTransferred: 500)
+        harness.tracker.unitEnded(session: session, id: 7, succeeded: true)
+        #expect(harness.emissions.isEmpty)
+
+        harness.tracker.closeSession(session, immediately: true)
+        // A closed session's late chunk finds nothing to attach to.
+        harness.tracker.unitProgressed(session: session, id: 0, bytesTransferred: 500)
+        #expect(harness.emissions.isEmpty)
+    }
+
+    @Test("closing a revealed session leaves its final state up for the linger")
+    func closingARevealedSessionHonorsTheDwell() throws {
+        let harness = Harness()
+        let session = harness.tracker.openSession(
+            direction: .inbound, peerName: "VM",
+            units: [ClipboardProgressTracker.PlannedUnit(id: 0, expectedBytes: 1_000)])
+        harness.tracker.unitBegan(session: session, id: 0)
+        harness.now = 2
+        harness.tracker.unitEnded(session: session, id: 0, succeeded: true)
+        harness.tracker.closeSession(session)
+
+        // The finished readout is still on screen, reading 100%.
+        let snapshot = try #require(harness.latest)
+        #expect(snapshot.fractionComplete == 1)
+
+        harness.fireScheduledWork()
+        #expect(harness.lastEmissionClears)
+    }
+
+    @Test("closing a session immediately clears it, dwell or not")
+    func closingImmediatelySkipsTheDwell() {
+        let harness = Harness()
+        let session = harness.tracker.openSession(
+            direction: .inbound, peerName: "VM",
+            units: [ClipboardProgressTracker.PlannedUnit(id: 0, expectedBytes: 1_000)])
+        harness.tracker.unitBegan(session: session, id: 0)
+        harness.now = 2
+        harness.tracker.unitProgressed(session: session, id: 0, bytesTransferred: 500)
+        #expect(harness.latest != nil)
+
+        // A supersession or teardown: what the readout was measuring is gone, so
+        // holding it on screen for a beat would be a lie.
+        harness.tracker.closeSession(session, immediately: true)
+        #expect(harness.lastEmissionClears)
+    }
+
+    @Test("closing a session that never revealed emits nothing")
+    func closingAnUnrevealedSessionIsSilent() {
+        let harness = Harness()
+        let session = harness.tracker.openSession(
+            direction: .inbound, peerName: "VM",
+            units: [ClipboardProgressTracker.PlannedUnit(id: 0, expectedBytes: 1_000)])
+        harness.tracker.unitBegan(session: session, id: 0)
+        harness.now = 0.4
+        harness.tracker.unitEnded(session: session, id: 0, succeeded: true)
+        harness.tracker.closeSession(session)
+        harness.fireScheduledWork()
+
+        #expect(harness.emissions.isEmpty)
     }
 }

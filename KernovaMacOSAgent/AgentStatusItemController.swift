@@ -52,7 +52,7 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     /// The dropdown readout, its one-shot automatic open, and the shared menu
     /// wiring for a materializing paste (#643), built lazily since most sessions
     /// never reveal one.
-    private lazy var pasteProgressPresenter = PasteProgressStatusItemPresenter(
+    private lazy var pasteProgressPresenter = ClipboardProgressStatusItemPresenter(
         statusItem: statusItem, menu: menu)
 
     init(
@@ -119,7 +119,7 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     ///
     /// Called by the app delegate from `FileProviderDomainHost
     /// .setMaterializationObserver`, which delivers on main.
-    func materializationProgressChanged(_ snapshot: PasteMaterializationSnapshot?) {
+    func materializationProgressChanged(_ snapshot: ClipboardProgressSnapshot?) {
         pasteProgressPresenter.apply(snapshot)
         setIcon(for: connectionState())
     }
@@ -170,7 +170,7 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         if let snapshot = pasteProgressPresenter.snapshot {
             statusItem.button?.image = image.withProgressRing(
                 fraction: snapshot.fractionComplete)
-            statusItem.button?.toolTip = PasteProgressFormat.summary(snapshot)
+            statusItem.button?.toolTip = ClipboardProgressFormat.summary(snapshot)
             return
         }
         statusItem.button?.image = reminderActive ? image.withAttentionBadge() : image

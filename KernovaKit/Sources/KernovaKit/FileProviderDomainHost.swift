@@ -315,16 +315,15 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// Lets an owner mirror availability into observable UI state. Set on main;
     /// invoked on main. Single-slot; see `setAvailabilityObserver`.
     private var availabilityObserver: (@MainActor (FileProviderAvailability) -> Void)?
-    /// Notified on the main queue with the paste readout to show, or `nil` to
-    /// clear it (#643).
+    /// Aggregates this side's paste pulls into the clipboard progress readout
+    /// (#643, #652).
     ///
-    /// Single-slot, for the same reason as `availabilityObserver`.
-    private var materializationObserver: (@MainActor (PasteMaterializationSnapshot?) -> Void)?
-    /// Aggregates the relay's per-pull events into that readout.
-    ///
-    /// Assigned once, right after `super.init()`, because its `emit` closure
-    /// captures `self`. Read on main.
-    private var materializationTracker: PasteMaterializationTracker?
+    /// Injected by the owner rather than created here, because the same tracker
+    /// also measures the flows that never touch a File Provider manifest — a
+    /// preview fetch, a Copy to Mac, this side serving a peer's pull — and one
+    /// readout can only come from one tracker. `nil` until the owner wires it
+    /// (and in tests that never do), which simply means no readout. Read on main.
+    private var progressTracker: ClipboardProgressTracker?
 
     /// Current File Provider usability, for the UI.
     ///
@@ -376,16 +375,16 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// Registers an observer notified on the main queue with the paste
     /// materialization readout to render, or `nil` to clear it (#643).
     ///
-    /// Single-observer for the same reason as `setAvailabilityObserver`: each
-    /// host instance has exactly one owner, and an owner driving several
-    /// consumers fans them out inside its own closure. Unlike availability there
-    /// is no current value to deliver on registration — a readout only exists
-    /// while a paste is materializing.
-    public func setMaterializationObserver(
-        _ observer: @escaping @MainActor (PasteMaterializationSnapshot?) -> Void
-    ) {
+    /// Points this host's paste pulls at the owner's progress tracker.
+    ///
+    /// The relay captures the tracker at each pull's *entry*, so re-pointing
+    /// mid-paste leaves an in-flight pull reporting to the tracker it started
+    /// under — which is what keeps a superseded VM's paste rendering on its own
+    /// session instead of vanishing when another VM publishes.
+    public func setProgressTracker(_ tracker: ClipboardProgressTracker?) {
         dispatchPrecondition(condition: .onQueue(.main))
-        materializationObserver = observer
+        progressTracker = tracker
+        relayService.progressTracker = tracker
     }
 
     /// Updates the cached availability and notifies the observer on a transition.
@@ -469,17 +468,6 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 }
             }
         super.init()
-        // The paste readout (#643). The tracker is driven off-main from the
-        // relay's XPC queues, so every emission hops to main before reaching the
-        // owner's UI.
-        let tracker = PasteMaterializationTracker { [weak self] snapshot in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                MainActor.assumeIsolated { self.materializationObserver?(snapshot) }
-            }
-        }
-        materializationTracker = tracker
-        relayService.materializationTracker = tracker
     }
 
     deinit {
@@ -989,7 +977,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         // sets of files. A publish that fails its reconciliation barrier below
         // falls back to the sync path and simply never produces a pull, so the
         // adopted offer stays unused rather than needing to be rolled back.
-        materializationTracker?.offerPublished(manifest, sourceName: sourceName)
+        progressTracker?.offerPublished(manifest, peerName: sourceName)
         signalEnumerator()
         // `signalEnumerator`'s completion means only that the signal was
         // delivered — NOT that the manifest change has been applied to the
@@ -1345,7 +1333,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         // Ahead of the `domainRegistered` guard: a superseded offer must stop
         // driving the paste readout even in a context that never registered
         // (where the tracker holds nothing anyway, making this a no-op).
-        materializationTracker?.offerCleared()
+        progressTracker?.offerCleared()
         // Only touch the manifest if the domain ever published — avoids creating
         // the container in a context where the File Provider is unused.
         guard domainRegistered else { return }

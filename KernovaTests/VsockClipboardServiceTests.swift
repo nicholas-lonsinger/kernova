@@ -1850,9 +1850,9 @@ struct VsockClipboardServiceTests {
     }
 
     @Test(
-        "pullStagedFile records the guest→host pull in the window's in-app bar, cleared at the terminal (#354)"
+        "the toggle-off Copy-to-Mac pull shows an aggregate readout, cleared at the terminal (#354, #652)"
     )
-    func pullStagedFileRecordsInAppProgress() async throws {
+    func syncCopyToMacPullShowsProgress() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -1861,7 +1861,7 @@ struct VsockClipboardServiceTests {
         // Reveal instantly so the mid-flight transfer surfaces (the sanctioned
         // "drive the shown path" test value; see VsockClipboardService's doc).
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: .zero)
+            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: 0, progressIdleLinger: 0)
         service.start()
         defer { service.stop() }
 
@@ -1882,22 +1882,24 @@ struct VsockClipboardServiceTests {
                 reps: [(uti: "public.data", byteCount: fileBytes.count, filename: "big.bin", isInline: false)]))
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
-        let pull = Task { await offCooperativePool { service.pullStagedFile(generation: 41, repIndex: 0) } }
-
-        // The bar reveals mid-flight: inbound, denominated by the rep's total, and
-        // labelled with the filename (#354 — LazyPullSnapshot.filename).
-        try await waitForChange { service.transferProgress?.direction == .inbound }
-        #expect(service.transferProgress?.totalBytes == fileBytes.count)
-        #expect(service.transferProgress?.label == "big.bin")
-
-        // Releasing End resolves the pull; the terminal clears the bar (§13: never
-        // leave a stuck bar).
-        responder.releaseEnd()
-        let outcome = await pull.value
-        guard case .success = outcome else {
-            Issue.record("Expected pullStagedFile to succeed, got \(outcome)")
-            return
+        let pull = Task {
+            await offCooperativePool { service.copyToMacFileURL(generation: 41, repIndex: 0) }
         }
+
+        // The readout reveals mid-flight: inbound, denominated by the rep's total,
+        // and naming the file.
+        try await waitForChange { service.transferProgress?.direction == .inbound }
+        #expect(service.transferProgress?.totalBytes == UInt64(fileBytes.count))
+        #expect(service.transferProgress?.currentItemName == "big.bin")
+        // Not a paste — the user started this from the clipboard window, which is
+        // already showing the readout, so it must never open a dropdown over them.
+        #expect(service.transferProgress?.isPasteSession == false)
+
+        // Releasing End resolves the pull; the terminal clears the readout (§13:
+        // never leave a stuck bar).
+        responder.releaseEnd()
+        let url = await pull.value
+        #expect(url != nil)
         try await waitForChange { service.transferProgress == nil }
     }
 
@@ -2729,7 +2731,7 @@ struct VsockClipboardServiceTests {
 
         // `.zero` reveal delay → the transfer shows as soon as a chunk lands.
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: .zero)
+            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: 0, progressIdleLinger: 0)
         service.start()
         defer { service.stop() }
 
@@ -2751,9 +2753,9 @@ struct VsockClipboardServiceTests {
         let copyTask = Task { await service.materializeForCopy() }
 
         // Chunks have landed but End is held → the bar shows, inbound.
-        try await waitForChange { service.transferProgress?.direction == .inbound }
-        #expect(service.transferProgress?.totalBytes == bytes.count)
-        #expect((service.transferProgress?.bytesTransferred ?? 0) > 0)
+        try await waitForChange { (service.transferProgress?.bytesTransferred ?? 0) > 0 }
+        #expect(service.transferProgress?.direction == .inbound)
+        #expect(service.transferProgress?.totalBytes == UInt64(bytes.count))
 
         responder.releaseEnd()
         _ = await copyTask.value
@@ -2768,7 +2770,7 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: .zero)
+            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: 0, progressIdleLinger: 0)
         service.start()
         defer { service.stop() }
 
@@ -2803,9 +2805,9 @@ struct VsockClipboardServiceTests {
         // First ack: a one-chunk window → the host sends a single 64 KiB chunk
         // then blocks on credit, so progress shows but the transfer isn't done.
         try sendAck(from: guest, transferID: xid, bytesConsumed: 0, windowBytes: 64 * 1024)
-        try await waitForChange { service.transferProgress?.direction == .outbound }
-        #expect(service.transferProgress?.totalBytes == expected.count)
-        #expect((service.transferProgress?.bytesTransferred ?? 0) > 0)
+        try await waitForChange { (service.transferProgress?.bytesTransferred ?? 0) > 0 }
+        #expect(service.transferProgress?.direction == .outbound)
+        #expect(service.transferProgress?.totalBytes == UInt64(expected.count))
 
         // Open the window fully → the rest streams and the transfer completes.
         try sendAck(from: guest, transferID: xid, bytesConsumed: 0, windowBytes: 2 * 1024 * 1024)
@@ -2821,7 +2823,7 @@ struct VsockClipboardServiceTests {
 
         // A reveal delay long enough that the fast transfer completes first.
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: .seconds(3600))
+            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: 3600, progressIdleLinger: 0)
         service.start()
         defer { service.stop() }
 
@@ -2851,7 +2853,7 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: .zero)
+            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: 0, progressIdleLinger: 0)
         service.start()
 
         let responder = FakeGuestResponder(guest: guest)
@@ -2959,12 +2961,19 @@ final class FakeHostClipboardDomainCoordinator: HostClipboardDomainCoordinating 
     func serviceDidStop(_ source: any HostClipboardFileRepProviding) { stopCount += 1 }
     func prepareForCopy() { prepareCount += 1 }
 
+    /// The tracker the most recent publish pointed the shared domain at.
+    private(set) var publishedProgressTracker: ClipboardProgressTracker?
+    /// Every snapshot the service pushed, newest last (`nil` entries are clears).
+    private(set) var progressUpdates: [ClipboardProgressSnapshot?] = []
+
     func publishItemsForPaste(
         source: any HostClipboardFileRepProviding, generation: UInt64, sourceName: String,
-        items: [FileProviderPublishItem], folders: [FileProviderPublishFolder]
+        progressTracker: ClipboardProgressTracker?, items: [FileProviderPublishItem],
+        folders: [FileProviderPublishFolder]
     ) -> [Int: URL]? {
         publishCallCount += 1
         publishedSourceName = sourceName
+        publishedProgressTracker = progressTracker
         published.append(
             contentsOf: items.map {
                 Published(
@@ -2980,4 +2989,10 @@ final class FakeHostClipboardDomainCoordinator: HostClipboardDomainCoordinating 
     }
 
     func clearOffer(from source: any HostClipboardFileRepProviding) { clearCount += 1 }
+
+    func progressChanged(
+        from source: any HostClipboardFileRepProviding, _ snapshot: ClipboardProgressSnapshot?
+    ) {
+        progressUpdates.append(snapshot)
+    }
 }

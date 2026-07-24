@@ -556,11 +556,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         transferProgressBar.toolTip = Self.transferTooltip(for: progress)
     }
 
-    private static func transferTooltip(for progress: ClipboardTransferProgress) -> String {
-        let verb = progress.direction == .inbound ? "Receiving" : "Sending"
-        let done = DataFormatters.formatBytes(UInt64(max(0, progress.bytesTransferred)))
-        let total = DataFormatters.formatBytes(UInt64(max(0, progress.totalBytes)))
-        return "\(verb)… \(done) of \(total)"
+    private static func transferTooltip(for progress: ClipboardProgressSnapshot) -> String {
+        ClipboardProgressFormat.summary(progress)
     }
 
     private func updateUI() {

@@ -1,24 +1,33 @@
 import Foundation
 
-/// Display strings for the paste materialization readout (#643).
+/// Display strings for the clipboard transfer readout (#643, #652).
 ///
 /// Shared by the host app and the guest agent so both directions word the same
 /// transfer identically, and free of AppKit so the wording is unit-testable
 /// without a status item — the same pure-mapper convention as
 /// `ClipboardFileProviderReminder` and `AgentMenuText`.
-public enum PasteProgressFormat {
-    /// Headline naming where the bytes are coming from — the VM's name on the
-    /// host, "Mac" in the guest.
+public enum ClipboardProgressFormat {
+    /// Headline naming the operation and the machine on the other end.
+    ///
+    /// A paste says so by name — it is the one operation the user started with ⌘V
+    /// somewhere outside Kernova, so naming it is how the readout explains why it
+    /// appeared. Everything else reports plainly which way the bytes are going.
     ///
     /// Trailing ellipsis because it describes work still under way, the same as
     /// the system's own "Copying…" progress titles. (Not the HIG's
     /// gathers-more-input ellipsis, which applies to commands.)
-    public static func headline(sourceName: String) -> String {
-        "Pasting from “\(sourceName)”…"
+    public static func headline(
+        direction: ClipboardProgressSnapshot.Direction, peerName: String, isPaste: Bool
+    ) -> String {
+        if isPaste { return "Pasting from “\(peerName)”…" }
+        switch direction {
+        case .inbound: return "Receiving from “\(peerName)”…"
+        case .outbound: return "Sending to “\(peerName)”…"
+        }
     }
 
-    /// Progress through the paste's files ("2 of 5" — a folder's file nodes
-    /// count individually), or `nil` for a single-file paste, where the file's
+    /// Progress through the operation's files ("2 of 5" — a folder's file nodes
+    /// count individually), or `nil` for a single-file transfer, where the file's
     /// own name already says everything a counter would.
     public static func itemCounter(completed: Int, total: Int) -> String? {
         guard total > 1 else { return nil }
@@ -37,7 +46,7 @@ public enum PasteProgressFormat {
         return "\(bytes)/s"
     }
 
-    /// Bytes so far against the paste's total, with the current speed in
+    /// Bytes so far against the operation's total, with the current speed in
     /// parentheses ("47.6 MB of 3.03 GB (7.8 MB/s)") — Safari's download-list
     /// phrasing.
     ///
@@ -84,16 +93,20 @@ public enum PasteProgressFormat {
     }
 
     /// Percent complete ("42%"), floored so it never reads 100 % before the
-    /// paste actually finishes.
+    /// operation actually finishes.
     public static func percent(fraction: Double) -> String {
         let clamped = min(1, max(0, fraction))
         return "\(Int(clamped * 100))%"
     }
 
-    /// One-line summary for the status item's tooltip and the readout's
+    /// One-line summary for a status item's tooltip and the readout's
     /// accessibility value.
-    public static func summary(_ snapshot: PasteMaterializationSnapshot) -> String {
-        var parts = [headline(sourceName: snapshot.sourceName)]
+    public static func summary(_ snapshot: ClipboardProgressSnapshot) -> String {
+        var parts = [
+            headline(
+                direction: snapshot.direction, peerName: snapshot.peerName,
+                isPaste: snapshot.isPasteSession)
+        ]
         parts.append(percent(fraction: snapshot.fractionComplete))
         if let counter = itemCounter(
             completed: snapshot.filesCompleted, total: snapshot.fileCount)
