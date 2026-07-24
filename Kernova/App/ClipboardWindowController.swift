@@ -15,8 +15,9 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
     let instance: VMInstance
     private var statusObservation: ObservationLoop?
 
-    /// The hosted content controller, retained so blur/close can flush a pending
-    /// editor edit before the service grabs the clipboard.
+    /// The hosted content controller, retained so blur/close can carry an edit the
+    /// user typed here to the guest — the window's only unprompted action, and a
+    /// no-op unless they actually edited (`flushAndAnnounceEdit`).
     ///
     /// Named distinctly from the inherited `NSWindowController.contentViewController`,
     /// which is typed `NSViewController?`.
@@ -63,10 +64,9 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
-        // Flush any pending edits before the window goes away
+        // Carry a user edit to the guest before the window goes away
         if instance.status == .running || instance.status == .paused {
-            clipboardContentVC.flushPendingEdit()
-            instance.clipboardService?.grabIfChanged()
+            clipboardContentVC.flushAndAnnounceEdit()
         }
         statusObservation?.cancel()
         statusObservation = nil
@@ -74,8 +74,7 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidResignKey(_ notification: Notification) {
-        clipboardContentVC.flushPendingEdit()
-        instance.clipboardService?.grabIfChanged()
+        clipboardContentVC.flushAndAnnounceEdit()
     }
 
     // MARK: - Status Observation

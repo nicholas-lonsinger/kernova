@@ -259,9 +259,131 @@ struct ClipboardContentViewControllerEditTests {
         service.clipboardContent = ClipboardContent(text: "guest content")
         vc.simulateObservationForTesting()  // updateUI rebuild branch cancels the pending edit
 
-        // Blur/close now flushes — and must NOT overwrite the guest content.
-        vc.flushPendingEdit()
+        // Blur/close now runs — and must neither overwrite the guest content nor
+        // announce the edit that content superseded.
+        vc.flushAndAnnounceEdit()
         #expect(service.clipboardContent == ClipboardContent(text: "guest content"))
+        #expect(service.grabCount == 0)
+    }
+
+    /// The window's one unprompted action, and the reason it needs its own
+    /// condition: a buffer written by something *other* than the editor — the
+    /// passthrough coordinator's forward, a paste that already announced itself —
+    /// must not be re-announced just because the window lost focus.
+    ///
+    /// `grabIfChanged()` alone can't express that: its digest check asks whether
+    /// the last announcement stuck, so a write whose announcement failed (an
+    /// unconnected transport, a send that threw) still looks "changed" and blur
+    /// completes the failed transfer — which is what disguised a stuck paste as
+    /// "opening the clipboard window fixed it".
+    @Test("blur announces nothing when the user didn't edit the buffer")
+    func blurWithoutAnEditAnnouncesNothing() {
+        let service = FakeClipboardService(content: .empty)
+        let vc = makeController(service: service, debounce: .seconds(60))
+        _ = vc.view
+
+        // Written behind the window's back and left unannounced, exactly as a
+        // forward that reached the buffer but never reached the guest.
+        service.clipboardContent = ClipboardContent(text: "never announced")
+
+        vc.flushAndAnnounceEdit()
+        #expect(service.grabCount == 0)
+
+        // Positive control: the same call does announce once the user edits, so
+        // the assertion above is the edit condition rather than a severed hand-off.
+        vc.setEditorTextForTesting("typed by the user")
+        vc.flushAndAnnounceEdit()
+        #expect(service.grabCount == 1)
+        #expect(service.clipboardContent == ClipboardContent(text: "typed by the user"))
+    }
+
+    /// A disconnected transport never attempted the announcement, so the edit is
+    /// still owed and the next blur must carry it.
+    ///
+    /// Reachable on Linux: `SpiceClipboardService` exists from VM start — making
+    /// the editor editable — but stays disconnected until spice-vdagent announces,
+    /// and `grabIfChanged()` is a silent no-op in that window.
+    @Test("an edit typed while disconnected is announced once the transport connects")
+    func blurKeepsAnEditOwedWhileDisconnected() {
+        let service = FakeClipboardService(content: .empty)
+        service.isConnected = false
+        let vc = makeController(service: service, debounce: .seconds(60))
+        _ = vc.view
+
+        vc.setEditorTextForTesting("typed before the agent connected")
+        vc.flushAndAnnounceEdit()
+        #expect(service.grabCount == 0)
+        // The text still reached the buffer — only the announcement is owed.
+        #expect(service.clipboardContent == ClipboardContent(text: "typed before the agent connected"))
+
+        service.isConnected = true
+        vc.flushAndAnnounceEdit()
+        #expect(service.grabCount == 1)
+    }
+
+    @Test("blur announces a typed edit once, not again on the next blur")
+    func blurAnnouncesEachEditOnce() {
+        let service = FakeClipboardService(content: .empty)
+        let vc = makeController(service: service, debounce: .seconds(60))
+        _ = vc.view
+
+        vc.setEditorTextForTesting("first edit")
+        vc.flushAndAnnounceEdit()
+        #expect(service.grabCount == 1)
+
+        // Focus bounces back and forth with no further typing.
+        vc.flushAndAnnounceEdit()
+        vc.flushAndAnnounceEdit()
+        #expect(service.grabCount == 1)
+
+        vc.setEditorTextForTesting("second edit")
+        vc.flushAndAnnounceEdit()
+        #expect(service.grabCount == 2)
+    }
+
+    /// The debounce having already committed doesn't make the edit announced —
+    /// `hasPendingEdit` spans only the quiet period, so blur has to track the
+    /// unannounced edit separately or typed text reaches the guest only when the
+    /// user blurs within the debounce window of their last keystroke.
+    @Test("blur announces an edit the debounce already committed")
+    func blurAnnouncesADebouncedEdit() async throws {
+        let service = FakeClipboardService(content: .empty)
+        let committed = AsyncGate()
+        service.onChangeForTesting = { committed.notify() }
+        let vc = makeController(service: service, debounce: .milliseconds(1))
+        _ = vc.view
+
+        vc.setEditorTextForTesting("committed off-actor")
+        try await committed.wait {
+            service.clipboardContent == ClipboardContent(text: "committed off-actor")
+        }
+
+        vc.flushAndAnnounceEdit()  // nothing pending — the debounce already landed
+        #expect(service.grabCount == 1)
+    }
+
+    /// The same supersession as `externalUpdateCancelsPendingEdit`, but after the
+    /// debounce has already committed the edit: `hasPendingEdit` is long clear by
+    /// then, so only the unannounced-edit flag stands between a rebuilt editor and
+    /// an announcement of content the user no longer has in front of them.
+    @Test("an external update also drops a committed-but-unannounced edit")
+    func externalUpdateDropsCommittedUnannouncedEdit() async throws {
+        let service = FakeClipboardService(content: .empty)
+        let committed = AsyncGate()
+        service.onChangeForTesting = { committed.notify() }
+        let vc = makeController(service: service, debounce: .milliseconds(1))
+        _ = vc.view
+
+        vc.setEditorTextForTesting("user edit")
+        try await committed.wait {
+            service.clipboardContent == ClipboardContent(text: "user edit")
+        }
+
+        service.clipboardContent = ClipboardContent(text: "guest content")
+        vc.simulateObservationForTesting()
+
+        vc.flushAndAnnounceEdit()
+        #expect(service.grabCount == 0)
     }
 }
 
@@ -473,12 +595,16 @@ private final class FakeClipboardService: ClipboardServicing {
     var supportsDirectoryTree: Bool = false
     var lastTransferIssue: ClipboardTransferIssue?
 
+    /// Announcements the controller asked for, so a test can assert the outbound
+    /// choke-point was (or wasn't) reached without a live transport.
+    private(set) var grabCount = 0
+
     init(content: ClipboardContent) {
         self.clipboardContent = content
     }
 
     func stop() {}
-    func grabIfChanged() {}
+    func grabIfChanged() { grabCount += 1 }
     func clearBuffer() { clipboardContent = .empty }
     // materializeForPreview / materializeForCopy use the protocol-extension
     // defaults (no-op / return clipboardContent unchanged).
