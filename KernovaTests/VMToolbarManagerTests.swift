@@ -212,6 +212,44 @@ struct VMToolbarManagerTests {
         #expect(item?.autovalidates == false)
     }
 
+    @Test("Clipboard item carries a menu form representation for the overflow menu")
+    func clipboardItemMenuFormRepresentation() {
+        let manager = makeManager()
+        let item = manager.makeToolbarItem(for: NSToolbarItem.Identifier("testClipboard"))
+
+        // A view-backed item leaves `item.action` nil, so AppKit's automatic menu
+        // form representation would be inert — the overflow ("»") entry has to be
+        // supplied explicitly.
+        let menuForm = item?.menuFormRepresentation
+        #expect(menuForm != nil)
+        #expect(menuForm?.title == "Clipboard")
+        #expect(menuForm?.action == #selector(AppDelegate.showClipboard(_:)))
+        // Nil target: the action travels the responder chain to AppDelegate.
+        #expect(menuForm?.target == nil)
+        #expect(menuForm?.image != nil)
+    }
+
+    @Test("Clipboard button hit-tests as one control over the transfer bar")
+    func clipboardButtonHitTestOverTransferBar() {
+        let button = ClipboardToolbarButton()
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 36, height: 36))
+        container.addSubview(button)
+        NSLayoutConstraint.activate([
+            button.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            button.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        button.transferFraction = 0.5
+        container.layoutSubtreeIfNeeded()
+
+        // Bar metrics (docs/TOOLBAR.md): 22×6 capsule, horizontally centered,
+        // bottom edge 3 pt above the circle's rim — so (18, 6) is over the bar.
+        // The button frame fills the container, making container coordinates and
+        // the button's bounds coincide.
+        #expect(button.hitTest(NSPoint(x: 18, y: 6)) === button)
+        // Sanity: a point clear of the bar naturally lands on the button too.
+        #expect(button.hitTest(NSPoint(x: 18, y: 26)) === button)
+    }
+
     @Test("updateClipboardItem disables the clipboard item without a running VM")
     func clipboardItemDisabledForStoppedInstance() {
         let instance = makeInstance(status: .stopped)

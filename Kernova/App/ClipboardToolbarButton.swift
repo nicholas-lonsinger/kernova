@@ -9,6 +9,10 @@ import Cocoa
 /// the item looks and behaves like an image-backed bordered item while hosting
 /// the bar as a real view (see docs/TOOLBAR.md for the platter metrics).
 final class ClipboardToolbarButton: NSButton {
+    /// The button's glyph, shared with the toolbar item's menu form
+    /// representation so the overflow menu shows the same symbol.
+    static let symbolName = "doc.on.clipboard"
+
     /// The glass toolbar platter's circle diameter (docs/TOOLBAR.md).
     ///
     /// The bezel's hover circle matches the platter only at exactly this size.
@@ -30,7 +34,7 @@ final class ClipboardToolbarButton: NSButton {
 
     init() {
         super.init(frame: .zero)
-        image = .systemSymbol("doc.on.clipboard", accessibilityDescription: "Clipboard")
+        image = .systemSymbol(Self.symbolName, accessibilityDescription: "Clipboard")
         bezelStyle = .toolbar
         isBordered = true
         translatesAutoresizingMaskIntoConstraints = false
@@ -80,6 +84,11 @@ private final class TransferBarView: NSView {
                 ? NSColor(white: 0.85, alpha: 1)
                 : NSColor(white: 0.75, alpha: 1)
         })
+
+    /// Decoration only: hand every event through to the button underneath so the
+    /// whole platter stays one control while a transfer is in flight, instead of
+    /// the bar swallowing hits over the bottom of the circle.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func draw(_ dirtyRect: NSRect) {
         let radius = bounds.height / 2

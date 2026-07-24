@@ -39,16 +39,14 @@ final class VMToolbarManager: NSObject {
 
     /// All shared toolbar item identifiers, for use in `NSToolbarDelegate` methods.
     var sharedItemIdentifiers: [NSToolbarItem.Identifier] {
-        var ids = [configuration.lifecycleID, configuration.saveStateID]
-        if let clipboardID = configuration.clipboardID {
-            ids.append(clipboardID)
-        }
-        ids.append(configuration.popOutID)
-        ids.append(configuration.fullscreenID)
-        if let settingsToggleID = configuration.settingsToggleID {
-            ids.append(settingsToggleID)
-        }
-        return ids
+        [
+            configuration.lifecycleID,
+            configuration.saveStateID,
+            configuration.clipboardID,
+            configuration.popOutID,
+            configuration.fullscreenID,
+            configuration.settingsToggleID,
+        ].compactMap { $0 }
     }
 
     /// The shared items in default-layout order, with fixed spaces between the
@@ -59,16 +57,22 @@ final class VMToolbarManager: NSObject {
     /// Clipboard each in their own circle, the display pair together, the
     /// settings toggle on its own. The lifecycle group needs no space — an
     /// `NSToolbarItemGroup` always gets its own platter.
+    ///
+    /// Derived from `sharedItemIdentifiers` so the two orders can never drift.
     var defaultItemIdentifiers: [NSToolbarItem.Identifier] {
-        var ids = [configuration.lifecycleID, configuration.saveStateID, .space]
-        if let clipboardID = configuration.clipboardID {
-            ids += [clipboardID, .space]
-        }
-        ids += [configuration.popOutID, configuration.fullscreenID]
-        if let settingsToggleID = configuration.settingsToggleID {
-            ids += [.space, settingsToggleID]
-        }
-        return ids
+        let clusterStarts = clusterStartIdentifiers
+        return sharedItemIdentifiers.flatMap { clusterStarts.contains($0) ? [.space, $0] : [$0] }
+    }
+
+    /// The items that begin a new capsule cluster, i.e. the ones a fixed
+    /// `.space` goes in front of in the default layout.
+    private var clusterStartIdentifiers: Set<NSToolbarItem.Identifier> {
+        Set(
+            [
+                configuration.clipboardID,
+                configuration.popOutID,
+                configuration.settingsToggleID,
+            ].compactMap { $0 })
     }
 
     private let configuration: Configuration
@@ -96,6 +100,7 @@ final class VMToolbarManager: NSObject {
     private static let stopToolTip = "Stop the virtual machine"
     private static let discardSavedStateToolTip = "Discard the virtual machine's saved state"
     private static let saveStateToolTip = "Suspend the virtual machine"
+    private static let clipboardToolTip = "Open the clipboard sharing window"
     private static let popOutToolTip = "Open display in a separate window"
     private static let popInToolTip = "Return display to the main window"
     private static let fullscreenToolTip = "Enter fullscreen display"
@@ -110,18 +115,13 @@ final class VMToolbarManager: NSObject {
     // MARK: - Init
 
     init(configuration: Configuration, instanceProvider: @escaping () -> VMInstance?) {
-        var allIDs = [
-            configuration.lifecycleID, configuration.saveStateID,
-            configuration.popOutID, configuration.fullscreenID,
-        ]
-        if let clipboardID = configuration.clipboardID { allIDs.append(clipboardID) }
-        if let settingsToggleID = configuration.settingsToggleID { allIDs.append(settingsToggleID) }
-        assert(
-            Set(allIDs).count == allIDs.count,
-            "VMToolbarManager.Configuration identifiers must be distinct")
         self.configuration = configuration
         self.instanceProvider = instanceProvider
         super.init()
+        let ids = sharedItemIdentifiers
+        assert(
+            Set(ids).count == ids.count,
+            "VMToolbarManager.Configuration identifiers must be distinct")
     }
 
     // MARK: - Item Factory
@@ -166,15 +166,28 @@ final class VMToolbarManager: NSObject {
             // A view-backed item so the transfer bar is a real subview over the
             // glyph (Safari's downloads-button construction) rather than baked
             // into the item's image; the button reproduces the native platter
-            // treatment (see ClipboardToolbarButton).
+            // treatment (see ClipboardToolbarButton). The nil target sends
+            // showClipboard down the responder chain, as the bordered items do.
             let button = ClipboardToolbarButton()
-            button.target = nil
             button.action = #selector(AppDelegate.showClipboard(_:))
-            button.toolTip = "Open the clipboard sharing window"
+            button.toolTip = Self.clipboardToolTip
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.label = "Clipboard"
             item.paletteLabel = "Clipboard"
             item.view = button
+            // AppKit builds an item's automatic menu form representation from the
+            // *item's* own action, which a view-backed item leaves nil — so the
+            // overflow menu ("»") entry would be inert while every bordered item's
+            // still works. Supply one explicitly; `AppDelegate.validateMenuItem`
+            // already covers the selector, so the menu enables it correctly.
+            let menuForm = NSMenuItem(
+                title: "Clipboard",
+                action: #selector(AppDelegate.showClipboard(_:)),
+                keyEquivalent: ""
+            )
+            menuForm.image = .systemSymbol(
+                ClipboardToolbarButton.symbolName, accessibilityDescription: "Clipboard")
+            item.menuFormRepresentation = menuForm
             item.autovalidates = false
             return item
 
@@ -220,11 +233,48 @@ final class VMToolbarManager: NSObject {
     func updateToolbarItems(in toolbar: NSToolbar) {
         let instance = resolveActiveInstance()
         updateLifecycleGroup(in: toolbar, instance: instance)
-        updateSaveStateItem(in: toolbar, instance: instance)
+        updateItem(in: toolbar, configuration.saveStateID, isEnabled: instance?.canSave ?? false)
         updateClipboardItem(in: toolbar, instance: instance)
-        updatePopOutItem(in: toolbar, instance: instance)
-        updateFullscreenItem(in: toolbar, instance: instance)
+        updateDisplayItems(in: toolbar, instance: instance)
         updateSettingsToggleItem(in: toolbar, instance: instance)
+    }
+
+    /// The state-dependent presentation of an item that relabels with VM state
+    /// (Pop Out ⇆ Pop In, Fullscreen ⇆ Exit Fullscreen, Show ⇆ Hide Settings).
+    private struct ItemState {
+        let label: String
+        let symbol: String
+        let toolTip: String
+    }
+
+    /// Applies enablement and, for an item that relabels with VM state, its
+    /// label, image and tooltip.
+    ///
+    /// A `nil` identifier (an item this controller doesn't configure) or an item
+    /// missing from the toolbar is a silent skip — the user may have removed it
+    /// via customization. Returns the item so a caller that needs it for more
+    /// than this (the clipboard's transfer bar) can carry on.
+    @discardableResult
+    private func updateItem(
+        in toolbar: NSToolbar,
+        _ identifier: NSToolbarItem.Identifier?,
+        isEnabled: Bool,
+        state: ItemState? = nil
+    ) -> NSToolbarItem? {
+        guard let identifier,
+            let item = toolbar.items.first(where: { $0.itemIdentifier == identifier })
+        else { return nil }
+
+        item.isEnabled = isEnabled
+
+        // Guard reassignment behind the label check so no-op updates don't
+        // trigger an AppKit redraw.
+        if let state, item.label != state.label {
+            item.label = state.label
+            item.image = .systemSymbol(state.symbol, accessibilityDescription: state.label)
+            item.toolTip = state.toolTip
+        }
+        return item
     }
 
     /// Whether the display items should be enabled for the given instance,
@@ -295,22 +345,14 @@ final class VMToolbarManager: NSObject {
         stop.isEnabled = instance.canStop || instance.isColdPaused
     }
 
-    private func updateSaveStateItem(in toolbar: NSToolbar, instance: VMInstance?) {
-        // Absence is legitimate under user customization — skip silently.
-        guard let item = toolbar.items.first(where: { $0.itemIdentifier == configuration.saveStateID })
-        else { return }
-
-        item.isEnabled = instance?.canSave ?? false
-    }
-
     private func updateClipboardItem(in toolbar: NSToolbar, instance: VMInstance?) {
-        // Absence is legitimate under user customization — skip silently (matches
-        // the other update* methods).
-        guard let clipboardID = configuration.clipboardID,
-            let item = toolbar.items.first(where: { $0.itemIdentifier == clipboardID })
+        guard
+            updateItem(
+                in: toolbar,
+                configuration.clipboardID,
+                isEnabled: instance?.canShowClipboard ?? false
+            ) != nil
         else { return }
-
-        item.isEnabled = instance?.canShowClipboard ?? false
 
         // Re-arm the transfer-progress observation onto the current VM so the
         // button's bar tracks in-flight transfers — without re-running the
@@ -345,73 +387,54 @@ final class VMToolbarManager: NSObject {
     }
 
     private func updateSettingsToggleItem(in toolbar: NSToolbar, instance: VMInstance?) {
-        guard let settingsToggleID = configuration.settingsToggleID,
-            let item = toolbar.items.first(where: { $0.itemIdentifier == settingsToggleID })
-        else {
-            return
-        }
-
-        // Only meaningful when there's an actual display the user could be looking at.
-        // In other states (stopped, starting, installing) the settings form is already
-        // — or is about to become — the only view, so there's nothing to toggle to.
-        item.isEnabled = instance?.status.hasActiveDisplay ?? false
-
         let inSettingsMode = instance?.detailPaneMode == .settings
-        let desiredLabel = inSettingsMode ? "Hide Settings" : "Show Settings"
-
-        // Guard reassignment behind the label check so no-op updates don't trigger
-        // an AppKit redraw (matches the pattern used by the lifecycle and display groups).
-        if item.label != desiredLabel {
-            item.label = desiredLabel
-            item.image = .systemSymbol(
-                inSettingsMode ? "gearshape.fill" : "gearshape",
-                accessibilityDescription: desiredLabel
-            )
-            item.toolTip = inSettingsMode ? Self.showDisplayToolTip : Self.showSettingsToolTip
-        }
+        updateItem(
+            in: toolbar,
+            configuration.settingsToggleID,
+            // Only meaningful when there's an actual display the user could be looking at.
+            // In other states (stopped, starting, installing) the settings form is already
+            // — or is about to become — the only view, so there's nothing to toggle to.
+            isEnabled: instance?.status.hasActiveDisplay ?? false,
+            state: inSettingsMode
+                ? ItemState(
+                    label: "Hide Settings", symbol: "gearshape.fill",
+                    toolTip: Self.showDisplayToolTip)
+                : ItemState(
+                    label: "Show Settings", symbol: "gearshape",
+                    toolTip: Self.showSettingsToolTip)
+        )
     }
 
-    private func updatePopOutItem(in toolbar: NSToolbar, instance: VMInstance?) {
-        // Absence is legitimate under user customization — skip silently.
-        guard let item = toolbar.items.first(where: { $0.itemIdentifier == configuration.popOutID })
-        else { return }
-
-        item.isEnabled = displayItemsEnabled(for: instance)
-
-        guard let instance else { return }
-        let label = instance.isDisplayDetached ? "Pop In" : "Pop Out"
-        if item.label != label {
-            item.label = label
-            item.image = .systemSymbol(
-                instance.isDisplayDetached ? "pip.enter" : "pip.exit",
-                accessibilityDescription: label
-            )
-            item.toolTip = instance.isDisplayDetached ? Self.popInToolTip : Self.popOutToolTip
-        }
-    }
-
-    private func updateFullscreenItem(in toolbar: NSToolbar, instance: VMInstance?) {
-        // Absence is legitimate under user customization — skip silently.
-        guard
-            let item = toolbar.items.first(where: { $0.itemIdentifier == configuration.fullscreenID })
-        else { return }
-
-        item.isEnabled = displayItemsEnabled(for: instance)
-
-        guard let instance else { return }
-        let label = instance.isInFullscreen ? "Exit Fullscreen" : "Fullscreen"
-        if item.label != label {
-            item.label = label
-            item.image = .systemSymbol(
-                instance.isInFullscreen
-                    ? "arrow.down.right.and.arrow.up.left"
-                    : "arrow.up.left.and.arrow.down.right",
-                accessibilityDescription: label
-            )
-            item.toolTip =
-                instance.isInFullscreen
-                ? Self.exitFullscreenToolTip : Self.fullscreenToolTip
-        }
+    /// Pop Out and Fullscreen share a shape — capability-gated enablement plus a
+    /// two-state relabel — so they share one update path.
+    private func updateDisplayItems(in toolbar: NSToolbar, instance: VMInstance?) {
+        let isEnabled = displayItemsEnabled(for: instance)
+        updateItem(
+            in: toolbar,
+            configuration.popOutID,
+            isEnabled: isEnabled,
+            state: instance.map {
+                $0.isDisplayDetached
+                    ? ItemState(label: "Pop In", symbol: "pip.enter", toolTip: Self.popInToolTip)
+                    : ItemState(label: "Pop Out", symbol: "pip.exit", toolTip: Self.popOutToolTip)
+            }
+        )
+        updateItem(
+            in: toolbar,
+            configuration.fullscreenID,
+            isEnabled: isEnabled,
+            state: instance.map {
+                $0.isInFullscreen
+                    ? ItemState(
+                        label: "Exit Fullscreen",
+                        symbol: "arrow.down.right.and.arrow.up.left",
+                        toolTip: Self.exitFullscreenToolTip)
+                    : ItemState(
+                        label: "Fullscreen",
+                        symbol: "arrow.up.left.and.arrow.down.right",
+                        toolTip: Self.fullscreenToolTip)
+            }
+        )
     }
 
     // MARK: - Actions

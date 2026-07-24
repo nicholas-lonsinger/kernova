@@ -44,6 +44,14 @@ standard `.toolbar`-bezel `NSButton` hosting the transfer bar as a real
 Auto Layout subview — so the bar is a live view (dynamic colors, no dimming
 with the item image) while the item keeps the full native platter treatment.
 
+- **The bar is decoration, not a control.** It overrides `hitTest` to return
+  `nil` so the whole platter stays one button while a transfer is in flight;
+  without that, the bar's 22×6 strip swallows clicks over the bottom of the
+  circle.
+- **The item needs an explicit `menuFormRepresentation`.** AppKit builds an
+  item's automatic overflow-menu ("»") entry from the *item's* own action, which
+  a view-backed item leaves `nil` — so the entry would be inert while every
+  bordered item's still worked.
 - **The pinned 36×36 size is load-bearing.** At exactly the platter metric the
   bezel's rollover *is* the platter's circular hover — measured pixel-identical
   to a native bordered item's (#645). At any other size the rollover no longer
@@ -68,12 +76,33 @@ collapsed, New VM is removed from the toolbar and restored on expand
 Group pattern. The mechanism is **remove/insert, not `NSToolbarItem.isHidden`**:
 on the glass toolbar a hidden item's slot keeps its width (measured on macOS 27
 beta 4), leaving a dead gap between the window controls and the toggle, while
-removal reclaims the space. The programmatic mutations run with
-`autosavesConfiguration` suspended so the saved layout never records the
-collapsed state, the removal applies only while New VM actually sits in the
-sidebar section, and the customize palette is always presented with the
+removal reclaims the space. The removal applies only while New VM actually sits
+in the sidebar section, and the customize palette is always presented with the
 canonical layout (New VM restored before the sheet opens, the collapse state
 re-applied after it closes).
+
+Autosave is handled asymmetrically, which is load-bearing:
+
+- **The removal runs with `autosavesConfiguration` suspended.** A collapsed
+  toolbar is a transient presentation, not a customization, so it must never
+  reach the saved layout.
+- **The restore runs with autosave live.** It returns the toolbar to the user's
+  canonical layout — exactly what should be persisted — and writing it through
+  *heals* a configuration that some other autosave captured mid-collapse.
+- **The removal is mirrored into `AppPreferences.mainToolbarNewVMCollapseIndex`.**
+  Suspending autosave around our own mutation does not stop an autosave
+  triggered by anything *else* while New VM is out (View ▸ Hide Toolbar, a
+  display-mode change) from persisting the New-VM-less item list — and because
+  the collapsed layout differs from the default set, AppKit writes that list
+  rather than omitting it. The mirrored index is what lets the next launch tell
+  that removal apart from a deliberate customization removal
+  (`adoptPersistedNewVMRemoval`, which re-adopts only when New VM is genuinely
+  absent); without it the button would be stranded until Restore Default Set.
+
+The index is remembered rather than recomputed from the sidebar toggle's
+position: New VM is user-movable within the sidebar section, so anchoring the
+reinsert to the toggle would silently reorder a layout that had put New VM on
+the toggle's trailing side.
 
 ## Constraints to respect
 
