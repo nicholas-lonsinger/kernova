@@ -56,30 +56,15 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// Keeps the paste readout in sync with the materializing transfer (#643).
     private var pasteProgressObservation: ObservationLoop?
 
-    /// The paste currently materializing, or `nil` when none is.
-    private var pasteProgress: PasteMaterializationSnapshot?
-    /// The dropdown's live readout.
+    /// The dropdown readout, its one-shot automatic open, and the shared menu
+    /// wiring for a materializing paste (#643).
     ///
-    /// Built on first use — most sessions never paste a file large enough to
-    /// reveal one — and then kept, so it updates in place while the dropdown is
-    /// open instead of being rebuilt under the cursor.
-    private lazy var pasteProgressView = PasteProgressMenuItemView()
-    private lazy var pasteProgressItem: NSMenuItem = {
-        let item = NSMenuItem()
-        item.view = pasteProgressView
-        item.isEnabled = false
-        return item
-    }()
-    private let pasteProgressSeparator = NSMenuItem.separator()
-    /// Decides when the readout opens and closes the dropdown by itself.
-    private var pasteAutoOpener = PasteProgressMenuAutoOpener()
-    /// Whether the dropdown is currently on screen, which the auto-opener needs
-    /// and `NSMenu` doesn't expose.
-    private var menuIsOpen = false
-    /// Set between asking for an automatic open and the resulting
-    /// `menuWillOpen`, so the opener can tell its own dropdown from one the user
-    /// summoned.
-    private var pendingAutoOpen = false
+    /// Built lazily — most sessions never reveal one. The host dismisses its
+    /// soft-quit reminder before an automatic open so the click reaches the
+    /// menu rather than the reminder's dismissal handler.
+    private lazy var pasteProgressPresenter = PasteProgressStatusItemPresenter(
+        statusItem: statusItem, menu: menu,
+        willAutoOpen: { [weak self] in self?.dismissSoftQuitReminder() })
 
     /// Manages the transient "still running in the menu bar" soft-quit reminder
     /// popover (#624).
@@ -136,84 +121,12 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     // MARK: - Paste progress (#643)
 
-    /// Applies the current paste readout to the icon, the dropdown, and the
-    /// tooltip.
+    /// Applies the current paste readout to the dropdown, then refreshes the
+    /// icon and tooltip from it.
     private func pasteProgressChanged() {
-        let snapshot = HostClipboardFileProvider.shared.materializationProgress
-        pasteProgress = snapshot
-        if let snapshot { pasteProgressView.apply(snapshot) }
+        pasteProgressPresenter.apply(HostClipboardFileProvider.shared.materializationProgress)
         setIcon()
         updateTooltip()
-        syncPasteProgressItems()
-        applyPasteAutoOpen(hasReadout: snapshot != nil)
-    }
-
-    /// Adds or removes the readout rows from a dropdown that is already on
-    /// screen.
-    ///
-    /// A closed dropdown needs nothing — `menuNeedsUpdate` rebuilds it from
-    /// `pasteProgress` when it next opens.
-    private func syncPasteProgressItems() {
-        guard menuIsOpen else { return }
-        if pasteProgress != nil {
-            insertPasteProgressItems()
-        } else {
-            removePasteProgressItems()
-        }
-    }
-
-    private func insertPasteProgressItems() {
-        guard menu.index(of: pasteProgressItem) < 0 else { return }
-        menu.insertItem(pasteProgressItem, at: 0)
-        menu.insertItem(pasteProgressSeparator, at: 1)
-    }
-
-    private func removePasteProgressItems() {
-        for item in [pasteProgressSeparator, pasteProgressItem] where menu.index(of: item) >= 0 {
-            menu.removeItem(item)
-        }
-    }
-
-    /// Runs the auto-opener's decision for the current readout.
-    private func applyPasteAutoOpen(hasReadout: Bool) {
-        // macOS drops status items it can't fit in a crowded menu bar, and a
-        // dropdown popped from a hidden item would appear anchored to nothing —
-        // the same degradation the soft-quit reminder takes.
-        let canOpen = statusItem.isVisible && statusItem.button?.window != nil
-        switch pasteAutoOpener.readoutChanged(
-            hasReadout: hasReadout, menuIsOpen: menuIsOpen, canOpen: canOpen)
-        {
-        case .none:
-            break
-        case .open:
-            // A soft-quit reminder detaches the dropdown while it is anchored,
-            // so the click below would land on its dismissal handler instead of
-            // opening the menu. The reminder has had its moment.
-            dismissSoftQuitReminder()
-            // Deferred, and deliberately NOT via `Task { @MainActor }`:
-            // `performClick` parks inside a nested menu-tracking loop until the
-            // dropdown closes, and parking there from a main-queue block starves
-            // every later main-queue update — which froze both the ring and the
-            // readout for the whole time the auto-opened dropdown was up. See
-            // `performOnMainRunLoop`.
-            performOnMainRunLoop { [weak self] in
-                guard let self else { return }
-                // The paste can end inside that turn (a cancel lands as a pull
-                // failure); opening for a readout that is already gone would
-                // leave a dropdown nothing will close.
-                guard self.pasteProgress != nil else { return }
-                self.pendingAutoOpen = true
-                self.statusItem.button?.performClick(nil)
-                // `performClick` only returns once the dropdown closes, by which
-                // point `menuWillOpen` has consumed the flag. Clearing it here
-                // covers the click that opened nothing at all, which would
-                // otherwise leave the flag set to mislabel the *user's* next
-                // dropdown as ours and close it under them.
-                self.pendingAutoOpen = false
-            }
-        case .close:
-            menu.cancelTracking()
-        }
     }
 
     // MARK: - Soft-quit reminder (#624)
@@ -377,9 +290,9 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         // overlap — a paste only materializes through the File Provider while
         // the domain is `.ready`, which is exactly when the badge is absent —
         // so this only decides the moment a user flips the toggle off mid-paste.
-        if let pasteProgress {
+        if let snapshot = pasteProgressPresenter.snapshot {
             statusItem.button?.image = image.withProgressRing(
-                fraction: pasteProgress.fractionComplete)
+                fraction: snapshot.fractionComplete)
             return
         }
         statusItem.button?.image = reminderActive ? image.withAttentionBadge() : image
@@ -400,7 +313,9 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         case 1: lines = ["Kernova — 1 virtual machine running"]
         default: lines = ["Kernova — \(count) virtual machines running"]
         }
-        if let pasteProgress { lines.append(PasteProgressFormat.summary(pasteProgress)) }
+        if let snapshot = pasteProgressPresenter.snapshot {
+            lines.append(PasteProgressFormat.summary(snapshot))
+        }
         if reminderActive { lines.append(badgeSummary()) }
         statusItem.button?.toolTip = lines.joined(separator: "\n")
     }
@@ -427,7 +342,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
         // A materializing paste leads: it is the only transient thing here, and
         // the automatic open exists to put it in front of the user (#643).
-        if pasteProgress != nil { insertPasteProgressItems() }
+        pasteProgressPresenter.insertItemsIfActive()
 
         let open = NSMenuItem(title: "Open Kernova", action: #selector(openTapped), keyEquivalent: "")
         open.target = self
@@ -490,16 +405,11 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
-        menuIsOpen = true
-        pasteAutoOpener.menuOpened(automatically: pendingAutoOpen)
-        pendingAutoOpen = false
+        pasteProgressPresenter.menuWillOpen()
     }
 
     func menuDidClose(_ menu: NSMenu) {
-        menuIsOpen = false
-        // A user dismissal lands here too, which is what stops a paste from
-        // re-opening the dropdown it was just told to go away from.
-        pasteAutoOpener.menuClosed()
+        pasteProgressPresenter.menuDidClose()
     }
 
     /// Appends a disabled, informational (non-actionable) line to the dropdown.
