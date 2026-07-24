@@ -47,6 +47,14 @@ public final class PasteProgressMenuItemView: NSView {
         frame.size = NSSize(
             width: Self.contentWidth,
             height: stack.fittingSize.height + Self.verticalInset * 2)
+        // Resolve layout NOW, while still detached: `fittingSize` above only
+        // measures — it assigns no frames — so without this every subview
+        // (the bar included) would first learn its real size during the
+        // window's first layout pass, and the bar's fill could render against
+        // a transitional width on the dropdown's opening frames. The view's
+        // own frame is fixed and the constraints fully determine the subviews,
+        // so one detached pass settles them for good.
+        layoutSubtreeIfNeeded()
     }
 
     @available(*, unavailable)
