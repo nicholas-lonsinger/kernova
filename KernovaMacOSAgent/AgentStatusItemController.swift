@@ -178,10 +178,13 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         case .none:
             break
         case .open:
-            // Deferred a turn: `performClick` spins a nested menu-tracking loop
-            // that doesn't return until the dropdown closes, which would strand
-            // this callback for the whole paste.
-            Task { @MainActor [weak self] in
+            // Deferred, and deliberately NOT via `Task { @MainActor }`:
+            // `performClick` parks inside a nested menu-tracking loop until the
+            // dropdown closes, and parking there from a main-queue block starves
+            // every later main-queue update — which froze both the ring and the
+            // readout for the whole time the auto-opened dropdown was up. See
+            // `performOnMainRunLoop`.
+            performOnMainRunLoop { [weak self] in
                 guard let self else { return }
                 // The paste can end inside that turn; opening for a readout that
                 // is already gone would leave a dropdown nothing will close.

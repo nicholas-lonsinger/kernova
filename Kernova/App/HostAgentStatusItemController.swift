@@ -190,10 +190,13 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             // so the click below would land on its dismissal handler instead of
             // opening the menu. The reminder has had its moment.
             dismissSoftQuitReminder()
-            // Deferred a turn: `performClick` spins a nested menu-tracking loop
-            // that doesn't return until the dropdown closes, which would strand
-            // this observation callback for the whole paste.
-            Task { @MainActor [weak self] in
+            // Deferred, and deliberately NOT via `Task { @MainActor }`:
+            // `performClick` parks inside a nested menu-tracking loop until the
+            // dropdown closes, and parking there from a main-queue block starves
+            // every later main-queue update — which froze both the ring and the
+            // readout for the whole time the auto-opened dropdown was up. See
+            // `performOnMainRunLoop`.
+            performOnMainRunLoop { [weak self] in
                 guard let self else { return }
                 // The paste can end inside that turn (a cancel lands as a pull
                 // failure); opening for a readout that is already gone would
@@ -313,8 +316,11 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         // Deferred a tick: `dismissSoftQuitReminder` reattached the menu, but
         // popping it from inside the button-action callback that the same click
         // is still delivering re-enters menu tracking mid-event; the next
-        // runloop turn opens it cleanly.
-        Task { @MainActor [weak self] in
+        // runloop turn opens it cleanly. A run-loop block rather than a `Task`,
+        // for the same reason as the paste readout's automatic open — see
+        // `performOnMainRunLoop` — so a dropdown reached this way doesn't
+        // freeze whatever is updating behind it.
+        performOnMainRunLoop { [weak self] in
             self?.statusItem.button?.performClick(nil)
         }
     }
