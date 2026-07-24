@@ -120,21 +120,6 @@ final class VsockClipboardService: ClipboardServicing {
     /// a bar, short enough that a genuinely slow transfer surfaces promptly.
     static let defaultProgressRevealDelay: Duration = .milliseconds(300)
 
-    /// How long the coalesced flush `Task` waits before consuming, bounding the
-    /// republish/observation rate rather than the queue depth.
-    ///
-    /// The tracker's conflation flag caps *queued* flushes to one, but the main
-    /// actor drains each flush before the next chunk lands, so a 64 KiB-chunked
-    /// File Provider pull otherwise republishes per chunk (~2,600/s). Sleeping
-    /// this interval before the flush keeps the flag set across the interval, so
-    /// interim chunks suppress and one flush per interval reads the freshest
-    /// bytes. Lowered to `.zero` in tests that need immediate flushes.
-    private let progressFlushInterval: Duration
-
-    /// Default flush interval: ~30 Hz — visually indistinguishable from a
-    /// per-chunk update, while capping the republish rate to ~30/s.
-    static let defaultProgressFlushInterval: Duration = .milliseconds(33)
-
     private var sender: ClipboardStreamSender?
     private var receiver: ClipboardStreamReceiver?
     private var consumeTask: Task<Void, Never>?
@@ -238,10 +223,6 @@ final class VsockClipboardService: ClipboardServicing {
     ///     channel stays open; defaults to the production value, lowered in tests.
     ///   - progressRevealDelay: how long a transfer must run before its progress
     ///     bar appears; defaults to the production value, overridden in tests.
-    ///   - progressFlushInterval: minimum spacing between coalesced progress
-    ///     republishes; defaults to the production ~30 Hz value, lowered to
-    ///     `.zero` in tests that assert on immediate mid-transfer flushes and
-    ///     raised to never-fire to prove interim chunks stay suppressed.
     ///   - stagingTempRoot: parent directory for the file-staging root; defaults
     ///     to the host File Provider app-group container (so the sandboxed
     ///     extension can read staged bytes), falling back to the system temp dir
@@ -256,7 +237,6 @@ final class VsockClipboardService: ClipboardServicing {
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         lazyPullTimeout: Duration = ClipboardStreamTuning.lazyPullTimeout,
         progressRevealDelay: Duration = VsockClipboardService.defaultProgressRevealDelay,
-        progressFlushInterval: Duration = VsockClipboardService.defaultProgressFlushInterval,
         stagingTempRoot: URL? = nil,
         fileProvider: any HostClipboardDomainCoordinating = HostClipboardFileProvider.shared
     ) {
@@ -264,7 +244,6 @@ final class VsockClipboardService: ClipboardServicing {
         self.label = label
         self.lazyPullTimeout = lazyPullTimeout
         self.progressRevealDelay = progressRevealDelay
-        self.progressFlushInterval = progressFlushInterval
         self.fileProvider = fileProvider
         self.staging = ClipboardFileStaging(
             label: "host-\(label)",
@@ -375,12 +354,12 @@ final class VsockClipboardService: ClipboardServicing {
     /// receiver progress callbacks) by scheduling the right main-actor work: arm
     /// the reveal timer on the first chunk, or run a coalesced flush.
     ///
-    /// The flush `Task` sleeps `progressFlushInterval` before consuming, so the
-    /// tracker's conflation flag stays set across the interval and every interim
-    /// chunk suppresses — bounding the republish/observation rate to ~30 Hz
-    /// rather than the per-chunk ~2,600/s a File Provider pull would otherwise
-    /// drive. The delayed flush reads the freshest bytes, so trailing-edge data
-    /// is never lost.
+    /// The republish *rate* is the tracker's business, not this hop's: a chunk only
+    /// comes back `.updatedScheduleFlush` once its transfer's shared
+    /// `FetchProgressCoalescer` admits it (~1% of the total or ~100 ms apart,
+    /// always the final chunk), so a 64 KiB-chunked File Provider pull can't drive
+    /// a main-actor hop per chunk (#636). Terminal paths (reveal, `finishProgress`)
+    /// bypass the throttle entirely — they go through `refreshTransferProgress`.
     nonisolated private func scheduleProgressFollowUp(
         _ outcome: ClipboardTransferProgressTracker.RecordOutcome, transferID: UInt64
     ) {
@@ -388,11 +367,7 @@ final class VsockClipboardService: ClipboardServicing {
         case .created:
             Task { @MainActor [weak self] in self?.armReveal(transferID) }
         case .updatedScheduleFlush:
-            let interval = progressFlushInterval
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: interval)
-                self?.flushTransferProgress()
-            }
+            Task { @MainActor [weak self] in self?.flushTransferProgress() }
         case .updatedSuppressed:
             break
         }
@@ -424,8 +399,8 @@ final class VsockClipboardService: ClipboardServicing {
     /// Coalesced-flush path: clears the conflation flag and republishes the
     /// freshest projection.
     ///
-    /// Runs one `progressFlushInterval` after the chunk that scheduled it, so
-    /// clearing the flag here opens the next ≤30 Hz cycle.
+    /// Clearing the flag re-opens the queue for the next chunk the tracker's
+    /// per-transfer throttle admits.
     @MainActor private func flushTransferProgress() { publish(progress.consumeFlush()) }
 
     /// Reveal/finish refresh path: republishes without touching the flush flag.
