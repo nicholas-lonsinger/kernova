@@ -266,44 +266,29 @@ struct ClipboardContentViewControllerEditTests {
         #expect(service.grabCallCount == 0)
     }
 
-    /// The window's one unprompted action, and the reason it needs its own
-    /// condition: a buffer written by something *other* than the editor — the
-    /// passthrough coordinator's forward, a paste that already announced itself —
-    /// must not be re-announced just because the window lost focus.
-    ///
-    /// `grabIfChanged()` alone can't express that: its dedup asks whether the last
-    /// announcement stuck, so a write whose announcement failed (an unconnected
-    /// transport, a send that threw) still looks "changed" and blur completes the
-    /// failed transfer — which is what disguised a stuck paste as "opening the
-    /// clipboard window fixed it".
     @Test("blur doesn't even ask the transport when the user didn't edit the buffer")
     func blurWithoutAnEditAnnouncesNothing() {
         let service = FakeClipboardService(content: .empty)
         let vc = makeController(service: service, debounce: .seconds(60))
         _ = vc.view
 
-        // Written behind the window's back and left unannounced, exactly as a
-        // forward that reached the buffer but never reached the guest.
+        // Written past the editor and left unannounced, as a passthrough forward
+        // that reached the buffer but never reached the guest would be.
         service.clipboardContent = ClipboardContent(text: "never announced")
 
         vc.flushAndAnnounceEdit()
         #expect(service.grabCallCount == 0)
 
-        // Positive control: the same call does announce once the user edits, so
-        // the assertion above is the edit condition rather than a severed hand-off.
+        // Positive control: the same call announces once the user edits, so the
+        // assertion above is the edit condition, not a severed hand-off.
         vc.setEditorTextForTesting("typed by the user")
         vc.flushAndAnnounceEdit()
         #expect(service.announcedCount == 1)
         #expect(service.clipboardContent == ClipboardContent(text: "typed by the user"))
     }
 
-    /// A disconnected transport never sent the edit, so the transport's own dedup
-    /// latch never advanced and the next blur carries it — no window-side
-    /// connection check required.
-    ///
-    /// Reachable on Linux: `SpiceClipboardService` exists from VM start — making
-    /// the editor editable — but stays disconnected until spice-vdagent announces,
-    /// and `grabIfChanged()` is a silent no-op in that window.
+    /// A disconnected transport leaves its dedup latch unadvanced, so the edit is
+    /// still owed — no window-side connection check required.
     @Test("an edit typed while disconnected is announced once the transport connects")
     func blurKeepsAnEditOwedWhileDisconnected() {
         let service = FakeClipboardService(content: .empty)
@@ -323,10 +308,6 @@ struct ClipboardContentViewControllerEditTests {
         #expect(service.announcedCount == 1)
     }
 
-    /// The composed answer to "does coming back and clicking away again publish it
-    /// twice?": the window keeps asking while the user's edit stands, and the
-    /// transport's dedup latch — advanced only by a *successful* send — collapses
-    /// the repeats into one publish.
     @Test("blur publishes a typed edit once however many times focus bounces")
     func blurAnnouncesEachEditOnce() {
         let service = FakeClipboardService(content: .empty)
@@ -348,10 +329,8 @@ struct ClipboardContentViewControllerEditTests {
         #expect(service.announcedCount == 2)
     }
 
-    /// The debounce having already committed doesn't stop the edit from being the
-    /// user's — `hasPendingEdit` spans only the quiet period, so blur has to track
-    /// authorship separately or typed text reaches the guest only when the user
-    /// blurs within the debounce window of their last keystroke.
+    /// `hasPendingEdit` spans only the debounce, so authorship has to be tracked
+    /// separately or typed text crosses only when the user blurs within it.
     @Test("blur announces an edit the debounce already committed")
     func blurAnnouncesADebouncedEdit() async throws {
         let service = FakeClipboardService(content: .empty)
@@ -369,10 +348,8 @@ struct ClipboardContentViewControllerEditTests {
         #expect(service.announcedCount == 1)
     }
 
-    /// The same supersession as `externalUpdateCancelsPendingEdit`, but after the
-    /// debounce has already committed the edit: `hasPendingEdit` is long clear by
-    /// then, so only the authorship flag stands between a rebuilt editor and an
-    /// announcement of content the user no longer has in front of them.
+    /// The supersession case after the debounce landed, where only the authorship
+    /// flag is left to drop the edit.
     @Test("an external update also drops a committed, still-unsent edit")
     func externalUpdateDropsCommittedUnannouncedEdit() async throws {
         let service = FakeClipboardService(content: .empty)
@@ -606,13 +583,7 @@ private final class FakeClipboardService: ClipboardServicing {
     /// outbound choke-point was (or wasn't) reached without a live transport.
     private(set) var grabCallCount = 0
 
-    /// Times an announcement actually went out — asks minus the ones the dedup
-    /// and connection guards swallow.
-    ///
-    /// Both are needed because the window and the transport answer different
-    /// questions: the controller decides *whether to ask* (did the user author
-    /// this?), and `grabIfChanged` decides *whether to send* (has this exact
-    /// content already gone out, over a live connection?).
+    /// Times one actually went out — asks minus what the guards below swallow.
     private(set) var announcedCount = 0
     private var lastAnnouncedDigest: Data?
 
@@ -622,11 +593,9 @@ private final class FakeClipboardService: ClipboardServicing {
 
     func stop() {}
 
-    /// Mirrors the real implementations' two send guards — `isConnected` and the
-    /// last-**successful**-send latch (`VsockClipboardService.lastGrabbedDigest` /
-    /// `SpiceClipboardService.lastGrabbedText`) — so a test can exercise the
-    /// composed behavior: repeated blurs publish once, but a send that never
-    /// happened is retried.
+    /// Mirrors both real send guards: `isConnected`, and a latch advanced only by
+    /// a successful send (`VsockClipboardService.lastGrabbedDigest` /
+    /// `SpiceClipboardService.lastGrabbedText`).
     func grabIfChanged() {
         grabCallCount += 1
         guard isConnected else { return }

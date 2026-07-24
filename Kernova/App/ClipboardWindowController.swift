@@ -15,9 +15,8 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
     let instance: VMInstance
     private var statusObservation: ObservationLoop?
 
-    /// The hosted content controller, retained so blur/close can carry an edit the
-    /// user typed here to the guest — the window's only unprompted action, and a
-    /// no-op unless they actually edited (`flushAndAnnounceEdit`).
+    /// The hosted content controller, retained so blur/close can hand off a typed
+    /// edit (`flushAndAnnounceEdit`).
     ///
     /// Named distinctly from the inherited `NSWindowController.contentViewController`,
     /// which is typed `NSViewController?`.

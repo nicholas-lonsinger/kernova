@@ -113,20 +113,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private var editSeq: UInt64 = 0
     private var hasPendingEdit = false
 
-    /// Whether the user authored what is currently in the buffer — the sole
-    /// condition under which blur/close offers it to the guest
-    /// (`flushAndAnnounceEdit`).
+    /// Whether the user authored the current buffer — the condition
+    /// `flushAndAnnounceEdit` announces on.
     ///
-    /// Distinct from `hasPendingEdit`, which spans only the debounce window: a
-    /// keystroke that has already committed off-actor is no longer "pending", but
-    /// it is still the user's content, and blurring after typing must carry it.
-    /// Set by both editor→buffer writes, cleared when an external update replaces
-    /// the edit (`cancelPendingEdit`).
-    ///
-    /// Deliberately *not* cleared by the announcement: whether the content already
-    /// reached the guest is the transport's dedup to answer, and it answers it
-    /// accurately — it knows whether the send succeeded, which this flag never
-    /// would.
+    /// Set by both editor writes, cleared when an external update replaces the
+    /// edit; **not** cleared by the announcement (unlike `hasPendingEdit`, which
+    /// spans only the debounce).
     private var hasUserEdit = false
 
     /// Quiet period before a keystroke burst commits off-actor.
@@ -469,32 +461,16 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         service.clipboardContent = edited
     }
 
-    /// Commits a pending editor keystroke and offers the buffer to the guest
-    /// **only when the user authored it here** — the window's blur/close hand-off,
-    /// called by `ClipboardWindowController`.
+    /// The window's blur/close hand-off: commit a pending keystroke, then announce
+    /// the buffer — but only content the user typed here.
     ///
-    /// Two independent questions gate an announcement, and each needs its own
-    /// mechanism:
+    /// The editor is the one surface with no send of its own; a paste/drop
+    /// announces at the gesture (`apply(intake:)`).
     ///
-    /// - *Is this the user's content?* — `hasUserEdit`. The editor is the one
-    ///   surface that puts content in the buffer with no send of its own: a
-    ///   paste/drop is a complete gesture that announces at the gesture
-    ///   (`apply(intake:)`), and a passthrough forward or an inbound guest offer
-    ///   never comes through the editor at all — which is what settles the
-    ///   passthrough case with no mode check. Typing still sends in either mode;
-    ///   it is a deliberate edit.
-    /// - *Has this exact content already gone out?* — the transport's own dedup
-    ///   inside `grabIfChanged()`, which compares the buffer against the digest
-    ///   (or text) of its last **successful** send. Repeated blurs with no new
-    ///   typing therefore publish once, while a send that failed — or was never
-    ///   attempted, as with `SpiceClipboardService` before spice-vdagent
-    ///   announces, when the editor is already editable — is retried by the next
-    ///   blur.
-    ///
-    /// Conflating the two is what made the window look like it fixed a stuck
-    /// paste. Asking the transport alone answers "differs from the last successful
-    /// send", which is equally true of content nobody touched whose announcement
-    /// failed, so blurring silently completed a failed transfer.
+    /// The `hasUserEdit` guard is not redundant with `grabIfChanged()`, which
+    /// answers "does this differ from the last *successful* send" — also true of
+    /// content nobody touched whose send failed. Announcing unconditionally here
+    /// therefore retries other components' failed transfers.
     func flushAndAnnounceEdit() {
         flushPendingEdit()
         guard hasUserEdit else { return }
@@ -503,10 +479,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     /// Drops any pending edit without committing it.
     ///
-    /// Called when an external update rebuilds the editor, so a superseded
-    /// in-progress edit can't later flush stale text over the new content — and,
-    /// for the same reason, so a blur can't announce an edit that content
-    /// replaced.
+    /// Called when an external update rebuilds the editor, so a superseded edit
+    /// can't later flush stale text over the new content, or be announced.
     private func cancelPendingEdit() {
         editDebounceTask?.cancel()
         editDebounceTask = nil
