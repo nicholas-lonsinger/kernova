@@ -126,6 +126,23 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             config: .guest(), pullProvider: clipboardAgent)
         clipboardAgent.fileProvider = fileProviderHost
 
+        // Clipboard progress (#643, #652) — the status item is the agent's only
+        // UI, so it renders the ring and the dropdown readout. One tracker covers
+        // both a paste materializing into the guest (driven by the File Provider
+        // relay) and what the agent streams back out to the host, so the readout
+        // reads the same either way. The tracker is driven off-main from the
+        // relay's XPC queues and the transfer queues, so emissions hop to main
+        // before touching the status item; `DispatchQueue.main` rather than a
+        // `Task`, because two independently scheduled hops carrying immutable
+        // snapshots have no ordering guarantee and the ring would jump backwards.
+        let progressTracker = ClipboardProgressTracker { [weak self] snapshot in
+            DispatchQueue.main.async {
+                self?.statusItemController?.materializationProgressChanged(snapshot)
+            }
+        }
+        fileProviderHost.setProgressTracker(progressTracker)
+        clipboardAgent.progressTracker = progressTracker
+
         // Control plane: always-on handshake/heartbeat/policy. `onPolicy` gates the
         // log + clipboard + File Provider capabilities; `onStateChange` drives the
         // status-item icon.
@@ -185,13 +202,6 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         // Delivered on main; the immediate `.inactive` delivery is a no-op.
         fileProviderHost.setAvailabilityObserver { [weak self] availability in
             self?.statusItemController?.fileProviderAvailabilityChanged(availability)
-        }
-
-        // Progress for a paste materializing into the guest (#643) — the
-        // status item is the agent's only UI, so it renders the ring and the
-        // dropdown readout. Delivered on main.
-        fileProviderHost.setMaterializationObserver { [weak self] snapshot in
-            self?.statusItemController?.materializationProgressChanged(snapshot)
         }
 
         installSignalHandlers(

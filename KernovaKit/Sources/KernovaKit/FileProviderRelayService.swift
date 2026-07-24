@@ -5,15 +5,16 @@ import Foundation
 // per-pull progress machinery it drives (split out of FileProviderDomainHost.swift,
 // which owns registration/manifest/availability).
 //
-// Each relay pull feeds `PasteMaterializationTracker` — Kernova's own per-paste
-// readout (#643) — from the receiver's per-chunk `onProgress` callback, plus each
-// pull's start and terminal so the tracker can aggregate many pulls into one
+// Each relay pull feeds `ClipboardProgressTracker` — Kernova's own progress
+// readout (#643, #652) — from the receiver's per-chunk `onProgress` callback, plus
+// each pull's start and terminal so the tracker can aggregate many pulls into one
 // session. Two earlier Finder-facing consumers of that same callback — the
 // servicing-XPC push that drove the extension's `fetchContents` `Progress` (#426)
 // and the published `NSProgress` Finder's copy dialog was meant to render (#634) —
-// were removed by #644 after #639 found no Finder surface ever rendered them. The
-// host app's in-app transfer bar (`ClipboardTransferProgressTracker`) is a further,
-// separate consumer of the underlying byte stream and shares the throttle below.
+// were removed by #644 after #639 found no Finder surface ever rendered them. Since
+// #652 there is exactly one owner-side consumer: the same tracker drives every
+// progress surface, so a paste can no longer read differently in the menu bar than
+// in the clipboard window.
 
 /// The XPC-exported relay object.
 ///
@@ -39,16 +40,23 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
     /// Guards the owner's wiring below, which the domain host sets from its init
     /// while the XPC queues may already read it on later pulls.
     private let wiringLock = NSLock()
-    private var materializationTrackerStorage: PasteMaterializationTracker?
+    private var progressTrackerStorage: ClipboardProgressTracker?
 
     /// Receives each pull's start, byte counts, and terminal so the owner can
-    /// render one aggregate readout for the whole paste (#643).
+    /// render one aggregate readout for the whole paste (#643, #652).
     ///
     /// `nil` (a context that never registered a domain, e.g. most tests) simply
     /// means no readout.
-    var materializationTracker: PasteMaterializationTracker? {
-        get { wiringLock.withLock { materializationTrackerStorage } }
-        set { wiringLock.withLock { materializationTrackerStorage = newValue } }
+    ///
+    /// Every pull below captures this **once, at entry**, and reports to that
+    /// tracker for its whole life. That is load-bearing on the host, where the
+    /// shared File Provider domain is re-pointed at whichever VM published most
+    /// recently: an in-flight pull keeps feeding the VM it started under, so a
+    /// superseded VM's paste goes on rendering its own session rather than
+    /// disappearing mid-transfer.
+    public var progressTracker: ClipboardProgressTracker? {
+        get { wiringLock.withLock { progressTrackerStorage } }
+        set { wiringLock.withLock { progressTrackerStorage = newValue } }
     }
 
     /// Creates the relay service, logging under `loggerSubsystem`.
@@ -68,7 +76,7 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
             "Relay fetchFile (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public))")
         // Announced before the queue hop, so the readout can name this file from
         // the moment the pull is asked for rather than from its first byte.
-        let tracker = materializationTracker
+        let tracker = progressTracker
         tracker?.pullBegan(generation: generation, repIndex: repIndex, childSeq: nil)
         // Off the XPC delivery queue: the File Provider read path has no 60s
         // deadline so a long block is safe, but it must not be *this* queue — see
@@ -129,7 +137,7 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
         logger.debug(
             "Relay fetchChild (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public), seq=\(childSeq, privacy: .public))"
         )
-        let tracker = materializationTracker
+        let tracker = progressTracker
         tracker?.pullBegan(generation: generation, repIndex: repIndex, childSeq: childSeq)
         pullQueue.async { [pullProvider, logger] in
             let onProgress: @Sendable (UInt64, UInt64) -> Void = { bytes, _ in
@@ -221,11 +229,9 @@ public enum FetchProgressThrottle {
 ///
 /// `FetchProgressThrottle` is the pure decision; this is the per-consumer
 /// bookkeeping around it (last-forwarded byte count and elapsed since the last
-/// forward). Two consumers of a pull's per-chunk progress — the host app's
-/// in-app transfer bar (`ClipboardTransferProgressTracker`, one coalescer per
-/// tracked transfer) and the status-item paste readout
-/// (`PasteMaterializationTracker`, one per paste) — share this instead of
-/// keeping parallel copies that could drift apart on a policy change.
+/// forward). `ClipboardProgressTracker` holds one per *session* — the aggregate
+/// is a single byte stream even when several transfers feed it — so every
+/// progress surface republishes at one shared policy and none can drift.
 ///
 /// `@unchecked Sendable`: every stored property is guarded by `lock`.
 public final class FetchProgressCoalescer: @unchecked Sendable {

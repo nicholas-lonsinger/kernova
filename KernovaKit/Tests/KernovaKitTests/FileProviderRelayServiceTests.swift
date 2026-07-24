@@ -255,12 +255,12 @@ struct FileProviderRelayServiceTests {
     /// read, wired to the relay exactly as the domain host wires it.
     private static func makeTrackerHarness(
         byteCount: UInt64
-    ) -> (tracker: PasteMaterializationTracker, emissions: Box<[PasteMaterializationSnapshot?]>) {
-        let emissions = Box<[PasteMaterializationSnapshot?]>([])
+    ) -> (tracker: ClipboardProgressTracker, emissions: Box<[ClipboardProgressSnapshot?]>) {
+        let emissions = Box<[ClipboardProgressSnapshot?]>([])
         // No reveal gate and no idle linger: this suite is asserting that the
         // relay reports each pull, not the tracker's own timing, which
-        // `PasteMaterializationTrackerTests` covers with an injected clock.
-        let tracker = PasteMaterializationTracker(
+        // `ClipboardProgressTrackerTests` covers with an injected clock.
+        let tracker = ClipboardProgressTracker(
             revealDelay: 0, idleLinger: 0,
             schedule: { _, _ in },
             emit: { emissions.value.append($0) })
@@ -272,7 +272,7 @@ struct FileProviderRelayServiceTests {
                         sessionSalt: 1, generation: 4, repIndex: 2, filename: "big.bin",
                         byteCount: byteCount, uti: "public.data")
                 ]),
-            sourceName: "macOS TEST")
+            peerName: "macOS TEST")
         return (tracker, emissions)
     }
 
@@ -284,7 +284,7 @@ struct FileProviderRelayServiceTests {
             progressEvents: [(400_000, 1_000_000)])
         let service = FileProviderRelayService(
             pullProvider: provider, loggerSubsystem: "app.kernova.test")
-        service.materializationTracker = harness.tracker
+        service.progressTracker = harness.tracker
         let replied = Box(false)
         let gate = AsyncGate()
 
@@ -313,7 +313,7 @@ struct FileProviderRelayServiceTests {
             progressEvents: [(250_000, 1_000_000)])
         let service = FileProviderRelayService(
             pullProvider: provider, loggerSubsystem: "app.kernova.test")
-        service.materializationTracker = harness.tracker
+        service.progressTracker = harness.tracker
         let error = Box<NSError?>(nil)
         let gate = AsyncGate()
 
@@ -331,8 +331,8 @@ struct FileProviderRelayServiceTests {
 
     @Test("fetchChild reports its pull against the folder's own tree node")
     func fetchChildDrivesMaterializationTracker() async throws {
-        let emissions = Box<[PasteMaterializationSnapshot?]>([])
-        let tracker = PasteMaterializationTracker(
+        let emissions = Box<[ClipboardProgressSnapshot?]>([])
+        let tracker = ClipboardProgressTracker(
             revealDelay: 0, idleLinger: 0,
             schedule: { _, _ in },
             emit: { emissions.value.append($0) })
@@ -350,14 +350,14 @@ struct FileProviderRelayServiceTests {
                                 uti: "public.data")
                         ])
                 ]),
-            sourceName: "macOS TEST")
+            peerName: "macOS TEST")
 
         let provider = MockPullProvider(
             result: .success("/staged/child"),
             progressEvents: [(200_000, 500_000)])
         let service = FileProviderRelayService(
             pullProvider: provider, loggerSubsystem: "app.kernova.test")
-        service.materializationTracker = tracker
+        service.progressTracker = tracker
         let replied = Box(false)
         let gate = AsyncGate()
 

@@ -1,0 +1,123 @@
+import Foundation
+import Testing
+
+@testable import KernovaKit
+
+/// Unit tests for `ClipboardProgressFormat` — the wording the host app and the guest
+/// agent both render for a clipboard transfer (#643, #652).
+@Suite("ClipboardProgressFormat")
+struct ClipboardProgressFormatTests {
+    /// A snapshot with everything but the fields under test held constant.
+    private static func snapshot(
+        direction: ClipboardProgressSnapshot.Direction = .inbound, peerName: String = "VM",
+        currentItemName: String? = nil, filesCompleted: Int = 0, fileCount: Int = 1,
+        bytesTransferred: UInt64 = 0, totalBytes: UInt64 = 1_000, isPaste: Bool = true
+    ) -> ClipboardProgressSnapshot {
+        ClipboardProgressSnapshot(
+            direction: direction, peerName: peerName, currentItemName: currentItemName,
+            filesCompleted: filesCompleted, fileCount: fileCount,
+            bytesTransferred: bytesTransferred, totalBytes: totalBytes, bytesPerSecond: nil,
+            secondsRemaining: nil, isPasteSession: isPaste, elapsedSeconds: 1)
+    }
+
+    @Test("the headline names the peer in quotes and says what is happening")
+    func headlineNamesPeer() {
+        // A paste is named as such: it is the one operation the user started
+        // outside Kernova, so the readout has to explain why it appeared.
+        #expect(
+            ClipboardProgressFormat.headline(
+                direction: .inbound, peerName: "macOS TEST", isPaste: true)
+                == "Pasting from “macOS TEST”…")
+        #expect(
+            ClipboardProgressFormat.headline(
+                direction: .inbound, peerName: "macOS TEST", isPaste: false)
+                == "Receiving from “macOS TEST”…")
+        #expect(
+            ClipboardProgressFormat.headline(
+                direction: .outbound, peerName: "macOS TEST", isPaste: false)
+                == "Sending to “macOS TEST”…")
+    }
+
+    @Test("the file counter shows the file being worked on, and is absent for a single file")
+    func itemCounter() {
+        #expect(ClipboardProgressFormat.itemCounter(completed: 0, total: 1) == nil)
+        #expect(ClipboardProgressFormat.itemCounter(completed: 0, total: 5) == "1 of 5")
+        #expect(ClipboardProgressFormat.itemCounter(completed: 2, total: 5) == "3 of 5")
+        // Never past the total, even in the beat between the last file finishing
+        // and the readout clearing.
+        #expect(ClipboardProgressFormat.itemCounter(completed: 5, total: 5) == "5 of 5")
+    }
+
+    @Test("speed is a byte count per second, and absent without an estimate")
+    func speed() {
+        #expect(ClipboardProgressFormat.speed(bytesPerSecond: nil) == nil)
+        #expect(ClipboardProgressFormat.speed(bytesPerSecond: 0) == nil)
+        let rate = ClipboardProgressFormat.speed(bytesPerSecond: 1_500_000)
+        #expect(rate?.hasSuffix("/s") == true)
+        #expect(rate?.contains("MB") == true)
+    }
+
+    @Test("time remaining spells minutes and seconds under an hour, coarsens above it")
+    func timeRemaining() {
+        #expect(ClipboardProgressFormat.timeRemaining(seconds: nil) == nil)
+        #expect(ClipboardProgressFormat.timeRemaining(seconds: 0) == nil)
+        #expect(ClipboardProgressFormat.timeRemaining(seconds: 0.4) == "1 second remaining")
+        #expect(ClipboardProgressFormat.timeRemaining(seconds: 3) == "3 seconds remaining")
+        #expect(ClipboardProgressFormat.timeRemaining(seconds: 30) == "30 seconds remaining")
+        #expect(ClipboardProgressFormat.timeRemaining(seconds: 60) == "1 minute, 0 seconds remaining")
+        #expect(ClipboardProgressFormat.timeRemaining(seconds: 75) == "1 minute, 15 seconds remaining")
+        #expect(
+            ClipboardProgressFormat.timeRemaining(seconds: 387) == "6 minutes, 27 seconds remaining")
+        #expect(ClipboardProgressFormat.timeRemaining(seconds: 3_600) == "1 hour remaining")
+        #expect(ClipboardProgressFormat.timeRemaining(seconds: 3_700) == "1 hour, 1 minute remaining")
+        #expect(ClipboardProgressFormat.timeRemaining(seconds: 9_000) == "2 hours, 30 minutes remaining")
+    }
+
+    @Test("an infinite estimate is treated as no estimate")
+    func infiniteTimeRemainingRejected() {
+        #expect(ClipboardProgressFormat.timeRemaining(seconds: .infinity) == nil)
+    }
+
+    @Test("percent floors, so it never reads complete early")
+    func percent() {
+        #expect(ClipboardProgressFormat.percent(fraction: 0) == "0%")
+        #expect(ClipboardProgressFormat.percent(fraction: 0.999) == "99%")
+        #expect(ClipboardProgressFormat.percent(fraction: 1) == "100%")
+        #expect(ClipboardProgressFormat.percent(fraction: 1.4) == "100%")
+        #expect(ClipboardProgressFormat.percent(fraction: -1) == "0%")
+    }
+
+    @Test("the byte-progress line carries the speed parenthetical only once one exists")
+    func byteProgressLine() {
+        let withoutSpeed = ClipboardProgressFormat.byteProgress(
+            bytesTransferred: 47_600_000, totalBytes: 3_030_000_000, bytesPerSecond: nil)
+        #expect(withoutSpeed.contains(" of ") == true)
+        #expect(withoutSpeed.contains("(") == false)
+        let withSpeed = ClipboardProgressFormat.byteProgress(
+            bytesTransferred: 47_600_000, totalBytes: 3_030_000_000, bytesPerSecond: 7_800_000)
+        #expect(withSpeed.contains(" of ") == true)
+        #expect(withSpeed.hasSuffix("/s)") == true)
+        #expect(withSpeed.contains("(") == true)
+    }
+
+    @Test("the summary leads with the headline and carries the counter for a multi-file paste")
+    func summaryMultipleItems() {
+        let snapshot = Self.snapshot(
+            currentItemName: "big.mov", filesCompleted: 1, fileCount: 5, bytesTransferred: 500)
+        #expect(ClipboardProgressFormat.summary(snapshot) == "Pasting from “VM”… — 50% — 2 of 5")
+    }
+
+    @Test("the summary falls back to the file's name for a single-file paste")
+    func summarySingleItem() {
+        let snapshot = Self.snapshot(currentItemName: "big.mov", bytesTransferred: 250)
+        #expect(ClipboardProgressFormat.summary(snapshot) == "Pasting from “VM”… — 25% — big.mov")
+    }
+
+    @Test("the summary carries the direction for a transfer that is not a paste")
+    func summaryNonPaste() {
+        let snapshot = Self.snapshot(
+            direction: .outbound, currentItemName: "big.mov", bytesTransferred: 250,
+            isPaste: false)
+        #expect(ClipboardProgressFormat.summary(snapshot) == "Sending to “VM”… — 25% — big.mov")
+    }
+}

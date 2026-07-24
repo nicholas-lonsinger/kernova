@@ -191,7 +191,16 @@ struct VMToolbarManagerTests {
         var supportsBinaryRepresentations = true
         var supportsDirectoryTree = false
         var lastTransferIssue: ClipboardTransferIssue?
-        var transferProgress: ClipboardTransferProgress?
+        var transferProgress: ClipboardProgressSnapshot?
+
+        /// Builds a snapshot carrying just the fraction the bar renders.
+        static func progress(transferred: UInt64, total: UInt64) -> ClipboardProgressSnapshot {
+            ClipboardProgressSnapshot(
+                direction: .inbound, peerName: "VM", currentItemName: nil, filesCompleted: 0,
+                fileCount: 1, bytesTransferred: transferred, totalBytes: total,
+                bytesPerSecond: nil, secondsRemaining: nil, isPasteSession: false,
+                elapsedSeconds: 1)
+        }
 
         func stop() {}
         func grabIfChanged() {}
@@ -276,8 +285,7 @@ struct VMToolbarManagerTests {
     func clipboardBarShownDuringTransfer() {
         let instance = makeInstance(status: .running)
         let service = FakeClipboardService()
-        service.transferProgress = ClipboardTransferProgress(
-            direction: .inbound, bytesTransferred: 25, totalBytes: 100, label: nil)
+        service.transferProgress = FakeClipboardService.progress(transferred: 25, total: 100)
         instance.clipboardService = service
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
@@ -291,8 +299,7 @@ struct VMToolbarManagerTests {
     func clipboardBarHiddenAfterTerminal() {
         let instance = makeInstance(status: .running)
         let service = FakeClipboardService()
-        service.transferProgress = ClipboardTransferProgress(
-            direction: .outbound, bytesTransferred: 50, totalBytes: 100, label: nil)
+        service.transferProgress = FakeClipboardService.progress(transferred: 50, total: 100)
         instance.clipboardService = service
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)

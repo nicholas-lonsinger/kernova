@@ -131,6 +131,24 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// the synchronous provider path. Set once on main at app wiring.
     weak var fileProvider: (any FileProviderPublishing)?
 
+    /// Aggregates what this side streams to the host into the status item's
+    /// readout (#652).
+    ///
+    /// The same tracker the File Provider host uses for an inbound paste, so the
+    /// ring means one thing regardless of direction. Replaced once on main at app
+    /// wiring; the default emits nowhere, which is what tests (and any run before
+    /// wiring) get — no readout, and no optionality to thread through every
+    /// streaming path.
+    var progressTracker = ClipboardProgressTracker { _ in }
+
+    /// The outbound session serving the host's pulls of `pendingOutbound`, with
+    /// the generation it measures.
+    ///
+    /// The host decides what it pulls and when — a paste can take two waves
+    /// separated by minutes — so the session's transfers are declared as they are
+    /// asked for rather than up front, and it always ends through the idle linger.
+    private var outboundSession: (generation: UInt64, token: ClipboardProgressTracker.SessionToken)?
+
     /// Whether the peer (host) advertised the folder placeholder-tree capability
     /// (`clipboard.dirtree.v1`) — the mutually negotiated gate.
     ///
@@ -385,6 +403,29 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         Self.logger.notice("Vsock clipboard agent stopped")
     }
 
+    /// The outbound session measuring what this side is streaming for
+    /// `generation`, opening one if the host's request is the first under it.
+    ///
+    /// A newer generation supersedes an older session outright: the offer it was
+    /// measuring no longer exists. A session the tracker has already ended is
+    /// replaced too — the host's preview wave and its paste wave can be minutes
+    /// apart, far longer than the idle linger, and reusing the ended token would
+    /// drop the paste's progress entirely.
+    private func outboundSessionToken(for generation: UInt64)
+        -> ClipboardProgressTracker.SessionToken
+    {
+        if let existing = outboundSession, existing.generation == generation,
+            progressTracker.isSessionLive(existing.token)
+        {
+            return existing.token
+        }
+        if let stale = outboundSession { progressTracker.closeSession(stale.token, immediately: true) }
+        let token = progressTracker.openSession(
+            direction: .outbound, peerName: Self.pasteSourceName)
+        outboundSession = (generation: generation, token: token)
+        return token
+    }
+
     /// Clears per-connection streaming + pending state on the main queue.
     private func teardownConnectionState() {
         sender?.cancelAll()
@@ -397,6 +438,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         pendingOutbound = nil
         currentOutboundGeneration.set(0)
         inboundPromise = nil
+        // Every session, not just the outbound one: a pull this teardown just
+        // failed would otherwise leave its readout up until the linger elapsed,
+        // for a connection that is already gone.
+        outboundSession = nil
+        progressTracker.clearAll()
         // Drop File Provider items too — with no live channel the agent can't pull
         // for a `fetchContents`, so a lingering placeholder would only fail.
         fileProvider?.clearOffer()
@@ -858,20 +904,41 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // main run loop) and stream that (#422 endgame — no eager copy-time
         // archive). The tree path (listing + per-child) uses `ClipboardTreeFetch`,
         // never this plain `ClipboardRequest`.
+        // Ahead of the session bookkeeping: with no sender nothing streams, so a
+        // transfer announced here would never see a terminal — the session would
+        // stay active forever and its readout would stick on screen.
+        guard let sender else { return }
+        // This rep joins the outbound session as the host asks for it — the host
+        // decides what it pulls and when, so the set can't be declared up front.
+        let xid = request.transferID
+        let session = outboundSessionToken(for: request.generation)
+        let name = representation.filename.isEmpty ? nil : representation.filename
+        progressTracker.unitBegan(
+            session: session, id: xid, expectedBytes: UInt64(max(0, representation.byteCount)),
+            name: name)
+        let tracker = progressTracker
         if case .directory(let sourceURL, _) = representation.source {
             archiveAndStream(
                 sourceURL: sourceURL, folderName: representation.filename, request: request,
-                isCurrent: generation)
+                isCurrent: generation, session: session, sender: sender)
             clipboardActivityStorage = .sentToHost
             return
         }
-        sender?.startTransfer(
+        sender.startTransfer(
             transferID: request.transferID,
             generation: request.generation,
             representation: representation,
             maxAcceptByteCount: request.maxAcceptByteCount,
             isInline: representation.shouldInlineOnPasteboard,
-            isCurrent: { value in generation.isCurrent(value) })
+            isCurrent: { value in generation.isCurrent(value) },
+            onProgress: { sent, total in
+                tracker.unitProgressed(
+                    session: session, id: xid, bytesTransferred: UInt64(max(0, sent)),
+                    totalBytes: UInt64(max(0, total)))
+            },
+            onComplete: { success in
+                tracker.unitEnded(session: session, id: xid, succeeded: success)
+            })
         // The host pulled our clipboard — the outbound stream is starting. (See
         // `ClipboardActivity` for why this is marked at start, not completion.)
         clipboardActivityStorage = .sentToHost
@@ -887,15 +954,16 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// Runs off the main run loop (walk + LZFSE compress).
     private func archiveAndStream(
         sourceURL: URL, folderName: String, request: Kernova_V1_ClipboardRequest,
-        isCurrent: AtomicGeneration
+        isCurrent: AtomicGeneration, session: ClipboardProgressTracker.SessionToken,
+        sender: ClipboardStreamSender
     ) {
-        guard let sender else { return }
         let staging = self.sendStaging
         let archiveGeneration = sendArchiveGeneration
         sendArchiveGeneration += 1
         let transferID = request.transferID
         let requestGeneration = request.generation
         let maxAccept = request.maxAcceptByteCount
+        let tracker = progressTracker
         DispatchQueue.global(qos: .userInitiated).async {
             guard
                 let rep = try? ClipboardDirectoryArchive.archivedRepresentation(
@@ -907,12 +975,27 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 sender.rejectRequest(
                     transferID: transferID, code: "archive.error",
                     message: "Could not archive the folder")
+                // The unit began when the request was accepted, so it must end here
+                // too — a unit left active would keep the session from ever going
+                // idle, and the readout would stick on screen.
+                tracker.unitEnded(session: session, id: transferID, succeeded: false)
                 return
             }
             sender.startTransfer(
                 transferID: transferID, generation: requestGeneration, representation: rep,
                 maxAcceptByteCount: maxAccept, isInline: false,
-                isCurrent: { value in isCurrent.isCurrent(value) })
+                isCurrent: { value in isCurrent.isCurrent(value) },
+                // The rep advertised a stat-walk estimate of the folder; what
+                // actually crosses is an LZFSE archive of it, so the wire figure
+                // replaces the estimate.
+                onProgress: { sent, total in
+                    tracker.unitProgressed(
+                        session: session, id: transferID, bytesTransferred: UInt64(max(0, sent)),
+                        totalBytes: UInt64(max(0, total)))
+                },
+                onComplete: { success in
+                    tracker.unitEnded(session: session, id: transferID, succeeded: success)
+                })
         }
     }
 
@@ -937,9 +1020,29 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return
         }
         let isCurrent = currentOutboundGeneration
-        ClipboardDirectoryTree.serveFetch(fetch, sourceURL: sourceURL, sender: sender) { value in
-            isCurrent.isCurrent(value)
-        }
+        // A folder's children are the largest thing this side ever streams, so they
+        // join the outbound session exactly as a plain rep does. The listing fetch
+        // (empty relative path) counts too — small, but leaving it out would let the
+        // session go idle between the listing and the first child.
+        let xid = fetch.transferID
+        let session = outboundSessionToken(for: fetch.generation)
+        let name =
+            fetch.relativePath.isEmpty
+            ? pending.content.representations[repIndex].filename
+            : (fetch.relativePath as NSString).lastPathComponent
+        progressTracker.unitBegan(session: session, id: xid, expectedBytes: 0, name: name)
+        let tracker = progressTracker
+        ClipboardDirectoryTree.serveFetch(
+            fetch, sourceURL: sourceURL, sender: sender,
+            isCurrent: { value in isCurrent.isCurrent(value) },
+            onProgress: { sent, total in
+                tracker.unitProgressed(
+                    session: session, id: xid, bytesTransferred: UInt64(max(0, sent)),
+                    totalBytes: UInt64(max(0, total)))
+            },
+            onComplete: { success in
+                tracker.unitEnded(session: session, id: xid, succeeded: success)
+            })
         clipboardActivityStorage = .sentToHost
     }
 

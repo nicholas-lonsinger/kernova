@@ -34,15 +34,32 @@ protocol HostClipboardDomainCoordinating: AnyObject {
     /// each rep's domain URL keyed by rep index, or `nil` when the File Provider
     /// isn't usable so the caller falls back to the size-capped synchronous pull.
     ///
-    /// `sourceName` is the publishing VM's name, which the paste progress
-    /// readout shows as where the bytes are coming from (#643).
+    /// `sourceName` is the publishing VM's name, which the progress readout shows
+    /// as where the bytes are coming from (#643). `progressTracker` is that VM's
+    /// tracker, which the shared domain is pointed at for the duration of this
+    /// offer so its pulls are measured against the VM that published them (#652).
     func publishItemsForPaste(
         source: any HostClipboardFileRepProviding, generation: UInt64, sourceName: String,
-        items: [FileProviderPublishItem], folders: [FileProviderPublishFolder]
+        progressTracker: ClipboardProgressTracker?, items: [FileProviderPublishItem],
+        folders: [FileProviderPublishFolder]
     ) -> [Int: URL]?
 
     /// Clears the current offer, but only if `source` published it.
     func clearOffer(from source: any HostClipboardFileRepProviding)
+
+    /// A service's progress readout changed, so the app-level surfaces (the
+    /// menu-bar status item) can render the most significant one across every
+    /// live VM (#652).
+    ///
+    /// Defaulted to a no-op so test doubles need not implement it.
+    func progressChanged(
+        from source: any HostClipboardFileRepProviding, _ snapshot: ClipboardProgressSnapshot?)
+}
+
+extension HostClipboardDomainCoordinating {
+    func progressChanged(
+        from source: any HostClipboardFileRepProviding, _ snapshot: ClipboardProgressSnapshot?
+    ) {}
 }
 
 /// App-level coordinator that owns the single host "Copy to Mac" File Provider
@@ -114,24 +131,29 @@ final class HostClipboardFileProvider: HostClipboardDomainCoordinating {
     /// restart.
     private(set) var availability: FileProviderAvailability = .inactive
 
-    /// The paste currently materializing through the host domain, or `nil` when
-    /// none is (#643).
+    /// The clipboard operation currently worth showing across every live VM, or
+    /// `nil` when none is (#643, #652).
     ///
-    /// Observe it to render progress: the domain host's tracker aggregates every
-    /// pull of one paste into this single readout and clears it at the paste's
-    /// terminal, so a consumer never has to reason about individual pulls.
-    /// `HostAgentStatusItemController` is the consumer today (status-item ring +
-    /// dropdown readout).
-    private(set) var materializationProgress: PasteMaterializationSnapshot?
+    /// Observe it to render progress: each VM's service aggregates its own
+    /// transfers into one snapshot, and this picks the most significant of them —
+    /// so a consumer never has to reason about individual pulls, or about which VM
+    /// they belong to. `HostAgentStatusItemController` is the consumer today
+    /// (status-item ring + dropdown readout).
+    private(set) var materializationProgress: ClipboardProgressSnapshot?
+
+    /// The latest snapshot from each live service, keyed by its identity.
+    ///
+    /// Per service rather than a single slot, because two VMs can transfer at once
+    /// and the readout must not flicker between them; entries are dropped in
+    /// `serviceDidStop` so a stopped VM can't pin the ring.
+    @ObservationIgnored
+    private var progressBySource: [ObjectIdentifier: ClipboardProgressSnapshot] = [:]
 
     private init() {
         let host = FileProviderDomainHost(config: .host(), pullProvider: router)
         domainHost = host
         host.setAvailabilityObserver { [weak self] availability in
             self?.availability = availability
-        }
-        host.setMaterializationObserver { [weak self] snapshot in
-            self?.materializationProgress = snapshot
         }
     }
 
@@ -146,6 +168,10 @@ final class HostClipboardFileProvider: HostClipboardDomainCoordinating {
     /// A clipboard service stopped — tear the domain down when the last one goes.
     func serviceDidStop(_ source: any HostClipboardFileRepProviding) {
         router.clearSource(ifCurrently: source)
+        // Ahead of the test guard, and unconditional: a stopped VM's last snapshot
+        // would otherwise pin the status-item ring forever, and the test host
+        // instantiates services directly (so this path runs there too).
+        progressChanged(from: source, nil)
         guard !Self.isRunningUnderTests else { return }
         activeServiceCount = max(0, activeServiceCount - 1)
         guard activeServiceCount == 0 else { return }
@@ -166,12 +192,56 @@ final class HostClipboardFileProvider: HostClipboardDomainCoordinating {
     /// mirror: nothing exists in the domain until a paste.
     func publishItemsForPaste(
         source: any HostClipboardFileRepProviding, generation: UInt64, sourceName: String,
-        items: [FileProviderPublishItem], folders: [FileProviderPublishFolder]
+        progressTracker: ClipboardProgressTracker?, items: [FileProviderPublishItem],
+        folders: [FileProviderPublishFolder]
     ) -> [Int: URL]? {
         router.setSource(source)
+        // Alongside the pull source, so the shared domain measures this offer's
+        // pulls against the VM that published it. Pulls already in flight for an
+        // earlier VM keep reporting to the tracker they started under — the relay
+        // captures it at entry — so a superseded paste finishes on screen instead
+        // of vanishing.
+        domainHost.setProgressTracker(progressTracker)
         return domainHost.publishItems(
             generation: generation, sourceName: sourceName, items: items, folders: folders,
             waitForPlaceholder: true)
+    }
+
+    /// Records a service's latest readout and republishes the most significant one
+    /// across every live VM.
+    ///
+    /// Ranked by bytes remaining, matching how a single service ranks its own
+    /// sessions, so a just-finished transfer never masks one still running.
+    func progressChanged(
+        from source: any HostClipboardFileRepProviding, _ snapshot: ClipboardProgressSnapshot?
+    ) {
+        let key = ObjectIdentifier(source)
+        if let snapshot {
+            progressBySource[key] = snapshot
+        } else {
+            progressBySource.removeValue(forKey: key)
+        }
+        materializationProgress = Self.mostSignificant(of: progressBySource)
+    }
+
+    /// The snapshot with the most bytes left to move, or `nil` when none is live.
+    ///
+    /// Ties break on the source's identity — arbitrary, but *stable*, which
+    /// dictionary iteration order is not: two VMs whose readouts are level (both
+    /// lingering at 100 %, say) would otherwise swap the status item's headline
+    /// between them as entries come and go.
+    private static func mostSignificant(
+        of snapshots: [ObjectIdentifier: ClipboardProgressSnapshot]
+    ) -> ClipboardProgressSnapshot? {
+        func remaining(_ snapshot: ClipboardProgressSnapshot) -> UInt64 {
+            snapshot.totalBytes - min(snapshot.bytesTransferred, snapshot.totalBytes)
+        }
+        return snapshots.max { lhs, rhs in
+            let lhsRemaining = remaining(lhs.value)
+            let rhsRemaining = remaining(rhs.value)
+            if lhsRemaining != rhsRemaining { return lhsRemaining < rhsRemaining }
+            return lhs.key < rhs.key
+        }?.value
     }
 
     /// Clears the current offer, but only if `source` is the one that published
@@ -304,8 +374,8 @@ protocol HostClipboardFileRepProviding: AnyObject, Sendable {
     /// and is woken off-main by the stream receiver.
     ///
     /// `onProgress` is fed the receiver's cumulative `(bytesTransferred,
-    /// totalBytes)` per chunk, so the relay can drive the paste readout (#643) and
-    /// the window's in-app bar (#354). Fires off-main on the transfer's queue.
+    /// totalBytes)` per chunk, so the relay can drive the paste session that owns
+    /// this pull (#643, #652). Fires off-main on the transfer's queue.
     func pullStagedFile(
         generation: UInt64, repIndex: Int,
         onProgress: @escaping @Sendable (UInt64, UInt64) -> Void

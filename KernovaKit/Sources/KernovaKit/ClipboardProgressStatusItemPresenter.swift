@@ -7,14 +7,14 @@ import AppKit
 /// `AgentStatusItemController` render the same readout the same way — only the
 /// surrounding menu, the icon, and (host-only) the soft-quit reminder differ.
 /// This owns the shared half so there is one copy of it: the live
-/// `PasteProgressMenuItemView` and its separator, their insertion into and
-/// removal from an open dropdown, and the `PasteProgressMenuAutoOpener` state
+/// `ClipboardProgressMenuItemView` and its separator, their insertion into and
+/// removal from an open dropdown, and the `ClipboardProgressMenuAutoOpener` state
 /// machine that decides when the readout opens and closes the dropdown on its
 /// own. Each controller keeps its own icon and menu structure and drives this
 /// from its `NSMenuDelegate` callbacks, reading `snapshot` back to compose the
 /// icon ring and tooltip.
 @MainActor
-public final class PasteProgressStatusItemPresenter {
+public final class ClipboardProgressStatusItemPresenter {
     private let statusItem: NSStatusItem
     private let menu: NSMenu
     /// Run just before the presenter pops the dropdown open by itself.
@@ -30,14 +30,14 @@ public final class PasteProgressStatusItemPresenter {
     /// Read by the controller to compose the icon ring and the tooltip, which
     /// stay controller-specific (different glyphs, and the host's enablement
     /// badge).
-    public private(set) var snapshot: PasteMaterializationSnapshot?
+    public private(set) var snapshot: ClipboardProgressSnapshot?
 
     /// The dropdown's live readout.
     ///
     /// Built on first use — most sessions never paste a file large enough to
     /// reveal one — and then kept, so it updates in place while the dropdown is
     /// open instead of being rebuilt under the cursor.
-    private lazy var view = PasteProgressMenuItemView()
+    private lazy var view = ClipboardProgressMenuItemView()
     private lazy var item: NSMenuItem = {
         let item = NSMenuItem()
         item.view = view
@@ -47,7 +47,7 @@ public final class PasteProgressStatusItemPresenter {
     private let separator = NSMenuItem.separator()
 
     /// Decides when the readout opens and closes the dropdown by itself.
-    private var autoOpener = PasteProgressMenuAutoOpener()
+    private var autoOpener = ClipboardProgressMenuAutoOpener()
     /// Whether the dropdown is currently on screen, which the auto-opener needs
     /// and `NSMenu` doesn't expose.
     private var menuIsOpen = false
@@ -70,11 +70,11 @@ public final class PasteProgressStatusItemPresenter {
     ///
     /// Updates the live view, an open dropdown, and the automatic open. The
     /// controller composes the icon and tooltip afterwards from `snapshot`.
-    public func apply(_ snapshot: PasteMaterializationSnapshot?) {
+    public func apply(_ snapshot: ClipboardProgressSnapshot?) {
         self.snapshot = snapshot
         if let snapshot { view.apply(snapshot) }
         syncItems()
-        applyAutoOpen(hasReadout: snapshot != nil)
+        applyAutoOpen(snapshot)
     }
 
     /// Inserts the readout rows at the top of a dropdown being rebuilt, when a
@@ -132,12 +132,11 @@ public final class PasteProgressStatusItemPresenter {
     }
 
     /// Runs the auto-opener's decision for the current readout.
-    private func applyAutoOpen(hasReadout: Bool) {
+    private func applyAutoOpen(_ readout: ClipboardProgressSnapshot?) {
         // macOS drops status items it can't fit in a crowded menu bar, and a
         // dropdown popped from a hidden item would appear anchored to nothing.
         let canOpen = statusItem.isVisible && statusItem.button?.window != nil
-        switch autoOpener.readoutChanged(
-            hasReadout: hasReadout, menuIsOpen: menuIsOpen, canOpen: canOpen)
+        switch autoOpener.readoutChanged(readout, menuIsOpen: menuIsOpen, canOpen: canOpen)
         {
         case .none:
             break
