@@ -513,6 +513,15 @@ struct PasteMaterializationTrackerTests {
         #expect(harness.latest?.fractionComplete == 1)
     }
 
+    // The suite's one wall-clock-dependent assertion, and the same trade-off
+    // `ClipboardTransferProgressTrackerTests.subQuantumChunkSuppressed` already
+    // documents: the throttle admits on the byte quantum OR ~100 ms elapsed, and
+    // `FetchProgressCoalescer` reads its own clock, so proving suppression needs
+    // the two records to land inside that window. They are adjacent synchronous
+    // statements — no awaits, actor hops, or I/O. The quantum itself is covered
+    // deterministically by `FetchProgressThrottleTests`, which passes
+    // `elapsedSinceLastPush` explicitly; this is kept because it is the only
+    // test proving the *tracker* consults the throttle at all.
     @Test("sub-1% updates are coalesced away, but a completed item always lands")
     func throttleSuppressesTinyUpdatesButNotItemCompletion() {
         let harness = Harness()

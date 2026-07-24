@@ -62,7 +62,19 @@ public struct PasteProgressMenuAutoOpener: Equatable, Sendable {
             pasteActive = true
             openedThisPaste = false
         }
-        guard !openedThisPaste, !menuIsOpen, canOpen else { return .none }
+        guard !openedThisPaste else { return .none }
+        if menuIsOpen {
+            // Nothing to open — but the paste has still *had* its showing, since
+            // the controller puts the readout straight into the open dropdown.
+            // Spending the open here is what stops the user's own dismissal from
+            // being answered by the next update popping the dropdown back up.
+            openedThisPaste = true
+            return .none
+        }
+        // An unreachable status item, by contrast, means the readout was never
+        // shown at all, so the open is not spent and a later update can still
+        // take it once macOS has room for the item again.
+        guard canOpen else { return .none }
         openedThisPaste = true
         return .open
     }

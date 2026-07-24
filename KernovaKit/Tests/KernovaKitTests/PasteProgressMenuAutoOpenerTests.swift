@@ -63,6 +63,23 @@ struct PasteProgressMenuAutoOpenerTests {
             opener.readoutChanged(hasReadout: true, menuIsOpen: true, canOpen: true) == .none)
     }
 
+    @Test("closing a dropdown the readout appeared inside does not make it pop back open")
+    func dismissingADropdownTheReadoutAppearedInIsFinal() {
+        var opener = PasteProgressMenuAutoOpener()
+        // The user opened the dropdown for their own reasons, and the paste's
+        // readout then revealed into it — so the paste has had its showing even
+        // though it never asked for the open.
+        opener.menuOpened(automatically: false)
+        #expect(
+            opener.readoutChanged(hasReadout: true, menuIsOpen: true, canOpen: true) == .none)
+
+        opener.menuClosed()
+        // Dismissing it is the user saying no. The next throttled update must not
+        // answer that by popping the dropdown straight back up.
+        #expect(
+            opener.readoutChanged(hasReadout: true, menuIsOpen: false, canOpen: true) == .none)
+    }
+
     @Test("an off-screen status item is never asked to open")
     func hiddenStatusItemNeverOpens() {
         var opener = PasteProgressMenuAutoOpener()
