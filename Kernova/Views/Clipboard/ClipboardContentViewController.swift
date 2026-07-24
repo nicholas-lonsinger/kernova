@@ -113,6 +113,14 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private var editSeq: UInt64 = 0
     private var hasPendingEdit = false
 
+    /// Whether the user authored the current buffer — the condition
+    /// `flushAndAnnounceEdit` announces on.
+    ///
+    /// Set by both editor writes, cleared when an external update replaces the
+    /// edit; **not** cleared by the announcement (unlike `hasPendingEdit`, which
+    /// spans only the debounce).
+    private var hasUserEdit = false
+
     /// Quiet period before a keystroke burst commits off-actor.
     ///
     /// Injectable so tests drive the commit deterministically instead of waiting
@@ -428,6 +436,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         // safe — the newer writer owns the model.
         guard seq == editSeq, textView.string == text else { return }
         hasPendingEdit = false
+        hasUserEdit = true
         // Prime the digest before the write so the resulting observation pass
         // recognizes the content as already displayed (the editor IS the source)
         // and doesn't rebuild the view out from under the user.
@@ -446,19 +455,37 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         editDebounceTask = nil
         guard hasPendingEdit, let service = instance.clipboardService else { return }
         hasPendingEdit = false
+        hasUserEdit = true
         let edited = ClipboardContent(text: textView.string)
         lastAppliedDigest = edited.digest
         service.clipboardContent = edited
     }
 
+    /// The window's blur/close hand-off: commit a pending keystroke, then announce
+    /// the buffer — but only content the user typed here.
+    ///
+    /// The editor is the one surface with no send of its own; a paste/drop
+    /// announces at the gesture (`apply(intake:)`).
+    ///
+    /// The `hasUserEdit` guard is not redundant with `grabIfChanged()`, which
+    /// answers "does this differ from the last *successful* send" — also true of
+    /// content nobody touched whose send failed. Announcing unconditionally here
+    /// therefore retries other components' failed transfers.
+    func flushAndAnnounceEdit() {
+        flushPendingEdit()
+        guard hasUserEdit else { return }
+        instance.clipboardService?.grabIfChanged()
+    }
+
     /// Drops any pending edit without committing it.
     ///
-    /// Called when an external update rebuilds the editor, so a superseded
-    /// in-progress edit can't later flush stale text over the new content.
+    /// Called when an external update rebuilds the editor, so a superseded edit
+    /// can't later flush stale text over the new content, or be announced.
     private func cancelPendingEdit() {
         editDebounceTask?.cancel()
         editDebounceTask = nil
         hasPendingEdit = false
+        hasUserEdit = false
     }
 
     #if DEBUG
