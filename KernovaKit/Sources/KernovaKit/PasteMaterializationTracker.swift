@@ -6,10 +6,11 @@ import Foundation
 /// The relay (`FileProviderRelayService`) sees one pull per file — a flat rep, or
 /// one node of a folder's placeholder tree — and each carries only its *own*
 /// byte counts. This turns that stream into one per-paste readout: the published
-/// manifest supplies the denominators (how many top-level items, how many bytes
-/// in total), the pull events supply the numerators, and the result is identical
-/// whether the pulls run sequentially (Finder walks a flat multi-file paste one
-/// at a time) or concurrently (a folder's children overlap).
+/// manifest supplies the denominators (how many files will materialize — flat
+/// reps and folder file nodes alike — and how many bytes in total), the pull
+/// events supply the numerators, and the result is identical whether the pulls
+/// run sequentially (Finder walks a flat multi-file paste one at a time) or
+/// concurrently (a folder's children overlap).
 ///
 /// Lifecycle of one *session* — the tracker's unit of work, spanning a whole
 /// paste rather than a pull:
@@ -39,11 +40,12 @@ import Foundation
 final class PasteMaterializationTracker: @unchecked Sendable {
     /// How long a paste must have been materializing before its progress shows.
     ///
-    /// Deliberately longer than the in-app clipboard bar's 300 ms convention: a
-    /// status-item ring plus a dropdown that opens itself is a heavier
-    /// interruption than a bar inside a window the user is already looking at,
-    /// so it is reserved for pastes slow enough to actually need it.
-    static let defaultRevealDelay: TimeInterval = 1.0
+    /// Deliberately far longer than the in-app clipboard bar's 300 ms
+    /// convention: a status-item ring plus a dropdown that opens itself is a
+    /// heavier interruption than a bar inside a window the user is already
+    /// looking at, so it is reserved for transfers long enough (several
+    /// seconds at minimum) to genuinely need a standing readout.
+    static let defaultRevealDelay: TimeInterval = 5.0
 
     /// How long the readout stays up after the last pull finishes — the gap
     /// bridge and completion dwell described in the type's documentation.
@@ -65,14 +67,13 @@ final class PasteMaterializationTracker: @unchecked Sendable {
         let unitBytes: [PullUnit: UInt64]
         /// The file name each pull materializes.
         let unitNames: [PullUnit: String]
-        /// Pulls belonging to each top-level item, keyed by rep index.
-        ///
-        /// Empty for a folder with no file nodes, which therefore counts as
-        /// complete from the start.
-        let unitsByItem: [Int: Set<PullUnit>]
         let totalBytes: UInt64
 
-        var itemCount: Int { unitsByItem.count }
+        /// How many files the paste will materialize — the "of M" the counter shows.
+        ///
+        /// Per *file*, not per top-level item: a folder contributes its file
+        /// nodes, so a folder-only paste still gets a live counter.
+        var fileCount: Int { unitBytes.count }
     }
 
     /// One paste's in-flight accounting.
@@ -90,7 +91,14 @@ final class PasteMaterializationTracker: @unchecked Sendable {
         /// that restarts a pull's own count at zero.
         var unitBytes: [PullUnit: UInt64] = [:]
         var completedUnits: Set<PullUnit> = []
-        var activeUnits: Set<PullUnit> = []
+        /// Pulls currently in flight, in the order they began.
+        ///
+        /// The readout names the most recently begun one, which follows a
+        /// sequential walk file by file and stays stable across a concurrent
+        /// batch. (An earlier version ranked these by bytes remaining, whose
+        /// tie-break pinned a folder of same-sized children to its first file
+        /// for the whole paste.)
+        var activeUnits: [PullUnit] = []
         /// Last file seen streaming, kept so the readout still names something
         /// during the gap between two items and at the completion dwell.
         var lastActiveName: String?
@@ -105,9 +113,6 @@ final class PasteMaterializationTracker: @unchecked Sendable {
         /// Bumped whenever a pull begins, so an already-scheduled idle terminal
         /// can tell it was superseded.
         var idleEpoch: UInt64 = 0
-        /// Item-completion count at the last delivered snapshot, so a change in
-        /// it can bypass the throttle (`-1` until the first delivery).
-        var deliveredItemsCompleted = -1
 
         init(generation: UInt64, startedAt: TimeInterval) {
             self.generation = generation
@@ -169,31 +174,26 @@ final class PasteMaterializationTracker: @unchecked Sendable {
     func offerPublished(_ manifest: FileProviderManifest, sourceName: String) {
         var unitBytes: [PullUnit: UInt64] = [:]
         var unitNames: [PullUnit: String] = [:]
-        var unitsByItem: [Int: Set<PullUnit>] = [:]
         var totalBytes: UInt64 = 0
 
         for item in manifest.items {
             let unit = PullUnit(repIndex: item.repIndex, childSeq: nil)
             unitBytes[unit] = item.byteCount
             unitNames[unit] = item.filename
-            unitsByItem[item.repIndex] = [unit]
             totalBytes &+= item.byteCount
         }
         for folder in manifest.folders {
-            var units: Set<PullUnit> = []
             for node in folder.nodes where node.kind == .file {
                 let unit = PullUnit(repIndex: folder.repIndex, childSeq: node.childSeq)
                 unitBytes[unit] = node.byteCount
                 unitNames[unit] = node.filename
-                units.insert(unit)
                 totalBytes &+= node.byteCount
             }
-            unitsByItem[folder.repIndex] = units
         }
 
         let published = Offer(
             generation: manifest.generation, sourceName: sourceName, unitBytes: unitBytes,
-            unitNames: unitNames, unitsByItem: unitsByItem, totalBytes: totalBytes)
+            unitNames: unitNames, totalBytes: totalBytes)
         let hadVisibleSession = lock.withLock { () -> Bool in
             let wasVisible = session?.revealed ?? false
             offer = published
@@ -222,7 +222,7 @@ final class PasteMaterializationTracker: @unchecked Sendable {
     func pullBegan(generation: UInt64, repIndex: Int, childSeq: UInt32?) {
         apply(generation: generation, repIndex: repIndex, childSeq: childSeq) {
             offer, session, unit in
-            session.activeUnits.insert(unit)
+            if !session.activeUnits.contains(unit) { session.activeUnits.append(unit) }
             session.lastActiveName = offer.unitNames[unit] ?? session.lastActiveName
             // A pull in flight means the paste isn't idle: invalidate any
             // terminal already scheduled for the gap this pull just filled.
@@ -258,7 +258,7 @@ final class PasteMaterializationTracker: @unchecked Sendable {
     func pullEnded(generation: UInt64, repIndex: Int, childSeq: UInt32?, succeeded: Bool) {
         apply(generation: generation, repIndex: repIndex, childSeq: childSeq) {
             offer, session, unit in
-            session.activeUnits.remove(unit)
+            session.activeUnits.removeAll { $0 == unit }
             if succeeded {
                 session.completedUnits.insert(unit)
                 // Credit the manifest's full byte count: the throttle can have
@@ -332,55 +332,41 @@ final class PasteMaterializationTracker: @unchecked Sendable {
     /// Folds the session's state into a snapshot, returning `nil` when this
     /// event shouldn't reach the UI.
     ///
-    /// Two things bypass the shared throttle, because each changes what the
-    /// readout *says* rather than just how far the bar has moved: the reveal, and
-    /// a change in how many top-level items are done (bounded by the item count,
-    /// so a folder's thousands of children can't exploit it). Everything else
-    /// goes through the coalescer at the shared ~1 %/100 ms policy. Caller holds
-    /// `lock`.
+    /// Only the reveal bypasses the shared throttle; everything else — the
+    /// per-file counter included — rides the coalescer at the shared
+    /// ~1 %/100 ms policy, since a folder can complete thousands of small
+    /// files faster than a screen is worth repainting. The paste's own final
+    /// update is still never lost: a completed pull is credited its full
+    /// manifest byte count, and the throttle's final-chunk rule always admits
+    /// the update that reaches the total. Caller holds `lock`.
     private func evaluate(offer: Offer, session: Session) -> PasteMaterializationSnapshot? {
         let transferred = session.unitBytes.values.reduce(UInt64(0)) { $0 &+ $1 }
-        let itemsCompleted = offer.unitsByItem.values.lazy
-            .filter { $0.isSubset(of: session.completedUnits) }.count
         let sampledAt = now()
         session.rate.record(bytes: transferred, seconds: sampledAt)
 
         if !session.revealed {
             guard sampledAt - session.startedAt >= revealDelay else { return nil }
             session.revealed = true
-        } else if itemsCompleted == session.deliveredItemsCompleted {
+            // The reveal bypassed the throttle, so its watermarks must still
+            // reflect what just went on screen — otherwise the next update
+            // would measure its delta from a byte count already shown.
+            session.coalescer.markForwarded(bytesTransferred: transferred)
+        } else {
             guard
                 session.coalescer.shouldForward(
                     bytesTransferred: transferred, totalBytes: offer.totalBytes)
             else { return nil }
         }
-        // Whatever admitted this update, the throttle's watermarks must reflect
-        // it — otherwise the next update would measure its delta from a byte
-        // count already on screen.
-        session.coalescer.markForwarded(bytesTransferred: transferred)
-        session.deliveredItemsCompleted = itemsCompleted
 
-        // Rank the in-flight pulls by bytes remaining so a folder's concurrent
-        // children don't make the name flicker; ties break on the unit's own
-        // ordering so the pick is deterministic.
-        func remaining(_ unit: PullUnit) -> UInt64 {
-            let expected = offer.unitBytes[unit] ?? 0
-            return expected - min(expected, session.unitBytes[unit] ?? 0)
+        if let current = session.activeUnits.last, let name = offer.unitNames[current] {
+            session.lastActiveName = name
         }
-        let streaming = session.activeUnits.max { lhs, rhs in
-            let lhsRemaining = remaining(lhs)
-            let rhsRemaining = remaining(rhs)
-            if lhsRemaining != rhsRemaining { return lhsRemaining < rhsRemaining }
-            if lhs.repIndex != rhs.repIndex { return lhs.repIndex > rhs.repIndex }
-            return (lhs.childSeq ?? 0) > (rhs.childSeq ?? 0)
-        }
-        if let streaming, let name = offer.unitNames[streaming] { session.lastActiveName = name }
 
         return PasteMaterializationSnapshot(
             sourceName: offer.sourceName,
             currentItemName: session.lastActiveName,
-            itemsCompleted: itemsCompleted,
-            itemCount: offer.itemCount,
+            filesCompleted: session.completedUnits.count,
+            fileCount: offer.fileCount,
             bytesTransferred: min(transferred, offer.totalBytes),
             totalBytes: offer.totalBytes,
             bytesPerSecond: session.rate.bytesPerSecond,

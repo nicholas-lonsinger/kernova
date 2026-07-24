@@ -134,13 +134,13 @@ struct PasteMaterializationTrackerTests {
 
         let snapshot = try #require(harness.latest)
         #expect(snapshot.sourceName == "macOS TEST")
-        #expect(snapshot.itemCount == 2)
+        #expect(snapshot.fileCount == 2)
         #expect(snapshot.totalBytes == 4_000)
         #expect(snapshot.bytesTransferred == 500)
         #expect(snapshot.currentItemName == "a.bin")
     }
 
-    @Test("a folder's total counts its file nodes, and the folder itself is one item")
+    @Test("a folder's file nodes count individually, alongside the flat files")
     func folderOfferDenominators() throws {
         let harness = Harness()
         harness.tracker.offerPublished(
@@ -163,9 +163,9 @@ struct PasteMaterializationTrackerTests {
             generation: 1, repIndex: 1, childSeq: 1, bytesTransferred: 200)
 
         let snapshot = try #require(harness.latest)
-        // Two top-level items (the loose file and the folder), and only the two
-        // file nodes contribute bytes — the subdirectory has none to move.
-        #expect(snapshot.itemCount == 2)
+        // Three files (the loose one plus the folder's two file nodes) — the
+        // subdirectory is not a file and contributes nothing.
+        #expect(snapshot.fileCount == 3)
         #expect(snapshot.totalBytes == 600)
     }
 
@@ -208,7 +208,7 @@ struct PasteMaterializationTrackerTests {
 
     // MARK: - Session shape
 
-    @Test("a sequential multi-file paste reads as one session, counting items as they land")
+    @Test("a sequential multi-file paste reads as one session, counting files as they land")
     func sequentialFilesAggregate() throws {
         let harness = Harness()
         harness.tracker.offerPublished(
@@ -221,7 +221,7 @@ struct PasteMaterializationTrackerTests {
         harness.now = 2
         harness.tracker.pullEnded(generation: 1, repIndex: 0, childSeq: nil, succeeded: true)
         let afterFirst = try #require(harness.latest)
-        #expect(afterFirst.itemsCompleted == 1)
+        #expect(afterFirst.filesCompleted == 1)
         #expect(afterFirst.bytesTransferred == 1_000)
 
         // The gap between two of Finder's sequential fetches must not end the
@@ -233,7 +233,7 @@ struct PasteMaterializationTrackerTests {
         harness.now = 4
         harness.tracker.pullEnded(generation: 1, repIndex: 1, childSeq: nil, succeeded: true)
         let afterSecond = try #require(harness.latest)
-        #expect(afterSecond.itemsCompleted == 2)
+        #expect(afterSecond.filesCompleted == 2)
         #expect(afterSecond.bytesTransferred == 2_000)
     }
 
@@ -261,12 +261,12 @@ struct PasteMaterializationTrackerTests {
         let snapshot = try #require(harness.latest)
         #expect(snapshot.bytesTransferred == 1_000)
         #expect(snapshot.totalBytes == 2_000)
-        // One folder is one top-level item, incomplete until every child lands.
-        #expect(snapshot.itemCount == 1)
-        #expect(snapshot.itemsCompleted == 0)
+        // Each child is its own file in the counter; none is done yet.
+        #expect(snapshot.fileCount == 2)
+        #expect(snapshot.filesCompleted == 0)
     }
 
-    @Test("a folder counts complete only once every file node has landed")
+    @Test("a folder's children advance the counter one by one")
     func folderCompletesOnLastChild() {
         let harness = Harness()
         harness.tracker.offerPublished(
@@ -282,15 +282,15 @@ struct PasteMaterializationTrackerTests {
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: 1)
         harness.now = 2
         harness.tracker.pullEnded(generation: 1, repIndex: 0, childSeq: 1, succeeded: true)
-        #expect(harness.latest?.itemsCompleted == 0)
+        #expect(harness.latest?.filesCompleted == 1)
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: 2)
         harness.now = 3
         harness.tracker.pullEnded(generation: 1, repIndex: 0, childSeq: 2, succeeded: true)
-        #expect(harness.latest?.itemsCompleted == 1)
+        #expect(harness.latest?.filesCompleted == 2)
     }
 
-    @Test("a folder with no file nodes counts as complete from the start")
+    @Test("a folder with no file nodes adds nothing to the counter")
     func emptyFolderCountsComplete() throws {
         let harness = Harness()
         harness.tracker.offerPublished(
@@ -304,10 +304,11 @@ struct PasteMaterializationTrackerTests {
         harness.tracker.pullEnded(generation: 1, repIndex: 0, childSeq: nil, succeeded: true)
 
         let snapshot = try #require(harness.latest)
-        #expect(snapshot.itemCount == 2)
-        // There is nothing to pull for the folder, so it can never "finish"
-        // later — counting it done keeps the readout from stalling at 1 of 2.
-        #expect(snapshot.itemsCompleted == 2)
+        // The empty folder has no file to pull, so it contributes no unit at
+        // all — the counter can't stall waiting on something that will never
+        // stream.
+        #expect(snapshot.fileCount == 1)
+        #expect(snapshot.filesCompleted == 1)
     }
 
     // MARK: - Terminals
@@ -361,7 +362,7 @@ struct PasteMaterializationTrackerTests {
         harness.tracker.pullEnded(generation: 1, repIndex: 0, childSeq: nil, succeeded: false)
 
         let snapshot = try #require(harness.latest)
-        #expect(snapshot.itemsCompleted == 0)
+        #expect(snapshot.filesCompleted == 0)
         #expect(snapshot.bytesTransferred == 400)
     }
 
@@ -522,7 +523,7 @@ struct PasteMaterializationTrackerTests {
     // deterministically by `FetchProgressThrottleTests`, which passes
     // `elapsedSinceLastPush` explicitly; this is kept because it is the only
     // test proving the *tracker* consults the throttle at all.
-    @Test("sub-1% updates are coalesced away, but a completed item always lands")
+    @Test("sub-1% updates are coalesced away; a completion lands via its credited bytes")
     func throttleSuppressesTinyUpdatesButNotItemCompletion() {
         let harness = Harness()
         harness.tracker.offerPublished(
@@ -544,10 +545,74 @@ struct PasteMaterializationTrackerTests {
             generation: 1, repIndex: 0, childSeq: nil, bytesTransferred: 50_100)
         #expect(harness.emissions.count == afterReveal)
 
-        // An item finishing changes what the readout says, so it bypasses the
-        // throttle even though the byte delta alone would not.
+        // Completion credits the file's full manifest size, so the resulting
+        // byte delta (~25% of the total here) clears the quantum on its own —
+        // no special bypass, which a folder completing thousands of small files
+        // in quick succession would otherwise exploit into an emission flood.
         harness.tracker.pullEnded(generation: 1, repIndex: 0, childSeq: nil, succeeded: true)
         #expect(harness.emissions.count == afterReveal + 1)
-        #expect(harness.latest?.itemsCompleted == 1)
+        #expect(harness.latest?.filesCompleted == 1)
+    }
+
+    // MARK: - Current file name
+
+    @Test("the readout names the most recently begun pull still in flight")
+    func nameFollowsMostRecentActivePull() throws {
+        let harness = Harness()
+        harness.tracker.offerPublished(
+            Self.manifest(folders: [
+                Self.folder(
+                    0, "Photos",
+                    nodes: [
+                        Self.fileNode(1, "one.jpg", 1_000), Self.fileNode(2, "two.jpg", 1_000),
+                        Self.fileNode(3, "three.jpg", 1_000),
+                    ])
+            ]),
+            sourceName: "VM")
+
+        // Sequential walk: the name follows each child as it begins. The
+        // session starts at the first pull, so the clock advances afterwards to
+        // clear the reveal gate.
+        harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: 1)
+        harness.now = 2
+        harness.tracker.pullEnded(generation: 1, repIndex: 0, childSeq: 1, succeeded: true)
+        #expect(harness.latest?.currentItemName == "one.jpg")
+
+        harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: 2)
+        harness.now = 3
+        harness.tracker.pullEnded(generation: 1, repIndex: 0, childSeq: 2, succeeded: true)
+        #expect(harness.latest?.currentItemName == "two.jpg")
+
+        harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: 3)
+        harness.now = 4
+        harness.tracker.pullEnded(generation: 1, repIndex: 0, childSeq: 3, succeeded: true)
+        #expect(harness.latest?.currentItemName == "three.jpg")
+    }
+
+    @Test("concurrent children show the newest pull, reverting when it finishes first")
+    func nameRevertsWhenTheNewestConcurrentPullFinishes() {
+        let harness = Harness()
+        harness.tracker.offerPublished(
+            Self.manifest(folders: [
+                Self.folder(
+                    0, "Photos",
+                    nodes: [
+                        Self.fileNode(1, "big.raw", 100_000), Self.fileNode(2, "small.jpg", 100_000),
+                    ])
+            ]),
+            sourceName: "VM")
+
+        harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: 1)
+        harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: 2)
+        harness.now = 2
+        harness.tracker.pullProgressed(
+            generation: 1, repIndex: 0, childSeq: 1, bytesTransferred: 10_000)
+        #expect(harness.latest?.currentItemName == "small.jpg")
+
+        // The newer pull finishes while the older streams on: the name falls
+        // back to the one still in flight instead of sticking to a done file.
+        harness.now = 3
+        harness.tracker.pullEnded(generation: 1, repIndex: 0, childSeq: 2, succeeded: true)
+        #expect(harness.latest?.currentItemName == "big.raw")
     }
 }

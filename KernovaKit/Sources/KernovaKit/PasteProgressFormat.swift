@@ -17,16 +17,16 @@ public enum PasteProgressFormat {
         "Pasting from “\(sourceName)”…"
     }
 
-    /// Progress through the paste's top-level items ("2 of 5 items"), or `nil`
-    /// for a single-item paste, where the file's own name already says
-    /// everything a counter would.
+    /// Progress through the paste's files ("2 of 5 files" — a folder's file
+    /// nodes count individually), or `nil` for a single-file paste, where the
+    /// file's own name already says everything a counter would.
     public static func itemCounter(completed: Int, total: Int) -> String? {
         guard total > 1 else { return nil }
-        // A count that has been delivered but not yet incremented past the item
+        // A count that has been delivered but not yet incremented past the file
         // currently streaming reads better as "3 of 5" than "2 of 5" — the user
         // counts the file on screen as the one in progress.
         let position = min(completed + 1, total)
-        return "\(position) of \(total) items"
+        return "\(position) of \(total) files"
     }
 
     /// Throughput ("1.2 GB/s"), or `nil` before an estimate exists.
@@ -80,7 +80,7 @@ public enum PasteProgressFormat {
         var parts = [headline(sourceName: snapshot.sourceName)]
         parts.append(percent(fraction: snapshot.fractionComplete))
         if let counter = itemCounter(
-            completed: snapshot.itemsCompleted, total: snapshot.itemCount)
+            completed: snapshot.filesCompleted, total: snapshot.fileCount)
         {
             parts.append(counter)
         } else if let name = snapshot.currentItemName {

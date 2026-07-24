@@ -10,21 +10,21 @@ import Foundation
 /// **One snapshot per paste, not per pull.** `bytesTransferred`/`totalBytes`
 /// aggregate every file the paste materializes, whether the pulls run
 /// sequentially (a flat multi-file paste) or concurrently (a folder's children),
-/// so the readout is identical in both shapes. `itemsCompleted`/`itemCount`
-/// count *top-level* entries — the files and folders the user copied — while
-/// `currentItemName` names the individual file streaming right now, which for a
-/// folder is one of its descendants.
+/// so the readout is identical in both shapes. `filesCompleted`/`fileCount`
+/// count individual *files* — flat reps and a folder's file nodes alike, so a
+/// folder paste gets a live counter too — while `currentItemName` names the
+/// file streaming right now.
 public struct PasteMaterializationSnapshot: Equatable, Sendable {
     /// Display name of the machine the bytes are coming from — the VM's name on
     /// the host, "Mac" in the guest.
     public let sourceName: String
     /// The file currently streaming (a folder's descendant shows its own name),
-    /// or `nil` when nothing is in flight between two items.
+    /// or `nil` when nothing is in flight between two files.
     public let currentItemName: String?
-    /// Top-level items fully materialized so far.
-    public let itemsCompleted: Int
-    /// Top-level items in the paste (flat files + folder roots).
-    public let itemCount: Int
+    /// Files fully materialized so far.
+    public let filesCompleted: Int
+    /// Files the paste will materialize (flat reps + folder file nodes).
+    public let fileCount: Int
     /// Bytes materialized across the whole paste.
     public let bytesTransferred: UInt64
     /// Bytes the whole paste will materialize, from the published manifest.
@@ -37,14 +37,14 @@ public struct PasteMaterializationSnapshot: Equatable, Sendable {
 
     /// Creates a snapshot of a paste in flight.
     public init(
-        sourceName: String, currentItemName: String?, itemsCompleted: Int, itemCount: Int,
+        sourceName: String, currentItemName: String?, filesCompleted: Int, fileCount: Int,
         bytesTransferred: UInt64, totalBytes: UInt64, bytesPerSecond: Double?,
         secondsRemaining: Double?
     ) {
         self.sourceName = sourceName
         self.currentItemName = currentItemName
-        self.itemsCompleted = itemsCompleted
-        self.itemCount = itemCount
+        self.filesCompleted = filesCompleted
+        self.fileCount = fileCount
         self.bytesTransferred = bytesTransferred
         self.totalBytes = totalBytes
         self.bytesPerSecond = bytesPerSecond

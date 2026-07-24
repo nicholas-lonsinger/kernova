@@ -480,15 +480,17 @@ who pressed ⌘V is looking at that machine; the guest agent's status item is it
 this is the first thing it renders beyond menu text. `PasteMaterializationTracker` is the
 per-chunk callback's fourth consumer, and the only one that also needs each pull's *start* and
 *terminal*, because it aggregates many pulls into one session: the published manifest supplies
-the denominators (top-level item count, total bytes across every file the paste will
-materialize) and the pulls supply the numerators, so a flat multi-file paste (sequential pulls)
-and a folder (concurrent children) read identically — one bar, one percent, one speed, one time
-remaining, plus the file currently streaming and "N of M items". The status item carries a
-determinate ring; the dropdown carries the full readout and opens itself **once per paste**, and
-never again for that paste once the user closes it. Revealed after 1 s of materializing —
-deliberately longer than the in-app bar's 300 ms, because a dropdown that opens itself is a
-heavier interruption than a bar in a window already on screen — and cleared 2 s after the last
-pull ends, a dwell that both bridges Finder's gap between two sequentially-pulled items and
+the denominators (how many files will materialize — flat reps and folder file nodes alike — and
+total bytes across all of them) and the pulls supply the numerators, so a flat multi-file paste
+(sequential pulls) and a folder (concurrent children) read identically — one bar, one percent,
+one speed, one time remaining, plus the file currently streaming (the most recently begun pull
+still in flight) and "N of M files", where a folder's children count individually so a
+folder-only paste gets a live counter too. The status item carries a determinate ring; the
+dropdown carries the full readout and opens itself **once per paste**, and never again for that
+paste once the user closes it. Revealed after 5 s of materializing — far past the in-app bar's
+300 ms, because a dropdown that opens itself is a heavier interruption than a bar in a window
+already on screen, so it is reserved for genuinely long transfers — and cleared 2 s after the
+last pull ends, a dwell that both bridges Finder's gap between two sequentially-pulled items and
 leaves the finished readout up for a beat. A cancelled paste or a partial materialization (one
 file dragged out of a folder placeholder tree) clears the same way, below 100 %, by design.
 Supersession — a new offer publishing, an offer release, clipboard sharing off — clears it

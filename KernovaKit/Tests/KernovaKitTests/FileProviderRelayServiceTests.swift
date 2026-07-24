@@ -445,7 +445,7 @@ struct FileProviderRelayServiceTests {
         // A successful pull is credited its full manifest size.
         let final = try #require(snapshots.last)
         #expect(final.bytesTransferred == 1_000_000)
-        #expect(final.itemsCompleted == 1)
+        #expect(final.filesCompleted == 1)
     }
 
     @Test("a failed fetchFile reports its terminal without completing the item")
@@ -467,7 +467,7 @@ struct FileProviderRelayServiceTests {
 
         try await gate.wait { error.value != nil }
         let final = try #require(harness.emissions.value.compactMap { $0 }.last)
-        #expect(final.itemsCompleted == 0)
+        #expect(final.filesCompleted == 0)
         // The bytes that really did cross are kept; only completion is withheld.
         #expect(final.bytesTransferred == 250_000)
     }
@@ -515,9 +515,9 @@ struct FileProviderRelayServiceTests {
         #expect(snapshots.first?.currentItemName == "file.txt")
         let final = try #require(snapshots.last)
         #expect(final.bytesTransferred == 500_000)
-        // One folder is one top-level item, complete once its only file lands.
-        #expect(final.itemCount == 1)
-        #expect(final.itemsCompleted == 1)
+        // The folder's single file node is the counter's whole population.
+        #expect(final.fileCount == 1)
+        #expect(final.filesCompleted == 1)
     }
 
     @Test("a relay with no tracker wired pulls normally")

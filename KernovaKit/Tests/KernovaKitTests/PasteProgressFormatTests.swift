@@ -12,14 +12,14 @@ struct PasteProgressFormatTests {
         #expect(PasteProgressFormat.headline(sourceName: "macOS TEST") == "Pasting from “macOS TEST”…")
     }
 
-    @Test("the item counter shows the file being worked on, and is absent for a single item")
+    @Test("the file counter shows the file being worked on, and is absent for a single file")
     func itemCounter() {
         #expect(PasteProgressFormat.itemCounter(completed: 0, total: 1) == nil)
-        #expect(PasteProgressFormat.itemCounter(completed: 0, total: 5) == "1 of 5 items")
-        #expect(PasteProgressFormat.itemCounter(completed: 2, total: 5) == "3 of 5 items")
-        // Never past the total, even in the beat between the last item finishing
+        #expect(PasteProgressFormat.itemCounter(completed: 0, total: 5) == "1 of 5 files")
+        #expect(PasteProgressFormat.itemCounter(completed: 2, total: 5) == "3 of 5 files")
+        // Never past the total, even in the beat between the last file finishing
         // and the readout clearing.
-        #expect(PasteProgressFormat.itemCounter(completed: 5, total: 5) == "5 of 5 items")
+        #expect(PasteProgressFormat.itemCounter(completed: 5, total: 5) == "5 of 5 files")
     }
 
     @Test("speed is a byte count per second, and absent without an estimate")
@@ -69,18 +69,18 @@ struct PasteProgressFormatTests {
         #expect(both?.hasSuffix("About 30 seconds remaining") == true)
     }
 
-    @Test("the summary leads with the headline and carries the counter for a multi-item paste")
+    @Test("the summary leads with the headline and carries the counter for a multi-file paste")
     func summaryMultipleItems() {
         let snapshot = PasteMaterializationSnapshot(
-            sourceName: "VM", currentItemName: "big.mov", itemsCompleted: 1, itemCount: 5,
+            sourceName: "VM", currentItemName: "big.mov", filesCompleted: 1, fileCount: 5,
             bytesTransferred: 500, totalBytes: 1_000, bytesPerSecond: nil, secondsRemaining: nil)
-        #expect(PasteProgressFormat.summary(snapshot) == "Pasting from “VM”… — 50% — 2 of 5 items")
+        #expect(PasteProgressFormat.summary(snapshot) == "Pasting from “VM”… — 50% — 2 of 5 files")
     }
 
-    @Test("the summary falls back to the file's name for a single-item paste")
+    @Test("the summary falls back to the file's name for a single-file paste")
     func summarySingleItem() {
         let snapshot = PasteMaterializationSnapshot(
-            sourceName: "VM", currentItemName: "big.mov", itemsCompleted: 0, itemCount: 1,
+            sourceName: "VM", currentItemName: "big.mov", filesCompleted: 0, fileCount: 1,
             bytesTransferred: 250, totalBytes: 1_000, bytesPerSecond: nil, secondsRemaining: nil)
         #expect(PasteProgressFormat.summary(snapshot) == "Pasting from “VM”… — 25% — big.mov")
     }
