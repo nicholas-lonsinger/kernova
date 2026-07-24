@@ -10,9 +10,7 @@ import Foundation
 /// in practice — the underlying `VsockHostConnection` handles its own
 /// thread safety (`@unchecked Sendable` + internal locking).
 enum VsockLogBridge {
-    // RATIONALE: nonisolated(unsafe) is appropriate here because assignment
-    // happens once on the main thread during top-level `main.swift`
-    // execution, before the reconnect Task or any logger calls happen on
-    // background threads. There is no concurrent write contention.
+    // nonisolated(unsafe): safe under the set-once-before-background-reads
+    // contract in the doc comment above.
     nonisolated(unsafe) static var connection: VsockHostConnection?
 }

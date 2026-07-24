@@ -371,13 +371,10 @@ struct VsockGuestClipboardAgentTests {
     ) async throws {
         agent.start()
         agent.setEnabled(true)
-        // RATIONALE: agent connection/lifecycle state (`liveChannelForTesting`,
-        // `inboundPromiseGenerationForTesting`, `isEnabledForTesting`) is the
-        // system-under-test's own state — not a test double we can fire an
-        // AsyncGate from, and the agent isn't @Observable. These reads stay
-        // polling per docs/TESTING.md "Async waits in tests" (sanctioned no-signal
-        // poll); the pasteboard-write waits, where the async timing flake
-        // actually lives, use `pasteboard.changed` instead.
+        // RATIONALE: sanctioned no-signal polls (docs/TESTING.md "Async waits
+        // in tests") — the `…ForTesting` lifecycle reads are SUT-internal
+        // state, not @Observable or a test double; the pasteboard-write waits
+        // use `pasteboard.changed` instead.
         try await waitUntil { agent.liveChannelForTesting != nil }
     }
 

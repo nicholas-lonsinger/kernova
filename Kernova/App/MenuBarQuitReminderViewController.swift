@@ -30,7 +30,7 @@ final class MenuBarQuitReminderViewController: NSViewController {
         let title = makeCalloutHeadline("Kernova is still running in the menu bar.")
         let body = makeCalloutBody(
             "Your virtual machines keep running. Quit Kernova fully from this menu-bar icon.")
-        // RATIONALE: the same title the status item's File Provider reminder uses
+        // The same title the status item's File Provider reminder uses
         // for its opt-out (`ClipboardFileProviderReminder.stopRemindingCommandTitle`),
         // so one menu-bar item doesn't word the identical concept two ways. Read
         // from that shared helper rather than duplicating the literal.

@@ -43,9 +43,8 @@ extension UTType {
         let resolvedExtensions: [(ext: String, fallback: UTType)] = [
             ("iso", .diskImage), ("img", .data), ("asif", .data),
         ]
-        // Extensions where the system UTType is semantically wrong for disk images.
-        // RATIONALE: "raw" maps to public.camera-raw-image on macOS, not raw disk images.
-        // We use .data directly to avoid filtering by the wrong content type.
+        // Extensions where the system UTType is semantically wrong for disk
+        // images ("raw" → public.camera-raw-image; see the doc comment above).
         let forcedFallbackExtensions: [UTType] = [.data]
 
         var types: [UTType] = [.diskImage]

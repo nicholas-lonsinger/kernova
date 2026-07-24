@@ -64,7 +64,7 @@ func nextFrame(from channel: VsockChannel) async throws -> Frame {
         var iterator = channel.incoming.makeAsyncIterator()
         return try await iterator.next()
     }
-    // RATIONALE: `receiver` is not cancelled in `defer` because every exit path
+    // `receiver` is not cancelled in `defer` because every exit path
     // already awaits `receiver.value` (success, EOF, or timeout-induced
     // CancellationError). By the time the function returns, the receiver task
     // has completed; a redundant cancel would be a no-op and obscures intent.

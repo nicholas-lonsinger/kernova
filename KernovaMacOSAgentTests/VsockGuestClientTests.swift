@@ -60,12 +60,9 @@ struct VsockGuestClientTests {
 
         _ = try await awaitFirst(enteredStream)
 
-        // RATIONALE: liveChannel exposes the SUT's own connection state — a
-        // lock-protected currentChannel published by the detached reconnect loop and
-        // cleared on socket EOF — not an @Observable property or a test-owned double,
-        // so there is no signal to await. Event-driving these waits would require
-        // adding notify() plumbing to VsockGuestClient (out of scope); polling is the
-        // correct seam. See docs/TESTING.md "Async waits in tests".
+        // RATIONALE: sanctioned no-signal poll (docs/TESTING.md "Async waits in
+        // tests") — `liveChannel` is lock-protected SUT state, not @Observable
+        // or a test-owned double, so there is no signal to await.
         try await waitUntil { client.liveChannel != nil }
         #expect(client.liveChannel != nil)
 

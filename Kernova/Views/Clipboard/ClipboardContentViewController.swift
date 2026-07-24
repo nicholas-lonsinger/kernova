@@ -746,9 +746,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     private func message(for issue: ClipboardTransferIssue) -> String {
         switch issue.kind {
-        case .contentTooLarge(let byteCount, let limit):
-            return
-                "Content is too large to send (\(DataFormatters.formatBytes(UInt64(byteCount))) — limit \(DataFormatters.formatBytes(UInt64(limit))))"
         case .diskFull(let needed, let available):
             if let available {
                 return

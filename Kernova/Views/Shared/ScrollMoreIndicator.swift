@@ -257,7 +257,7 @@ final class ScrollMoreIndicator {
 private final class ScrollMoreFadeView: NSView {
     override var isOpaque: Bool { false }
 
-    // RATIONALE: nil from hitTest drops the view from event routing so the scroll
+    // nil from hitTest drops the view from event routing so the scroll
     // view beneath still scrolls under the cursor.
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 

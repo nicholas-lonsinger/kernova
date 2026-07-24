@@ -11,13 +11,10 @@ import KernovaTestSupport
 @MainActor
 @Suite("SerialSocketRelay")
 struct SerialSocketRelayTests {
-    // RATIONALE: Every `waitUntil` in this suite stays a poll rather than
-    // `waitForChange`/`AsyncGate` (see docs/TESTING.md "Async waits in tests"). The only
-    // two signals are a kernel socket/pipe becoming readable (`readChunk`) and
-    // `relay.hasClientForTesting`, which `SerialSocketRelay` (`@unchecked Sendable`,
-    // not `@Observable`) flips on its private background GCD queue under `NSLock`.
-    // Neither is an `@Observable` property nor a test-owned recorder, so making them
-    // event-driven would require adding a seam to production code, out of scope here.
+    // RATIONALE: sanctioned no-signal polls (docs/TESTING.md "Async waits in
+    // tests") — this suite's only waits are kernel socket/pipe readability
+    // (`readChunk`) and `relay.hasClientForTesting`, NSLock-guarded SUT state;
+    // neither is @Observable or a test-owned recorder.
 
     // MARK: - Helpers
 

@@ -309,7 +309,7 @@ public enum VsockChannelError: Error, Sendable {
     /// (typically a `CocoaError.fileWriteUnknown` wrapping a POSIX errno).
     case write(any Error)
 
-    // RATIONALE: `Equatable` is implemented manually so callers can still
+    // `Equatable` is implemented manually so callers can still
     // pattern-match on `.closed` (the common test case) without forcing
     // every wrapped error to be Equatable. `.write` cases compare equal to
     // each other irrespective of their inner error — sufficient for the

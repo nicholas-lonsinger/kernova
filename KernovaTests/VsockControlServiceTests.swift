@@ -491,10 +491,9 @@ struct VsockControlServiceTests {
         // Wait for a few terminateAfter windows. By then `checkLiveness`
         // should have fired and called `channel.close()` on the host side.
         // After teardown, `host.send(...)` raises `VsockChannelError.closed`.
-        // RATIONALE: channel closure is detected by attempting a send and
-        // catching `.closed` — there is no @Observable property or signal to
-        // await (the watchdog closes the socket directly), so this is one of the
-        // sanctioned no-signal polls per docs/TESTING.md "Async waits in tests".
+        // RATIONALE: sanctioned exception-catch poll (docs/TESTING.md "Async
+        // waits in tests") — closure is only detectable by a send raising
+        // `.closed`; the watchdog closes the socket with no signal to await.
         try await waitUntil {
             do {
                 try host.send(makeHeartbeat(nonce: 1))

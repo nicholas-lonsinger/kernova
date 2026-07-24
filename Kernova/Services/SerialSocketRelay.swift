@@ -22,10 +22,6 @@ import os
 /// private serial `DispatchQueue` via `DispatchSourceRead`. `forwardOutput(_:)`
 /// is therefore safe to call from the background GCD queue that drives serial
 /// output, with no actor hop — mirroring `VsockChannel`'s lock-based model.
-// RATIONALE: `@unchecked Sendable` with a manual `NSLock` (rather than
-// `@MainActor` isolation) so `forwardOutput` is callable directly from the
-// background serial readability handler with no MainActor hop. Same rationale
-// as `VsockChannel`.
 final class SerialSocketRelay: @unchecked Sendable {
     /// Filesystem path of the bound socket, for UI display. `nil` until
     /// `start()` binds successfully, and `nil` again after `stop()` or if the

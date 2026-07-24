@@ -272,10 +272,8 @@ struct VsockGuestControlAgentTests {
 
         // Close the first host fd immediately so any agent send to host0
         // doesn't stall the test on a kernel buffer; the agent's liveness
-        // watchdog tears down its own end after `terminateAfter` of silence.
-        // RATIONALE: We're testing the agent's behavior on a silent host —
-        // closing host0 simulates an unresponsive peer cleanly, but the
-        // critical path is the watchdog timeout, not the EOF.
+        // watchdog tears down its own end after `terminateAfter` of silence —
+        // the watchdog timeout, not the EOF, is the path under test.
         close(hostFd0)
 
         let host1 = VsockChannel(fileDescriptor: hostFd1)
