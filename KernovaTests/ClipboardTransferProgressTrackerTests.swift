@@ -95,12 +95,21 @@ struct ClipboardTransferProgressTrackerTests {
         return tracker
     }
 
+    // RATIONALE: this is the suite's one wall-clock-dependent assertion — the
+    // throttle admits an update on the byte quantum OR ~100 ms elapsed, so
+    // reaching the byte gate requires the two records below to land inside that
+    // window. `FetchProgressCoalescerTests` avoids the exposure by only exercising
+    // branches that short-circuit first, and `FetchProgressThrottleTests` covers
+    // the quantum itself deterministically (it passes `elapsedSinceLastPush`
+    // explicitly). It is kept here anyway because it is the only test that proves
+    // `record` consults the throttle at all: delete the `shouldForward` guard and
+    // this is the sole failure, which is exactly the #636 regression. The two
+    // records are adjacent synchronous statements — no awaits, actor hops, or I/O.
     @Test("a sub-quantum chunk after a forwarded one is suppressed")
     func subQuantumChunkSuppressed() {
         let tracker = makeRevealedTracker(forwardedTo: quantum * 10)
-        // A tenth of the quantum: far under the byte gate, and this runs in the
-        // same synchronous block, so the throttle's ~100 ms time gate is closed
-        // too — the update carries nothing the bar could show yet.
+        // A tenth of the quantum: far under the byte gate, so the update carries
+        // nothing the bar could show yet.
         #expect(record(tracker, bytes: quantum * 10 + quantum / 10) == .updatedSuppressed)
     }
 
@@ -132,13 +141,17 @@ struct ClipboardTransferProgressTrackerTests {
 
     @Test("a suppressed chunk still advances the bytes the next flush publishes")
     func suppressedChunkStillAdvancesBytes() {
-        let tracker = makeRevealedTracker(forwardedTo: quantum * 10)
-        #expect(tracker.projection()?.bytesTransferred == quantum * 10)
-        // Two sub-quantum chunks, both suppressed…
-        #expect(record(tracker, bytes: quantum * 10 + 1) == .updatedSuppressed)
-        #expect(record(tracker, bytes: quantum * 10 + 2) == .updatedSuppressed)
-        // …yet the freshest count is what the next flush reads, so nothing is lost
-        // by not republishing per chunk.
-        #expect(tracker.consumeFlush()?.bytesTransferred == quantum * 10 + 2)
+        let tracker = ClipboardTransferProgressTracker()
+        #expect(record(tracker, bytes: 1) == .created)
+        #expect(tracker.reveal(1))
+        // Suppress on the conflation flag (leave the flush queued) rather than on
+        // the byte quantum: this path reaches the same `.updatedSuppressed` with no
+        // dependence on how long the test takes to run.
+        #expect(record(tracker, bytes: quantum) == .updatedScheduleFlush)
+        #expect(record(tracker, bytes: quantum * 2) == .updatedSuppressed)
+        #expect(record(tracker, bytes: quantum * 3) == .updatedSuppressed)
+        // The queued flush reads the freshest count, so nothing is lost by not
+        // republishing per chunk.
+        #expect(tracker.consumeFlush()?.bytesTransferred == quantum * 3)
     }
 }
