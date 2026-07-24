@@ -106,8 +106,9 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
     /// stalled peer, and this delivery queue is shared with every other
     /// `fetchFile`/`cancelFetch` on the connection — blocking it here would
     /// reintroduce exactly the starvation problem moving `fetchFile` off the
-    /// queue was meant to solve. (No progress teardown here: the abort surfaces
-    /// as the in-flight pull's failure reply, whose branch unpublishes.)
+    /// queue was meant to solve. (No readout teardown here: the abort surfaces
+    /// as the in-flight pull's failure reply, whose branch reports the terminal
+    /// to the materialization tracker.)
     public func cancelFetch(generation: UInt64, repIndex: Int) {
         logger.debug(
             "Relay cancelFetch (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public))"
@@ -186,9 +187,10 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
 /// A multi-GB pull fires the receiver's per-chunk callback tens of thousands of
 /// times; forwarding every one would flood a consumer's main-queue republishes.
 /// This coalesces to at most one update per ~1% of the total OR per ~100 ms, and
-/// always forwards the final chunk (`bytes >= total`) so a determinate bar
-/// reaches 100% before the clone step. Stateless and testable in isolation; the
-/// caller owns the watermarks (`lastPushedBytes`, elapsed since the last push).
+/// always forwards the final chunk (`bytes >= total`) so a determinate readout
+/// always reaches 100% rather than stalling one throttle interval short.
+/// Stateless and testable in isolation; the caller owns the watermarks
+/// (`lastPushedBytes`, elapsed since the last push).
 public enum FetchProgressThrottle {
     /// Minimum fraction of the total that must accumulate since the last push.
     public static let minByteFraction = 0.01

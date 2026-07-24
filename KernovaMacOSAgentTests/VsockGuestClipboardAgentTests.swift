@@ -1126,7 +1126,7 @@ struct VsockGuestClipboardAgentTests {
         #expect(try Data(contentsOf: stagedURL) == contents)
     }
 
-    @Test("File Provider relay: fetchStagedFile forwards cumulative byte progress via onProgress (#426)")
+    @Test("File Provider relay: fetchStagedFile forwards cumulative byte progress via onProgress")
     func fileProviderRelayForwardsProgress() async throws {
         let pasteboard = FakePasteboard()
         let (agentFd, remoteFd) = try makeRawSocketPair()
@@ -1153,7 +1153,7 @@ struct VsockGuestClipboardAgentTests {
                 ]))
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
 
-        let log = ServicingProgressLog()
+        let log = RelayProgressLog()
         let pull = Task {
             await offCooperativePool {
                 agent.fetchStagedFile(
@@ -1166,7 +1166,8 @@ struct VsockGuestClipboardAgentTests {
         _ = try await pull.value.get()
 
         // Progress was surfaced, cumulative (non-decreasing), and reached the total
-        // on the final push — what drives the extension's determinate download bar.
+        // on the final callback — the byte stream that drives the guest agent's
+        // status-item paste readout (#643).
         #expect(log.count >= 1)
         #expect(log.last?.bytes == UInt64(contents.count))
         #expect(log.last?.total == UInt64(contents.count))
@@ -3194,11 +3195,11 @@ struct VsockGuestClipboardAgentTests {
     }
 }
 
-// MARK: - Servicing progress recorder
+// MARK: - Relay progress recorder
 
-/// Thread-safe recorder for the `fetchStagedFile` `onProgress` pushes (#426),
-/// which fire off the main queue on the transfer's serial queue.
-final class ServicingProgressLog: @unchecked Sendable {
+/// Thread-safe recorder for the `fetchStagedFile` `onProgress` callbacks, which
+/// fire off the main queue on the transfer's serial queue.
+final class RelayProgressLog: @unchecked Sendable {
     private let lock = NSLock()
     private var entries: [(bytes: UInt64, total: UInt64)] = []
     func record(_ bytes: UInt64, _ total: UInt64) { lock.withLock { entries.append((bytes, total)) } }
