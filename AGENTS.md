@@ -155,7 +155,7 @@ A PR's head branch must always carry this clean name. (Renaming a branch on GitH
 
 ### Commit Messages
 
-These conventions apply to **all** forms of committing: local commits, PR squash/merge commits, and any other git operations that produce commits.
+These conventions apply to **all** forms of committing: local commits, PR squash/merge commits, and any other git operations that produce commits. The subject-line format, type prefixes, and trailer below are universal; the sectioned body is for commits you author on a branch. A squash merge's body is written differently — see [Merging Pull Requests](#merging-pull-requests).
 
 Use the following format for all commits:
 
@@ -212,11 +212,28 @@ feat: Add VM snapshot support
 
 Commit messages must reflect the full intent and scope of all changes, not just the last operation performed. Before writing a commit message, review both the task context (what was asked for, the steps taken) and the staged diff holistically. Lead with the primary purpose; secondary details (naming conventions, formatting choices) belong in the body.
 
-An AI agent authoring a commit ends the message with a `Co-Authored-By: Claude <noreply@anthropic.com>` trailer — no model name, substituting the agent's own identity if it isn't Claude. The trailer is **not** appended automatically — add it explicitly (e.g. `git commit --trailer "Co-Authored-By: Claude <noreply@anthropic.com>"`). Include it exactly once; do not duplicate it in the message body.
+An AI agent authoring a commit ends the message with a `Co-authored-by: Claude <noreply@anthropic.com>` trailer — no model name, substituting the agent's own identity if it isn't Claude. The trailer is **not** appended automatically — add it explicitly (e.g. `git commit --trailer "Co-authored-by: Claude <noreply@anthropic.com>"`). Include it exactly once; do not duplicate it in the message body. A squash merge does not inherit it from the branch's commits either — it comes from the `--body` you pass at merge time (see [Merging Pull Requests](#merging-pull-requests)).
 
 ### Merging Pull Requests
 
 When merging PRs with `gh pr merge`, always squash-merge with `--squash --subject` using the PR title and appending the PR number in parentheses (e.g., `--squash --subject "fix: Title (#11)"`), matching the repo's existing convention.
+
+**Always pass `--body`, and never pass it empty.** `gh` forwards `--subject`/`--body` to the merge API as the commit title and message verbatim, so the squash commit says exactly what you pass and nothing more — in particular it does not pick up the `Co-authored-by` trailers from the branch's commits (observed on `4fb1829`, which lost its trailer to a `--body ""`). Omitting `--body` is not the fix either: GitHub then falls back to its default squash message, the branch's commit messages concatenated — fourteen of them, for a branch like #650. Write the body yourself:
+
+```
+gh pr merge <N> --squash \
+  --subject "<type>: <PR title> (#<PR number>)" \
+  --body "$(cat <<'EOF'
+<one short paragraph, or a few bullets, describing the change as merged>
+
+Co-authored-by: Claude <noreply@anthropic.com>
+EOF
+)"
+```
+
+**Describe the merged state, not the route to it.** Write the body from the final diff. Work that was superseded, reverted, or corrected mid-branch is not part of what lands: if the branch replaced one approach with another, describe only the one that shipped; if it rolled something back, that work doesn't appear at all. Review-fix and follow-up commits are absorbed into the change they fix rather than listed as their own steps. Squash bodies are prose about the result — the branch's commit-by-commit history stays on the PR, which is where the path is legible.
+
+Keep it to the equivalent of the PR's `## Summary`. The full `## Changes` restates the diff a reader is already looking at, and `## Test plan` checkboxes are a review artifact; both belong on the PR, not in `git log`.
 
 **Do not use `--delete-branch`.** The repo has `delete_branch_on_merge` enabled on GitHub, so remote branches are auto-deleted. The `--delete-branch` flag causes `gh` to run `git checkout main` locally, which fails in worktree contexts.
 
