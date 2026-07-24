@@ -37,23 +37,50 @@ public enum PasteProgressFormat {
         return "\(bytes)/s"
     }
 
-    /// Time remaining in the system's own coarse phrasing, or `nil` when it
-    /// can't be estimated.
+    /// Bytes so far against the paste's total, with the current speed in
+    /// parentheses ("47.6 MB of 3.03 GB (7.8 MB/s)") — Safari's download-list
+    /// phrasing.
     ///
-    /// Deliberately vague: a chunked transfer's instantaneous rate is noisy
-    /// enough that a precise-looking figure would be a lie, and a countdown that
-    /// jitters between "38 seconds" and "2 minutes" reads as broken. Coarse
-    /// buckets change far less often, so the estimate stays believable.
+    /// Drops the parenthetical before a speed estimate exists.
+    public static func byteProgress(
+        bytesTransferred: UInt64, totalBytes: UInt64, bytesPerSecond: Double?
+    ) -> String {
+        let transferred = ByteCountFormatter.string(
+            fromByteCount: Int64(clamping: bytesTransferred), countStyle: .file)
+        let total = ByteCountFormatter.string(
+            fromByteCount: Int64(clamping: totalBytes), countStyle: .file)
+        var line = "\(transferred) of \(total)"
+        if let speed = speed(bytesPerSecond: bytesPerSecond) {
+            line += " (\(speed))"
+        }
+        return line
+    }
+
+    /// Time remaining in Safari's download phrasing ("6 minutes, 27 seconds
+    /// remaining"), or `nil` when it can't be estimated.
+    ///
+    /// Under an hour the seconds are always spelled out — the ticking figure is
+    /// what makes the countdown read as live. Above an hour the seconds would be
+    /// noise, so the line coarsens to hours and minutes.
     public static func timeRemaining(seconds: Double?) -> String? {
         guard let seconds, seconds.isFinite, seconds > 0 else { return nil }
-        if seconds < 10 { return "A few seconds remaining" }
-        if seconds < 60 { return "About \(Int(seconds.rounded())) seconds remaining" }
-        if seconds < 90 { return "About a minute remaining" }
-        if seconds < 3600 {
-            return "About \(Int((seconds / 60).rounded())) minutes remaining"
+        func unit(_ count: Int, _ name: String) -> String {
+            "\(count) \(name)\(count == 1 ? "" : "s")"
         }
-        let hours = Int((seconds / 3600).rounded())
-        return hours <= 1 ? "About an hour remaining" : "About \(hours) hours remaining"
+        let total = max(1, Int(seconds.rounded()))
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        var parts: [String] = []
+        if hours > 0 {
+            parts.append(unit(hours, "hour"))
+            if minutes > 0 { parts.append(unit(minutes, "minute")) }
+        } else if minutes > 0 {
+            parts.append(unit(minutes, "minute"))
+            parts.append(unit(total % 60, "second"))
+        } else {
+            parts.append(unit(total, "second"))
+        }
+        return parts.joined(separator: ", ") + " remaining"
     }
 
     /// Percent complete ("42%"), floored so it never reads 100 % before the
@@ -61,17 +88,6 @@ public enum PasteProgressFormat {
     public static func percent(fraction: Double) -> String {
         let clamped = min(1, max(0, fraction))
         return "\(Int(clamped * 100))%"
-    }
-
-    /// Speed and time remaining as one line, dropping whichever half isn't
-    /// available yet ("1.2 GB/s · About 30 seconds remaining").
-    ///
-    /// Returns `nil` before either half exists, so the caller can leave the row
-    /// empty rather than render a bare separator.
-    public static func detail(bytesPerSecond: Double?, secondsRemaining: Double?) -> String? {
-        let parts = [speed(bytesPerSecond: bytesPerSecond), timeRemaining(seconds: secondsRemaining)]
-            .compactMap { $0 }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     /// One-line summary for the status item's tooltip and the readout's

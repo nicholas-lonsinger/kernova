@@ -15,8 +15,8 @@ import AppKit
 public final class PasteProgressMenuItemView: NSView {
     /// Content width.
     ///
-    /// Wide enough for a headline naming a VM plus a speed-and-time line,
-    /// without making the whole dropdown unusually wide.
+    /// Wide enough for a headline naming a VM plus the byte-progress line with
+    /// its file counter, without making the whole dropdown unusually wide.
     private static let contentWidth: CGFloat = 260
     /// Leading inset aligning the readout with the dropdown's ordinary item
     /// titles, whose text starts clear of the checkmark gutter.
@@ -30,10 +30,9 @@ public final class PasteProgressMenuItemView: NSView {
     /// The fraction the bar should show, committed to it only while the view is
     /// on screen — see `viewDidMoveToWindow`.
     private var pendingFraction: Double = 0
-    private let itemName = NSTextField(labelWithString: "")
+    private let byteProgress = NSTextField(labelWithString: "")
     private let itemCounter = NSTextField(labelWithString: "")
-    private let detail = NSTextField(labelWithString: "")
-    private let percent = NSTextField(labelWithString: "")
+    private let timeRemaining = NSTextField(labelWithString: "")
 
     /// Creates the readout, sized to its content.
     public init() {
@@ -68,33 +67,26 @@ public final class PasteProgressMenuItemView: NSView {
         bar.doubleValue = 0
         bar.controlSize = .small
 
-        for label in [itemName, itemCounter, detail, percent] {
+        for label in [byteProgress, itemCounter, timeRemaining] {
             label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
             label.textColor = .secondaryLabelColor
             label.lineBreakMode = .byTruncatingMiddle
         }
-        // The counter and percent are the fixed-width anchors of their rows;
-        // the name and detail give way to them when space runs out.
-        for trailing in [itemCounter, percent] {
-            trailing.alignment = .right
-            trailing.lineBreakMode = .byClipping
-            trailing.setContentCompressionResistancePriority(.required, for: .horizontal)
-            trailing.setContentHuggingPriority(.required, for: .horizontal)
-        }
-        for leading in [itemName, detail] {
-            leading.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        }
+        // The counter is the fixed-width anchor of its row; the byte line gives
+        // way to it when space runs out.
+        itemCounter.alignment = .right
+        itemCounter.lineBreakMode = .byClipping
+        itemCounter.setContentCompressionResistancePriority(.required, for: .horizontal)
+        itemCounter.setContentHuggingPriority(.required, for: .horizontal)
+        byteProgress.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let itemRow = NSStackView(views: [itemName, itemCounter])
-        let detailRow = NSStackView(views: [detail, percent])
-        for row in [itemRow, detailRow] {
-            row.orientation = .horizontal
-            row.alignment = .firstBaseline
-            row.distribution = .fill
-            row.spacing = 8
-        }
+        let byteRow = NSStackView(views: [byteProgress, itemCounter])
+        byteRow.orientation = .horizontal
+        byteRow.alignment = .firstBaseline
+        byteRow.distribution = .fill
+        byteRow.spacing = 8
 
-        let stack = NSStackView(views: [headline, bar, itemRow, detailRow])
+        let stack = NSStackView(views: [headline, bar, byteRow, timeRemaining])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Self.rowSpacing
@@ -106,8 +98,7 @@ public final class PasteProgressMenuItemView: NSView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.verticalInset),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.leadingInset),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.trailingInset),
-            itemRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            detailRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            byteRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             bar.widthAnchor.constraint(equalTo: stack.widthAnchor),
             // Pin the content width so the rows lay out (and the height measures)
             // against the width the menu will actually give this view.
@@ -148,15 +139,15 @@ public final class PasteProgressMenuItemView: NSView {
         pendingFraction = snapshot.fractionComplete
         // Off screen, the value is only recorded — see `viewDidMoveToWindow`.
         if window != nil { bar.doubleValue = pendingFraction }
-        itemName.stringValue = snapshot.currentItemName ?? ""
+        byteProgress.stringValue = PasteProgressFormat.byteProgress(
+            bytesTransferred: snapshot.bytesTransferred,
+            totalBytes: snapshot.totalBytes,
+            bytesPerSecond: snapshot.bytesPerSecond)
         itemCounter.stringValue =
             PasteProgressFormat.itemCounter(
                 completed: snapshot.filesCompleted, total: snapshot.fileCount) ?? ""
-        detail.stringValue =
-            PasteProgressFormat.detail(
-                bytesPerSecond: snapshot.bytesPerSecond,
-                secondsRemaining: snapshot.secondsRemaining) ?? ""
-        percent.stringValue = PasteProgressFormat.percent(fraction: snapshot.fractionComplete)
+        timeRemaining.stringValue =
+            PasteProgressFormat.timeRemaining(seconds: snapshot.secondsRemaining) ?? ""
         setAccessibilityLabel(PasteProgressFormat.summary(snapshot))
     }
 }

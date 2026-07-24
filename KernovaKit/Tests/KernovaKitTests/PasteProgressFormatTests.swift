@@ -31,17 +31,20 @@ struct PasteProgressFormatTests {
         #expect(rate?.contains("MB") == true)
     }
 
-    @Test("time remaining is bucketed rather than precise")
+    @Test("time remaining spells minutes and seconds under an hour, coarsens above it")
     func timeRemaining() {
         #expect(PasteProgressFormat.timeRemaining(seconds: nil) == nil)
         #expect(PasteProgressFormat.timeRemaining(seconds: 0) == nil)
-        #expect(PasteProgressFormat.timeRemaining(seconds: 3) == "A few seconds remaining")
-        #expect(PasteProgressFormat.timeRemaining(seconds: 30) == "About 30 seconds remaining")
-        #expect(PasteProgressFormat.timeRemaining(seconds: 75) == "About a minute remaining")
-        #expect(PasteProgressFormat.timeRemaining(seconds: 600) == "About 10 minutes remaining")
-        #expect(PasteProgressFormat.timeRemaining(seconds: 3_500) == "About 58 minutes remaining")
-        #expect(PasteProgressFormat.timeRemaining(seconds: 3_700) == "About an hour remaining")
-        #expect(PasteProgressFormat.timeRemaining(seconds: 9_000) == "About 3 hours remaining")
+        #expect(PasteProgressFormat.timeRemaining(seconds: 0.4) == "1 second remaining")
+        #expect(PasteProgressFormat.timeRemaining(seconds: 3) == "3 seconds remaining")
+        #expect(PasteProgressFormat.timeRemaining(seconds: 30) == "30 seconds remaining")
+        #expect(PasteProgressFormat.timeRemaining(seconds: 60) == "1 minute, 0 seconds remaining")
+        #expect(PasteProgressFormat.timeRemaining(seconds: 75) == "1 minute, 15 seconds remaining")
+        #expect(
+            PasteProgressFormat.timeRemaining(seconds: 387) == "6 minutes, 27 seconds remaining")
+        #expect(PasteProgressFormat.timeRemaining(seconds: 3_600) == "1 hour remaining")
+        #expect(PasteProgressFormat.timeRemaining(seconds: 3_700) == "1 hour, 1 minute remaining")
+        #expect(PasteProgressFormat.timeRemaining(seconds: 9_000) == "2 hours, 30 minutes remaining")
     }
 
     @Test("an infinite estimate is treated as no estimate")
@@ -58,15 +61,17 @@ struct PasteProgressFormatTests {
         #expect(PasteProgressFormat.percent(fraction: -1) == "0%")
     }
 
-    @Test("the detail line drops whichever half is missing")
-    func detailLine() {
-        #expect(PasteProgressFormat.detail(bytesPerSecond: nil, secondsRemaining: nil) == nil)
-        #expect(
-            PasteProgressFormat.detail(bytesPerSecond: nil, secondsRemaining: 30)
-                == "About 30 seconds remaining")
-        let both = PasteProgressFormat.detail(bytesPerSecond: 1_500_000, secondsRemaining: 30)
-        #expect(both?.contains(" · ") == true)
-        #expect(both?.hasSuffix("About 30 seconds remaining") == true)
+    @Test("the byte-progress line carries the speed parenthetical only once one exists")
+    func byteProgressLine() {
+        let withoutSpeed = PasteProgressFormat.byteProgress(
+            bytesTransferred: 47_600_000, totalBytes: 3_030_000_000, bytesPerSecond: nil)
+        #expect(withoutSpeed.contains(" of ") == true)
+        #expect(withoutSpeed.contains("(") == false)
+        let withSpeed = PasteProgressFormat.byteProgress(
+            bytesTransferred: 47_600_000, totalBytes: 3_030_000_000, bytesPerSecond: 7_800_000)
+        #expect(withSpeed.contains(" of ") == true)
+        #expect(withSpeed.hasSuffix("/s)") == true)
+        #expect(withSpeed.contains("(") == true)
     }
 
     @Test("the summary leads with the headline and carries the counter for a multi-file paste")
