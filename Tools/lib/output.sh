@@ -19,12 +19,18 @@
 #   detail()                ASIDE — an explanation, a remediation command, a
 #                           pointer to another target. Dim, and skippable.
 #
-# The value/detail split is the rule worth keeping: `c_dim` is 90m ("bright
-# black"), which on a dark background renders barely above the background
-# itself. Dimming an aside is the point of it; dimming a version number or a
-# resolved path hides the answer the user ran the command to get. Default
-# foreground for data is also the only choice that stays legible under both
-# light and dark terminal themes, which no explicit colour can promise.
+# The value/detail split is the rule worth keeping: dimming an aside is the
+# point of it, but dimming a version number or a resolved path hides the answer
+# the user ran the command to get. Default foreground for data is also the only
+# choice that stays legible under both light and dark terminal themes, which no
+# explicit colour can promise.
+#
+# c_dim is SGR 2 (faint), NOT 90m ("bright black"). 90m is a fixed dark grey:
+# against a dark background it lands almost on top of the background and the
+# text becomes genuinely hard to read. SGR 2 instead reduces the intensity of
+# the theme's own foreground, so it stays proportional on light and dark alike —
+# and a terminal that doesn't implement it renders the line at full contrast,
+# which is the right way to fail. Legible beats distinguishable.
 
 # shellcheck shell=bash
 
@@ -36,7 +42,7 @@
 if [ -t 1 ]; then
     c_green=$'\033[0;32m'; c_red=$'\033[0;31m'; c_yellow=$'\033[0;33m'
     c_cyan=$'\033[0;36m'
-    c_dim=$'\033[0;90m'; c_bold=$'\033[1m'; c_reset=$'\033[0m'
+    c_dim=$'\033[2m'; c_bold=$'\033[1m'; c_reset=$'\033[0m'
 else
     c_green=''; c_red=''; c_yellow=''; c_cyan=''
     c_dim=''; c_bold=''; c_reset=''

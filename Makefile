@@ -162,32 +162,6 @@ bootstrap: ## Derive your signing team into Config/Local.xcconfig (auto-run by b
 doctor: ## Check the local toolchain (macOS, Xcode, Swift, swift-format) and repo setup
 	@Tools/doctor.sh
 
-# Diagnoses ghost Launch Services registrations, orphaned DerivedData build
-# arenas in the global ~/Library location, orphaned processes, and prunable
-# git worktrees left behind by torn-down worktrees (the post-checkout hook
-# sweeps registrations and arenas on new checkouts; this reports whatever
-# remains) — plus LIVE on-disk Kernova.app copies (Trash, DerivedData) that
-# outrank the installed /Applications copy in the LaunchServices/PluginKit
-# CFBundleVersion election (#454). `ghosts` only reports; `clean-ghosts` also
-# unregisters/kills/prunes/evicts, prompting only for live competing copies.
-ghosts: ## Report stale/competing Kernova Launch Services, process, and worktree registrations
-	@Tools/ghosts.sh
-
-clean-ghosts: ## Same as ghosts, but also unregisters/kills/prunes/evicts what it finds
-	@Tools/ghosts.sh --fix
-
-# Restarts the File Provider daemon to clear stale Kernova domain/extension
-# bindings — e.g. after a rebuild leaves fileproviderd pointing at a deleted or
-# moved extension binary (Copy to Mac then beeps because the extension can't
-# launch), or a domain wedged in a dead-end state. Kept separate from
-# clean-ghosts and opt-in because it briefly interrupts ALL File Providers
-# (iCloud Drive reconnects within seconds). macOS 26's fileproviderctl has no
-# domain-remove command; the app self-heals a dead domain on next launch.
-fp-reset: ## Restart fileproviderd to clear stale Kernova File Provider bindings
-	@printf 'Restarting fileproviderd to clear stale Kernova File Provider bindings...\n'
-	@printf '(briefly interrupts all File Providers; iCloud Drive reconnects in a few seconds)\n'
-	@killall fileproviderd 2>/dev/null && printf 'fileproviderd restarted.\n' || printf 'fileproviderd was not running; it will start on demand.\n'
-
 # Removes both build arenas this checkout can have: the in-worktree
 # DerivedData/ (CI-style explicit-flag builds, and Relative-mode machines) and
 # the arena the machine's Xcode preference resolves to (the hashed ~/Library
@@ -214,3 +188,29 @@ clean: ## Remove this checkout's build arenas (in-worktree DerivedData/ and the 
 		''|'$(CURDIR)'/*) ;; \
 		*) Tools/ghosts.sh --evict "$$arena" ;; \
 	esac
+
+# Diagnoses ghost Launch Services registrations, orphaned DerivedData build
+# arenas in the global ~/Library location, orphaned processes, and prunable
+# git worktrees left behind by torn-down worktrees (the post-checkout hook
+# sweeps registrations and arenas on new checkouts; this reports whatever
+# remains) — plus LIVE on-disk Kernova.app copies (Trash, DerivedData) that
+# outrank the installed /Applications copy in the LaunchServices/PluginKit
+# CFBundleVersion election (#454). `ghosts` only reports; `clean-ghosts` also
+# unregisters/kills/prunes/evicts, prompting only for live competing copies.
+ghosts: ## Report stale/competing Kernova Launch Services, process, and worktree registrations
+	@Tools/ghosts.sh
+
+clean-ghosts: ## Same as ghosts, but also unregisters/kills/prunes/evicts what it finds
+	@Tools/ghosts.sh --fix
+
+# Restarts the File Provider daemon to clear stale Kernova domain/extension
+# bindings — e.g. after a rebuild leaves fileproviderd pointing at a deleted or
+# moved extension binary (Copy to Mac then beeps because the extension can't
+# launch), or a domain wedged in a dead-end state. Kept separate from
+# clean-ghosts and opt-in because it briefly interrupts ALL File Providers
+# (iCloud Drive reconnects within seconds). macOS 26's fileproviderctl has no
+# domain-remove command; the app self-heals a dead domain on next launch.
+fp-reset: ## Restart fileproviderd to clear stale Kernova File Provider bindings
+	@printf 'Restarting fileproviderd to clear stale Kernova File Provider bindings...\n'
+	@printf '(briefly interrupts all File Providers; iCloud Drive reconnects in a few seconds)\n'
+	@killall fileproviderd 2>/dev/null && printf 'fileproviderd restarted.\n' || printf 'fileproviderd was not running; it will start on demand.\n'
