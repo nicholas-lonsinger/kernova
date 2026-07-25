@@ -29,19 +29,13 @@ cd "$(dirname "$0")/.." || exit 1
 # bailing on the first one.
 fail_count=0
 
-# Colour only when writing to a TTY — keep CI logs and pipes plain.
-if [ -t 1 ]; then
-    c_green=$'\033[0;32m'; c_red=$'\033[0;31m'; c_yellow=$'\033[0;33m'
-    c_dim=$'\033[0;90m'; c_bold=$'\033[1m'; c_reset=$'\033[0m'
-else
-    c_green=''; c_red=''; c_yellow=''; c_dim=''; c_bold=''; c_reset=''
-fi
+# Colours and the pass/warn/value/detail helpers are shared with the other
+# Tools/ scripts — see Tools/lib/output.sh for the value-vs-detail rule.
+# shellcheck source=lib/output.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/output.sh"
 
-pass()    { printf '  %s✓%s %s\n' "$c_green"  "$c_reset" "$1"; }
-warn()    { printf '  %s⚠%s %s\n' "$c_yellow" "$c_reset" "$1"; }
-fail()    { printf '  %s✗%s %s\n' "$c_red"    "$c_reset" "$1"; fail_count=$((fail_count + 1)); }
-detail()  { printf '    %s%s%s\n' "$c_dim"    "$1" "$c_reset"; }
-section() { printf '\n%s%s%s\n' "$c_bold" "$1" "$c_reset"; }
+# Local because it drives this script's exit status; the rest come from the lib.
+fail() { printf '  %s✗%s %s\n' "$c_red" "$c_reset" "$1"; fail_count=$((fail_count + 1)); }
 
 # major_of "26.5.2" -> "26"; empty input stays empty.
 major_of() { printf '%s' "${1:-}" | cut -d. -f1; }
@@ -118,7 +112,7 @@ fi
 # reach it via `xcrun swift-format`, so probe it the same way.
 if sf_path=$(xcrun --find swift-format 2>/dev/null); then
     pass "swift-format available (make format / make lint)"
-    detail "$sf_path"
+    value "$sf_path"
 else
     fail "swift-format not found in the active Xcode toolchain"
     detail "It ships with Xcode 26+. Confirm your Xcode is selected: xcode-select -p"
@@ -153,13 +147,13 @@ if [ -f .worktreeinclude ]; then
             *'*'* | *'?'* | *'['* | '!'*)
                 [ "$wti_problems" -eq 0 ] && warn ".worktreeinclude has entries that won't reach new worktrees:"
                 wti_problems=$((wti_problems + 1))
-                detail "$entry — glob syntax; the post-checkout hook only copies literal paths"
+                value "$entry — glob syntax; the post-checkout hook only copies literal paths"
                 ;;
             *)
                 if ! git check-ignore -q -- "$entry"; then
                     [ "$wti_problems" -eq 0 ] && warn ".worktreeinclude has entries that won't reach new worktrees:"
                     wti_problems=$((wti_problems + 1))
-                    detail "$entry — not gitignored; every consumer skips it (safety rule)"
+                    value "$entry — not gitignored; every consumer skips it (safety rule)"
                 fi
                 ;;
         esac
@@ -185,7 +179,12 @@ if [ -n "$arena" ]; then
         *)  dd_mode="relative location ($dd_pref/ inside the checkout)" ;;
     esac
     pass "Derived data: $dd_mode"
-    detail "this checkout's build arena: ${arena/#$HOME/~}"
+    # Label from the checkout rather than the arena: in default mode the arena
+    # is a bare hash, and it may not exist yet on a checkout that has never
+    # built — the checkout path always resolves.
+    arena_label=$(Tools/arena-label.sh "$PWD" 2>/dev/null || true)
+    [ -n "$arena_label" ] && arena_label=" ($arena_label)"
+    value "this checkout's build arena: ${arena/#$HOME/~}$arena_label"
     detail 'orphaned worktree arenas are swept at worktree creation; audit with `make ghosts`'
 else
     warn 'Could not resolve the derived-data arena (Tools/derived-data-path.sh failed)'
@@ -232,7 +231,7 @@ if [ -n "$resolved_team" ] && [ -n "$identities" ]; then
             pass "Resolved team matches a current keychain identity"
         else
             warn "DEVELOPMENT_TEAM ($resolved_team) doesn't match any current keychain identity"
-            detail "Available: $(printf '%s' "$current_teams" | tr '\n' ' ')"
+            value "Available: $(printf '%s' "$current_teams" | tr '\n' ' ')"
             detail "Re-derive with: Tools/bootstrap-team.sh --force"
         fi
     fi
@@ -251,13 +250,13 @@ else
     detail "Install with: brew install protobuf swift-protobuf"
 fi
 
-# Shell static analysis for Tools/ and .githooks/ — `make lint-shell` (part of
-# `make lint`) uses it when present and CI requires it; locally it's optional,
-# with `bash -n` still catching syntax errors without it.
+# Shell static analysis for Tools/ and .githooks/ — `make lint` uses it when
+# present and CI requires it; locally it's optional, with `bash -n` still
+# catching syntax errors without it.
 if command -v shellcheck >/dev/null 2>&1; then
-    pass "shellcheck $(shellcheck --version 2>/dev/null | sed -n 's/^version: //p') — make lint-shell runs full static analysis"
+    pass "shellcheck $(shellcheck --version 2>/dev/null | sed -n 's/^version: //p') — make lint runs full static analysis"
 else
-    warn "shellcheck absent — make lint-shell falls back to bash -n only (CI still enforces shellcheck)"
+    warn "shellcheck absent — make lint falls back to bash -n only (CI still enforces shellcheck)"
     detail "Install with: brew install shellcheck"
 fi
 

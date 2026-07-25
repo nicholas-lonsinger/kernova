@@ -69,7 +69,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-suite test-package clean format lint lint-shell install-hooks check-hooks bootstrap doctor ghosts clean-ghosts fp-reset ls-reset
+.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks bootstrap doctor ghosts clean-ghosts fp-reset
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -80,48 +80,15 @@ help:
 	@printf '  make test-suite requires SUITE=<Target/Suite>, e.g. SUITE=KernovaTests/VMConfigurationTests\n'
 	@printf '  Append CONFIGURATION=Release to build/test in Release (default: Debug)\n'
 
-build: check-hooks bootstrap ## Build the app for macOS
-	xcodebuild $(XCODEBUILD_FLAGS) build
-
-test: check-hooks bootstrap ## Run the full test suite (all three test targets via Kernova.xctestplan)
-	xcodebuild $(XCODEBUILD_FLAGS) test
-
-# `xcrun` so the toolchain matches the one selected via `xcode-select`
-# (same rationale as the `xcrun swift-format` invocation above).
-test-package: ## Run only the KernovaKit SwiftPM package tests
-	xcrun swift test --package-path KernovaKit
-
-test-suite: check-hooks bootstrap ## Run a single test suite (SUITE=<Target/Suite>; see below)
-	@if [ -z "$(SUITE)" ]; then \
-		echo 'Usage: make test-suite SUITE=<Target/Suite>' >&2; \
-		echo 'Example: make test-suite SUITE=KernovaTests/VMConfigurationTests' >&2; \
-		exit 2; \
-	fi
-	xcodebuild $(XCODEBUILD_FLAGS) test -only-testing:$(SUITE)
-
-format: ## Rewrite Swift sources in place via swift-format
-	@test -n '$(strip $(SWIFT_SOURCE_DIRS))' || { echo 'No tracked Swift sources found — not a git checkout?' >&2; exit 1; }
-	$(SWIFT_FORMAT) format --in-place --recursive $(SWIFT_SOURCE_DIRS)
-
-lint: lint-shell ## Lint Swift sources (swift-format --strict) and shell scripts
-	@test -n '$(strip $(SWIFT_SOURCE_DIRS))' || { echo 'No tracked Swift sources found — not a git checkout?' >&2; exit 1; }
-	$(SWIFT_FORMAT) lint --strict --recursive $(SWIFT_SOURCE_DIRS)
-
-# `bash -n` always (ships with macOS, catches syntax errors); shellcheck for
-# real static analysis when installed — optional locally (brew install
-# shellcheck), REQUIRED on CI ($CI is set by GitHub Actions) so findings gate
-# merges rather than silently skipping. Project-wide directives live in
-# .shellcheckrc.
-lint-shell: ## Lint shell scripts (bash -n; plus shellcheck when installed — required on CI)
-	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
-	@if command -v shellcheck >/dev/null 2>&1; then \
-		shellcheck $(SHELL_SOURCES); \
-	elif [ -n "$${CI:-}" ]; then \
-		echo 'lint-shell: shellcheck is required on CI but not installed' >&2; \
-		exit 1; \
-	else \
-		echo 'lint-shell: shellcheck not installed — skipping static analysis (brew install shellcheck)'; \
-	fi
+# Derives this developer's signing team from their own certificate into the
+# gitignored Config/Local.xcconfig (see Config/Base.xcconfig) — what makes a
+# fresh clone build and sign with *your* team rather than a hardcoded one
+# (#476). A prerequisite of build/test rather than a separate manual step, so
+# a fresh clone's first `make build` just works; Tools/bootstrap-team.sh is
+# idempotent (no-ops once Config/Local.xcconfig has a value), so this is cheap
+# on every subsequent build. Re-derive with `Tools/bootstrap-team.sh --force`.
+bootstrap: ## Derive your signing team into Config/Local.xcconfig (auto-run by build/test)
+	@Tools/bootstrap-team.sh
 
 # One-time per clone: point this repo's git at the checked-in hooks —
 # `.githooks/pre-push` runs `make lint` before each push (bypass an
@@ -144,15 +111,80 @@ install-hooks: ## Point git at .githooks/ (pre-push lint; post-checkout worktree
 check-hooks:
 	@Tools/hooks-installed.sh >/dev/null || printf 'Note: git hooks are not installed. Run `make install-hooks` (one-time per clone) to lint before push and auto-set-up new worktrees.\n' >&2
 
-# Derives this developer's signing team from their own certificate into the
-# gitignored Config/Local.xcconfig (see Config/Base.xcconfig) — what makes a
-# fresh clone build and sign with *your* team rather than a hardcoded one
-# (#476). A prerequisite of build/test rather than a separate manual step, so
-# a fresh clone's first `make build` just works; Tools/bootstrap-team.sh is
-# idempotent (no-ops once Config/Local.xcconfig has a value), so this is cheap
-# on every subsequent build. Re-derive with `Tools/bootstrap-team.sh --force`.
-bootstrap: ## Derive your signing team into Config/Local.xcconfig (auto-run by build/test)
-	@Tools/bootstrap-team.sh
+build: check-hooks bootstrap ## Build the app for macOS
+	xcodebuild $(XCODEBUILD_FLAGS) build
+
+# Removes both build arenas this checkout can have: the in-worktree
+# DerivedData/ (CI-style explicit-flag builds, and Relative-mode machines) and
+# the arena the machine's Xcode preference resolves to (the hashed ~/Library
+# folder on default-location machines — where flag-less `make build` and GUI
+# builds land). The resolver is authoritative for "where would a build go",
+# so this cannot delete another project's folder; the $(CURDIR) guard just
+# avoids a redundant second eviction when the arena is already inside the
+# worktree.
+#
+# Both go through `Tools/ghosts.sh --evict`, the same unregister-then-delete
+# routine the post-checkout sweep and `clean-ghosts` use. A bare `rm -rf`, what
+# this target used to do, leaves Launch Services registrations pointing into the
+# deleted arena, so `make clean` manufactured exactly the ghosts
+# `make clean-ghosts` exists to remove — the two targets stepped on each other.
+# --evict also refuses to delete an arena a running app is executing from, and
+# prints each arena's size before removing it, since on a default-location
+# machine this is the arena the Xcode GUI shares and discarding it costs a full
+# rebuild. A missing path is a no-op, so both candidates are passed
+# unconditionally.
+clean: ## Remove this checkout's build arenas (in-worktree DerivedData/ and the resolved Xcode arena)
+	@Tools/ghosts.sh --evict '$(DERIVED_DATA_ROOT)'
+	@arena=$$(Tools/derived-data-path.sh 2>/dev/null); \
+	case "$$arena" in \
+		''|'$(CURDIR)'/*) ;; \
+		*) Tools/ghosts.sh --evict "$$arena" ;; \
+	esac
+
+test: check-hooks bootstrap ## Run the full test suite (all three test targets via Kernova.xctestplan)
+	xcodebuild $(XCODEBUILD_FLAGS) test
+
+# `xcrun` so the toolchain matches the one selected via `xcode-select`
+# (same rationale as the `xcrun swift-format` invocation above).
+test-package: ## Run only the KernovaKit SwiftPM package tests
+	xcrun swift test --package-path KernovaKit
+
+test-suite: check-hooks bootstrap ## Run a single test suite (SUITE=<Target/Suite>; see below)
+	@if [ -z "$(SUITE)" ]; then \
+		echo 'Usage: make test-suite SUITE=<Target/Suite>' >&2; \
+		echo 'Example: make test-suite SUITE=KernovaTests/VMConfigurationTests' >&2; \
+		exit 2; \
+	fi
+	xcodebuild $(XCODEBUILD_FLAGS) test -only-testing:$(SUITE)
+
+format: ## Rewrite Swift sources in place via swift-format
+	@test -n '$(strip $(SWIFT_SOURCE_DIRS))' || { echo 'No tracked Swift sources found — not a git checkout?' >&2; exit 1; }
+	$(SWIFT_FORMAT) format --in-place --recursive $(SWIFT_SOURCE_DIRS)
+
+# One lint target, covering both languages. The shell half was `make lint-shell`
+# until nothing was found to invoke it: CI and .githooks/pre-push both run
+# `make lint`, every other mention was prose, and the whole Swift pass costs 4
+# seconds more than the shell pass alone — too little to justify a second
+# command in `make help`.
+#
+# Shell: `bash -n` always (ships with macOS, catches syntax errors); shellcheck
+# for real static analysis when installed — optional locally (brew install
+# shellcheck), REQUIRED on CI ($CI is set by GitHub Actions) so findings gate
+# merges rather than silently skipping. Project-wide directives live in
+# .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
+# error surfaces without waiting on swift-format.
+lint: ## Lint Swift sources (swift-format --strict) and shell scripts
+	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
+	@if command -v shellcheck >/dev/null 2>&1; then \
+		shellcheck $(SHELL_SOURCES); \
+	elif [ -n "$${CI:-}" ]; then \
+		echo 'lint: shellcheck is required on CI but not installed' >&2; \
+		exit 1; \
+	else \
+		echo 'lint: shellcheck not installed — skipping shell static analysis (brew install shellcheck)'; \
+	fi
+	@test -n '$(strip $(SWIFT_SOURCE_DIRS))' || { echo 'No tracked Swift sources found — not a git checkout?' >&2; exit 1; }
+	$(SWIFT_FORMAT) lint --strict --recursive $(SWIFT_SOURCE_DIRS)
 
 # Environment sanity check: verifies the local toolchain (macOS, Xcode, Swift,
 # swift-format) and repo setup (git hooks, .worktreeinclude) match what Kernova
@@ -187,31 +219,3 @@ fp-reset: ## Restart fileproviderd to clear stale Kernova File Provider bindings
 	@printf 'Restarting fileproviderd to clear stale Kernova File Provider bindings...\n'
 	@printf '(briefly interrupts all File Providers; iCloud Drive reconnects in a few seconds)\n'
 	@killall fileproviderd 2>/dev/null && printf 'fileproviderd restarted.\n' || printf 'fileproviderd was not running; it will start on demand.\n'
-
-# Clears ghost Launch Services registrations left under the legacy
-# pre-#471-rename `com.kernova.app` identifier — a gap `clean-ghosts` can't
-# see, since Tools/ghosts.sh's Launch Services check only pattern-matches the
-# current `app.kernova` identifier. Kept as its own target (rather than folded
-# into ghosts.sh) until the legacy-identifier era is retired; see
-# Tools/ls-reset.sh for why this isn't the system-wide rebuild its name might
-# suggest (`-kill` no longer exists in lsregister, and turns out unnecessary).
-ls-reset: ## Clear legacy com.kernova.app ghost Launch Services registrations
-	@Tools/ls-reset.sh
-
-# Removes both build arenas this checkout can have: the in-worktree
-# DerivedData/ (CI-style explicit-flag builds, and Relative-mode machines) and
-# the arena the machine's Xcode preference resolves to (the hashed ~/Library
-# folder on default-location machines — where flag-less `make build` and GUI
-# builds land). The resolver is authoritative for "where would a build go",
-# so this cannot delete another project's folder; the $(CURDIR) guard just
-# avoids a redundant second rm when the arena is already inside the worktree.
-clean: ## Remove this checkout's build arenas (in-worktree DerivedData/ and the resolved Xcode arena)
-	rm -rf $(DERIVED_DATA_ROOT)
-	@arena=$$(Tools/derived-data-path.sh 2>/dev/null); \
-	case "$$arena" in \
-		''|'$(CURDIR)'/*) ;; \
-		*) if [ -d "$$arena" ]; then \
-			printf 'Removing resolved build arena %s\n' "$$arena"; \
-			rm -rf "$$arena"; \
-		fi ;; \
-	esac

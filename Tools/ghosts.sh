@@ -14,8 +14,9 @@
 # pointing at a path that no longer resolves.
 #
 # Checks for:
-#   - Launch Services registrations for app.kernova.* extensions whose
-#     `path:` no longer exists on disk
+#   - Launch Services registrations whose `path:` no longer exists on disk,
+#     under the current app.kernova.* identifiers and the legacy
+#     pre-#471-rename `com.kernova.app` one alike
 #   - Xcode DerivedData build arenas in the global per-path-hashed
 #     ~/Library location whose recorded source worktree no longer exists —
 #     on default-location machines every worktree the GUI opens leaves a
@@ -35,7 +36,7 @@
 #     (#454). Deregistration/eviction is the only lever.
 #
 # Run via `make ghosts` (report only) or `make clean-ghosts` (also fixes).
-# Direct invocation: Tools/ghosts.sh [--fix | --sweep]
+# Direct invocation: Tools/ghosts.sh [--fix | --sweep | --evict <dir>]
 # (--sweep-ls is the former name of --sweep, kept as an alias for any
 # installed hooks from before the arena sweep was added.)
 
@@ -43,18 +44,54 @@ set -uo pipefail
 
 FIX=0
 SWEEP=0
+EVICT=0
+EVICT_DIR=
 case "${1:-}" in
     --fix) FIX=1 ;;
     --sweep | --sweep-ls) SWEEP=1 ;;
+    --evict)
+        EVICT=1
+        EVICT_DIR="${2:-}"
+        ;;
 esac
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
+# Sourced here, before anything prints: the --sweep and --evict modes below run
+# and exit long before the report body, and they label paths too.
+# shellcheck source=lib/output.sh
+. "$REPO_ROOT/Tools/lib/output.sh"
+
+# ---- path display -------------------------------------------------------------
+
+# The path plus the checkout its build arena belongs to. A default-mode arena is
+# named by a hash of the .xcodeproj path (Kernova-cylpmrailymlsackwzjwvurxnpbj),
+# so on its own no arena line answers the first question a reader has — whose
+# build is this? Tools/arena-label.sh resolves the hash back to a worktree name;
+# it exits non-zero for anything it can't attribute, and then the path renders
+# bare exactly as before.
+labeled_path() {
+    local label
+    label=$("$REPO_ROOT/Tools/arena-label.sh" "$1" 2>/dev/null) || label=''
+    if [ -n "$label" ]; then
+        printf '%s (%s)' "$(pretty_path "$1")" "$label"
+    else
+        pretty_path "$1"
+    fi
+}
+
 # lsregister's dump lists `path:` a few lines before the `identifier:` line
 # for the same entry, with entries separated by a full-width dash rule —
 # track the most recently seen path and reset it at each rule so an
 # identifier never gets paired with a path from a different entry.
+#
+# Both identifier eras match: the current `app.kernova*` one and the legacy
+# `com.kernova.app` left by builds predating the #471 naming cleanup. The
+# legacy half used to live in its own script (Tools/ls-reset.sh, `make
+# ls-reset`) purely because this regex was too narrow to see it — an extra
+# alternation costs nothing here (same dump, same loop) and retires a command
+# whose only reason to exist was the gap.
 kernova_registered_paths() {
     "$LSREGISTER" -dump 2>/dev/null | awk '
         /^-+$/ { path = "" }
@@ -64,46 +101,41 @@ kernova_registered_paths() {
             sub(/ \(0x[0-9a-fA-F]+\)[ \t]*$/, "", line)
             path = line
         }
-        /^identifier:[ \t]+app\.kernova($|\.)/ {
+        /^identifier:[ \t]+(app\.kernova($|\.)|com\.kernova\.app$)/ {
             if (path != "") print path
         }
     ' | sort -u
 }
 
-# Xcode DerivedData arenas left by torn-down worktrees. On machines using
-# Xcode's default derived-data location, every worktree the GUI opens gets a
-# permanent per-path-hashed folder under ~/Library — nothing removes it when
-# the worktree goes away, and the LS-registered app copy inside keeps
-# competing in the CFBundleVersion election (docs/BUILD.md "Derived data and build arenas").
-# Each folder records its source project in info.plist's WorkspacePath; that
-# recorded path is the ground truth for orphan detection (and stays readable
-# after the worktree is deleted). Tools/derived-data-path.sh computes the same
-# worktree->arena mapping forward when a single arena needs locating.
-XCODE_DD_ROOT="$HOME/Library/Developer/Xcode/DerivedData"
+# Xcode DerivedData arenas left by torn-down worktrees. Where the machine's
+# preference puts per-path-hashed arenas, every worktree the GUI opens gets a
+# permanent folder there — nothing removes it when the worktree goes away, and
+# the LS-registered app copy inside keeps competing in the CFBundleVersion
+# election (docs/BUILD.md "Derived data and build arenas").
+#
+# Resolved rather than hardcoded to the default ~/Library path: on a machine
+# pointed at a custom root, hardcoding scanned a directory Xcode never writes
+# to, so the sweep reported no orphans while they piled up unseen. Empty means
+# no machine-wide arena directory exists at all — Relative mode nests each arena
+# inside its own checkout, where it cannot outlive the worktree, so there is
+# genuinely nothing to scan.
+XCODE_DD_ROOT=$("$REPO_ROOT/Tools/derived-data-path.sh" --root 2>/dev/null) || XCODE_DD_ROOT=''
 
-# The worktrees all live under the *primary* checkout's .claude/worktrees/,
-# which REPO_ROOT is not when this script runs from inside a worktree — the
-# first `git worktree list` entry is the primary checkout.
-main_root=$(git -C "$REPO_ROOT" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
-
-# Print one arena directory per line whose recorded WorkspacePath sits in a
-# .claude/worktrees/ worktree of this repo that no longer exists on disk.
-# Scoped to this repo's worktrees deliberately: a deleted checkout of some
-# other project is not this script's call to clean up.
+# Print one arena directory per line whose recorded source worktree is gone.
+# The classification is Tools/arena-label.sh's — this used to re-read each
+# info.plist and re-derive the .claude/worktrees layout itself, which was the
+# same mapping implemented twice. --status is asked for rather than the human
+# label so nothing here depends on that label's wording. Scoped to this repo's
+# worktrees by that same classification: a deleted checkout of some other
+# project reports `other` and is not this script's call to clean up.
 orphaned_dd_arenas() {
-    [ -n "$main_root" ] || return 0
-    local info ws wt_dir
+    [ -n "$XCODE_DD_ROOT" ] || return 0
+    local info dir
     for info in "$XCODE_DD_ROOT"/*/info.plist; do
         [ -f "$info" ] || continue
-        ws=$(plutil -extract WorkspacePath raw "$info" -o - 2>/dev/null) || continue
-        case "$ws" in
-            "$main_root/.claude/worktrees/"*) ;;
-            *) continue ;;
-        esac
-        wt_dir=${ws#"$main_root/.claude/worktrees/"}
-        wt_dir="$main_root/.claude/worktrees/${wt_dir%%/*}"
-        [ -d "$wt_dir" ] && continue
-        printf '%s\n' "${info%/info.plist}"
+        dir=${info%/info.plist}
+        [ "$("$REPO_ROOT/Tools/arena-label.sh" --status "$dir" 2>/dev/null)" = 'worktree-removed' ] || continue
+        printf '%s\n' "$dir"
     done
 }
 
@@ -207,20 +239,13 @@ if [ "$SWEEP" = 1 ]; then
         [ -z "$dir" ] && continue
         arena_in_use "$dir" && continue
         if evict_dd_arena "$dir"; then
-            printf 'ghosts.sh: evicted orphaned worktree DerivedData arena: %s\n' "$dir"
+            printf 'ghosts.sh: evicted orphaned DerivedData arena: %s\n' "$(labeled_path "$dir")"
         fi
     done < <(orphaned_dd_arenas)
     exit 0
 fi
 
 # ---- output helpers (matches Tools/doctor.sh) --------------------------------
-
-if [ -t 1 ]; then
-    c_green=$'\033[0;32m'; c_red=$'\033[0;31m'; c_yellow=$'\033[0;33m'
-    c_dim=$'\033[0;90m'; c_bold=$'\033[1m'; c_reset=$'\033[0m'
-else
-    c_green=''; c_red=''; c_yellow=''; c_dim=''; c_bold=''; c_reset=''
-fi
 
 found_count=0
 fixed_count=0
@@ -229,18 +254,69 @@ fixed_count=0
 # will clear it.
 manual_count=0
 
-clean()   { printf '  %s✓%s %s\n' "$c_green" "$c_reset" "$1"; }
-warn()    { printf '  %s⚠%s %s\n' "$c_yellow" "$c_reset" "$1"; }
-ghost()   { printf '  %s✗%s %s\n' "$c_red" "$c_reset" "$1"; found_count=$((found_count + 1)); }
-fixed()   { printf '    %s→ fixed:%s %s\n' "$c_green" "$c_reset" "$1"; fixed_count=$((fixed_count + 1)); }
-detail()  { printf '    %s%s%s\n' "$c_dim" "$1" "$c_reset"; }
-section() { printf '\n%s%s%s\n' "$c_bold" "$1" "$c_reset"; }
+# section/pass/warn/value/detail/pretty_path come from Tools/lib/output.sh.
+# These two stay local because they also drive this script's summary counters.
+ghost() { printf '  %s✗%s %s\n' "$c_red" "$c_reset" "$1"; found_count=$((found_count + 1)); }
+fixed() { printf '    %s→ fixed:%s %s\n' "$c_green" "$c_reset" "$1"; fixed_count=$((fixed_count + 1)); }
 
-# Display-only: abbreviate $HOME to ~ so deep DerivedData paths stay scannable.
-pretty_path() { printf '%s' "${1/#$HOME/~}"; }
+# --evict <dir>: remove ONE build arena and exit — the shared implementation
+# behind `make clean`, which used to `rm -rf` the arena itself. A bare delete
+# leaves Launch Services registrations pointing into the hole, so cleaning a
+# checkout manufactured precisely the ghosts `make clean-ghosts` then had to
+# sweep up; routing it through evict_dd_arena unregisters the bundles inside
+# first, leaving nothing to clean. The in-use guard matches --fix: an on-demand
+# extension is terminated (its daemon restarts it on the next request), while a
+# running app or test runner is the user's to quit, so the arena is left intact
+# and this exits non-zero rather than deleting a binary out from under a live
+# process. A path that isn't there is a no-op, so callers can pass every
+# candidate arena unconditionally.
+if [ "$EVICT" = 1 ]; then
+    if [ -z "$EVICT_DIR" ]; then
+        printf 'ghosts.sh: --evict requires a directory argument\n' >&2
+        exit 2
+    fi
+    # Absolutize: callers pass repo-relative arenas (the in-worktree
+    # DerivedData/), and the in-use check greps absolute paths out of `ps` —
+    # a relative path would silently never match, defeating the guard.
+    case "$EVICT_DIR" in
+        /*) ;;
+        *) EVICT_DIR="$PWD/$EVICT_DIR" ;;
+    esac
+    [ -d "$EVICT_DIR" ] || exit 0
+    # Clear the in-use guard before announcing anything, so a refusal never
+    # follows a "Removing…" line that turned out to be false.
+    if arena_in_use "$EVICT_DIR"; then
+        if arena_has_non_appex "$EVICT_DIR"; then
+            printf 'ghosts.sh: a running app is still executing from inside %s — quit it, then re-run\n' \
+                "$(labeled_path "$EVICT_DIR")" >&2
+            exit 1
+        fi
+        if ! kill_arena_appexes "$EVICT_DIR"; then
+            printf 'ghosts.sh: could not free %s — an extension did not exit\n' \
+                "$(labeled_path "$EVICT_DIR")" >&2
+            exit 1
+        fi
+    fi
+    # Size on the way out: on a default-location machine this is the arena the
+    # Xcode GUI shares, so discarding it costs a full rebuild — worth seeing as
+    # it happens rather than wondering later why the next build was cold.
+    printf 'Removing build arena %s — %s\n' \
+        "$(labeled_path "$EVICT_DIR")" \
+        "$(du -sh "$EVICT_DIR" 2>/dev/null | cut -f1)"
+    evict_dd_arena "$EVICT_DIR"
+    if [ -d "$EVICT_DIR" ]; then
+        printf 'ghosts.sh: failed to remove %s\n' "$(labeled_path "$EVICT_DIR")" >&2
+        exit 1
+    fi
+    exit 0
+fi
 
 printf '%sKernova ghost cleanup%s\n' "$c_bold" "$c_reset"
-[ "$FIX" = 1 ] && printf '%s(--fix: will unregister, kill, and prune)%s\n' "$c_dim" "$c_reset"
+# Names the mode, not the flag that selected it: the flag is unreachable through
+# the Makefile front door anyway (make swallows `--fix` as one of its own
+# options and bails), so echoing it back only suggests an argument the reader
+# cannot actually pass to `make ghosts`.
+[ "$FIX" = 1 ] && printf '%s(repair mode: will unregister, kill, and prune)%s\n' "$c_dim" "$c_reset"
 
 # ---- Launch Services ghost registrations -------------------------------------
 
@@ -256,7 +332,7 @@ while IFS= read -r path; do
 done < <(kernova_registered_paths)
 
 if [ "${#live_ghost_paths[@]}" -eq 0 ]; then
-    clean 'No ghost app.kernova.* registrations found'
+    pass 'No ghost app.kernova.* or legacy com.kernova.app registrations found'
 else
     for path in "${live_ghost_paths[@]}"; do
         ghost "Registered but missing on disk: $path"
@@ -277,7 +353,7 @@ else
         for path in "${live_ghost_paths[@]}"; do
             if printf '%s\n' "$still_registered" | grep -qxF "$path"; then
                 detail "still registered: $path"
-                detail 'Unexpected — a plain `lsregister -u` normally sticks even once the path is gone (see Tools/ls-reset.sh). Re-run this script; if it persists, file a bug rather than reaching for `lsregister -kill` (removed on current macOS).'
+                detail 'Unexpected — a plain `lsregister -u` normally sticks even once the path is gone (verified empirically 2026-07-08). Re-run this script; if it persists, file a bug rather than reaching for `lsregister -kill` (removed on current macOS).'
             else
                 fixed "unregistered: $path"
             fi
@@ -316,7 +392,7 @@ section 'Git worktrees'
 
 prunable=$(git -C "$REPO_ROOT" worktree list 2>/dev/null | grep 'prunable' || true)
 if [ -z "$prunable" ]; then
-    clean 'No prunable git worktrees'
+    pass 'No prunable git worktrees'
 else
     while IFS= read -r line; do
         [ -z "$line" ] && continue
@@ -349,10 +425,15 @@ while IFS= read -r dir; do
 done < <(orphaned_dd_arenas)
 
 if [ "${#dd_orphans[@]}" -eq 0 ]; then
-    clean 'No DerivedData arenas left by torn-down worktrees'
+    pass 'No DerivedData arenas left by torn-down worktrees'
 else
     for dir in "${dd_orphans[@]}"; do
-        ghost "Orphaned worktree arena: $(pretty_path "$dir") ($(du -sh "$dir" 2>/dev/null | cut -f1))"
+        # Resolved once, up front, because the label is read out of the arena's
+        # own info.plist — evicting the arena destroys the evidence, so a
+        # lookup after the delete falls back to the bare hashed path on the one
+        # line where naming the worktree matters most.
+        dir_label=$(labeled_path "$dir")
+        ghost "Orphaned arena: $dir_label — $(du -sh "$dir" 2>/dev/null | cut -f1)"
         if arena_in_use "$dir"; then
             if arena_has_non_appex "$dir"; then
                 detail 'a running app is still executing from inside — quit it (or reboot), then re-run'
@@ -368,9 +449,9 @@ else
         fi
         if [ "$FIX" = 1 ]; then
             if evict_dd_arena "$dir"; then
-                fixed "unregistered bundles and deleted: $(pretty_path "$dir")"
+                fixed "unregistered bundles and deleted: $dir_label"
             else
-                detail "delete failed for $dir"
+                detail "delete failed for $dir_label"
             fi
         fi
     done
@@ -385,13 +466,28 @@ fi
 # there. Trash and DerivedData are walked explicitly because both escape
 # `mdfind` — DerivedData ships a `.metadata_never_index` sentinel and Trash is
 # excluded from Spotlight entirely.
+#
+# Index.noindex/ is filtered out. Index-while-building writes a second products
+# tree there, so an arena yields two Kernova.app paths and the section reported
+# the same arena twice. The index copy is not a competing build: it carries no
+# Info.plist and no executable (10M of skeleton against the real product's 76M),
+# so it has no CFBundleVersion to enter the election with, and LaunchServices
+# does not register it — verified 2026-07-24 against an arena holding both,
+# where the `lsregister -dump` entries covered only Build/Products/. Excluded by
+# path rather than by "has no Info.plist", so that a *registered* bundle which
+# is genuinely malformed still gets surfaced instead of silently dropped.
 kernova_app_copies() {
     {
         mdfind "kMDItemCFBundleIdentifier == 'app.kernova'" 2>/dev/null
         find "$HOME/.Trash" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
-        find "$HOME/Library/Developer/Xcode/DerivedData" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
+        # Same resolved root as the orphan scan above, for the same reason; the
+        # in-checkout DerivedData/ below covers Relative mode, where the
+        # machine-wide root does not exist.
+        if [ -n "$XCODE_DD_ROOT" ]; then
+            find "$XCODE_DD_ROOT" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
+        fi
         find "$REPO_ROOT/DerivedData" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
-    } | sort -u
+    } | grep -v '/Index\.noindex/' | sort -u
 }
 
 app_copies=()
@@ -444,7 +540,7 @@ fp_flags=$(printf '%s\n' "$fp_dump" | awk '
 fp_has() { printf '%s\n' "$fp_flags" | grep -qx "$1"; }
 
 if ! printf '%s\n' "$fp_dump" | grep -qiE "app\.kernova|kernova-clipboard"; then
-    clean 'No Kernova File Provider domains registered'
+    pass 'No Kernova File Provider domains registered'
 elif fp_has notfound; then
     # A domain outlives the build that registered it — that is the system
     # working as designed, not debris: the registration is what lets the next
@@ -472,7 +568,7 @@ elif fp_has deadend; then
     detail 'This resets the domain'"'"'s System Settings enablement, so use it only when fp-reset didn'"'"'t help.'
     manual_count=$((manual_count + 1))
 else
-    clean 'Kernova File Provider domain(s) registered, none dead-ended'
+    pass 'Kernova File Provider domain(s) registered, none dead-ended'
     detail 'If Copy to Mac beeps or hangs, `make fp-reset` clears stale fileproviderd bindings.'
 fi
 
@@ -516,8 +612,67 @@ is_numeric() {
     esac
 }
 
+# location_of PATH — the directory a bundle is elected from, and the key this
+# section groups by. Xcode nests an arena's products under
+# Build/Products/<config>/, and every bundle produced by one build (the app plus
+# the appexes inside it) shares that prefix, so cutting there collapses a whole
+# arena into a single block. Anything else groups by its containing directory
+# (/Applications, ~/.Trash).
+location_of() {
+    local rest
+    case "$1" in
+        */Build/Products/*)
+            rest=${1#*/Build/Products/}
+            printf '%s/Build/Products/%s' "${1%%/Build/Products/*}" "${rest%%/*}"
+            ;;
+        *) dirname "$1" ;;
+    esac
+}
+
+# Rendering state, held as parallel arrays: macOS ships bash 3.2, which has no
+# associative arrays, so locations are interned by linear search into loc_paths
+# and every item records its location's index. Nothing here prints — the whole
+# section is computed first so the verdict lines can lead and the per-location
+# blocks follow, instead of interleaving findings with detail.
+loc_paths=()
+item_loc=()
+item_name=()
+item_meta=()
+item_mark=()
+
+# Returns through a global rather than stdout: interning has to APPEND to
+# loc_paths, and a `$(loc_index …)` call would run that append in a subshell,
+# where the new entry dies with the substitution and every block silently
+# disappears from the report.
+loc_index_result=''
+loc_index() {
+    local want=$1 n
+    for (( n = 0; n < ${#loc_paths[@]}; n++ )); do
+        if [ "${loc_paths[$n]}" = "$want" ]; then
+            loc_index_result=$n
+            return
+        fi
+    done
+    loc_paths+=("$want")
+    loc_index_result=$(( ${#loc_paths[@]} - 1 ))
+}
+
+# add_item <path> <display-name> <meta> <mark>; mark is '', 'ok' or 'ghost'.
+add_item() {
+    loc_index "$(location_of "$1")"
+    item_loc+=("$loc_index_result")
+    item_name+=("$2")
+    item_meta+=("$3")
+    item_mark+=("$4")
+}
+
+copies_verdict=''
+copies_verdict_kind=''
+competing_copies=()
+
 if [ "${#app_copies[@]}" -eq 0 ]; then
-    clean 'No on-disk Kernova.app copies found'
+    copies_verdict='No on-disk Kernova.app copies found'
+    copies_verdict_kind='clean'
 else
     # Check the well-known path directly rather than scanning app_copies for
     # it: blessed_path is a fixed constant, so a scan would just be a second
@@ -544,15 +699,15 @@ else
         i=$((i + 1))
     done
 
-    competing_copies=()
     if [ "$blessed_known" -eq 1 ]; then
+        ghost_count=0
         i=0
         for path in "${app_copies[@]}"; do
             ver=${copy_vers[$i]}
             i=$((i + 1))
             sign=$(signing_summary "$path")
             if [ "$path" = "$blessed_path" ]; then
-                clean "$path — version $ver, $sign (installed copy)"
+                add_item "$path" "$(basename "$path")" "version $ver, $sign (installed copy)" 'ok'
                 continue
             fi
 
@@ -561,71 +716,49 @@ else
             # of the same release), and this script has no verified basis for
             # a tie-break — only a build that would actually outrank
             # /Applications is a ghost.
-            outranks=0
             if is_numeric "$ver" && [ "$ver" -gt "$blessed_version" ]; then
-                outranks=1
-            fi
-            if [ "$outranks" = 1 ]; then
-                ghost "$(pretty_path "$path") — version $ver, $sign (outranks the installed copy, wins the election)"
+                add_item "$path" "$(basename "$path")" "version $ver, $sign — outranks the installed copy, wins the election" 'ghost'
                 competing_copies+=("$path")
+                ghost_count=$((ghost_count + 1))
             else
-                detail "$(pretty_path "$path") — version $ver, $sign"
+                add_item "$path" "$(basename "$path")" "version $ver, $sign" ''
             fi
         done
+        if [ "$ghost_count" -gt 0 ]; then
+            if [ "$ghost_count" -eq 1 ]; then
+                copies_verdict='An on-disk copy outranks the installed /Applications build'
+            else
+                copies_verdict="$ghost_count on-disk copies outrank the installed /Applications build"
+            fi
+            copies_verdict_kind='ghost'
+        else
+            copies_verdict='No on-disk copy outranks the installed /Applications build'
+            copies_verdict_kind='clean'
+        fi
     elif [ "${#app_copies[@]}" -eq 1 ]; then
-        clean 'No /Applications install — the only on-disk copy wins the election unopposed:'
-        detail "$(pretty_path "${app_copies[0]}") — version ${copy_vers[0]}, $(signing_summary "${app_copies[0]}")"
+        copies_verdict='No /Applications install — the only on-disk copy wins the election unopposed'
+        copies_verdict_kind='clean'
+        add_item "${app_copies[0]}" "$(basename "${app_copies[0]}")" \
+            "version ${copy_vers[0]}, $(signing_summary "${app_copies[0]}")" ''
     else
         # Without an installed copy there is nothing to outrank, so none of
         # these is a ghost by this script's definition — but multiple copies
         # mean the highest CFBundleVersion silently wins name/UTI resolution,
         # which is worth a glance.
-        warn "No /Applications install to rank against — ${#app_copies[@]} copies on disk, highest version wins:"
+        copies_verdict="No /Applications install to rank against — ${#app_copies[@]} copies on disk, highest version wins"
+        copies_verdict_kind='warn'
         i=0
         for path in "${app_copies[@]}"; do
+            # Coloured because this branch has no ✓/✗ marker to carry the
+            # signal — every copy here is legitimate, and the only thing worth
+            # spotting is which one the system actually resolves to. The ghost
+            # branch above leaves its text plain, since its ✗ already says it.
             mark=''
-            [ "$i" = "$top_idx" ] && mark=' ← wins the election'
-            detail "$(pretty_path "$path") — version ${copy_vers[$i]}, $(signing_summary "$path")$mark"
+            [ "$i" = "$top_idx" ] && mark=" ${c_yellow}← wins the election${c_reset}"
+            add_item "$path" "$(basename "$path")" \
+                "version ${copy_vers[$i]}, $(signing_summary "$path")$mark" ''
             i=$((i + 1))
         done
-    fi
-
-    if [ "$FIX" = 1 ] && [ "${#competing_copies[@]}" -gt 0 ]; then
-        if [ ! -t 0 ]; then
-            detail 'Not evicting competing copies: stdin is not a TTY, run interactively to confirm.'
-        elif ! command -v trash >/dev/null 2>&1; then
-            detail 'Not evicting competing copies: the `trash` CLI is not installed (brew install trash).'
-        else
-            for path in "${competing_copies[@]}"; do
-                printf '  Trash and unregister %s? [y/N] ' "$path"
-                # Default to empty (falls through to the skip branch below)
-                # rather than leaving $reply unset: under `set -u`, EOF on
-                # `read` (e.g. Ctrl-D at the prompt) never assigns it, and
-                # referencing an unset var would abort the whole script.
-                reply=''
-                read -r reply || true
-                case "$reply" in
-                    y|Y|yes|YES)
-                        if trash "$path" 2>/dev/null; then
-                            "$LSREGISTER" -u "$path" >/dev/null 2>&1
-                            # Same best-effort-then-verify discipline as the
-                            # Launch Services ghost fix above: don't trust
-                            # the unregister exit code, re-check the dump.
-                            if printf '%s\n' "$(kernova_registered_paths)" | grep -qxF "$path"; then
-                                detail "trashed but still registered: $path (re-run to retry unregistering)"
-                            else
-                                fixed "trashed and unregistered: $path"
-                            fi
-                        else
-                            detail "trash failed for $path"
-                        fi
-                        ;;
-                    *)
-                        detail "skipped: $path"
-                        ;;
-                esac
-            done
-        fi
     fi
 fi
 
@@ -635,9 +768,10 @@ fi
 # A default `pluginkit -m` returns only the election winner. Each match line
 # is "<election-marker> id(version)<TAB>uuid<TAB>registered<TAB>path",
 # followed by a tab-less "(N plug-ins)" count line — keep the version and
-# winning path, drop the UUID/timestamp/count noise. Collect everything
-# first so the verdict line can lead and the per-appex lines sit under it.
-pk_lines=()
+# winning path, drop the UUID/timestamp/count noise. Each winner is filed
+# under the location it is elected from, so an appex appears in the same block
+# as the app bundle that carries it.
+pk_unregistered=()
 pk_dead=()
 pk_registered=0
 for id in app.kernova.fileprovider app.kernova.macosagent.fileprovider; do
@@ -649,8 +783,24 @@ for id in app.kernova.fileprovider app.kernova.macosagent.fileprovider; do
     id_matches=0
     while IFS=$'\t' read -r head _uuid _registered path; do
         [ -z "$path" ] && continue
-        ver=${head##*\(}
-        ver=${ver%\)}
+        # pluginkit prints CFBundleShortVersionString — the marketing version —
+        # in its parentheses, but the election it reports on is decided by
+        # CFBundleVersion, which is also what the app lines above show. Read
+        # that key off the elected bundle so both report the same quantity;
+        # comparing marketing versions would be actively misleading here, since
+        # they are bumped by hand and two builds of the guest agent can share
+        # one while their election inputs differ. The marketing version rides
+        # along in parentheses because it is the number bumped per release.
+        short_ver=${head##*\(}
+        short_ver=${short_ver%\)}
+        build_ver=$(bundle_version "$path")
+        if [ -n "$build_ver" ]; then
+            ver="version $build_ver ($short_ver)"
+        else
+            # An election pointing at a deleted bundle leaves no plist to read,
+            # so pluginkit's remembered value is all there is.
+            ver="version unknown ($short_ver per PlugInKit)"
+        fi
         # The election marker only matters when it says the winner is not
         # actually in use (man pluginkit); `+`/blank are the normal states.
         note=''
@@ -658,16 +808,38 @@ for id in app.kernova.fileprovider app.kernova.macosagent.fileprovider; do
             '-'*) note=' (user elected to ignore)' ;;
             '='*) note=' (superseded by another plug-in)' ;;
         esac
-        [ -e "$path" ] || pk_dead+=("$id")
-        pk_lines+=("$id $ver — $(pretty_path "$path")$note")
+        [ -e "$path" ] || { pk_dead+=("$id"); note="$note (path is gone)"; }
+        # Name the carrying bundle rather than repeating the arena: within a
+        # block the only part that varies is which .app the appex sits in.
+        host=${path#*/Build/Products/*/}
+        host=${host%%/Contents/PlugIns/*}
+        case "$host" in
+            *.app) ;;
+            *) host=$(basename "$(dirname "$(dirname "$path")")") ;;
+        esac
+        add_item "$path" "$id" "$ver — in $host$note" ''
         id_matches=$((id_matches + 1))
     done <<< "$info"
     if [ "$id_matches" -eq 0 ]; then
-        pk_lines+=("$id — not registered with PlugInKit")
+        pk_unregistered+=("$id")
     else
         pk_registered=$((pk_registered + 1))
     fi
 done
+
+# ---- verdicts, then one block per location ------------------------------------
+
+case "$copies_verdict_kind" in
+    clean) clean "$copies_verdict" ;;
+    warn)  warn "$copies_verdict" ;;
+    ghost) ghost "$copies_verdict" ;;
+esac
+# Each competing copy is its own fixable finding (the --fix loop below trashes
+# them one at a time), so the count has to match even though they share a single
+# verdict line.
+if [ "$copies_verdict_kind" = 'ghost' ]; then
+    found_count=$((found_count + ghost_count - 1))
+fi
 
 if [ "${#pk_dead[@]}" -gt 0 ]; then
     # Not counted as a fixable issue: pluginkit offers no scripted repair —
@@ -675,15 +847,92 @@ if [ "${#pk_dead[@]}" -gt 0 ]; then
     # copy, or evicting the competing copy above).
     warn "PlugInKit election(s) point at deleted paths: ${pk_dead[*]}"
 elif [ "$pk_registered" -eq 0 ]; then
-    clean 'No app.kernova.* appexes registered with PlugInKit'
-    pk_lines=()
+    pass 'No app.kernova.* appexes registered with PlugInKit'
 else
-    clean 'PlugInKit appex elections point at bundles present on disk:'
+    pass 'PlugInKit appex elections point at bundles present on disk'
 fi
-if [ "${#pk_lines[@]}" -gt 0 ]; then
-    for line in "${pk_lines[@]}"; do
-        detail "$line"
+for id in ${pk_unregistered[@]+"${pk_unregistered[@]}"}; do
+    detail "$id — not registered with PlugInKit"
+done
+
+for (( li = 0; li < ${#loc_paths[@]}; li++ )); do
+    # Column width is per block: one arena's bundle names are similar lengths,
+    # and padding every block to a global maximum would reintroduce the ragged
+    # whitespace this layout exists to remove.
+    width=0
+    for (( j = 0; j < ${#item_name[@]}; j++ )); do
+        [ "${item_loc[$j]}" = "$li" ] || continue
+        [ "${#item_name[$j]}" -gt "$width" ] && width=${#item_name[$j]}
     done
+
+    # Plain, not bold: bold is the section-header weight, and a long hashed path
+    # set at the same weight one level down flattens the hierarchy — it became
+    # the loudest thing on screen while saying the least. The blank line and
+    # indent delimit the block; the cyan worktree line below anchors it.
+    printf '\n'
+    printf '    %s\n' "$(pretty_path "${loc_paths[$li]}")"
+    # Cyan, not dim: the worktree name is the line a reader scans a block for —
+    # the hashed path above it is reference detail they already know how to
+    # ignore. Dimming the identifier buried the one thing this whole feature
+    # exists to surface.
+    loc_label=$("$REPO_ROOT/Tools/arena-label.sh" "${loc_paths[$li]}" 2>/dev/null) || loc_label=''
+    [ -n "$loc_label" ] && printf '    %s%s%s\n' "$c_cyan" "$loc_label" "$c_reset"
+
+    for (( j = 0; j < ${#item_name[@]}; j++ )); do
+        [ "${item_loc[$j]}" = "$li" ] || continue
+        # Braced expansions: the marker glyphs are multi-byte, and bash reads
+        # the leading bytes of a bare `$c_green✓` as part of the variable name,
+        # which fails under `set -u` on the first marked item.
+        case "${item_mark[$j]}" in
+            ghost) marker="${c_red}✗${c_reset} " ;;
+            ok)    marker="${c_green}✓${c_reset} " ;;
+            *)     marker='  ' ;;
+        esac
+        # Meta prints in the default foreground: versions, team ids and the
+        # election verdict are the payload of this section, and the aligned
+        # column already separates them from the name without needing a colour.
+        printf '      %s%-*s  %s\n' \
+            "$marker" "$width" "${item_name[$j]}" "${item_meta[$j]}"
+    done
+done
+
+if [ "$FIX" = 1 ] && [ "${#competing_copies[@]}" -gt 0 ]; then
+    printf '\n'
+    if [ ! -t 0 ]; then
+        detail 'Not evicting competing copies: stdin is not a TTY, run interactively to confirm.'
+    elif ! command -v trash >/dev/null 2>&1; then
+        detail 'Not evicting competing copies: the `trash` CLI is not installed (brew install trash).'
+    else
+        for path in "${competing_copies[@]}"; do
+            printf '  Trash and unregister %s? [y/N] ' "$path"
+            # Default to empty (falls through to the skip branch below)
+            # rather than leaving $reply unset: under `set -u`, EOF on
+            # `read` (e.g. Ctrl-D at the prompt) never assigns it, and
+            # referencing an unset var would abort the whole script.
+            reply=''
+            read -r reply || true
+            case "$reply" in
+                y|Y|yes|YES)
+                    if trash "$path" 2>/dev/null; then
+                        "$LSREGISTER" -u "$path" >/dev/null 2>&1
+                        # Same best-effort-then-verify discipline as the
+                        # Launch Services ghost fix above: don't trust
+                        # the unregister exit code, re-check the dump.
+                        if printf '%s\n' "$(kernova_registered_paths)" | grep -qxF "$path"; then
+                            detail "trashed but still registered: $path (re-run to retry unregistering)"
+                        else
+                            fixed "trashed and unregistered: $path"
+                        fi
+                    else
+                        detail "trash failed for $path"
+                    fi
+                    ;;
+                *)
+                    detail "skipped: $path"
+                    ;;
+            esac
+        done
+    fi
 fi
 
 # launchd's record is read-only diagnosis here, never a repair target: BTM

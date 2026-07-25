@@ -15,8 +15,8 @@ jobs:
   # ruleset (required checks match on job name) — renaming it again means
   # updating the ruleset in the same change, or PRs wait forever on a check
   # that never reports. `make lint` covers Swift (swift-format --strict) and
-  # shell (bash -n + shellcheck via lint-shell, which treats shellcheck as
-  # REQUIRED when $CI is set), so both gate merges through this one check.
+  # shell (bash -n + shellcheck, which it treats as REQUIRED when $CI is set),
+  # so both gate merges through this one check.
   lint:
     runs-on: macos-26
     timeout-minutes: 5
@@ -33,7 +33,7 @@ jobs:
 
       # The macOS runner images ship shellcheck; install it only if a future
       # image drops it, so `make lint` never silently skips static analysis
-      # here (lint-shell hard-fails on CI without it).
+      # here (it hard-fails on CI without it).
       - name: Ensure shellcheck
         run: command -v shellcheck >/dev/null || brew install shellcheck
 

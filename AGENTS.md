@@ -19,7 +19,7 @@ make format              # Rewrite Swift sources in place via swift-format
 make lint                # Check Swift sources (swift-format --strict) + shell scripts (bash -n; shellcheck when installed, required on CI)
 make install-hooks       # One-time: enable .githooks/ (pre-push lint; post-checkout worktree setup)
 make doctor              # Check the local toolchain (macOS, Xcode, Swift, swift-format) and repo setup (hooks, .worktreeinclude)
-make clean               # Remove DerivedData/
+make clean               # Remove this checkout's build arenas (unregistering the bundles inside first)
 ```
 
 Run `make install-hooks` once after cloning to enable the checked-in `.githooks/`: pre-push runs `make lint` (bypass an individual push with `git push --no-verify`), and post-checkout sets up new git worktrees so they inherit the gitignored local files and sign without a manual step. `DEVELOPMENT_TEAM` is not hardcoded in the project — `make bootstrap` derives it from your own signing certificate into the gitignored `Config/Local.xcconfig`, and `make build`/`make test`/`make test-suite` run it automatically. Raw `xcodebuild` (and Xcode's own ⌘B/⌘R) assume it has already run, so on a fresh clone (where hooks aren't active yet) run `make bootstrap` once first — otherwise `DEVELOPMENT_TEAM` resolves empty and the Manual/profile-less Debug targets fail to sign. The full build machinery — the hooks and `.worktreeinclude`, the bootstrap derivation, why a single `xcodebuild test` runs all three test targets, and the DerivedData layout / IDE build-state sharing — is documented in [docs/BUILD.md](docs/BUILD.md).

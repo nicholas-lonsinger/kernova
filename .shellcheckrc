@@ -1,7 +1,6 @@
 # ShellCheck project config — applies to every script in the repo
 # (shellcheck searches upward from each script's directory for this file).
-# Run via `make lint-shell` (part of `make lint`): optional locally,
-# required on CI.
+# Run via `make lint`: optional locally, required on CI.
 #
 # SC2016 ("Expressions don't expand in single quotes"): disabled repo-wide.
 # The Tools/ scripts' user-facing pass/warn/detail text quotes commands and
@@ -9,3 +8,16 @@
 # `--fix`) — display markup, not intended command substitution — and that
 # trips SC2016 on every such line.
 disable=SC2016
+
+# Follow `.` / `source` directives into the sourced file (Tools/lib/output.sh),
+# so the helpers and colour variables it defines are seen as assigned. Without
+# it every consumer reports SC1091 plus an SC2154 per colour it uses. ShellCheck
+# only honours this from an .shellcheckrc, never from an inline directive, which
+# is why it lives here rather than next to each `source` line.
+external-sources=true
+
+# Resolve each `source=` target relative to the sourcing script's own directory
+# rather than shellcheck's working directory. `make lint` runs from the
+# repo root, so a Tools/ script's `source=lib/output.sh` would otherwise be
+# looked up as ./lib/output.sh and reported as missing.
+source-path=SCRIPTDIR
