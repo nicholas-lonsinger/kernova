@@ -25,19 +25,15 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
 
-# ---- output helpers (matches Tools/doctor.sh / Tools/ghosts.sh) ------------
+# ---- output helpers ---------------------------------------------------------
 
-if [ -t 1 ]; then
-    c_green=$'\033[0;32m'; c_red=$'\033[0;31m'; c_yellow=$'\033[0;33m'
-    c_dim=$'\033[0;90m'; c_bold=$'\033[1m'; c_reset=$'\033[0m'
-else
-    c_green=''; c_red=''; c_yellow=''; c_dim=''; c_bold=''; c_reset=''
-fi
+# Colours and the pass/warn/value/detail helpers are shared with the other
+# Tools/ scripts — see Tools/lib/output.sh for the value-vs-detail rule.
+# shellcheck source=lib/output.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/output.sh"
 
-pass()   { printf '  %s✓%s %s\n' "$c_green"  "$c_reset" "$1"; }
-warn()   { printf '  %s⚠%s %s\n' "$c_yellow" "$c_reset" "$1"; }
-fail()   { printf '  %s✗%s %s\n' "$c_red"    "$c_reset" "$1"; }
-detail() { printf '    %s%s%s\n' "$c_dim"    "$1" "$c_reset"; }
+# Local; pass/warn/value/detail come from the lib.
+fail() { printf '  %s✗%s %s\n' "$c_red" "$c_reset" "$1"; }
 
 mode="write"
 case "${1:-}" in
@@ -151,8 +147,8 @@ mkdir -p Config
 } > "$local_xcconfig"
 
 pass "Derived DEVELOPMENT_TEAM = $derived_team (from \"$derived_common_name\")"
-detail "Written to $local_xcconfig"
+value "Written to $local_xcconfig"
 if [ "$distinct_count" -gt 1 ]; then
     warn "Multiple distinct teams found in your keychain: $(printf '%s' "$derived_all_teams" | tr '\n' ' ')"
-    detail "Using $derived_team. Hand-edit $local_xcconfig to pin a different one."
+    value "Using $derived_team. Hand-edit $local_xcconfig to pin a different one."
 fi

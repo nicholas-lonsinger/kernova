@@ -58,13 +58,12 @@ esac
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
-# ---- path display -------------------------------------------------------------
-#
-# Defined up here rather than with the other output helpers because the --sweep
-# and --evict modes below run and exit before that section is reached.
+# Sourced here, before anything prints: the --sweep and --evict modes below run
+# and exit long before the report body, and they label paths too.
+# shellcheck source=lib/output.sh
+. "$REPO_ROOT/Tools/lib/output.sh"
 
-# Display-only: abbreviate $HOME to ~ so deep DerivedData paths stay scannable.
-pretty_path() { printf '%s' "${1/#$HOME/~}"; }
+# ---- path display -------------------------------------------------------------
 
 # The path plus the checkout its build arena belongs to. A default-mode arena is
 # named by a hash of the .xcodeproj path (Kernova-cylpmrailymlsackwzjwvurxnpbj),
@@ -253,21 +252,6 @@ fi
 
 # ---- output helpers (matches Tools/doctor.sh) --------------------------------
 
-# c_dim is reserved for genuine asides — hints and follow-up pointers that a
-# reader can skip. It is NOT for data: at 90m ("bright black") a column of
-# versions and team ids is barely legible on a dark background, which is what
-# the grouped layout looked like at first. Anything the reader came for renders
-# in the terminal's default foreground, which is also the only choice that
-# stays legible on both light and dark themes.
-if [ -t 1 ]; then
-    c_green=$'\033[0;32m'; c_red=$'\033[0;31m'; c_yellow=$'\033[0;33m'
-    c_cyan=$'\033[0;36m'
-    c_dim=$'\033[0;90m'; c_bold=$'\033[1m'; c_reset=$'\033[0m'
-else
-    c_green=''; c_red=''; c_yellow=''; c_cyan=''
-    c_dim=''; c_bold=''; c_reset=''
-fi
-
 found_count=0
 fixed_count=0
 # Subset of found_count that `--fix` deliberately does not repair, so the
@@ -275,12 +259,10 @@ fixed_count=0
 # will clear it.
 manual_count=0
 
-clean()   { printf '  %s✓%s %s\n' "$c_green" "$c_reset" "$1"; }
-warn()    { printf '  %s⚠%s %s\n' "$c_yellow" "$c_reset" "$1"; }
-ghost()   { printf '  %s✗%s %s\n' "$c_red" "$c_reset" "$1"; found_count=$((found_count + 1)); }
-fixed()   { printf '    %s→ fixed:%s %s\n' "$c_green" "$c_reset" "$1"; fixed_count=$((fixed_count + 1)); }
-detail()  { printf '    %s%s%s\n' "$c_dim" "$1" "$c_reset"; }
-section() { printf '\n%s%s%s\n' "$c_bold" "$1" "$c_reset"; }
+# section/pass/warn/value/detail/pretty_path come from Tools/lib/output.sh.
+# These two stay local because they also drive this script's summary counters.
+ghost() { printf '  %s✗%s %s\n' "$c_red" "$c_reset" "$1"; found_count=$((found_count + 1)); }
+fixed() { printf '    %s→ fixed:%s %s\n' "$c_green" "$c_reset" "$1"; fixed_count=$((fixed_count + 1)); }
 
 # --evict <dir>: remove ONE build arena and exit — the shared implementation
 # behind `make clean`, which used to `rm -rf` the arena itself. A bare delete
@@ -355,7 +337,7 @@ while IFS= read -r path; do
 done < <(kernova_registered_paths)
 
 if [ "${#live_ghost_paths[@]}" -eq 0 ]; then
-    clean 'No ghost app.kernova.* or legacy com.kernova.app registrations found'
+    pass 'No ghost app.kernova.* or legacy com.kernova.app registrations found'
 else
     for path in "${live_ghost_paths[@]}"; do
         ghost "Registered but missing on disk: $path"
@@ -415,7 +397,7 @@ section 'Git worktrees'
 
 prunable=$(git -C "$REPO_ROOT" worktree list 2>/dev/null | grep 'prunable' || true)
 if [ -z "$prunable" ]; then
-    clean 'No prunable git worktrees'
+    pass 'No prunable git worktrees'
 else
     while IFS= read -r line; do
         [ -z "$line" ] && continue
@@ -448,7 +430,7 @@ while IFS= read -r dir; do
 done < <(orphaned_dd_arenas)
 
 if [ "${#dd_orphans[@]}" -eq 0 ]; then
-    clean 'No DerivedData arenas left by torn-down worktrees'
+    pass 'No DerivedData arenas left by torn-down worktrees'
 else
     for dir in "${dd_orphans[@]}"; do
         # Resolved once, up front, because the label is read out of the arena's
@@ -558,7 +540,7 @@ fp_flags=$(printf '%s\n' "$fp_dump" | awk '
 fp_has() { printf '%s\n' "$fp_flags" | grep -qx "$1"; }
 
 if ! printf '%s\n' "$fp_dump" | grep -qiE "app\.kernova|kernova-clipboard"; then
-    clean 'No Kernova File Provider domains registered'
+    pass 'No Kernova File Provider domains registered'
 elif fp_has notfound; then
     # A domain outlives the build that registered it — that is the system
     # working as designed, not debris: the registration is what lets the next
@@ -586,7 +568,7 @@ elif fp_has deadend; then
     detail 'This resets the domain'"'"'s System Settings enablement, so use it only when fp-reset didn'"'"'t help.'
     manual_count=$((manual_count + 1))
 else
-    clean 'Kernova File Provider domain(s) registered, none dead-ended'
+    pass 'Kernova File Provider domain(s) registered, none dead-ended'
     detail 'If Copy to Mac beeps or hangs, `make fp-reset` clears stale fileproviderd bindings.'
 fi
 
@@ -865,9 +847,9 @@ if [ "${#pk_dead[@]}" -gt 0 ]; then
     # copy, or evicting the competing copy above).
     warn "PlugInKit election(s) point at deleted paths: ${pk_dead[*]}"
 elif [ "$pk_registered" -eq 0 ]; then
-    clean 'No app.kernova.* appexes registered with PlugInKit'
+    pass 'No app.kernova.* appexes registered with PlugInKit'
 else
-    clean 'PlugInKit appex elections point at bundles present on disk'
+    pass 'PlugInKit appex elections point at bundles present on disk'
 fi
 for id in ${pk_unregistered[@]+"${pk_unregistered[@]}"}; do
     detail "$id — not registered with PlugInKit"
