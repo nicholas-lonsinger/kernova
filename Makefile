@@ -83,6 +83,33 @@ help:
 build: check-hooks bootstrap ## Build the app for macOS
 	xcodebuild $(XCODEBUILD_FLAGS) build
 
+# Removes both build arenas this checkout can have: the in-worktree
+# DerivedData/ (CI-style explicit-flag builds, and Relative-mode machines) and
+# the arena the machine's Xcode preference resolves to (the hashed ~/Library
+# folder on default-location machines — where flag-less `make build` and GUI
+# builds land). The resolver is authoritative for "where would a build go",
+# so this cannot delete another project's folder; the $(CURDIR) guard just
+# avoids a redundant second eviction when the arena is already inside the
+# worktree.
+#
+# Both go through `Tools/ghosts.sh --evict`, the same unregister-then-delete
+# routine the post-checkout sweep and `clean-ghosts` use. A bare `rm -rf`, what
+# this target used to do, leaves Launch Services registrations pointing into the
+# deleted arena, so `make clean` manufactured exactly the ghosts
+# `make clean-ghosts` exists to remove — the two targets stepped on each other.
+# --evict also refuses to delete an arena a running app is executing from, and
+# prints each arena's size before removing it, since on a default-location
+# machine this is the arena the Xcode GUI shares and discarding it costs a full
+# rebuild. A missing path is a no-op, so both candidates are passed
+# unconditionally.
+clean: ## Remove this checkout's build arenas (in-worktree DerivedData/ and the resolved Xcode arena)
+	@Tools/ghosts.sh --evict '$(DERIVED_DATA_ROOT)'
+	@arena=$$(Tools/derived-data-path.sh 2>/dev/null); \
+	case "$$arena" in \
+		''|'$(CURDIR)'/*) ;; \
+		*) Tools/ghosts.sh --evict "$$arena" ;; \
+	esac
+
 test: check-hooks bootstrap ## Run the full test suite (all three test targets via Kernova.xctestplan)
 	xcodebuild $(XCODEBUILD_FLAGS) test
 
@@ -166,33 +193,6 @@ bootstrap: ## Derive your signing team into Config/Local.xcconfig (auto-run by b
 # it's CI-usable too.
 doctor: ## Check the local toolchain (macOS, Xcode, Swift, swift-format) and repo setup
 	@Tools/doctor.sh
-
-# Removes both build arenas this checkout can have: the in-worktree
-# DerivedData/ (CI-style explicit-flag builds, and Relative-mode machines) and
-# the arena the machine's Xcode preference resolves to (the hashed ~/Library
-# folder on default-location machines — where flag-less `make build` and GUI
-# builds land). The resolver is authoritative for "where would a build go",
-# so this cannot delete another project's folder; the $(CURDIR) guard just
-# avoids a redundant second eviction when the arena is already inside the
-# worktree.
-#
-# Both go through `Tools/ghosts.sh --evict`, the same unregister-then-delete
-# routine the post-checkout sweep and `clean-ghosts` use. A bare `rm -rf`, what
-# this target used to do, leaves Launch Services registrations pointing into the
-# deleted arena, so `make clean` manufactured exactly the ghosts
-# `make clean-ghosts` exists to remove — the two targets stepped on each other.
-# --evict also refuses to delete an arena a running app is executing from, and
-# prints each arena's size before removing it, since on a default-location
-# machine this is the arena the Xcode GUI shares and discarding it costs a full
-# rebuild. A missing path is a no-op, so both candidates are passed
-# unconditionally.
-clean: ## Remove this checkout's build arenas (in-worktree DerivedData/ and the resolved Xcode arena)
-	@Tools/ghosts.sh --evict '$(DERIVED_DATA_ROOT)'
-	@arena=$$(Tools/derived-data-path.sh 2>/dev/null); \
-	case "$$arena" in \
-		''|'$(CURDIR)'/*) ;; \
-		*) Tools/ghosts.sh --evict "$$arena" ;; \
-	esac
 
 # Diagnoses ghost Launch Services registrations, orphaned DerivedData build
 # arenas in the global ~/Library location, orphaned processes, and prunable
