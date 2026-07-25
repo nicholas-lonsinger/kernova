@@ -789,8 +789,24 @@ for id in app.kernova.fileprovider app.kernova.macosagent.fileprovider; do
     id_matches=0
     while IFS=$'\t' read -r head _uuid _registered path; do
         [ -z "$path" ] && continue
-        ver=${head##*\(}
-        ver=${ver%\)}
+        # pluginkit prints CFBundleShortVersionString — the marketing version —
+        # in its parentheses, but the election it reports on is decided by
+        # CFBundleVersion, which is also what the app lines above show. Read
+        # that key off the elected bundle so both report the same quantity;
+        # comparing marketing versions would be actively misleading here, since
+        # they are bumped by hand and two builds of the guest agent can share
+        # one while their election inputs differ. The marketing version rides
+        # along in parentheses because it is the number bumped per release.
+        short_ver=${head##*\(}
+        short_ver=${short_ver%\)}
+        build_ver=$(bundle_version "$path")
+        if [ -n "$build_ver" ]; then
+            ver="version $build_ver ($short_ver)"
+        else
+            # An election pointing at a deleted bundle leaves no plist to read,
+            # so pluginkit's remembered value is all there is.
+            ver="version unknown ($short_ver per PlugInKit)"
+        fi
         # The election marker only matters when it says the winner is not
         # actually in use (man pluginkit); `+`/blank are the normal states.
         note=''
