@@ -622,8 +622,67 @@ is_numeric() {
     esac
 }
 
+# location_of PATH — the directory a bundle is elected from, and the key this
+# section groups by. Xcode nests an arena's products under
+# Build/Products/<config>/, and every bundle produced by one build (the app plus
+# the appexes inside it) shares that prefix, so cutting there collapses a whole
+# arena into a single block. Anything else groups by its containing directory
+# (/Applications, ~/.Trash).
+location_of() {
+    local rest
+    case "$1" in
+        */Build/Products/*)
+            rest=${1#*/Build/Products/}
+            printf '%s/Build/Products/%s' "${1%%/Build/Products/*}" "${rest%%/*}"
+            ;;
+        *) dirname "$1" ;;
+    esac
+}
+
+# Rendering state, held as parallel arrays: macOS ships bash 3.2, which has no
+# associative arrays, so locations are interned by linear search into loc_paths
+# and every item records its location's index. Nothing here prints — the whole
+# section is computed first so the verdict lines can lead and the per-location
+# blocks follow, instead of interleaving findings with detail.
+loc_paths=()
+item_loc=()
+item_name=()
+item_meta=()
+item_mark=()
+
+# Returns through a global rather than stdout: interning has to APPEND to
+# loc_paths, and a `$(loc_index …)` call would run that append in a subshell,
+# where the new entry dies with the substitution and every block silently
+# disappears from the report.
+loc_index_result=''
+loc_index() {
+    local want=$1 n
+    for (( n = 0; n < ${#loc_paths[@]}; n++ )); do
+        if [ "${loc_paths[$n]}" = "$want" ]; then
+            loc_index_result=$n
+            return
+        fi
+    done
+    loc_paths+=("$want")
+    loc_index_result=$(( ${#loc_paths[@]} - 1 ))
+}
+
+# add_item <path> <display-name> <meta> <mark>; mark is '', 'ok' or 'ghost'.
+add_item() {
+    loc_index "$(location_of "$1")"
+    item_loc+=("$loc_index_result")
+    item_name+=("$2")
+    item_meta+=("$3")
+    item_mark+=("$4")
+}
+
+copies_verdict=''
+copies_verdict_kind=''
+competing_copies=()
+
 if [ "${#app_copies[@]}" -eq 0 ]; then
-    clean 'No on-disk Kernova.app copies found'
+    copies_verdict='No on-disk Kernova.app copies found'
+    copies_verdict_kind='clean'
 else
     # Check the well-known path directly rather than scanning app_copies for
     # it: blessed_path is a fixed constant, so a scan would just be a second
@@ -650,15 +709,15 @@ else
         i=$((i + 1))
     done
 
-    competing_copies=()
     if [ "$blessed_known" -eq 1 ]; then
+        ghost_count=0
         i=0
         for path in "${app_copies[@]}"; do
             ver=${copy_vers[$i]}
             i=$((i + 1))
             sign=$(signing_summary "$path")
             if [ "$path" = "$blessed_path" ]; then
-                clean "$path — version $ver, $sign (installed copy)"
+                add_item "$path" "$(basename "$path")" "version $ver, $sign (installed copy)" 'ok'
                 continue
             fi
 
@@ -667,71 +726,45 @@ else
             # of the same release), and this script has no verified basis for
             # a tie-break — only a build that would actually outrank
             # /Applications is a ghost.
-            outranks=0
             if is_numeric "$ver" && [ "$ver" -gt "$blessed_version" ]; then
-                outranks=1
-            fi
-            if [ "$outranks" = 1 ]; then
-                ghost "$(labeled_path "$path") — version $ver, $sign (outranks the installed copy, wins the election)"
+                add_item "$path" "$(basename "$path")" "version $ver, $sign — outranks the installed copy, wins the election" 'ghost'
                 competing_copies+=("$path")
+                ghost_count=$((ghost_count + 1))
             else
-                detail "$(labeled_path "$path") — version $ver, $sign"
+                add_item "$path" "$(basename "$path")" "version $ver, $sign" ''
             fi
         done
+        if [ "$ghost_count" -gt 0 ]; then
+            if [ "$ghost_count" -eq 1 ]; then
+                copies_verdict='An on-disk copy outranks the installed /Applications build'
+            else
+                copies_verdict="$ghost_count on-disk copies outrank the installed /Applications build"
+            fi
+            copies_verdict_kind='ghost'
+        else
+            copies_verdict='No on-disk copy outranks the installed /Applications build'
+            copies_verdict_kind='clean'
+        fi
     elif [ "${#app_copies[@]}" -eq 1 ]; then
-        clean 'No /Applications install — the only on-disk copy wins the election unopposed:'
-        detail "$(labeled_path "${app_copies[0]}") — version ${copy_vers[0]}, $(signing_summary "${app_copies[0]}")"
+        copies_verdict='No /Applications install — the only on-disk copy wins the election unopposed'
+        copies_verdict_kind='clean'
+        add_item "${app_copies[0]}" "$(basename "${app_copies[0]}")" \
+            "version ${copy_vers[0]}, $(signing_summary "${app_copies[0]}")" ''
     else
         # Without an installed copy there is nothing to outrank, so none of
         # these is a ghost by this script's definition — but multiple copies
         # mean the highest CFBundleVersion silently wins name/UTI resolution,
         # which is worth a glance.
-        warn "No /Applications install to rank against — ${#app_copies[@]} copies on disk, highest version wins:"
+        copies_verdict="No /Applications install to rank against — ${#app_copies[@]} copies on disk, highest version wins"
+        copies_verdict_kind='warn'
         i=0
         for path in "${app_copies[@]}"; do
             mark=''
             [ "$i" = "$top_idx" ] && mark=' ← wins the election'
-            detail "$(labeled_path "$path") — version ${copy_vers[$i]}, $(signing_summary "$path")$mark"
+            add_item "$path" "$(basename "$path")" \
+                "version ${copy_vers[$i]}, $(signing_summary "$path")$mark" ''
             i=$((i + 1))
         done
-    fi
-
-    if [ "$FIX" = 1 ] && [ "${#competing_copies[@]}" -gt 0 ]; then
-        if [ ! -t 0 ]; then
-            detail 'Not evicting competing copies: stdin is not a TTY, run interactively to confirm.'
-        elif ! command -v trash >/dev/null 2>&1; then
-            detail 'Not evicting competing copies: the `trash` CLI is not installed (brew install trash).'
-        else
-            for path in "${competing_copies[@]}"; do
-                printf '  Trash and unregister %s? [y/N] ' "$path"
-                # Default to empty (falls through to the skip branch below)
-                # rather than leaving $reply unset: under `set -u`, EOF on
-                # `read` (e.g. Ctrl-D at the prompt) never assigns it, and
-                # referencing an unset var would abort the whole script.
-                reply=''
-                read -r reply || true
-                case "$reply" in
-                    y|Y|yes|YES)
-                        if trash "$path" 2>/dev/null; then
-                            "$LSREGISTER" -u "$path" >/dev/null 2>&1
-                            # Same best-effort-then-verify discipline as the
-                            # Launch Services ghost fix above: don't trust
-                            # the unregister exit code, re-check the dump.
-                            if printf '%s\n' "$(kernova_registered_paths)" | grep -qxF "$path"; then
-                                detail "trashed but still registered: $path (re-run to retry unregistering)"
-                            else
-                                fixed "trashed and unregistered: $path"
-                            fi
-                        else
-                            detail "trash failed for $path"
-                        fi
-                        ;;
-                    *)
-                        detail "skipped: $path"
-                        ;;
-                esac
-            done
-        fi
     fi
 fi
 
@@ -741,9 +774,10 @@ fi
 # A default `pluginkit -m` returns only the election winner. Each match line
 # is "<election-marker> id(version)<TAB>uuid<TAB>registered<TAB>path",
 # followed by a tab-less "(N plug-ins)" count line — keep the version and
-# winning path, drop the UUID/timestamp/count noise. Collect everything
-# first so the verdict line can lead and the per-appex lines sit under it.
-pk_lines=()
+# winning path, drop the UUID/timestamp/count noise. Each winner is filed
+# under the location it is elected from, so an appex appears in the same block
+# as the app bundle that carries it.
+pk_unregistered=()
 pk_dead=()
 pk_registered=0
 for id in app.kernova.fileprovider app.kernova.macosagent.fileprovider; do
@@ -764,16 +798,38 @@ for id in app.kernova.fileprovider app.kernova.macosagent.fileprovider; do
             '-'*) note=' (user elected to ignore)' ;;
             '='*) note=' (superseded by another plug-in)' ;;
         esac
-        [ -e "$path" ] || pk_dead+=("$id")
-        pk_lines+=("$id $ver — $(labeled_path "$path")$note")
+        [ -e "$path" ] || { pk_dead+=("$id"); note="$note (path is gone)"; }
+        # Name the carrying bundle rather than repeating the arena: within a
+        # block the only part that varies is which .app the appex sits in.
+        host=${path#*/Build/Products/*/}
+        host=${host%%/Contents/PlugIns/*}
+        case "$host" in
+            *.app) ;;
+            *) host=$(basename "$(dirname "$(dirname "$path")")") ;;
+        esac
+        add_item "$path" "$id" "$ver — in $host$note" ''
         id_matches=$((id_matches + 1))
     done <<< "$info"
     if [ "$id_matches" -eq 0 ]; then
-        pk_lines+=("$id — not registered with PlugInKit")
+        pk_unregistered+=("$id")
     else
         pk_registered=$((pk_registered + 1))
     fi
 done
+
+# ---- verdicts, then one block per location ------------------------------------
+
+case "$copies_verdict_kind" in
+    clean) clean "$copies_verdict" ;;
+    warn)  warn "$copies_verdict" ;;
+    ghost) ghost "$copies_verdict" ;;
+esac
+# Each competing copy is its own fixable finding (the --fix loop below trashes
+# them one at a time), so the count has to match even though they share a single
+# verdict line.
+if [ "$copies_verdict_kind" = 'ghost' ]; then
+    found_count=$((found_count + ghost_count - 1))
+fi
 
 if [ "${#pk_dead[@]}" -gt 0 ]; then
     # Not counted as a fixable issue: pluginkit offers no scripted repair —
@@ -782,14 +838,80 @@ if [ "${#pk_dead[@]}" -gt 0 ]; then
     warn "PlugInKit election(s) point at deleted paths: ${pk_dead[*]}"
 elif [ "$pk_registered" -eq 0 ]; then
     clean 'No app.kernova.* appexes registered with PlugInKit'
-    pk_lines=()
 else
-    clean 'PlugInKit appex elections point at bundles present on disk:'
+    clean 'PlugInKit appex elections point at bundles present on disk'
 fi
-if [ "${#pk_lines[@]}" -gt 0 ]; then
-    for line in "${pk_lines[@]}"; do
-        detail "$line"
+for id in ${pk_unregistered[@]+"${pk_unregistered[@]}"}; do
+    detail "$id — not registered with PlugInKit"
+done
+
+for (( li = 0; li < ${#loc_paths[@]}; li++ )); do
+    # Column width is per block: one arena's bundle names are similar lengths,
+    # and padding every block to a global maximum would reintroduce the ragged
+    # whitespace this layout exists to remove.
+    width=0
+    for (( j = 0; j < ${#item_name[@]}; j++ )); do
+        [ "${item_loc[$j]}" = "$li" ] || continue
+        [ "${#item_name[$j]}" -gt "$width" ] && width=${#item_name[$j]}
     done
+
+    printf '\n'
+    printf '    %s%s%s\n' "$c_bold" "$(pretty_path "${loc_paths[$li]}")" "$c_reset"
+    loc_label=$("$REPO_ROOT/Tools/arena-label.sh" "${loc_paths[$li]}" 2>/dev/null) || loc_label=''
+    [ -n "$loc_label" ] && printf '    %s%s%s\n' "$c_dim" "$loc_label" "$c_reset"
+
+    for (( j = 0; j < ${#item_name[@]}; j++ )); do
+        [ "${item_loc[$j]}" = "$li" ] || continue
+        # Braced expansions: the marker glyphs are multi-byte, and bash reads
+        # the leading bytes of a bare `$c_green✓` as part of the variable name,
+        # which fails under `set -u` on the first marked item.
+        case "${item_mark[$j]}" in
+            ghost) marker="${c_red}✗${c_reset} " ;;
+            ok)    marker="${c_green}✓${c_reset} " ;;
+            *)     marker='  ' ;;
+        esac
+        printf '      %s%-*s  %s%s%s\n' \
+            "$marker" "$width" "${item_name[$j]}" "$c_dim" "${item_meta[$j]}" "$c_reset"
+    done
+done
+
+if [ "$FIX" = 1 ] && [ "${#competing_copies[@]}" -gt 0 ]; then
+    printf '\n'
+    if [ ! -t 0 ]; then
+        detail 'Not evicting competing copies: stdin is not a TTY, run interactively to confirm.'
+    elif ! command -v trash >/dev/null 2>&1; then
+        detail 'Not evicting competing copies: the `trash` CLI is not installed (brew install trash).'
+    else
+        for path in "${competing_copies[@]}"; do
+            printf '  Trash and unregister %s? [y/N] ' "$path"
+            # Default to empty (falls through to the skip branch below)
+            # rather than leaving $reply unset: under `set -u`, EOF on
+            # `read` (e.g. Ctrl-D at the prompt) never assigns it, and
+            # referencing an unset var would abort the whole script.
+            reply=''
+            read -r reply || true
+            case "$reply" in
+                y|Y|yes|YES)
+                    if trash "$path" 2>/dev/null; then
+                        "$LSREGISTER" -u "$path" >/dev/null 2>&1
+                        # Same best-effort-then-verify discipline as the
+                        # Launch Services ghost fix above: don't trust
+                        # the unregister exit code, re-check the dump.
+                        if printf '%s\n' "$(kernova_registered_paths)" | grep -qxF "$path"; then
+                            detail "trashed but still registered: $path (re-run to retry unregistering)"
+                        else
+                            fixed "trashed and unregistered: $path"
+                        fi
+                    else
+                        detail "trash failed for $path"
+                    fi
+                    ;;
+                *)
+                    detail "skipped: $path"
+                    ;;
+            esac
+        done
+    fi
 fi
 
 # launchd's record is read-only diagnosis here, never a repair target: BTM
