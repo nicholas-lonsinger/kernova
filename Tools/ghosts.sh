@@ -253,11 +253,19 @@ fi
 
 # ---- output helpers (matches Tools/doctor.sh) --------------------------------
 
+# c_dim is reserved for genuine asides — hints and follow-up pointers that a
+# reader can skip. It is NOT for data: at 90m ("bright black") a column of
+# versions and team ids is barely legible on a dark background, which is what
+# the grouped layout looked like at first. Anything the reader came for renders
+# in the terminal's default foreground, which is also the only choice that
+# stays legible on both light and dark themes.
 if [ -t 1 ]; then
     c_green=$'\033[0;32m'; c_red=$'\033[0;31m'; c_yellow=$'\033[0;33m'
+    c_cyan=$'\033[0;36m'
     c_dim=$'\033[0;90m'; c_bold=$'\033[1m'; c_reset=$'\033[0m'
 else
-    c_green=''; c_red=''; c_yellow=''; c_dim=''; c_bold=''; c_reset=''
+    c_green=''; c_red=''; c_yellow=''; c_cyan=''
+    c_dim=''; c_bold=''; c_reset=''
 fi
 
 found_count=0
@@ -759,8 +767,12 @@ else
         copies_verdict_kind='warn'
         i=0
         for path in "${app_copies[@]}"; do
+            # Coloured because this branch has no ✓/✗ marker to carry the
+            # signal — every copy here is legitimate, and the only thing worth
+            # spotting is which one the system actually resolves to. The ghost
+            # branch above leaves its text plain, since its ✗ already says it.
             mark=''
-            [ "$i" = "$top_idx" ] && mark=' ← wins the election'
+            [ "$i" = "$top_idx" ] && mark=" ${c_yellow}← wins the election${c_reset}"
             add_item "$path" "$(basename "$path")" \
                 "version ${copy_vers[$i]}, $(signing_summary "$path")$mark" ''
             i=$((i + 1))
@@ -871,10 +883,18 @@ for (( li = 0; li < ${#loc_paths[@]}; li++ )); do
         [ "${#item_name[$j]}" -gt "$width" ] && width=${#item_name[$j]}
     done
 
+    # Plain, not bold: bold is the section-header weight, and a long hashed path
+    # set at the same weight one level down flattens the hierarchy — it became
+    # the loudest thing on screen while saying the least. The blank line and
+    # indent delimit the block; the cyan worktree line below anchors it.
     printf '\n'
-    printf '    %s%s%s\n' "$c_bold" "$(pretty_path "${loc_paths[$li]}")" "$c_reset"
+    printf '    %s\n' "$(pretty_path "${loc_paths[$li]}")"
+    # Cyan, not dim: the worktree name is the line a reader scans a block for —
+    # the hashed path above it is reference detail they already know how to
+    # ignore. Dimming the identifier buried the one thing this whole feature
+    # exists to surface.
     loc_label=$("$REPO_ROOT/Tools/arena-label.sh" "${loc_paths[$li]}" 2>/dev/null) || loc_label=''
-    [ -n "$loc_label" ] && printf '    %s%s%s\n' "$c_dim" "$loc_label" "$c_reset"
+    [ -n "$loc_label" ] && printf '    %s%s%s\n' "$c_cyan" "$loc_label" "$c_reset"
 
     for (( j = 0; j < ${#item_name[@]}; j++ )); do
         [ "${item_loc[$j]}" = "$li" ] || continue
@@ -886,8 +906,11 @@ for (( li = 0; li < ${#loc_paths[@]}; li++ )); do
             ok)    marker="${c_green}✓${c_reset} " ;;
             *)     marker='  ' ;;
         esac
-        printf '      %s%-*s  %s%s%s\n' \
-            "$marker" "$width" "${item_name[$j]}" "$c_dim" "${item_meta[$j]}" "$c_reset"
+        # Meta prints in the default foreground: versions, team ids and the
+        # election verdict are the payload of this section, and the aligned
+        # column already separates them from the name without needing a colour.
+        printf '      %s%-*s  %s\n' \
+            "$marker" "$width" "${item_name[$j]}" "${item_meta[$j]}"
     done
 done
 
