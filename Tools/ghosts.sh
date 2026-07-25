@@ -472,13 +472,23 @@ fi
 # there. Trash and DerivedData are walked explicitly because both escape
 # `mdfind` — DerivedData ships a `.metadata_never_index` sentinel and Trash is
 # excluded from Spotlight entirely.
+#
+# Index.noindex/ is filtered out. Index-while-building writes a second products
+# tree there, so an arena yields two Kernova.app paths and the section reported
+# the same arena twice. The index copy is not a competing build: it carries no
+# Info.plist and no executable (10M of skeleton against the real product's 76M),
+# so it has no CFBundleVersion to enter the election with, and LaunchServices
+# does not register it — verified 2026-07-24 against an arena holding both,
+# where the `lsregister -dump` entries covered only Build/Products/. Excluded by
+# path rather than by "has no Info.plist", so that a *registered* bundle which
+# is genuinely malformed still gets surfaced instead of silently dropped.
 kernova_app_copies() {
     {
         mdfind "kMDItemCFBundleIdentifier == 'app.kernova'" 2>/dev/null
         find "$HOME/.Trash" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
         find "$HOME/Library/Developer/Xcode/DerivedData" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
         find "$REPO_ROOT/DerivedData" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
-    } | sort -u
+    } | grep -v '/Index\.noindex/' | sort -u
 }
 
 app_copies=()
