@@ -14,8 +14,9 @@
 # pointing at a path that no longer resolves.
 #
 # Checks for:
-#   - Launch Services registrations for app.kernova.* extensions whose
-#     `path:` no longer exists on disk
+#   - Launch Services registrations whose `path:` no longer exists on disk,
+#     under the current app.kernova.* identifiers and the legacy
+#     pre-#471-rename `com.kernova.app` one alike
 #   - Xcode DerivedData build arenas in the global per-path-hashed
 #     ~/Library location whose recorded source worktree no longer exists —
 #     on default-location machines every worktree the GUI opens leaves a
@@ -35,7 +36,7 @@
 #     (#454). Deregistration/eviction is the only lever.
 #
 # Run via `make ghosts` (report only) or `make clean-ghosts` (also fixes).
-# Direct invocation: Tools/ghosts.sh [--fix | --sweep]
+# Direct invocation: Tools/ghosts.sh [--fix | --sweep | --evict <dir>]
 # (--sweep-ls is the former name of --sweep, kept as an alias for any
 # installed hooks from before the arena sweep was added.)
 
@@ -43,18 +44,55 @@ set -uo pipefail
 
 FIX=0
 SWEEP=0
+EVICT=0
+EVICT_DIR=
 case "${1:-}" in
     --fix) FIX=1 ;;
     --sweep | --sweep-ls) SWEEP=1 ;;
+    --evict)
+        EVICT=1
+        EVICT_DIR="${2:-}"
+        ;;
 esac
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
+# ---- path display -------------------------------------------------------------
+#
+# Defined up here rather than with the other output helpers because the --sweep
+# and --evict modes below run and exit before that section is reached.
+
+# Display-only: abbreviate $HOME to ~ so deep DerivedData paths stay scannable.
+pretty_path() { printf '%s' "${1/#$HOME/~}"; }
+
+# The path plus the checkout its build arena belongs to. A default-mode arena is
+# named by a hash of the .xcodeproj path (Kernova-cylpmrailymlsackwzjwvurxnpbj),
+# so on its own no arena line answers the first question a reader has — whose
+# build is this? Tools/arena-label.sh resolves the hash back to a worktree name;
+# it exits non-zero for anything it can't attribute, and then the path renders
+# bare exactly as before.
+labeled_path() {
+    local label
+    label=$("$REPO_ROOT/Tools/arena-label.sh" "$1" 2>/dev/null) || label=''
+    if [ -n "$label" ]; then
+        printf '%s (%s)' "$(pretty_path "$1")" "$label"
+    else
+        pretty_path "$1"
+    fi
+}
+
 # lsregister's dump lists `path:` a few lines before the `identifier:` line
 # for the same entry, with entries separated by a full-width dash rule —
 # track the most recently seen path and reset it at each rule so an
 # identifier never gets paired with a path from a different entry.
+#
+# Both identifier eras match: the current `app.kernova*` one and the legacy
+# `com.kernova.app` left by builds predating the #471 naming cleanup. The
+# legacy half used to live in its own script (Tools/ls-reset.sh, `make
+# ls-reset`) purely because this regex was too narrow to see it — an extra
+# alternation costs nothing here (same dump, same loop) and retires a command
+# whose only reason to exist was the gap.
 kernova_registered_paths() {
     "$LSREGISTER" -dump 2>/dev/null | awk '
         /^-+$/ { path = "" }
@@ -64,7 +102,7 @@ kernova_registered_paths() {
             sub(/ \(0x[0-9a-fA-F]+\)[ \t]*$/, "", line)
             path = line
         }
-        /^identifier:[ \t]+app\.kernova($|\.)/ {
+        /^identifier:[ \t]+(app\.kernova($|\.)|com\.kernova\.app$)/ {
             if (path != "") print path
         }
     ' | sort -u
@@ -207,7 +245,7 @@ if [ "$SWEEP" = 1 ]; then
         [ -z "$dir" ] && continue
         arena_in_use "$dir" && continue
         if evict_dd_arena "$dir"; then
-            printf 'ghosts.sh: evicted orphaned worktree DerivedData arena: %s\n' "$dir"
+            printf 'ghosts.sh: evicted orphaned DerivedData arena: %s\n' "$(labeled_path "$dir")"
         fi
     done < <(orphaned_dd_arenas)
     exit 0
@@ -236,8 +274,57 @@ fixed()   { printf '    %s→ fixed:%s %s\n' "$c_green" "$c_reset" "$1"; fixed_c
 detail()  { printf '    %s%s%s\n' "$c_dim" "$1" "$c_reset"; }
 section() { printf '\n%s%s%s\n' "$c_bold" "$1" "$c_reset"; }
 
-# Display-only: abbreviate $HOME to ~ so deep DerivedData paths stay scannable.
-pretty_path() { printf '%s' "${1/#$HOME/~}"; }
+# --evict <dir>: remove ONE build arena and exit — the shared implementation
+# behind `make clean`, which used to `rm -rf` the arena itself. A bare delete
+# leaves Launch Services registrations pointing into the hole, so cleaning a
+# checkout manufactured precisely the ghosts `make clean-ghosts` then had to
+# sweep up; routing it through evict_dd_arena unregisters the bundles inside
+# first, leaving nothing to clean. The in-use guard matches --fix: an on-demand
+# extension is terminated (its daemon restarts it on the next request), while a
+# running app or test runner is the user's to quit, so the arena is left intact
+# and this exits non-zero rather than deleting a binary out from under a live
+# process. A path that isn't there is a no-op, so callers can pass every
+# candidate arena unconditionally.
+if [ "$EVICT" = 1 ]; then
+    if [ -z "$EVICT_DIR" ]; then
+        printf 'ghosts.sh: --evict requires a directory argument\n' >&2
+        exit 2
+    fi
+    # Absolutize: callers pass repo-relative arenas (the in-worktree
+    # DerivedData/), and the in-use check greps absolute paths out of `ps` —
+    # a relative path would silently never match, defeating the guard.
+    case "$EVICT_DIR" in
+        /*) ;;
+        *) EVICT_DIR="$PWD/$EVICT_DIR" ;;
+    esac
+    [ -d "$EVICT_DIR" ] || exit 0
+    # Clear the in-use guard before announcing anything, so a refusal never
+    # follows a "Removing…" line that turned out to be false.
+    if arena_in_use "$EVICT_DIR"; then
+        if arena_has_non_appex "$EVICT_DIR"; then
+            printf 'ghosts.sh: a running app is still executing from inside %s — quit it, then re-run\n' \
+                "$(labeled_path "$EVICT_DIR")" >&2
+            exit 1
+        fi
+        if ! kill_arena_appexes "$EVICT_DIR"; then
+            printf 'ghosts.sh: could not free %s — an extension did not exit\n' \
+                "$(labeled_path "$EVICT_DIR")" >&2
+            exit 1
+        fi
+    fi
+    # Size on the way out: on a default-location machine this is the arena the
+    # Xcode GUI shares, so discarding it costs a full rebuild — worth seeing as
+    # it happens rather than wondering later why the next build was cold.
+    printf 'Removing build arena %s — %s\n' \
+        "$(labeled_path "$EVICT_DIR")" \
+        "$(du -sh "$EVICT_DIR" 2>/dev/null | cut -f1)"
+    evict_dd_arena "$EVICT_DIR"
+    if [ -d "$EVICT_DIR" ]; then
+        printf 'ghosts.sh: failed to remove %s\n' "$(labeled_path "$EVICT_DIR")" >&2
+        exit 1
+    fi
+    exit 0
+fi
 
 printf '%sKernova ghost cleanup%s\n' "$c_bold" "$c_reset"
 [ "$FIX" = 1 ] && printf '%s(--fix: will unregister, kill, and prune)%s\n' "$c_dim" "$c_reset"
@@ -256,7 +343,7 @@ while IFS= read -r path; do
 done < <(kernova_registered_paths)
 
 if [ "${#live_ghost_paths[@]}" -eq 0 ]; then
-    clean 'No ghost app.kernova.* registrations found'
+    clean 'No ghost app.kernova.* or legacy com.kernova.app registrations found'
 else
     for path in "${live_ghost_paths[@]}"; do
         ghost "Registered but missing on disk: $path"
@@ -277,7 +364,7 @@ else
         for path in "${live_ghost_paths[@]}"; do
             if printf '%s\n' "$still_registered" | grep -qxF "$path"; then
                 detail "still registered: $path"
-                detail 'Unexpected — a plain `lsregister -u` normally sticks even once the path is gone (see Tools/ls-reset.sh). Re-run this script; if it persists, file a bug rather than reaching for `lsregister -kill` (removed on current macOS).'
+                detail 'Unexpected — a plain `lsregister -u` normally sticks even once the path is gone (verified empirically 2026-07-08). Re-run this script; if it persists, file a bug rather than reaching for `lsregister -kill` (removed on current macOS).'
             else
                 fixed "unregistered: $path"
             fi
@@ -352,7 +439,7 @@ if [ "${#dd_orphans[@]}" -eq 0 ]; then
     clean 'No DerivedData arenas left by torn-down worktrees'
 else
     for dir in "${dd_orphans[@]}"; do
-        ghost "Orphaned worktree arena: $(pretty_path "$dir") ($(du -sh "$dir" 2>/dev/null | cut -f1))"
+        ghost "Orphaned arena: $(labeled_path "$dir") — $(du -sh "$dir" 2>/dev/null | cut -f1)"
         if arena_in_use "$dir"; then
             if arena_has_non_appex "$dir"; then
                 detail 'a running app is still executing from inside — quit it (or reboot), then re-run'
@@ -368,7 +455,7 @@ else
         fi
         if [ "$FIX" = 1 ]; then
             if evict_dd_arena "$dir"; then
-                fixed "unregistered bundles and deleted: $(pretty_path "$dir")"
+                fixed "unregistered bundles and deleted: $(labeled_path "$dir")"
             else
                 detail "delete failed for $dir"
             fi
@@ -566,15 +653,15 @@ else
                 outranks=1
             fi
             if [ "$outranks" = 1 ]; then
-                ghost "$(pretty_path "$path") — version $ver, $sign (outranks the installed copy, wins the election)"
+                ghost "$(labeled_path "$path") — version $ver, $sign (outranks the installed copy, wins the election)"
                 competing_copies+=("$path")
             else
-                detail "$(pretty_path "$path") — version $ver, $sign"
+                detail "$(labeled_path "$path") — version $ver, $sign"
             fi
         done
     elif [ "${#app_copies[@]}" -eq 1 ]; then
         clean 'No /Applications install — the only on-disk copy wins the election unopposed:'
-        detail "$(pretty_path "${app_copies[0]}") — version ${copy_vers[0]}, $(signing_summary "${app_copies[0]}")"
+        detail "$(labeled_path "${app_copies[0]}") — version ${copy_vers[0]}, $(signing_summary "${app_copies[0]}")"
     else
         # Without an installed copy there is nothing to outrank, so none of
         # these is a ghost by this script's definition — but multiple copies
@@ -585,7 +672,7 @@ else
         for path in "${app_copies[@]}"; do
             mark=''
             [ "$i" = "$top_idx" ] && mark=' ← wins the election'
-            detail "$(pretty_path "$path") — version ${copy_vers[$i]}, $(signing_summary "$path")$mark"
+            detail "$(labeled_path "$path") — version ${copy_vers[$i]}, $(signing_summary "$path")$mark"
             i=$((i + 1))
         done
     fi
@@ -659,7 +746,7 @@ for id in app.kernova.fileprovider app.kernova.macosagent.fileprovider; do
             '='*) note=' (superseded by another plug-in)' ;;
         esac
         [ -e "$path" ] || pk_dead+=("$id")
-        pk_lines+=("$id $ver — $(pretty_path "$path")$note")
+        pk_lines+=("$id $ver — $(labeled_path "$path")$note")
         id_matches=$((id_matches + 1))
     done <<< "$info"
     if [ "$id_matches" -eq 0 ]; then

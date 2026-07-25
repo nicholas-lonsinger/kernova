@@ -25,7 +25,7 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
 
-# ---- output helpers (matches Tools/doctor.sh / Tools/ls-reset.sh) ----------
+# ---- output helpers (matches Tools/doctor.sh / Tools/ghosts.sh) ------------
 
 if [ -t 1 ]; then
     c_green=$'\033[0;32m'; c_red=$'\033[0;31m'; c_yellow=$'\033[0;33m'

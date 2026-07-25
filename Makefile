@@ -69,7 +69,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-suite test-package clean format lint lint-shell install-hooks check-hooks bootstrap doctor ghosts clean-ghosts fp-reset ls-reset
+.PHONY: help build test test-suite test-package clean format lint lint-shell install-hooks check-hooks bootstrap doctor ghosts clean-ghosts fp-reset
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -188,30 +188,29 @@ fp-reset: ## Restart fileproviderd to clear stale Kernova File Provider bindings
 	@printf '(briefly interrupts all File Providers; iCloud Drive reconnects in a few seconds)\n'
 	@killall fileproviderd 2>/dev/null && printf 'fileproviderd restarted.\n' || printf 'fileproviderd was not running; it will start on demand.\n'
 
-# Clears ghost Launch Services registrations left under the legacy
-# pre-#471-rename `com.kernova.app` identifier — a gap `clean-ghosts` can't
-# see, since Tools/ghosts.sh's Launch Services check only pattern-matches the
-# current `app.kernova` identifier. Kept as its own target (rather than folded
-# into ghosts.sh) until the legacy-identifier era is retired; see
-# Tools/ls-reset.sh for why this isn't the system-wide rebuild its name might
-# suggest (`-kill` no longer exists in lsregister, and turns out unnecessary).
-ls-reset: ## Clear legacy com.kernova.app ghost Launch Services registrations
-	@Tools/ls-reset.sh
-
 # Removes both build arenas this checkout can have: the in-worktree
 # DerivedData/ (CI-style explicit-flag builds, and Relative-mode machines) and
 # the arena the machine's Xcode preference resolves to (the hashed ~/Library
 # folder on default-location machines — where flag-less `make build` and GUI
 # builds land). The resolver is authoritative for "where would a build go",
 # so this cannot delete another project's folder; the $(CURDIR) guard just
-# avoids a redundant second rm when the arena is already inside the worktree.
+# avoids a redundant second eviction when the arena is already inside the
+# worktree.
+#
+# Both go through `Tools/ghosts.sh --evict`, the same unregister-then-delete
+# routine the post-checkout sweep and `clean-ghosts` use. A bare `rm -rf`, what
+# this target used to do, leaves Launch Services registrations pointing into the
+# deleted arena, so `make clean` manufactured exactly the ghosts
+# `make clean-ghosts` exists to remove — the two targets stepped on each other.
+# --evict also refuses to delete an arena a running app is executing from, and
+# prints each arena's size before removing it, since on a default-location
+# machine this is the arena the Xcode GUI shares and discarding it costs a full
+# rebuild. A missing path is a no-op, so both candidates are passed
+# unconditionally.
 clean: ## Remove this checkout's build arenas (in-worktree DerivedData/ and the resolved Xcode arena)
-	rm -rf $(DERIVED_DATA_ROOT)
+	@Tools/ghosts.sh --evict '$(DERIVED_DATA_ROOT)'
 	@arena=$$(Tools/derived-data-path.sh 2>/dev/null); \
 	case "$$arena" in \
 		''|'$(CURDIR)'/*) ;; \
-		*) if [ -d "$$arena" ]; then \
-			printf 'Removing resolved build arena %s\n' "$$arena"; \
-			rm -rf "$$arena"; \
-		fi ;; \
+		*) Tools/ghosts.sh --evict "$$arena" ;; \
 	esac

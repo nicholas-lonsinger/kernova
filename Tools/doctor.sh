@@ -185,7 +185,12 @@ if [ -n "$arena" ]; then
         *)  dd_mode="relative location ($dd_pref/ inside the checkout)" ;;
     esac
     pass "Derived data: $dd_mode"
-    detail "this checkout's build arena: ${arena/#$HOME/~}"
+    # Label from the checkout rather than the arena: in default mode the arena
+    # is a bare hash, and it may not exist yet on a checkout that has never
+    # built — the checkout path always resolves.
+    arena_label=$(Tools/arena-label.sh "$PWD" 2>/dev/null || true)
+    [ -n "$arena_label" ] && arena_label=" ($arena_label)"
+    detail "this checkout's build arena: ${arena/#$HOME/~}$arena_label"
     detail 'orphaned worktree arenas are swept at worktree creation; audit with `make ghosts`'
 else
     warn 'Could not resolve the derived-data arena (Tools/derived-data-path.sh failed)'
