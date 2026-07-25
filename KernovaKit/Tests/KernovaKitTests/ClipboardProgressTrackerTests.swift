@@ -812,6 +812,92 @@ struct ClipboardProgressTrackerTests {
         #expect(harness.lastEmissionClears)
     }
 
+    @Test("a disowned transfer leaves the denominator, so the session can still finish")
+    func discardedUnitLeavesTheDenominator() throws {
+        // Two materialization loops can walk one offer at once; whichever reaches a
+        // rep second coalesces onto the other's pull, and that rep's bytes are
+        // reported to the session that owns it. The coalescing session has to give
+        // the unit back or it never reaches 100% (#656).
+        let harness = Harness()
+        let session = harness.tracker.openSession(
+            direction: .inbound, peerName: "VM",
+            units: [
+                ClipboardProgressTracker.PlannedUnit(id: 0, expectedBytes: 1_000, name: "mine.bin"),
+                ClipboardProgressTracker.PlannedUnit(id: 1, expectedBytes: 9_000, name: "theirs.bin"),
+            ])
+        harness.tracker.unitBegan(session: session, id: 0)
+        harness.now = 2
+        harness.tracker.unitProgressed(session: session, id: 0, bytesTransferred: 400)
+        #expect(harness.latest?.totalBytes == 10_000)
+
+        harness.tracker.discardUnit(session: session, id: 1)
+        let afterDiscard = try #require(harness.latest)
+        #expect(afterDiscard.fileCount == 1)
+        #expect(afterDiscard.totalBytes == 1_000)
+        #expect(afterDiscard.bytesTransferred == 400)
+
+        // And what this session does own still completes the readout.
+        harness.tracker.unitEnded(session: session, id: 0, succeeded: true)
+        let finished = try #require(harness.latest)
+        #expect(finished.fractionComplete == 1)
+        #expect(finished.filesCompleted == 1)
+    }
+
+    @Test("disowning a transfer never reveals a session that has shown nothing")
+    func discardingDoesNotReveal() {
+        // A loop that coalesces on every rep it declared moves nothing of its own.
+        // Revealing it would put an empty readout on screen — and, with no bytes
+        // remaining, it would rank last anyway.
+        let harness = Harness()
+        let session = harness.tracker.openSession(
+            direction: .inbound, peerName: "VM",
+            units: [
+                ClipboardProgressTracker.PlannedUnit(id: 0, expectedBytes: 1_000),
+                ClipboardProgressTracker.PlannedUnit(id: 1, expectedBytes: 9_000),
+            ])
+        harness.now = 5  // well past the reveal delay
+        harness.tracker.discardUnit(session: session, id: 0)
+        harness.tracker.discardUnit(session: session, id: 1)
+        #expect(harness.emissions.isEmpty)
+
+        harness.tracker.closeSession(session)
+        #expect(harness.emissions.isEmpty)
+    }
+
+    @Test("the readout follows the session moving bytes, not one waiting on a transfer it disowned")
+    func discardedUnitDoesNotOutrankRealProgress() throws {
+        // The projection ranks by bytes *remaining*, so a session stalled on a unit
+        // it doesn't own outranks the one actually transferring — the symptom #656
+        // is filed for.
+        let harness = Harness()
+        let owner = harness.tracker.openSession(
+            direction: .inbound, peerName: "VM",
+            units: [
+                ClipboardProgressTracker.PlannedUnit(id: 0, expectedBytes: 100_000, name: "big.bin")
+            ])
+        harness.tracker.unitBegan(session: owner, id: 0)
+
+        // The second loop declared the same rep plus one of its own, then found the
+        // first loop already pulling it.
+        let coalescing = harness.tracker.openSession(
+            direction: .inbound, peerName: "VM",
+            units: [
+                ClipboardProgressTracker.PlannedUnit(id: 0, expectedBytes: 100_000, name: "big.bin"),
+                ClipboardProgressTracker.PlannedUnit(id: 1, expectedBytes: 2_000, name: "own.bin"),
+            ])
+        harness.tracker.discardUnit(session: coalescing, id: 0)
+        harness.tracker.unitBegan(session: coalescing, id: 1)
+
+        harness.now = 2
+        harness.tracker.unitProgressed(session: owner, id: 0, bytesTransferred: 10_000)
+        harness.tracker.unitProgressed(session: coalescing, id: 1, bytesTransferred: 1_000)
+
+        let snapshot = try #require(harness.latest)
+        #expect(snapshot.currentItemName == "big.bin")
+        #expect(snapshot.totalBytes == 100_000)
+        #expect(snapshot.bytesTransferred == 10_000)
+    }
+
     @Test("closing a session that never revealed emits nothing")
     func closingAnUnrevealedSessionIsSilent() {
         let harness = Harness()

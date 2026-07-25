@@ -143,8 +143,8 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
         /// Whether the reveal gate has been passed — once true, the readout is on
         /// screen and every terminal must clear it.
         var revealed = false
-        /// Writable only through `setUnit`, which keeps the running byte sums
-        /// below in step with it.
+        /// Writable only through `setUnit` and `removeUnit`, which keep the
+        /// running byte sums below in step with it.
         private(set) var units: [Unit: UnitState]
         var completedCount = 0
         /// Transfers currently in flight, in the order they began.
@@ -197,12 +197,23 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
 
         /// Installs one transfer's state, keeping the running sums in step.
         ///
-        /// The only way `units` is written after `init`, so the two can't drift.
+        /// One of the two ways `units` is written after `init`, so the sums can't
+        /// drift.
         func setUnit(_ unit: Unit, _ state: UnitState) {
             let previous = units[unit]
             totalBytes = totalBytes &- (previous?.expected ?? 0) &+ state.expected
             transferredBytes = transferredBytes &- (previous?.observed ?? 0) &+ state.observed
             units[unit] = state
+        }
+
+        /// Drops one transfer, unwinding everything the session counted for it —
+        /// the mirror of `setUnit`, and the other writer of `units`.
+        func removeUnit(_ unit: Unit) {
+            guard let state = units.removeValue(forKey: unit) else { return }
+            totalBytes &-= state.expected
+            transferredBytes &-= state.observed
+            if state.completed { completedCount -= 1 }
+            activeUnits.removeAll { $0 == unit }
         }
     }
 
@@ -382,6 +393,27 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
             // cross) but never counts its file complete.
             return .mayBeIdle
         }
+    }
+
+    /// Drops a transfer this session declared but does not own, taking it back out
+    /// of the denominator.
+    ///
+    /// A caller that coalesces onto another session's in-flight transfer is never
+    /// told when it begins, progresses, or ends. Left declared, it is a
+    /// denominator waiting on events that never arrive — and `projectionLocked`
+    /// ranks by bytes *remaining*, so that session wins the readout.
+    ///
+    /// Never reveals; a revealed session republishes off the throttle. Unknown
+    /// sessions and units are ignored.
+    public func discardUnit(session token: SessionToken, id: UInt64) {
+        let outcome: Outcome = lock.withLock {
+            guard let session = sessions[token] else { return Outcome(.none) }
+            let unit = Unit.adHoc(id)
+            guard session.units[unit] != nil else { return Outcome(.none) }
+            session.removeUnit(unit)
+            return Outcome(resolveLocked(admits: session.revealed))
+        }
+        deliver(outcome)
     }
 
     /// Ends a session the caller knows has finished — a materialization loop that
