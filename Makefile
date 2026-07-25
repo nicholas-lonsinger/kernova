@@ -80,6 +80,37 @@ help:
 	@printf '  make test-suite requires SUITE=<Target/Suite>, e.g. SUITE=KernovaTests/VMConfigurationTests\n'
 	@printf '  Append CONFIGURATION=Release to build/test in Release (default: Debug)\n'
 
+# Derives this developer's signing team from their own certificate into the
+# gitignored Config/Local.xcconfig (see Config/Base.xcconfig) — what makes a
+# fresh clone build and sign with *your* team rather than a hardcoded one
+# (#476). A prerequisite of build/test rather than a separate manual step, so
+# a fresh clone's first `make build` just works; Tools/bootstrap-team.sh is
+# idempotent (no-ops once Config/Local.xcconfig has a value), so this is cheap
+# on every subsequent build. Re-derive with `Tools/bootstrap-team.sh --force`.
+bootstrap: ## Derive your signing team into Config/Local.xcconfig (auto-run by build/test)
+	@Tools/bootstrap-team.sh
+
+# One-time per clone: point this repo's git at the checked-in hooks —
+# `.githooks/pre-push` runs `make lint` before each push (bypass an
+# individual push with `git push --no-verify`), and `.githooks/post-checkout`
+# sets up fresh worktrees: it copies the gitignored files listed in
+# .worktreeinclude from the main checkout, then bootstraps DEVELOPMENT_TEAM
+# if still missing. Per-repo config (no `--global`); core.hooksPath is
+# shared by all worktrees of this repo.
+install-hooks: ## Point git at .githooks/ (pre-push lint; post-checkout worktree setup)
+	git config core.hooksPath .githooks
+	@echo 'Hooks installed. Pre-push runs `make lint`; post-checkout sets up new worktrees (.worktreeinclude copies + DEVELOPMENT_TEAM bootstrap).'
+
+# Silent when the hooks are wired up; otherwise a one-line nudge. Runs as a
+# prerequisite of the build/test targets so contributors who skipped the
+# install step see the reminder on their first build instead of only when
+# CI fails on their PR. Detection delegates to Tools/hooks-installed.sh —
+# shared with doctor.sh — which verifies the configured path actually
+# contains the hooks rather than string-comparing against ".githooks" (an
+# absolute path that resolves correctly also counts as installed).
+check-hooks:
+	@Tools/hooks-installed.sh >/dev/null || printf 'Note: git hooks are not installed. Run `make install-hooks` (one-time per clone) to lint before push and auto-set-up new worktrees.\n' >&2
+
 build: check-hooks bootstrap ## Build the app for macOS
 	xcodebuild $(XCODEBUILD_FLAGS) build
 
@@ -154,37 +185,6 @@ lint: ## Lint Swift sources (swift-format --strict) and shell scripts
 	fi
 	@test -n '$(strip $(SWIFT_SOURCE_DIRS))' || { echo 'No tracked Swift sources found — not a git checkout?' >&2; exit 1; }
 	$(SWIFT_FORMAT) lint --strict --recursive $(SWIFT_SOURCE_DIRS)
-
-# One-time per clone: point this repo's git at the checked-in hooks —
-# `.githooks/pre-push` runs `make lint` before each push (bypass an
-# individual push with `git push --no-verify`), and `.githooks/post-checkout`
-# sets up fresh worktrees: it copies the gitignored files listed in
-# .worktreeinclude from the main checkout, then bootstraps DEVELOPMENT_TEAM
-# if still missing. Per-repo config (no `--global`); core.hooksPath is
-# shared by all worktrees of this repo.
-install-hooks: ## Point git at .githooks/ (pre-push lint; post-checkout worktree setup)
-	git config core.hooksPath .githooks
-	@echo 'Hooks installed. Pre-push runs `make lint`; post-checkout sets up new worktrees (.worktreeinclude copies + DEVELOPMENT_TEAM bootstrap).'
-
-# Silent when the hooks are wired up; otherwise a one-line nudge. Runs as a
-# prerequisite of the build/test targets so contributors who skipped the
-# install step see the reminder on their first build instead of only when
-# CI fails on their PR. Detection delegates to Tools/hooks-installed.sh —
-# shared with doctor.sh — which verifies the configured path actually
-# contains the hooks rather than string-comparing against ".githooks" (an
-# absolute path that resolves correctly also counts as installed).
-check-hooks:
-	@Tools/hooks-installed.sh >/dev/null || printf 'Note: git hooks are not installed. Run `make install-hooks` (one-time per clone) to lint before push and auto-set-up new worktrees.\n' >&2
-
-# Derives this developer's signing team from their own certificate into the
-# gitignored Config/Local.xcconfig (see Config/Base.xcconfig) — what makes a
-# fresh clone build and sign with *your* team rather than a hardcoded one
-# (#476). A prerequisite of build/test rather than a separate manual step, so
-# a fresh clone's first `make build` just works; Tools/bootstrap-team.sh is
-# idempotent (no-ops once Config/Local.xcconfig has a value), so this is cheap
-# on every subsequent build. Re-derive with `Tools/bootstrap-team.sh --force`.
-bootstrap: ## Derive your signing team into Config/Local.xcconfig (auto-run by build/test)
-	@Tools/bootstrap-team.sh
 
 # Environment sanity check: verifies the local toolchain (macOS, Xcode, Swift,
 # swift-format) and repo setup (git hooks, .worktreeinclude) match what Kernova
