@@ -250,13 +250,13 @@ else
     detail "Install with: brew install protobuf swift-protobuf"
 fi
 
-# Shell static analysis for Tools/ and .githooks/ — `make lint-shell` (part of
-# `make lint`) uses it when present and CI requires it; locally it's optional,
-# with `bash -n` still catching syntax errors without it.
+# Shell static analysis for Tools/ and .githooks/ — `make lint` uses it when
+# present and CI requires it; locally it's optional, with `bash -n` still
+# catching syntax errors without it.
 if command -v shellcheck >/dev/null 2>&1; then
-    pass "shellcheck $(shellcheck --version 2>/dev/null | sed -n 's/^version: //p') — make lint-shell runs full static analysis"
+    pass "shellcheck $(shellcheck --version 2>/dev/null | sed -n 's/^version: //p') — make lint runs full static analysis"
 else
-    warn "shellcheck absent — make lint-shell falls back to bash -n only (CI still enforces shellcheck)"
+    warn "shellcheck absent — make lint falls back to bash -n only (CI still enforces shellcheck)"
     detail "Install with: brew install shellcheck"
 fi
 

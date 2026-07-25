@@ -69,7 +69,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-suite test-package clean format lint lint-shell install-hooks check-hooks bootstrap doctor ghosts clean-ghosts fp-reset
+.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks bootstrap doctor ghosts clean-ghosts fp-reset
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -103,25 +103,30 @@ format: ## Rewrite Swift sources in place via swift-format
 	@test -n '$(strip $(SWIFT_SOURCE_DIRS))' || { echo 'No tracked Swift sources found — not a git checkout?' >&2; exit 1; }
 	$(SWIFT_FORMAT) format --in-place --recursive $(SWIFT_SOURCE_DIRS)
 
-lint: lint-shell ## Lint Swift sources (swift-format --strict) and shell scripts
-	@test -n '$(strip $(SWIFT_SOURCE_DIRS))' || { echo 'No tracked Swift sources found — not a git checkout?' >&2; exit 1; }
-	$(SWIFT_FORMAT) lint --strict --recursive $(SWIFT_SOURCE_DIRS)
-
-# `bash -n` always (ships with macOS, catches syntax errors); shellcheck for
-# real static analysis when installed — optional locally (brew install
+# One lint target, covering both languages. The shell half was `make lint-shell`
+# until nothing was found to invoke it: CI and .githooks/pre-push both run
+# `make lint`, every other mention was prose, and the whole Swift pass costs 4
+# seconds more than the shell pass alone — too little to justify a second
+# command in `make help`.
+#
+# Shell: `bash -n` always (ships with macOS, catches syntax errors); shellcheck
+# for real static analysis when installed — optional locally (brew install
 # shellcheck), REQUIRED on CI ($CI is set by GitHub Actions) so findings gate
 # merges rather than silently skipping. Project-wide directives live in
-# .shellcheckrc.
-lint-shell: ## Lint shell scripts (bash -n; plus shellcheck when installed — required on CI)
+# .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
+# error surfaces without waiting on swift-format.
+lint: ## Lint Swift sources (swift-format --strict) and shell scripts
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck $(SHELL_SOURCES); \
 	elif [ -n "$${CI:-}" ]; then \
-		echo 'lint-shell: shellcheck is required on CI but not installed' >&2; \
+		echo 'lint: shellcheck is required on CI but not installed' >&2; \
 		exit 1; \
 	else \
-		echo 'lint-shell: shellcheck not installed — skipping static analysis (brew install shellcheck)'; \
+		echo 'lint: shellcheck not installed — skipping shell static analysis (brew install shellcheck)'; \
 	fi
+	@test -n '$(strip $(SWIFT_SOURCE_DIRS))' || { echo 'No tracked Swift sources found — not a git checkout?' >&2; exit 1; }
+	$(SWIFT_FORMAT) lint --strict --recursive $(SWIFT_SOURCE_DIRS)
 
 # One-time per clone: point this repo's git at the checked-in hooks —
 # `.githooks/pre-push` runs `make lint` before each push (bypass an

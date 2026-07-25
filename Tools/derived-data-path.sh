@@ -37,6 +37,35 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# --root: print the directory that CONTAINS the per-path-hashed arenas, rather
+# than one project's arena. Tools/ghosts.sh scans it to find arenas orphaned by
+# torn-down worktrees, and used to hardcode the default ~/Library location —
+# which silently scanned the wrong directory on a machine pointed at a custom
+# root, reporting no orphans while they accumulated.
+#
+# Exits 1 printing nothing when no such shared directory exists: Relative mode
+# nests each arena inside its own checkout (so an arena cannot outlive its
+# worktree, and there is nothing to sweep), and a per-user workspace override
+# names a single arena rather than a root. Callers treat "no root" as "no
+# machine-wide arena scan applies", not as an error.
+if [ "${1:-}" = "--root" ]; then
+    shift
+    [ $# -eq 0 ] || { echo "derived-data-path.sh: --root takes no arguments" >&2; exit 2; }
+    override="$REPO_ROOT/Kernova.xcodeproj/project.xcworkspace/xcuserdata/$USER.xcuserdatad/WorkspaceSettings.xcsettings"
+    if [ -f "$override" ] \
+        && plutil -extract DerivedDataCustomLocation raw "$override" -o - >/dev/null 2>&1; then
+        exit 1
+    fi
+    root="$(defaults read com.apple.dt.Xcode IDECustomDerivedDataLocation 2>/dev/null || true)"
+    case "$root" in
+        '') printf '%s/Library/Developer/Xcode/DerivedData\n' "$HOME" ;;
+        /*) printf '%s\n' "${root%/}" ;;
+        *)  exit 1 ;;
+    esac
+    exit 0
+fi
+
 project="${1:-$REPO_ROOT/Kernova.xcodeproj}"
 
 # Absolutize without requiring existence (dirname may be gone for a

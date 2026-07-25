@@ -27,9 +27,14 @@ cd "$repo_root"
 
 echo "pre-push: running 'make lint' (bypass with git push --no-verify)"
 
+# Don't attribute the failure to swift-format: `make lint` covers the shell
+# scripts too, and a shellcheck or `bash -n` finding sent the reader to
+# `make format`, which cannot fix one. Name both remedies and let the output
+# above say which applies.
 if ! make lint; then
     echo ""
-    echo "pre-push: swift-format lint failed."
-    echo "          Run 'make format' to auto-fix, then commit the changes and push again."
+    echo "pre-push: 'make lint' failed — see the findings above."
+    echo "          Swift findings:  run 'make format' to auto-fix, then commit and push again."
+    echo "          Shell findings:  fix by hand; swift-format does not touch shell scripts."
     exit 1
 fi

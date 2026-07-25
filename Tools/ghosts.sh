@@ -107,40 +107,35 @@ kernova_registered_paths() {
     ' | sort -u
 }
 
-# Xcode DerivedData arenas left by torn-down worktrees. On machines using
-# Xcode's default derived-data location, every worktree the GUI opens gets a
-# permanent per-path-hashed folder under ~/Library — nothing removes it when
-# the worktree goes away, and the LS-registered app copy inside keeps
-# competing in the CFBundleVersion election (docs/BUILD.md "Derived data and build arenas").
-# Each folder records its source project in info.plist's WorkspacePath; that
-# recorded path is the ground truth for orphan detection (and stays readable
-# after the worktree is deleted). Tools/derived-data-path.sh computes the same
-# worktree->arena mapping forward when a single arena needs locating.
-XCODE_DD_ROOT="$HOME/Library/Developer/Xcode/DerivedData"
+# Xcode DerivedData arenas left by torn-down worktrees. Where the machine's
+# preference puts per-path-hashed arenas, every worktree the GUI opens gets a
+# permanent folder there — nothing removes it when the worktree goes away, and
+# the LS-registered app copy inside keeps competing in the CFBundleVersion
+# election (docs/BUILD.md "Derived data and build arenas").
+#
+# Resolved rather than hardcoded to the default ~/Library path: on a machine
+# pointed at a custom root, hardcoding scanned a directory Xcode never writes
+# to, so the sweep reported no orphans while they piled up unseen. Empty means
+# no machine-wide arena directory exists at all — Relative mode nests each arena
+# inside its own checkout, where it cannot outlive the worktree, so there is
+# genuinely nothing to scan.
+XCODE_DD_ROOT=$("$REPO_ROOT/Tools/derived-data-path.sh" --root 2>/dev/null) || XCODE_DD_ROOT=''
 
-# The worktrees all live under the *primary* checkout's .claude/worktrees/,
-# which REPO_ROOT is not when this script runs from inside a worktree — the
-# first `git worktree list` entry is the primary checkout.
-main_root=$(git -C "$REPO_ROOT" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
-
-# Print one arena directory per line whose recorded WorkspacePath sits in a
-# .claude/worktrees/ worktree of this repo that no longer exists on disk.
-# Scoped to this repo's worktrees deliberately: a deleted checkout of some
-# other project is not this script's call to clean up.
+# Print one arena directory per line whose recorded source worktree is gone.
+# The classification is Tools/arena-label.sh's — this used to re-read each
+# info.plist and re-derive the .claude/worktrees layout itself, which was the
+# same mapping implemented twice. --status is asked for rather than the human
+# label so nothing here depends on that label's wording. Scoped to this repo's
+# worktrees by that same classification: a deleted checkout of some other
+# project reports `other` and is not this script's call to clean up.
 orphaned_dd_arenas() {
-    [ -n "$main_root" ] || return 0
-    local info ws wt_dir
+    [ -n "$XCODE_DD_ROOT" ] || return 0
+    local info dir
     for info in "$XCODE_DD_ROOT"/*/info.plist; do
         [ -f "$info" ] || continue
-        ws=$(plutil -extract WorkspacePath raw "$info" -o - 2>/dev/null) || continue
-        case "$ws" in
-            "$main_root/.claude/worktrees/"*) ;;
-            *) continue ;;
-        esac
-        wt_dir=${ws#"$main_root/.claude/worktrees/"}
-        wt_dir="$main_root/.claude/worktrees/${wt_dir%%/*}"
-        [ -d "$wt_dir" ] && continue
-        printf '%s\n' "${info%/info.plist}"
+        dir=${info%/info.plist}
+        [ "$("$REPO_ROOT/Tools/arena-label.sh" --status "$dir" 2>/dev/null)" = 'worktree-removed' ] || continue
+        printf '%s\n' "$dir"
     done
 }
 
@@ -485,7 +480,12 @@ kernova_app_copies() {
     {
         mdfind "kMDItemCFBundleIdentifier == 'app.kernova'" 2>/dev/null
         find "$HOME/.Trash" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
-        find "$HOME/Library/Developer/Xcode/DerivedData" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
+        # Same resolved root as the orphan scan above, for the same reason; the
+        # in-checkout DerivedData/ below covers Relative mode, where the
+        # machine-wide root does not exist.
+        if [ -n "$XCODE_DD_ROOT" ]; then
+            find "$XCODE_DD_ROOT" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
+        fi
         find "$REPO_ROOT/DerivedData" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
     } | grep -v '/Index\.noindex/' | sort -u
 }
