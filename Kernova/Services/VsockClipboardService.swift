@@ -922,25 +922,20 @@ final class VsockClipboardService: ClipboardServicing {
     /// Opens the progress session covering one materialization loop, or `nil` when
     /// the loop has nothing to pull.
     ///
-    /// `pulling` is the loop's own selection; reps already materialized or already
-    /// in flight for another caller are dropped from it here, because their bytes
-    /// will be reported to whichever session owns that pull — declaring them again
-    /// would leave this session waiting on transfers that never begin. One session
-    /// spans the whole loop, so a multi-rep materialization reads as one transfer
-    /// rather than one per rep.
+    /// `pulling` is declared in full: another loop can claim a rep at any point
+    /// before this one reaches it, so ownership is settled per rep in `materialize`
+    /// rather than filtered here. One session spans the whole loop, so a multi-rep
+    /// materialization reads as one transfer rather than one per rep.
     private func openInboundSession(promise: InboundPromise, pulling indices: [Int])
         -> ClipboardProgressTracker.SessionToken?
     {
-        let units = indices.compactMap { index -> ClipboardProgressTracker.PlannedUnit? in
-            guard promise.materialized[index] == nil, promise.inFlight[index] == nil else {
-                return nil
-            }
+        guard !indices.isEmpty else { return nil }
+        let units = indices.map { index -> ClipboardProgressTracker.PlannedUnit in
             let info = promise.reps[index]
             return ClipboardProgressTracker.PlannedUnit(
                 id: UInt64(index), expectedBytes: info.byteCount,
                 name: info.filename.isEmpty ? nil : info.filename)
         }
-        guard !units.isEmpty else { return nil }
         return progress.openSession(direction: .inbound, peerName: label, units: units)
     }
 
@@ -1252,8 +1247,15 @@ final class VsockClipboardService: ClipboardServicing {
         index: Int, info: Kernova_V1_ClipboardRepresentationInfo, promise: InboundPromise,
         session: ClipboardProgressTracker.SessionToken?
     ) async -> ClipboardContent.Representation? {
-        if let cached = promise.materialized[index] { return cached }
+        // Neither early return moves a byte on this session's behalf, so both give
+        // the unit back before awaiting: left declared, it would sit in the
+        // denominator waiting on events that never arrive.
+        if let cached = promise.materialized[index] {
+            if let session { progress.discardUnit(session: session, id: UInt64(index)) }
+            return cached
+        }
         if let existing = promise.inFlight[index] {
+            if let session { progress.discardUnit(session: session, id: UInt64(index)) }
             let rep = await existing.value
             // The owning call writes the cache after its own continuation resumes,
             // which may be after this coalescing caller — populate it here too so a

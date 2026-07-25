@@ -2762,6 +2762,99 @@ struct VsockClipboardServiceTests {
         try await waitForChange { service.transferProgress == nil }
     }
 
+    @Test(
+        "a rep another loop pulled first leaves the declaring session's readout, which still reaches 100% (#656)"
+    )
+    func coalescedRepIsDisownedByTheSessionThatDeclaredIt() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // Reveal instantly so each session's state is observable as it happens; the
+        // linger is sized past any scheduler stall instead of to a "tidy" value,
+        // because the sessions here span a gap between two transfers on purpose and
+        // an idle terminal firing inside it would end the very session under test.
+        // Nothing waits on the linger — `stop()` clears the readout at teardown.
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: 0,
+            progressIdleLinger: 60)
+        service.start()
+        defer { service.stop() }
+
+        // rep 0: an inline blob only Copy-to-Mac pulls — not an image, not text, so
+        // the preview loop skips it. rep 1: text both loops want, and the rep they
+        // end up racing over.
+        let blob = Data(count: 8_192)
+        let text = String(repeating: "x", count: 200_000)
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 7, repIndex: 0, uti: "public.data", bytes: blob, isInline: true)
+        responder.register(
+            generation: 7, repIndex: 1, uti: ClipboardContent.utf8TextUTI, bytes: Data(text.utf8),
+            isInline: true)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 7,
+                reps: [
+                    (uti: "public.data", byteCount: blob.count, filename: "", isInline: true),
+                    (
+                        uti: ClipboardContent.utf8TextUTI, byteCount: text.utf8.count, filename: "",
+                        isInline: true
+                    ),
+                ]))
+        try await waitForChange { service.clipboardContent.representations.count == 2 }
+
+        // The seam parks Copy-to-Mac inside `materialize` for rep 0, leaving the
+        // main actor free for the preview loop.
+        let entered = AsyncGate()
+        let release = AsyncGate()
+        var didEnter = false
+        var released = false
+        var parkedOnce = false
+        service.afterInboundPullForTesting = {
+            if parkedOnce { return }
+            parkedOnce = true
+            didEnter = true
+            entered.notify()
+            try? await release.wait { released }
+        }
+
+        // Copy-to-Mac opens its session first and declares BOTH reps — neither is
+        // materialized or in flight yet, which is precisely the state an open-time
+        // filter cannot see past.
+        let copyTask = Task { await service.materializeForCopy() }
+        try await entered.wait { didEnter }
+
+        // With it parked, the preview loop runs to completion over rep 1 — the rep
+        // Copy-to-Mac declared but will now never own.
+        await service.materializeForPreview()
+        #expect(service.clipboardContent.representations[1].isPendingRemote == false)
+
+        // Copy-to-Mac's session is what's on screen — it has the most bytes
+        // remaining — and it is still counting both reps.
+        try await waitForChange {
+            service.transferProgress?.totalBytes == UInt64(blob.count + text.utf8.count)
+        }
+        #expect(service.transferProgress?.fileCount == 2)
+
+        released = true
+        release.notify()
+        _ = await copyTask.value
+
+        // Reaching rep 1 and finding it already pulled, the copy session disowns
+        // it, and the readout lands on the bytes it actually moved — at 100%,
+        // rather than stalling at 4% for the rest of the operation. The total is
+        // what identifies the session: the preview's is the text rep's size.
+        try await waitForChange { service.transferProgress?.totalBytes == UInt64(blob.count) }
+        let final = try #require(service.transferProgress)
+        #expect(final.fileCount == 1)
+        #expect(final.fractionComplete == 1)
+    }
+
     @Test("an outbound transfer sets transferProgress while streaming and clears it on completion")
     func outboundTransferProgressSetThenCleared() async throws {
         let (guest, host) = try makePair()
