@@ -327,7 +327,11 @@ if [ "$EVICT" = 1 ]; then
 fi
 
 printf '%sKernova ghost cleanup%s\n' "$c_bold" "$c_reset"
-[ "$FIX" = 1 ] && printf '%s(--fix: will unregister, kill, and prune)%s\n' "$c_dim" "$c_reset"
+# Names the mode, not the flag that selected it: the flag is unreachable through
+# the Makefile front door anyway (make swallows `--fix` as one of its own
+# options and bails), so echoing it back only suggests an argument the reader
+# cannot actually pass to `make ghosts`.
+[ "$FIX" = 1 ] && printf '%s(repair mode: will unregister, kill, and prune)%s\n' "$c_dim" "$c_reset"
 
 # ---- Launch Services ghost registrations -------------------------------------
 
@@ -439,7 +443,12 @@ if [ "${#dd_orphans[@]}" -eq 0 ]; then
     clean 'No DerivedData arenas left by torn-down worktrees'
 else
     for dir in "${dd_orphans[@]}"; do
-        ghost "Orphaned arena: $(labeled_path "$dir") — $(du -sh "$dir" 2>/dev/null | cut -f1)"
+        # Resolved once, up front, because the label is read out of the arena's
+        # own info.plist — evicting the arena destroys the evidence, so a
+        # lookup after the delete falls back to the bare hashed path on the one
+        # line where naming the worktree matters most.
+        dir_label=$(labeled_path "$dir")
+        ghost "Orphaned arena: $dir_label — $(du -sh "$dir" 2>/dev/null | cut -f1)"
         if arena_in_use "$dir"; then
             if arena_has_non_appex "$dir"; then
                 detail 'a running app is still executing from inside — quit it (or reboot), then re-run'
@@ -455,9 +464,9 @@ else
         fi
         if [ "$FIX" = 1 ]; then
             if evict_dd_arena "$dir"; then
-                fixed "unregistered bundles and deleted: $(labeled_path "$dir")"
+                fixed "unregistered bundles and deleted: $dir_label"
             else
-                detail "delete failed for $dir"
+                detail "delete failed for $dir_label"
             fi
         fi
     done
