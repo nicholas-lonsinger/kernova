@@ -52,10 +52,10 @@ func relaunchApp() async {
         }
     }
 
-    // RATIONALE: no /usr/bin/open fallback here. The helper is app-sandbox +
-    // inherit (KernovaRelaunchHelper.entitlements), so a spawned `open` inherits
-    // that sandbox and reaches LaunchServices through the same mediated path as
-    // NSWorkspace — no added capability.
+    // RATIONALE: the helper is app-sandbox + inherit
+    // (KernovaRelaunchHelper.entitlements), so a spawned `/usr/bin/open` inherits
+    // that sandbox and reaches LaunchServices through the same mediated path
+    // `NSWorkspace` already took — it adds no capability this loop lacks.
     logger.error("Failed to relaunch Kernova after 4 attempts, giving up")
     exit(1)
 }

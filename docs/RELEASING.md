@@ -98,7 +98,7 @@ into *build*-action products for debugger attachment — the agent targets set
 the DMG is notarization-clean regardless of whether it came from a `build` or
 an `archive` action.
 
-All five product targets set `ENABLE_HARDENED_RUNTIME = YES` in Release. The
+Every product target sets `ENABLE_HARDENED_RUNTIME = YES` in Release. The
 agent and `KernovaRelaunchHelper` each set `SKIP_INSTALL = YES` so the archive
 contains only `Kernova.app` — either one installing as a second product turns
 the archive into a generic *Other Items* archive with **Distribute App

@@ -2,11 +2,9 @@
 // project XCBuildConfigurations (targets without their own
 // baseConfigurationReference inherit it).
 //
-// DEVELOPMENT_TEAM is intentionally NOT hardcoded here. It is derived
-// per-developer from your own signing certificate by `make bootstrap` (see
-// Tools/bootstrap-team.sh) into the gitignored Local.xcconfig included below,
-// so a fresh clone builds and signs with *your* team, not the project
-// owner's — see README.md "Development setup" and issue #476.
+// DEVELOPMENT_TEAM is derived per-developer from your own signing certificate
+// by `make bootstrap` (Tools/bootstrap-team.sh) into the gitignored
+// Local.xcconfig included below — see docs/BUILD.md "Signing team derivation".
 //
 // `#include?` (with the trailing `?`) is the optional form: it silently
 // no-ops when Local.xcconfig doesn't exist yet, so a not-yet-bootstrapped

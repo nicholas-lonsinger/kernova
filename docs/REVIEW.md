@@ -73,17 +73,17 @@ It is a **last resort**, not the routine outcome of **Annotate**: the population
 3. **Cites re-checkable evidence** — a PR or issue number, a named test, a vendor-doc URL, or a dated first-hand observation (`verified 2026-07-20 via log stream`). A bare assertion about framework, OS, or hardware behavior does **not** qualify; that is exactly the class that goes stale invisibly while still being trusted. With nothing to cite you have a hypothesis, not a rationale: leave the code unannotated, or file it under the `## Hypothesis` heading above.
 4. **Consequential.** "Fixing" the pattern breaks something real. If the worst case is a style regression, dismiss instead.
 
-**Format** — name the rejected alternative and why it loses, then the evidence and its date:
+**Format** — name the alternative it displaces, state the constraint that makes the shipped form required, then the evidence and its date:
 
 ```swift
 // RATIONALE: `nonisolated(unsafe)`, not `@MainActor` — VZVirtualMachine delegate
 // callbacks are not actor-isolated by the framework, so we bridge back via
-// MainActor.assumeIsolated. (VZVirtualMachineDelegate docs; the @MainActor form
-// fails to compile under Swift 6 strict concurrency.)
+// MainActor.assumeIsolated. (VZVirtualMachineDelegate docs; Swift 6 requires a
+// synchronous witness to carry its requirement's isolation.)
 nonisolated(unsafe) func guestDidStop(_ virtualMachine: VZVirtualMachine) {
 ```
 
-Explain *why the rejected alternative is wrong here*, never *what the code does* — if the prose reads the same without the prefix, drop the prefix. `grep -rn "RATIONALE:"` audits every one; run it periodically to prune, not only when writing a new one.
+State *the constraint that makes this form required here*, never *what the code does* — if the prose reads the same without the prefix, drop the prefix. `grep -rn "RATIONALE:"` audits every one; run it periodically to prune, not only when writing a new one.
 
 ## Periphery directives
 

@@ -1170,10 +1170,14 @@ final class VMLibraryViewModel {
     /// Reconciles the live removable media list with `target`, diffing per id against
     /// `instance.liveRemovableMedia`.
     ///
+    /// Detaches run before attaches, so swapping the medium in a slot cannot collide
+    /// with itself on a duplicate UUID.
+    ///
     /// On unexpected detach or attach errors the persisted config is rolled back to
     /// match `instance.liveRemovableMedia`, so the UI snaps to what is actually
-    /// attached. `deviceNotFound` (which also covers a guest-side eject) and
-    /// `noVirtualMachine` are handled as confirmed-gone / silent bail.
+    /// attached rather than describing a state VZ refused. `deviceNotFound` (which
+    /// also covers a guest-side eject) and `noVirtualMachine` are handled as
+    /// confirmed-gone / silent bail.
     private func applyLiveRemovableMediaChange(
         for instance: VMInstance,
         target: [RemovableMediaItem]
@@ -2063,7 +2067,7 @@ final class VMLibraryViewModel {
 
     /// Moves a partial VM bundle to the Trash in the background, logging on failure.
     ///
-    /// Static (with the file-system seam passed in) because two call sites run after
+    /// Static (with the file-system seam passed in) because it must stay callable after
     /// `guard let self else` — the cleanup must not depend on the view model.
     private static func trashPartialBundle(at url: URL, fileSystem: any FileSystemOperating) {
         let log = logger

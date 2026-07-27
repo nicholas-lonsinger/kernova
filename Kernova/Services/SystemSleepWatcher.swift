@@ -2,6 +2,10 @@ import AppKit
 import os
 
 /// Observes system sleep/wake notifications and invokes callbacks.
+///
+/// Untested by construction rather than by omission: the callbacks fire from
+/// `NSWorkspace`'s sleep and wake notifications, and a test process cannot put the
+/// machine to sleep.
 @MainActor
 final class SystemSleepWatcher {
     private static let logger = Logger(subsystem: "app.kernova", category: "SystemSleepWatcher")

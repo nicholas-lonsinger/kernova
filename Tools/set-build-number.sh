@@ -5,26 +5,8 @@
 #
 # Usage: set-build-number.sh <app|agent>
 #
-# The number is *squash-merge aware*. A checkout reports the commit count it will
-# have once its PR squash-merges into main, and holds that value steady across a
-# branch's own commits instead of climbing by one per commit:
-#
-#     base   = git merge-base HEAD origin/main   # after a rebase, == origin/main tip
-#     number = <commits reachable from base> + <1 if this checkout has pending work>
-#
-# "Pending work" = a commit beyond base OR an uncommitted change (a dirty tree is
-# the in-progress next commit; untracked non-ignored files count, gitignored build
-# output does not). So the ONLY +0 case is a clean checkout of a commit already on
-# main (reading its own position); anything with work of its own is +1, and commits
-# + dirt still collapse to a single squash commit, so it never exceeds +1. On main
-# with a clean tree the number equals the old `git rev-list --count HEAD`, so what
-# ships (archived from main) is unchanged. When main advances, git forces a rebase
-# to merge; that rebase moves `base` forward and re-derives the number — the rebase
-# is the natural trigger, not a per-commit creep.
-#
-# app mode counts every commit / any change. agent mode counts only commits and
-# changes touching the guest-agent sources, so an app-only PR leaves the agent's
-# number untouched — mirroring how a single squash commit moves each by at most one.
+# The number is squash-merge aware, and app/agent mode scope it differently —
+# docs/BUILD.md "Build version" has the derivation.
 #
 # Environment (exported by Xcode): SRCROOT, DERIVED_FILE_DIR.
 

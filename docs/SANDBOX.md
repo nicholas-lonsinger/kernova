@@ -21,7 +21,7 @@ Everything `Kernova/Resources/Kernova.entitlements` claims:
 
 Two absences are deliberate:
 
-**`com.apple.security.network.server`.** The app never calls `socket()`/`bind()`/`listen()` — `VZVirtioSocketListener`/`VZVirtioSocketConnection` hand it already-connected fds, and the sandbox's network entitlements gate socket *acquisition*, not I/O on granted fds. The serial relay's `AF_UNIX` listener binds inside the app's own temp directory, which file rules already allow. Do not add this entitlement to make vsock or the relay work; neither needs it.
+**`com.apple.security.network.server`.** The app never calls `socket()`/`bind()`/`listen()` — `VZVirtioSocketListener`/`VZVirtioSocketConnection` hand it already-connected fds, and the sandbox's network entitlements gate socket *acquisition*, not I/O on granted fds. The serial relay's `AF_UNIX` listener binds inside the app's own temp directory, which file rules already allow. Neither vsock nor the relay needs it.
 
 **Any entitlement unavailable to Mac App Store apps.** The virtualization entitlement is compatible with the sandbox on the store — UTM ships exactly this combination there, macOS guests included.
 
@@ -33,7 +33,7 @@ The group identifier is the per-configuration `KERNOVA_APP_GROUP` build setting.
 
 **Debug** uses a Team-ID-prefixed group, `$(DEVELOPMENT_TEAM).app.kernova`. macOS grants silent container access to a group whose prefix matches the signing team (macOS 15 app-group protection, criterion C), so Debug needs no provisioning profile and no portal or device registration — which is what lets anyone build against their own team, and what keeps the guest agent from hitting the "access data from other apps" consent prompt inside an unregistered guest VM.
 
-**Do not rename the Debug group off the Team-ID prefix**: profile-less Debug signing depends on that prefix match. `DEVELOPMENT_TEAM` itself is derived per developer ([BUILD.md](BUILD.md)).
+**Profile-less Debug signing depends on that Team-ID prefix match.** `DEVELOPMENT_TEAM` itself is derived per developer ([BUILD.md](BUILD.md)).
 
 **Release** uses the canonical iOS-style `group.app.kernova` — the form Apple recommends on macOS and the only form developer-portal registration accepts — authorized by an embedded provisioning profile.
 

@@ -37,9 +37,6 @@
 #
 # Run via `make ghosts` (report only) or `make clean-ghosts` (also fixes).
 # Direct invocation: Tools/ghosts.sh [--fix | --sweep | --evict <dir>]
-# (--sweep-ls is the former name of --sweep, kept as an alias for any
-# installed hooks from before the arena sweep was added.)
-
 set -uo pipefail
 
 FIX=0
@@ -87,11 +84,7 @@ labeled_path() {
 # identifier never gets paired with a path from a different entry.
 #
 # Both identifier eras match: the current `app.kernova*` one and the legacy
-# `com.kernova.app` left by builds predating the #471 naming cleanup. The
-# legacy half used to live in its own script (Tools/ls-reset.sh, `make
-# ls-reset`) purely because this regex was too narrow to see it — an extra
-# alternation costs nothing here (same dump, same loop) and retires a command
-# whose only reason to exist was the gap.
+# `com.kernova.app` left by builds predating the #471 naming cleanup.
 kernova_registered_paths() {
     "$LSREGISTER" -dump 2>/dev/null | awk '
         /^-+$/ { path = "" }
@@ -206,8 +199,8 @@ kill_arena_appexes() {
 # Unregister first, so no dead registration lingers until the next sweep.
 # `rm -rf`, not `trash` (the exception to the trash-first file-operations
 # rule): a bundle sitting in the Trash is still a valid on-disk copy that
-# Launch Services can rediscover and re-elect until the Trash is emptied
-# (#454), so trashing just relocates the ghost — and an orphaned arena is
+# Launch Services can rediscover and re-elect until the Trash is emptied,
+# so trashing just relocates the ghost — and an orphaned arena is
 # purely regenerable build products of a worktree that no longer exists,
 # with nothing user-authored to recover.
 evict_dd_arena() {
@@ -260,11 +253,7 @@ ghost() { printf '  %s✗%s %s\n' "$c_red" "$c_reset" "$1"; found_count=$((found
 fixed() { printf '    %s→ fixed:%s %s\n' "$c_green" "$c_reset" "$1"; fixed_count=$((fixed_count + 1)); }
 
 # --evict <dir>: remove ONE build arena and exit — the shared implementation
-# behind `make clean`, which used to `rm -rf` the arena itself. A bare delete
-# leaves Launch Services registrations pointing into the hole, so cleaning a
-# checkout manufactured precisely the ghosts `make clean-ghosts` then had to
-# sweep up; routing it through evict_dd_arena unregisters the bundles inside
-# first, leaving nothing to clean. The in-use guard matches --fix: an on-demand
+# behind `make clean`. The in-use guard matches --fix: an on-demand
 # extension is terminated (its daemon restarts it on the next request), while a
 # running app or test runner is the user's to quit, so the arena is left intact
 # and this exits non-zero rather than deleting a binary out from under a live

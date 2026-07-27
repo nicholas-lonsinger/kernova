@@ -30,11 +30,10 @@ enum PathValidation {
 
     /// Resolves symlinks and validates that a regular file exists at the given path.
     ///
-    // RATIONALE: no `requireReadable` parameter for files. A pre-flight readability
-    // check adds little value — the authoritative test occurs when
-    // Virtualization.framework opens the file, and a TOCTOU race could invalidate
-    // any earlier check. Callers must still handle `.notReadable` in their switch
-    // for exhaustiveness, but this method never throws it.
+    // RATIONALE: readability is established when Virtualization.framework opens
+    // the file — a TOCTOU race invalidates any earlier check — so this method
+    // resolves and existence-checks only. Callers still handle `.notReadable` in
+    // their switch for exhaustiveness; this method never throws it.
     static func resolveFile(at path: String, requireWritable: Bool = false) throws(Failure) -> ResolvedPath {
         let resolved = resolve(path)
         let fm = FileManager.default

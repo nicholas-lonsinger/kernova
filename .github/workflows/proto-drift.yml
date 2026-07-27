@@ -1,13 +1,11 @@
 name: Proto Drift
 
-# Triggers are intentionally NOT path-filtered at the workflow level — when
-# `proto-drift` is a required status check, a workflow-level `paths:` filter
-# would skip the run entirely on PRs that don't touch proto files, leaving
-# GitHub waiting forever for a status that's never reported. Instead the
-# first job step diffs the changed paths against this workflow's relevance
-# pattern and short-circuits the remaining steps when nothing relevant
-# changed; the job still reports a green status so the required check is
-# satisfied. The early-exit path adds <30s of macOS runner time per PR.
+# A required status check has to report on every PR, and a workflow-level
+# `paths:` filter skips the run entirely — GitHub then waits on a status that
+# never arrives. Relevance is therefore decided inside the job: the first step
+# diffs the changed paths against this workflow's pattern and short-circuits
+# the remaining steps, still reporting green so the required check is
+# satisfied.
 on:
   pull_request:
     types: [opened, synchronize, reopened]

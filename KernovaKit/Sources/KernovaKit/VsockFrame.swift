@@ -104,7 +104,6 @@ struct VsockFrameDecoder: Sendable {
         // before the next `feed`/`nextFrame`; `Data`'s copy-on-write keeps that a
         // performance contract, not a safety one. The slice carries a non-zero
         // `startIndex` — index it through its own indices, never absolute offsets.
-        // Verified 2026-07-27.
         let payload = buffer[payloadStart..<payloadEnd]
         readOffset += totalFrameSize
 
@@ -142,7 +141,7 @@ struct VsockFrameDecoder: Sendable {
         // `compactionThreshold` on its own — so a bare threshold guard would
         // memmove the whole unread tail after *every* frame, moving far more than
         // it reclaims (#377). The price is a buffer growing to ~2× the live bytes
-        // between compactions. Verified 2026-07-27.
+        // between compactions.
         let unread = buffer.count - readOffset
         if readOffset >= max(VsockFrameDecoder.compactionThreshold, unread) {
             let unreadStart = buffer.startIndex + readOffset

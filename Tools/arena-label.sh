@@ -19,12 +19,9 @@
 #   other checkout: <dir>         a different clone or project entirely
 #
 # With --status, prints the machine-readable kind instead — one of
-# `worktree-live`, `worktree-removed`, `main`, `other`. This exists so callers
-# can BRANCH on the classification without re-deriving it: ghosts.sh's orphan
-# scan previously carried its own copy of the plist read and the
-# .claude/worktrees layout test, which is the same mapping computed twice in two
-# files. Never match on the human label to get at this — that is a format
-# dependency, and the `, removed` suffix is presentation.
+# `worktree-live`, `worktree-removed`, `main`, `other`. Callers branch on this rather than
+# on the human label: matching the label is a format dependency, and the
+# `, removed` suffix is presentation.
 #
 # Exits 1 printing nothing when the path can't be attributed (no info.plist to
 # read, a path outside every known checkout, not a git repo). Callers append the

@@ -33,9 +33,8 @@ import Foundation
 /// from `(generation, repIndex, direction)` alone — plus `childSeq` for a child
 /// transfer. Both `cancelStagedPull` sites re-derive it rather than remembering
 /// what they minted, and `FileProviderServiceSource.cancelPull`'s race-win guard
-/// needs the same key to always yield the same id. A per-attempt discriminator
-/// (#499) would break that everywhere, to close a window whose worst case is one
-/// spurious re-abort, never corruption — covered by
+/// needs the same key to always yield the same id. A reused id's worst case is
+/// one spurious re-abort, never corruption — pinned by
 /// `LazyPullCoordinatorTests.staleAbortCollidesWithReusedAwaiterButTableStaysConsistent`.
 public enum ClipboardTransferID {
     /// High bit marking a transfer the **host** receives (guest→host direction).

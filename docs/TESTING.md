@@ -6,9 +6,9 @@ Read this before writing any test that waits on async state or needs access to p
 
 macos-26 CI runners have heavy `@MainActor` scheduling jitter. With a `waitUntil`/`pollUntil` poll loop, the timeout deadline *is* the pass/fail criterion — so a starved scheduler fails a test whose condition would have become true. **When a test waits for async state that has an underlying signal, make the wait event-driven from the start — do not reach for a poll loop.** With event-driven waits the timeout is only a stuck-condition backstop the happy path never reaches.
 
-**Wait timeouts default to the shared `testWaitBackstop` (60 s in `KernovaTestSupport`) — don't pass a smaller explicit value.** Runner stalls defeated 5 s *and* 10 s backstops (2026-07-19: two consecutive main-branch runs timed out 12 event-driven waits whose conditions were sound). A shorter timeout is reserved for the rare case where the deadline itself is the assertion; negative assertions ("prove nothing arrived") don't qualify — they use a fixed observation window (`expectNoNewFrames`-style), not a wait timeout.
+**Wait timeouts default to the shared `testWaitBackstop` — don't pass a smaller explicit value.** Runner stalls defeated 5 s *and* 10 s backstops (2026-07-19: two consecutive main-branch runs timed out 12 event-driven waits whose conditions were sound). A shorter timeout is reserved for the rare case where the deadline itself is the assertion; negative assertions ("prove nothing arrived") don't qualify — they use a fixed observation window (`expectNoNewFrames`-style), not a wait timeout.
 
-Pick the seam by what produces the state. `AsyncGate`/`waitUntil`/`TestFailure` are in the shared `KernovaTestSupport` product, imported by all three test targets; `waitForChange` is KernovaTests-only:
+Pick the seam by what produces the state. `AsyncGate`/`waitUntil`/`TestFailure` are in the shared `KernovaTestSupport` product, imported by every test target; `waitForChange` is KernovaTests-only:
 
 | Seam | Use when | Notes |
 |------|----------|-------|

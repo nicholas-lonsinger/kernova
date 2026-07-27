@@ -4,6 +4,11 @@ import os
 /// Creation and resolution of app-scoped security bookmarks — the sandbox's
 /// mechanism for persisting a user's open/save-panel grant across launches.
 ///
+/// Runtime behavior here, and in ``ScopedAccess`` and `RuntimeFileAccess`, is
+/// untested by construction: bookmark creation and resolution need a signed,
+/// sandboxed process holding a real panel grant, and CI runs unsigned, where the
+/// sandbox is not enforced at all.
+///
 /// Every panel pick site converts its URL through ``capture(_:)`` and stores the
 /// resulting `(path, bookmark)` pair on the model; every access site resolves it
 /// back into live access via ``ScopedAccess``. A `nil` bookmark falls through to

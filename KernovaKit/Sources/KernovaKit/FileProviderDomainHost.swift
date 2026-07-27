@@ -292,9 +292,6 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     ///
     /// Single-slot: a later call replaces the prior registration, so an owner
     /// driving several consumers must fan them out inside its one closure.
-    /// RATIONALE: a multicast registry would be structure for a second
-    /// registrant that doesn't exist — no instance registers twice today. See
-    /// #588 for the alternative and why it stayed unbuilt.
     public func setAvailabilityObserver(
         _ observer: @escaping @MainActor (FileProviderAvailability) -> Void
     ) {

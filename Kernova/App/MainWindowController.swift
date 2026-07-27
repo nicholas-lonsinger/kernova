@@ -73,6 +73,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         // below overrides both the size and this placement.
         window.center()
         window.title = "Kernova"
+        // Order matters: assigning `contentViewController` resizes the window to the
+        // content view's fitting size, and `minSize` then clamps to that. Setting
+        // `minSize` first lets the fitting size overwrite it.
         window.minSize = NSSize(width: 800, height: 500)
 
         super.init(window: window)

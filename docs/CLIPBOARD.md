@@ -294,9 +294,6 @@ Non-negotiable mechanics for how clipboard changes ship:
   dropped silently. There is **no legacy fallback**, and any behavior change requiring a guest
   reinstall **bumps the guest agent version**. Do not add back-compat decode paths for data that
   does not exist.
-- **Filter log captures with `subsystem BEGINSWITH "app.kernova"`.** The agent and both File
-  Provider extensions log under their own subsystems (AGENTS.md's Logging table), so an exact
-  match yields a misleadingly complete-looking partial capture.
 - **A reinstalled guest agent does not replace its running File Provider extension.**
   `fileproviderd` keeps the already-spawned extension process serving the domain across a
   reinstall and relaunch. The install and uninstall scripts kill it; when replacing the bundle any

@@ -15,25 +15,12 @@
 # torn-down worktree's arena after the worktree itself is gone
 # (Tools/ghosts.sh, `make clean`).
 #
-# Modes resolved, mirroring Xcode's Settings > Locations > Derived Data:
-#   default   IDECustomDerivedDataLocation unset
-#             -> ~/Library/Developer/Xcode/DerivedData/<Name>-<hash>
-#   relative  the preference is a relative path (canonically "DerivedData")
-#             -> <project-dir>/<pref>/<Name>    (nested per project, no hash)
-#   custom    the preference is an absolute path
-#             -> <pref>/<Name>-<hash>
-#
 # A per-user workspace override (Xcode's File > Project Settings…, stored in
 # the workspace's xcuserdata) takes precedence over the global preference.
 # Its on-disk semantics aren't documented, so rather than guess, this script
 # defers to `xcodebuild -showBuildSettings` (authoritative, but needs the
 # project to exist and costs a few seconds) only in that rare case.
 #
-# The hash: MD5 the project path's UTF-8 bytes, split the 16-byte digest into
-# two big-endian 64-bit halves, and write each half as 14 base-26 letters
-# ('a'..'z'), most significant digit first — 28 letters total. Verified
-# against every live DerivedData folder's recorded WorkspacePath (info.plist).
-
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

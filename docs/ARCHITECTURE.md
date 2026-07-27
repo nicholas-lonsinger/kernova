@@ -63,9 +63,8 @@ synthesized main disk derives its own from the bundle path
 
 ### Services
 
-Every service conforms to a protocol in `Services/Protocols/` (`VirtualizationProviding`,
-`VMStorageProviding`, `DiskImageProviding`, `MacOSInstallProviding`, `IPSWProviding`,
-`USBDeviceProviding`) so tests inject mocks. Services split by concurrency: those that touch
+The services the view models inject conform to a protocol in `Services/Protocols/` so tests can
+substitute mocks. Services split by concurrency: those that touch
 `VZVirtualMachine` are `@MainActor`; stateless ones are `Sendable` structs.
 
 `@MainActor`:
@@ -99,7 +98,7 @@ through `PathValidation` before every hand-off. This is not defensive: under the
 
 The vsock stack (macOS guests only):
 
-- `VsockPorts` — the port registry (`control` 49154, `clipboard` 49152, `log` 49153). Each service
+- `VsockPorts` — the port registry. Each service
   gets its own listener instead of in-band multiplexing; `KernovaMacOSAgent/VsockPorts.swift`
   mirrors the same assignments guest-side.
 - `VsockListenerHost` — one `VZVirtioSocketListener` per port, bridging an accepted connection to a
@@ -122,8 +121,8 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
 
 - `ClipboardServicing` — the `@MainActor` protocol both transports implement.
   `VMInstance.clipboardService` holds the existential, so the window controllers never branch on
-  transport. Agent install/version state is deliberately **not** on this protocol: for macOS guests
-  it belongs to `VsockControlService`, which runs whether or not clipboard sharing is enabled.
+  transport. Agent install/version state lives on `VsockControlService`,
+  which runs whether or not clipboard sharing is enabled.
 - `SpiceClipboardService` — the Linux transport, over raw `VZFileHandleSerialPortAttachment` pipes
   parsed by `SpiceAgentParser`. Text only. It uses raw pipes rather than
   `VZSpiceAgentPortAttachment` so clipboard data flows through the gated UI instead of the host
@@ -156,10 +155,7 @@ rename, and guest-driven `VMInstance.onUpdateConfiguration` callbacks — routes
 change takes effect while the VM runs.
 
 **Removable-media reconcile.** `applyLivePolicy` drops media changes into a coalescing drain that
-calls `applyLiveRemovableMediaChange(for:target:)`, which diffs the target against
-`VMInstance.liveRemovableMedia` and detaches before attaching so a swap cannot collide on a
-duplicate UUID. When VZ refuses the change, the reconciler rebuilds the configuration from the live
-device list rather than leaving the UI describing a state VZ rejected.
+calls `applyLiveRemovableMediaChange(for:target:)`.
 
 ### ViewModels
 
@@ -187,7 +183,7 @@ usually the `observeRecurring` seam below, occasionally a hand-rolled `withObser
 re-arm loop. Content controllers decouple from the view model through delegate protocols; their
 hosts implement the delegates and forward the user's choice on.
 
-Three constraints the file layout does not show:
+Constraints the file layout does not show:
 
 - **No shared callout, form container, or base class.** Consistency comes from shared token sets
   (`CalloutStyle`, `GroupedFormStyle`, `Spacing`, `Typography`), not inheritance; genuinely
@@ -254,8 +250,6 @@ AppKit views ──observe──→ VMLibraryViewModel ──delegates──→ 
   user-supplied paths.
 - `NSWindowExtensions.withStableContentSize(_:styleMask:contentViewController:)` — the one place
   the "re-apply the content size *after* assigning `contentViewController`" ordering lives.
-  Assigning the controller resizes the window to the content view's fitting size, and a later
-  `minSize` then clamps to that.
 - `SecurityScopedBookmark` / `ScopedAccess` — capture and RAII resolution of app-scoped bookmarks
   (rules in [AGENTS.md](../AGENTS.md#app-sandbox-rules)).
 - `AppPreferences` — the `UserDefaults`-backed preference store, injected (defaulting to `.shared`)
@@ -270,8 +264,8 @@ vsock wire protocol, the clipboard domain model and file staging/archive, the Fi
 and cross-cutting helpers. **New host/guest-identical code belongs here**, not copied into both
 targets.
 
-The package also vends `KernovaTestSupport`, the single shared copy of the test wait primitives all
-three test targets import. It must keep **no dependency on `KernovaKit`** and is **never linked
+The package also vends `KernovaTestSupport`, the single shared copy of the test wait primitives every
+test target imports. It must keep **no dependency on `KernovaKit`** and is **never linked
 into a shipping target** — nothing enforces either.
 
 ## Key Design Decisions
@@ -279,10 +273,9 @@ into a shipping target** — nothing enforces either.
 ### Pure AppKit
 
 `NSSplitViewController`, `NSToolbar`, `NSOutlineView`, `NSWindow`; the app target imports no
-SwiftUI. **Do not add a hosting bridge for one surface.** The chrome this app depends on — toolbar
-item validation, sidebar collapsibility, popover and sheet anchoring, split-view behavior — is
-controlled directly or not at all, and a hybrid shell reintroduces exactly the bridge boundaries
-that owning AppKit removes.
+SwiftUI. The chrome this app depends on — toolbar item
+validation, sidebar collapsibility, popover and sheet anchoring, split-view behavior — is
+controlled directly through AppKit or not at all.
 
 ### The VM bundle owns everything a VM needs
 
@@ -295,16 +288,13 @@ external attachments are the deliberate exception, and they carry bookmarks (bel
 ### ASIF disk images from bundled templates
 
 Disk images use Apple Sparse Image Format. `DiskTemplates/` holds pre-built lzfse-compressed
-templates (~3 KB each) that `DiskImageService` decompresses in-process at VM creation. macOS 26
+templates that `DiskImageService` decompresses in-process at VM creation. macOS 26
 exposes no in-process ASIF-creation API and a sandboxed app cannot reach `hdiutil` or `diskutil`,
-so **do not shell out to make a disk** — add a template.
+so every disk shape ships as a bundled template.
 
 ### Apple Silicon only
 
-`ARCHS = arm64` project-wide, and no `#if arch(arm64)` anywhere. Virtualization.framework gates the
-macOS-guest APIs (`VZMacOSInstaller`, `VZMacOSRestoreImage`, `VZMacAuxiliaryStorage`, recovery boot)
-and `saveMachineStateTo`/`restoreMachineStateFrom` to Apple Silicon, so an Intel slice would lose
-macOS guests and suspend/restore both. **Do not re-add architecture guards** — nothing compiles them.
+`ARCHS = arm64` project-wide. Virtualization.framework gates the macOS-guest APIs (`VZMacOSInstaller`, `VZMacOSRestoreImage`, `VZMacAuxiliaryStorage`, recovery boot) and `saveMachineStateTo`/`restoreMachineStateFrom` to Apple Silicon.
 
 ### App Sandbox with per-path security bookmarks
 
@@ -318,14 +308,7 @@ fds at config-build time with no published retention guarantee, and an unbalance
 kernel resources until relaunch — hence one owner (`RuntimeFileAccess`) and one release point
 (`tearDownSession`).
 
-**There is deliberately no migration machinery for pre-sandbox configs** — no
-`Container Migration.plist`, no decode-time path rewriting. A `nil` bookmark falls through to the
-raw path, which the sandbox denies, surfacing the existing missing-file UX; re-picking the file
-mints a fresh bookmark.
-
 ## Helper Targets
-
-Four targets ship with the app, plus one test bundle.
 
 - **KernovaRelaunchHelper** — a watchdog embedded in `Contents/MacOS/`, spawned by `AppDelegate`
   during a quit that followed a TCC revocation. It watches the app's PID and relaunches through
@@ -391,11 +374,3 @@ Four targets ship with the app, plus one test bundle.
 | **os** | `os.Logger` |
 | **SwiftProtobuf** | Wire-protocol codegen and runtime; `KernovaKit` only |
 
-## Not Tested
-
-Neither is a coverage gap — the environment a test would need cannot be built:
-
-- `SecurityScopedBookmark` / `ScopedAccess` / `RuntimeFileAccess` runtime behavior — bookmark
-  creation and resolution need a signed, sandboxed process holding a real panel grant, and CI runs
-  unsigned, so the sandbox is not even enforced there.
-- `SystemSleepWatcher` — a test cannot put the machine to sleep.

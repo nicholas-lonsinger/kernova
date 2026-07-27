@@ -1,11 +1,7 @@
 # Periphery dead-code scan configuration.
 # https://github.com/peripheryapp/periphery
 #
-# Run via the weekly `.github/workflows/dead-code.yml` job. Local invocation
-# is intentionally not supported in this repo — Periphery is not installed
-# via brew or otherwise. To trigger an ad-hoc run:
-#
-#     gh workflow run dead-code.yml
+# Consumed by the `.github/workflows/dead-code.yml` job — see docs/BUILD.md "CI".
 
 project: Kernova.xcodeproj
 schemes:

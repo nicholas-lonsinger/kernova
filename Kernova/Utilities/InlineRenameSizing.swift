@@ -2,9 +2,8 @@ import AppKit
 
 /// Sizing for an inline-rename box that hugs its text and grows as you type.
 ///
-/// Shared by the storage-disk rows, the sidebar VM rows, and the Settings name
-/// field so all three rename boxes size identically, clamped by each surface's
-/// own layout.
+/// Shared by every inline-rename surface so the boxes size identically, clamped
+/// by each surface's own layout.
 enum InlineRenameSizing {
     /// Extra width added beyond the measured box width.
     ///

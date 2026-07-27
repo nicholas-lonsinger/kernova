@@ -93,7 +93,7 @@ Then open `Kernova.xcodeproj`, select the `Kernova` scheme, and build and run (â
 make test
 ```
 
-Runs all three test targets via the test plan. Tests use [Swift Testing](https://developer.apple.com/documentation/testing/) against protocol-based mocks; the conventions are in [docs/TESTING.md](docs/TESTING.md).
+Runs every test target via the test plan. Tests use [Swift Testing](https://developer.apple.com/documentation/testing/) against protocol-based mocks; the conventions are in [docs/TESTING.md](docs/TESTING.md).
 
 ## Architecture
 

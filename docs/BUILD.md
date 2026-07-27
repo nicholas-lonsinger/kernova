@@ -28,6 +28,16 @@ That works because `KernovaKit` is referenced as a top-level peer — a `PBXFile
 
 `make test-package` is a focused shortcut for iterating on the package tests alone.
 
+## CI
+
+Three of the workflows in `.github/workflows/` are required status checks: `lint`, `build-and-test`, and `proto-drift`. The "Required actions" ruleset matches them **by job name**, and that ruleset lives in GitHub's settings rather than in this repo — so renaming a job means editing the ruleset in the same change, or every PR waits on a check that never reports.
+
+The `lint` job runs `make lint`, which is therefore what gates a merge: `swift-format --strict`, shell (`bash -n` plus shellcheck, which it treats as required once `$CI` is set), and `Tools/check-docs.sh` for the documentation line cap and link validity. Each workflow's own header explains its trigger design; read it there before changing one.
+
+`Kernova.xctestplan` sets `retryOnFailure` with two repetitions, so a test that fails once and passes on the retry still greens the job. The "Report flaky (retried) tests" step reads the result bundle and names those tests, which is where to look — a green conclusion on its own says nothing about flakes.
+
+The dead-code scan runs on a schedule and on demand with `gh workflow run dead-code.yml`. Periphery is configured in `.periphery.yml` for that job and is not installed locally.
+
 ## Derived data and build arenas
 
 On a dev machine `make build`/`make test` omit `-derivedDataPath` entirely. A flag-less `xcodebuild` reads the machine's Xcode derived-data preference (Settings → Locations) and computes the same build arena the GUI does — same location *and* same arena identity — so terminal and Xcode builds share incremental state and switching between them is a second-scale null build.
@@ -90,4 +100,4 @@ Debris of *removed* worktrees self-heals. The post-checkout hook runs `Tools/gho
 
 **Live** stray copies still need the on-demand tools: `make ghosts` reports; `make clean-ghosts` also unregisters, terminates a blocking on-demand extension, prunes, and evicts (including an arena the sweep skipped). `make ghosts` inventories live `Kernova.app` copies under Trash and `~/Library/Developer/Xcode/DerivedData`, and flags any that outrank the installed `/Applications` copy in the LaunchServices/PluginKit `CFBundleVersion` election — Spotlight indexes neither location, so `mdfind` alone misses them.
 
-**Do not reach for a system-wide `lsregister -kill -r` rebuild.** `-kill` has been removed from current macOS's `lsregister` ("dangerous and no longer useful", per `lsregister -h`), and a plain `lsregister -u <path>` reliably unregisters an entry even once its path is gone (verified empirically 2026-07-08).
+`-kill` has been removed from current macOS's `lsregister` ("dangerous and no longer useful", per `lsregister -h`), and a plain `lsregister -u <path>` reliably unregisters an entry even once its path is gone (verified empirically 2026-07-08).

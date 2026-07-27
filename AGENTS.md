@@ -14,7 +14,7 @@ The app is Apple Silicon-only (`ARCHS = arm64` project-wide), so `#if arch(arm64
 
 A new top-level target needing a dynamic build number calls `Tools/set-build-number.sh <app|agent>` from a `Set Build Number from Git` build phase — never patch the built `Info.plist`.
 
-Any change requiring a guest-agent reinstall bumps its `MARKETING_VERSION` — all four occurrences together ([docs/BUILD.md](docs/BUILD.md)).
+Any change requiring a guest-agent reinstall bumps its `MARKETING_VERSION` — every occurrence together ([docs/BUILD.md](docs/BUILD.md)).
 
 ## Architecture
 
@@ -151,7 +151,7 @@ Deleted wholesale, not adjudicated sentence by sentence:
 - Hand-maintained test inventories
 - Version changelogs written into prose
 - Roadmap, status, and known-gap notes ("currently only logs", "D1b follows") — an issue, or nothing
-- An "Alternatives" clause defending a rejected design
+- An "Alternatives" clause in a doc defending a rejected design — the PR body holds the argument, or a call-site `RATIONALE:` clearing [docs/REVIEW.md](docs/REVIEW.md)'s four conditions
 
 ### Comments
 
