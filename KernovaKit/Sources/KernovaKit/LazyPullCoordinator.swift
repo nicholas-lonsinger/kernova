@@ -14,33 +14,19 @@ public enum LazyPullOutcome: Sendable {
     /// release).
     case cancelled
     /// A newer `pull` call for the identical `transferID` displaced this one
-    /// before it resolved (#500 — e.g. a File Provider fetch retried after its
-    /// owner connection dropped mid-pull). The retry owns the id now; this
-    /// caller must not touch any state keyed by `transferID` (unlike
-    /// `.cancelled`, which the caller's own cleanup would otherwise do).
+    /// before it resolved. The retry owns the id now, so this caller must not
+    /// touch any state keyed by `transferID` — unlike `.cancelled`, where its
+    /// own cleanup is expected.
     case superseded
 }
 
 /// Bridges a synchronous, blocking consume (an `NSPasteboardItemDataProvider`
-/// callback) to the asynchronous, off-actor stream receive.
+/// callback) to the asynchronous, off-actor stream receive: the calling thread
+/// parks on a per-`transfer_id` semaphore until the transfer resolves.
 ///
-/// The lazy clipboard path defers the `ClipboardRequest` to the moment the OS
-/// asks the promise owner for a representation's bytes. That callback is
-/// synchronous and runs on the owner's main thread, but the streamed receive
-/// runs off the owning actor on the receiver's per-transfer queue. This
-/// coordinator parks the calling thread on a per-`transfer_id` semaphore until
-/// the receiver delivers (`deliver`/`abort`), the channel tears down
-/// (`failAll`), or a backstop timeout fires — then returns the outcome.
-///
-/// ## Deadlock safety
-/// `deliver`/`abort`/`failAll` must be invoked **off the blocked thread** — for
-/// the guest provider that means off the agent's main thread. The wiring is
-/// `ClipboardStreamReceiver.awaitTransfer` → these methods, fired on the
-/// transfer's serial queue (never main). If the wakeup were routed through the
-/// blocked thread it could never run.
-///
-/// `@unchecked Sendable`: the slot table is guarded by `lock`; each slot's
-/// semaphore is the only cross-thread handoff.
+/// `deliver`/`abort`/`failAll` MUST be invoked **off the blocked thread** — for
+/// the guest provider that means off the agent's main thread. Routed through the
+/// blocked thread, the wakeup could never run.
 public final class LazyPullCoordinator: @unchecked Sendable {
     /// One waiting consumer, keyed by `transfer_id`.
     private final class Slot {
@@ -55,10 +41,9 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     #if DEBUG
     /// Test seam: replaces the real timed semaphore wait at each window boundary in `pull`.
     ///
-    /// Lets a test control precisely when a window "elapses" instead of
-    /// racing real wall-clock scheduling. Defaults to a real timed wait
-    /// identical to the Release-only path below; tests override it to make
-    /// window-boundary re-arming deterministic. Test-only.
+    /// Test-only; defaults to a wait identical to the Release path below. Lets a
+    /// test control when a window "elapses" instead of racing wall-clock
+    /// scheduling.
     var windowWaitForTesting: (@Sendable (DispatchSemaphore, Duration) -> Void) = { semaphore, timeout in
         _ = semaphore.wait(timeout: .now() + timeout.timeInterval)
     }
@@ -66,13 +51,10 @@ public final class LazyPullCoordinator: @unchecked Sendable {
 
     private let lock = NSLock()
     private var slots: [UInt64: Slot] = [:]
-    /// Transfer ids cancelled (#464) before `pull` registered a slot for them.
+    /// Transfer ids cancelled before `pull` registered a slot for them.
     ///
-    /// One-shot: `pull` consumes (removes) its own id the moment it runs,
-    /// whether or not it was present — so this can never grow unboundedly, and
-    /// a `transferID` that's never pulled leaves at most one stale entry (freed
-    /// the next time that same id happens to be pulled, or simply harmless
-    /// dead weight for the coordinator's lifetime otherwise).
+    /// One-shot: `pull` removes its own id the moment it runs, whether or not it
+    /// was present.
     private var preCancelled: Set<UInt64> = []
 
     /// Creates an idle coordinator.
@@ -85,18 +67,8 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     /// The slot is registered **before** `send` runs so a fast completion can't
     /// be missed. MUST be called off the thread that `deliver`/`abort`/`failAll`
     /// run on (e.g. off the guest agent's main thread), or the wakeup deadlocks.
-    ///
     /// `timeout` is an **inactivity** window, not an absolute deadline: each
-    /// `heartbeat` (one per chunk accepted off the wire — since #615 that is
-    /// the receive lane's own signal, so it can run up to one credit window
-    /// ahead of the staging writes) re-arms it, so a healthy
-    /// transfer of any size never times out no matter how long it runs. The
-    /// backstop fires only after a full window with no chunk *and* no terminal
-    /// outcome — and the receiver's own 30 s stall timer normally aborts a dead
-    /// transfer first. (An earlier absolute deadline silently killed large,
-    /// still-progressing transfers that needed more than one window to stream.)
-    /// The host runs the equivalent inactivity loop for the reverse direction in
-    /// `VsockClipboardService.pull`.
+    /// `heartbeat` re-arms it, so a healthy transfer of any size never times out.
     ///
     /// - Parameters:
     ///   - transferID: correlates this pull with its `ClipboardRequest` and the
@@ -104,30 +76,19 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     ///   - timeout: inactivity window (see `ClipboardStreamTuning.lazyPullTimeout`).
     ///   - send: emits the `ClipboardRequest`; runs synchronously on the calling
     ///     thread after the slot is registered.
-    /// - Returns: the outcome the matching transfer resolved with — delivered,
-    ///   aborted, cancelled, or timed out.
+    /// - Returns: the outcome the matching transfer resolved with.
     public func pull(
         transferID: UInt64,
         timeout: Duration = ClipboardStreamTuning.lazyPullTimeout,
         send: () -> Void
     ) -> LazyPullOutcome {
         let slot = Slot()
-        // Consume any pre-cancel mark atomically with registering the slot: a
-        // `cancelBeforeStart` that raced ahead of this call (#464 — a consumer
-        // cancelling before the request was even sent) is honored here instead
-        // of registering a slot nothing will ever resolve until the backstop
-        // timeout, and `send` never runs — the request never goes out over the
-        // wire for a fetch the consumer already gave up on.
-        //
-        // A pre-existing slot for the same id (#500 — e.g. a File Provider
-        // fetch retried after its owner connection dropped mid-pull, so a
-        // second concurrent `pull` for the identical `(generation, repIndex)`
-        // registers) is captured and displaced here rather than silently
-        // overwritten: the retry is always the live registration going
-        // forward (the prior caller's connection is dead and can't deliver
-        // its result), so per CLIPBOARD.md §9 the displaced pull is woken
-        // immediately with `.superseded` instead of parking to its own
-        // backstop timeout.
+        // Consume any pre-cancel mark atomically with registering the slot, so a
+        // `cancelBeforeStart` that raced ahead of this call is honored here and
+        // `send` never runs. A pre-existing slot for the same id is displaced
+        // rather than silently overwritten: the retry is the live registration
+        // going forward, so the displaced pull is woken immediately with
+        // `.superseded` instead of parking to its backstop (CLIPBOARD.md §9).
         let (alreadyCancelled, displaced): (Bool, Slot?) = lock.withLock {
             if preCancelled.remove(transferID) != nil { return (true, nil) }
             let prior = slots[transferID]
@@ -135,9 +96,8 @@ public final class LazyPullCoordinator: @unchecked Sendable {
             return (false, prior)
         }
         if let displaced {
-            // `resolveSlot` no-ops if `displaced` already resolved on its own
-            // (e.g. it delivered a beat before being displaced) — its real
-            // outcome wins, not a spurious supersede.
+            // No-ops if `displaced` already resolved on its own, so its real
+            // outcome wins over a spurious supersede.
             resolveSlot(displaced, .superseded)
         }
         if alreadyCancelled { return .cancelled }
@@ -152,14 +112,9 @@ public final class LazyPullCoordinator: @unchecked Sendable {
             _ = slot.semaphore.wait(timeout: .now() + timeout.timeInterval)
             #endif
             let outcome: LazyPullOutcome? = lock.withLock {
-                // A terminal resolve (deliver/abort/cancel) sets `resolved` before
-                // signaling, so it's observed here whether the wait was signaled or
-                // raced the deadline.
                 if slot.resolved {
-                    // Identity-checked: if a later `pull` has since superseded
-                    // this slot, `slots[transferID]` already points at ITS
-                    // slot — removing unconditionally here would evict the
-                    // successor's live registration out from under it (#500).
+                    // Identity-checked: removing unconditionally would evict a
+                    // successor pull's live registration out from under it.
                     if slots[transferID] === slot { slots[transferID] = nil }
                     return slot.outcome
                 }
@@ -182,9 +137,7 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     /// landed so the blocked `pull` keeps waiting past the next window boundary.
     ///
     /// Off-actor and idempotent; a heartbeat for a resolved or unknown pull is a
-    /// no-op. Does not signal the semaphore — the blocked `pull` reads the flag
-    /// when its current wait window elapses, so a heartbeat costs nothing while
-    /// bytes flow.
+    /// no-op.
     public func heartbeat(_ transferID: UInt64) {
         lock.withLock {
             guard let slot = slots[transferID], !slot.resolved else { return }
@@ -216,16 +169,12 @@ public final class LazyPullCoordinator: @unchecked Sendable {
         for slot in pending { resolveSlot(slot, .cancelled) }
     }
 
-    /// Cancels the pull for `transferID` (#464) whether or not it has reached
-    /// `pull` yet.
+    /// Cancels the pull for `transferID` whether or not it has reached `pull`
+    /// yet.
     ///
-    /// If a slot is already registered, resolves it immediately with
-    /// `.cancelled` — the same effect as `abort`/`failAll`, just addressed by
-    /// id. If `pull` hasn't been called yet for this id, marks it so the
-    /// upcoming `pull` call resolves to `.cancelled` on arrival instead of
-    /// registering a slot and sending a request the consumer already gave up
-    /// on. Idempotent: a repeated or late call for an id with no slot and no
-    /// pending mark just re-marks it, consumed by the next `pull` as usual.
+    /// A registered slot resolves immediately with `.cancelled`; otherwise the
+    /// id is marked so the upcoming `pull` resolves on arrival without sending a
+    /// request the consumer already gave up on. Idempotent.
     public func cancelBeforeStart(_ transferID: UInt64) {
         let slot: Slot? = lock.withLock {
             if let existing = slots[transferID] { return existing }

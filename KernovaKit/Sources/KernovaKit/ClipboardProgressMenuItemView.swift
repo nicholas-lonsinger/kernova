@@ -1,22 +1,16 @@
 import AppKit
 
 /// The live transfer readout inside a status-item dropdown, for a paste
-/// materializing in the background (#643).
+/// materializing in the background.
 ///
-/// Hosted as an `NSMenuItem.view` by both the host app's and the guest agent's
-/// status-item controllers, so a paste reads identically in whichever direction
-/// it is running. Non-actionable: it reports, and the menu item that carries it
-/// is disabled.
-///
-/// Built to keep a fixed size across every update — single-line labels that
-/// truncate rather than wrap — because a menu item that changed height while its
-/// menu was open would re-lay-out the dropdown under the user's cursor.
+/// Every label must stay single-line and truncate rather than wrap: a menu item
+/// that changed height while its menu was open would re-lay-out the dropdown
+/// under the user's cursor. Non-actionable — the menu item carrying it is
+/// disabled.
 @MainActor
 public final class ClipboardProgressMenuItemView: NSView {
-    /// Content width.
-    ///
-    /// Wide enough for a headline naming a VM plus the byte-progress line with
-    /// its file counter, without making the whole dropdown unusually wide.
+    /// Content width — fits a headline naming a VM plus the byte-progress line
+    /// and its file counter.
     private static let contentWidth: CGFloat = 312
     /// Leading inset aligning the readout with the dropdown's ordinary item
     /// titles, whose text starts clear of the checkmark gutter.
@@ -38,11 +32,9 @@ public final class ClipboardProgressMenuItemView: NSView {
     public init() {
         super.init(frame: NSRect(x: 0, y: 0, width: Self.contentWidth, height: 1))
         let stack = buildLayout()
-        // NSMenu sizes a custom item from its view's frame, so settle on the
-        // measured height once here; nothing in `apply` can change it, since
-        // every label is single-line. Measured from the stack rather than from
-        // `self`, whose own fitting size depends on how the menu later treats
-        // this view's autoresizing.
+        // NSMenu sizes a custom item from its view's frame, so settle the height
+        // once here. Measure the stack, not `self`, whose fitting size depends on
+        // how the menu later treats this view's autoresizing.
         frame.size = NSSize(
             width: Self.contentWidth,
             height: stack.fittingSize.height + Self.verticalInset * 2)
@@ -110,24 +102,19 @@ public final class ClipboardProgressMenuItemView: NSView {
 
     /// Commits the bar's stored fraction when the view lands on screen.
     ///
-    /// This is the *only* place a detached bar's value catches up, and it is
-    /// what keeps the dropdown's first frame honest: `apply` runs on every
-    /// throttled snapshot from the reveal onward — before the dropdown ever
-    /// opens — and committing those to an `NSProgressIndicator` that has no
-    /// window left its first on-screen frame animating out of the accumulated,
-    /// never-displayed state (observed live on #650 as the bar opening around
+    /// The only place a detached bar's value catches up: `apply` runs on every
+    /// throttled snapshot from the reveal onward, and committing those to an
+    /// `NSProgressIndicator` with no window leaves its first on-screen frame
+    /// animating out of never-displayed state (observed as the bar opening around
     /// 40 % and springing back). Withholding commits until the view is attached
-    /// means the control's first on-screen animation runs from its built value
-    /// of zero up to the real fraction — an ordinary fill.
+    /// keeps that first animation an ordinary fill from zero.
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil {
             bar.doubleValue = pendingFraction
         } else {
-            // Detached: park the control back at zero so its next appearance
-            // fills from empty again, rather than springing down from whatever
-            // the previous showing left behind (the view is kept across
-            // pastes).
+            // The view is kept across pastes: park the control at zero so its
+            // next appearance fills from empty again.
             bar.doubleValue = 0
         }
     }

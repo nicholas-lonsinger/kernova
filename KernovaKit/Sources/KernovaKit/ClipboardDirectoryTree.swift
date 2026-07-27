@@ -3,55 +3,38 @@ import SwiftProtobuf
 import UniformTypeIdentifiers
 
 /// In-process directory-tree walking and serialization for the folder
-/// placeholder-tree transport (`clipboard.dirtree.v1`, #422/#376).
+/// placeholder-tree transport (`clipboard.dirtree.v1`).
 ///
-/// Where `ClipboardDirectoryArchive` packs a whole folder into one AppleArchive,
-/// this walks the source tree lazily and emits **metadata only**: the producer
-/// serves a listing on demand (`ClipboardTreeListing`) and each child file
-/// individually, so no archive is built at copy time and Kernova's marginal disk
-/// stays ≈ 0 (CLIPBOARD.md §2/§3). Fidelity (§6) — kind, size, POSIX
-/// permissions, mtime, symlink targets, and package-ness — rides the listing so
-/// the consumer's File Provider placeholders reconstruct the tree.
-///
-/// All helpers are pure/stateless (no logging — callers log at their own
-/// subsystem, matching the other `KernovaKit` stream/staging types) and
-/// sandbox-safe (in-process `FileManager`, never shelling out — §11). Symlinks
-/// are recorded, not followed; child resolution is confined beneath the source
-/// root so a crafted `relative_path` can't escape it.
+/// Emits **metadata only** — kind, size, POSIX permissions, mtime, symlink
+/// target, package-ness — so the producer serves a listing on demand and each
+/// child file individually rather than building an archive at copy time. All
+/// helpers are pure and stateless (callers log at their own subsystem) and must
+/// stay in-process: `FileManager`, never shelling out (docs/CLIPBOARD.md §11).
 public enum ClipboardDirectoryTree {
-    /// UTI for a plain folder — equals `UTType.folder.identifier`, kept as a
-    /// literal so the package needn't import `UniformTypeIdentifiers`.
+    /// UTI for a plain folder.
     public static let folderUTI = ClipboardDirectoryArchive.directoryUTI
 
     /// UTI for a streamed tree-listing payload — an inline transfer whose bytes
     /// deserialize to a `ClipboardTreeListing`, never something the pasteboard
     /// sees.
-    ///
-    /// Shared by both directions' producer.
     public static let treeListingUTI = "app.kernova.clipboard.tree-listing"
 
     /// Upper bound on how many entries a walk visits before stopping, so a
     /// pathological tree (or a symlink cycle reached via the estimate's
     /// following enumerator) can't spin unbounded.
-    ///
-    /// Comfortably past the design
-    /// target of a 100k-entry tree.
     public static let entryCap = 500_000
 
     // MARK: - Listing
 
-    /// Walks the tree at `root` (depth-first, names sorted for determinism) into
-    /// a flat list of `ClipboardTreeEntry`, assigning each node a 1-based
-    /// `child_seq`.
+    /// Walks the tree at `root` depth-first into a flat list of
+    /// `ClipboardTreeEntry`, assigning each node a 1-based `child_seq`.
     ///
-    /// Symlinks are recorded (kind `.symlink`, with their raw
-    /// target) and never traversed; directories — including OS packages, which
-    /// are flagged so the pasted folder opens as a bundle — are recorded and
-    /// recursed into. Stops at `entryCap` nodes.
+    /// Symlinks are recorded with their raw target and never traversed;
+    /// directories are recorded and recursed into. Stops at `entryCap` nodes.
     ///
     /// - Throws: any error `FileManager.contentsOfDirectory` raises on `root`
-    ///   itself (a caller maps that to a failed listing); per-child stat failures
-    ///   are tolerated (the child is recorded with best-effort metadata).
+    ///   itself; per-child stat failures are tolerated, the child recorded with
+    ///   best-effort metadata.
     public static func enumerateTree(at root: URL) throws -> [Kernova_V1_ClipboardTreeEntry] {
         var entries: [Kernova_V1_ClipboardTreeEntry] = []
         var seq: UInt32 = 0
@@ -69,9 +52,8 @@ public enum ClipboardDirectoryTree {
                 .isSymbolicLinkKey, .isDirectoryKey, .isRegularFileKey, .fileSizeKey, .isPackageKey,
             ],
             options: [])
-        // Deterministic order so the same tree produces the same listing/child
-        // sequence on every walk (the listing and each later child fetch must
-        // agree on `child_seq`).
+        // Deterministic order: the listing and each later child fetch must agree
+        // on `child_seq`.
         let sorted = children.sorted { $0.lastPathComponent < $1.lastPathComponent }
         for child in sorted {
             guard entries.count < entryCap else { return }
@@ -149,8 +131,8 @@ public enum ClipboardDirectoryTree {
     /// used only for the directory rep's offer `byte_count` (UI/free-space
     /// preflight).
     ///
-    /// Metadata-only and bounded by `entryCap`; symlink cycles are
-    /// bounded by the cap rather than resolved.
+    /// Bounded by `entryCap`, which is also what bounds a symlink cycle here —
+    /// this enumerator follows links.
     public static func estimatedByteCount(at root: URL) -> Int {
         guard
             let enumerator = FileManager.default.enumerator(
@@ -177,9 +159,7 @@ public enum ClipboardDirectoryTree {
     ///
     /// Rejects an absolute path, any `.`/`..` component, a leaf that is a symlink
     /// or a directory, and any path whose symlink-resolved location escapes
-    /// `root` — defense in depth on the producer side (the listing never
-    /// traverses symlinks, so a legitimate child fetch always names a path within
-    /// the real tree).
+    /// `root`.
     public static func resolveChildFile(root: URL, relativePath: String) -> URL? {
         guard !relativePath.isEmpty, !relativePath.hasPrefix("/") else { return nil }
         let components = relativePath.split(separator: "/", omittingEmptySubsequences: true).map(
@@ -206,26 +186,16 @@ public enum ClipboardDirectoryTree {
 
     // MARK: - Producer: serve a tree fetch
 
-    /// Serves a directory rep's tree fetch (folder D1b) off the caller's actor:
-    /// walks the source tree for a **listing** (empty `relative_path`, streamed
-    /// inline) or opens one **confined child** (`relative_path`, streamed as a
-    /// file), replying over `sender` keyed by the fetch's `transfer_id`.
+    /// Serves a directory rep's tree fetch off the caller's actor: walks the
+    /// source tree for a **listing** (empty `relative_path`, streamed inline) or
+    /// opens one **confined child** (`relative_path`, streamed as a file),
+    /// replying over `sender` keyed by the fetch's `transfer_id`.
     ///
-    /// A
-    /// walk/open failure sends a `ClipboardStreamAbort` so the consumer's parked
-    /// pull wakes immediately.
-    ///
-    /// The walk and LZFSE-free listing serialization run on a background queue so
-    /// a large tree never blocks the caller's run loop; `sender.startTransfer`
-    /// then reads the source off its own transfer queue. Shared by the host
-    /// (host→guest paste) and the guest agent (guest→host "Copy to Mac").
-    /// `onProgress`/`onComplete` mirror `ClipboardStreamSender.startTransfer`'s, so
-    /// the producer can measure what it is sending: a folder is usually the largest
-    /// thing that crosses, and without these its children would be the one transfer
-    /// the sending side's progress readout could not see. The reject paths report a
-    /// failed terminal rather than staying silent — a unit that never ends would
-    /// leave the session permanently "active", so its idle terminal would never
-    /// fire and the readout would stick on screen.
+    /// The walk and listing serialization run on a background queue so a large
+    /// tree never blocks the caller's run loop. Every reject path must send a
+    /// `ClipboardStreamAbort` — waking the consumer's parked pull — and report a
+    /// failed terminal through `onComplete`: a unit that never ends leaves the
+    /// session permanently "active" and its readout stuck on screen.
     public static func serveFetch(
         _ fetch: Kernova_V1_ClipboardTreeFetch, sourceURL: URL, sender: ClipboardStreamSender,
         isCurrent: @escaping @Sendable (UInt64) -> Bool,
@@ -318,9 +288,6 @@ public enum ClipboardDirectoryTree {
     /// Derives a content UTI for a tree node from its kind, name, and package
     /// flag — a package/file type from the extension, else `public.folder` for a
     /// plain directory or `public.data` for an unknown file.
-    ///
-    /// Symlinks are not
-    /// content-typed here (the consumer uses `UTType.symbolicLink`).
     static func contentUTI(
         kind: FileProviderManifest.FolderRep.Node.Kind, filename: String, isPackage: Bool
     ) -> String {

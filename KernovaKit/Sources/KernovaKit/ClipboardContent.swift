@@ -1,35 +1,21 @@
 import CryptoKit
 import Foundation
 
-/// One logical clipboard payload: an ordered list of UTI-tagged
-/// representations, mirroring the (type, data) pairs of a single
-/// `NSPasteboardItem`.
+/// One logical clipboard payload: an ordered list of UTI-tagged representations,
+/// mirroring the (type, data) pairs of a single `NSPasteboardItem`.
 ///
-/// Order is meaningful — it matches the source pasteboard's fidelity order
-/// (richest representation first) and is preserved across the wire.
-///
-/// A flat `representations` list models both inline content and file payloads:
-/// a representation with an empty `filename` is an alternative encoding of one
-/// *inline* item (text + RTF + image data; the consumer picks the richest);
-/// each representation with a non-empty `filename` is a distinct *file* the
-/// receiver materializes. Several file representations therefore mean several
-/// files.
-///
-/// Equality is digest-based: a SHA-256 over a length-prefixed canonical
-/// encoding of every representation (uti, filename, and a byte-stable payload
-/// digest), computed once at init. Dedup and echo-suppression state can
-/// therefore retain the 32-byte `digest` instead of a second copy of
-/// multi-megabyte payloads.
+/// Order is meaningful — richest representation first, preserved across the wire.
+/// A representation with an empty `filename` is an alternative encoding of one
+/// *inline* item; each with a non-empty `filename` is a distinct *file* the
+/// receiver materializes. Equality is digest-based (SHA-256 computed once at
+/// init), so dedup state can retain the 32-byte `digest`, not the payload.
 public struct ClipboardContent: Equatable, Sendable {
     /// One (type, data) pair of the payload.
     public struct Representation: Equatable, Sendable {
         /// Where a representation's bytes live.
         ///
-        /// Streaming chooses its sink by this, not by size: an `.inMemory`
-        /// representation reassembles in RAM (the pasteboard API needs the
-        /// bytes resident, and the consuming app holds them in RAM too, so RAM
-        /// is the natural bound); a `.file` representation is streamed to/from
-        /// disk in chunks and never read whole.
+        /// Streaming chooses its sink by this, not by size: `.inMemory`
+        /// reassembles in RAM, `.file` streams in chunks and is never read whole.
         public enum Source: Equatable, Sendable {
             /// Bytes resident in memory — text, RTF, inline images, small
             /// payloads.
@@ -37,32 +23,26 @@ public struct ClipboardContent: Equatable, Sendable {
 
             /// Bytes on disk, never loaded whole. `byteCount` is a stat result;
             /// `sha256` is the digest the stream computed over the bytes, or
-            /// `nil` before a transfer has produced one (e.g. offer-time on the
-            /// sender side, where the file is named but not yet read).
+            /// `nil` before a transfer has produced one (offer time on the sender
+            /// side, where the file is named but not yet read).
             case file(url: URL, byteCount: Int, sha256: Data?)
 
             /// A representation a peer has offered but whose bytes have not been
-            /// pulled — the lazy-receive placeholder. Carries only the advertised
-            /// `byteCount`; `inMemoryData` and `fileURL` are `nil` until a
-            /// `ClipboardRequest` streams the bytes and the rep is replaced by
-            /// `.inMemory`/`.file`. Used host-side to render a metadata-only
-            /// preview (type · size · filename) without pulling, and is never
-            /// handed to the sender.
+            /// pulled. Carries only the advertised `byteCount`; replaced by
+            /// `.inMemory`/`.file` once a `ClipboardRequest` streams the bytes.
+            /// Renders a metadata-only preview host-side, and is never handed to
+            /// the sender.
             case pendingRemote(byteCount: Int)
 
             /// A copied **source directory** whose tree is walked and streamed on
-            /// demand (folder placeholder tree, `clipboard.dirtree.v1`) rather
-            /// than archived at copy time. Producer side only: `url` is the
-            /// original folder and `byteCount` a stat-walk size estimate for the
-            /// offer/UI. Never handed to the stream sender (which refuses it) —
-            /// the producer walks it for a listing, opens a confined child, or
-            /// archives it at *request* time for the toggle-off fallback.
+            /// demand rather than archived at copy time. Producer side only, and
+            /// refused by the stream sender: the producer walks it for a listing,
+            /// opens a confined child, or archives it at *request* time.
             case directory(url: URL, estimatedByteCount: Int)
         }
 
         /// Uniform Type Identifier naming the format.
         ///
-        /// For example `"public.utf8-plain-text"` or `"public.png"`.
         /// Dynamic (`dyn.*`) identifiers pass through untouched so legacy
         /// pasteboard types round-trip exactly.
         public let uti: String
@@ -70,30 +50,23 @@ public struct ClipboardContent: Equatable, Sendable {
         /// Where the representation's bytes live (memory or disk).
         public let source: Source
 
-        /// Suggested filename when this representation is a file payload.
+        /// Suggested filename when this representation is a file payload; `""`
+        /// for inline-only content.
         ///
-        /// A copied/dragged image file → `"photo.png"`; `""` for inline-only
-        /// content. A receiver with a non-empty filename streams the bytes to a
-        /// local temp file and offers its file URL so a Finder paste creates the
-        /// file. **Part of the digest** (folded under its own length-prefixed
-        /// block) so two files that share bytes+UTI but differ only by name are
-        /// distinguishable — required once a payload can carry several files.
+        /// A receiver with a non-empty filename streams the bytes to a local temp
+        /// file and offers its file URL, so a Finder paste creates the file.
+        /// **Part of the digest**, so two files that share bytes+UTI but differ
+        /// only by name stay distinguishable.
         public let filename: String
 
         /// `true` when this file representation is a *directory* (folder, or an
         /// OS package such as `.app`/`.rtfd`) whose bytes are an in-process
         /// AppleArchive of the tree rather than a single file's bytes.
         ///
-        /// The receiver extracts the archive into a real directory and offers
-        /// that folder's URL, so a Finder paste recreates the tree. Implies a
-        /// non-empty `filename` (the folder name, no archive suffix) and a
-        /// file-backed, non-inline source.
-        ///
-        /// **Excluded from the digest:** the archive's SHA-256 (folded via the
-        /// `.file` source) and the folded `filename` already identify the
-        /// content; the flag only changes how the receiver *materializes* it,
-        /// and the stream layer is offer-agnostic, so a receiver re-applies it
-        /// to the delivered representation from the offer's metadata.
+        /// The receiver extracts the archive and offers the folder's URL. Implies
+        /// a non-empty `filename` and a file-backed source. **Excluded from the
+        /// digest**: the archive's SHA-256 and the folded `filename` already
+        /// identify the content, and the receiver re-applies it from the offer.
         public let isDirectory: Bool
 
         /// Creates a representation from an explicit byte source.
@@ -108,8 +81,6 @@ public struct ClipboardContent: Equatable, Sendable {
 
         /// Creates an in-memory representation from a UTI and its raw bytes,
         /// optionally tagged with a suggested filename for file payloads.
-        ///
-        /// The common case for text, RTF, inline images, and small payloads.
         public init(uti: String, data: Data, filename: String = "") {
             self.init(uti: uti, source: .inMemory(data), filename: filename)
         }
@@ -117,11 +88,10 @@ public struct ClipboardContent: Equatable, Sendable {
         /// Creates a disk-backed representation from a file URL and its stat'd
         /// size — the bytes are streamed on demand, never read to build it.
         ///
-        /// `sha256` is the byte digest once a transfer has computed it (reused
-        /// as the content digest so a multi-GB file is never re-hashed); `nil`
-        /// when the file is only named (offer time on the sender side).
-        /// `isDirectory` marks a folder/package whose bytes are an AppleArchive
-        /// of the tree (the URL points at the `.aar`, not the original folder).
+        /// `sha256` is the byte digest once a transfer has computed it — reused as
+        /// the content digest so a multi-GB file is never re-hashed — and `nil`
+        /// when the file is only named. For `isDirectory`, the URL points at the
+        /// `.aar`, not the original folder.
         public init(
             uti: String, fileURL: URL, byteCount: Int, sha256: Data? = nil, filename: String,
             isDirectory: Bool = false
@@ -135,8 +105,7 @@ public struct ClipboardContent: Equatable, Sendable {
         }
 
         /// Creates a metadata-only placeholder for a peer-offered representation
-        /// whose bytes have not been pulled — the lazy-receive preview, replaced
-        /// by `.inMemory`/`.file` once a `ClipboardRequest` streams the bytes.
+        /// whose bytes have not been pulled.
         public init(
             pendingRemoteUTI uti: String, byteCount: Int, filename: String = "",
             isDirectory: Bool = false
@@ -147,13 +116,12 @@ public struct ClipboardContent: Equatable, Sendable {
         }
 
         /// Creates a producer-side directory representation backed by its source
-        /// folder (folder placeholder tree).
+        /// folder.
         ///
-        /// No archive is built: the tree is
-        /// walked/streamed on demand, with `estimatedByteCount` a stat-walk size
-        /// estimate for the offer. `uti` is the folder's content type (a package
-        /// UTI for a bundle so the pasted tree opens as a package, else
-        /// `public.folder`).
+        /// No archive is built: the tree is walked and streamed on demand, with
+        /// `estimatedByteCount` a stat-walk estimate for the offer. `uti` is the
+        /// folder's content type — a package UTI for a bundle, so the pasted tree
+        /// opens as a package.
         public init(
             directorySourceURL url: URL, estimatedByteCount: Int, filename: String,
             uti: String = ClipboardDirectoryArchive.directoryUTI
@@ -182,8 +150,8 @@ public struct ClipboardContent: Equatable, Sendable {
             return false
         }
 
-        /// The source folder URL for a producer-side `.directory` representation
-        /// (folder placeholder tree), or `nil` otherwise.
+        /// The source folder URL for a producer-side `.directory` representation,
+        /// or `nil` otherwise.
         public var directorySourceURL: URL? {
             if case .directory(let url, _) = source { return url }
             return nil
@@ -206,8 +174,7 @@ public struct ClipboardContent: Equatable, Sendable {
 
     /// The UTI of UTF-8 plain text.
     ///
-    /// The format shared with peers that predate UTI support; matches the
-    /// raw value of `NSPasteboard.PasteboardType.string`.
+    /// Matches the raw value of `NSPasteboard.PasteboardType.string`.
     public static let utf8TextUTI = "public.utf8-plain-text"
 
     /// Content carrying no representations.
@@ -219,9 +186,7 @@ public struct ClipboardContent: Equatable, Sendable {
     ///
     /// A `transfer_id` packs the representation index into its low 16 bits
     /// (`(generation << 16) | repIndex`), so an index past `0xFFFF` would alias
-    /// a lower one. Offer builders truncate to this and log. Reaching it means
-    /// copying ~65 000 files at once, so it's a defensive bound rather than a
-    /// limit any real selection hits.
+    /// a lower one. Offer builders truncate to this and log.
     public static let maxOfferableRepresentations = 0xFFFF
 
     /// Ordered representations, richest first.
@@ -230,12 +195,10 @@ public struct ClipboardContent: Equatable, Sendable {
     /// `true` when the source pasteboard marked this snapshot confidential
     /// (`org.nspasteboard.ConcealedType`, the convention password managers use).
     ///
-    /// Snapshot-level metadata, not a representation: the content still syncs so
-    /// it can be pasted into the peer, but the host clipboard window hides it
-    /// behind a placeholder rather than rendering the secret. Carried across the
-    /// wire on the `ClipboardOffer`. **Excluded from the digest** (like
-    /// `Representation.isDirectory`) — it changes how the content is *displayed*,
-    /// not its identity, so two snapshots with the same bytes stay
+    /// The content still syncs so it can be pasted into the peer; the host
+    /// clipboard window hides it behind a placeholder rather than rendering the
+    /// secret. **Excluded from the digest** — it changes how content is
+    /// *displayed*, not its identity, so two snapshots with the same bytes stay
     /// echo-suppressed regardless of the flag.
     public let isConcealed: Bool
 
@@ -254,10 +217,7 @@ public struct ClipboardContent: Equatable, Sendable {
 
     /// Creates content with an already-computed digest.
     ///
-    /// Backs the digest-reusing factories so the O(payload) hash is paid at most
-    /// once: `makeOffActor(representations:)` runs it on a background executor,
-    /// and `withConcealed(_:)` skips it entirely (the flag is excluded from the
-    /// digest). The result is assembled here without re-hashing.
+    /// Backs the digest-reusing factories so the O(payload) hash is paid at most once.
     private init(representations: [Representation], isConcealed: Bool, precomputedDigest: Data) {
         self.representations = representations
         self.isConcealed = isConcealed
@@ -266,14 +226,11 @@ public struct ClipboardContent: Equatable, Sendable {
 
     /// Creates content from ordered representations off the caller's actor.
     ///
-    /// The synchronous `init` computes the SHA-256 `digest` over every byte of
-    /// every representation — fine for small payloads, but a multi-hundred-
-    /// millisecond stall on the `@MainActor` (host) or the guest agent's main
-    /// run loop for a 100 MiB clipboard file. This `async` factory is not
-    /// actor-isolated, so awaiting it from those contexts runs the hash on the
-    /// cooperative executor and resumes with the finished, `Sendable` value.
-    /// Use it on the large-payload create/receive paths; keep the synchronous
-    /// `init` for small, latency-insensitive content.
+    /// The synchronous `init` hashes every byte of every representation — a
+    /// multi-hundred-millisecond stall on the `@MainActor` or the guest agent's
+    /// main run loop for a 100 MiB payload. This factory is not actor-isolated, so
+    /// awaiting it runs the hash on the cooperative executor. Use it on the
+    /// large-payload create/receive paths.
     public static func makeOffActor(
         representations: [Representation], isConcealed: Bool = false
     ) async -> ClipboardContent {
@@ -286,13 +243,9 @@ public struct ClipboardContent: Equatable, Sendable {
 
     /// Returns a copy with `isConcealed` set, **without** recomputing the digest.
     ///
-    /// `isConcealed` is excluded from the digest (it changes how the content is
-    /// displayed, not its identity), so the flag can be flipped by reusing the
-    /// existing `digest` rather than re-hashing the whole payload — the snapshot
-    /// path re-stamps the concealed marker after `ClipboardSnapshotPolicy.evaluate`
-    /// builds non-concealed content, and that re-stamp must not pay a second
-    /// SHA-256 over a large inline payload. Returns `self` unchanged when the flag
-    /// already matches.
+    /// The flag is excluded from the digest, so re-stamping it — as the snapshot
+    /// path does after `ClipboardSnapshotPolicy.evaluate` — must not pay a second
+    /// SHA-256 over a large payload. Returns `self` when the flag already matches.
     public func withConcealed(_ concealed: Bool) -> ClipboardContent {
         guard concealed != isConcealed else { return self }
         return ClipboardContent(
@@ -301,10 +254,9 @@ public struct ClipboardContent: Equatable, Sendable {
 
     /// Content holding a single UTF-8 plain-text representation.
     ///
-    /// The empty string normalizes to `.empty` — "empty text" and "no
-    /// content" are deliberately the same non-offerable value, resolved here
-    /// once rather than at every call site (so empty text is never concealed:
-    /// there is nothing to conceal).
+    /// The empty string normalizes to `.empty`: "empty text" and "no content" are
+    /// deliberately the same non-offerable value, resolved here rather than at
+    /// every call site.
     public init(text: String, isConcealed: Bool = false) {
         if text.isEmpty {
             self = .empty
@@ -320,12 +272,9 @@ public struct ClipboardContent: Equatable, Sendable {
     /// caller's actor.
     ///
     /// The off-actor twin of `init(text:)` for the editor commit path: a large
-    /// pasted-then-edited buffer must not pay the UTF-8 copy *or* the SHA-256
-    /// digest on the `@MainActor` per keystroke (CLIPBOARD.md §8). Because this is
-    /// a non-isolated `async` factory, awaiting it from the main actor runs both
-    /// the `Data(text.utf8)` conversion and `makeOffActor(representations:)`'s hash
-    /// on the cooperative executor, resuming with the finished `Sendable` value.
-    /// The empty string normalizes to `.empty`, identically to `init(text:)`.
+    /// pasted-then-edited buffer must not pay the UTF-8 copy *or* the SHA-256 on
+    /// the `@MainActor` per keystroke (CLIPBOARD.md §8). The empty string
+    /// normalizes to `.empty`, identically to `init(text:)`.
     public static func makeOffActor(text: String, isConcealed: Bool = false) async -> ClipboardContent {
         guard !text.isEmpty else { return .empty }
         return await makeOffActor(
@@ -339,8 +288,8 @@ public struct ClipboardContent: Equatable, Sendable {
     /// The UTF-8 plain-text representation decoded as a string, or `nil`
     /// when no such representation exists or its bytes are not valid UTF-8.
     ///
-    /// Text is always in-memory; a file-backed representation (whose bytes are
-    /// not resident) yields `nil` here rather than triggering a disk read.
+    /// Text is always in-memory; a file-backed representation yields `nil` here
+    /// rather than triggering a disk read.
     public var text: String? {
         guard
             let representation = representations.first(where: { $0.uti == Self.utf8TextUTI }),
@@ -357,11 +306,9 @@ public struct ClipboardContent: Equatable, Sendable {
 
     /// Caps the representation list to `maxOfferableRepresentations`.
     ///
-    /// A `transfer_id` packs the rep index into 16 bits, so an offer past the
-    /// limit would alias indices. Returns the content unchanged in the common
-    /// case (no recompute); `truncatedFrom` is the original representation count
-    /// when truncation happened — so a caller can log it with its own logger —
-    /// and `nil` otherwise. Reaching the cap means copying ~65 000 files at once.
+    /// Returns the content unchanged in the common case (no recompute);
+    /// `truncatedFrom` is the original representation count when truncation
+    /// happened — so a caller can log it — and `nil` otherwise.
     public func cappedToOfferLimit() -> (content: ClipboardContent, truncatedFrom: Int?) {
         guard representations.count > Self.maxOfferableRepresentations else {
             return (self, nil)
@@ -382,30 +329,12 @@ public struct ClipboardContent: Equatable, Sendable {
 
     /// Hashes the representations with a length-prefixed canonical encoding.
     ///
-    /// For each representation: the big-endian `UInt64` byte count of the UTI,
-    /// the UTI bytes, the length-prefixed `filename` bytes, then a byte-stable
-    /// digest of its payload. For an `.inMemory` representation that digest is
-    /// the length-prefixed bytes themselves (so an all-inline payload with no
-    /// filename hashes identically to the pre-multi-file encoding); for a
-    /// `.file` representation it is the SHA-256 the stream computed over the
-    /// bytes. The *suggested* `filename` is folded in — it round-trips
-    /// identically across the wire, so it stays stable cross-process and lets
-    /// two files that share bytes+UTI but differ only by name be told apart
-    /// (otherwise `[a.bin, b.bin] → [a.bin, c.bin]` with byte-identical b/c
-    /// would be silently echo-suppressed) — but the file *path* and mtime are
-    /// never hashed (those differ between the host and guest temp copies and
-    /// would break cross-process echo suppression). A file representation whose
-    /// digest is not yet known (offer time on the sender side) folds in only its
-    /// byte count as a placeholder; such representations are echo-suppressed by
-    /// change-count and staging-path guards rather than by digest equality.
-    /// Length prefixes prevent collisions from shifting bytes across the
-    /// uti/filename/payload or representation boundaries; a one-byte source tag
-    /// separates the inline-bytes and file-digest domains so the two can never
-    /// alias. `isDirectory` is deliberately **not** hashed — the archive's
-    /// SHA-256 (folded via the `.file` source) plus the folded folder name
-    /// already identify a directory rep, and the flag is re-derived from the
-    /// offer on the receiver, so hashing it would only risk an asymmetry
-    /// between the two ends.
+    /// Per representation: length-prefixed UTI, length-prefixed `filename`, a
+    /// one-byte source tag, then a byte-stable payload digest — the inline bytes,
+    /// or the SHA-256 the stream computed for a file. The `filename` is folded in so
+    /// `[a.bin, b.bin] → [a.bin, c.bin]` with byte-identical b/c isn't silently
+    /// echo-suppressed. The file *path* and mtime are never hashed: they differ
+    /// between host and guest temp copies and would break echo suppression.
     private static func computeDigest(of representations: [Representation]) -> Data {
         var hasher = SHA256()
         for representation in representations {
@@ -413,17 +342,13 @@ public struct ClipboardContent: Equatable, Sendable {
                 hasher.update(bufferPointer: $0)
             }
             hasher.update(data: Data(representation.uti.utf8))
-            // The suggested filename rides in its own length-prefixed block (an
-            // empty name folds in a 0 length, leaving inline-only content
-            // unchanged). [N2]
             let filenameBytes = Data(representation.filename.utf8)
             withUnsafeBytes(of: UInt64(filenameBytes.count).bigEndian) {
                 hasher.update(bufferPointer: $0)
             }
             hasher.update(data: filenameBytes)
-            // A one-byte domain tag separates the inline-bytes domain from the
-            // file-digest domain, so a 32-byte inline payload can never alias a
-            // file rep's SHA-256 under the same UTI. [N1]
+            // The one-byte domain tag keeps a 32-byte inline payload from aliasing
+            // a file rep's SHA-256 under the same UTI.
             switch representation.source {
             case .inMemory(let data):
                 hasher.update(data: Data([0]))
@@ -446,21 +371,17 @@ public struct ClipboardContent: Equatable, Sendable {
                     }
                 }
             case .pendingRemote(let byteCount):
-                // Distinct domain tag (3) so a metadata-only placeholder hashes
-                // deterministically AND is never digest-equal to its eventual
-                // materialized (.inMemory/.file) form. Echo suppression for these
-                // relies on change-count/identity guards, not digest equality.
+                // A metadata-only placeholder is never digest-equal to its eventual
+                // materialized form; echo suppression for these relies on
+                // change-count/identity guards, not digest equality.
                 hasher.update(data: Data([3]))
                 withUnsafeBytes(of: UInt64(byteCount).bigEndian) {
                     hasher.update(bufferPointer: $0)
                 }
             case .directory(_, let byteCount):
-                // Distinct domain tag (4) for a producer-side source-directory
-                // rep (folder placeholder tree): the source path and mtime are
-                // never hashed (they differ between hosts), so its identity is
-                // the folded folder name + this estimate. Stable per poll tick so
-                // the producer's own offer dedup works; directory reps are not
-                // cross-process digest-matched.
+                // A producer-side source directory is identified by its folded
+                // folder name plus this estimate — stable per poll tick, so the
+                // producer's own offer dedup works. Not cross-process matched.
                 hasher.update(data: Data([4]))
                 withUnsafeBytes(of: UInt64(byteCount).bigEndian) {
                     hasher.update(bufferPointer: $0)

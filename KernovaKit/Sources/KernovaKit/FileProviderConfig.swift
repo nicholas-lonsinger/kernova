@@ -2,62 +2,30 @@ import FileProvider
 import Foundation
 import os
 
-// Direction configuration for the shared clipboard File Provider machinery
-// (issues #376 guest / #424 host / #460 servicing migration).
-//
-// The guest agent (host→guest paste) and the main app (guest→host "Copy to
-// Mac") run the *same* domain host + extension logic; only the addressing and
-// logging differ. This config carries those direction-specific values so one
-// implementation serves both, with the constants for each direction defined
-// once here (the single source of truth).
-//
-// Host↔extension IPC uses the canonical `NSFileProviderServicing` anonymous-XPC
-// pattern (#460): the extension vends a listener endpoint under a per-direction
-// `NSFileProviderServiceName`, the owner connects via
-// `NSFileProviderManager.getService(named:for:)` (identifier-based — the
-// path-based `FileManager` form needs filesystem access to the domain root,
-// which the sandboxed host app doesn't have, #539) and exports the relay so the
-// extension can call back at `fetchContents`, and a per-direction Darwin
-// notification is the reconnect doorbell. There is no Mach service.
-//
-// The app group scopes the shared staging container. Its identifier is
-// per-build-configuration (the `KERNOVA_APP_GROUP` build setting): Debug uses a
-// Team-ID-prefixed group (`$(DEVELOPMENT_TEAM).app.kernova`) that macOS grants
-// silent container access to with no provisioning profile (macOS 15 app-group
-// protection, criterion C), and Release uses the canonical iOS-style
-// `group.app.kernova` authorized by an embedded provisioning profile. Each
-// executable resolves its value from the Info.plist via
-// `KernovaAppGroup.identifier()`, which `host()` / `guest()` read by default.
-// Because Debug is Team-ID-prefixed, the agent no longer hits the one-time macOS
-// "access data from other apps" consent prompt inside an unregistered guest VM.
-//
-// Guest and host deliberately share the app group but use distinct service names,
-// domain identifiers, container subpaths, and Darwin doorbell names, so a dev Mac
-// running both the guest agent (host-local) and the main app never collides (in
-// production they're separate machines / OS instances).
+// Direction configuration for the shared clipboard File Provider machinery: the
+// guest agent (host→guest paste) and the main app (guest→host "Copy to Mac") run
+// the same domain host + extension logic, differing only in the values below.
+// Both directions share the app group but must keep distinct service names,
+// domain identifiers, container subpaths, and doorbell names so a dev Mac running
+// both never collides. The app group is per-build-configuration
+// (`KERNOVA_APP_GROUP`); renaming Debug's Team-ID-prefixed group breaks the
+// profile-less signing that grants it silent container access.
 
 /// Per-direction configuration for the clipboard File Provider transport.
 public struct FileProviderConfig: Sendable {
-    /// App group shared by the container app and its sandboxed extension.
-    ///
-    /// Scopes the shared staging container the owner writes into and the
-    /// extension APFS-clones out of. Per-build-configuration (see the file
-    /// header); resolved from the Info.plist by `host()` / `guest()`. No longer
-    /// used for any Mach-service lookup.
+    /// App group scoping the staging container the owner writes into and the
+    /// extension APFS-clones out of.
     public let appGroupIdentifier: String
 
     /// The `NSFileProviderServiceName` the extension vends its anonymous XPC
     /// endpoint under and the owner selects when connecting.
-    ///
-    /// Reverse-DNS by convention; per-direction so a dev Mac running both host
-    /// and guest never crosses wires.
     public let serviceName: NSFileProviderServiceName
 
     /// The Darwin notification name the extension posts (reconnect doorbell) and
     /// the owner observes to re-establish the control connection.
     ///
-    /// Darwin names are a flat global namespace with no app-group prefix (that
-    /// rule is Mach-service-only); per-direction, reverse-DNS by convention.
+    /// Darwin names are a flat global namespace and take no app-group prefix —
+    /// that rule is Mach-service-only.
     public let reconnectNotificationName: String
 
     /// Stable File Provider domain identifier (no `/` or `:`, which the
@@ -68,7 +36,7 @@ public struct FileProviderConfig: Sendable {
     public let domainDisplayName: String
 
     /// Subdirectory under the app-group container for this direction's manifest
-    /// and staging, so guest and host never collide on a shared dev Mac.
+    /// and staging.
     public let containerDirectoryName: String
 
     /// `KernovaLogger` subsystem for the domain host + relay service (runs in
@@ -82,16 +50,12 @@ public struct FileProviderConfig: Sendable {
     /// **owner** in `shouldAcceptNewConnection`, or `nil` to skip peer
     /// validation.
     ///
-    /// The host pins the main app (the only process allowed to export the relay);
-    /// the guest leaves it `nil` — per-VM vsock auth is tracked separately (#145)
-    /// and both guest processes run inside the same VM.
+    /// The host pins the main app, the only process allowed to export the relay;
+    /// the guest leaves it `nil` — both guest processes run inside the same VM.
     public let ownerCodeSigningRequirement: String?
 
     /// Code-signing requirement the **owner** pins on the **extension** for its
     /// `getFileProviderConnection` control connection, or `nil` to skip.
-    ///
-    /// The host pins the host File Provider extension; the guest leaves it `nil`
-    /// (same rationale as `ownerCodeSigningRequirement`).
     public let extensionCodeSigningRequirement: String?
 
     /// Creates a direction config from its addressing and logging values.
@@ -123,12 +87,9 @@ public struct FileProviderConfig: Sendable {
 
     /// Builds this direction's File Provider domain.
     ///
-    /// The single construction point for domain identity: the domain host
-    /// registers the domain this returns, and the servicing connector's
-    /// identifier-based `getService(named:for:)` lookup must resolve the same
-    /// domain (#539). Each call site constructs a fresh instance rather than
-    /// sharing one — `NSFileProviderDomain` is not Sendable, so a shared
-    /// instance couldn't cross the connector's `@Sendable` connect closure.
+    /// `NSFileProviderDomain` is not `Sendable`, so each call site builds a fresh
+    /// instance rather than sharing one across the connector's `@Sendable`
+    /// connect closure.
     public func makeDomain() -> NSFileProviderDomain {
         NSFileProviderDomain(
             identifier: NSFileProviderDomainIdentifier(domainIdentifier),
@@ -139,20 +100,16 @@ public struct FileProviderConfig: Sendable {
     /// to the given `team`.
     ///
     /// `anchor apple generic` + the team OU holds for both Apple Development and
-    /// Developer ID signing, so one requirement matches whichever of the two the
-    /// peer is actually signed with. `subject.OU` is the certificate field that
-    /// carries the team ID — not the CN parenthetical, which is a known footgun
-    /// (see `Tools/bootstrap-team.sh`). Both peer pins built by `host()` share
-    /// this shape, so the anchor/team clause lives here once and can't drift
-    /// between them.
+    /// Developer ID signing, so one requirement matches whichever the peer is
+    /// signed with. `subject.OU` is the certificate field carrying the team ID —
+    /// not the CN parenthetical, a known footgun (`Tools/bootstrap-team.sh`).
     private static func teamSignedRequirement(identifier: String, team: String) -> String {
         "identifier \"\(identifier)\" "
             + "and anchor apple generic "
             + "and certificate leaf[subject.OU] = \"\(team)\""
     }
 
-    /// Host→guest: the guest agent serves the host's copied file to the guest
-    /// (issue #376).
+    /// Host→guest: the guest agent serves the host's copied file to the guest.
     ///
     /// - Parameter appGroupIdentifier: the shared container's app group;
     ///   defaults to the running executable's configured value.
@@ -174,25 +131,15 @@ public struct FileProviderConfig: Sendable {
     }
 
     /// Guest→host: the main app serves the guest's copied file to the Mac
-    /// ("Copy to Mac", issue #424).
-    ///
-    /// Distinct service/domain/subpath/doorbell from the guest so both can
-    /// coexist on a dev Mac; reuses the same app group.
+    /// ("Copy to Mac").
     ///
     /// - Parameters:
     ///   - appGroupIdentifier: the shared container's app group; defaults to
     ///     the running executable's configured value.
-    ///   - teamIdentifier: the team the host↔extension XPC peer requirements
-    ///     pin to; defaults to the running executable's own signing team
-    ///     (#476) so the pin floats with whoever cloned and signed the
-    ///     build, rather than a hardcoded team. Pinning the peer to *my own*
-    ///     team is correct because the host app and its embedded
-    ///     `KernovaFileProvider.appex` are always co-signed by the same team —
-    ///     an invariant Xcode's `ValidateEmbeddedBinary` build phase enforces
-    ///     (it fails the build if a host and an embedded binary carry
-    ///     different Team IDs), so the two processes always resolve the same
-    ///     value here. `nil` (unsigned/ad-hoc, not the real signed host path)
-    ///     skips peer validation.
+    ///   - teamIdentifier: the team the XPC peer requirements pin to; defaults
+    ///     to the running executable's own signing team, which the extension
+    ///     always shares (Xcode's `ValidateEmbeddedBinary` phase enforces it).
+    ///     `nil` (unsigned/ad-hoc) skips peer validation.
     /// - Returns: a host-direction config.
     public static func host(
         appGroupIdentifier: String = KernovaAppGroup.identifier(),

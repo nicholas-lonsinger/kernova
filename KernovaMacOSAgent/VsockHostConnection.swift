@@ -2,35 +2,18 @@ import Foundation
 import KernovaKit
 import os
 
-/// Forwards guest-emitted log records to the host on `KernovaVsockPort.log`
-/// (49153).
+/// Forwards guest-emitted log records to the host on `KernovaVsockPort.log`.
 ///
-/// Connection lifecycle is delegated to `VsockGuestClient`; this
-/// class layers log-specific buffering and inbound drain on top.
-///
-/// The version handshake and agent liveness live on the always-on control
-/// channel (`VsockGuestControlAgent` / `KernovaVsockPort.control`). This class
-/// emits only `LogRecord` frames once a connection is established.
-///
-/// `forwardLog` is safe to call from any thread. When the channel is down,
-/// frames are buffered in a bounded ring (oldest dropped first) and flushed
-/// once the next connection comes up.
+/// Connection lifecycle is delegated to `VsockGuestClient`; this class layers
+/// log-specific buffering and inbound drain on top.
 final class VsockHostConnection: @unchecked Sendable {
     private static let logger = Logger(subsystem: "app.kernova.macosagent", category: "VsockHostConnection")
 
-    /// Maximum number of `LogRecord` frames buffered while the channel is
-    /// down.
+    /// Maximum number of `LogRecord` frames buffered while the channel is down,
+    /// oldest dropped first.
     ///
-    /// Older entries are dropped first.
-    ///
-    /// Sized for the bursty pre-connect window: agent boot can take 30s+
-    /// from VM-start to first vsock connect on macOS, and clipboard activity
-    /// from `VsockGuestClipboardAgent` may push `.debug` traffic that could
-    /// fill a smaller buffer well before the log channel comes up. Records now
-    /// buffer from process start — the `.undecided` policy state buffers rather
-    /// than drops until the host's first `PolicyUpdate` (#598) — so this window
-    /// is actually reachable, not just from policy-enable onward. 256 frames
-    /// at ~200 bytes apiece is ~50 KiB of bounded memory.
+    /// Sized for the bursty pre-connect window: agent boot can take 30 s+ from
+    /// VM start to the first vsock connect on macOS.
     static let logBufferLimit = 256
 
     private let client: VsockGuestClient
@@ -40,35 +23,26 @@ final class VsockHostConnection: @unchecked Sendable {
 
     /// Whether the host has decided log forwarding yet, and if so, its verdict.
     ///
-    /// Policy defaults to disabled until the host's first `PolicyUpdate` arrives
-    /// (the install/boot window, up to 30 s+), so a plain on/off flag would drop
-    /// every record emitted before that handshake — defeating the pre-connect
-    /// ring's whole purpose. The `.undecided` state buffers those records
-    /// instead, deferring the send/drop verdict to the first `setEnabled(_:)`
-    /// (#598).
+    /// `.undecided` buffers records rather than dropping them, so the boot
+    /// window survives to the host's first `PolicyUpdate`.
     private enum ForwardingPolicy {
         case undecided
         case enabled
         case disabled
     }
 
-    /// Current forwarding policy, guarded by `lock`. `.undecided` until the host's
-    /// first `PolicyUpdate`; then `.enabled`/`.disabled` per `setEnabled(_:)`.
+    /// Current forwarding policy, guarded by `lock`.
     private var policy: ForwardingPolicy = .undecided
 
     /// Lock-guarded read of the forwarding policy for the main-thread menu.
-    ///
-    /// Renders the "Log Forwarding: enabled/disabled" line; the lock makes the
-    /// cross-thread read safe (`policy` is mutated from the off-main policy
-    /// callback). `.undecided` reads as not-yet-enabled.
     var isLogForwardingEnabled: Bool {
         lock.withLock { policy == .enabled }
     }
 
     init() {
         self.client = VsockGuestClient(port: KernovaVsockPort.log, label: "log")
-        // Default-disabled: pause the reconnect loop until the host sends its
-        // first `PolicyUpdate(logForwardingEnabled: true)`.
+        // Default-disabled: no connect attempts until the host's first
+        // `PolicyUpdate(logForwardingEnabled: true)`.
         self.client.pause()
     }
 
@@ -88,16 +62,9 @@ final class VsockHostConnection: @unchecked Sendable {
 
     /// Applies a host policy update for log forwarding.
     ///
-    /// This is also the first decision that resolves the initial `.undecided`
-    /// policy, so `undecided → enabled/disabled` is always a transition (never a
-    /// no-op). When enabling: resumes the loop so the next connect happens within
-    /// `retryInterval`, flushing any records buffered during the undecided
-    /// window. When disabling: closes any active channel via the underlying
-    /// client, discards buffered log frames (including undecided-era records — an
-    /// explicit "off" ships nothing retroactively, preserving the privacy intent)
-    /// so the host doesn't get a flood on the next enable, and pauses the
-    /// reconnect loop. Idempotent — a repeat call with the already-decided value
-    /// is a no-op.
+    /// Enabling resumes the loop, flushing whatever was buffered while the policy
+    /// was undecided. Disabling closes the channel and discards the buffer — an
+    /// explicit "off" ships nothing retroactively. Idempotent.
     func setEnabled(_ enabled: Bool) {
         let target: ForwardingPolicy = enabled ? .enabled : .disabled
         let needsTransition: Bool = lock.withLock {
@@ -118,11 +85,9 @@ final class VsockHostConnection: @unchecked Sendable {
 
     /// Builds and best-effort sends a `LogRecord` frame to the host.
     ///
-    /// When no
-    /// connection is currently active, the frame is buffered (up to
-    /// `logBufferLimit` records, oldest dropped first) and flushed once the
-    /// next connection comes up. Returns `true` when the frame was handed to a
-    /// live channel synchronously.
+    /// Safe to call from any thread. With no live connection the frame is
+    /// buffered and flushed on the next one. Returns `true` only when the frame
+    /// was handed to a live channel synchronously.
     @discardableResult
     func forwardLog(
         level: Kernova_V1_LogRecord.Level,
@@ -130,9 +95,6 @@ final class VsockHostConnection: @unchecked Sendable {
         category: String,
         message: String
     ) -> Bool {
-        // Drop the frame entirely once host policy has explicitly disabled
-        // forwarding — not just buffer it for later. The user's intent is "stop
-        // sending, don't fill a pipe to flush on the next enable".
         let policy = lock.withLock { self.policy }
         if policy == .disabled { return false }
 
@@ -146,10 +108,8 @@ final class VsockHostConnection: @unchecked Sendable {
             $0.message = message
         }
 
-        // No policy decision yet: buffer the frame so the install/boot-window
-        // records survive to the first `PolicyUpdate` instead of being dropped
-        // (#598). `timestampMs` is stamped above (forward time), so chronology
-        // survives the deferred flush; a `.disabled` verdict later clears these.
+        // `timestampMs` is stamped above at forward time, so chronology survives
+        // a deferred flush.
         guard policy == .enabled else {
             bufferFrameUnlessDisabled(frame)
             return false
@@ -160,8 +120,6 @@ final class VsockHostConnection: @unchecked Sendable {
                 try live.send(frame)
                 return true
             } catch {
-                // Send failed — channel is likely dead. Buffer the frame so
-                // it gets flushed on the next reconnect rather than lost.
                 bufferFrameUnlessDisabled(frame)
                 return false
             }
@@ -178,11 +136,9 @@ final class VsockHostConnection: @unchecked Sendable {
 
     /// Buffers `frame` unless host policy has meanwhile gone explicitly `.disabled`.
     ///
-    /// `forwardLog` samples the policy, builds the frame, and only then buffers,
-    /// so a `setEnabled(false)` landing in between would clear `pendingLogs` and
-    /// then find this frame appended behind it — shipping a record on the next
-    /// enable that an explicit "off" was meant to discard. Re-checking under the
-    /// same lock hold as the append makes that discard authoritative.
+    /// `forwardLog` samples the policy before building the frame, so re-checking
+    /// under the same lock hold as the append is what keeps a concurrent
+    /// `setEnabled(false)` from leaving this frame behind its own buffer clear.
     private func bufferFrameUnlessDisabled(_ frame: Frame) {
         lock.withLock {
             guard policy != .disabled else { return }
@@ -203,9 +159,7 @@ final class VsockHostConnection: @unchecked Sendable {
     private func serveLogChannel(_ channel: VsockChannel) async {
         flushPendingLogs(on: channel)
 
-        // Drain the inbound stream so we observe EOF / errors. The log
-        // channel is one-way today; any inbound message is logged and
-        // discarded after a protocol-version check.
+        // The log channel is one-way; draining is how EOF and errors are seen.
         do {
             for try await frame in channel.incoming {
                 guard frame.protocolVersion == 1 else {

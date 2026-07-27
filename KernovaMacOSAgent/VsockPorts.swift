@@ -1,18 +1,10 @@
 import Foundation
 
-/// Vsock port assignments (guest-side mirror of `Kernova/Services/VsockPorts.swift`).
-///
-/// Duplicated rather than imported across the host/agent boundary so the two
-/// sides can drift independently if needed (e.g. a guest agent built against
-/// an older host). The port numbers are part of the wire contract — keep
-/// both sides in sync.
+/// Vsock port assignments, part of the wire contract and mirrored in
+/// `Kernova/Services/VsockPorts.swift` — change both sides together.
 enum KernovaVsockPort {
-    /// Always-on control plane.
-    ///
-    /// Carries the agent version handshake and
-    /// bidirectional heartbeats independent of any optional feature toggle,
-    /// so the host can detect agent presence/liveness even when clipboard
-    /// sharing or other features are disabled.
+    /// Always-on control plane: version handshake and heartbeats, carried
+    /// independently of any optional feature toggle.
     static let control: UInt32 = 49154
 
     /// Bidirectional clipboard sync.

@@ -3,23 +3,12 @@ import Foundation
 
 /// Serves a clipboard offer's representations to a pasteboard lazily.
 ///
-/// Used on both sides of the clipboard bridge: the guest agent registers one
-/// per inbound host offer, and the host app registers one per "Copy to Mac"
-/// item. One provider is written per pasteboard item via
-/// `NSPasteboardItem.setDataProvider(_:forTypes:)`. When the OS (a paste, a drag
-/// read, a Quick Look) asks for one of the promised types, the pasteboard server
-/// invokes `pasteboard(_:item:provideDataForType:)` on the owner's main
-/// thread/run loop. The callback delegates to `provide`, which produces the
-/// requested representation on demand — the host serves its resident or
-/// memory-mapped bytes, the guest streams them from the host (blocking the main
-/// thread until the bytes, or a materialized file URL, land — woken off-main by
-/// the stream receiver). `provide` returns `nil` to leave the type empty (a
-/// timeout, abort, disk full, a superseded offer, or a type this item never
-/// promised).
-///
-/// The owner keeps a strong reference to each provider until
-/// `pasteboardFinishedWithDataProvider(_:)` fires — Apple requires the provider
-/// stay alive while its item's data is still promised.
+/// One provider is written per pasteboard item via
+/// `NSPasteboardItem.setDataProvider(_:forTypes:)`. When the OS asks for a
+/// promised type, the pasteboard server invokes
+/// `pasteboard(_:item:provideDataForType:)` on the owner's main thread/run loop,
+/// which delegates to `provide` (`nil` leaves the type empty). The owner must
+/// hold each provider until `pasteboardFinishedWithDataProvider(_:)` fires.
 public final class LazyClipboardDataProvider: NSObject, NSPasteboardItemDataProvider {
     private let provide: (NSPasteboard.PasteboardType) -> Data?
     private let onFinished: (LazyClipboardDataProvider) -> Void

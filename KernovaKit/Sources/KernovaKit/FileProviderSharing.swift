@@ -1,48 +1,29 @@
 import Foundation
 
-// Shared item-identity + offer-manifest machinery for the guest File Provider
-// transport (issue #376).
-//
-// The File Provider extension owns the enumerator, but the agent (a separate
-// process) knows the current clipboard offer. The framework has no "push items"
-// API — the system learns items *only* by calling the extension's enumerator —
-// so the two processes agree on the current item set through a small manifest
-// the agent writes into the shared app-group container and the extension reads.
-// After writing it the agent calls `signalEnumerator` to prompt re-enumeration.
-//
-// All types here are value types or stateless file helpers: synchronization
-// across the two processes is the atomic manifest write, not shared memory, so
-// none of this needs lock-based `@unchecked Sendable`.
+// Shared item-identity + offer-manifest machinery for the File Provider
+// transport. The framework has no "push items" API — the system learns items
+// *only* by calling the extension's enumerator — so the agent and the extension
+// (separate processes) agree on the current item set through a manifest the
+// agent writes into the shared app-group container, then signals the enumerator
+// to re-read.
 
 /// Encodes and decodes a file representation's `(sessionSalt, generation,
 /// repIndex)` as a `NSFileProviderItemIdentifier` string.
 ///
-/// The string is carried as a plain `String` here (not `NSFileProviderItemIdentifier`)
-/// so the encoding is unit-testable without importing `FileProvider`; the
-/// extension wraps it. The `clipfile` prefix distinguishes a per-rep file item
-/// from the framework's reserved container identifiers (root / working-set /
-/// trash). Avoids `/` and `:`, which the framework reserves.
-///
-/// The identifier leads with a per-owner-session salt because the offer
-/// `generation` counter restarts at 1 with every owner session, while
-/// placeholder dirents survive teardown on disk (#541). Without the salt, a
-/// new session's first offer reuses the previous session's item identifier and
-/// fileproviderd treats it as an in-place *update* of the stale — possibly
-/// already materialized — placeholder: it renames the old file, keeps its
-/// bytes and size, and decides `shouldFetch:false`, so a paste serves the
-/// previous offer's content. A salted identifier makes a new session's offer a
-/// *different item*, so reconciliation deletes the stale placeholder and
-/// creates a fresh dataless one with the correct metadata.
+/// The leading per-owner-session salt is load-bearing: `generation` restarts at 1
+/// each owner session while placeholder dirents survive teardown, so without it
+/// fileproviderd treats a new session's first offer as an in-place *update* of
+/// the stale placeholder — keeping its bytes and deciding `shouldFetch:false`, so
+/// a paste serves the previous offer's content.
 enum FileProviderItemIdentifier {
     private static let prefix = "clipfile"
-    /// Prefix for a **tree node** of a directory rep's placeholder tree (folder
-    /// D1b): the folder root and every descendant.
+    /// Prefix for a **tree node** of a directory rep's placeholder tree: the
+    /// folder root and every descendant.
     ///
-    /// Distinct from `clipfile` so a
-    /// flat single-file rep and a folder tree never collide, and so the
-    /// extension routes `fetchContents` to the flat vs. child pull path by the
-    /// prefix alone.
+    /// Distinct from `clipfile` so a flat rep and a folder tree never collide,
+    /// and so `fetchContents` routes to the flat vs. child pull path by prefix.
     private static let nodePrefix = "clipnode"
+    /// Neither `/` nor `:`, which the framework reserves in identifiers.
     private static let separator: Character = "."
 
     /// Encodes `(sessionSalt, generation, repIndex)` into an item identifier
@@ -65,8 +46,7 @@ enum FileProviderItemIdentifier {
         return (sessionSalt, generation, repIndex)
     }
 
-    /// Encodes a directory-rep **tree node** identifier — `(sessionSalt,
-    /// generation, repIndex, childSeq)`, with `childSeq == 0` naming the folder
+    /// Encodes a tree-node identifier, where `childSeq == 0` names the folder
     /// root and `>= 1` a descendant.
     static func makeNode(
         sessionSalt: UInt64, generation: UInt64, repIndex: Int, childSeq: UInt32
@@ -95,13 +75,10 @@ enum FileProviderItemIdentifier {
 ///
 /// One entry per File-Provider-served file rep.
 public struct FileProviderManifest: Codable, Sendable, Equatable {
-    /// One enumerable file item: its `(sessionSalt, generation, repIndex)`
-    /// identity plus the metadata the enumerator needs to build a dataless
-    /// `NSFileProviderItem`.
+    /// One enumerable file item: its identity plus the metadata the enumerator
+    /// needs to build a dataless `NSFileProviderItem`.
     public struct Item: Codable, Sendable, Equatable {
-        /// The publishing owner session's salt — makes the item identifier
-        /// unique across sessions whose `generation` counters restart (#541);
-        /// see `FileProviderItemIdentifier`.
+        /// The publishing owner session's salt; see `FileProviderItemIdentifier`.
         public var sessionSalt: UInt64
         /// Offer generation this item belongs to.
         public var generation: UInt64
@@ -134,15 +111,15 @@ public struct FileProviderManifest: Codable, Sendable, Equatable {
         }
     }
 
-    /// A directory representation published as a placeholder **tree** (folder
-    /// D1b, `clipboard.dirtree.v1`): a folder root plus every descendant node.
+    /// A directory representation published as a placeholder **tree**
+    /// (`clipboard.dirtree.v1`): a folder root plus every descendant node.
     ///
     /// The enumerator serves the root under the domain root and each folder's
     /// direct children under it; a file node's bytes are pulled by a child
     /// `ClipboardTreeFetch` on `fetchContents`.
     public struct FolderRep: Codable, Sendable, Equatable {
-        /// The publishing owner session's salt (#541), shared by the root and
-        /// every node's identifier.
+        /// The publishing owner session's salt, shared by the root and every
+        /// node's identifier.
         public var sessionSalt: UInt64
         /// Offer generation this folder belongs to.
         public var generation: UInt64
@@ -158,7 +135,7 @@ public struct FileProviderManifest: Codable, Sendable, Equatable {
         /// Stat-walk size estimate, surfaced as the root's `documentSize`
         /// (advisory — see the proto's `byte_count` doc).
         public var byteCount: UInt64
-        /// Root folder modification time (ms since epoch), for fidelity.
+        /// Root folder modification time (ms since epoch).
         public var mtimeMs: Int64
         /// Every descendant node (`childSeq >= 1`); the folder root is `childSeq
         /// 0`, represented by this `FolderRep` itself.
@@ -195,10 +172,9 @@ public struct FileProviderManifest: Codable, Sendable, Equatable {
             public var isPackage: Bool
             /// Raw symlink target for a symlink node; empty otherwise.
             public var symlinkTarget: String
-            /// POSIX permission bits (`st_mode & 0o7777`) for the executable bit
-            /// and friends; 0 when unknown.
+            /// POSIX permission bits (`st_mode & 0o7777`); 0 when unknown.
             public var posixPermissions: UInt32
-            /// Modification time (ms since epoch), for fidelity.
+            /// Modification time (ms since epoch).
             public var mtimeMs: Int64
 
             /// Creates a tree node.
@@ -280,7 +256,7 @@ public struct FileProviderManifest: Codable, Sendable, Equatable {
 
     /// The flat single-file item matching an identifier, or `nil`.
     ///
-    /// Kept for the flat single-file path; folder-tree callers use `resolve(_:)`.
+    /// Folder-tree callers use `resolve(_:)` instead.
     public func item(for identifier: String) -> Item? {
         guard let decoded = FileProviderItemIdentifier.decode(identifier) else { return nil }
         return items.first {
@@ -291,7 +267,7 @@ public struct FileProviderManifest: Codable, Sendable, Equatable {
 
     /// Resolves any manifest identifier to what it names — a flat file, a folder
     /// root, or a tree node — or `nil` for a stale/unknown identifier (a
-    /// superseded generation, a previous session (#541), or not one of ours).
+    /// superseded generation, a previous session, or not one of ours).
     public func resolve(_ identifier: String) -> Resolved? {
         if let item = item(for: identifier) { return .flatFile(item) }
         guard let decoded = FileProviderItemIdentifier.decodeNode(identifier),
@@ -339,9 +315,7 @@ enum FileProviderContainerError: Error {
 ///
 /// `containerURL(forSecurityApplicationGroupIdentifier:)` may return a URL whose
 /// directory isn't actually accessible (per Apple's docs), so writes are
-/// fallible and reads degrade to `.empty`. Direction-bound: the app group and
-/// the subdirectory come from the `FileProviderConfig` it's built with,
-/// so the guest and host containers never collide on a shared dev Mac.
+/// fallible and reads degrade to `.empty`.
 public struct FileProviderContainer: Sendable {
     private static let stagingDirectoryName = "staging"
     private static let manifestFilename = "clipboard-manifest.json"

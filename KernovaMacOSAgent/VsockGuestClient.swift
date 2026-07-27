@@ -3,47 +3,29 @@ import KernovaKit
 import Darwin
 import os
 
-/// Maintains a long-lived `socket(AF_VSOCK, SOCK_STREAM)` connection from the
-/// guest agent to the host on a single vsock port, with automatic reconnect on
-/// disconnect or connect failure.
+/// Maintains a long-lived `socket(AF_VSOCK, SOCK_STREAM)` connection to the host
+/// on one vsock port, reconnecting on disconnect or connect failure.
 ///
-/// This class owns the connection lifecycle — connect attempt, retry on
-/// failure, sleep between attempts. *What* to do once connected is delegated
-/// to the `serve` closure passed to `start(serve:)`. When `serve` returns,
-/// the client sleeps for `retryInterval` and reconnects.
-///
-/// Multiple guest services (log, clipboard, …) each instantiate their own
-/// `VsockGuestClient` on their own port; the connection-lifecycle logic is
-/// shared so each service only writes its own protocol-specific code.
-///
-/// RATIONALE: This file deliberately uses raw `os.Logger` rather than the
-/// `KernovaLogger` wrapper most agent files use. Connection-lifecycle logs
-/// (connect-attempt failures, EOF events) flow over the same vsock channel
-/// that this class manages — routing them through `KernovaLogger` would risk
-/// a feedback loop where a write failure logs an event that schedules
-/// another send through the broken channel.
+/// What to do once connected is the `serve` closure passed to `start(serve:)`;
+/// when it returns, the client sleeps for `retryInterval` and reconnects.
+/// Lifecycle logging uses raw `os.Logger`, never `KernovaLogger` — the agent
+/// wires that sink through this very transport, so a write failure would
+/// schedule another send through the broken channel.
 final class VsockGuestClient: @unchecked Sendable {
-    /// Outcome of a `VsockSocketProvider` failure. `.transient` failures cause
-    /// the reconnect loop to sleep and retry; `.permanent` failures cause the
-    /// loop to exit and the client to enter its terminal "cannot be restarted"
-    /// state.
+    /// Outcome of a `VsockSocketProvider` failure: `.transient` retries the
+    /// connect loop, `.permanent` halts it for good.
     enum VsockProviderError: Error, Sendable, Equatable {
-        /// Retry-able — peer not ready, transient kernel resource pressure, etc.
+        /// Retry-able — peer not ready, transient kernel resource pressure.
         case transient(String)
-        /// Not retry-able — kernel doesn't support AF_VSOCK, sandbox prohibits
-        /// the syscall, etc. Logging once at error level is sufficient.
+        /// Not retry-able — the kernel has no `AF_VSOCK` support.
         case permanent(String)
     }
 
-    /// Opens a SOCK_STREAM fd for the given port and label; returns `.success`
-    /// with the connected fd, or `.failure` with a `.transient` or `.permanent`
-    /// error indicating whether the loop should retry or halt.
+    /// Opens a SOCK_STREAM fd for the given port and label.
     typealias VsockSocketProvider =
         @Sendable (_ port: UInt32, _ label: String) -> Result<Int32, VsockProviderError>
 
-    /// Outcome produced by `connectAndServe` to control the reconnect loop.
     private enum LoopOutcome: Equatable {
-        /// Sleep `retryInterval`, then try again.
         case retry
         /// Exit the loop; client is now permanently inert.
         case terminate
@@ -51,9 +33,9 @@ final class VsockGuestClient: @unchecked Sendable {
 
     private static let logger = Logger(subsystem: "app.kernova.macosagent", category: "VsockGuestClient")
     private static let socketTimeoutSeconds: Int = 30
-    // RATIONALE: vsock is a local-only transport with no SYN dance, so connect
-    // is normally immediate-success or immediate-ECONNREFUSED. 3s is a generous
-    // ceiling that stays well under the 5s retryInterval.
+    // vsock is local-only with no SYN dance: connect is normally immediate
+    // success or immediate ECONNREFUSED, so 3 s is a generous ceiling that still
+    // stays under the 5 s retryInterval.
     private static let connectTimeoutSeconds: Int = 3
 
     let port: UInt32
@@ -68,19 +50,11 @@ final class VsockGuestClient: @unchecked Sendable {
     private var stopped = false
 
     /// When `true`, the reconnect loop skips connect attempts and waits for
-    /// `resume()`.
-    ///
-    /// Distinct from `stopped` — pause is reversible, stop is
-    /// terminal. Used by higher-level agents to honor host policy updates
-    /// (e.g., log forwarding disabled → pause the client → no connects).
+    /// `resume()`; reversible, unlike `stopped`.
     private var paused = false
 
     // MARK: - Init
 
-    /// Creates a client for the given port.
-    ///
-    /// Pass a custom `socketProvider` and
-    /// `retryInterval` in tests; production callers can use the defaults.
     init(
         port: UInt32,
         label: String,
@@ -100,10 +74,8 @@ final class VsockGuestClient: @unchecked Sendable {
 
     /// Begins the connect/serve/reconnect loop.
     ///
-    /// Idempotent — repeated calls
-    /// after the first are no-ops. Once stopped (or permanently terminated by a
-    /// permanent provider failure), the client cannot be restarted; create a
-    /// new instance.
+    /// Idempotent. Once stopped — including by a permanent provider failure —
+    /// the client cannot be restarted; create a new instance.
     func start(serve: @escaping @Sendable (VsockChannel) async -> Void) {
         lock.withLock {
             guard reconnectTask == nil, !stopped else { return }
@@ -115,8 +87,7 @@ final class VsockGuestClient: @unchecked Sendable {
 
     /// Pauses the reconnect loop and tears down any active channel.
     ///
-    /// Subsequent reconnect attempts are skipped until `resume()` is called.
-    /// Idempotent. Distinct from `stop()` — pause is reversible.
+    /// Idempotent, and reversible with `resume()` — unlike `stop()`.
     func pause() {
         let ch: VsockChannel? = lock.withLock {
             paused = true
@@ -127,18 +98,14 @@ final class VsockGuestClient: @unchecked Sendable {
         ch?.close()
     }
 
-    /// Resumes the reconnect loop after `pause()`.
-    ///
-    /// The next reconnect attempt
-    /// happens within `retryInterval`. Idempotent.
+    /// Resumes the reconnect loop after `pause()`, reconnecting within
+    /// `retryInterval`.
     func resume() {
         lock.withLock { paused = false }
     }
 
-    /// Stops the loop and tears down any active channel.
-    ///
-    /// Subsequent `start`
-    /// calls are no-ops.
+    /// Stops the loop and tears down any active channel; later `start` calls are
+    /// no-ops.
     func stop() {
         let (task, ch): (Task<Void, Never>?, VsockChannel?) = lock.withLock {
             stopped = true
@@ -152,11 +119,8 @@ final class VsockGuestClient: @unchecked Sendable {
         ch?.close()
     }
 
-    /// Currently-attached channel, or nil.
-    ///
-    /// Useful for callers that need to
-    /// peek for synchronous best-effort sends (e.g. log forwarding) without
-    /// owning the loop.
+    /// Currently-attached channel, for callers making synchronous best-effort
+    /// sends without owning the loop.
     var liveChannel: VsockChannel? {
         lock.withLock { currentChannel }
     }
@@ -189,12 +153,9 @@ final class VsockGuestClient: @unchecked Sendable {
         case .success(let f):
             fd = f
         case .failure(.transient):
-            // Logged at the call site closest to errno context (openVsockToHost /
-            // classifySocketErrno). No re-log here — the typed error is purely a
-            // control-flow signal at this level.
+            // Already logged with errno context by the provider.
             return .retry
         case .failure(.permanent):
-            // Logged at error level inside classifySocketErrno. Halt the loop.
             Self.logger.error("Halting reconnect loop for '\(self.label, privacy: .public)' after permanent failure.")
             return .terminate
         }
@@ -210,13 +171,9 @@ final class VsockGuestClient: @unchecked Sendable {
         let channel = VsockChannel(fileDescriptor: fd)
         channel.start()
 
-        // Check `paused` here (under the same lock that protects
-        // `currentChannel`) to close the race where `pause()` lands while
-        // `socketProvider` was mid-flight: without this guard, the lock-
-        // protected publish below would store the new channel and the
-        // outer loop would invoke `serve(channel)` despite policy saying
-        // otherwise. `pause()` clears `currentChannel` and sets `paused=true`
-        // atomically, so seeing `paused == true` here means we must abort.
+        // Re-check `paused` under the same lock that publishes `currentChannel`:
+        // a `pause()` landing while `socketProvider` was mid-flight would
+        // otherwise be overwritten here and `serve` would run against policy.
         let aborted: Bool = lock.withLock {
             if stopped || paused { return true }
             currentChannel = channel
@@ -240,19 +197,13 @@ final class VsockGuestClient: @unchecked Sendable {
 
     // MARK: - Socket helpers (static — no instance state read)
 
-    /// Opens a raw `AF_VSOCK / SOCK_STREAM` socket and connects to the host
-    /// using the non-blocking-connect-with-poll idiom so `connect(2)` can't
-    /// block the reconnect loop longer than `connectTimeoutSeconds`.
+    /// Opens a raw `AF_VSOCK / SOCK_STREAM` socket and connects to the host with
+    /// the non-blocking-connect-plus-poll idiom, so `connect(2)` cannot block the
+    /// reconnect loop past `connectTimeoutSeconds`.
     ///
-    /// `SO_RCVTIMEO`/`SO_SNDTIMEO` from Darwin do not bound `connect(2)`,
-    /// only `recv`/`send`. Non-blocking mode is used exclusively for the
-    /// connect phase; blocking mode is restored afterwards so subsequent
-    /// `recv`/`send` calls continue to observe the socket-level timeouts.
-    ///
-    /// Returns `.success(fd)` on success, `.failure(.permanent(...))` when
-    /// `AF_VSOCK` is unsupported, or `.failure(.transient(...))` for all other
-    /// failures. Used as the default `socketProvider` in the production
-    /// convenience init.
+    /// Darwin's `SO_RCVTIMEO`/`SO_SNDTIMEO` bound only `recv`/`send`, never
+    /// `connect(2)`. Non-blocking mode covers the connect phase only; blocking
+    /// mode is restored afterwards so those socket-level timeouts still apply.
     private static func openVsockToHost(
         port: UInt32, label: String
     ) -> Result<Int32, VsockProviderError> {
@@ -278,9 +229,8 @@ final class VsockGuestClient: @unchecked Sendable {
         }
 
         var addr = sockaddr_vm()
-        // Darwin's `sockaddr` family carries a leading `sa_len`/`svm_len`
-        // byte that the networking stack may rely on; set it explicitly
-        // even though some kernel paths infer it.
+        // Darwin's `sockaddr` family carries a leading `sa_len`/`svm_len` byte the
+        // networking stack may rely on; set it even though some paths infer it.
         addr.svm_len = UInt8(MemoryLayout<sockaddr_vm>.size)
         addr.svm_family = sa_family_t(AF_VSOCK)
         addr.svm_port = port
@@ -319,11 +269,10 @@ final class VsockGuestClient: @unchecked Sendable {
         return .success(fd)
     }
 
-    /// Classifies a `socket(AF_VSOCK)` errno value into a `.permanent` or
-    /// `.transient` provider error. `EAFNOSUPPORT` and `EPROTONOSUPPORT`
-    /// indicate the kernel does not support AF_VSOCK at all and will never
-    /// succeed; all other values (resource exhaustion, access control) may
-    /// clear up and are classified as transient.
+    /// Classifies a `socket(AF_VSOCK)` errno as permanent or transient.
+    ///
+    /// `EAFNOSUPPORT` and `EPROTONOSUPPORT` mean the kernel has no `AF_VSOCK`
+    /// support and will never succeed; everything else may clear up.
     static func classifySocketErrno(_ err: Int32, label: String) -> VsockProviderError {
         switch err {
         case EAFNOSUPPORT, EPROTONOSUPPORT:
@@ -339,9 +288,8 @@ final class VsockGuestClient: @unchecked Sendable {
     /// Waits up to `connectTimeoutSeconds` for an in-flight non-blocking connect
     /// to complete on `fd`.
     ///
-    /// Returns true on success, false on timeout, poll
-    /// error, or a deferred connect error. Caller owns `fd` on both paths and
-    /// must `close()` it on false return — this helper does not assume ownership.
+    /// The caller owns `fd` on both paths and must `close()` it on a `false`
+    /// return — this helper never takes ownership.
     private static func awaitConnectCompletion(fd: Int32, label: String, port: UInt32) -> Bool {
         var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
         let deadline = ContinuousClock.now + .seconds(connectTimeoutSeconds)
@@ -370,9 +318,9 @@ final class VsockGuestClient: @unchecked Sendable {
             return false
         }
 
-        // Check output-only error flags before trusting SO_ERROR. POLLHUP can
-        // arrive with POLLOUT on a peer that hung up between EINPROGRESS and
-        // completion; SO_ERROR may read 0 because the connect itself succeeded.
+        // Check the error flags before trusting SO_ERROR: POLLHUP can arrive with
+        // POLLOUT when the peer hung up between EINPROGRESS and completion, and
+        // SO_ERROR then reads 0 because the connect itself succeeded.
         let errorRevents = Int16(POLLHUP) | Int16(POLLERR) | Int16(POLLNVAL)
         if pfd.revents & errorRevents != 0 {
             var soError: Int32 = 0
@@ -406,10 +354,8 @@ final class VsockGuestClient: @unchecked Sendable {
         return true
     }
 
-    /// Sets `SO_RCVTIMEO` / `SO_SNDTIMEO` on the fresh socket so subsequent
-    /// recv/send calls can't block longer than `socketTimeoutSeconds`.
-    /// `setsockopt` failures are logged at warning and otherwise ignored —
-    /// without timeouts the agent still works, just less robustly.
+    /// Sets `SO_RCVTIMEO` / `SO_SNDTIMEO` so later recv/send calls can't block
+    /// longer than `socketTimeoutSeconds`.
     private static func applySocketTimeouts(fd: Int32, label: String) {
         var timeout = timeval(tv_sec: socketTimeoutSeconds, tv_usec: 0)
         let optionSize = socklen_t(MemoryLayout<timeval>.size)

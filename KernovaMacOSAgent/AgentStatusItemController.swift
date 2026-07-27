@@ -4,35 +4,10 @@ import os
 
 /// Owns the agent's menu-bar `NSStatusItem` and its dropdown.
 ///
-/// The dropdown leads with the live host-connection line, then a "Status"
-/// submenu grouping the two host-driven capability states (log forwarding,
-/// clipboard), and offers About + Quit: clipboard/log enablement is host-driven
-/// (the host pushes `PolicyUpdate`), so the menu reflects state rather than
-/// offering switches that would fight host policy. Identity, version/build, and
-/// copyright live in the standard About panel (`aboutTapped`); a pending agent
-/// update also surfaces as a top-level hint line. Dynamic lines are rebuilt
-/// each time the menu opens (`menuNeedsUpdate`) by pulling the current state
-/// through the closures supplied at init; the status-item icon is updated live
-/// via `connectionStateChanged()` so it tracks the connection even while the
-/// menu is closed.
-///
-/// Also surfaces a proactive "enable File Provider" reminder (#581): while the
-/// guest clipboard domain is registered but the user hasn't flipped the
-/// System-Settings toggle (`fileProviderAvailability() == .needsEnabling`),
-/// the icon gets a small attention badge and the dropdown gains a "Stop
-/// Reminding Me" command that silences just the badge — the passive
-/// explanatory line + "Enable in System Settings…" command stay regardless of
-/// dismissal. A registration/install failure (`.unavailable`, #591) badges the
-/// icon too, with its own non-dismissible explanatory line (no toggle to
-/// flip, so no enable/stop commands). Mirrors the host app's
-/// `HostAgentStatusItemController`.
-///
-/// While a host→guest paste is materializing through the File Provider it also
-/// carries that paste's progress (#643): a determinate ring around the icon, a
-/// live readout at the top of the dropdown, and a one-time automatic open of the
-/// dropdown. Rendering it here rather than on the host is deliberate — the user
-/// who pressed ⌘V is looking at the guest's screen, and this status item is the
-/// agent's only UI.
+/// Clipboard and log enablement are host-driven, so the menu reflects state
+/// rather than offering switches that would fight host policy. Dynamic lines are
+/// rebuilt on `menuNeedsUpdate` from the closures supplied at init; the icon is
+/// updated live so it tracks state while the menu is closed.
 @MainActor
 final class AgentStatusItemController: NSObject, NSMenuDelegate {
     private static let logger = Logger(subsystem: "app.kernova.macosagent", category: "AgentStatusItem")
@@ -49,9 +24,7 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     private let fileProviderAvailability: () -> FileProviderAvailability
     private let onQuit: () -> Void
 
-    /// The dropdown readout, its one-shot automatic open, and the shared menu
-    /// wiring for a materializing paste (#643), built lazily since most sessions
-    /// never reveal one.
+    /// Built lazily, since most sessions never reveal a paste readout.
     private lazy var pasteProgressPresenter = ClipboardProgressStatusItemPresenter(
         statusItem: statusItem, menu: menu)
 
@@ -86,23 +59,17 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
 
     /// Updates the menu-bar icon to reflect a connection-state change.
     ///
-    /// Called by the app delegate from the control agent's `onStateChange`
-    /// (hopped to main). Re-reads the live (lock-guarded) state rather than
-    /// trusting a delivered value: each off-main `onStateChange` is hopped
-    /// through its own `Task { @MainActor }`, and independently-spawned tasks
-    /// have no ordering guarantee, so a rapid connect/disconnect flap could
-    /// arrive out of order — reading ground truth makes the icon converge on
-    /// the real state regardless of arrival order.
+    /// Takes no state deliberately: `onStateChange` deliveries are hopped to main
+    /// through independently spawned tasks with no ordering guarantee, so the
+    /// live lock-guarded state is re-read instead of trusting a delivered value.
     func connectionStateChanged() {
         setIcon(for: connectionState())
     }
 
-    /// Updates the menu-bar icon (and resets a stale dismissal) to reflect a
-    /// File Provider availability change (#581).
+    /// Updates the menu-bar icon, and resets a stale dismissal, for a File
+    /// Provider availability change.
     ///
-    /// Called by the app delegate from `FileProviderDomainHost
-    /// .setAvailabilityObserver`, which — unlike `onStateChange` above —
-    /// delivers synchronously on main, so `availability` is trusted directly
+    /// Delivered synchronously on main, so `availability` is trusted directly
     /// rather than re-read.
     func fileProviderAvailabilityChanged(_ availability: FileProviderAvailability) {
         preferences.fileProviderReminderDismissed =
@@ -112,13 +79,10 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         setIcon(for: connectionState())
     }
 
-    // MARK: - Paste progress (#643)
+    // MARK: - Paste progress
 
     /// Applies the paste readout the domain host just published — a snapshot to
     /// render, or `nil` to clear it.
-    ///
-    /// Called by the app delegate from `FileProviderDomainHost
-    /// .setMaterializationObserver`, which delivers on main.
     func materializationProgressChanged(_ snapshot: ClipboardProgressSnapshot?) {
         pasteProgressPresenter.apply(snapshot)
         setIcon(for: connectionState())
@@ -126,11 +90,8 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
 
     /// Whether the proactive status-item badge should currently show.
     ///
-    /// Distinct from the always-present passive menu line below, which shows
-    /// whenever the toggle is off regardless of dismissal. Covers both the
-    /// dismissible `.needsEnabling` nudge and the non-dismissible
-    /// `.unavailable` failure badge (#591) — see `ClipboardFileProviderReminder
-    /// .shouldShowBadge`.
+    /// Distinct from the passive menu line, which shows whenever the toggle is
+    /// off regardless of dismissal.
     private var reminderActive: Bool {
         ClipboardFileProviderReminder.shouldShowBadge(
             availability: fileProviderAvailability(),
@@ -152,8 +113,6 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
             let image = NSImage(
                 systemSymbolName: name, accessibilityDescription: "Kernova Guest Agent")
         else {
-            // SF Symbol names are compile-time constants; a miss means a typo or a
-            // deployment-target mismatch. Crash in debug, degrade to a glyph in release.
             Self.logger.fault("Missing SF Symbol '\(name, privacy: .public)' for status item")
             assertionFailure("Missing SF Symbol '\(name)'")
             statusItem.button?.image = nil
@@ -162,11 +121,7 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         }
         image.isTemplate = true
         statusItem.button?.title = ""
-        // A materializing paste outranks the enablement badge: it is happening
-        // now and ends on its own, while the badge is a standing nudge that will
-        // still be there afterwards. The two barely overlap in practice — a
-        // paste only materializes through the File Provider while the domain is
-        // `.ready`, which is exactly when the badge is absent.
+        // A materializing paste outranks the standing enablement badge.
         if let snapshot = pasteProgressPresenter.snapshot {
             statusItem.button?.image = image.withProgressRing(
                 fraction: snapshot.fractionComplete)
@@ -177,10 +132,6 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         statusItem.button?.toolTip = reminderActive ? badgeSummary() : nil
     }
 
-    /// The badge tooltip text for the current availability, picking the
-    /// distinct `.unavailable` (#591) copy over the routine `.needsEnabling`
-    /// (#581) copy so an install/signing problem reads differently from
-    /// "flip this toggle".
     private func badgeSummary() -> String {
         fileProviderAvailability() == .unavailable
             ? ClipboardFileProviderReminder.guestUnavailableSummary()
@@ -192,24 +143,16 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        // A materializing paste leads: it is the only transient thing here, and
-        // the automatic open exists to put it in front of the user (#643).
         pasteProgressPresenter.insertItemsIfActive()
 
-        // Lead with live status. Identity + version/build are reached through
-        // the About item below; only an actionable pending update surfaces here.
         if case .updateAvailable(let bundled) = updateState() {
             addInfoItem(AgentMenuText.updateAvailableLine(bundled: bundled))
             menu.addItem(.separator())
         }
 
-        // Surface an actionable affordance only when the File Provider extension
-        // is registered but the user hasn't enabled it (the System-Settings
-        // toggle is off), which is the one File-Provider state that needs the
-        // user to act before large-file paste reliably works. This passive line
-        // shows regardless of whether the proactive badge reminder was
-        // dismissed (#581); "Stop Reminding Me" only silences the badge.
         let availability = fileProviderAvailability()
+        // `.needsEnabling` is the one File-Provider state the user must act on;
+        // this line shows regardless of whether the badge reminder was dismissed.
         if availability == .needsEnabling {
             addInfoItem(ClipboardFileProviderReminder.guestDegradedSummary())
             let enable = NSMenuItem(
@@ -228,17 +171,13 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
             }
             menu.addItem(.separator())
         } else if availability == .unavailable {
-            // Registration/install failure (#591) — no user toggle to flip, so
-            // no enable/stop commands; the explanatory line is the correction.
+            // A registration failure has no toggle to flip, so no commands.
             addInfoItem(ClipboardFileProviderReminder.guestUnavailableSummary())
             menu.addItem(.separator())
         }
 
         addInfoItem(AgentMenuText.hostStatusLine(connectionState()))
 
-        // Group the two host-driven capability states under a "Status" submenu,
-        // log forwarding first. The connection line above stays at the top level
-        // (it's the headline health and drives the icon).
         let statusMenuItem = NSMenuItem(
             title: AgentMenuText.statusSubmenu(), action: nil, keyEquivalent: "")
         let statusMenu = NSMenu()
@@ -273,13 +212,8 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
 
     /// Opens the standard AppKit About panel.
     ///
-    /// Name, version/build, icon, and copyright all come from the bundle's
-    /// `Info.plist`, so the panel needs no options to populate them — the same
-    /// approach as `AppDelegate.showAboutPanel` in the host app. Unlike that
-    /// host app (a regular app that's already active), the agent is an
-    /// `.accessory` app and isn't active, so it's activated first or the panel
-    /// would open behind the frontmost app. A pending update is surfaced as the
-    /// credits line so it's visible whether the user opened the menu or About.
+    /// The agent is an `.accessory` app and is never already active, so it must
+    /// be activated first or the panel opens behind the frontmost app.
     @objc private func aboutTapped() {
         var options: [NSApplication.AboutPanelOptionKey: Any] = [:]
         if case .updateAvailable(let bundled) = updateState() {
@@ -296,14 +230,12 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
 
     // MARK: - Helpers
 
-    /// Live update state: compares the agent's own version against the version
-    /// the host currently bundles (pulled fresh through the closure).
     private func updateState() -> KernovaVersionComparison.UpdateState {
         KernovaVersionComparison.updateState(own: version, hostBundled: hostBundledVersion())
     }
 
-    /// Appends a disabled, informational (non-actionable) line to `destination`
-    /// (the main dropdown by default, or a submenu when one is passed).
+    /// Appends a disabled, non-actionable line to `destination`, defaulting to
+    /// the main dropdown.
     private func addInfoItem(_ title: String, to destination: NSMenu? = nil) {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
@@ -314,16 +246,14 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         onQuit()
     }
 
-    /// Opens System Settings so the user can enable the File Provider extension
-    /// (see `ClipboardFileProviderSettings.openEnablementSettings()`).
     @objc private func enableFileSharingTapped() {
         if !ClipboardFileProviderSettings.openEnablementSettings() {
             Self.logger.error("Failed to open File Providers settings deep link")
         }
     }
 
-    /// Silences the proactive badge reminder for the current `.needsEnabling`
-    /// episode (#581); the passive dropdown line + enable command stay.
+    /// Silences the badge reminder for the current episode; the dropdown line and
+    /// enable command stay.
     @objc private func stopRemindingTapped() {
         preferences.fileProviderReminderDismissed = true
         setIcon(for: connectionState())

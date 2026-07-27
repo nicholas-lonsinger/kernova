@@ -6,25 +6,13 @@ import System
 ///
 /// A copied folder rides the same `.file` streaming path as a plain file by
 /// first being packed into a single AppleArchive (`.aar`, LZFSE) of the tree;
-/// the receiver unpacks it back into a real directory. Archiving is in-process
-/// via Apple's `AppleArchive` framework — never shelling out to `ditto`/`tar`/
-/// `zip` — so the app stays Mac App Store-sandbox-safe.
-///
-/// The canonical fidelity key set preserves type, path, symlink target, device
-/// id, data, ownership, permissions, flags, timestamps, and a per-entry
-/// SHA-256. Symlinks are stored, not followed, and AppleArchive confines
-/// extraction beneath the destination directory (a `../` entry can't escape).
-/// No logging — callers (host service / guest agent) log at their own
-/// subsystem, matching the other log-free `KernovaKit` stream/staging
-/// types.
+/// the receiver unpacks it back into a real directory. Archiving must stay
+/// in-process via Apple's `AppleArchive` framework — never shelling out to
+/// `ditto`/`tar`/`zip`, which the App Sandbox blocks. This type never logs;
+/// callers log at their own subsystem.
 public enum ClipboardDirectoryArchive {
     /// A stream in the archive pipeline could not be opened, or the field-key
     /// set failed to parse.
-    ///
-    /// All of these are "should never happen" given a writable destination and
-    /// the compile-time key string — surfaced as throwing cases rather than
-    /// force-unwrapped so a caller can fail the transfer gracefully instead of
-    /// crashing an end user.
     public enum ArchiveError: Error {
         case openWriteStream
         case openCompressionStream
@@ -39,29 +27,23 @@ public enum ClipboardDirectoryArchive {
     /// Fidelity key set: type, path, link target, device id, data, uid, gid,
     /// permissions, flags, mtime, ctime, and per-entry SHA-256.
     ///
-    /// RATIONALE: extended attributes (`XAT`) are deliberately omitted — xattrs
-    /// don't cross on any paste path, and carrying them only in this fallback
-    /// would make its fidelity diverge from the placeholder-tree path
-    /// (CLIPBOARD.md §6, #603).
+    /// RATIONALE: extended attributes (`XAT`) are deliberately omitted — carrying
+    /// them here alone would diverge from the placeholder-tree path, whose
+    /// accepted xattr gap is CLIPBOARD.md §6 (verified 2026-07-27).
     private static let fieldKeys = "TYP,PAT,LNK,DEV,DAT,UID,GID,MOD,FLG,MTM,CTM,SH2"
 
     /// Packs the directory tree at `directoryURL` into a single LZFSE-compressed
     /// `.aar` at `archiveURL`.
     ///
-    /// Archives the directory's *contents* (entries are stored relative to
-    /// `directoryURL`), so extraction reconstitutes the tree under a fresh
-    /// destination without embedding the source's name — the folder name rides
-    /// separately in the representation's `filename`. On any throw the partial
-    /// archive is removed so a half-written `.aar` is never streamed.
+    /// Entries are stored relative to `directoryURL`, so the source folder's own
+    /// name is not embedded; a partial archive is removed on any throw.
     ///
     /// - Throws: ``ArchiveError`` if a pipeline stream can't be opened, or any
     ///   error AppleArchive raises while walking/reading the tree.
     public static func archive(directoryAt directoryURL: URL, to archiveURL: URL) throws {
         do {
-            // Streams are closed in reverse creation order on scope exit (encode
-            // flushes its trailer, then compression, then the file) — including
-            // when `writeDirectoryContents` throws, so the partial is closed
-            // before the catch removes it.
+            // Streams close in reverse creation order on scope exit, flushing the
+            // encode trailer before the catch below removes a partial archive.
             guard
                 let writeStream = ArchiveByteStream.fileStream(
                     path: FilePath(archiveURL.path),
@@ -95,8 +77,7 @@ public enum ClipboardDirectoryArchive {
     /// Extracts the LZFSE `.aar` at `archiveURL` into `directoryURL`, which must
     /// already exist (the caller reserves it under the staging root).
     ///
-    /// On any throw the destination directory is removed so a partially-
-    /// extracted tree never reaches the pasteboard.
+    /// On any throw the destination directory is removed.
     ///
     /// - Throws: ``ArchiveError`` if a pipeline stream can't be opened, or any
     ///   error AppleArchive raises while decoding/extracting.
@@ -137,9 +118,6 @@ public enum ClipboardDirectoryArchive {
 
 extension ClipboardDirectoryArchive {
     /// UTI for a directory representation (a folder or OS package).
-    ///
-    /// Equals `UTType.folder.identifier`; kept as a literal so the package needn't
-    /// import `UniformTypeIdentifiers`.
     public static let directoryUTI = "public.folder"
 
     /// Archives the directory at `directoryURL` into a single `.aar` staged under
@@ -148,11 +126,7 @@ extension ClipboardDirectoryArchive {
     ///
     /// The folder name (not the `.aar`) rides in `filename`, the UTI is
     /// `directoryUTI`, and `isDirectory` is set, so the receiver extracts it back
-    /// into a real folder. Shared by the host intake and the guest agent — both
-    /// import `KernovaKit` — so the archive/UTI/sizing rules live in one
-    /// place and can't drift between the two ends. Throws the underlying archive
-    /// error so the caller can log it at its own subsystem (this package stays
-    /// log-free).
+    /// into a real folder.
     public static func archivedRepresentation(
         ofDirectoryAt directoryURL: URL, named folderName: String,
         into staging: ClipboardFileStaging, generation: UInt64
@@ -175,10 +149,7 @@ extension ClipboardDirectoryArchive {
     ///
     /// The free-space check is a best-effort **floor**: `representation.byteCount`
     /// is the LZFSE-compressed archive size, while extraction writes the larger
-    /// uncompressed tree — so a volume that passes the check can still fill
-    /// mid-extract. That's handled, not guaranteed away: `extract` deletes the
-    /// partial tree on a throw and this returns `nil`, the same graceful outcome
-    /// as a failed file stage.
+    /// uncompressed tree, so a volume that passes it can still fill mid-extract.
     public static func extractedDirectoryURL(
         for representation: ClipboardContent.Representation,
         into staging: ClipboardFileStaging, generation: UInt64

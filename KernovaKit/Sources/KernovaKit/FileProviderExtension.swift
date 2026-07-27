@@ -3,39 +3,20 @@ import Foundation
 import UniformTypeIdentifiers
 import os
 
-// Shared clipboard File Provider extension (issues #376 guest / #424 host /
-// #460 servicing migration).
+// Shared clipboard File Provider extension.
 //
 // Serves clipboard *file* pastes as on-demand, dataless placeholders so a paste
 // returns instantly and the bytes materialize on read via `fetchContents` —
-// escaping Finder's 60s pasteboard-promise deadline (CLIPBOARD.md §2/§13).
-//
-// The extension is sandboxed and can't open a vsock, so it relays the byte pull
-// to the owning process (the guest agent or the main app) over the canonical
-// `NSFileProviderServicing` anonymous-XPC pipe: this extension conforms to
-// `NSFileProviderServicing` and vends a `FileProviderServiceSource`
-// whose anonymous listener endpoint the owner connects to. INVERTED wiring vs.
-// the old Mach design — the owner is the XPC client and exports the relay; the
-// extension calls it back through the accepted connection at `fetchContents`
-// time (see `FileProviderServiceSource`). The current offer's items
-// come from a manifest the owner writes into the shared app-group container; the
-// extension enumerates from it and `fetchContents` clones the owner-staged file
-// (also in the shared container) into the domain's temporary directory before
-// handing it to the system.
-//
-// Direction-agnostic: all addressing comes from `directionConfig`. Each appex
-// subclasses this and overrides `directionConfig` with its direction; the
-// subclass is the bundle's `NSExtensionPrincipalClass`, so the principal class
-// stays in the appex module (its runtime name unchanged) while all logic lives
-// here, the single source of truth.
+// escaping Finder's 60s pasteboard-promise deadline (CLIPBOARD.md §2/§13). The
+// extension is sandboxed and can't open a vsock, so `fetchContents` relays the
+// byte pull to the owning process over `NSFileProviderServicing`; the current
+// offer's items come from a manifest the owner writes into the app group.
 
 /// The shared principal-class base.
 ///
-/// Subclasses override `directionConfig`. The base conforms to
-/// `NSFileProviderReplicatedExtension` so the protocol's witnesses (and whatever
-/// Obj-C exposure the framework needs) live on the conforming type; subclasses
-/// inherit the conformance, all method implementations, and the
-/// `required init(domain:)`, and supply only their direction.
+/// Subclasses override `directionConfig` and inherit the
+/// `NSFileProviderReplicatedExtension` conformance, every method
+/// implementation, and `required init(domain:)`.
 open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
     NSFileProviderServicing
 {
@@ -56,8 +37,7 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
     /// The single servicing endpoint vended to the owner.
     ///
     /// Created once so its anonymous listener endpoint is stable across
-    /// `makeListenerEndpoint()` calls, and reachable from `fetchContents` for the
-    /// byte-pull callback.
+    /// `makeListenerEndpoint()` calls.
     let serviceSource: FileProviderServiceSource
 
     /// Instantiated by the system per registered domain; configures itself from
@@ -79,14 +59,14 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         logger.notice("FileProviderExtension invalidate")
         // Tear down the servicing endpoint so the owner's connection drops and it
         // reconnects to the replacement instance, rather than re-handshaking with
-        // this now-dead instance's zombie source (#598).
+        // this dead instance's zombie source.
         serviceSource.invalidate()
     }
 
     // MARK: - NSFileProviderServicing
 
     /// Vends the single anonymous-XPC service source the owner connects to so it
-    /// can be called back at `fetchContents` (#460).
+    /// can be called back at `fetchContents`.
     ///
     /// Domain-wide, so the per-item `itemIdentifier` is ignored.
     open func supportedServiceSources(
@@ -140,11 +120,9 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void
     ) -> Progress {
         logger.debug("fetchContents START (item=\(itemIdentifier.rawValue, privacy: .public))")
-        // The identifier carries the addressing; the manifest carries the metadata
-        // for the returned item. A superseded item is gone from both → noSuchItem.
-        // Only a byte-bearing regular file is fetched: a flat single-file rep, or a
-        // file node within a directory rep's placeholder tree. A directory/symlink
-        // node is enumerated / resolved from metadata, never fetched.
+        // Only a byte-bearing regular file is fetched: a flat single-file rep, or
+        // a file node within a directory rep's placeholder tree. A
+        // directory/symlink node is resolved from metadata, never fetched.
         let manifest = store.readManifest()
         let target: (returnedItem: NSFileProviderItem, byteCount: UInt64, pull: FetchPull)
         switch manifest.resolve(itemIdentifier.rawValue) {
@@ -167,14 +145,10 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
 
         // `fetchContents` must return a `Progress`: it carries the fetch's
         // cancellation token (wired below), and the framework reads its
-        // `kind`/`fileOperationKind` to present the item as a file download. It is
-        // not advanced per chunk — the byte pull runs over vsock out of this
-        // process's sight, and the owner-pushed per-chunk advancement (#426) was
-        // removed by #644 after #639 found no Finder surface ever rendered it.
-        // The bar is created at the declared size and completed in one step at
-        // `materialize`. `byteCount` is the manifest's declared size; a zero-byte
-        // rep gets a unit of 1 (a 0/0 progress reads as indeterminate) and completes
-        // instantly in `materialize`.
+        // `kind`/`fileOperationKind` to present the item as a file download. The
+        // bar is created at the declared size and completed in one step at
+        // `materialize`; a zero-byte rep gets a unit of 1, since a 0/0 progress
+        // reads as indeterminate.
         let totalUnitCount = target.byteCount > 0 ? Int64(clamping: target.byteCount) : 1
         let progress = Progress(totalUnitCount: totalUnitCount)
         progress.kind = .file
@@ -182,16 +156,11 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
 
         let returnedItem = target.returnedItem
         // Relay the byte pull to the owner over the servicing connection — the
-        // sandboxed extension can't open vsock (CLIPBOARD.md §11). INVERTED wiring:
-        // the owner is the XPC client and exported the relay; we call it back
-        // through the accepted connection (`serviceSource`). If no owner connection
-        // is live, the source rings the Darwin doorbell and completes once the owner
-        // reconnects. This MUST stay async — see `FileProviderServiceSource`:
-        // the framework serialises the owner's `getFileProviderConnection` behind an
-        // in-flight `fetchContents`, so blocking here would deadlock the very
-        // reconnect we're waiting for. Return `progress` now; complete when the
-        // staged path (or an error) lands. A flat rep pulls the whole file; a tree
-        // node pulls the addressed child (folder D1b).
+        // sandboxed extension can't open vsock (CLIPBOARD.md §11). With no owner
+        // connection live, the source rings the Darwin doorbell and completes once
+        // the owner reconnects. This MUST stay async: the framework serialises the
+        // owner's `getFileProviderConnection` behind an in-flight `fetchContents`,
+        // so blocking here deadlocks the very reconnect we're waiting for.
         let completion: (Result<String, NSError>) -> Void = {
             [weak self, weak progress] result in
             guard let self else {
@@ -204,9 +173,8 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
                     stagedPath: stagedPath, returnedItem: returnedItem, progress: progress,
                     completionHandler: completionHandler)
             case .failure(let error):
-                // A user cancellation (Finder's cancel button → `progress.cancel()`)
-                // completes with Cocoa's `NSUserCancelledError`; log it at debug, not
-                // error — it's an expected outcome, not a fetch failure.
+                // Finder's cancel button completes with `NSUserCancelledError` —
+                // an expected outcome, not a fetch failure.
                 if error.domain == NSCocoaErrorDomain && error.code == NSUserCancelledError {
                     self.logger.debug("fetchContents cancelled by user")
                 } else {
@@ -226,17 +194,17 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
                 generation: generation, repIndex: repIndex, childSeq: childSeq,
                 relativePath: relativePath, completion: completion)
         }
-        // Wire Finder's cancel button to the pull. RATIONALE: the completion closure
-        // above captures `progress` WEAKLY so this handler — which strongly holds
-        // `cancellation` → the pull → that completion — can't form a retain cycle back
-        // through `progress`. `progress` is alive whenever the completion runs (the
-        // system owns it until the fetch completes), so the weak ref is never nil there.
+        // Wire Finder's cancel button to the pull. The completion closure above
+        // captures `progress` WEAKLY so this handler — which strongly holds
+        // `cancellation` → the pull → that completion — can't form a retain cycle
+        // back through `progress`. The system owns `progress` until the fetch
+        // completes, so the weak ref is never nil inside the completion.
         progress.cancellationHandler = { cancellation.cancel() }
         return progress
     }
 
     /// Which relay pull backs a `fetchContents`: a flat single-file rep, or a
-    /// child file within a directory rep's placeholder tree (folder D1b).
+    /// child file within a directory rep's placeholder tree.
     private enum FetchPull {
         case flat(generation: UInt64, repIndex: Int)
         case child(generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String)
@@ -245,21 +213,15 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
     /// Clones the owner-staged file into the domain's temporary directory and hands
     /// it to the system, completing the fetch.
     ///
-    /// Split out of `fetchContents` because the byte pull is now asynchronous, so
-    /// materialization runs in the pull's completion rather than inline.
-    ///
-    /// `progress` is weak at the call site (to avoid a cancellation retain cycle —
-    /// see `fetchContents`), so it's optional here; it's non-nil on the success path
-    /// in practice because the system owns it until the fetch completes.
+    /// `progress` is optional because the call site captures it weakly to avoid a
+    /// cancellation retain cycle; see `fetchContents`.
     private func materialize(
         stagedPath: String, returnedItem: NSFileProviderItem, progress: Progress?,
         completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void
     ) {
-        // Clone the owner-staged file (shared app-group container) into the domain's
-        // temporary directory, which is guaranteed to be on the same volume so the
-        // system can clone it into its replicated store. A same-volume copy is an
-        // APFS clonefile — near-free — and hands the system a disposable file,
-        // leaving the owner's staging cache free to evict.
+        // The domain's temporary directory is guaranteed to be on the same volume
+        // as the system's replicated store, so this copy is an APFS clonefile and
+        // the owner's staging cache stays free to evict.
         guard let manager = NSFileProviderManager(for: domain) else {
             completionHandler(nil, nil, NSFileProviderError(.providerNotFound))
             return
@@ -271,9 +233,8 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
             logger.notice(
                 "fetchContents materialized \(returnedItem.documentSize??.int64Value ?? 0, privacy: .public) bytes"
             )
-            // Complete the returned bar in one step: it is never advanced per
-            // chunk (the owner-pushed advancement was removed by #644), so this
-            // terminal set is the only completion the system's `Progress` receives.
+            // The bar is never advanced per chunk, so this terminal set is the
+            // only completion the system's `Progress` receives.
             if let progress { progress.completedUnitCount = progress.totalUnitCount }
             completionHandler(destination, returnedItem, nil)
         } catch {
@@ -334,8 +295,7 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
 }
 
 /// The domain's root container.
-// RATIONALE: NSObject isn't Sendable, but the type is immutable, so the system
-// calling in on several threads is safe.
+// Immutable, so `@unchecked Sendable` is safe here.
 final class ClipboardRootItem: NSObject, NSFileProviderItem, @unchecked Sendable {
     private let displayName: String
 
@@ -355,8 +315,7 @@ final class ClipboardRootItem: NSObject, NSFileProviderItem, @unchecked Sendable
 }
 
 /// One served file item, built from a manifest entry.
-// RATIONALE: every stored property is an immutable `let` of a Sendable type, so
-// the system reading it from any thread is safe.
+// Immutable `let` properties only, so `@unchecked Sendable` is safe here.
 final class ClipboardFileItem: NSObject, NSFileProviderItem, @unchecked Sendable {
     let itemIdentifier: NSFileProviderItemIdentifier
     let parentItemIdentifier: NSFileProviderItemIdentifier
@@ -376,49 +335,38 @@ final class ClipboardFileItem: NSObject, NSFileProviderItem, @unchecked Sendable
         super.init()
     }
 
-    // RATIONALE: the clipboard domain is conceptually read-only (it never syncs
-    // edits back), but advertising only `.allowsReading` makes the system present
-    // the item — and the file pasted from it — as **locked** (a padlock badge and
-    // "Item is locked" on delete). Advertise full capabilities so the pasted copy
-    // is an ordinary file the user owns; the mutating extension methods still
-    // reject (the placeholder is transient and copied out, never edited in place).
-    // Spelled out explicitly (rather than `.allowsAll`, deprecated in macOS 12) —
-    // this is the exact set `.allowsAll` used to expand to.
+    // RATIONALE: advertising only `.allowsReading` — which the read-only clipboard
+    // domain otherwise argues for — makes the system present the item, and the file
+    // pasted from it, as **locked**: a padlock badge and "Item is locked" on delete.
+    // Full capabilities keep the pasted copy an ordinary file the user owns; the
+    // mutating extension methods still reject in-place edits. Spelled out rather
+    // than `.allowsAll`, deprecated in macOS 12. (verified 2026-07-27)
     var capabilities: NSFileProviderItemCapabilities {
         [.allowsReading, .allowsWriting, .allowsReparenting, .allowsRenaming, .allowsTrashing, .allowsDeleting]
     }
     var contentType: UTType { UTType(representationUTI) ?? .data }
     var documentSize: NSNumber? { NSNumber(value: size) }
-    // The bytes and metadata of a given item identifier never change, so a
-    // constant version is correct — and keeps fetchContents' returned version
-    // matching the enumerated one (the framework requires the match). This
-    // relies on the identifier being unique per offer ACROSS owner sessions
-    // (the session salt, #541): with a colliding identifier, fileproviderd
-    // compares versions across two different offers, sees no change, and
-    // serves the stale placeholder's bytes with `shouldFetch:false`.
+    // The bytes of a given item identifier never change, so a constant version is
+    // correct and keeps fetchContents' returned version matching the enumerated
+    // one (the framework requires the match). It relies on the identifier being
+    // unique per offer ACROSS owner sessions (the session salt): with a colliding
+    // identifier fileproviderd sees no change and serves the stale placeholder's
+    // bytes with `shouldFetch:false`.
     var itemVersion: NSFileProviderItemVersion {
         NSFileProviderItemVersion(contentVersion: Data("1".utf8), metadataVersion: Data("1".utf8))
     }
 }
 
 /// One node of a directory rep's placeholder tree — the folder root, a
-/// subdirectory, a file, or a symlink (folder D1b, `clipboard.dirtree.v1`).
+/// subdirectory, a file, or a symlink (`clipboard.dirtree.v1`).
 ///
-/// Carries fidelity from the manifest (CLIPBOARD.md §6): a file's executable bit
-/// via `fileSystemFlags`, a symlink's target via `symlinkTargetPath`, and the
-/// modification date. A directory node's `childItemCount` drives Finder's count.
-///
-/// `RATIONALE:` every container (the folder root and directory nodes) is served
-/// with a plain `.folder` contentType even when the manifest marks it a package
-/// (.app/.rtfd): a package-conforming contentType makes the system treat the
-/// item as an atomic *file* — it calls `fetchContents` on the container itself
-/// instead of enumerating its children, which a placeholder tree cannot serve
-/// (observed live: a pasted `.app` failed with Finder error -36). The pasted
-/// copy still lands as a package on disk — LaunchServices derives packageness
-/// of a real directory from its extension/bundle bit, not from the provider's
-/// contentType — so only the transient placeholder's icon is generic.
-// RATIONALE: every stored property is an immutable `let` of a Sendable type, so
-// the system reading it from any thread is safe.
+/// `RATIONALE:` every container is served with a plain `.folder` contentType even
+/// when the manifest marks it a package (.app/.rtfd): a package-conforming type
+/// makes the system fetch the container as an atomic *file* instead of
+/// enumerating its children, which a placeholder tree cannot serve (observed
+/// live: a pasted `.app` failed with Finder error -36). The pasted copy still
+/// lands as a package on disk. (verified 2026-07-27)
+// Immutable `let` properties only, so `@unchecked Sendable` is safe here.
 final class ClipboardTreeItem: NSObject, NSFileProviderItem, @unchecked Sendable {
     let itemIdentifier: NSFileProviderItemIdentifier
     let parentItemIdentifier: NSFileProviderItemIdentifier
@@ -486,9 +434,8 @@ final class ClipboardTreeItem: NSObject, NSFileProviderItem, @unchecked Sendable
         return Date(timeIntervalSince1970: Double(millis) / 1000)
     }
 
-    // RATIONALE: full capabilities so the pasted copy is an ordinary file/folder
-    // the user owns rather than a locked File Provider item (see `ClipboardFileItem`);
-    // the extension's mutating methods still reject in-place edits.
+    // Full capabilities so the pasted copy is an ordinary file/folder the user
+    // owns rather than a locked File Provider item; see `ClipboardFileItem`.
     var capabilities: NSFileProviderItemCapabilities {
         var caps: NSFileProviderItemCapabilities = [
             .allowsReading, .allowsWriting, .allowsReparenting, .allowsRenaming, .allowsTrashing,
@@ -506,9 +453,7 @@ final class ClipboardTreeItem: NSObject, NSFileProviderItem, @unchecked Sendable
 
     var contentModificationDate: Date? { modificationDate }
 
-    /// Preserves the executable bit (critical for a pasted app bundle's binaries)
-    /// and keeps files readable/writable so the copy is usable; a directory needs
-    /// no flags.
+    /// Preserves the executable bit, critical for a pasted app bundle's binaries.
     ///
     /// A `0` permission set (unknown) degrades to readable/writable.
     var fileSystemFlags: NSFileProviderFileSystemFlags {
@@ -518,10 +463,7 @@ final class ClipboardTreeItem: NSObject, NSFileProviderItem, @unchecked Sendable
         return flags
     }
 
-    // The bytes and metadata of a given item identifier never change within an
-    // offer (a new offer mints new session-salted identifiers), so a constant
-    // version is correct and keeps fetchContents' returned version matching the
-    // enumerated one (the framework requires the match).
+    // Constant for the same reason as `ClipboardFileItem.itemVersion`.
     var itemVersion: NSFileProviderItemVersion {
         NSFileProviderItemVersion(contentVersion: Data("1".utf8), metadataVersion: Data("1".utf8))
     }
@@ -558,8 +500,6 @@ final class ClipboardEnumerator: NSObject, NSFileProviderEnumerator {
             )
             observer.didEnumerate(items)
         } else if let children = manifest.children(ofContainer: container.rawValue) {
-            // A directory rep's folder root or a subdirectory node: serve its
-            // direct children (folder D1b placeholder tree).
             let items = children.map { ClipboardTreeItem(folder: $0.0, node: $0.1) }
             logger.debug(
                 "enumerateItems(\(self.container.rawValue, privacy: .public)) → \(items.count, privacy: .public) child item(s)"
@@ -572,11 +512,8 @@ final class ClipboardEnumerator: NSObject, NSFileProviderEnumerator {
     func enumerateChanges(
         for observer: NSFileProviderChangeObserver, from anchor: NSFileProviderSyncAnchor
     ) {
-        // RATIONALE: the working set is fully derived from the manifest, so rather
-        // than track per-item diffs the enumerator forces a fresh full enumeration
-        // whenever the offer generation changed (the anchor differs) — always
-        // consistent for a single tiny item, and cheap. An unchanged anchor means
-        // no changes.
+        // The working set is fully derived from the manifest, so a changed anchor
+        // forces a fresh full enumeration instead of per-item diffs.
         if anchor.rawValue == currentAnchor().rawValue {
             observer.finishEnumeratingChanges(upTo: anchor, moreComing: false)
         } else {

@@ -1,30 +1,13 @@
 import Foundation
 import os
 
-/// Drop-in replacement for `os.Logger` that, in addition to writing to the
-/// local log store, can forward each emission to a remote sink — the guest
-/// agent installs one that relays to the host over vsock; the host app leaves
-/// it `nil`, so logs there stay local.
+/// Drop-in replacement for `os.Logger` that also forwards each emission to a
+/// remote sink — the guest agent installs one relaying to the host over vsock.
 ///
-/// Construction matches `os.Logger`:
-///
-///     private static let logger = KernovaLogger(
-///         subsystem: "app.kernova.macosagent",
-///         category: "Agent"
-///     )
-///
-/// Call-site syntax is identical too — including privacy attributes:
-///
-///     logger.notice("VM '\(name, privacy: .public)' started")
-///     logger.debug("retrying in \(seconds, privacy: .public)s")
-///
-/// Forwarding goes through `forwardingSink`. If the sink is `nil` (the host,
-/// or the guest before its vsock connection is wired) the local emission
-/// still happens and the forward is best-effort dropped.
-///
-/// Lives in `KernovaKit` so the guest agent and the host app share one
-/// logging surface; the guest-specific vsock relay is injected via
-/// `forwardingSink` rather than referenced directly.
+/// Construction and call-site syntax match `os.Logger`, privacy attributes
+/// included. With a `nil` `forwardingSink` (the host, or the guest before its
+/// vsock connection is wired) the local emission still happens and the forward
+/// is best-effort dropped.
 public struct KernovaLogger: Sendable {
     /// The `os.Logger` subsystem, also tagged on each forwarded record.
     public let subsystem: String
@@ -32,7 +15,7 @@ public struct KernovaLogger: Sendable {
     public let category: String
     private let osLogger: Logger
 
-    /// Creates a logger for a subsystem/category, matching `os.Logger`.
+    /// Creates a logger for a subsystem and category.
     public init(subsystem: String, category: String) {
         self.subsystem = subsystem
         self.category = category
@@ -51,11 +34,9 @@ public struct KernovaLogger: Sendable {
             _ message: String
         ) -> Void
 
-    // RATIONALE: nonisolated(unsafe) mirrors the prior `VsockLogBridge`
-    // pattern — assigned once during synchronous startup, before any
-    // background `Task` fires a log line, and read-only thereafter. There is
-    // no concurrent write contention; the guest's underlying connection
-    // handles its own thread safety.
+    // `nonisolated(unsafe)`: assign this once during synchronous startup, before
+    // any background `Task` can fire a log line, and treat it as read-only
+    // thereafter — nothing here guards a concurrent write.
     /// Process-wide forwarding sink the guest agent installs to relay each
     /// emission to the host over vsock; the host app leaves it `nil`.
     nonisolated(unsafe) public static var forwardingSink: ForwardingSink?

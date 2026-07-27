@@ -3,13 +3,11 @@ import os
 
 /// Privacy attribute accepted by `KernovaLogMessage` interpolations.
 ///
-/// Mirrors the static-API shape of `OSLogPrivacy` so call sites read the
-/// same: `\(value, privacy: .public)`, `\(value, privacy: .private)`, etc.
-/// We define our own type because Apple's `OSLogMessage` /
-/// `OSLogInterpolation` are guarded by compile-time `@_semantics` checks
-/// that reject manual construction from outside the `os` module —
-/// so we redact privately-marked values ourselves instead of relying on
-/// the OS's runtime privacy machinery.
+/// Mirrors the static-API shape of `OSLogPrivacy` so call sites read the same:
+/// `\(value, privacy: .public)`. Apple's `OSLogMessage`/`OSLogInterpolation`
+/// can't be reused — compile-time `@_semantics` checks reject manual
+/// construction from outside the `os` module — so redaction happens here
+/// instead of in the OS's runtime privacy machinery.
 public struct LogPrivacy: Sendable {
     /// The redaction policy applied to an interpolated value's local form.
     public enum Kind: Sendable {
@@ -35,25 +33,14 @@ public struct LogPrivacy: Sendable {
     public static let auto = LogPrivacy(kind: .auto)
 }
 
-/// Captures a log message in two parallel rendered forms — one suitable
-/// for emission to `os.Logger` on the local process, one for forwarding to
-/// a remote (the host, over vsock).
+/// Captures a log message in two parallel rendered forms — one for `os.Logger`
+/// locally, one for forwarding to the host over vsock.
 ///
-/// **Local form** (`localRendered`): values marked `.private` or
-/// `.sensitive` are replaced by the literal `<private>` placeholder. The
-/// rendered string is then passed to `os.Logger` as a single `.public`
-/// argument, so Console.app displays the placeholders directly instead of
-/// relying on the OS's runtime privacy redaction. `.public` and `.auto`
-/// values render as themselves.
-///
-/// **Wire form** (`wireRendered`): every interpolated value is rendered
-/// in cleartext. Vsock is host-guest only and the host is the trusted
-/// destination; redacting on the wire would simply hide diagnostic
-/// information from the user inspecting their own VM's logs.
-///
-/// Lives in `KernovaKit` so both the guest agent (which forwards over
-/// vsock) and the host app (which logs locally) share one logging surface;
-/// see `KernovaLogger`.
+/// `localRendered` replaces `.private`/`.sensitive` values with the literal
+/// `<private>` placeholder and is passed to `os.Logger` as a single `.public`
+/// argument. `wireRendered` is entirely cleartext: vsock is host-guest only and
+/// the host is trusted, so redacting there would only hide the user's own VM
+/// logs from them.
 public struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleByStringLiteral,
     Sendable
 {
@@ -78,8 +65,6 @@ public struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleBy
         }
 
         // Default-privacy = `.private` matches `os.Logger`'s string default.
-        // `StringInterpolationProtocol` witness, invoked by Swift's
-        // compiler-emitted interpolation machinery.
         /// Appends a `String` value, redacting the local form per `privacy`.
         public mutating func appendInterpolation(
             _ value: String,
@@ -89,11 +74,8 @@ public struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleBy
             localRendered += redacted(value, privacy: privacy)
         }
 
-        // Generic fallback for non-`String` types — numbers, booleans,
-        // arrays, anything `CustomStringConvertible`. Rendered via
-        // `String(describing:)`. Same witness rationale as the `String` overload.
-        /// Appends any value via `String(describing:)`, redacting the local
-        /// form per `privacy`.
+        /// Appends any non-`String` value via `String(describing:)`, redacting
+        /// the local form per `privacy`.
         public mutating func appendInterpolation<T>(
             _ value: T,
             privacy: LogPrivacy = .private
@@ -103,8 +85,6 @@ public struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleBy
             localRendered += redacted(s, privacy: privacy)
         }
 
-        // Applies the privacy policy; called only from the `appendInterpolation`
-        // witnesses above.
         func redacted(_ value: String, privacy: LogPrivacy) -> String {
             switch privacy.kind {
             case .public, .auto:
@@ -115,17 +95,11 @@ public struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleBy
         }
     }
 
-    /// String suitable for emission to local `os.Logger`.
-    ///
-    /// Values marked
-    /// `.private` or `.sensitive` have already been replaced with the
-    /// `<private>` placeholder.
+    /// String for local `os.Logger`, with `.private`/`.sensitive` values already
+    /// replaced by the `<private>` placeholder.
     public let localRendered: String
 
-    /// String suitable for forwarding over vsock.
-    ///
-    /// Every interpolated
-    /// value is rendered in cleartext.
+    /// String for forwarding over vsock, every value in cleartext.
     public let wireRendered: String
 
     /// Builds a message from an interpolated string literal.
@@ -134,7 +108,7 @@ public struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleBy
         wireRendered = stringInterpolation.wireRendered
     }
 
-    /// Builds a message from a plain string literal (identical local/wire forms).
+    /// Builds a message from a plain string literal.
     public init(stringLiteral value: String) {
         localRendered = value
         wireRendered = value

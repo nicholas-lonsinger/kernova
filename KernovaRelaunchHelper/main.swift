@@ -1,11 +1,9 @@
 import AppKit
 import os
 
-// KernovaRelaunchHelper
-//
-// A lightweight watchdog that monitors the main Kernova process and relaunches
-// it after termination. Used when macOS TCC forces a restart while VMs are
-// saving state, which exceeds TCC's built-in relaunch timeout.
+// A watchdog that monitors the main Kernova process and relaunches it after
+// termination. Used when macOS TCC forces a restart while VMs are saving state,
+// which exceeds TCC's built-in relaunch timeout.
 //
 // Usage: KernovaRelaunchHelper <pid> <app-bundle-path>
 
@@ -32,16 +30,14 @@ guard FileManager.default.fileExists(atPath: appPath) else {
 
 @MainActor
 func relaunchApp() async {
-    // Brief delay to let LaunchServices finish cleaning up the terminated process.
-    // Without this, NSWorkspace may fail with "0 items" because the old process
-    // registration hasn't been fully removed yet.
+    // Let LaunchServices finish cleaning up the terminated process: without this,
+    // NSWorkspace fails with "0 items" while the old registration lingers.
     try? await Task.sleep(for: .seconds(1))
 
     let configuration = NSWorkspace.OpenConfiguration()
     configuration.activates = true
 
-    // Retry with backoff — LaunchServices may need additional time to update
-    // after process exit. Total retry window is ~7 seconds.
+    // LaunchServices may need more time to update after process exit.
     for attempt in 1...4 {
         do {
             try await NSWorkspace.shared.openApplication(at: appURL, configuration: configuration)
@@ -56,11 +52,10 @@ func relaunchApp() async {
         }
     }
 
-    // RATIONALE: No /usr/bin/open fallback. The helper runs sandboxed
-    // (app-sandbox + inherit), so a spawned `open` would inherit the same
-    // sandbox and reach LaunchServices through the same mediated path as
-    // NSWorkspace — no added capability, just an exec for App Review to
-    // question.
+    // RATIONALE: no /usr/bin/open fallback here. The helper is app-sandbox +
+    // inherit (KernovaRelaunchHelper.entitlements), so a spawned `open` inherits
+    // that sandbox and reaches LaunchServices through the same mediated path as
+    // NSWorkspace — no added capability (verified 2026-07-27).
     logger.error("Failed to relaunch Kernova after 4 attempts, giving up")
     exit(1)
 }
@@ -69,9 +64,8 @@ func relaunchApp() async {
 
 logger.notice("Watching PID \(pid, privacy: .public) for exit, will relaunch \(appPath, privacy: .private)")
 
-// Set up the watcher FIRST to close the TOCTOU race window. If the app dies
-// during setup, the source catches it. If it was already dead, the subsequent
-// kill check catches it.
+// Set up the watcher FIRST to close the TOCTOU race window: a death during setup
+// is caught by the source, an earlier one by the kill check below.
 let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .main)
 
 source.setEventHandler {
@@ -93,8 +87,8 @@ if kill(pid, 0) != 0, errno == ESRCH {
     }
 }
 
-// Safety timeout — relaunchApp() calls exit(0) on success, so this only fires
-// if something unexpected prevents the relaunch from completing.
+// Safety timeout: relaunchApp() calls exit(0) on success, so this fires only if
+// the relaunch never completes.
 DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
     logger.warning("Timeout waiting for PID \(pid, privacy: .public) to exit, giving up")
     source.cancel()

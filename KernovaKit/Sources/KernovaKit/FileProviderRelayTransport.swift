@@ -1,37 +1,17 @@
 import FileProvider
 import Foundation
 
-// How the domain host connects to the sandboxed extension to serve its relay
-// (issues #376 guest / #424 host / #460 servicing migration).
-//
-// Both directions use the canonical `NSFileProviderServicing` anonymous-XPC
-// pattern. INVERTED wiring vs. the old Mach design: the *owner* (the guest agent
-// or the main app) is the XPC **client** — it reaches the extension's vended
-// endpoint via `NSFileProviderManager.getService(named:for:)` →
-// `NSFileProviderService.getFileProviderConnection`, then **exports** the relay
-// object so the extension can call it back at `fetchContents`. The extension can
-// neither initiate nor launch a connection, so the owner connects proactively at
-// publish time and re-connects when the extension rings the Darwin doorbell.
-//
-// The service lookup is by ITEM IDENTIFIER (`.rootContainer`), not by path: the
-// path-based `FileManager.getFileProviderServicesForItem(at:)` needs filesystem
-// access to the domain root under `~/Library/CloudStorage`, which the sandboxed
-// host app doesn't have (Cocoa 257, #539). The identifier form is a pure
-// fileproviderd round-trip — no path resolution, so the sandbox never gates it,
-// and no dataless-placeholder touch, so no reentrant-materialization hazard
-// (P1b, #460) either.
-//
-// The domain host owns the relay *service* (built from its pull provider) and
-// hands it to the connector, keeping its enable/disable lifecycle identical
-// across directions. Host and guest now share ONE connector implementation —
-// the only differences (service name, doorbell name, code-signing pins) come
-// from `FileProviderConfig`.
+// How the domain host connects to the sandboxed extension to serve its relay: both
+// directions use the canonical `NSFileProviderServicing` anonymous-XPC pattern, the
+// owner as XPC client exporting the relay for the extension to call back at
+// `fetchContents`. The extension can't initiate a connection, so the owner connects
+// proactively at publish time and reconnects on the Darwin doorbell. Look the service
+// up by ITEM IDENTIFIER, never by path: the path-based
+// `FileManager.getFileProviderServicesForItem(at:)` needs filesystem access under
+// `~/Library/CloudStorage`, which the sandboxed host app does not have (Cocoa 257).
 
 /// Connects the domain host to its File Provider extension so the extension can
 /// call the relay back.
-///
-/// Injected into `FileProviderDomainHost`; the default is a
-/// `FileProviderServicingConnector`, and tests inject a no-op.
 public protocol FileProviderRelayTransport: AnyObject, Sendable {
     /// Arms the connector with the relay `service` to export, and starts
     /// listening for the reconnect doorbell. Idempotent — called on each enable.
@@ -50,26 +30,19 @@ public protocol FileProviderRelayTransport: AnyObject, Sendable {
 
 // MARK: - Servicing connector
 
-/// The single `FileProviderRelayTransport` implementation: reaches the
-/// extension's `NSFileProviderServicing` endpoint, exports the relay, and keeps
-/// the control connection warm (reconnecting on the Darwin doorbell or an XPC
-/// invalidation).
+/// Reaches the extension's `NSFileProviderServicing` endpoint, exports the relay,
+/// and keeps the control connection warm — reconnecting on the Darwin doorbell or
+/// an XPC invalidation.
 ///
 /// `@unchecked Sendable`: all mutable state is guarded by `lock`; the immutable
-/// addressing/logging values are set once in `init`. The exported relay carries
-/// no bytes — only `(generation, repIndex)` crosses, and the reply is a staged
-/// app-group path.
+/// addressing/logging values are set once in `init`.
 public final class FileProviderServicingConnector: NSObject,
     FileProviderRelayTransport, @unchecked Sendable
 {
     /// Establishes the control connection to the extension.
     ///
-    /// Production performs the `NSFileProviderManager.getService(named:for:)` →
-    /// `NSFileProviderService.getFileProviderConnection` dance (logging each
-    /// failure); tests inject a stub yielding a controllable connection or `nil`.
-    /// The seam collapses both system calls into one closure rather than
-    /// injecting either individually: `NSFileProviderService` is an opaque,
-    /// non-instantiable system type a test can't fabricate.
+    /// Both system calls collapse into one closure because `NSFileProviderService`
+    /// is opaque and non-instantiable — a test cannot fabricate one to inject.
     typealias ConnectOperation =
         @Sendable (_ completion: @escaping @Sendable (NSXPCConnection?) -> Void) -> Void
 
@@ -86,12 +59,10 @@ public final class FileProviderServicingConnector: NSObject,
     private var relayService: FileProviderRelay?
     /// Whether `ensureConnected` has ever been called.
     ///
-    /// The domain host's signal that the domain is registered and connecting is
-    /// worthwhile — gates connect attempts so a doorbell arriving before
-    /// registration doesn't spin the retry budget. Deliberately not cleared by
-    /// `stopServing` (matching the root-URL cache it replaced, #539): after a
-    /// re-enable, a doorbell can reconnect immediately — the domain stays
-    /// registered across policy off→on cycles.
+    /// Gates connect attempts so a doorbell arriving before the domain is
+    /// registered doesn't spin the retry budget. Deliberately not cleared by
+    /// `stopServing`: the domain stays registered across policy off→on cycles, so
+    /// a doorbell after a re-enable can reconnect immediately.
     private var connectRequested = false
     /// The live control connection, or `nil` when not connected.
     private var connection: NSXPCConnection?
@@ -103,46 +74,34 @@ public final class FileProviderServicingConnector: NSObject,
     /// Consecutive failed connect attempts in the current retry burst.
     ///
     /// Reset on a successful connect, on a live connection dropping, and on any
-    /// external (re)connect trigger; incremented on each transient failure. Bounds
-    /// the retry loop so a permanently unreachable extension can't spin.
+    /// external (re)connect trigger; incremented on each transient failure.
     private var connectAttempts = 0
 
     /// Upper bound on transient connect retries before giving up.
     ///
-    /// Sized (via `defaultMaxConnectAttempts`/`defaultConnectRetryDelay`) so
-    /// `maxConnectAttempts × connectRetryDelay` spans the extension's own
-    /// `fetchContents` connect wait (`FileProviderServiceSource.connectTimeout`),
-    /// so a slow-relaunching extension is still caught within the window the
-    /// paste is waiting — rather than the owner giving up after a few seconds
-    /// while the extension keeps waiting. The coupling is structural (#466):
-    /// both defaults derive from `FileProviderServicingTiming`, so editing one
-    /// side's constant re-derives the other rather than silently misaligning.
+    /// Sized so `maxConnectAttempts × connectRetryDelay` spans the extension's own
+    /// `FileProviderServiceSource.connectTimeout` — a slow-relaunching extension
+    /// must still be caught inside the window the paste is waiting. Both defaults
+    /// derive from `FileProviderServicingTiming`, so editing one re-derives the
+    /// other rather than silently misaligning.
     private let maxConnectAttempts: Int
     /// Delay between transient connect retries.
     private let connectRetryDelay: DispatchTimeInterval
 
-    /// Production default for `maxConnectAttempts` — see its doc for the
-    /// coupling with the extension's connect-timeout.
     private static let defaultMaxConnectAttempts = FileProviderServicingTiming.maxConnectAttempts
-    /// Production default for `connectRetryDelay` — see its doc for the
-    /// coupling with the extension's connect-timeout.
     private static let defaultConnectRetryDelay = FileProviderServicingTiming.connectRetryDelay
 
     /// Creates a connector for one direction from its config.
     public convenience init(config: FileProviderConfig) {
-        // Built self-free from `config`'s VALUES: `connectOperation` is a stored
-        // `let` that must be assigned before the delegated init runs, before which
-        // a closure cannot capture `self`.
+        // Built from `config`'s values, never `self`: `connectOperation` is a stored
+        // `let` assigned before the delegated init runs, so no closure here can
+        // capture `self`.
         let logger = KernovaLogger(
             subsystem: config.loggerSubsystem, category: "ServicingConnector")
         let serviceName = config.serviceName
         let operation: ConnectOperation = { completion in
-            // Identifier-based lookup (`.rootContainer` is always known to the
-            // extension) — see the file header for why this is not the path-based
-            // `FileManager.getFileProviderServicesForItem(at:)` (#539). The domain
-            // is built fresh per attempt via `config.makeDomain()` (a `Sendable`
-            // struct's factory) because `NSFileProviderDomain` itself can't cross
-            // this `@Sendable` closure boundary.
+            // The domain is built fresh per attempt: `NSFileProviderDomain` itself
+            // can't cross this `@Sendable` closure boundary.
             let domain = config.makeDomain()
             guard let manager = NSFileProviderManager(for: domain) else {
                 logger.error(
@@ -180,10 +139,7 @@ public final class FileProviderServicingConnector: NSObject,
     /// Creates a connector with an injected connect operation and retry budget —
     /// the seam tests use to drive the state machine deterministically.
     ///
-    /// `logger` lets the convenience init above pass through the logger it
-    /// already built for the default `connect` closure, rather than this
-    /// initializer constructing a second, redundant `KernovaLogger` from the
-    /// same config; test call sites omit it and get one built from `config`.
+    /// Omitting `logger` builds one from `config`.
     init(
         config: FileProviderConfig, connect: @escaping ConnectOperation,
         maxConnectAttempts: Int, connectRetryDelay: DispatchTimeInterval,
@@ -248,18 +204,16 @@ public final class FileProviderServicingConnector: NSObject,
 
     private func handleReconnectDoorbell() {
         logger.notice("Reconnect doorbell received")
-        // The doorbell means the extension has no accepted connection. Reset the
-        // retry budget (it's actively waiting on us) and act on our cached state:
+        // The doorbell means the extension has no accepted connection and is
+        // actively waiting, so reset the retry budget.
         let existing: NSXPCConnection? = lock.withLock {
             connectAttempts = 0
             return self.connection
         }
         if let existing {
-            // We think we're connected. Re-send the activation handshake rather than
-            // tearing the connection down: on a live connection it's a harmless
-            // re-acknowledge, and on a secretly-dead one the handshake's error
-            // handler drops it and reconnects. This avoids killing a healthy
-            // connection whose just-drained pulls are mid-flight.
+            // Re-send the handshake rather than tearing the connection down: on a
+            // secretly-dead connection the handshake's error handler drops it and
+            // reconnects, and a healthy one whose pulls are mid-flight survives.
             activate(existing)
         } else {
             connectIfNeeded()
@@ -270,10 +224,8 @@ public final class FileProviderServicingConnector: NSObject,
     /// when already connected/connecting, disarmed, or no connect was requested
     /// yet.
     ///
-    /// Coalescing a trigger that arrives while a connect is in flight (`connecting
-    /// == true`) is safe: that in-flight attempt either succeeds, or fails and
-    /// retries via `finishFailedConnect`, so the coalesced request's intent — be
-    /// connected — is still satisfied without a lost edge.
+    /// Coalescing a trigger that arrives mid-connect is safe: the in-flight attempt
+    /// either succeeds or retries via `finishFailedConnect`, so no edge is lost.
     private func connectIfNeeded() {
         let claimed: Bool = lock.withLock {
             guard connection == nil, !connecting else { return false }
@@ -288,10 +240,8 @@ public final class FileProviderServicingConnector: NSObject,
     private func connect() {
         connectOperation { [weak self] connection in
             guard let self else {
-                // The connector went away while the two-hop connect was in
-                // flight — unlike a live connector, there's nothing left to
-                // notify, but a successfully obtained connection must still be
-                // invalidated rather than silently dropped live.
+                // The connector went away mid-connect: a successfully obtained
+                // connection must still be invalidated, not dropped live.
                 connection?.invalidate()
                 return
             }
@@ -306,13 +256,8 @@ public final class FileProviderServicingConnector: NSObject,
     /// Exports the relay, pins the extension, and resumes — storing the
     /// connection before `resume()` so an immediate invalidation reconnects.
     private func configureAndResume(_ connection: NSXPCConnection) {
-        // We EXPORT the relay (the extension calls it back) and REMOTE the control
-        // interface (we call `ownerDidConnect` to activate the connection). Mirror of
-        // the extension's `FileProviderServiceSource` (inverted wiring, #460).
         connection.exportedInterface = NSXPCInterface(with: FileProviderRelay.self)
         connection.remoteObjectInterface = NSXPCInterface(with: FileProviderControl.self)
-        // Pin the extension when the direction requires it (host pins the host
-        // extension; guest leaves it nil — per-VM vsock auth is tracked by #145).
         if let extensionRequirement {
             connection.setCodeSigningRequirement(extensionRequirement)
         }
@@ -320,11 +265,9 @@ public final class FileProviderServicingConnector: NSObject,
         connection.interruptionHandler = { [weak self] in self?.handleConnectionDropped(connection) }
 
         // Read the relay and store the connection under ONE lock hold. `stopServing`
-        // can clear `relayService` on another thread while this connect is in flight
-        // (its completion runs on a framework callback thread); a separate
-        // read-then-store would let a just-disabled connector still end up with a
-        // live connection exporting the relay. Re-checking here means a concurrent
-        // disable reliably drops this connection instead of racing past it.
+        // can clear `relayService` on another thread while this connect is in
+        // flight, and a separate read-then-store would let a just-disabled
+        // connector still end up with a live connection exporting the relay.
         let armed: Bool = lock.withLock {
             guard let relay = relayService else { return false }
             connection.exportedObject = relay
@@ -339,8 +282,8 @@ public final class FileProviderServicingConnector: NSObject,
             return
         }
         connection.resume()
-        // Activate the connection so the extension's listener accepts it (it delivers
-        // shouldAcceptNewConnection only on our first message — see the control doc).
+        // The extension's listener delivers `shouldAcceptNewConnection` only on our
+        // first message, so the handshake is what actually gets us accepted.
         activate(connection)
         logger.notice("Servicing control connection established")
     }
@@ -359,12 +302,9 @@ public final class FileProviderServicingConnector: NSObject,
     ///
     /// Releases the connect slot, then retries a bounded number of times (the
     /// extension may be mid-relaunch) or gives up so a permanently unreachable
-    /// extension can't spin. On giving up, the extension's own bounded
-    /// `fetchContents` wait returns `serverUnreachable`; a later doorbell or publish
-    /// then starts a fresh burst.
-    ///
+    /// extension can't spin; a later doorbell or publish starts a fresh burst.
     /// Also the settle path when a connect completes but the connector was disabled
-    /// meanwhile (`relayService == nil`) — the guards below simply schedule no retry.
+    /// meanwhile (`relayService == nil`) — the guards below schedule no retry.
     private func finishFailedConnect() {
         var attempt = 0
         let shouldRetry: Bool = lock.withLock {
@@ -390,9 +330,6 @@ public final class FileProviderServicingConnector: NSObject,
 
     /// Clears a dropped connection (only if still current) and reconnects while
     /// armed.
-    ///
-    /// A relaunched extension also rings the doorbell, so this and the doorbell are
-    /// complementary recovery paths.
     private func handleConnectionDropped(_ connection: NSXPCConnection) {
         let shouldReconnect: Bool = lock.withLock {
             guard self.connection === connection else { return false }
@@ -400,11 +337,10 @@ public final class FileProviderServicingConnector: NSObject,
             connectAttempts = 0  // a live connection dropped → fresh retry budget
             return relayService != nil && connectRequested
         }
-        // Invalidate the dropped connection whether or not it was still current.
-        // On the invalidation path this is a documented no-op; on the interruption
-        // path (extension crash/relaunch, which does NOT auto-invalidate) it breaks
-        // the connection↔handler-block retain cycle so the old connection is freed
-        // instead of leaking one per relaunch. Done outside the lock — `invalidate`
+        // Invalidate whether or not it was still current: on the invalidation path
+        // this is a documented no-op, but interruption (extension crash/relaunch)
+        // does NOT auto-invalidate, and without this the connection↔handler retain
+        // cycle leaks one connection per relaunch. Outside the lock — `invalidate`
         // can run handlers synchronously.
         connection.invalidate()
         guard shouldReconnect else { return }
@@ -422,16 +358,11 @@ public final class FileProviderServicingConnector: NSObject,
     /// Consecutive failed connect attempts in the current retry burst.
     var connectAttemptsForTesting: Int { lock.withLock { connectAttempts } }
 
-    /// Directly invokes the reconnect-doorbell handler.
+    /// Directly invokes the reconnect-doorbell handler on the connector's private
+    /// `queue` — the same context the real doorbell runs on.
     ///
-    /// Dispatched onto the connector's private `queue` — the same execution
-    /// context the real doorbell always runs on (see `startServing`'s
-    /// `DarwinNotificationObserver`).
-    ///
-    /// The real doorbell relies on `CFNotificationCenter` delivery on a running
-    /// main run loop, which the KernovaKit SwiftPM test target does not host (see
-    /// `DarwinNotificationTests`) — so tests drive the handler directly instead of
-    /// posting a real Darwin notification that would never arrive.
+    /// The real doorbell needs `CFNotificationCenter` delivery on a running main
+    /// run loop, which the KernovaKit SwiftPM test target does not host.
     func triggerReconnectDoorbellForTesting() { queue.sync { handleReconnectDoorbell() } }
     #endif
 }

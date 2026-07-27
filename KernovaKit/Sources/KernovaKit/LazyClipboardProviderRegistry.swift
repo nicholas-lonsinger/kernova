@@ -5,37 +5,16 @@ import os
 /// Owner of the live clipboard pasteboard data providers, holding each alive
 /// until its pasteboard promise is finished.
 ///
-/// A promised pasteboard item outlives the code that wrote it. On the host, a
-/// "Copy to Mac" promise survives the clipboard window closing (or the VM
-/// stopping, which auto-closes it) so the user can still paste later; in the
-/// guest agent, an inbound-paste promise survives the offer that registered it.
-/// `NSPasteboard` does **not** retain a data provider — it requires the owner
-/// keep the provider alive while the item's data is still promised. Both sides
-/// hold their providers here instead: the host in the process-wide `shared`
-/// registry, the guest agent in one instance it owns for its lifetime.
-///
-/// Providers are retained only after a successful write (so a failed or no-op
-/// write needs no rollback — an unwritten provider never gets a finish callback
-/// and deallocates with the caller's local array) and released when the
-/// pasteboard reports the provider is finished (`pasteboardFinishedWithDataProvider`,
-/// routed here via the provider's `onFinished`). The set is never proactively
-/// cleared, since a destination may still read a prior copy's promise; the staged
-/// file generations (`ClipboardFileStaging.maxGenerations`) cover that window for
-/// file payloads.
-///
-/// Thread-safe via an internal lock rather than actor isolation: the host calls
-/// from its `@MainActor`, the guest agent from its main-queue-confined (but not
-/// `@MainActor`) run loop, and the provider's nonisolated `onFinished` fires on
-/// the pasteboard's main run loop on each side. A lock lets every site call
-/// `retain`/`release` directly, with no isolation hop sending a non-`Sendable`
-/// provider across an actor boundary.
+/// `NSPasteboard` does **not** retain a data provider, and a promised item
+/// outlives the code that wrote it. The set is never proactively cleared — a
+/// destination may still read a prior copy's promise. Thread-safe via a lock,
+/// not actor isolation: the host calls from `@MainActor`, the guest agent from
+/// its main-queue-confined run loop, and a provider is not `Sendable`.
 public final class LazyClipboardProviderRegistry: @unchecked Sendable {
-    /// Shared registry used by the host in production — one per process, matching
-    /// the single `NSPasteboard.general` every "Copy to Mac" targets.
+    /// Shared registry used by the host in production, one per process.
     ///
-    /// The guest agent constructs its own instance instead (its providers are
-    /// agent-lifetime, not process-immortal), and tests inject their own so the
-    /// count is isolated per test.
+    /// Matches the single `NSPasteboard.general` every "Copy to Mac" targets. The
+    /// guest agent and tests construct their own instances.
     public static let shared = LazyClipboardProviderRegistry()
 
     private static let logger = Logger(subsystem: "app.kernova", category: "ClipboardProvider")
@@ -78,26 +57,17 @@ public final class LazyClipboardProviderRegistry: @unchecked Sendable {
     #if DEBUG
     /// Count of providers currently retained for an outstanding pasteboard
     /// promise.
-    ///
-    /// Lets a test assert the retain-on-write / drop-on-finished lifecycle
-    /// without reaching into `private` state. Reached via `@testable import`.
     var countForTesting: Int { lock.withLock { live.count } }
 
     /// Fires after every `retain`/`release` so a test can await the registration
     /// or finish signal instead of polling.
     ///
-    /// Driving an `AsyncGate` off this avoids the timing-sensitive
-    /// `countForTesting` poll the `ci-test-timings` flakes trace back to. Set once
-    /// before the registry is exercised; `releaseAllForTesting` is teardown-only
-    /// and deliberately doesn't fire it.
+    /// Set it once before the registry is exercised; `releaseAllForTesting` is
+    /// teardown-only and deliberately doesn't fire it.
     var onChangeForTesting: (() -> Void)?
 
-    /// Releases every retained provider.
-    ///
-    /// A test injecting its own registry uses this to tear down the
-    /// registry↔provider retain cycle that production breaks via
-    /// `pasteboardFinishedWithDataProvider`, so the per-test registry doesn't
-    /// outlive the test.
+    /// Releases every retained provider, breaking the registry↔provider retain
+    /// cycle that production breaks via `pasteboardFinishedWithDataProvider`.
     func releaseAllForTesting() { lock.withLock { live.removeAll() } }
     #endif
 }

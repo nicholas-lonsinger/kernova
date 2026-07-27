@@ -2,24 +2,15 @@ import AppKit
 import Foundation
 import KernovaKit
 
-// KernovaMacOSAgent
-//
-// A guest-side agent that runs inside macOS virtual machines managed by Kernova.
-// It runs as an `.accessory` menu-bar app (an `NSStatusItem` dropdown, no Dock
-// icon, no window) and maintains three long-lived vsock connections to the host:
-// control (`VsockGuestControlAgent`, always-on handshake + heartbeat + policy),
-// clipboard (`VsockGuestClipboardAgent`), and log forwarding (`VsockHostConnection`).
-// All reconnect automatically on disconnect.
-//
-// Usage: KernovaMacOSAgent [--version]
-// Designed to run as a macOS LaunchAgent (auto-start on login, auto-restart on
-// crash — see `app.kernova.macosagent.plist`).
+// Guest-side agent for macOS VMs managed by Kernova: an `.accessory` menu-bar
+// app holding three long-lived, self-reconnecting vsock connections to the host
+// — control, clipboard, and log forwarding.
 
 @main
 @MainActor
 final class AgentAppDelegate: NSObject, NSApplicationDelegate {
-    // `nonisolated` so the (Sendable) signal handler can log without main-actor
-    // isolation; `KernovaLogger` is `Sendable`, so this is safe.
+    // `nonisolated` so the Sendable signal handler can log without main-actor
+    // isolation.
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova.macosagent", category: "Agent")
 
@@ -55,11 +46,8 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     private var controlAgent: VsockGuestControlAgent?
     private var statusItemController: AgentStatusItemController?
 
-    /// Hosts the File Provider XPC relay + clipboard domain (#376).
-    ///
-    /// Gated on host clipboard-sharing policy. Wired bidirectionally with
-    /// `clipboardAgent`: the host pulls through the agent on `fetchContents`; the
-    /// agent publishes a single inbound file rep through the host.
+    /// Hosts the File Provider XPC relay and clipboard domain, gated on host
+    /// clipboard-sharing policy.
     private var fileProviderHost: FileProviderDomainHost?
 
     /// Retained so the signal sources stay armed for the process lifetime.
@@ -73,24 +61,23 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Entry point
 
     static func main() {
-        // `--version` must work headless — install.command probes it — so handle it
-        // before any NSApplication / window-server / status-item setup.
+        // `--version` must work headless — install.command probes it — so it is
+        // handled before any NSApplication / window-server setup.
         if CommandLine.arguments.contains("--version") {
             print("kernova-agent \(version) (\(buildNumber))")
             exit(0)
         }
 
-        // Dev/test teardown helper (#376) — removes the guest clipboard File
-        // Provider domain so no Finder location lingers after a test. The host app
-        // wires the same flag for its own domain (#467).
+        // Dev/test teardown: removes the guest clipboard domain so no Finder
+        // location lingers after a test.
         if CommandLine.arguments.contains("--remove-clipboard-domain") {
             FileProviderDomainHost.removeAllDomainsBlocking()
             exit(0)
         }
 
         let app = NSApplication.shared
-        // Menu-bar-only: no Dock icon, no app-switcher entry. `LSUIElement` in the
-        // Info.plist is the primary mechanism; this is belt-and-suspenders.
+        // `LSUIElement` in Info.plist is the primary mechanism for this; the call
+        // is belt-and-suspenders.
         app.setActivationPolicy(.accessory)
         let delegate = AgentAppDelegate()
         app.delegate = delegate
@@ -100,10 +87,8 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Log forwarding — created and registered with `VsockLogBridge` before the
-        // startup banner so the banner buffers into its pre-connect ring. The
-        // shared `KernovaLogger` (in KernovaKit) forwards through this sink, which
-        // relays to the host over vsock; the host app leaves the sink `nil`.
+        // Registered with `VsockLogBridge` before the startup banner, so the
+        // banner itself buffers into the pre-connect ring.
         let vsockConnection = VsockHostConnection()
         VsockLogBridge.connection = vsockConnection
         KernovaLogger.forwardingSink = { level, subsystem, category, message in
@@ -116,25 +101,17 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
 
         let clipboardAgent = VsockGuestClipboardAgent()
 
-        // File Provider host (#376): owns the servicing connection + clipboard
-        // domain, gated on clipboard sharing. Wired both ways with the clipboard
-        // agent — the host pulls through the agent on `fetchContents`; the agent
-        // publishes a single inbound file rep through the host. The domain host
-        // builds its default `NSFileProviderServicing` connector from `.guest()`
-        // (#460). The agent's back-reference is weak.
+        // Wired both ways with the clipboard agent: the host pulls through the
+        // agent on `fetchContents`, the agent publishes inbound reps through the
+        // host. The agent's back-reference is weak.
         let fileProviderHost = FileProviderDomainHost(
             config: .guest(), pullProvider: clipboardAgent)
         clipboardAgent.fileProvider = fileProviderHost
 
-        // Clipboard progress (#643, #652) — the status item is the agent's only
-        // UI, so it renders the ring and the dropdown readout. One tracker covers
-        // both a paste materializing into the guest (driven by the File Provider
-        // relay) and what the agent streams back out to the host, so the readout
-        // reads the same either way. The tracker is driven off-main from the
-        // relay's XPC queues and the transfer queues, so emissions hop to main
-        // before touching the status item; `DispatchQueue.main` rather than a
-        // `Task`, because two independently scheduled hops carrying immutable
-        // snapshots have no ordering guarantee and the ring would jump backwards.
+        // One tracker covers both directions, so the readout reads the same
+        // either way. Emissions arrive off-main and hop via `DispatchQueue.main`,
+        // not a `Task` — two independently scheduled hops carrying immutable
+        // snapshots have no ordering guarantee, and the ring would jump backwards.
         let progressTracker = ClipboardProgressTracker { [weak self] snapshot in
             DispatchQueue.main.async {
                 self?.statusItemController?.materializationProgressChanged(snapshot)
@@ -143,16 +120,12 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         fileProviderHost.setProgressTracker(progressTracker)
         clipboardAgent.progressTracker = progressTracker
 
-        // Control plane: always-on handshake/heartbeat/policy. `onPolicy` gates the
-        // log + clipboard + File Provider capabilities; `onStateChange` drives the
-        // status-item icon.
+        // `onPolicy` gates the log + clipboard + File Provider capabilities;
+        // `onStateChange` drives the status-item icon.
         let controlAgent = VsockGuestControlAgent(
             onPolicy: { [weak self] policy in
                 vsockConnection.setEnabled(policy.logForwardingEnabled)
                 clipboardAgent.setEnabled(policy.clipboardSharingEnabled)
-                // Stands up / tears down the domain + servicing connection with
-                // clipboard sharing, so nothing connects unless the host enabled
-                // clipboard (notably never in the CI test host).
                 fileProviderHost.setEnabled(policy.clipboardSharingEnabled)
                 Task { @MainActor in
                     self?.updateAppNap(clipboardEnabled: policy.clipboardSharingEnabled)
@@ -160,17 +133,13 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             },
             onStateChange: { [weak self] _ in
                 // Called off-main; hop to the main actor to touch the status item.
-                // The delivered state is only a trigger — the controller re-reads
-                // the live state, since independently-hopped tasks aren't ordered.
                 Task { @MainActor in
                     self?.statusItemController?.connectionStateChanged()
                 }
             }
         )
 
-        // Fold the mutually-negotiated folder placeholder-tree capability
-        // (`clipboard.dirtree.v1`) from the control Hello into the clipboard
-        // agent, read lazily at offer/paste time so it tracks reconnects.
+        // Read lazily at offer/paste time so it tracks reconnects.
         clipboardAgent.peerSupportsDirTree = { [weak controlAgent] in
             controlAgent?.hostSupportsClipboardDirTree ?? false
         }
@@ -194,12 +163,8 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             onQuit: { NSApp.terminate(nil) }
         )
 
-        // Refresh the status-item reminder badge on availability transitions
-        // (#581). The clipboard agent no longer needs an availability-flip
-        // re-publish here: the unified provider closure re-checks the File
-        // Provider at paste time (#427), so an offer that arrived before the
-        // probe settled routes lazily on its next paste without a re-write.
-        // Delivered on main; the immediate `.inactive` delivery is a no-op.
+        // Refreshes the status-item reminder badge on availability transitions,
+        // delivered on main.
         fileProviderHost.setAvailabilityObserver { [weak self] availability in
             self?.statusItemController?.fileProviderAvailabilityChanged(availability)
         }
@@ -213,21 +178,17 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         vsockConnection.start()
         clipboardAgent.start()
         controlAgent.start()
-        // The File Provider host stands itself up when the host's first
-        // PolicyUpdate enables clipboard sharing (via `onPolicy` above) — no
-        // unconditional registration here.
+        // The File Provider host stands itself up from `onPolicy` above; it must
+        // not be registered unconditionally here.
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // The Quit path (the SIGTERM path stops them in the signal handler). Stop
-        // control first so heartbeat cessation is the cleanest going-away signal to
-        // the host; clipboard and log follow. `stop()` is idempotent.
+        // Stop control first so heartbeat cessation is the cleanest going-away
+        // signal to the host; clipboard and log follow.
         controlAgent?.stop()
         clipboardAgent?.stop()
         vsockConnection?.stop()
-        // Balance any held App-Nap activity so begin/end stays paired (harmless
-        // at real process exit, but keeps the assertion from leaking if the
-        // lifecycle ever keeps the process alive past terminate).
+        // Balance any held App-Nap activity so begin/end stays paired.
         updateAppNap(clipboardEnabled: false)
     }
 
@@ -257,9 +218,9 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         let sigintSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
         let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
 
-        // Captures the (Sendable) services rather than `self`, so the handler needs
-        // no main-actor isolation. Runs on the main queue; exits cleanly (exit code
-        // 0) so the LaunchAgent's `KeepAlive={SuccessfulExit:false}` keeps it quit.
+        // Captures the Sendable services rather than `self`, so the handler needs
+        // no main-actor isolation. Must exit 0 — the LaunchAgent's
+        // `KeepAlive={SuccessfulExit:false}` only keeps a clean exit quit.
         let handler: @Sendable () -> Void = {
             Self.logger.notice("Received termination signal, shutting down")
             controlAgent.stop()
