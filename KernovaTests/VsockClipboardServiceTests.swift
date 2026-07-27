@@ -713,7 +713,7 @@ struct VsockClipboardServiceTests {
         let recorder = FrameRecorder(channel: guest)
         defer { recorder.cancel() }
 
-        // Wrong uti for rep 0 → rejected with an Abort (was: silently dropped).
+        // Wrong uti for rep 0 → rejected with an Abort.
         try guest.send(makeRequest(generation: offer.generation, repIndex: 0, uti: "public.bogus"))
         try await waitForFrames(recorder) {
             recorder.first {
@@ -2680,16 +2680,6 @@ struct VsockClipboardServiceTests {
         #expect(!reps.contains { $0.uti == "org.nspasteboard.TransientType" })
         #expect(!reps.contains { $0.uti == "public.file-url" })
     }
-
-    // NOTE: Disk-full at the service level (`pull`'s free-space pre-flight) is
-    // not exercised here. The free-space provider is injectable on the service's
-    // staging (`freeSpaceProvider:`), but the host pull's pre-flight reaches it
-    // through `ClipboardFileStaging.hasCapacity`, covered at the engine level by
-    // `ClipboardStreamTests`. A service-level disk-full test would duplicate that
-    // coverage without exercising new host logic; the host's behavior on a failed
-    // pull (the rep stays a placeholder, `lastTransferIssue == .diskFull`) is the
-    // same as on any aborted pull, which `releaseDropsPromise` and
-    // `newerOfferSupersedesInFlightPull` already cover via the abort path.
 
     // MARK: - Peer errors
 

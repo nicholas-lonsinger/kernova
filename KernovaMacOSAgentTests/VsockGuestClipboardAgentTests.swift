@@ -460,8 +460,8 @@ struct VsockGuestClipboardAgentTests {
         }
         #expect(offer.repInfo.count == 1)
         let info = try #require(offer.repInfo.first)
-        // No rejection despite a file far over the old cap conceptually: the
-        // offer carries the stat'd size and the real filename.
+        // A large file is offered whole: the offer carries the stat'd size and
+        // the real filename.
         #expect(info.byteCount == UInt64(contents.count))
         #expect(info.filename == "notes.bin")
         // A non-image file is file-only (not inlined) per shouldInline's rule.

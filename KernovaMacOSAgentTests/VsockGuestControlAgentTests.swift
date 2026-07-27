@@ -123,13 +123,11 @@ struct VsockGuestControlAgentTests {
 
         // Property under test: heartbeats fire repeatedly on the cadence.
         //
-        // Earlier shape — "≥ N heartbeats inside a fixed wall-clock window" —
-        // was brittle on macos-26 GitHub Actions runners (one prior failure
-        // recorded `count → 2 ≥ 3`). The window-based count fails when a
-        // single MainActor stall slides multiple ticks outside the window
-        // even though the timer is firing correctly.
+        // Gap-based, not a count inside a fixed wall-clock window: on macos-26
+        // GitHub Actions runners a single MainActor stall slides multiple ticks
+        // outside such a window even though the timer is firing correctly.
         //
-        // Gap-based assertion: read three consecutive heartbeats and check
+        // Read three consecutive heartbeats and check
         // that the maximum inter-frame gap stays within a generous tolerance
         // of the cadence. This proves "the timer fires repeatedly at roughly
         // the configured rate" without coupling to absolute wall-clock time.
@@ -138,8 +136,7 @@ struct VsockGuestControlAgentTests {
         // time. If MainActor stalls and the kernel buffers heartbeats during
         // the stall, the test reads them back-to-back with near-zero gaps and
         // passes — which is correct for "is the timer running" but does NOT
-        // catch "MainActor → late delivery". A separate (likely clock-injected)
-        // test would be needed to assert end-to-end latency.
+        // catch "MainActor → late delivery".
         let cadence: Duration = .milliseconds(100)
         let agent = makeAgent(agentFd: agentFd, heartbeatInterval: cadence)
         defer { agent.stop() }

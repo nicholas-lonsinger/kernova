@@ -708,11 +708,10 @@ struct LazyPullCoordinatorTests {
         "cancelBeforeStart marks a transferID so pull() resolves .cancelled without ever calling send"
     )
     func cancelBeforeStartPreventsSend() async throws {
-        // Closes the race a review found: a consumer cancel (#464) that arrives
-        // before the owner's `pull` call has even registered a slot — because
-        // the fetch is dispatched onto a concurrent queue and hasn't started
-        // yet — used to be silently lost, so the request went out over vsock
-        // regardless. This proves it no longer does.
+        // A consumer cancel that arrives before the owner's `pull` call has
+        // registered a slot — the fetch is dispatched onto a concurrent queue and
+        // hasn't started yet — must still suppress the send, not go out over
+        // vsock regardless.
         let coordinator = LazyPullCoordinator()
         let sendCalled = Box(false)
 
