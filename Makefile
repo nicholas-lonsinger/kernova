@@ -1,8 +1,8 @@
 # Kernova build & test invocations.
 #
-# These targets wrap the canonical `xcodebuild` calls documented in
-# AGENTS.md. Inside Xcode, just use the IDE (CMD-B / CMD-U); this
-# Makefile is for terminal, CI, and tooling use.
+# These targets own the `xcodebuild` invocations — the flags are not the
+# obvious ones, so never hand-write one. Inside Xcode, just use the IDE
+# (CMD-B / CMD-U); this Makefile is for terminal, CI, and tooling use.
 #
 # CI mirrors the build/test invocation by hand in
 # .github/workflows/xcodebuild-test.yml — it can't run `make test` because

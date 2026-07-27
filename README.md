@@ -107,9 +107,11 @@ make install-hooks
 make bootstrap
 ```
 
-`install-hooks` points the repo at the checked-in `.githooks/` directory. It's a one-time setup per clone (Git does not auto-activate checked-in hooks) and enables two hooks: a pre-push hook that runs `make lint` locally, matching the required `lint` check enforced on `main` (bypass an individual push with `git push --no-verify`), and a post-checkout hook that sets up new git worktrees — it copies the gitignored local files listed in [`.worktreeinclude`](.worktreeinclude) from the main checkout (the same list Claude Code and other worktree tools consume when *they* create a worktree, so `git worktree add` honors it too), then re-runs `bootstrap` (below) if `Config/Local.xcconfig` is still missing — so a new git worktree builds in Xcode immediately with no manual step.
+`install-hooks` points the repo at the checked-in `.githooks/` directory — a one-time step per clone, since Git does not auto-activate checked-in hooks. It enables a pre-push `make lint` matching the required `lint` check on `main` (bypass an individual push with `git push --no-verify`) and a post-checkout hook that makes a new git worktree build in Xcode with no manual setup.
 
-`bootstrap` derives your own signing team from your Apple Development (or Developer ID) certificate into a gitignored `Config/Local.xcconfig`, so a Debug build signs as *you* rather than a hardcoded team — see [Signing: Debug vs Release](#signing-debug-vs-release) below. `make build` and `make test` run it automatically, and the post-checkout hook covers additional git worktrees (each needs its own `Config/Local.xcconfig`, since gitignored files aren't shared between worktrees; the hook copies the main checkout's file, falling back to fresh derivation), so this is only a manual step if you're building a fresh clone straight from Xcode without ever running a `make` target first.
+`bootstrap` derives your own signing team from your Apple Development (or Developer ID) certificate into a gitignored `Config/Local.xcconfig`, so a Debug build signs as *you* rather than a hardcoded team — see [Signing: Debug vs Release](#signing-debug-vs-release) below. `make build` and `make test` run it automatically, so it is only a manual step when building a fresh clone straight from Xcode.
+
+The hook and bootstrap machinery is documented in [docs/BUILD.md](docs/BUILD.md).
 
 Run `make doctor` to confirm your local toolchain (macOS, Xcode, Swift, swift-format), signing team, and git hooks match what Kernova needs before building.
 
@@ -125,12 +127,7 @@ The app requires the `com.apple.security.virtualization` entitlement, which is i
 
 ### Signing: Debug vs Release
 
-Kernova signs differently per build configuration, driven by the `KERNOVA_APP_GROUP` build setting that scopes the clipboard File Provider's shared container:
-
-- **Debug** uses a Team-ID-prefixed app group (`$(DEVELOPMENT_TEAM).app.kernova`). macOS grants a Team-ID-prefixed group silent container access with **no provisioning profile**, so a Debug build (⌘R, `make build`, `make test`) works with *any* signing team. `DEVELOPMENT_TEAM` is not hardcoded: `make bootstrap` ([`Tools/bootstrap-team.sh`](Tools/bootstrap-team.sh)) derives it from your own signing certificate into a gitignored `Config/Local.xcconfig`, included by the tracked `Config/Base.xcconfig` ([#476](https://github.com/nicholas-lonsinger/kernova/issues/476)). No Apple Developer Program membership or developer-portal setup is needed to build and run, and the guest agent never shows the "access data from other apps" consent prompt in a VM.
-- **Release** uses the canonical `group.app.kernova`. That form is **not** silently authorized: it requires the app group registered on the Apple Developer portal plus an embedded provisioning profile, which in turn requires a paid **Apple Developer Program** membership and a distribution identity — **Developer ID** for direct distribution, or Apple Distribution for the Mac App Store. A Release build fails to sign without them.
-
-Day-to-day development only needs Debug. The Release path matters when cutting a distributable build; see [docs/SANDBOX.md](docs/SANDBOX.md) for the full rationale.
+Day-to-day development only needs **Debug**, which signs with *any* team — no Apple Developer Program membership or developer-portal setup, just `make bootstrap`. **Release** additionally requires a paid membership and a distribution identity (Developer ID, or Apple Distribution for the Mac App Store), and fails to sign without them; it matters only when cutting a distributable build. The per-configuration app-group and signing story is in [docs/SANDBOX.md](docs/SANDBOX.md).
 
 ## Testing
 
@@ -140,21 +137,11 @@ The project has comprehensive test coverage using [Swift Testing](https://develo
 make test
 ```
 
-This runs all three test targets via the test plan; it wraps the canonical `xcodebuild` invocation documented in [AGENTS.md](AGENTS.md). See the test coverage section in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
+This runs all three test targets via the test plan.
 
 ## Architecture
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed component descriptions, data flow diagrams, and design decisions — and [docs/README.md](docs/README.md) for the full documentation index. Design philosophy and UI guidelines live in [docs/SPEC.md](docs/SPEC.md); the clipboard subsystem is documented in [docs/CLIPBOARD.md](docs/CLIPBOARD.md).
-
-```
-Kernova/
-├── App/          # AppDelegate, MainWindowController
-├── Models/       # VMConfiguration, VMInstance, enums
-├── Services/     # VM lifecycle, storage, disk images, IPSW, installation
-├── Views/        # AppKit view controllers (sidebar, detail, console, creation wizard)
-├── ViewModels/   # Observable view models
-└── Utilities/    # Formatters, extensions
-```
 
 Alongside the app target, the repo contains the in-guest menu-bar agent (`KernovaMacOSAgent/`), the shared SwiftPM package (`KernovaKit/`), the guest and host clipboard File Provider extensions (`KernovaMacOSAgentFileProvider/`, `KernovaFileProvider/`), and the relaunch helper (`KernovaRelaunchHelper/`) — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full map.
 

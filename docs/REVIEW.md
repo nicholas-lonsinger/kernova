@@ -82,7 +82,7 @@ These rules apply to **all** issues you file — feature/enhancement as well as 
 
 ## Intentional Pattern Annotations
 
-A `RATIONALE:` comment records **why a specific alternative was rejected**, so a future reader can re-evaluate that trade-off without redoing the investigation. It is evidence, not a verdict — the reading rules below matter more than the writing rules.
+A `RATIONALE:` comment records **why a specific alternative was rejected**, so a future reader can re-evaluate that trade-off without redoing the investigation. The rules for *reading* one — it is evidence, not authority — are in [AGENTS.md](../AGENTS.md#review-feedback-handling); this section covers writing one.
 
 It is a **last resort**, not the routine outcome of **Annotate**. The population only ever grows, each one taxes every future reader, and an unverifiable one is worse than no comment at all: it gets believed. Most findings that reach this point should be **Dismissed**.
 
@@ -105,13 +105,6 @@ It is a **last resort**, not the routine outcome of **Annotate**. The population
 // fails to compile under Swift 6 strict concurrency.)
 nonisolated(unsafe) func guestDidStop(_ virtualMachine: VZVirtualMachine) {
 ```
-
-### Reading a RATIONALE — evidence, not authority
-
-- **It is a claim as of its date, not a standing verdict.** Treat an old annotation the way you treat an old issue: accurate when written, not authoritative now.
-- **It never settles a contradicting observation.** If the code looks wrong *today* and the comment says it is fine, the comment loses — investigate. A RATIONALE is a head start on where to look, never a reason to stop looking.
-- **Verify on contact.** When you edit code an annotation covers, re-check its claim, then correct and re-date it or delete it. Removing one that no longer holds is the maintenance the greppability exists for — not churn.
-- **Uncited or undated ⇒ unverified.** Many predate these rules. Give them no more weight than an ordinary comment until someone re-verifies and re-dates them.
 
 ### Guidelines
 

@@ -1,6 +1,6 @@
 # Kernova documentation
 
-Deep-dive documentation, read on demand. The always-relevant operating guide — build commands, architecture summary, and the coding/testing/review/git conventions — is [AGENTS.md](../AGENTS.md) at the repo root (loaded by AI agents every session; the same file is the human contributor quick reference).
+Deep-dive documentation, read on demand. The always-relevant operating guide — build commands, architecture summary, and the coding/testing/review/git conventions — is [AGENTS.md](../AGENTS.md) at the repo root (loaded by AI agents every session, and the maintainer's own quick reference).
 
 | Document | Read it when |
 |----------|--------------|

@@ -4,19 +4,17 @@ Design philosophy and guidelines for Kernova.
 
 ## Code Approach
 
-- Do not settle for workarounds or hacks. Fix root causes with proper refactors, even when the change is larger than a quick patch.
-- Aggressively identify code that looks like a shortcut or band-aid. Prefer fixing it in the current scope — even when the fix is larger than the original task. File a GitHub issue only when the fix is genuinely out of scope (a different system, another change's responsibility), not as a soft landing for borderline findings.
-- The bar for acting on a finding is "does this make the code genuinely better today" — a real correctness issue, an observable perf problem, a readability win. Skip findings that only defend against unreachable scenarios, hypothetical future callers, or theoretical perf concerns at current scale.
-- GitHub issues serve as durable context — when a fix is deferred, the issue should capture enough detail to address it later without rediscovery.
+- Do not settle for workarounds or hacks. Fix root causes with proper refactors, even when the change is larger than a quick patch, and prefer fixing a shortcut in the current scope over deferring it.
 - Prefer the simpler path first. Always attempt or plan the straightforward solution before introducing complexity through flags, intercepts, overrides, special cases, shims, or conditional branching.
-- When working on window layout issues, verify that the implementation follows AppKit best practices. Cross-reference Apple documentation and well-known code examples where possible before settling on an approach.
+
+Whether a review finding is worth acting on, and what a deferred issue may say, are governed by the severity bar and issue hygiene in [REVIEW.md](REVIEW.md).
 
 ## GUI Design
 
 ### General
 
-- Match Apple's built-in app conventions and visuals (Mail, Finder, etc.) whenever possible/feasible.
-- If matching Apple's conventions would require significant effort or complexity, ask the user first before proceeding.
+- Match Apple's built-in app conventions and visuals (Mail, Finder, etc.) whenever possible/feasible; cross-reference Apple's documentation and published sample code before settling on an approach.
+- If matching Apple's conventions would require significant effort or complexity, ask the maintainer first before proceeding.
 - Use SF Symbols exclusively for icons — no custom image assets (except the app icon).
 
 ### Layout
