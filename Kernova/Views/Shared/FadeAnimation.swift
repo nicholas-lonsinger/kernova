@@ -25,7 +25,6 @@ func animateFade(
             // assumeIsolated. Set on the context (a non-`@Sendable` property) rather
             // than passed as the `@Sendable` `completionHandler:` argument, which would
             // warn on capturing the non-Sendable `@MainActor` closure.
-            // (verified 2026-07-27)
             context.completionHandler = { MainActor.assumeIsolated { completion() } }
         }
         for view in views {

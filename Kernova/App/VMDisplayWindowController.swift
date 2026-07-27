@@ -89,7 +89,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         // RATIONALE: one shared toolbar identifier for every VM's display window,
         // unlike the per-VM frame autosave name above — AppKit synchronizes
         // same-identifier toolbars, so a customized layout applies to all display
-        // windows and persists as a single configuration. verified 2026-07-27
+        // windows and persists as a single configuration.
         let toolbar = NSToolbar(identifier: "KernovaVMDisplayToolbar")
         toolbar.delegate = self
         // The autosaved configuration is restored when the toolbar is attached to
@@ -157,7 +157,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         // enter/exit contaminates the autosaved toolbar configuration (quitting
         // while fullscreen persists "hidden"), so `.autoHideToolbar` does it
         // instead — the toolbar slides in with the menu bar on hover. It requires
-        // `.autoHideMenuBar`, which requires `.autoHideDock`. verified 2026-07-27
+        // `.autoHideMenuBar`, which requires `.autoHideDock`.
         [.fullScreen, .autoHideMenuBar, .autoHideDock, .autoHideToolbar]
     }
 

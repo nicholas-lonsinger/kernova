@@ -5,10 +5,7 @@ import Foundation
 // directions use the canonical `NSFileProviderServicing` anonymous-XPC pattern, the
 // owner as XPC client exporting the relay for the extension to call back at
 // `fetchContents`. The extension can't initiate a connection, so the owner connects
-// proactively at publish time and reconnects on the Darwin doorbell. Look the service
-// up by ITEM IDENTIFIER, never by path: the path-based
-// `FileManager.getFileProviderServicesForItem(at:)` needs filesystem access under
-// `~/Library/CloudStorage`, which the sandboxed host app does not have (Cocoa 257).
+// proactively at publish time and reconnects on the Darwin doorbell.
 
 /// Connects the domain host to its File Provider extension so the extension can
 /// call the relay back.
@@ -33,6 +30,12 @@ public protocol FileProviderRelayTransport: AnyObject, Sendable {
 /// Reaches the extension's `NSFileProviderServicing` endpoint, exports the relay,
 /// and keeps the control connection warm — reconnecting on the Darwin doorbell or
 /// an XPC invalidation.
+///
+/// The service is addressed by ITEM IDENTIFIER — on the guest side too, which shares
+/// this connector. The path-based `FileManager.getFileProviderServicesForItem(at:)`
+/// needs `~/Library/CloudStorage` access the sandboxed host app lacks (Cocoa 257),
+/// and reaching through our own dataless root risks reentrant materialization. Only
+/// the second constraint binds the unsandboxed guest agent.
 ///
 /// `@unchecked Sendable`: all mutable state is guarded by `lock`; the immutable
 /// addressing/logging values are set once in `init`.

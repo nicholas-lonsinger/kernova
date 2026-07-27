@@ -29,7 +29,7 @@ public enum ClipboardDirectoryArchive {
     ///
     /// RATIONALE: extended attributes (`XAT`) are deliberately omitted — carrying
     /// them here alone would diverge from the placeholder-tree path, whose
-    /// accepted xattr gap is CLIPBOARD.md §6 (verified 2026-07-27).
+    /// accepted xattr gap is CLIPBOARD.md §6.
     private static let fieldKeys = "TYP,PAT,LNK,DEV,DAT,UID,GID,MOD,FLG,MTM,CTM,SH2"
 
     /// Packs the directory tree at `directoryURL` into a single LZFSE-compressed

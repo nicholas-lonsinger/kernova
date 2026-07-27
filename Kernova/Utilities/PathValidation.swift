@@ -34,7 +34,7 @@ enum PathValidation {
     // check adds little value — the authoritative test occurs when
     // Virtualization.framework opens the file, and a TOCTOU race could invalidate
     // any earlier check. Callers must still handle `.notReadable` in their switch
-    // for exhaustiveness, but this method never throws it. verified 2026-07-27
+    // for exhaustiveness, but this method never throws it.
     static func resolveFile(at path: String, requireWritable: Bool = false) throws(Failure) -> ResolvedPath {
         let resolved = resolve(path)
         let fm = FileManager.default

@@ -378,7 +378,7 @@ final class VsockControlService {
             // channels close on a wrong-port payload, but this one stays up —
             // it is the admission anchor they gate on, so closing it would flap
             // the agent-status UI and every dependent channel on one stray
-            // frame. verified 2026-07-27
+            // frame.
             Self.logger.warning(
                 "Unexpected payload on control channel for '\(self.label, privacy: .public)' — wrong port"
             )

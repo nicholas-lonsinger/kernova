@@ -21,7 +21,7 @@ struct AppPreferences {
         // RATIONALE: these two deliberately keep unnamespaced key strings — the
         // ones existing users' persisted selection and order are already stored
         // under. Not a namespacing inconsistency to "fix": changing them drops
-        // that saved state. verified 2026-07-27
+        // that saved state.
         static let lastSelectedVMID = "lastSelectedVMID"
         static let vmOrder = "vmOrder"
         static let fileProviderReminderDismissed = "fileProviderReminderDismissed"
@@ -83,7 +83,7 @@ struct AppPreferences {
     /// RATIONALE: the value is stored *inverted* under `quitTerminatesApp` so the
     /// file's plain `bool(forKey:)` convention — an unset key reads `false` —
     /// produces this preference's `true` default without registering defaults.
-    /// The key names what it literally holds. verified 2026-07-27
+    /// The key names what it literally holds.
     var keepInMenuBarOnQuit: Bool {
         get { !defaults.bool(forKey: Keys.quitTerminatesApp) }
         nonmutating set { defaults.set(!newValue, forKey: Keys.quitTerminatesApp) }

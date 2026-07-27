@@ -71,7 +71,7 @@ final class MacOSInstallService {
         // `instance.virtualMachine` set, which
         // `VMLibraryViewModel.installAndAutoBoot`'s `catch is CancellationError`
         // tears down. Checking first would leave the configured pipes dangling on
-        // `instance` with no matching VM (verified 2026-07-27).
+        // `instance` with no matching VM.
         let vm = instance.attachVirtualMachine(from: result.configuration)
         instance.startSerialReading()
         instance.startClipboardService()
@@ -227,7 +227,7 @@ final class MacOSInstallService {
     /// *any* component and never resolves it itself — `VZMacOSRestoreImage.load`
     /// fails `VZErrorInvalidRestoreImage` on a file `FileManager` calls readable,
     /// and `VZMacOSInstaller.init` is documented to *raise an exception*. Under the
-    /// sandbox `.downloadsDirectory` is itself a symlink (verified 2026-07-27).
+    /// sandbox `.downloadsDirectory` is itself a symlink.
     static func resolveRestoreImage(at url: URL) throws -> URL {
         let path = url.path(percentEncoded: false)
         do {
@@ -242,7 +242,7 @@ final class MacOSInstallService {
             // RATIONALE: resolve the *parent* and re-attach the file name.
             // `resolvingSymlinksInPath()` is existence-dependent — it returns the
             // path untouched when the last component is missing, which is exactly
-            // the `.notFound` case here (verified 2026-07-27).
+            // the `.notFound` case here.
             let reportedPath =
                 url.deletingLastPathComponent()
                 .resolvingSymlinksInPath()

@@ -11,7 +11,6 @@ final class ClipboardCommandBarView: NSView {
     // would intercept performKeyEquivalent before a focused NSTextView ever
     // sees the keystroke, breaking normal text editing. Keyboard access flows
     // through the responder chain (`paste(_:)` / `copy(_:)`) instead.
-    // (verified 2026-07-27)
     let pasteButton: NSButton
     let copyButton: NSButton
     let clearButton: NSButton

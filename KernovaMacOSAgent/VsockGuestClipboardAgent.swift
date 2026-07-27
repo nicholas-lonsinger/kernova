@@ -986,7 +986,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // sync path, producing `public.file-url` materializes the whole file with
         // zero user interaction (docs/CLIPBOARD.md §3). The option is per-write
         // state, reset by every prepare/clear, so it is applied at this single
-        // publication choke point. (verified 2026-07-27)
+        // publication choke point.
         pasteboard.prepareForNewContents(with: .currentHostOnly)
         let written = pasteboard.writeItems(writes)
         lastPasteboardChangeCount = pasteboard.changeCount
@@ -1616,6 +1616,14 @@ extension VsockGuestClipboardAgent: FileProviderPullProvider {
     /// connection state, then performs the *same* blocking pull as the pasteboard
     /// path off-main. The File Provider read path has no 60s deadline, so holding
     /// the XPC thread for a multi-GB transfer is safe.
+    ///
+    /// Keying the coordinator slot and the receiver's awaiter on the deterministic
+    /// `transferID` assumes a rep is never pulled twice at once: the File Provider
+    /// framework coalesces concurrent `fetchContents` for one constant
+    /// `itemVersion`, and a routed rep never also mints a sync pull. A second
+    /// concurrent read path for a rep — a prefetch, a preview fetch, a
+    /// retry-on-timeout — would need a different key, and would race for bytes
+    /// rather than fail to compile.
     func fetchStagedFile(
         generation: UInt64, repIndex: Int,
         onProgress: @escaping @Sendable (UInt64, UInt64) -> Void = { _, _ in }

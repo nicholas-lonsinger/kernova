@@ -313,7 +313,7 @@ final class DetailAlertsPresenter: NSObject {
         // calls `forceStopFromPaused` directly rather than routing through
         // `confirmForceStop`, which would stack a second alert on top of this
         // one. The message text makes the destructive outcome explicit, so one
-        // confirmation is sufficient. verified 2026-07-27
+        // confirmation is sufficient.
         AlertConfiguration(
             title: "Stop Paused Virtual Machine",
             message:

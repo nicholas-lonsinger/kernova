@@ -83,7 +83,7 @@ final class HostClipboardFileProvider: HostClipboardDomainCoordinating {
     /// constructs the service against the default `.shared` coordinator and calls
     /// `start()`, so without this guard every clipboard test would register a
     /// domain on the developer's machine. The pull bridge (`pullStagedFile`) is
-    /// unaffected and stays directly testable. (verified 2026-07-27)
+    /// unaffected and stays directly testable.
     private static let isRunningUnderTests = ProcessInfo.processInfo.isRunningXCTests
 
     /// Current File Provider usability, mirrored from the domain host.

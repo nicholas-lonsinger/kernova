@@ -29,7 +29,7 @@ import Foundation
 /// bytes. Both layouts cap what they can encode — a generation of 2^46 for the
 /// legacy layout, 2^24 offers or ~4M tree nodes for the child layout.
 ///
-/// `RATIONALE:` (verified 2026-07-27) the id is **intentionally** reproducible
+/// `RATIONALE:` the id is **intentionally** reproducible
 /// from `(generation, repIndex, direction)` alone — plus `childSeq` for a child
 /// transfer. Both `cancelStagedPull` sites re-derive it rather than remembering
 /// what they minted, and `FileProviderServiceSource.cancelPull`'s race-win guard

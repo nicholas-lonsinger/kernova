@@ -311,7 +311,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// sidebar tracking separator reuses the existing instance without firing
     /// toolbarWillAddItem or toolbarDidRemoveItem (verified empirically), so a
     /// moved item keeps the wrong treatment. Reinserting at the same index routes
-    /// through the delegate factory. verified 2026-07-27
+    /// through the delegate factory.
     func windowDidEndSheet(_ notification: Notification) {
         guard sheetIsCustomizationPalette, let toolbar = window?.toolbar else { return }
         sheetIsCustomizationPalette = false

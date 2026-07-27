@@ -2201,7 +2201,7 @@ struct VsockGuestClipboardAgentTests {
     }
 
     @Test(
-        "deadline cap: an over-cap directory rep is refused too — a folder paste has no File Provider escape hatch yet (D1b), so it rides the same deadline-bound path as a plain file"
+        "deadline cap: an over-cap directory rep is refused too, reporting the folder-specific code when the peer can't route a placeholder tree"
     )
     func tooLargeDirectoryPullReturnsNilWithoutRequest() async throws {
         let pasteboard = FakePasteboard()
@@ -2230,9 +2230,9 @@ struct VsockGuestClipboardAgentTests {
         let provided = await pull.value
         #expect(provided == nil)
 
-        // A directories-only refusal reports the folder-specific code: "enable
-        // File Provider" can't help a folder until D1b folders ship, so the
-        // host renders an honest folder message instead.
+        // A directories-only refusal reports the folder-specific code: this peer
+        // advertises no placeholder-tree capability, so "enable File Provider"
+        // can't help here and the host renders an honest folder message instead.
         let frame = try await maybeNextFrame(from: hostChannel)
         guard case .error(let error)? = frame?.payload else {
             Issue.record("Expected an Error frame, got \(String(describing: frame?.payload))")

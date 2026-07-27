@@ -8,7 +8,7 @@ extension NSWindow {
     /// content view's Auto Layout fitting size, which for a flexible content view
     /// is far smaller than the intended initial size — and `minSize`, set
     /// afterwards, then clamps the window up to *that*. Re-establishing the size
-    /// after the assignment is the only ordering that sticks. verified 2026-07-27
+    /// after the assignment is the only ordering that sticks.
     static func withStableContentSize(
         _ contentSize: NSSize,
         styleMask: NSWindow.StyleMask,

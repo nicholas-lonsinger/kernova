@@ -107,7 +107,7 @@ final class ScopedAccess {
     // RATIONALE: `startAccessingSecurityScopedResource()` returning false is
     // NORMAL for paths that need no scope (inside the container, or covered
     // by the downloads entitlement) — this exists only to balance the matching
-    // stop call, not to signal an error. verified 2026-07-27
+    // stop call, not to signal an error.
     private let didStart: Bool
     private var released = false
 

@@ -442,7 +442,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // past the window it latches headless and the window doesn't auto-show, but
         // the always-present status item still summons the GUI. Longer would delay
         // the correct headless outcome of a genuine login launch for no gain.
-        // (verified 2026-07-27)
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(1.5))
             self?.resolveColdLaunch(showWindow: false)

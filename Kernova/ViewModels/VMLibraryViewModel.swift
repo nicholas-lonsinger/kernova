@@ -61,7 +61,7 @@ final class VMLibraryViewModel {
     // this is true, and `cancelPreparingConfirmed` keeps a cancelling row in
     // `instances` for the same reason: any gap lets reconcile resurrect a bundle
     // whose uninterruptible copy is still settling. A wedged `FileManager.copyItem`
-    // therefore holds the gate until relaunch. (verified 2026-07-27)
+    // therefore holds the gate until relaunch.
     var hasPreparing: Bool { instances.contains(where: \.isPreparing) }
 
     private var customOrder: [UUID] = []
@@ -788,7 +788,7 @@ final class VMLibraryViewModel {
                     if permanently {
                         // RATIONALE: the user-confirmed "Delete Immediately" path — the
                         // deliberate exception to AGENTS.md's "Prefer `trash` over `rm`"
-                        // guideline. (verified 2026-07-27)
+                        // guideline.
                         try fileSystem.removeItem(at: target)
                     } else {
                         try fileSystem.trashItem(at: target)

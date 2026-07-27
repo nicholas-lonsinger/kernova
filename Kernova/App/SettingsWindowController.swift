@@ -13,7 +13,6 @@ final class SettingsWindowController: NSWindowController {
         // size, and this window has no single correct one — it is non-resizable and
         // its height is whatever the selected pane publishes as `preferredContentSize`,
         // re-applied by `SettingsTabViewController` on every tab switch.
-        // verified 2026-07-27
         let window = NSWindow(
             contentViewController: SettingsTabViewController(viewModel: viewModel))
         window.title = "Settings"
@@ -26,7 +25,6 @@ final class SettingsWindowController: NSWindowController {
         // the moment the pane list or a pane's content changes (observed stretching
         // the first pane's cards over the excess). AppKit has no position-only
         // autosave, so `SettingsTabViewController` re-asserts the height on appear.
-        // verified 2026-07-27
         window.setFrameAutosaveName("KernovaSettings")
         self.init(window: window)
     }

@@ -669,7 +669,7 @@ extension SidebarViewController {
                 // AppKit's menu-positioning engine still anchors the window on index 0's
                 // original coordinates — every visible row shifts down by one item's
                 // height. A permanent top anchor gives the pair below it the same physics
-                // as a mid-menu pair. (verified 2026-07-27)
+                // as a mid-menu pair.
                 let dummy = NSMenuItem()
                 dummy.view = NSView(frame: .zero)
                 menu.addItem(dummy)

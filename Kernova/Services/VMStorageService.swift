@@ -134,7 +134,7 @@ struct VMStorageService: Sendable {
         }
         // RATIONALE: The user-confirmed "Delete Immediately" path (menu item →
         // confirm sheet → here) is the deliberate exception to AGENTS.md's
-        // "prefer trash over rm" rule. verified 2026-07-27
+        // "prefer trash over rm" rule.
         try FileManager.default.removeItem(at: bundleURL)
         Self.logger.notice("Permanently deleted VM bundle: \(bundleURL.lastPathComponent, privacy: .public)")
     }

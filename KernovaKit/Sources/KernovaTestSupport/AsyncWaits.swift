@@ -156,7 +156,7 @@ public func waitUntil(
 /// Runs a **synchronous, blocking** bridge call on a GCD global-queue thread,
 /// mirroring production's callers.
 ///
-/// RATIONALE (verified 2026-07-27): never wrap these in `Task.detached`. Such a
+/// RATIONALE: never wrap these in `Task.detached`. Such a
 /// call parks its thread until the transfer resolves; on the cooperative pool
 /// (3-4 threads on CI) enough parked pulls exhaust it, the tasks the reply
 /// depends on starve, and the bundle freezes until the shortest injected timeout

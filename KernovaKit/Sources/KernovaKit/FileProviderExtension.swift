@@ -340,7 +340,7 @@ final class ClipboardFileItem: NSObject, NSFileProviderItem, @unchecked Sendable
     // pasted from it, as **locked**: a padlock badge and "Item is locked" on delete.
     // Full capabilities keep the pasted copy an ordinary file the user owns; the
     // mutating extension methods still reject in-place edits. Spelled out rather
-    // than `.allowsAll`, deprecated in macOS 12. (verified 2026-07-27)
+    // than `.allowsAll`, deprecated in macOS 12.
     var capabilities: NSFileProviderItemCapabilities {
         [.allowsReading, .allowsWriting, .allowsReparenting, .allowsRenaming, .allowsTrashing, .allowsDeleting]
     }
@@ -365,7 +365,7 @@ final class ClipboardFileItem: NSObject, NSFileProviderItem, @unchecked Sendable
 /// makes the system fetch the container as an atomic *file* instead of
 /// enumerating its children, which a placeholder tree cannot serve (observed
 /// live: a pasted `.app` failed with Finder error -36). The pasted copy still
-/// lands as a package on disk. (verified 2026-07-27)
+/// lands as a package on disk.
 // Immutable `let` properties only, so `@unchecked Sendable` is safe here.
 final class ClipboardTreeItem: NSObject, NSFileProviderItem, @unchecked Sendable {
     let itemIdentifier: NSFileProviderItemIdentifier

@@ -115,7 +115,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         // the status-item button pops the assigned menu open by itself (macOS 26,
         // observed on every soft quit with the cursor nowhere near the item), and
         // that open dismisses the reminder via `menuNeedsUpdate` within a frame.
-        // Every dismissal path restores the menu. verified 2026-07-27
+        // Every dismissal path restores the menu.
         statusItem.menu = nil
         button.target = self
         button.action = #selector(statusItemTappedDuringReminder)
@@ -131,7 +131,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         // popover auto-closes on app deactivation (see `PopoverPresenter`'s
         // `onClose` doc), so the reminder would vanish before it could be read.
         // Lifetime is bounded instead by the auto-dismiss timer below, the
-        // opt-out tap, and a click on the status item. verified 2026-07-27
+        // opt-out tap, and a click on the status item.
         softQuitReminder.show(
             content: content, from: button, preferredEdge: .minY, behavior: .applicationDefined)
         Self.logger.debug("Showing soft-quit menu-bar reminder")
@@ -203,7 +203,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         // RATIONALE: deliberately not the shared `NSImage.systemSymbol(_:…)` helper.
         // Its release fallback is a zero-size `NSImage()`, which would render the
         // status-item button invisible — and the status item is the *only* way to
-        // find (or quit) the headless agent. verified 2026-07-27
+        // find (or quit) the headless agent.
         guard
             let image = NSImage(
                 systemSymbolName: Self.iconSymbol, accessibilityDescription: "Kernova")

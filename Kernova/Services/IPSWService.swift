@@ -232,8 +232,7 @@ final class IPSWService: Sendable {
         do {
             if permanently {
                 // RATIONALE: the user-confirmed "Delete Immediately" path; the deliberate
-                // exception to AGENTS.md's "prefer trash over rm" guideline
-                // (verified 2026-07-27).
+                // exception to AGENTS.md's "prefer trash over rm" guideline.
                 try fileSystem.removeItem(at: bundleURL)
             } else {
                 try fileSystem.trashItem(at: bundleURL)

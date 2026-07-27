@@ -10,6 +10,13 @@ import os
 /// through each path's security bookmark: under the sandbox a raw `fileExists` on
 /// an out-of-container path is denied and would mark every present attachment
 /// missing.
+///
+/// Watching is best-effort: a file-scoped bookmark never grants its parent
+/// directory, so `open(parent, O_EVTONLY)` fails for most external attachments and
+/// the `fd >= 0` guard leaves those parents unwatched. Freshness then rests on the
+/// coarse triggers — `setPaths`, app activation, the mount/unmount refresh — which
+/// is why they are not redundant with the per-parent sources. The authoritative
+/// check runs at VM start; this only backs a warning affordance.
 @MainActor
 @Observable
 final class AttachmentFileMonitor {

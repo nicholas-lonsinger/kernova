@@ -159,7 +159,8 @@ public final class ClipboardFileStaging: @unchecked Sendable {
 
         let dir = try directory(for: generation)
         let url = Self.uniqueDestination(in: dir, filename: filename)
-        // `F_NOCACHE` keeps a multi-GB transfer from evicting the page cache.
+        // `F_NOCACHE` keeps a multi-GB transfer from evicting the page cache —
+        // the DTS-preferred behavior for streaming large files.
         FileManager.default.createFile(atPath: url.path, contents: nil)
         let handle = try FileHandle(forWritingTo: url)
         _ = fcntl(handle.fileDescriptor, F_NOCACHE, 1)

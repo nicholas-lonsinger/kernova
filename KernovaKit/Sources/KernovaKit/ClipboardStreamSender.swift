@@ -9,6 +9,11 @@ import Foundation
 /// `FileHandle.read(upToCount:)` in the flow-control loop never blocks a
 /// Swift-concurrency cooperative thread. Per-transfer state is guarded by each
 /// transfer's `NSCondition`; the transfer table is guarded by `lock`.
+///
+/// RATIONALE: Apple DTS sanctions a synchronous read on a dedicated GCD queue as
+/// the fallback to `DispatchIO`, and `F_NOCACHE` recovers the page-cache behavior
+/// DTS prefers for streaming large files. The blocking read is deliberate: the
+/// dedicated queue is what keeps it off the cooperative pool.
 public final class ClipboardStreamSender: @unchecked Sendable {
     private let channel: VsockChannel
     private let chunkSize: Int

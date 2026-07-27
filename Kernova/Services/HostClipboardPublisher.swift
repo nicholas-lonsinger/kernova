@@ -119,7 +119,7 @@ final class HostClipboardPublisher {
         // devices over Universal Clipboard (docs/CLIPBOARD.md §10). The option is
         // per-write state, reset by every `prepareForNewContents`/`clearContents`,
         // so it is applied at this single publication choke point rather than once
-        // at init. (verified 2026-07-27)
+        // at init.
         pasteboard.prepareForNewContents(with: .currentHostOnly)
         guard pasteboard.writeObjects(items) else {
             // The write failed, so the providers were never retained.

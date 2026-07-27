@@ -149,7 +149,9 @@ defect; round-trip equality with a native copy/paste is the bar.
 - **Accepted gap: extended attributes cross on *no* paste path** — Finder tags,
   `com.apple.quarantine`, `kMDItemWhereFroms` — because every path streams content bytes into a
   freshly created destination file. Keep that uniform; one path carrying them alone would be a
-  worse inconsistency than dropping them everywhere.
+  worse inconsistency than dropping them everywhere. Carrying them on both paths is not
+  available: `NSFileProviderItem.extendedAttributes` admits only syncable-flagged names under a
+  ~32 KiB per-item budget.
 - **Do not chase destination-added metadata as a Kernova fidelity bug.** Finder stamps
   `com.apple.FinderInfo` on bundle-named directories it creates during a copy, which
   `codesign --verify --strict` reports as detritus on an otherwise byte-identical bundle (verified

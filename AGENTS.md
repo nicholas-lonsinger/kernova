@@ -62,7 +62,7 @@ Every type that logs declares its own `private static let logger = Logger(subsys
 
 Capture with `subsystem BEGINSWITH "app.kernova"`: an exact `== "app.kernova"` match silently drops the agent's and both extensions' records, and because KernovaKit code inside those processes still matches, the truncated capture *looks* complete.
 
-Only `.notice` and above persist to disk. Use `.debug` for method entry and intermediate state; `.info` for routine progress; `.notice` for state transitions and irreversible actions (VM started/stopped/saved, bundle created/deleted, launch); `.warning` for recoverable trouble (missing files, fallbacks, degraded operation); `.error` for operations that did not complete; `.fault` for programming errors, paired with `assertionFailure`.
+Only `.notice` and above persist to disk; `.debug` reaches no store at all and exists only while a client streams (`log stream`, Console.app). Use `.debug` for method entry and intermediate state; `.info` for routine progress; `.notice` for state transitions and irreversible actions (VM started/stopped/saved, bundle created/deleted, launch); `.warning` for recoverable trouble (missing files, fallbacks, degraded operation); `.error` for operations that did not complete; `.fault` for programming errors, paired with `assertionFailure`.
 
 ### Defensive Unwrapping
 
@@ -131,10 +131,11 @@ Write to that baseline — no onboarding prose, no introducing a term, no explai
 
 ### Routing
 
-Run these on every sentence a diff adds or keeps:
+Run these on every sentence a diff adds or keeps, in order:
 
+0. Does it state an external fact carrying evidence (a vendor doc, a WWDC session, an FB number, a dated observation), or a constraint the code's structure does not reveal? Yes → keep, and stop. Such a fact usually names something outside the tree, so this gate precedes test 3. State it as what is true, never as what failed — a negative claim has no expiry and nothing triggers a re-test, so it outlives the limitation it describes.
 1. Would this sentence exist if someone else had made this change a year ago? No → PR body.
-2. Can a reader with the repo answer it with one grep? Yes → delete.
+2. Can a reader with the repo derive it — a grep, `wc`, `git log`, reading the project file? Yes → delete. A derivable value written down is a second source of truth that can disagree with the first, and a reader cannot tell which is current without deriving it anyway.
 3. Does it name something not in the codebase today? Yes → delete.
 4. Is it stated in another layer? Yes → keep the deepest one only.
 5. Is it true-as-of-a-date rather than always-true? Yes → dated research note, or nowhere.
@@ -156,23 +157,13 @@ Deleted wholesale, not adjudicated sentence by sentence:
 
 Same rules, and the default is none — a comment says what the code cannot. A bare trailing `(#NNN)` is a provenance stamp, not a citation: cite the vendor doc, the radar, or a dated observation, or say nothing.
 
-### Budgets
+### Size
 
-A budget means adding requires removing.
+When you add to a durable doc, read the whole document, not the diff, and decide what no longer earns its place. Growth is invisible at diff altitude: a 5,267-character line was once edited to 5,577 inside a `+1 -1` diff.
 
-| Words | Doc |
-|---|---|
-| 4,000 | ARCHITECTURE.md |
-| 3,000 | CLIPBOARD.md |
-| 2,500 | AGENTS.md |
-| 2,000 | BUILD.md |
-| 1,800 | REVIEW.md |
-| 1,200 | README.md, TESTING.md, RELEASING.md |
-| 1,000 | TOOLBAR.md |
-| 900 | SANDBOX.md |
-| 500 | SPEC.md |
+Removing nothing is legitimate when the subject genuinely grew; not looking is not. Keep a sentence carrying external evidence, or a constraint the code does not reveal, whatever it costs in length — test 0 outranks size, always.
 
-Caps: no doc line over 80 words; no comment block over 8 lines.
+A `//` block over eight lines raises a placement question, not a deletion one: that content usually belongs on the symbol as `///`, or nowhere. The one hard cap is no doc line over 80 words, because an over-long line is unreviewable at any content quality and the fix is always to break the line.
 
 ### When this fires
 

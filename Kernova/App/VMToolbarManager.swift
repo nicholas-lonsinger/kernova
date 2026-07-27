@@ -458,7 +458,6 @@ final class VMToolbarManager: NSObject {
         // RATIONALE: the update methods own enabled state; with autovalidation
         // on, AppKit would force isEnabled=true and fight the manual updates,
         // producing a visible flicker when switching between stopped VMs.
-        // verified 2026-07-27
         item.autovalidates = false
         return item
     }

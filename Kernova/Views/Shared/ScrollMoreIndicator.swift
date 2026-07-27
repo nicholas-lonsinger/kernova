@@ -258,7 +258,7 @@ private func makeScrollMoreChevron() -> NSView {
 
     // RATIONALE: a custom NSBox sizes a `contentView` through the legacy autoresizing
     // path and collapses, so it's pinned as a chrome layer behind the chevron sibling
-    // (the same pattern as `makeGroupedFormBox`). (verified 2026-07-27)
+    // (the same pattern as `makeGroupedFormBox`).
     let container = ScrollMoreHitTransparentView()
     container.addFullSizeSubview(disc)
     container.addSubview(chevron)
