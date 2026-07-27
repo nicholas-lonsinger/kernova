@@ -2,18 +2,16 @@ import AppKit
 
 /// Step 4 of the creation wizard: review the configuration before creating.
 ///
-/// Native macOS grouped cards (System Settings style) of read-only rows plus a
-/// "start after create" switch, built from a snapshot of the shared
-/// ``VMCreationViewModel``. The shell rebuilds this VC each time the review step
-/// is entered, so it always reflects current values; no intra-step observation
-/// is needed. Tapping Create is handled by the shell (which reports to its host
-/// via the delegate).
+/// Read-only rows plus a "start after create" switch, built from a snapshot of
+/// the shared ``VMCreationViewModel``. The shell rebuilds this VC each time the
+/// review step is entered, so it always reflects current values; no intra-step
+/// observation is needed.
 @MainActor
 final class ReviewContentViewController: NSViewController {
     private let creationVM: VMCreationViewModel
     private let startSwitch = NSSwitch()
-    /// Shows the "more content below" cue while this (often-overflowing) summary
-    /// doesn't fit the sheet; a hint only.
+    /// Shows the "more content below" cue while this summary doesn't fit the
+    /// sheet; a hint only.
     private var scrollMoreIndicator: ScrollMoreIndicator?
 
     init(creationVM: VMCreationViewModel) {

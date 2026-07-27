@@ -3,27 +3,20 @@ import os
 
 /// Manages VM bundle directories on disk under `~/Library/Application Support/Kernova/VMs/`.
 ///
-/// Each VM is stored as a `.kernova` document package named by its UUID, containing:
-/// - `config.json` — Serialized `VMConfiguration`
-/// - `Disk.asif` — ASIF sparse disk image
-/// - macOS-specific files: `AuxiliaryStorage`, `HardwareModel`, `MachineIdentifier`
-/// - Optional: `SaveFile.vzvmsave`
+/// Each VM is a `.kernova` document package named by its UUID; `VMBundleLayout`
+/// owns the names of the files inside it.
 struct VMStorageService: Sendable {
     private static let logger = Logger(subsystem: "app.kernova", category: "VMStorageService")
 
     static let bundleExtension = "kernova"
 
     /// Whether `url` looks like a `.kernova` bundle, by extension.
-    ///
-    /// The single source of truth for the odoc/drag-and-drop filter shared by
-    /// `AppDelegate` and `SidebarViewController`.
     static func isBundleURL(_ url: URL) -> Bool {
         url.pathExtension == bundleExtension
     }
 
     // MARK: - Directory Helpers
 
-    /// The root directory for all VM bundles.
     var vmsDirectory: URL {
         get throws {
             let appSupport = try FileManager.default.url(
@@ -44,7 +37,6 @@ struct VMStorageService: Sendable {
         }
     }
 
-    /// Returns the bundle directory URL for a given VM configuration.
     func bundleURL(for configuration: VMConfiguration) throws -> URL {
         try vmsDirectory.appendingPathComponent(
             "\(configuration.id.uuidString).\(Self.bundleExtension)",
@@ -54,7 +46,7 @@ struct VMStorageService: Sendable {
 
     // MARK: - CRUD
 
-    /// Lists all VM bundle directories.
+    /// Lists the bundle directories under `vmsDirectory` that hold a config file.
     func listVMBundles() throws -> [URL] {
         let dir = try vmsDirectory
         let contents = try FileManager.default.contentsOfDirectory(
@@ -68,12 +60,10 @@ struct VMStorageService: Sendable {
         }
     }
 
-    /// Loads a `VMConfiguration` from a bundle directory.
     func loadConfiguration(from bundleURL: URL) throws -> VMConfiguration {
         try VMConfiguration.load(fromBundle: bundleURL)
     }
 
-    /// Saves a `VMConfiguration` to a bundle directory.
     func saveConfiguration(_ configuration: VMConfiguration, to bundleURL: URL) throws {
         let configURL = VMBundleLayout(bundleURL: bundleURL).configURL
         let data = try VMConfiguration.makeJSONEncoder().encode(configuration)
@@ -100,7 +90,6 @@ struct VMStorageService: Sendable {
         return bundle
     }
 
-    /// Clones a VM bundle by creating a new bundle directory and copying specified files.
     func cloneVMBundle(from sourceBundleURL: URL, newConfiguration: VMConfiguration, filesToCopy: [String]) throws
         -> URL
     {
@@ -129,7 +118,7 @@ struct VMStorageService: Sendable {
         return destinationBundle
     }
 
-    /// Deletes a VM bundle directory and all its contents.
+    /// Moves a VM bundle and everything in it to the Trash.
     func deleteVMBundle(at bundleURL: URL) throws {
         guard FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)) else {
             throw VMStorageError.bundleNotFound(bundleURL)
@@ -143,8 +132,9 @@ struct VMStorageService: Sendable {
         guard FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)) else {
             throw VMStorageError.bundleNotFound(bundleURL)
         }
-        // RATIONALE: This is the user-confirmed "Delete Immediately" path, the deliberate
-        // exception to AGENTS.md's "prefer trash over rm" guideline.
+        // RATIONALE: The user-confirmed "Delete Immediately" path (menu item →
+        // confirm sheet → here) is the deliberate exception to AGENTS.md's
+        // "prefer trash over rm" rule. verified 2026-07-27
         try FileManager.default.removeItem(at: bundleURL)
         Self.logger.notice("Permanently deleted VM bundle: \(bundleURL.lastPathComponent, privacy: .public)")
     }

@@ -3,11 +3,9 @@ import os
 
 /// Manages a clipboard sharing window for a single VM instance.
 ///
-/// Each VM gets its own window controller. The window hosts a
-/// `ClipboardContentViewController` and persists its frame position per VM ID.
-///
-/// The controller observes the VM's status and automatically closes the window when
-/// the VM stops or enters an error state.
+/// The window hosts a `ClipboardContentViewController`, persists its frame
+/// position per VM ID, and closes automatically when the VM stops or enters an
+/// error state.
 @MainActor
 final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
     private static let logger = Logger(subsystem: "app.kernova", category: "ClipboardWindowController")
@@ -16,10 +14,8 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
     private var statusObservation: ObservationLoop?
 
     /// The hosted content controller, retained so blur/close can hand off a typed
-    /// edit (`flushAndAnnounceEdit`).
-    ///
-    /// Named distinctly from the inherited `NSWindowController.contentViewController`,
-    /// which is typed `NSViewController?`.
+    /// edit; named distinctly from the inherited `contentViewController`, which
+    /// is typed `NSViewController?`.
     private let clipboardContentVC: ClipboardContentViewController
 
     init(instance: VMInstance, viewModel: VMLibraryViewModel) {
@@ -31,9 +27,8 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
         let viewController = ClipboardContentViewController(
             instance: instance, viewModel: viewModel, publisher: instance.hostClipboardPublisher)
         self.clipboardContentVC = viewController
-        // Tall enough for the content area plus the command bar and the
-        // agent status bar; the min keeps both bars and a few text lines
-        // visible. Autosave name is unchanged so existing saved frames win.
+        // Tall enough for the content area plus the command bar and the agent
+        // status bar; the min keeps both bars and a few text lines visible.
         let initialSize = NSSize(width: 480, height: 320)
 
         let window = NSWindow.withStableContentSize(

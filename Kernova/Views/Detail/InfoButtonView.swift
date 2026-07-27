@@ -3,25 +3,15 @@ import AppKit
 /// Info-circle `NSButton` that opens an `NSPopover` of body paragraphs when
 /// clicked.
 ///
-/// AppKit call sites instantiate `InfoButtonView` and call
-/// ``InfoButtonView/configure(label:paragraphs:)``. Paragraphs are plain values
-/// (`.body(...)` for prose, `.code(...)` for monospaced snippets); the popover
-/// content is rendered by ``InfoPopoverContentViewController``.
-///
-/// The button is wrapped in this view rather than exposed directly so the
-/// popover anchors to a fixed 16×16 inner button: that keeps the info-circle
-/// tight against the trailing edge of the section/control label instead of
-/// being stretched by its container, and anchoring on the inner button keeps
-/// `.minY` ("below") in standard AppKit coordinates.
+/// The button is wrapped in a fixed 16×16 view so the info circle stays tight
+/// against the trailing edge of its label instead of being stretched by its
+/// container, and the popover anchors to that wrapper so `.minY` ("below") is
+/// read in an unflipped coordinate system.
 @MainActor
 final class InfoButtonView: NSView {
     let button = NSButton()
 
     /// Owns the per-button popover lifecycle.
-    ///
-    /// Private so AppKit callers don't accidentally couple to the
-    /// internal state — go through ``configure(label:paragraphs:)``
-    /// instead.
     private let coordinator = Coordinator()
 
     init() {
@@ -56,13 +46,8 @@ final class InfoButtonView: NSView {
     /// Set the info-circle icon, hover tooltip, VoiceOver label, and the
     /// popover paragraph payload that fires on click.
     ///
-    /// Safe to call repeatedly — re-invoked by callers during
-    /// view-controller setup or reuse.
-    ///
-    /// - Parameters:
-    ///   - label: Section or control name; rendered as "About \(label)"
-    ///     in the tooltip and VoiceOver label.
-    ///   - paragraphs: Popover body content.
+    /// Safe to call repeatedly; `label` is the section or control name, rendered
+    /// as "About \(label)".
     func configure(label: String, paragraphs: [InfoPopoverParagraph]) {
         let about = "About \(label)"
         let config = NSImage.SymbolConfiguration(scale: .small)
@@ -81,9 +66,6 @@ final class InfoButtonView: NSView {
     private final class Coordinator {
         let presenter = PopoverPresenter()
         /// Wrapper `NSView` used as the popover's positioning view.
-        ///
-        /// See the type-level note on ``InfoButtonView`` for why
-        /// anchoring on the wrapper (not the inner `NSButton`) matters.
         weak var anchor: NSView?
         var paragraphs: [InfoPopoverParagraph] = []
 

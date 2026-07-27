@@ -1,20 +1,15 @@
 import AppKit
 
 /// Action-needed banner shown at the top of the clipboard window when the host
-/// "Copy to Mac" File Provider extension needs attention — either registered
-/// but not enabled in System Settings (`.needsEnabling`), or a registration/
-/// install failure with no user toggle to flip (`.unavailable`, #591).
+/// "Copy to Mac" File Provider extension needs attention.
 ///
 /// Large guest→host file pastes go lazy through the File Provider; while the
 /// extension is disabled or unavailable, they fall back to a size-capped
-/// synchronous copy (and over-cap files drop). `present(_:)` switches the
-/// banner's copy and whether the "Enable…" button shows (`.needsEnabling` has
-/// a one-toggle fix; `.unavailable` doesn't). The owner toggles visibility via
-/// `isHidden`; it carries its own hairline so it self-delineates from the
-/// command bar below.
+/// synchronous copy (and over-cap files drop). The banner carries its own
+/// hairline, so it self-delineates from the command bar below.
 @MainActor
 final class ClipboardEnablementBanner: NSView {
-    /// The two File Provider states the banner has copy for — see the type doc.
+    /// The two File Provider states the banner has copy for.
     enum Mode {
         case needsEnabling
         case unavailable
@@ -88,10 +83,9 @@ final class ClipboardEnablementBanner: NSView {
 
     /// Configures the banner's copy and button visibility for `mode`.
     ///
-    /// `.needsEnabling` has a one-toggle fix, so it keeps the "Enable…"
-    /// button; `.unavailable` has no user toggle to flip, so the button is
-    /// hidden and the explanatory line is the correction (mirrors the
-    /// status-item menu's `.unavailable` line — #591).
+    /// `.needsEnabling` has a one-toggle fix, so it keeps the "Enable…" button;
+    /// `.unavailable` has no user toggle to flip, so the button is hidden and
+    /// the explanatory line is the correction.
     func present(_ mode: Mode) {
         switch mode {
         case .needsEnabling:

@@ -8,21 +8,16 @@ enum AlertButtonRole {
     /// Activated by the Return key. At most one button per alert should
     /// have this role.
     case `default`
-    /// Activated by the Escape key. AppKit also auto-binds Escape when a
-    /// button's title is "Cancel", but setting `.cancel` here makes the
-    /// intent explicit regardless of title.
+    /// Activated by the Escape key, regardless of the button's title.
     case cancel
-    /// Tinted red via `NSButton.hasDestructiveAction`. Not activated by
-    /// Return — matches SwiftUI convention where `Button(role: .destructive)`
-    /// does not become the default button.
+    /// Tinted red via `NSButton.hasDestructiveAction`, and not activated by
+    /// Return.
     case destructive
     /// Standard button, no special key equivalent or tinting.
     case standard
 }
 
 /// One button in an ``AlertConfiguration``.
-///
-/// The action closure fires when the user activates the button.
 struct AlertButton {
     let title: String
     let role: AlertButtonRole
@@ -37,11 +32,9 @@ struct AlertButton {
 
 /// Declarative description of a sheet alert.
 ///
-/// Passed to ``presentSheetAlert(_:in:completion:)``. Buttons appear in `NSAlert` in the order
-/// listed; the first button added is the AppKit "default" by convention,
-/// but ``presentSheetAlert(_:in:completion:)`` overrides the default
-/// key-equivalent based on roles so the user's chosen `.default` (or none
-/// at all) is honored.
+/// Buttons appear in `NSAlert` in the order listed. AppKit makes the first added
+/// button the default; ``presentSheetAlert(_:in:completion:)`` overrides that
+/// from the roles, so a configuration with no `.default` gets none.
 struct AlertConfiguration {
     let title: String
     let message: String
@@ -56,11 +49,7 @@ struct AlertConfiguration {
 
 /// Presents an `NSAlert` as a window-modal sheet on `window`.
 ///
-/// - Parameters:
-///   - config: Title, message, and buttons.
-///   - window: The window the sheet attaches to — typically the presenting
-///     view controller's own `view.window`.
-///   - completion: Fired after the user's chosen button action has run.
+/// `completion` fires after the user's chosen button action has run.
 @MainActor
 func presentSheetAlert(
     _ config: AlertConfiguration,
@@ -76,10 +65,9 @@ func presentSheetAlert(
         configureNSAlertButton(nsButton, role: button.role)
     }
 
-    // If no button asked for `.default`, clear the auto-Return on the
-    // first added button so Return is inert — matches SwiftUI behavior for
-    // destructive-only alerts (Force Stop, Delete VM, etc.) where the user
-    // must explicitly click.
+    // If no button asked for `.default`, clear the auto-Return on the first
+    // added button so Return is inert — a destructive-only alert (Force Stop,
+    // Delete VM) must be clicked explicitly.
     if !config.buttons.contains(where: { $0.role == .default }), let first = alert.buttons.first {
         first.keyEquivalent = ""
     }

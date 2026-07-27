@@ -14,13 +14,10 @@ extension UTType {
         return type
     }()
 
-    /// `.iso` filename-extension type, falling back to `.data` if lookup fails.
     static let iso: UTType = resolvedFilenameExtension("iso")
 
-    /// `.ipsw` filename-extension type, falling back to `.data` if lookup fails.
     static let ipsw: UTType = resolvedFilenameExtension("ipsw")
 
-    /// `.asif` filename-extension type, falling back to `.data` if lookup fails.
     static let asif: UTType = resolvedFilenameExtension("asif")
 
     private static func resolvedFilenameExtension(_ ext: String, fallback: UTType = .data) -> UTType {
@@ -39,12 +36,10 @@ extension UTType {
     /// resolves to `public.camera-raw-image` (digital camera photos), not raw disk images.
     static let diskImageTypes: [UTType] = {
         let logger = Logger(subsystem: "app.kernova", category: "UTType")
-        // Extensions where the system UTType correctly represents a disk image format.
         let resolvedExtensions: [(ext: String, fallback: UTType)] = [
             ("iso", .diskImage), ("img", .data), ("asif", .data),
         ]
-        // Extensions where the system UTType is semantically wrong for disk
-        // images ("raw" → public.camera-raw-image; see the doc comment above).
+        // "raw" — forced to `.data` per the note above.
         let forcedFallbackExtensions: [UTType] = [.data]
 
         var types: [UTType] = [.diskImage]

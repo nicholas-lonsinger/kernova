@@ -6,15 +6,13 @@ import Virtualization
 /// Hosts a single `VZVirtioSocketListener` on a given vsock port and hands
 /// each accepted connection to a callback as a `VsockChannel`.
 ///
-/// One instance handles one port; pair multiple instances with one
-/// `VZVirtioSocketDevice` to run several services side-by-side (e.g. logging
-/// and clipboard on different ports).
+/// One instance handles one port; pair several with one `VZVirtioSocketDevice`
+/// to run multiple services side-by-side.
 @MainActor
 final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
     typealias OnConnect = @MainActor (VsockChannel) -> Void
 
-    /// Owner-supplied admission predicate, evaluated per accepted connection
-    /// (#145).
+    /// Owner-supplied admission predicate, evaluated per accepted connection.
     ///
     /// Returning `false` refuses the connection at the VZ level — no channel is
     /// built and `onConnect` never fires. `nil` admits every connection.
@@ -38,9 +36,6 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
     }
 
     /// Installs this listener on the supplied socket device.
-    ///
-    /// Connections to
-    /// `port` from the guest will subsequently invoke `onConnect`.
     func attach(to socketDevice: VZVirtioSocketDevice) {
         socketDevice.setSocketListener(listener, forPort: port)
         Self.logger.info("Listening on vsock port \(self.port, privacy: .public)")
@@ -48,14 +43,10 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
 
     // MARK: - VZVirtioSocketListenerDelegate
 
-    // RATIONALE: Virtualization framework delegates are nonisolated; matching
-    // VMDelegateAdapter's pattern, we bridge back to MainActor with
-    // `assumeIsolated` since the VZ delegate callbacks for a VM created on
-    // the main queue are also delivered on the main queue.
-    //
-    // We resolve the fd (and capture errno on failure) in this nonisolated
-    // method so we never carry the non-Sendable `VZVirtioSocketConnection`
-    // across the actor boundary.
+    // VZ delegate callbacks for a VM created on the main queue are delivered on
+    // the main queue, so `assumeIsolated` bridges back. Resolve the fd (and
+    // capture errno) here, in the nonisolated method, so the non-Sendable
+    // `VZVirtioSocketConnection` never crosses the actor boundary.
     nonisolated func listener(
         _ listener: VZVirtioSocketListener,
         shouldAcceptNewConnection connection: VZVirtioSocketConnection,
@@ -71,17 +62,12 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
     /// Resolves one accepted connection: admission check, socket configuration,
     /// channel construction, `onConnect`.
     ///
-    /// Takes ownership of `fd` on every path (the built channel closes it, or a
-    /// refusal closes it here). `internal` (not `private`) purely as a test seam,
-    /// like `configureAcceptedSocket`: the production caller is the nonisolated
-    /// VZ delegate above, whose `VZVirtioSocketConnection` a unit test cannot
-    /// construct, so admission tests drive this against an injected `socketpair`
-    /// fd instead.
+    /// Takes ownership of `fd` on every path — the built channel closes it, or
+    /// a refusal closes it here.
     func acceptDuplicatedFd(_ fd: Int32, dupErrno: Int32) -> Bool {
-        // RATIONALE: dup() above gives us a fully independent fd referencing
-        // the same socket file description. The framework can release its
-        // own copy without affecting ours — `VsockChannel`/`FileHandle`
-        // owns and closes the duplicate.
+        // The dup() above is a fully independent fd on the same socket file
+        // description: the framework can release its own copy without affecting
+        // ours, and `VsockChannel`/`FileHandle` owns and closes the duplicate.
         guard fd >= 0 else {
             Self.logger.error(
                 "dup() failed for accepted vsock connection on port \(self.port, privacy: .public): errno=\(dupErrno, privacy: .public)"
@@ -89,12 +75,9 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
             return false
         }
 
-        // #145 hardening: let the owner veto the connection (e.g. no control
-        // channel with a completed Hello handshake exists for the VM yet).
         // Refusing here — before any channel exists — means the peer sees the
-        // connection reset; a conformant guest agent's reconnect loop simply
-        // retries within its retry interval, by which time the control
-        // handshake has normally landed.
+        // connection reset; a conformant guest agent's reconnect loop retries,
+        // by which time the control handshake has normally landed.
         if let shouldAdmit, !shouldAdmit() {
             Self.logger.warning(
                 "Refusing vsock connection on port \(self.port, privacy: .public) — admission check failed"
@@ -113,11 +96,6 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
     }
 
     /// Applies the host-side socket options to a freshly accepted vsock fd.
-    ///
-    /// `internal` (not `private`) purely as a test seam: the accept path's fd
-    /// otherwise originates from a live `VZVirtioSocketConnection`, so a unit test
-    /// has no way to observe the applied options without driving this against an
-    /// injected `socketpair` fd.
     func configureAcceptedSocket(_ fd: Int32) {
         applySendBuffer(fd)
         applySendTimeout(fd)
@@ -125,19 +103,12 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
 
     /// Enlarges the socket send buffer to unlock host→guest streaming throughput.
     ///
-    /// RATIONALE: a `VZVirtioSocketConnection`'s host-side fd is a plain AF_UNIX
-    /// socket born at XNU's 8 KiB `net.local.stream.sendspace` default, and vsock
-    /// throughput is gated by the *writer's* send buffer. At 8 KiB the host writer
-    /// ping-pongs with the VM helper process every 8 KiB, capping the raw
-    /// host→guest transport at ~0.7 GiB/s; raising `SO_SNDBUF` to 1 MiB lifts that
-    /// ceiling ~9× (measured knee at 256 KiB), after which the app stack is the
-    /// only host→guest limiter (#377). 64 KiB writes stay optimal, so the chunk
-    /// and credit-window sizes are untouched. Host-only: the guest→host writer
-    /// lives in Apple's `com.apple.Virtualization.VirtualMachine` helper process
-    /// and is unreachable per-fd, so that direction stays capped ~750 MiB/s. The
-    /// `setsockopt` return is checked and the applied value read back; a clamp
-    /// below the requested size is logged at `.warning` (persisted) so a lever
-    /// that silently failed to engage is diagnosable post-mortem.
+    /// RATIONALE: throughput is gated by the *writer's* send buffer, and this fd
+    /// is born at XNU's 8 KiB `net.local.stream.sendspace` default — the host
+    /// writer then ping-pongs with the VM helper process every 8 KiB, capping
+    /// host→guest at ~0.7 GiB/s. 1 MiB lifts that ~9× (knee measured at 256 KiB,
+    /// #377). Host-only: the guest→host writer lives in Apple's VM helper
+    /// process, unreachable per-fd. verified 2026-07-27
     private func applySendBuffer(_ fd: Int32) {
         var size = Int32(Self.sendBufferBytes)
         let rc = setsockopt(
@@ -164,23 +135,11 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
 
     /// Bounds a host write to a stalled guest defensively.
     ///
-    /// RATIONALE: the host previously built the channel from the duped fd with no
-    /// send timeout, so a guest that stops draining could hang a `writeFramed`
-    /// forever. The socket send buffer is 1 MiB (`applySendBuffer`, raised from
-    /// XNU's 8 KiB `net.local.stream.sendspace` default) while the streaming credit
-    /// window (`ClipboardStreamTuning`) ranges 1–2 MiB, so at the 2 MiB ceiling a
-    /// `writeFramed` `write(2)` can still block. What actually keeps a blocked
-    /// write from wedging the channel is `VsockChannel`'s split write/state lock
-    /// (#457): a stalled peer's blocked write holds only the write lock, never the
-    /// lock inbound decode needs, so acks and control frames keep flowing and the
-    /// streaming engine's own no-ack (sender) / inbound-stall (receiver) deadlines
-    /// can still fire and tear the channel down — which `shutdown(2)`s the fd
-    /// first, unblocking the parked write. `SO_SNDTIMEO` is a belt-and-suspenders
-    /// backstop on top of that; Apple does not document whether it is honoured on a
-    /// vsock fd (it may be a no-op). The `setsockopt` return is checked and logged
-    /// so an ineffective option is visible; if it proves ineffective in practice
-    /// the streaming write path can move to a non-blocking fd + `poll(POLLOUT)`
-    /// (vsock(4)'s canonical approach).
+    /// Apple does not document whether `SO_SNDTIMEO` is honoured on a vsock fd,
+    /// so treat this as a backstop, not as the mechanism that unwedges a write
+    /// to a stalled guest — that is `VsockChannel`'s split write/state lock,
+    /// which keeps acks flowing so the streaming deadlines can tear the channel
+    /// down and unblock the parked write.
     private func applySendTimeout(_ fd: Int32) {
         var timeout = timeval(tv_sec: Self.sendTimeoutSeconds, tv_usec: 0)
         let rc = setsockopt(
@@ -195,11 +154,7 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
     /// Defensive host-side send timeout, matching the guest's socket timeout.
     private static let sendTimeoutSeconds = 30
 
-    /// Host-side socket send-buffer size.
-    ///
-    /// XNU births the `VZVirtioSocketConnection` fd at an 8 KiB
-    /// `net.local.stream.sendspace` default; 1 MiB lifts the host→guest transport
-    /// ceiling ~9× (knee measured at 256 KiB) and stays well under
-    /// `kern.ipc.maxsockbuf` (8 MiB). See `applySendBuffer` (#377).
+    /// Host-side socket send-buffer size, well under `kern.ipc.maxsockbuf`
+    /// (8 MiB) — see `applySendBuffer` for why it is raised at all.
     private static let sendBufferBytes = 1 << 20
 }

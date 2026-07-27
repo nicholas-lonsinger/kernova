@@ -1,12 +1,6 @@
 import AppKit
 
 /// Two-step macOS install progress UI (download → install).
-///
-/// AppKit reimplementation of the former SwiftUI `MacOSInstallProgressView`.
-/// Observes the instance's `installState`; when the install includes a download
-/// step it shows numbered step indicators with a connector, otherwise just the
-/// install progress bar. The Cancel button confirms via a sheet alert (download
-/// resumes next start; install restarts from the cached image).
 @MainActor
 final class MacOSInstallProgressViewController: NSViewController {
     private let instance: VMInstance
@@ -14,10 +8,6 @@ final class MacOSInstallProgressViewController: NSViewController {
     private var observation: ObservationLoop?
 
     private let progressBar = NSProgressIndicator()
-    // Two separate labels so the speed/ETA line can refresh on a slower cadence
-    // than the byte/percent line. Line 1 (bytes/%) and the progress bar track the
-    // smoother's ~10 Hz feed; line 2 is throttled to `line2RefreshInterval` so the
-    // ~5 s-smoothed speed/ETA doesn't flicker (#555 follow-up).
     private let detailLine1Label = NSTextField(labelWithString: "")
     private let detailLine2Label = NSTextField(labelWithString: "")
     private let cancelButton = NSButton()
@@ -81,9 +71,6 @@ final class MacOSInstallProgressViewController: NSViewController {
         }
         detailLine2Label.isHidden = true
 
-        // The two lines stack tightly (hairline gap), each centered on the shared
-        // centerline — every field is constant-width (#555), so neither line
-        // shifts horizontally as it updates.
         let detailStack = NSStackView(views: [detailLine1Label, detailLine2Label])
         detailStack.orientation = .vertical
         detailStack.alignment = .centerX
@@ -227,11 +214,9 @@ final class MacOSInstallProgressViewController: NSViewController {
 
     /// Refreshes the two subtitle labels.
     ///
-    /// Line 1 (bytes/%) tracks the progress bar's ~10 Hz feed; line 2 (speed/ETA)
-    /// is throttled to `line2RefreshInterval` so the ~5 s-smoothed figures don't
-    /// flicker. Line 2 also refreshes the instant it starts or stops applying (the
-    /// first speed sample, or the install phase) so its appearance isn't delayed
-    /// by a throttle window.
+    /// Line 2 (speed/ETA) is throttled to `line2RefreshInterval` so the smoothed
+    /// figures don't flicker, but refreshes the instant it starts or stops
+    /// applying so its appearance isn't delayed by a throttle window.
     private func refreshDetailLabels(for phase: MacOSInstallPhase) {
         detailLine1Label.stringValue = Self.detailLine1(for: phase)
 
@@ -307,8 +292,7 @@ final class MacOSInstallProgressViewController: NSViewController {
     /// Builds subtitle line 1 — the byte/percent progress line.
     ///
     /// Assembled from figure-space-padded fixed-width fields so it holds a stable
-    /// horizontal position as values update (#555). Pure and `nonisolated` so the
-    /// width-stability tests can exercise it directly.
+    /// horizontal position as values update.
     nonisolated static func detailLine1(for phase: MacOSInstallPhase) -> String {
         switch phase {
         case .downloading(let download):
@@ -341,10 +325,6 @@ final class MacOSInstallProgressViewController: NSViewController {
     }
 
     /// Composes both subtitle lines into one newline-separated string.
-    ///
-    /// The live UI renders the lines in two independently-throttled labels; this
-    /// joined form is the single source of truth for the assembled text and backs
-    /// the width-stability tests.
     nonisolated static func detailText(for phase: MacOSInstallPhase) -> String {
         [detailLine1(for: phase), detailLine2(for: phase)].compactMap { $0 }.joined(separator: "\n")
     }

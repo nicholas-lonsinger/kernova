@@ -4,12 +4,7 @@ import AppKit
 /// from an AppKit anchor view and forwards the confirmed size to a closure.
 ///
 /// One instance owns one popover slot — typically a stored property on the view
-/// controller that hosts the anchor button. This is the pure-AppKit replacement
-/// for the `Coordinator` that used to live inside the SwiftUI
-/// `CreateStorageDiskPopoverAnchor` / `CreateRemovableMediaPopoverAnchor`
-/// bridges: the `onConfirm` closure lets the host decide what to do with the
-/// size (allocate an in-bundle disk, or present a save panel for external
-/// media) without coupling this coordinator to the view model.
+/// controller that hosts the anchor button.
 @MainActor
 final class DiskSizePopoverCoordinator: DiskSizePopoverContentViewControllerDelegate {
     private let presenter = PopoverPresenter()
@@ -41,10 +36,9 @@ final class DiskSizePopoverCoordinator: DiskSizePopoverContentViewControllerDele
         _ vc: DiskSizePopoverContentViewController,
         didConfirmSizeInGB sizeInGB: Int
     ) {
-        // Close before invoking the action: the action may present an
-        // NSSavePanel (removable media) or mutate the config (in-bundle disk),
-        // and closing first lets the popover's dismissal animation complete
-        // first — matching the former SwiftUI bridge's ordering.
+        // Close before invoking the action so the popover's dismissal animation
+        // completes before the action presents an NSSavePanel (removable media)
+        // or mutates the config (in-bundle disk).
         presenter.close()
         onConfirm(sizeInGB)
     }

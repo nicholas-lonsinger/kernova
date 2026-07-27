@@ -3,9 +3,6 @@ import AppKit
 /// Centered spinner + status label shown in the detail pane during transient
 /// states (starting, suspending, restoring, …) and while a clone/import is
 /// preparing.
-///
-/// The AppKit replacement for the former SwiftUI `transitionView` /
-/// `preparingState` progress placeholders in `VMDetailView`.
 @MainActor
 final class DetailStatusPlaceholderViewController: NSViewController {
     private let spinner = NSProgressIndicator()

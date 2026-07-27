@@ -4,19 +4,12 @@ import AppKit
 /// look — rounded, subtly-filled cards with hairline-separated rows, section
 /// headers, captions, and tinted banners.
 ///
-/// Mirrors the `CalloutStyle` / `WizardStyle` pattern: a token `enum` plus free
-/// `make*` factory functions, so every view controller composing a grouped form
-/// looks consistent without inheriting from a shared base class.
-///
-/// These atoms are deliberately context-neutral: both the creation wizard
-/// (`WizardStyle` builds on them) and the VM settings pane consume them. Tokens
-/// that are specific to one surface (e.g. the wizard's fixed sheet dimensions)
-/// stay in that surface's own style file.
+/// These atoms are context-neutral: tokens specific to one surface (e.g. the
+/// wizard's fixed sheet dimensions) stay in that surface's own style file.
 enum GroupedFormStyle {
-    /// Symmetric inset from a scrolling form's viewport to its content, applied
-    /// on both sides so content stays horizontally centered — and, on scrolling
-    /// forms, also the clearance between content and the overlay scroller at the
-    /// trailing edge.
+    /// Symmetric inset from a scrolling form's viewport to its content, applied on
+    /// both sides so content stays horizontally centered — and the clearance
+    /// between content and a trailing overlay scroller.
     static let contentSideInset: CGFloat = 16
 }
 
@@ -29,8 +22,6 @@ enum GroupedFormStyle {
 /// to the bottom of the viewport — and when content is marginally taller than
 /// the viewport, the initial scroll position shows the bottom, clipping the top
 /// out of view.
-/// Top-anchoring clip view shared by the grouped-form scroll views and the
-/// delete sheet's content list.
 final class FlippedClipView: NSClipView {
     override var isFlipped: Bool { true }
 }
@@ -38,19 +29,11 @@ final class FlippedClipView: NSClipView {
 /// Wraps `content` in a borderless vertical scroll view.
 ///
 /// `content` is hosted inside a full-width document view and inset symmetrically
-/// by ``GroupedFormStyle/contentSideInset`` on both sides, so it stays
-/// horizontally centered, and by `topInset` / `bottomInset` so a scrolling form
-/// can keep a margin from the viewport's top and/or bottom edges. The document
-/// view fills the clip view's width on purpose: pinning it *narrower* than the
-/// clip makes `NSClipView` offset its bounds origin to align the under-sized
-/// document, which scrolls the content sideways and defeats the inset. With the
-/// flipped clip view short content sits at the top and tall content scrolls.
-/// Callers add their own per-subview width constraints against `content`.
-///
-/// The scroller style follows the system: with "Always show scroll bars" the
-/// vertical scroller reserves a gutter (its width comes out of the clip, so the
-/// trailing content margin grows when content overflows — a visible cue that
-/// there's more below); with overlay scrollers it floats and auto-hides.
+/// by ``GroupedFormStyle/contentSideInset``, plus `topInset` / `bottomInset`.
+/// The document view fills the clip view's width on purpose: pinning it
+/// *narrower* than the clip makes `NSClipView` offset its bounds origin to align
+/// the under-sized document, which scrolls the content sideways and defeats the
+/// inset. Callers add their own per-subview width constraints against `content`.
 @MainActor
 func makeGroupedFormScrollView(
     documentView content: NSView,
@@ -63,7 +46,6 @@ func makeGroupedFormScrollView(
     scrollView.hasHorizontalScroller = false
     scrollView.borderType = .noBorder
     scrollView.drawsBackground = false
-    // Show the vertical scroller only when content overflows.
     scrollView.autohidesScrollers = true
     scrollView.automaticallyAdjustsContentInsets = false
     scrollView.contentInsets = NSEdgeInsetsZero
@@ -84,8 +66,6 @@ func makeGroupedFormScrollView(
         docView.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
         docView.trailingAnchor.constraint(equalTo: clip.trailingAnchor),
         docView.widthAnchor.constraint(equalTo: clip.widthAnchor),
-        // Content inset symmetrically within the document view → centered,
-        // with optional top/bottom margins so scrolling content clears the edges.
         content.topAnchor.constraint(equalTo: docView.topAnchor, constant: topInset),
         content.bottomAnchor.constraint(equalTo: docView.bottomAnchor, constant: -bottomInset),
         content.leadingAnchor.constraint(equalTo: docView.leadingAnchor, constant: inset),
@@ -96,7 +76,6 @@ func makeGroupedFormScrollView(
 
 // MARK: - Grouped cards (System Settings style)
 
-/// Builds a 1pt, appearance-adaptive horizontal hairline for separating card rows.
 @MainActor
 func makeGroupedFormHairline() -> NSView {
     let line = NSBox()
@@ -145,8 +124,6 @@ func makeGroupedFormCardRow(
     return row
 }
 
-/// Wraps rows in a rounded, subtly-filled card with hairline separators between
-/// them — the native macOS grouped-form look.
 @MainActor
 func makeGroupedFormCard(rows: [NSView]) -> NSView {
     let content = NSStackView()
@@ -185,10 +162,6 @@ func makeGroupedFormCard(rows: [NSView]) -> NSView {
 }
 
 /// Leading indent applied to a sub-option nested beneath its parent row.
-///
-/// Enough to read as "child of the row above" while the trailing control stays
-/// aligned with the rest of the card. Matches the wizard's radio-description
-/// indent.
 let groupedFormSubOptionIndent: CGFloat = 20
 
 /// Composes a primary row and a dependent sub-option into a single grouped-form
@@ -196,9 +169,7 @@ let groupedFormSubOptionIndent: CGFloat = 20
 /// the primary so the pair reads as a parent → child unit.
 ///
 /// Pass the result to ``makeGroupedFormCard(rows:)`` in place of two sibling
-/// rows. The card then draws its usual full-width separators only *around* the
-/// pair — not between them — keeping the sub-option visually attached to its
-/// parent rather than floating as an equal peer.
+/// rows, so the card's full-width separators land only *around* the pair.
 @MainActor
 func makeGroupedFormSubOptionGroup(primary: NSView, subOption: NSView) -> NSView {
     let hairline = makeGroupedFormHairline()
@@ -227,7 +198,6 @@ func makeGroupedFormSubOptionGroup(primary: NSView, subOption: NSView) -> NSView
 
 // MARK: - Labels
 
-/// Builds a secondary value label for a form/review row (the trailing value).
 @MainActor
 func makeGroupedFormValueLabel(_ text: String) -> NSTextField {
     let label = NSTextField(labelWithString: text)
@@ -238,7 +208,6 @@ func makeGroupedFormValueLabel(_ text: String) -> NSTextField {
     return label
 }
 
-/// Builds a secondary section-header label for a grouped form section.
 @MainActor
 func makeGroupedFormSectionHeader(_ text: String) -> NSTextField {
     let label = NSTextField(labelWithString: text)
@@ -248,7 +217,6 @@ func makeGroupedFormSectionHeader(_ text: String) -> NSTextField {
     return label
 }
 
-/// Builds a secondary, wrapping caption label (explanatory footnote under a row).
 @MainActor
 func makeGroupedFormCaption(_ text: String) -> NSTextField {
     let label = NSTextField(wrappingLabelWithString: text)
@@ -259,11 +227,6 @@ func makeGroupedFormCaption(_ text: String) -> NSTextField {
     return label
 }
 
-/// Builds a borderless, link-styled push button (caption font, link color).
-///
-/// Used for lightweight inline affordances — e.g. a "Change…" path control in
-/// the creation wizard or a "Select All" toggle in the delete sheet's section
-/// header.
 @MainActor
 func makeLinkButton(_ title: String, target: AnyObject, action: Selector) -> NSButton {
     let button = NSButton(title: title, target: target, action: action)
@@ -279,14 +242,11 @@ func makeLinkButton(_ title: String, target: AnyObject, action: Selector) -> NSB
 
 /// Wraps `content` in a rounded, tinted container drawn by an `NSBox`.
 ///
-/// The `NSBox` draws its `fillColor`/`borderColor` (`NSColor`s) and adapts to
-/// light/dark automatically — no layer-backed `CGColor` juggling or
-/// `viewDidChangeEffectiveAppearance` override needed. It is used purely as a
-/// chrome layer pinned behind the content rather than via `box.contentView`: a
-/// custom `NSBox` sizes its content view through the legacy autoresizing path
-/// and never derives an intrinsic height from Auto Layout content, so it
-/// collapses. Pinning the content as a sibling makes the container's size a
-/// pure function of the content's own constraints.
+/// The box is a chrome layer pinned behind the content rather than its
+/// `box.contentView`: a custom `NSBox` sizes its content view through the legacy
+/// autoresizing path and never derives an intrinsic height from Auto Layout
+/// content, so it collapses. Pinning the content as a sibling makes the
+/// container's size a pure function of the content's own constraints.
 @MainActor
 func makeGroupedFormBox(
     content: NSView,
@@ -318,8 +278,6 @@ func makeGroupedFormBox(
     return container
 }
 
-/// Builds a tinted warning/info banner: a symbol, a message, and optional
-/// trailing action buttons, in a rounded tinted container.
 @MainActor
 func makeGroupedFormBanner(
     symbolName: String,

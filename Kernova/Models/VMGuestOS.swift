@@ -39,8 +39,8 @@ enum VMGuestOS: String, Codable, CaseIterable, Sendable {
 
     /// Default size used when creating a new disk image.
     ///
-    /// OS-independent — fits comfortably above both guest OSes'
-    /// `minDiskSizeInGB` and is present in `allDiskSizes`.
+    /// Must stay above both guest OSes' `minDiskSizeInGB` and present in
+    /// `allDiskSizes`.
     static let defaultDiskSizeInGB = 100
 
     /// All offered disk sizes in GB, matching bundled ASIF templates.
@@ -49,7 +49,6 @@ enum VMGuestOS: String, Codable, CaseIterable, Sendable {
         500, 750, 1000, 1500, 2000, 2500, 5000, 7500, 10000,
     ]
 
-    /// The disk sizes available for this guest OS, filtered by minimum.
     var availableDiskSizes: [Int] {
         Self.allDiskSizes.filter { $0 >= minDiskSizeInGB }
     }

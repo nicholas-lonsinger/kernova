@@ -19,7 +19,6 @@ enum VMBootMode: String, Codable, Sendable {
         }
     }
 
-    /// Returns the valid boot modes for a given guest OS.
     static func validModes(for guestOS: VMGuestOS) -> [VMBootMode] {
         switch guestOS {
         case .macOS: [.macOS]

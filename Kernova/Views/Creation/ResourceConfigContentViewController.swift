@@ -2,13 +2,11 @@ import AppKit
 
 /// Step 3 of the creation wizard: name the VM and allocate resources.
 ///
-/// Native macOS grouped cards (System Settings style): a heading, then sections
-/// of rows inside rounded boxes. All controls write the shared
-/// ``VMCreationViewModel`` directly. The name field and the CPU/Memory fields
-/// write on every keystroke (via `controlTextDidChange`) so the shell's
-/// `canAdvance`/`validationMessage` observation re-evaluates the Next button
-/// live. Stepper/field bounds come from the *current* `selectedOS`, and the
-/// standing values are clamped into range when the step is built.
+/// All controls write the shared ``VMCreationViewModel`` directly. The name field
+/// writes on every keystroke so the shell's `canAdvance`/`validationMessage`
+/// observation re-evaluates the Next button live. Stepper/field bounds come from
+/// the *current* `selectedOS`, and the standing values are clamped into range
+/// when the step is built.
 @MainActor
 final class ResourceConfigContentViewController: NSViewController {
     private let creationVM: VMCreationViewModel
@@ -225,11 +223,9 @@ final class ResourceConfigContentViewController: NSViewController {
     /// Clamps a typed CPU/Memory value into the OS-allowed range and syncs the
     /// model, the paired stepper, and the field text together.
     ///
-    /// Called on end-of-edit (not per keystroke): clamping mid-type would snap
-    /// the stepper to the minimum while the field still showed a partial value
-    /// (e.g. typing "16" momentarily reads as 1 → clamps to the minimum), which
-    /// desyncs the field from the stepper. CPU/Memory don't gate `canAdvance`,
-    /// so there's no need to write them live.
+    /// Called on end-of-edit, not per keystroke: clamping mid-type would snap the
+    /// stepper to the minimum while the field still showed a partial value (e.g.
+    /// typing "16" momentarily reads as 1), desyncing the two.
     private func applyCPUFieldEdit() {
         let clamped = min(max(cpuField.integerValue, os.minCPUCount), os.maxCPUCount)
         creationVM.cpuCount = clamped
@@ -250,9 +246,7 @@ final class ResourceConfigContentViewController: NSViewController {
 extension ResourceConfigContentViewController: NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
         guard let field = obj.object as? NSTextField else { return }
-        // Only the name affects `canAdvance`/`validationMessage` (which the shell
-        // observes), so write it live. CPU/Memory are clamped on end-of-edit to
-        // avoid a mid-type stepper/field desync.
+        // Only the name affects `canAdvance`/`validationMessage`, so write it live.
         if field === nameField {
             creationVM.vmName = nameField.stringValue
         }

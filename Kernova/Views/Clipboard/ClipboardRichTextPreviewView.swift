@@ -4,11 +4,8 @@ import os
 
 /// Read-only styled preview of inline RTF.
 ///
-/// The buffer already holds the rich representations; this view renders them
-/// styled so a copied formatted snippet shows its formatting instead of flat
-/// text. It is non-editable on purpose — the editable plain-text editor stays
-/// for plain text, while rich content is a faithful preview (editing it as
-/// plain text in place would silently flatten the formatting).
+/// Non-editable on purpose: editing rich content as plain text in place would
+/// silently flatten its formatting.
 @MainActor
 final class ClipboardRichTextPreviewView: NSView {
     private static let logger = Logger(subsystem: "app.kernova", category: "ClipboardRichTextPreviewView")
@@ -31,8 +28,7 @@ final class ClipboardRichTextPreviewView: NSView {
             height: CGFloat.greatestFiniteMagnitude
         )
         // A read-only NSTextView still registers as a drag destination; keep it
-        // from intercepting drops so the whole window is one drop target (see
-        // ClipboardImagePreviewView).
+        // from intercepting drops so the whole window is one drop target.
         textView.unregisterDraggedTypes()
         self.textView = textView
 
@@ -61,7 +57,6 @@ final class ClipboardRichTextPreviewView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// Matches the text editor's background — see `ClipboardImagePreviewView`.
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
@@ -71,10 +66,8 @@ final class ClipboardRichTextPreviewView: NSView {
     /// Renders `data` as styled text.
     ///
     /// Decodes with the RTFD document type for an RTFD flavor (so an inline image
-    /// renders in place) and plain RTF otherwise — flat-RTFD is a self-contained
-    /// flat byte stream, so no unpacking is needed. Returns `false` when the bytes
-    /// can't be decoded — the caller falls back to the summary. Runtime data, so
-    /// failure is a logged condition, not a programming error.
+    /// renders in place) and plain RTF otherwise. Returns `false` when the bytes
+    /// can't be decoded — the caller falls back to the summary.
     func configure(data: Data, uti: String) -> Bool {
         let documentType: NSAttributedString.DocumentType =
             UTType(uti)?.needsRTFDDocumentType == true ? .rtfd : .rtf

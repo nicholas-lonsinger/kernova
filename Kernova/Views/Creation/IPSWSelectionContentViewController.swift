@@ -5,8 +5,7 @@ import UniformTypeIdentifiers
 /// source (download latest vs. local file), show the chosen path, and surface
 /// overwrite/resume warnings.
 ///
-/// A native macOS form: a left-aligned heading and a radio-button group for the
-/// source. All controls mutate the shared ``VMCreationViewModel`` and then call
+/// All controls mutate the shared ``VMCreationViewModel`` and then call
 /// ``refresh()`` to reconcile the radios, path badge, and banners in place. The
 /// shell observes the model separately to keep its Next button in sync.
 @MainActor
@@ -17,8 +16,8 @@ final class IPSWSelectionContentViewController: NSViewController {
 
     /// Rebuilt by ``rebuildConditional()`` whenever the source/path/warning state changes.
     private let conditionalContainer = NSStackView()
-    /// Shows the "more content below" cue while this step's content — radios plus
-    /// the conditional path badge / banners — overflows the sheet; a hint only.
+    /// Shows the "more content below" cue while this step's content overflows the
+    /// sheet; a hint only.
     private var scrollMoreIndicator: ScrollMoreIndicator?
 
     init(creationVM: VMCreationViewModel) {
@@ -127,9 +126,8 @@ final class IPSWSelectionContentViewController: NSViewController {
         case .downloadLatest:
             let path = creationVM.ipswDownloadPath
             // No "Change…" affordance: the destination is always the Downloads
-            // folder, the one location the sandbox's downloads entitlement
-            // covers without per-pick grants (the resume sidecar lives beside
-            // the destination, outside any save-panel grant).
+            // folder, the one location the sandbox's downloads entitlement covers
+            // without per-pick grants.
             conditionalContainer.addArrangedSubview(makeWizardPathBadge(path: path))
 
             if creationVM.shouldShowOverwriteWarning {

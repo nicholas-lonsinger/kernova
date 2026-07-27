@@ -3,36 +3,23 @@ import AppKit
 /// Trailing accessory shown in the sidebar row when the guest agent needs
 /// the user's attention.
 ///
-/// Pure AppKit: an `NSButton` (for the static SF Symbol states) and an
-/// `NSProgressIndicator` (for the `.connecting` spinner) stacked at fixed
-/// size, with one visible at a time based on `status.isConnecting`. Click
-/// opens an `NSPopover` (via ``PopoverPresenter``) hosting an
+/// An `NSButton` (the static SF Symbol states) and an `NSProgressIndicator`
+/// (the `.connecting` spinner) stacked at fixed size, one visible at a time.
+/// Click opens an `NSPopover` hosting an
 /// ``AgentStatusPopoverContentViewController``.
-///
-/// ## Why the spinner is an `NSProgressIndicator`
-/// An earlier SwiftUI version used `.symbolEffect(.rotate, options:
-/// .repeat(.continuous))` on the SF Symbol while `.connecting`. On macOS
-/// Tahoe that modifier re-ran the SwiftUI view graph every animation tick,
-/// generating enough CA commits to backlog the render server and freeze
-/// the main thread for the entire post-start grace window. AppKit's
-/// `NSProgressIndicator` animates in Core Animation without invalidating
-/// the surrounding view tree.
 @MainActor
 final class SidebarAgentStatusButtonView: NSView,
     AgentStatusPopoverContentViewControllerDelegate
 {
-    /// Invoked when the user activates the popover's action button for a
-    /// status that requires mounting the installer
-    /// (`.waiting`, `.outdated`, `.expectedMissing`).
+    /// Invoked when the user activates the popover's action button for a status
+    /// that requires mounting the installer.
     var onMount: (() -> Void)?
 
-    /// Invoked when the user activates the popover's "Don't show again"
-    /// link (only surfaced when ``hasDismissAction`` is true).
+    /// Invoked when the user activates the popover's "Don't show again" link.
     var onDismiss: (() -> Void)?
 
-    /// The accessory's fixed square dimension — also read by
-    /// `SidebarVMRowCellView.contentWidth(...)` so the sidebar snap-to-fit
-    /// reserves the right trailing width.
+    /// The accessory's fixed square dimension — also read by the sidebar
+    /// snap-to-fit measurement, so it reserves the right trailing width.
     static let width: CGFloat = 16
 
     private let iconButton = NSButton()
@@ -71,10 +58,8 @@ final class SidebarAgentStatusButtonView: NSView,
 
     /// Applies a new status / VM name / dismiss-availability snapshot.
     ///
-    /// Updates the button image and tint, toggles the spinner, refreshes
-    /// the help tooltip, and (if the popover is currently shown) updates
-    /// the popover content in place so an in-flight status change
-    /// (e.g. `.waiting → .current`) doesn't dismiss the popover.
+    /// An open popover is updated in place, so an in-flight status change
+    /// doesn't dismiss it.
     func configure(status: AgentStatus, vmName: String, hasDismissAction: Bool) {
         self.status = status
         self.vmName = vmName
@@ -88,10 +73,9 @@ final class SidebarAgentStatusButtonView: NSView,
 
     /// Closes any open popover and stops the spinner.
     ///
-    /// Called by the hosting sidebar cell when the cell is recycled, rebound to
-    /// a different VM, or the indicator is hidden — so a stale popover can't
-    /// fire its action against the wrong VM and the spinner can't keep
-    /// animating on a hidden/off-screen view.
+    /// Called when the cell is recycled, rebound, or hidden, so a stale popover
+    /// can't fire its action against the wrong VM and the spinner can't keep
+    /// animating off-screen.
     func reset() {
         popoverPresenter.close()
         spinner.stopAnimation(nil)
@@ -114,14 +98,11 @@ final class SidebarAgentStatusButtonView: NSView,
         spinner.style = .spinning
         spinner.controlSize = .mini
         spinner.isDisplayedWhenStopped = false
-        // NSProgressIndicator does not expose a direct tint API; it adopts
-        // the system control accent. The default rendering is gray-ish,
-        // which matches the "secondary" semantic of the .connecting state.
+        // NSProgressIndicator exposes no tint API; it adopts the system control
+        // accent, whose gray-ish default matches the `.connecting` semantic.
         addSubview(spinner)
     }
 
-    /// Reflects `status` into the icon image + tint, and into the spinner's
-    /// running state.
     private func applyVisualState() {
         if status.isConnecting {
             iconButton.isHidden = true

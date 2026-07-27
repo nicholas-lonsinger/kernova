@@ -6,19 +6,11 @@ import os
 /// Pure-AppKit settings pane for editing a stopped VM's configuration, or
 /// viewing a running VM's configuration in read-only mode.
 ///
-/// The AppKit reimplementation of the former SwiftUI `VMSettingsView`. The
-/// SwiftUI version is the behavioral spec; this is idiomatic AppKit: a single
-/// concrete `NSViewController` that builds a grouped form (matching the creation
-/// wizard's `GroupedFormStyle`), writes every config change through
-/// `viewModel.updateConfiguration`, and refreshes its chrome from an
-/// idempotent ``apply()`` driven by an ``ObservationLoop``.
-///
 /// Structure that depends on the *instance* (guest-agent section visibility,
 /// MAC-address row, OS-specific help text) is fixed per instance and built in
-/// ``buildForm()``; switching VMs rebuilds the form (mirroring the SwiftUI
-/// `.id(selected.id)` reset). ``apply()`` only updates mutable state: control
-/// values, lock/enabled state, the dynamic attachment lists, and the microphone
-/// permission warning.
+/// ``buildForm()``; switching VMs rebuilds the form. ``apply()`` only updates
+/// mutable state: control values, lock/enabled state, the dynamic attachment
+/// lists, and the microphone permission warning.
 @MainActor
 final class VMSettingsViewController: NSViewController {
     private static let logger = Logger(
@@ -32,8 +24,7 @@ final class VMSettingsViewController: NSViewController {
 
     private let fileMonitor = AttachmentFileMonitor()
     /// Flashes the form's scroller once when its content overflows the viewport,
-    /// signaling there's more below — a light, overlay-free cue (`.flash` only,
-    /// see ``ScrollMoreCues``).
+    /// signaling there's more below.
     private var scrollMoreIndicator: ScrollMoreIndicator?
     private var modelObservation: ObservationLoop?
     private var hasDisappeared = false
@@ -42,8 +33,7 @@ final class VMSettingsViewController: NSViewController {
     /// A new token is minted each `viewDidAppear`; a re-arming callback from an
     /// older cycle (which `hasDisappeared` alone can't cancel —
     /// `withObservationTracking` has no unregister) bails when its token no
-    /// longer matches, so stale chains can't accumulate across appear/disappear
-    /// cycles.
+    /// longer matches, so stale chains can't accumulate.
     private var fileMonitorObservationToken: UUID?
     private var micPermission: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .audio)
 
@@ -88,22 +78,16 @@ final class VMSettingsViewController: NSViewController {
     private var nameEditRow = NSView()
     private var nameRowIsEditing = false
     /// Suppresses the end-editing commit while a path that already settled the
-    /// rename (Escape's cancel) resigns the field editor — the counterpart of
-    /// `SidebarVMRowCellView.isCancellingRename`.
+    /// rename (Escape's cancel) resigns the field editor.
     private var suppressNameEndEditingCommit = false
     /// Caps the name edit box at its text width so it hugs the name and grows as
     /// you type (right-aligned, the leading spacer absorbs the slack).
     ///
-    /// A `<=` bound, not `==`, so a name wider than the form fills the available
-    /// width and scrolls instead of the box stretching the window. Matches the
-    /// storage-disk and sidebar rename boxes.
-    ///
-    /// Created once for the lifetime of the reused `nameField`, *not* per
-    /// `buildForm()`: a width constraint lives on the field itself, so a copy
-    /// minted on every instance swap would outlive its build cycle — the `<=`
-    /// caps accumulate, the smallest constant wins, and a cycle whose rename
-    /// never ran pins the box at the initial 0 forever (#283's collapsed
-    /// single-character box).
+    /// A `<=` bound, not `==`, so a name wider than the form scrolls instead of
+    /// stretching the window. Created once for the lifetime of the reused
+    /// `nameField`, *not* per `buildForm()`: the constraint lives on the field,
+    /// so a copy minted on every instance swap outlives its build cycle — the
+    /// caps accumulate and the smallest constant wins.
     private lazy var nameEditMaxWidth: NSLayoutConstraint = {
         let constraint = nameField.widthAnchor.constraint(lessThanOrEqualToConstant: 0)
         constraint.priority = .defaultHigh
@@ -112,9 +96,8 @@ final class VMSettingsViewController: NSViewController {
     /// Active only while renaming: ends the edit on a click outside the name field.
     ///
     /// Resigns the field editor (committing the current text) — AppKit doesn't end
-    /// field editing when a click lands on the settings card's non-focusable space,
-    /// so without this the box would linger. Mirrors the storage-disk row's
-    /// outside-click monitor.
+    /// field editing when a click lands on the settings card's non-focusable
+    /// space, so without this the box would linger.
     private var nameOutsideClickMonitor: Any?
 
     // Resources
@@ -133,17 +116,17 @@ final class VMSettingsViewController: NSViewController {
     private var storageRowsByID: [UUID: AttachmentRowView] = [:]
     /// The disk being renamed inline, or `nil`.
     ///
-    /// While set, `refreshStorageList` skips its rebuild so an async usage
-    /// refresh landing mid-edit can't destroy the editing field.
+    /// While set, `refreshStorageList` skips its rebuild so an async refresh
+    /// landing mid-edit can't destroy the editing field.
     private var activeStorageRename: UUID?
 
     // Removable Media
     private var removableListStack = NSStackView()
     private var createRemovableButton: NSButton?
-    /// Live removable-media row views keyed by item id (mirrors `storageRowsByID`).
+    /// Live removable-media row views keyed by item id.
     private var removableRowsByID: [UUID: AttachmentRowView] = [:]
-    /// The removable medium being renamed inline, or `nil` (mirrors
-    /// `activeStorageRename`; suppresses `refreshRemovableList` mid-edit).
+    /// The removable medium being renamed inline, or `nil`; suppresses
+    /// `refreshRemovableList` mid-edit.
     private var activeRemovableRename: UUID?
 
     // Shared Directories
@@ -164,11 +147,8 @@ final class VMSettingsViewController: NSViewController {
     // Clipboard
     private var clipboardSwitch = NSSwitch()
     private var clipboardPassthroughSwitch = NSSwitch()
-    /// The passthrough row's title label.
-    ///
-    /// Retained because AppKit fades a disabled `NSSwitch` but leaves its label
-    /// at full strength — `refreshClipboard` grays the text in step with the
-    /// switch so the whole row reads as inert.
+    /// The passthrough row's title label, retained so `refreshClipboard` can gray
+    /// it in step with the switch.
     private var clipboardPassthroughLabel = NSTextField()
     private var clipboardCaption = NSView()
 
@@ -234,12 +214,10 @@ final class VMSettingsViewController: NSViewController {
         if instanceChanged {
             buildForm()
             startInstanceSideEffects()
-            // Re-arm the model observation on the new instance. `withObservationTracking`
-            // is one-shot and re-registers only after it fires, so without this the loop
-            // stays bound to the previous instance and reactive updates (disk usage,
-            // config/status changes) for the new VM wouldn't fire. Only restart when
-            // already observing (i.e. the view has appeared); otherwise `viewDidAppear`
-            // sets it up — creating it here early would skip the notification observer.
+            // Re-arm the model observation on the new instance: it is one-shot and
+            // re-registers only after it fires, so otherwise the loop stays bound
+            // to the previous instance. Only restart when already observing;
+            // creating it here early would skip the notification observer.
             if modelObservation != nil {
                 restartModelObservation()
             }
@@ -247,11 +225,9 @@ final class VMSettingsViewController: NSViewController {
         apply()
 
         if instanceChanged {
-            // Re-arm the overflow flash for the freshly built form and re-evaluate
-            // against its laid-out geometry. The indicator is reused across VM
-            // switches, so without this only the first overflowing pane in a
-            // session would flash. Force layout so overflow is measured on the new
-            // form's real height, not the outgoing VM's.
+            // The indicator is reused across VM switches, so without this re-arm
+            // only the first overflowing pane in a session would flash. Force
+            // layout so overflow is measured on the new form's real height.
             view.layoutSubtreeIfNeeded()
             scrollMoreIndicator?.rearmFlash()
         }
@@ -269,12 +245,8 @@ final class VMSettingsViewController: NSViewController {
         let scrollView = makeGroupedFormScrollView(documentView: formStack, bottomInset: 16)
         scrollView.setContentHuggingPriority(.defaultLow, for: .vertical)
 
-        // Flash the scroller when the form overflows — this is the app's longest
-        // grouped form. Flash-only (no chevron/fade overlays): the root is an
-        // `NSStackView`, which shouldn't host unmanaged overlay subviews, and a
-        // brief flash is cue enough here. The indicator is reused across VM
-        // switches; `reconfigure` re-arms the flash so each overflowing pane gets
-        // the cue, not just the first shown in the session.
+        // Flash-only (no chevron/fade overlays): the root is an `NSStackView`,
+        // which shouldn't host unmanaged overlay subviews.
         scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView, cues: .flash)
 
         bannerContainer = makeBannerContainer()
@@ -350,13 +322,11 @@ final class VMSettingsViewController: NSViewController {
     override func viewDidDisappear() {
         super.viewDidDisappear()
         // Fallback teardown of the name-rename monitor for any path that reaches
-        // `viewDidDisappear` without `viewWillDisappear` (mirrors the safety net
-        // `AttachmentRowView` installs via `viewDidMoveToWindow`).
+        // `viewDidDisappear` without `viewWillDisappear`.
         removeNameOutsideClickMonitor()
     }
 
-    /// Starts the per-instance side effects: seeding the file monitor with the
-    /// current attachment paths and refreshing the main disk's usage stats.
+    /// Seeds the file monitor with the current instance's attachment paths.
     private func startInstanceSideEffects() {
         let refs = externalAttachmentRefs(for: instance.configuration)
         Task { await fileMonitor.setPaths(refs) }
@@ -365,11 +335,8 @@ final class VMSettingsViewController: NSViewController {
     /// Re-arming `withObservationTracking` on `fileMonitor.existsByPath`, so the
     /// missing-file affordance on attachment rows updates live.
     ///
-    /// Mirrors the Boot Order sheet's pattern (the `hasDisappeared` guard breaks
-    /// the chain on dismissal), with an added `token`: `withObservationTracking`
-    /// can't unregister, so a callback from a prior appear cycle bails when its
-    /// token no longer matches the current one, preventing chains from piling up
-    /// across repeated appear/disappear cycles.
+    /// The `hasDisappeared` guard breaks the chain on dismissal, and the `token`
+    /// makes a callback from a prior appear cycle bail.
     private func observeFileMonitor(token: UUID) {
         if hasDisappeared || fileMonitorObservationToken != token { return }
         withObservationTracking { [fileMonitor] in
@@ -385,7 +352,7 @@ final class VMSettingsViewController: NSViewController {
         }
     }
 
-    // MARK: - Read accessors (materialize defaults, matching the SwiftUI bindings)
+    // MARK: - Read accessors (materialize defaults)
 
     private var currentStorageDisks: [StorageDisk] {
         if let disks = instance.configuration.storageDisks, !disks.isEmpty {
@@ -432,8 +399,7 @@ final class VMSettingsViewController: NSViewController {
 extension VMSettingsViewController {
     /// Rebuilds the whole form for the current instance.
     ///
-    /// Called on first load and whenever the bound instance changes (the AppKit
-    /// analogue of SwiftUI's `.id(selected.id)` identity reset).
+    /// Called on first load and whenever the bound instance changes.
     private func buildForm() {
         formStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         lockIcons.removeAll()
@@ -458,12 +424,11 @@ extension VMSettingsViewController {
         addSection(buildNetworkSection())
         addSection(buildAudioSection())
         if isGuestAgentSectionVisible(guestOS: instance.configuration.guestOS) {
-            // macOS: clipboard rides the agent's vsock channel, so it joins the
-            // agent group as a nested row rather than a sibling section.
+            // macOS: clipboard rides the agent's vsock channel, so it nests in
+            // the agent group rather than forming a sibling section.
             addSection(buildGuestAgentSection())
         } else {
-            // Linux: clipboard is SPICE-based and independent of the Kernova
-            // guest agent, so it stays a standalone section.
+            // Linux: clipboard is SPICE-based, so it stands alone.
             addSection(buildClipboardSection())
         }
         addSection(buildSerialRelaySection())
@@ -486,10 +451,8 @@ extension VMSettingsViewController {
         return stack
     }
 
-    /// Section header: optional orange lock icon, the title, optional info
-    /// button, then a trailing spacer.
-    ///
-    /// Lock icons are registered in ``lockIcons`` and toggled by ``apply()``.
+    /// Section header; any lock icon it creates is registered in ``lockIcons``
+    /// and toggled by ``apply()``.
     private func makeHeader(
         _ title: String, lockable: Bool = false, paragraphs: [InfoPopoverParagraph] = []
     ) -> NSView {
@@ -536,8 +499,7 @@ extension VMSettingsViewController {
         let inset = GroupedFormStyle.contentSideInset
         NSLayoutConstraint.activate([
             banner.topAnchor.constraint(equalTo: container.topAnchor, constant: inset),
-            // Buffer below the banner so it doesn't crowd the first section title;
-            // matches the inter-section rhythm of the form below.
+            // Buffer below the banner so it doesn't crowd the first section title.
             banner.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -Spacing.section),
             banner.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: inset),
             banner.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -inset),
@@ -566,12 +528,9 @@ extension VMSettingsViewController {
         nameField.delegate = self
         nameField.cell?.isScrollable = true
         // The field fills the row (the leading spacer absorbs the slack) and
-        // `nameEditMaxWidth` caps it at the text width, so the box hugs the name
-        // and grows as you type. The cap is a `<=` bound, *not* `==`: it never
-        // demands width, so a name wider than the form fills the available width
-        // and scrolls instead of the box stretching the form (and the window)
-        // wider. Hug is one step below the spacer's so the field claims the slack
-        // first; compression is low so it yields (scrolls) rather than pushes.
+        // `nameEditMaxWidth` caps it at the text width. Hug is one step below the
+        // spacer's so the field claims the slack first; compression is low so it
+        // yields (scrolls) rather than pushes.
         nameField.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
         nameField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         nameEditRow = makeGroupedFormCardRow("Name", control: nameField)
@@ -788,9 +747,6 @@ extension VMSettingsViewController {
     // MARK: Guest Agent
 
     /// Caption shown beneath the macOS Guest Agent card.
-    ///
-    /// Makes the cohort's shared dependency legible at a glance; extracted so
-    /// tests can assert it verbatim.
     static let agentDependencyCaption =
         "Clipboard sharing and log forwarding require the Kernova guest agent. Kernova offers to install or update it from the clipboard window."
 
@@ -805,23 +761,14 @@ extension VMSettingsViewController {
         ),
     ]
 
-    /// Guest Agent group for **macOS** guests.
-    ///
-    /// Holds the two agent-management toggles plus Clipboard Sharing, which
-    /// rides the agent's vsock channel and is therefore agent-dependent.
-    /// Grouping them under a dependency caption makes it obvious which features
-    /// go inert when the agent isn't installed or connected. Linux clipboard is
-    /// SPICE-based — see `buildClipboardSection()`.
+    /// Guest Agent group for **macOS** guests, holding the agent-management
+    /// toggles plus Clipboard Sharing, which rides the agent's vsock channel.
     private func buildGuestAgentSection() -> NSView {
         logForwardingSwitch = makeSwitch(action: #selector(logForwardingToggled))
         installReminderSwitch = makeSwitch(action: #selector(installReminderToggled))
         clipboardSwitch = makeSwitch(action: #selector(clipboardToggled))
         clipboardPassthroughSwitch = makeSwitch(action: #selector(clipboardPassthroughToggled))
-        // Not lockable — every toggle here takes effect live. Future
-        // agent-backed features belong in this group too, keeping the
-        // agent-dependent cohort intact rather than spawning new top-level
-        // sections. Capability toggles lead (the cohort the caption names); the
-        // install-reminder nudge sits last.
+        // Not lockable — every toggle here takes effect live.
         let card = makeGroupedFormCard(rows: [
             makeToggleRowWithInfo(
                 "Forward guest logs", control: logForwardingSwitch,
@@ -830,15 +777,12 @@ extension VMSettingsViewController {
                         "Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `app.kernova.guest`. Off by default; can be toggled while the VM is running."
                     )
                 ]),
-            // Passthrough rides on sharing (it goes inert when sharing is off),
-            // so it's nested as a sub-option beneath Clipboard Sharing rather
-            // than presented as an equal sibling toggle.
+            // Passthrough rides on sharing — it goes inert when sharing is off —
+            // so it nests as a sub-option rather than an equal sibling toggle.
             makeGroupedFormSubOptionGroup(
                 primary: makeToggleRowWithInfo(
                     "Clipboard Sharing", control: clipboardSwitch,
                     paragraphs: [
-                        // Behavior only — the group caption below carries the shared
-                        // agent dependency, so it isn't repeated here.
                         .body("Exchanges clipboard text between host and guest.")
                     ]),
                 subOption: makeToggleRowWithInfo(
@@ -862,7 +806,6 @@ extension VMSettingsViewController {
 
     /// Standalone Clipboard section for **Linux** guests, whose clipboard rides
     /// SPICE (`spice-vdagent`) and is independent of the Kernova guest agent.
-    /// macOS clipboard is agent-dependent and lives in `buildGuestAgentSection()`.
     private func buildClipboardSection() -> NSView {
         clipboardSwitch = makeSwitch(action: #selector(clipboardToggled))
         clipboardPassthroughSwitch = makeSwitch(action: #selector(clipboardPassthroughToggled))
@@ -880,9 +823,6 @@ extension VMSettingsViewController {
         return makeSection([
             makeHeader("Clipboard", paragraphs: [body]),
             makeGroupedFormCard(rows: [
-                // Passthrough rides on sharing (it goes inert when sharing is
-                // off), so it's nested as a sub-option beneath Clipboard Sharing
-                // rather than presented as an equal sibling toggle.
                 makeGroupedFormSubOptionGroup(
                     primary: makeGroupedFormCardRow("Clipboard Sharing", control: clipboardSwitch),
                     subOption: makeToggleRowWithInfo(
@@ -962,8 +902,7 @@ extension VMSettingsViewController {
     /// Builds a toggle row: title, info button, and a trailing control.
     ///
     /// `titleLabel` hands the freshly-built label back to the caller, for rows
-    /// whose text has to be restyled later (e.g. grayed in step with a control
-    /// that gets disabled). Callers that never restyle simply omit it.
+    /// whose text has to be restyled later.
     private func makeToggleRowWithInfo(
         _ title: String, control: NSControl, paragraphs: [InfoPopoverParagraph],
         titleLabel: ((NSTextField) -> Void)? = nil
@@ -1043,11 +982,8 @@ extension VMSettingsViewController {
 
     /// An inline trailing "eject" button for an attachment/share row.
     ///
-    /// Tinted with the secondary label color rather than destructive red: on
-    /// removable media the button ejects (detach only, file untouched) and a
-    /// shared directory's button merely stops sharing — both non-destructive and
-    /// re-attachable — so the eject glyph and a neutral tint read truer than a
-    /// red minus.
+    /// Detaches only — the backing file is untouched — so it is neutral-tinted
+    /// rather than destructive red.
     private func makeEjectButton(id: UUID, enabled: Bool, action: Selector) -> NSButton {
         let button = NSButton()
         button.image = .systemSymbol("eject.circle.fill", accessibilityDescription: "Eject")
@@ -1061,9 +997,6 @@ extension VMSettingsViewController {
         return button
     }
 
-    /// Builds an attachment list row: leading icon, title + subtitle, a
-    /// read-only switch with its caption, and a trailing eject button wired to
-    /// `deleteSelector` (neutral-tinted; the row's removal is non-destructive).
     private func makeListRow(
         icon: NSView, title: String, subtitle: NSTextField, id: UUID, readOnly: Bool,
         controlsEnabled: Bool, readOnlySelector: Selector, deleteSelector: Selector
@@ -1106,9 +1039,6 @@ extension VMSettingsViewController {
 
 extension VMSettingsViewController {
     /// Idempotently refreshes all mutable chrome from the model.
-    ///
-    /// Safe to call repeatedly; the single source of truth for enable/disable
-    /// and the dynamic lists.
     private func apply() {
         guard isViewLoaded else { return }
         bannerContainer.isHidden = !isReadOnly
@@ -1142,11 +1072,10 @@ extension VMSettingsViewController {
                 nameField.stringValue = instance.name
                 view.window?.makeFirstResponder(nameField)
                 // Re-seed after taking focus: the makeFirstResponder above can
-                // synchronously commit the *other* surface's pending rename
-                // (mid-handoff), changing `instance.name` after the seed — and
-                // the mutation lands inside this very apply() pass, so no
-                // later pass repairs an already-open box. Reading the name
-                // again guarantees the box shows what a commit would produce.
+                // synchronously commit the *other* surface's pending rename,
+                // changing `instance.name` after the seed — and the mutation
+                // lands inside this very apply() pass, so no later pass repairs
+                // an already-open box.
                 nameField.stringValue = instance.name
                 if let editor = nameField.currentEditor() {
                     editor.string = instance.name
@@ -1157,13 +1086,12 @@ extension VMSettingsViewController {
                 installNameOutsideClickMonitor()
             } else {
                 removeNameOutsideClickMonitor()
-                // End a still-active editor session BEFORE flipping the local
-                // session flag or hiding the row: the resign flows through
+                // End a still-active editor session BEFORE flipping the session
+                // flag or hiding the row: the resign flows through
                 // `controlTextDidEndEditing`, whose commit gate reads
-                // `nameRowIsEditing` — a superseded rename's in-flight text
-                // then still commits instead of being silently dropped, and no
-                // orphaned, focused-but-invisible editor survives to swallow
-                // keystrokes.
+                // `nameRowIsEditing`, so a superseded rename's in-flight text
+                // still commits and no focused-but-invisible editor survives to
+                // swallow keystrokes.
                 if nameField.currentEditor() != nil {
                     Self.logger.debug(
                         "Ending superseded name rename session via end-editing commit")
@@ -1178,10 +1106,9 @@ extension VMSettingsViewController {
 
     /// Installs a local mouse-down monitor that ends the rename on an outside click.
     ///
-    /// Resigns the field editor so `controlTextDidEndEditing` commits when the user
-    /// clicks anywhere outside the name field — AppKit doesn't end field editing on
-    /// clicks that land on non-focusable space in the settings card. Mirrors the
-    /// storage-disk row's outside-click monitor.
+    /// Resigns the field editor so `controlTextDidEndEditing` commits when the
+    /// user clicks anywhere outside the name field — AppKit doesn't end field
+    /// editing on clicks that land on non-focusable space in the settings card.
     private func installNameOutsideClickMonitor() {
         removeNameOutsideClickMonitor()
         nameOutsideClickMonitor = NSEvent.addLocalMonitorForEvents(
@@ -1207,8 +1134,7 @@ extension VMSettingsViewController {
     ///
     /// For paths that bypass `refreshGeneral`'s teardown transition (instance
     /// rebind, view disappearance): those reset `nameRowIsEditing` out-of-band,
-    /// which would otherwise strand the typed text, the marker, and the
-    /// outside-click monitor.
+    /// stranding the typed text, the marker, and the outside-click monitor.
     private func endNameRenameSession() {
         if nameField.currentEditor() != nil {
             view.window?.makeFirstResponder(nil)
@@ -1275,12 +1201,9 @@ extension VMSettingsViewController {
     }
 
     private func refreshClipboard() {
-        // The clipboard switch lives on both platforms (nested in the agent
-        // group on macOS, standalone on Linux), so its state always refreshes.
         clipboardSwitch.state = instance.configuration.clipboardSharingEnabled ? .on : .off
-        // Passthrough rides on sharing: its state mirrors the config, but the
-        // control is only actionable while sharing is on (it's hot-toggleable, so
-        // not in `persistentLockableControls` — its enablement is gated here).
+        // Passthrough is hot-toggleable, so it isn't in
+        // `persistentLockableControls`; its enablement is gated here instead.
         clipboardPassthroughSwitch.state = instance.configuration.clipboardPassthroughEnabled ? .on : .off
         clipboardPassthroughSwitch.isEnabled = instance.configuration.clipboardSharingEnabled
         // AppKit fades the disabled switch but not its label, which leaves the
@@ -1288,8 +1211,7 @@ extension VMSettingsViewController {
         clipboardPassthroughLabel.textColor =
             instance.configuration.clipboardSharingEnabled ? .labelColor : .disabledControlTextColor
         // The "takes effect on next start" caption is built only by the Linux
-        // standalone section; macOS clipboard is hot-toggleable and has none, so
-        // gate the caption here (symmetric with refreshGuestAgent's guard).
+        // standalone section, so gate it here.
         guard instance.configuration.guestOS == .linux else { return }
         clipboardCaption.isHidden = !isReadOnly
     }
@@ -1342,9 +1264,8 @@ extension VMSettingsViewController {
                 id: item.id,
                 iconSystemName: "opticaldisc",
                 title: item.label,
-                // Structural subtitle only (see `refreshStorageList`). Removable
-                // media is always external and hot-pluggable, so controls stay
-                // enabled even while the VM runs.
+                // Removable media is always external and hot-pluggable, so
+                // controls stay enabled even while the VM runs.
                 subtitle: item.path,
                 isMissing: isMissing,
                 missingPath: isMissing ? item.path : nil,
@@ -1377,18 +1298,10 @@ extension VMSettingsViewController {
     /// Shared rebuild/in-place-update engine for both attachment lists.
     ///
     /// A structural change (rows added, removed, or reordered) rebuilds the
-    /// stack; anything else updates the affected rows in place so a rename or
-    /// toggle doesn't recreate every subtitle field and re-fade its size in.
-    ///
-    /// - A structural rebuild is the only path that tears down an in-progress
-    ///   editing field, so it (and only it) is skipped while a row is being
-    ///   renamed; the in-place path runs freely — `AttachmentRowView.update`
-    ///   leaves a live title alone and the subtitle is an independent field — so
-    ///   a rename committed by clicking another row still repaints in place.
-    /// - The live size is re-read on *every* in-place pass (not gated on the
-    ///   structural subtitle changing), so an out-of-band resize is reflected;
-    ///   `setDiskSubtitle` skips the repaint when the size is unchanged, so a
-    ///   rename/toggle still doesn't flicker.
+    /// stack; anything else updates the affected rows in place. Only the
+    /// structural path tears down an in-progress editing field, so only it is
+    /// skipped while a row is being renamed. The live size is re-read on *every*
+    /// in-place pass, so an out-of-band resize is reflected.
     private func refreshAttachmentList(
         models: [RenderedRow],
         listStack: NSStackView,
@@ -1444,8 +1357,8 @@ extension VMSettingsViewController {
     }
 
     /// Builds one attachment row, wiring its icon Get Info, rename closures, and
-    /// context menu — shared by both lists (the per-list differences arrive via
-    /// `kind`, `readOnlySelector`, and the active-rename key path).
+    /// context menu; the per-list differences arrive via `kind`,
+    /// `readOnlySelector`, and the active-rename key path.
     private func makeAttachmentRow(
         model: RenderedRow,
         kind: AttachmentKind,
@@ -1455,16 +1368,13 @@ extension VMSettingsViewController {
         let ref = AttachmentRef(kind: kind, id: model.id)
         let icon = AttachmentIconButton()
         icon.configure(systemName: model.iconSystemName, missingPath: model.missingPath)
-        // Clicking the (present) icon opens Get Info anchored to the icon.
         icon.onActivate = { [weak self] anchor in
             guard let self, let info = self.attachmentInfo(ref) else { return }
             self.presentAttachmentInfoPopover(info, from: anchor)
         }
         // Removable media is hot-pluggable and swapped often, so it carries an
-        // inline one-click Eject button (detach only, no confirmation); the
-        // context menu still offers both Eject and the file-trashing Remove.
-        // Storage disks have no inline button (`kind` is the documented carrier
-        // for per-list differences).
+        // inline one-click Eject button (detach only, no confirmation); storage
+        // disks detach through the context menu alone.
         let ejectButton: NSButton? =
             kind == .removable
             ? makeEjectButton(
@@ -1634,8 +1544,7 @@ extension VMSettingsViewController {
 
     @objc private func installReminderToggled() {
         // Routed through the view model's named accessor rather than the generic
-        // `writeConfig` so every write of this flag — here, the sidebar popover,
-        // and the Reminders settings pane — shares one logged path.
+        // `writeConfig` so every write of this flag shares one logged path.
         viewModel.setAgentInstallNudgeDismissed(installReminderSwitch.state != .on, for: instance)
     }
 
@@ -1670,12 +1579,10 @@ extension VMSettingsViewController {
             in: window)
     }
 
-    /// Commits the passthrough enable after the user confirms the security prompt.
     private func enablePassthroughConfirmed() {
         writeConfig { $0.clipboardPassthroughEnabled = true }
     }
 
-    /// Puts the switch back to off when the user cancels the enable prompt.
     private func revertPassthroughToggle() {
         clipboardPassthroughSwitch.state = .off
     }
@@ -1761,14 +1668,11 @@ extension VMSettingsViewController {
     // MARK: Attachment context menu (shared by both lists)
 
     /// Identifies which list a context-menu item / row belongs to, so a single
-    /// set of `@objc` handlers serves both the Storage Disks and Removable Media
-    /// lists.
+    /// set of `@objc` handlers serves both lists.
     enum AttachmentKind { case storage, removable }
 
     /// A context-menu item's backing identity (list + id), stored as its
     /// `representedObject`.
-    ///
-    /// A class so it's a valid `representedObject`.
     final class AttachmentRef: NSObject {
         let kind: AttachmentKind
         let id: UUID
@@ -1854,9 +1758,8 @@ extension VMSettingsViewController {
         readOnly.state = info.readOnly ? .on : .off
         readOnly.isEnabled = info.editable
         menu.addItem(readOnly)
-        // Removable media offers both: Eject detaches with no confirmation
-        // (file untouched); Remove… is the file-trashing path with its prompt.
-        // Storage disks get Remove… only.
+        // Removable media offers Eject (detach, no confirmation) alongside the
+        // file-trashing Remove…; storage disks get Remove… only.
         if ref.kind == .removable {
             let eject = attachmentMenuItem("Eject", #selector(menuAttachmentEject(_:)), ref)
             eject.isEnabled = info.editable
@@ -1916,8 +1819,6 @@ extension VMSettingsViewController {
         }
     }
 
-    /// Context-menu "Eject" (removable media only): detach with no confirmation,
-    /// sharing the inline button's `ejectRemovableMedia` path.
     @objc private func menuAttachmentEject(_ sender: NSMenuItem) {
         guard let ref = attachmentRef(from: sender), ref.kind == .removable else { return }
         ejectRemovableMedia(forItemID: ref.id)
@@ -1980,8 +1881,7 @@ extension VMSettingsViewController {
         return formatter
     }()
 
-    /// Builds the per-row delete confirmation that ``attachmentDeletePrompt`` decided,
-    /// wiring each action to `perform(trashFile:)` and appending Cancel.
+    /// Builds the alert for a decided ``AttachmentDeletePrompt``, appending Cancel.
     private func makeDeleteAlert(
         prompt: AttachmentDeletePrompt,
         perform: @escaping (_ trashFile: Bool) -> Void
@@ -1999,12 +1899,10 @@ extension VMSettingsViewController {
     }
 
     /// Decides the per-row delete confirmation (title, message, offered actions)
-    /// purely from the item's nature, so it is unit-testable without a window.
+    /// purely from the item's nature.
     ///
-    /// Mirrors the VM-delete sheet's rules: the Guest Agent installer and files
-    /// shared with another VM can only be detached (never trashed); in-bundle
-    /// disks are trashed-or-cancelled; private external files may be trashed or
-    /// merely detached.
+    /// The Guest Agent installer and files shared with another VM can only be
+    /// detached, never trashed.
     static func attachmentDeletePrompt(
         label: String,
         isInternal: Bool,
@@ -2082,9 +1980,7 @@ extension VMSettingsViewController {
 
     /// Ejects a removable medium from its inline trailing button.
     ///
-    /// Detach only — no confirmation, backing file untouched. The file-trashing
-    /// path with its confirmation is the context menu's "Remove…"; see
-    /// ``presentRemovableDeleteConfirmation(forItemID:)``.
+    /// Detach only — no confirmation, backing file untouched.
     @objc private func removableEjectTapped(_ sender: NSButton) {
         guard let id = uuid(from: sender) else { return }
         ejectRemovableMedia(forItemID: id)
@@ -2092,10 +1988,8 @@ extension VMSettingsViewController {
 
     /// Detaches a removable medium (removes its config entry, keeping the file).
     ///
-    /// `removeRemovableMedia(_:from:trashFile:)` with `trashFile: false` removes
-    /// the `removableMedia` entry — which the live reconcile hot-detaches from a
-    /// running VM — and never touches the file. No alert: ejecting is the safe,
-    /// reversible action (re-attach via "Attach Disk…").
+    /// Dropping the `removableMedia` entry is what the live reconcile
+    /// hot-detaches from a running VM. No alert: ejecting is reversible.
     private func ejectRemovableMedia(forItemID id: UUID) {
         guard let item = currentRemovableMedia.first(where: { $0.id == id }) else { return }
         _ = viewModel.removeRemovableMedia(item, from: instance, trashFile: false)
@@ -2176,7 +2070,6 @@ extension VMSettingsViewController {
 
 extension VMSettingsViewController: NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
-        // Grow/shrink the name box with the live text so it stays snug.
         guard (obj.object as? NSTextField) === nameField else { return }
         let live = nameField.currentEditor()?.string ?? nameField.stringValue
         nameEditMaxWidth.constant = InlineRenameSizing.boxWidth(for: live, font: Typography.body)
@@ -2187,10 +2080,9 @@ extension VMSettingsViewController: NSTextFieldDelegate {
         switch field {
         case nameField:
             // Gate on the local session flag, not the model marker: when this
-            // surface's rename is superseded mid-handoff the marker has
-            // already moved to the other surface, but the in-flight text must
-            // still commit (mirrors the sidebar cell's local `isRenaming`
-            // gate; the surface-scoped `commitRename` makes this safe).
+            // surface's rename is superseded mid-handoff the marker has already
+            // moved to the other surface, but the in-flight text must still
+            // commit.
             if nameRowIsEditing, !suppressNameEndEditingCommit {
                 viewModel.commitRename(
                     for: instance, newName: nameField.stringValue, from: .detail)
@@ -2207,10 +2099,9 @@ extension VMSettingsViewController: NSTextFieldDelegate {
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         guard control === nameField else { return false }
         if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-            // Resign instead of committing directly: the end-editing path is
-            // the single commit path (gated on the local session flag), so
-            // Return, outside clicks, and superseded teardowns all commit the
-            // same way.
+            // Resign instead of committing directly: the end-editing path is the
+            // single commit path, so Return, outside clicks, and superseded
+            // teardowns all commit the same way.
             view.window?.makeFirstResponder(nil)
             return true
         }
@@ -2247,9 +2138,7 @@ extension VMSettingsViewController: NSTextFieldDelegate {
 
 /// The confirmation a per-row storage/removable delete should present.
 ///
-/// Decided purely from the item's nature, so it is unit-testable without a
-/// window. The trailing Cancel button is added by the presenter, not modeled
-/// here.
+/// The trailing Cancel button is added by the presenter, not modeled here.
 struct AttachmentDeletePrompt: Equatable {
     /// A non-cancel action and the file disposition it implies.
     enum Action: Equatable {

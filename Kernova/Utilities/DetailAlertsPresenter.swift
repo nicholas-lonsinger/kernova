@@ -4,15 +4,10 @@ import os
 /// Presents the detail pane's lifecycle confirmation alerts and the delete
 /// sheet on behalf of `DetailContainerViewController`.
 ///
-/// AppKit replacement for the SwiftUI `LifecycleAlerts` modifier (on the former
-/// `VMDetailView`) plus the error / installer-mounted alerts that lived on
-/// `MainDetailView`. These are owned by `DetailContainerViewController` — which
-/// is always present and owns the window — so they survive while the VM display
-/// is showing.
-///
-/// Presentation is imperative: the container forwards each request here. One
-/// alert/sheet shows at a time; requests that arrive while one is up (or before
-/// the window exists) are queued and run in order.
+/// The container is always present and owns the window, so these survive while
+/// the VM display is showing. One alert/sheet shows at a time; requests that
+/// arrive while one is up (or before the window exists) are queued and run in
+/// order.
 @MainActor
 final class DetailAlertsPresenter: NSObject {
     private static let logger = Logger(subsystem: "app.kernova", category: "DetailAlertsPresenter")
@@ -29,32 +24,26 @@ final class DetailAlertsPresenter: NSObject {
     /// The request the *shown* delete sheet is presenting, read by the sheet
     /// delegate on confirm; `nil` when no sheet is on screen.
     ///
-    /// Frozen as a single value at show time (the sheet doesn't re-encode the
-    /// disposition on confirm) so the displayed sheet and the confirm disposition
-    /// can never disagree. Distinct from ``pendingDelete``: a stale-token close
-    /// clears this but preserves the in-flight ``pendingDelete``.
+    /// Frozen as a single value at show time so the displayed sheet and the
+    /// confirm disposition can never disagree. Distinct from ``pendingDelete``:
+    /// a stale-token close clears this but preserves the in-flight
+    /// ``pendingDelete``.
     private var shownDelete: PendingDelete?
     /// The latest in-flight delete request — resolving externals off-main, queued
     /// in `pending`, or shown — used to de-dup and to let the latest gesture win.
     ///
-    /// A repeat request updates this last-wins (a follow-up ⌥⌘⌫ upgrades the mode;
-    /// a different VM retargets); the show step reads it as the single source of
-    /// truth, so the sheet always reflects the latest request *up until it is
-    /// shown*. Once on screen the displayed sheet is authoritative — a later
-    /// gesture can't silently change a visible modal sheet. Cleared by the shown
-    /// sheet's close (matched by ``deleteSheetToken``) or on teardown (`stop()`).
+    /// A repeat request updates this last-wins, and the show step reads it as the
+    /// single source of truth, so the sheet reflects the latest request *up until
+    /// it is shown*. Once on screen the displayed sheet is authoritative — a later
+    /// gesture can't silently change a visible modal sheet.
     private var pendingDelete: PendingDelete?
     /// Externals resolved off-main for the delete sheet, tagged with the VM they
-    /// belong to.
-    ///
-    /// Re-resolved if `pendingDelete` retargets to a different VM before the
-    /// sheet is shown.
+    /// belong to, and re-resolved if `pendingDelete` retargets to a different VM
+    /// before the sheet is shown.
     private var resolvedDelete: (instanceID: UUID, externals: [ExternalAttachment])?
     /// Identifies the currently-shown delete sheet so a stale sheet's late async
     /// `onClose` can't clear state belonging to a newer sheet — even for the
     /// same VM.
-    ///
-    /// Bumped on each show and in `stop()`.
     private var deleteSheetToken = 0
     /// Tracks the off-main external-resolution task so `stop()` can cancel it.
     private var deleteResolutionTask: Task<Void, Never>?
@@ -77,62 +66,47 @@ final class DetailAlertsPresenter: NSObject {
         deleteResolutionTask = nil
         pendingDelete = nil
         resolvedDelete = nil
-        // Clear the shown-sheet state synchronously rather than waiting for the
-        // async `onClose` that `reset()` would otherwise rely on: the
+        // Cleared synchronously rather than via the async `onClose`: the
         // `presentDeleteSheet` ignore guard keys on `shownDelete`, so leaving it
         // set until a late completion fires would wrongly ignore deletes for a
         // window after the next `start()`.
         shownDelete = nil
-        // Invalidate the in-flight sheet's `onClose` so its late async close
-        // (fired by the `close()` below) can't clear state belonging to a sheet
-        // shown after the next `start()`. stop() has already cleared the
-        // in-flight delete itself.
+        // Invalidate the in-flight sheet's `onClose` so its late async close can't
+        // clear state belonging to a sheet shown after the next `start()`.
         deleteSheetToken += 1
         pending.removeAll()
-        // Belt-and-suspenders: a resolution task that resolves after teardown
-        // (or any late enqueue) can't present on the disappearing window once
-        // it's nil. `start(window:)` re-sets it on the next `viewDidAppear`.
+        // A resolution task that resolves after teardown can't present on the
+        // disappearing window once this is nil.
         window = nil
-        // Reset (not close) the sheet: `reset()` drops `isShown` *synchronously*
-        // rather than via the async dismissal completion, so a sheet whose parent
-        // window is torn down before that completion fires can't leave `isShown`
-        // stuck `true` and silently wedge `runNext`. We've already done the delete
-        // state cleanup above, so we don't need the `onClose` that `close()` fires.
+        // Reset, not close: `reset()` drops `isShown` *synchronously* rather than
+        // via the async dismissal completion, so a sheet whose parent window is
+        // torn down before that completion fires can't leave `isShown` stuck
+        // `true` and silently wedge `runNext`.
         if deleteSheetPresenter.isShown { deleteSheetPresenter.reset() }
     }
 
     #if DEBUG
     /// Number of presentation closures currently queued.
-    ///
-    /// With no window set (test harness never calls `start`), `runNext` always
-    /// bails, so enqueued delete sheets accumulate here for the de-dup tests.
     var pendingCountForTesting: Int { pending.count }
 
     /// The VM whose delete is in flight, or `nil` if none.
-    ///
-    /// The show step reads this as the source of truth, so it is what the sheet
-    /// would present.
     var pendingDeleteInstanceIDForTesting: UUID? { pendingDelete?.instance.id }
 
-    /// The latest requested disposition for the in-flight delete (last gesture
-    /// wins), so a test can assert ⌘⌫-then-⌥⌘⌫ upgrades the sheet to Immediate.
+    /// The latest requested disposition for the in-flight delete.
     var pendingDeletePermanentlyForTesting: Bool? { pendingDelete?.permanently }
 
-    /// Per-shown-sheet identity; a test can assert `stop()` bumps it (which
-    /// invalidates a stale sheet's late `onClose`).
+    /// Per-shown-sheet identity.
     var deleteSheetTokenForTesting: Int { deleteSheetToken }
 
     /// The tracked off-main resolution task, so tests can `await` its `.value`.
     var deleteResolutionTaskForTesting: Task<Void, Never>? { deleteResolutionTask }
 
-    /// Drives the delete sheet's close handler directly so a test can verify the
-    /// token guard (a current-token close clears the in-flight delete; a stale
-    /// one does not) without a live window to present a real sheet.
+    /// Drives the delete sheet's close handler directly, with no live window to
+    /// present a real sheet.
     func handleDeleteSheetClosedForTesting(token: Int) { handleDeleteSheetClosed(token: token) }
 
-    /// Test seam: awaited inside `resolveAndEnqueueDelete` right after the
-    /// externals resolve, so a test can drive a retarget into that exact gap and
-    /// exercise the across-the-await re-resolve (`continue`) path deterministically.
+    /// Awaited inside `resolveAndEnqueueDelete` right after the externals
+    /// resolve, so a test can drive a retarget into that exact gap.
     var afterDeleteResolveForTesting: (@MainActor () async -> Void)?
     #endif
 
@@ -150,11 +124,8 @@ final class DetailAlertsPresenter: NSObject {
         // Once a delete sheet is on screen it is an authoritative, window-modal
         // confirmation — ignore further delete gestures (the menu key-equivalents
         // stay live under a window-modal sheet) until it closes. Coalescing them
-        // would be worse than ignoring: the new request would overwrite
-        // `pendingDelete`, then be cleared by the shown sheet's close without ever
-        // being shown — silently dropping the delete. `shownDelete` is set for the
-        // whole shown→closing window, so this also covers the gap between a
-        // Cancel/Confirm and the sheet's async `onClose`.
+        // would overwrite `pendingDelete`, which the shown sheet's close then
+        // clears without it ever being shown — silently dropping the delete.
         guard shownDelete == nil else {
             Self.logger.debug(
                 "Delete sheet already on screen; ignoring request for '\(instance.name, privacy: .public)'")
@@ -162,10 +133,7 @@ final class DetailAlertsPresenter: NSObject {
         }
         // De-dup to one delete sheet at a time, with the LATEST request winning
         // until the sheet is shown: a follow-up ⌘⌫ → ⌥⌘⌫ upgrades the mode and a
-        // different VM retargets, both by updating `pendingDelete` (the single
-        // source of truth the show step reads). So a fast double-invoke never
-        // opens a second sheet, and the user's most recent intent is honored
-        // rather than silently downgraded.
+        // different VM retargets, both by updating `pendingDelete`.
         let wasIdle = pendingDelete == nil
         pendingDelete = PendingDelete(instance: instance, permanently: permanently)
         guard wasIdle else {
@@ -179,8 +147,6 @@ final class DetailAlertsPresenter: NSObject {
     /// Resolves the in-flight delete's external-file existence off-main *before*
     /// showing, so the synchronous presentation step never blocks the main actor
     /// on a stale mount.
-    ///
-    /// Tracked so `stop()` can cancel it.
     private func startDeleteResolution() {
         deleteResolutionTask = Task { @MainActor [weak self] in
             await self?.resolveAndEnqueueDelete()
@@ -254,8 +220,7 @@ final class DetailAlertsPresenter: NSObject {
         // If the request retargeted to a different VM after this show was
         // enqueued (e.g. while queued behind another alert), the cached externals
         // belong to the wrong VM — re-resolve for the new one instead of showing
-        // stale data. Cancel any in-flight resolve and start a fresh one so the
-        // retarget can never be swallowed (today the task is already nil here).
+        // stale data.
         guard let resolved = resolvedDelete, resolved.instanceID == request.instance.id else {
             resolvedDelete = nil
             deleteResolutionTask?.cancel()
@@ -271,9 +236,6 @@ final class DetailAlertsPresenter: NSObject {
             mode: request.permanently ? .immediate : .trash
         )
         content.delegate = self
-        // Freeze the shown sheet's request as one value so the displayed sheet
-        // and the confirm delegate always agree, even if a later gesture updates
-        // `pendingDelete` while the sheet is up.
         shownDelete = request
         deleteSheetPresenter.onClose = { [weak self] in
             self?.handleDeleteSheetClosed(token: token)
@@ -283,12 +245,10 @@ final class DetailAlertsPresenter: NSObject {
 
     private func handleDeleteSheetClosed(token: Int) {
         shownDelete = nil
-        // Allow the next delete: the sheet has closed (cancel, confirm, or
-        // programmatic `close()` all route through here). Clear the in-flight
-        // delete only if THIS is still the current sheet — a stop()/start() cycle
-        // bumps `deleteSheetToken`, so a stale sheet's late async close (after
-        // teardown re-showed a newer sheet, even for the same VM) can't clobber
-        // the newer delete and reopen the duplicate-sheet path (#362).
+        // Clear the in-flight delete only if THIS is still the current sheet — a
+        // stop()/start() cycle bumps `deleteSheetToken`, so a stale sheet's late
+        // async close can't clobber the newer delete and reopen the
+        // duplicate-sheet path.
         if token == deleteSheetToken {
             pendingDelete = nil
             resolvedDelete = nil
@@ -296,7 +256,7 @@ final class DetailAlertsPresenter: NSObject {
         runNext()
     }
 
-    // MARK: - Alert configurations (copied from the former SwiftUI modifiers)
+    // MARK: - Alert configurations
 
     private func cancelPreparingConfig(_ instance: VMInstance) -> AlertConfiguration {
         AlertConfiguration(
@@ -349,10 +309,11 @@ final class DetailAlertsPresenter: NSObject {
     }
 
     private func stopPausedConfig(_ vm: VMInstance) -> AlertConfiguration {
-        // RATIONALE: This alert is itself a confirmation step, so "Force Stop"
-        // intentionally calls forceStop directly rather than routing through
-        // confirmForceStop and stacking a second alert. The message text makes
-        // the destructive nature explicit so one confirmation is sufficient.
+        // RATIONALE: this alert is itself a confirmation step, so "Force Stop"
+        // calls `forceStopFromPaused` directly rather than routing through
+        // `confirmForceStop`, which would stack a second alert on top of this
+        // one. The message text makes the destructive outcome explicit, so one
+        // confirmation is sufficient. verified 2026-07-27
         AlertConfiguration(
             title: "Stop Paused Virtual Machine",
             message:
@@ -375,11 +336,6 @@ final class DetailAlertsPresenter: NSObject {
             title: "Error", message: message, buttons: [AlertButton("OK", role: .cancel)])
     }
 
-    /// The start-failed alert for an attachment that couldn't be opened.
-    ///
-    /// Names the item, explains the likely cause, and offers to remove it
-    /// (detach only — the file is untouched) and start again. No ellipsis on
-    /// "Remove and Start": it neither gathers further input nor destroys data.
     private func startFailedAttachmentConfig(
         _ failure: StartFailedAttachment, _ vm: VMInstance
     ) -> AlertConfiguration {

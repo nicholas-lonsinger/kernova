@@ -2,40 +2,29 @@ import AppKit
 
 /// Leaf-row cell for a single virtual machine in the sidebar.
 ///
-/// A guest-OS icon tinted to the VM's state color, the VM name, and an optional
-/// guest-agent accessory. While the VM is preparing or transitioning the icon is
-/// swapped in place for a spinner.
-///
 /// The cell owns a per-instance ``ObservationLoop`` so it repaints itself when
-/// its bound VM's observable state changes (status, name, agent status), the
-/// AppKit analogue of SwiftUI re-rendering the row. The loop is replaced on
-/// every ``configure(instance:isRenaming:onCommitRename:onCancelRename:onMountAgent:onDismissAgentNudge:)``
-/// and torn down in ``prepareForReuse()``; both closures capture `self` weakly
-/// and read the instance through `self.instance` so a deleted VM is never kept
+/// its bound VM's observable state changes; it is replaced on every `configure`
+/// and torn down in ``prepareForReuse()``. Both closures capture `self` weakly
+/// and read the instance through `self.instance`, so a deleted VM is never kept
 /// alive.
 ///
-/// Inline rename reuses the name field: the controller flips the row into
-/// editing via ``setRenaming(_:)`` and the cell, acting as the field's
-/// delegate, commits on Return/focus-loss and cancels on Escape.
+/// Inline rename reuses the name field: the controller flips the row into editing
+/// via ``setRenaming(_:)`` and the cell, acting as the field's delegate, commits
+/// on Return/focus-loss and cancels on Escape.
 @MainActor
 final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     static let reuseIdentifier = NSUserInterfaceItemIdentifier("SidebarVMRowCell")
 
-    /// Layout metrics shared by `buildLayout()` and `contentWidth(forName:showsAgentAccessory:)`.
-    ///
-    /// Reading the constraints and the snap-to-fit width measurement from one
-    /// source keeps the rendered row and the measurement from drifting apart.
+    /// Layout metrics shared by `buildLayout()` and the snap-to-fit measurement,
+    /// so the rendered row and the measurement can't drift apart.
     private static let rowLeadingInset: CGFloat = 4
     private static let rowTrailingInset: CGFloat = 8
     private static let iconSlotWidth: CGFloat = 20
 
     private weak var instance: VMInstance?
     private var rowObservation: ObservationLoop?
-    /// Commits the edited name.
-    ///
-    /// The `Bool` is `true` when editing ended by Return, which the controller
-    /// uses to decide whether to restore sidebar focus (and the emphasized blue
-    /// selection).
+    /// Commits the edited name; the `Bool` is `true` when editing ended by Return,
+    /// which decides whether the controller restores sidebar focus.
     private var onCommitRename: ((String, Bool) -> Void)?
     private var onCancelRename: (() -> Void)?
 
@@ -53,13 +42,11 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     private let agentButton = SidebarAgentStatusButtonView()
     private let spinner = NSProgressIndicator()
     /// A flexible filler trailing the name so the name field can hug its text
-    /// while renaming (the filler soaks up the spare width); inert in the
-    /// display state, where the name field fills the row instead.
+    /// while renaming; inert in the display state.
     private let nameSpacer = NSView()
     /// Caps the name field at its text width while renaming so the box hugs it.
     ///
-    /// The field otherwise fills the row, so a short name gets a snug box. A
-    /// `<=` bound, *not* `==`, so a long name in a narrow sidebar fills the
+    /// A `<=` bound, *not* `==`, so a long name in a narrow sidebar fills the
     /// available width and scrolls rather than the box demanding room and
     /// stretching the window.
     private var nameEditMaxWidth: NSLayoutConstraint?
@@ -97,10 +84,9 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         nameField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         nameField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        // The filler hugs slightly more eagerly than the name field, so in the
-        // display state the name field claims the spare width (the filler stays
-        // collapsed) and while renaming the fixed-width name box leaves the
-        // filler to absorb the slack instead of the box ballooning.
+        // The filler hugs slightly more eagerly than the name field, so the name
+        // claims the spare width in the display state, and while renaming the
+        // filler absorbs the slack instead of the box ballooning.
         nameSpacer.translatesAutoresizingMaskIntoConstraints = false
         nameSpacer.setContentHuggingPriority(.defaultLow + 1, for: .horizontal)
         nameSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -113,40 +99,32 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         spinner.setContentHuggingPriority(.required, for: .horizontal)
         spinner.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        // Keep the trailing accessory rigid so the name field is the sole
-        // flexible element: it claims all spare width and truncates only when
-        // genuinely out of room.
+        // Keep the trailing accessory rigid so the name field is the sole flexible
+        // element, truncating only when genuinely out of room.
         agentButton.setContentHuggingPriority(.required, for: .horizontal)
         agentButton.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        // The icon and spinner share the leading slot: exactly one is visible at
-        // a time, so the stack collapses the hidden one and the visible view
-        // owns that position. Both are pinned to the same width to keep the
-        // name field from shifting when they swap.
+        // The icon and spinner share the leading slot: exactly one is visible at a
+        // time, and both are pinned to the same width so the name field doesn't
+        // shift when they swap.
         let row = NSStackView(views: [iconView, spinner, nameField, nameSpacer, agentButton])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.distribution = .fill
         row.spacing = Spacing.small
-        // No gap between the name and its filler, so the display row looks the
-        // same as before the filler existed (name directly abutting the spare
-        // space, the standard accessory gap before the agent badge).
+        // No gap between the name and its filler.
         row.setCustomSpacing(0, after: nameField)
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
 
-        // Caps the name box at its text width while renaming (see
-        // `setRenaming(_:)`); inactive here so the name fills the row in its
-        // display state. A `<=` bound rather than `==` so it never demands width
-        // and pushes the sidebar wider — a long name just fills and scrolls.
+        // Inactive here, so the name fills the row in its display state.
         let editMax = nameField.widthAnchor.constraint(lessThanOrEqualToConstant: 0)
         editMax.priority = .defaultHigh
         nameEditMaxWidth = editMax
 
-        // Auto-adjust the primary label for selection highlighting. The icon is
-        // deliberately not wired to `imageView`; its state color is baked into a
-        // non-template symbol image (see `applyIconStateColor()`) so the source
-        // list's selection vibrancy leaves it alone instead of drawing it white.
+        // The icon is deliberately not wired to `imageView`: its state color is
+        // baked into a non-template symbol image, so the source list's selection
+        // vibrancy leaves it alone instead of drawing it white.
         textField = nameField
 
         NSLayoutConstraint.activate([
@@ -235,8 +213,8 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
                 status: agentStatus, vmName: instance.name, hasDismissAction: dismissible
             )
         } else {
-            // No badge for this state: hide it and dismiss any popover/spinner
-            // left from a prior state so nothing lingers on the recycled view.
+            // Dismiss any popover/spinner left from a prior state so nothing
+            // lingers on the recycled view.
             agentButton.reset()
             agentButton.isHidden = true
         }
@@ -248,9 +226,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     /// result is marked non-template. A plain template image tinted with
     /// `contentTintColor` would be drawn white by the source list's selection
     /// vibrancy when its row is highlighted; a non-template, pre-colored image
-    /// is exempt, so the state color survives selection. The point size is
-    /// folded into the same configuration so the glyph matches the spinner's
-    /// visual weight (the SF Symbol default reads small beside it).
+    /// is exempt.
     private func applyIconStateColor() {
         guard let instance else { return }
         let guestOS = instance.configuration.guestOS
@@ -274,24 +250,18 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
 
     // MARK: - Inline rename
 
-    /// `true` when `point` (in this cell's coordinate space) is over the
-    /// editable name.
-    ///
-    /// Lets the outline view start a slow-second-click rename only on a click
-    /// over the name itself, not the leading icon or the trailing agent badge.
+    /// `true` when `point` (in this cell's coordinate space) is over the editable
+    /// name, so a slow-second-click rename starts only over the name itself.
     func isPointOverName(_ point: NSPoint) -> Bool {
-        // `point` is in this cell's coordinate space; convert into the name
-        // field's own space — its `frame` is relative to the inset row stack,
-        // not the cell, so comparing them directly never matches.
+        // Convert into the name field's own space — its `frame` is relative to the
+        // inset row stack, not the cell, so comparing directly never matches.
         guard !nameField.isHidden else { return false }
         return nameField.bounds.contains(nameField.convert(point, from: self))
     }
 
     /// Flips the name field between display and editable states.
     ///
-    /// Driven by the controller when `activeRename` enters/leaves
-    /// `.sidebar(id)` for this row; also re-applied on reconfigure so a reload
-    /// mid-rename keeps the field editable.
+    /// Re-applied on reconfigure, so a reload mid-rename keeps the field editable.
     func setRenaming(_ renaming: Bool) {
         guard renaming != isRenaming else { return }
         isRenaming = renaming
@@ -302,14 +272,13 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
             nameField.isBezeled = true
             nameField.drawsBackground = true
             if let instance { nameField.stringValue = instance.name }
-            // Cap the box at the text width so it hugs the name; the field
-            // otherwise fills the row. Re-capped as the user types.
+            // Re-capped as the user types.
             updateRenameBoxWidth(for: nameField.stringValue)
             nameEditMaxWidth?.isActive = true
             window?.makeFirstResponder(nameField)
             // Re-seed after taking focus: the makeFirstResponder above can
-            // synchronously commit the detail surface's pending rename
-            // (mid-handoff), changing the name after the seed above.
+            // synchronously commit the detail surface's pending rename, changing
+            // the name after the seed above.
             if let instance, nameField.stringValue != instance.name {
                 nameField.stringValue = instance.name
                 nameField.currentEditor()?.string = instance.name
@@ -331,21 +300,15 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     /// Ends a live edit session through the normal commit path.
     ///
     /// Resigns the field editor while `isRenaming` is still set, so
-    /// `controlTextDidEndEditing` commits the in-flight text. Callers tearing
-    /// down the row's rename state must use this BEFORE `setRenaming(false)`,
-    /// which flips the commit gate without resigning the editor — a later
-    /// resign would then silently drop the typed text.
+    /// `controlTextDidEndEditing` commits the in-flight text. Callers must use
+    /// this BEFORE `setRenaming(false)`, which flips the commit gate without
+    /// resigning the editor — a later resign then silently drops the typed text.
     func commitActiveRenameSession() {
         guard isRenaming, nameField.currentEditor() != nil else { return }
         window?.makeFirstResponder(nil)
     }
 
     /// Caps the rename box at the width of `text` so it hugs the name.
-    ///
-    /// Shared sizing via ``InlineRenameSizing``. Because the cap is a `<=` bound
-    /// and the field fills the row, a name wider than the sidebar isn't forced to
-    /// fit — the box fills the available width and the text scrolls, so the box
-    /// never demands room and stretches the window.
     private func updateRenameBoxWidth(for text: String) {
         nameEditMaxWidth?.constant = InlineRenameSizing.boxWidth(for: text, font: Typography.body)
     }
@@ -359,11 +322,8 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     func controlTextDidEndEditing(_ obj: Notification) {
         guard isRenaming, !isCancellingRename else { return }
         let newName = nameField.stringValue
-        // Whether editing ended by Return (vs a click elsewhere). The controller
-        // restores sidebar focus — and the emphasized blue selection — only for
-        // Return; a click commits too but lets focus follow the click, so the
-        // sidebar greys out on its own (the standard "selected but not focused"
-        // look).
+        // Whether editing ended by Return (vs a click elsewhere): the controller
+        // restores sidebar focus only for Return.
         let endedByReturn =
             (obj.userInfo?["NSTextMovement"] as? Int) == NSTextMovement.return.rawValue
         setRenaming(false)
@@ -377,8 +337,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         isCancellingRename = true
         // Revert the live buffer and resign so the field editor actually tears
         // down — setting `isEditable = false` in `setRenaming(false)` alone leaves
-        // it active, so the box would stay in its editing state. The controller
-        // restores focus (and the blue selection) once the cancel propagates.
+        // it active, so the box would stay in its editing state.
         if let instance { nameField.currentEditor()?.string = instance.name }
         window?.makeFirstResponder(nil)
         setRenaming(false)
@@ -389,9 +348,8 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
 
     /// Re-establishes first-responder focus when a renaming cell joins a window.
     ///
-    /// During `reloadData` the cell is configured (and `setRenaming` runs)
-    /// before it's in the window hierarchy, so the `makeFirstResponder` there
-    /// no-ops; this catches that case on attach.
+    /// During `reloadData` the cell is configured (and `setRenaming` runs) before
+    /// it's in the window hierarchy, so the `makeFirstResponder` there no-ops.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard isRenaming, let window else { return }
@@ -420,15 +378,8 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
 
     // MARK: - Intrinsic width
 
-    /// The cell content width (within the cell's own bounds, excluding the
-    /// outline view's per-row indentation) at which `name` is fully visible and
-    /// the label stops truncating.
-    ///
-    /// Mirrors `buildLayout()`: the leading row inset, the fixed icon/spinner
-    /// slot and its gap, the measured name width, the trailing inset, and — when
-    /// the agent accessory is shown — its width plus gap. Used by the
-    /// split-view divider's Finder-style snap-to-fit; the caller adds the
-    /// outline indentation.
+    /// The cell content width — excluding the outline view's per-row indentation,
+    /// which the caller adds — at which `name` stops truncating.
     static func contentWidth(forName name: String, showsAgentAccessory: Bool) -> CGFloat {
         let nameWidth = ceil(measuredNameWidth(for: name))
         var width =
@@ -459,9 +410,8 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     ///
     /// The snap recomputes the fit width on every `constrainSplitPosition` call
     /// (many per second during a drag) over every VM, so caching the text-layout
-    /// pass keeps that hot path off the layout engine. Keyed only by name;
-    /// cleared when the font changes (system text-size change), which also keeps
-    /// it tracking `Typography.body` for live rows. Bounded by the VM count.
+    /// pass keeps that hot path off the layout engine. Cleared when the font
+    /// changes, so it keeps tracking `Typography.body`.
     private static var nameWidthCache: [String: CGFloat] = [:]
     private static var nameWidthCacheFont: NSFont?
 
@@ -486,19 +436,10 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     ///
     /// Hidden for Linux guests, during macOS install, when `.current`, when
     /// `.waiting` was dismissed, and — the outermost gate — whenever the VM has
-    /// no live session.
-    ///
-    /// Every state the badge renders is a statement about *this* session's
-    /// control channel: `.waiting` ("no handshake yet"), `.connecting`,
-    /// `.outdated` and `.unresponsive` report what the channel has or hasn't
-    /// carried, and `.expectedMissing` reports that a previously-seen agent
-    /// failed to reconnect after this session's post-start grace. None of them
-    /// is answerable without a session. On a stopped or cold-paused VM
-    /// `agentStatus` therefore degrades to `.waiting`, and the badge would
-    /// report "guest agent not installed" for a VM whose agent state is simply
-    /// unknown — and whose popover action (mounting the installer DMG, which
-    /// needs USB hot-plug per `VMInstance.canAttachUSBDevices`) can't run
-    /// anyway.
+    /// no live session: every state the badge renders is a statement about *this*
+    /// session's control channel. On a stopped or cold-paused VM `agentStatus`
+    /// degrades to `.waiting`, and the badge would report "guest agent not
+    /// installed" for a VM whose agent state is unknown.
     static func visibleAgentStatus(for instance: VMInstance) -> AgentStatus? {
         guard instance.configuration.guestOS == .macOS else { return nil }
         guard instance.installState == nil else { return nil }

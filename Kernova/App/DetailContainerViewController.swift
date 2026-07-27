@@ -4,16 +4,11 @@ import os
 /// AppKit container that layers pure-AppKit VM displays on top of the detail
 /// content (the empty state, or the per-VM detail router).
 ///
-/// Each running VM that displays inline gets its own `VMDisplayBackingView`
-/// (and thus its own `VZVirtualMachineView`). Switching VMs swaps visibility rather than
-/// reassigning the `virtualMachine` property, which `VZVirtualMachineView` does not handle
-/// correctly.
-///
-/// The detail content layer (`DetailEmptyStateView` ⇆ `VMDetailRouterViewController`)
-/// is kept in the view hierarchy at all times beneath the backing views. The
-/// lifecycle confirmation alerts and the delete sheet are presented by
-/// ``DetailAlertsPresenter`` (owned here so they survive while the VM display is
-/// showing), and the creation wizard by ``wizardPresenter``.
+/// Each running VM that displays inline gets its own `VMDisplayBackingView` (and
+/// thus its own `VZVirtualMachineView`). Switching VMs swaps visibility rather
+/// than reassigning the `virtualMachine` property, which `VZVirtualMachineView`
+/// does not handle correctly. The detail content layer stays in the view
+/// hierarchy at all times beneath the backing views.
 @MainActor
 final class DetailContainerViewController: NSViewController {
     private let viewModel: VMLibraryViewModel
@@ -68,8 +63,7 @@ final class DetailContainerViewController: NSViewController {
             contentContainer.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             contentContainer.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             // Pin the top to the safe area so detail content clears the
-            // full-size-content window's toolbar (matching the VM display
-            // backing view, which does the same).
+            // full-size-content window's toolbar.
             contentContainer.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor),
         ])
 
@@ -175,8 +169,8 @@ final class DetailContainerViewController: NSViewController {
                 _ = self.viewModel.selectedInstance?.displayMode
                 _ = self.viewModel.selectedInstance?.detailPaneMode
                 _ = self.viewModel.selectedInstance?.virtualMachine
-                // Track instances with backing views so we detect when they stop or leave inline mode.
-                // Also track the instances array itself so we detect additions/removals.
+                // Track instances with backing views so a stop or a move out of
+                // inline mode is detected, and the array itself for adds/removes.
                 _ = self.viewModel.instances.count
                 for id in self.backingViews.keys {
                     if let inst = self.viewModel.instances.first(where: { $0.id == id }) {
@@ -255,11 +249,9 @@ extension DetailContainerViewController: VMCreationWizardViewControllerDelegate 
         _ vc: VMCreationWizardViewController,
         creationVM: VMCreationViewModel
     ) {
-        // Keep the sheet up until creation completes. On success, dismiss it; on
-        // failure, present the error on the wizard's own window and keep it open
-        // for a retry. `createVM` returns the error rather than presenting it, so
-        // the global alerts presenter on this same window can't race the
-        // still-open wizard sheet.
+        // Keep the sheet up until creation completes: on failure the error is
+        // presented on the wizard's own window, so the global alerts presenter on
+        // this same window can't race the still-open wizard sheet.
         Task { [weak self] in
             guard let self else { return }
             switch await self.viewModel.createVM(from: creationVM) {

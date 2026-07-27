@@ -1,10 +1,6 @@
 import AppKit
 
 /// Centered empty state shown in the detail pane when no VM is selected.
-///
-/// The AppKit replacement for the SwiftUI `ContentUnavailableView` in
-/// `MainDetailView`: a large symbol, a title, a description, and a button that
-/// opens the creation wizard.
 @MainActor
 final class DetailEmptyStateView: NSView {
     private let onNewVM: () -> Void

@@ -1,20 +1,12 @@
 import AppKit
 
 /// Delegate for ``DiskSizePopoverContentViewController``.
-///
-/// The view controller is intentionally decoupled from `VMLibraryViewModel`
-/// — the host (a presenter or coordinator, e.g. `DiskSizePopoverCoordinator`)
-/// implements these methods to forward the user's choice to the appropriate
-/// view-model action and to close the surrounding popover.
 @MainActor
 protocol DiskSizePopoverContentViewControllerDelegate: AnyObject {
     /// Invoked when the user clicks the confirm (Create) button.
     ///
-    /// - Parameters:
-    ///   - vc: The popover content view controller firing the event.
-    ///   - sizeInGB: The size (in gigabytes) the user selected from the
-    ///     popup. Always one of the `availableSizes` passed to the
-    ///     controller's initializer.
+    /// `sizeInGB` is always one of the `availableSizes` passed to the
+    /// controller's initializer.
     func diskSizePopover(
         _ vc: DiskSizePopoverContentViewController,
         didConfirmSizeInGB sizeInGB: Int
@@ -27,17 +19,9 @@ protocol DiskSizePopoverContentViewControllerDelegate: AnyObject {
 /// Generic popover content for asking the user to pick a disk size and
 /// confirm or cancel.
 ///
-/// Reused for both Storage Disks ("Create New Disk") and Removable Media
-/// ("Create New Removable Disk") — the two surfaces are visually identical
-/// (headline + size popup + caption + Cancel/Create) and only differ in the
-/// headline text, the caption text, and what the host does on confirm.
-/// The controller knows nothing about either flow; the host supplies the
-/// strings via init and implements the delegate.
-///
-/// Owns its full layout via `loadView()` using the shared ``CalloutStyle``
-/// tokens and the `makeCalloutHeadline` / `makeCalloutBody` atom factories.
-/// The surrounding `NSPopover` chrome is managed externally by the host
-/// (via ``PopoverPresenter``); this controller has no reference to it.
+/// The controller knows nothing about the flow it serves: the host supplies the
+/// headline and caption via init, implements the delegate, and owns the
+/// surrounding `NSPopover` chrome.
 @MainActor
 final class DiskSizePopoverContentViewController: NSViewController {
     weak var delegate: DiskSizePopoverContentViewControllerDelegate?
@@ -45,8 +29,7 @@ final class DiskSizePopoverContentViewController: NSViewController {
     /// Headline shown at the top of the popover (e.g. "Create New Disk").
     let headline: String
 
-    /// Caption shown below the size popup explaining what will be created
-    /// and where.
+    /// Caption shown below the size popup.
     let caption: String
 
     /// All disk sizes the user can pick from, in display order.
@@ -116,15 +99,11 @@ final class DiskSizePopoverContentViewController: NSViewController {
     }
 
     /// Returns the currently selected size in gigabytes.
-    ///
-    /// Reads the popup's selected `tag`, falling back to `defaultSizeInGB`
-    /// if the popup has no selection (shouldn't happen after `loadView`).
     var selectedSizeInGB: Int {
         let tag = sizePopUp.selectedItem?.tag ?? defaultSizeInGB
         return tag == 0 ? defaultSizeInGB : tag
     }
 
-    /// "Size:" label + `NSPopUpButton` populated from `availableSizes`.
     private func makeSizeRow() -> NSView {
         let row = NSStackView()
         row.orientation = .horizontal
@@ -148,7 +127,6 @@ final class DiskSizePopoverContentViewController: NSViewController {
         return row
     }
 
-    /// Trailing-aligned Cancel + Create button row.
     private func makeButtonRow() -> NSView {
         let row = NSStackView()
         row.orientation = .horizontal

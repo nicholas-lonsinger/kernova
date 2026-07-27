@@ -2,18 +2,13 @@ import AppKit
 import os
 
 /// Observes system sleep/wake notifications and invokes callbacks.
-///
-/// Mirrors the `VMDirectoryWatcher` pattern: `@MainActor`-isolated, callback-driven,
-/// with `nonisolated(unsafe)` for observer references needed in `deinit`.
 @MainActor
 final class SystemSleepWatcher {
     private static let logger = Logger(subsystem: "app.kernova", category: "SystemSleepWatcher")
 
-    /// `nonisolated(unsafe)` because `NSObjectProtocol` observer tokens are not `Sendable`
-    /// and we need to remove them in `deinit` (which is nonisolated).
-    ///
-    /// Safe because they are
-    /// only written in `start()` and read in `deinit`.
+    /// Observer tokens aren't `Sendable` and `deinit` is nonisolated — this is
+    /// safe only because they are written in `start()` and read nowhere but
+    /// `deinit`.
     nonisolated(unsafe) private var sleepObserver: (any NSObjectProtocol)?
     nonisolated(unsafe) private var wakeObserver: (any NSObjectProtocol)?
 
@@ -37,7 +32,6 @@ final class SystemSleepWatcher {
         }
     }
 
-    /// Registers observers for system sleep and wake notifications.
     func start() {
         let center = NSWorkspace.shared.notificationCenter
 

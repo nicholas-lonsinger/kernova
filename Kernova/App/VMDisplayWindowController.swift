@@ -6,18 +6,13 @@ import Virtualization
 /// resizable pop-out window or in native macOS fullscreen.
 ///
 /// On show the inline display in the main window is replaced by a placeholder
-/// (via `VMInstance.displayMode`), and this controller creates its own
-/// `VMDisplayBackingView` (containing a `VZVirtualMachineView`) bound to the same
-/// `VZVirtualMachine`. What happens on close depends on the `CloseReason`: a
-/// user close leaves the VM running headless (`displayMode == .hidden`), while
-/// pop-in and app dismissal return the display slot to the main window.
+/// (via `VMInstance.displayMode`). What happens on close depends on the
+/// `CloseReason`: a user close leaves the VM running headless (`displayMode ==
+/// .hidden`), while pop-in and app dismissal return the display slot to the
+/// main window.
 @MainActor
 final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     /// Why the display window is closing; `nil` while it is open.
-    ///
-    /// Determines the close side effects both here (`windowWillClose`'s
-    /// `displayMode` transition) and in `AppDelegate`'s close observer
-    /// (`displayPreference` and window restoration).
     enum CloseReason {
         /// The user closed the window (red button / ⌘W): the VM keeps running
         /// headless — nothing pops back into the main window.
@@ -53,7 +48,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 lifecycleID: NSToolbarItem.Identifier("displayLifecycle"),
                 saveStateID: NSToolbarItem.Identifier("displaySaveState"),
                 // Targets this window's VM: the nil-target showClipboard action
-                // resolves through AppDelegate.activeInstance, which prefers the
+                // resolves through `AppDelegate.activeInstance`, which prefers the
                 // key display window's instance over the sidebar selection.
                 clipboardID: NSToolbarItem.Identifier("displayClipboard"),
                 popOutID: NSToolbarItem.Identifier("displayPopOut"),
@@ -91,16 +86,14 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
         window.setFrameAutosaveName("VMDisplay-\(instance.instanceID)")
 
-        // RATIONALE: one shared toolbar identifier for every VM's display window
-        // (unlike the per-VM frame autosave name above, which is intentionally
-        // per-VM) — AppKit synchronizes same-identifier toolbars, so a customized
-        // layout applies to all display windows and persists as a single
-        // configuration, the way Finder windows share theirs.
+        // RATIONALE: one shared toolbar identifier for every VM's display window,
+        // unlike the per-VM frame autosave name above — AppKit synchronizes
+        // same-identifier toolbars, so a customized layout applies to all display
+        // windows and persists as a single configuration. verified 2026-07-27
         let toolbar = NSToolbar(identifier: "KernovaVMDisplayToolbar")
         toolbar.delegate = self
-        // First-run default; the autosaved configuration (restored when the
-        // toolbar is attached to the window) overrides this, so all properties
-        // must be set before the attach below.
+        // The autosaved configuration is restored when the toolbar is attached to
+        // the window, so every property must be set before the attach below.
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = true
@@ -125,25 +118,16 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// Closes the window as an app-initiated dismissal rather than a user close.
-    ///
-    /// Used both when the agent dismisses the *whole* GUI (a GUI-origin quit) and
-    /// when the VM stops/errors/cold-pauses out from under the window
-    /// (`observeInstance`).
     func closeForAppDismissal() {
         close(reason: .appDismissal)
     }
 
     /// Closes the window as an explicit Pop In.
-    ///
-    /// The display returns to the main window's detail pane and `AppDelegate`'s
-    /// close observer reverts `displayPreference` to `.inline`.
     func closeForPopIn() {
         close(reason: .popIn)
     }
 
-    /// The single programmatic-close path.
-    ///
-    /// Idempotent via the `closeReason` guard.
+    /// The single programmatic-close path; idempotent via the `closeReason` guard.
     private func close(reason: CloseReason) {
         guard closeReason == nil else { return }
         lastDisplayID = window?.screen?.displayID
@@ -157,15 +141,11 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         // A close that arrives without a programmatic reason is the user
         // closing the window (red button / ⌘W).
         if closeReason == nil { closeReason = .userClose }
-        // Capture display ID if not already set by the programmatic-close path
         if lastDisplayID == nil {
             lastDisplayID = window?.screen?.displayID
         }
         instanceObservation?.cancel()
         instanceObservation = nil
-        // A user close leaves the VM running headless — the display just
-        // disappears; pop-in and app dismissal return the display slot to the
-        // main window.
         instance.displayMode = (closeReason == .userClose) ? .hidden : .inline
     }
 
@@ -173,13 +153,11 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         _ window: NSWindow,
         willUseFullScreenPresentationOptions proposedOptions: NSApplication.PresentationOptions
     ) -> NSApplication.PresentationOptions {
-        // RATIONALE: .autoHideToolbar replaces the manual toolbar?.isVisible
-        // toggling this controller used to do on fullscreen enter/exit, which
-        // contaminated the autosaved toolbar configuration (quitting while
-        // fullscreen persisted "hidden"). The toolbar now slides in with the menu
-        // bar on hover, keeping lifecycle controls reachable in fullscreen.
-        // .autoHideToolbar requires .autoHideMenuBar, which requires .autoHideDock
-        // (both are the system fullscreen defaults anyway).
+        // RATIONALE: manually toggling `toolbar?.isVisible` on fullscreen
+        // enter/exit contaminates the autosaved toolbar configuration (quitting
+        // while fullscreen persists "hidden"), so `.autoHideToolbar` does it
+        // instead — the toolbar slides in with the menu bar on hover. It requires
+        // `.autoHideMenuBar`, which requires `.autoHideDock`. verified 2026-07-27
         [.fullScreen, .autoHideMenuBar, .autoHideDock, .autoHideToolbar]
     }
 
@@ -191,18 +169,15 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     func windowDidExitFullScreen(_ notification: Notification) {
         guard instance.displayMode == .fullscreen else { return }
         instance.displayMode = .popOut
-        // Only update the persisted preference for user-initiated exits.
-        // During a programmatic close (VM stopped/errored/cold-paused, GUI
-        // dismissal, pop-in), the preference should remain .fullscreen so it
-        // restores correctly when the display window is next opened.
+        // Only persist user-initiated exits: during a programmatic close the
+        // preference must stay .fullscreen so it restores correctly when the
+        // display window is next opened.
         guard closeReason == nil else { return }
         onUpdateConfiguration { $0.displayPreference = .popOut }
     }
 
     // MARK: - Instance Observation
 
-    /// Observes VM state changes to auto-close the window when the VM stops/errors/saves,
-    /// keep toolbar items in sync, and update the backing view's overlay state.
     private func observeInstance() {
         instanceObservation = observeRecurring(
             track: { [weak self] in
@@ -216,8 +191,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 guard let self else { return }
                 let status = self.instance.status
                 if status == .stopped || status == .error || self.instance.isColdPaused {
-                    // Programmatic close (VM went away out from under the window) — the
-                    // same bookkeeping as a GUI-origin dismissal, so share one helper.
+                    // The VM went away out from under the window.
                     self.closeForAppDismissal()
                 } else {
                     self.backingView.update(
@@ -254,10 +228,9 @@ extension VMDisplayWindowController: NSToolbarDelegate {
     }
 
     func toolbarWillAddItem(_ notification: Notification) {
-        // A palette-added item is born with factory-default labels and enablement
-        // (autovalidates is false on the shared items), and during will-add it is
-        // not yet in toolbar.items — refresh one runloop turn later so it
-        // immediately reflects VM state.
+        // A palette-added item is born with factory-default labels and enablement,
+        // and during will-add it is not yet in `toolbar.items` — refresh one
+        // runloop turn later so it reflects VM state.
         Task { @MainActor [weak self] in
             self?.updateToolbarItems()
         }

@@ -3,12 +3,9 @@ import AppKit
 /// Placeholder shown for confidential clipboard content
 /// (`org.nspasteboard.ConcealedType`, the convention password managers use).
 ///
-/// The window deliberately never renders the secret bytes — whatever the source
-/// marked as concealed (a password copied on the host, or one copied inside a
-/// macOS guest) is replaced here by a lock icon and a short explanation. The
-/// content still crosses the channel and pastes into the peer; only its on-screen
-/// display is suppressed. Static, read-only, and parameterless — there is nothing
-/// to configure.
+/// The window deliberately never renders the secret bytes. The content still
+/// crosses the channel and pastes into the peer; only its on-screen display is
+/// suppressed.
 @MainActor
 final class ClipboardConcealedPreviewView: NSView {
     init() {
@@ -19,7 +16,7 @@ final class ClipboardConcealedPreviewView: NSView {
             pointSize: 36, weight: .regular)
         iconView.contentTintColor = .secondaryLabelColor
         // A read-only decorative image must not intercept drags — let the whole
-        // area bubble to the container (see ClipboardFilePreviewView).
+        // area bubble to the container.
         iconView.unregisterDraggedTypes()
 
         let headlineLabel = NSTextField(labelWithString: "Confidential content")
@@ -36,8 +33,8 @@ final class ClipboardConcealedPreviewView: NSView {
         detailLabel.isSelectable = false
         // A wrapping label computes its intrinsic *height* at this width, so the
         // stack lays it out at the correct multi-line height rather than a
-        // single-line guess (the width constraint below alone forces wrapping but
-        // not the matching height). Matches the codebase's wrapping-label idiom.
+        // single-line guess; the width constraint below forces wrapping but not
+        // the matching height.
         detailLabel.preferredMaxLayoutWidth = Self.detailWidth
 
         super.init(frame: .zero)
@@ -58,8 +55,7 @@ final class ClipboardConcealedPreviewView: NSView {
             stack.trailingAnchor.constraint(
                 lessThanOrEqualTo: trailingAnchor, constant: -Spacing.large),
             // Cap the explanation's width so it wraps to a few lines rather than
-            // dictating the window width (paired with `preferredMaxLayoutWidth`
-            // above, which gives the wrapped text its correct height).
+            // dictating the window width.
             detailLabel.widthAnchor.constraint(lessThanOrEqualToConstant: Self.detailWidth),
         ])
     }
@@ -72,7 +68,6 @@ final class ClipboardConcealedPreviewView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// Matches the text editor's background — see `ClipboardImagePreviewView`.
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {

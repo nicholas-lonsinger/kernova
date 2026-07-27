@@ -4,8 +4,6 @@ import KernovaKit
 import UniformTypeIdentifiers
 
 /// Pure string derivation for the clipboard window's content-type indicator and summary rows.
-///
-/// Extracted from the views so the formats are unit-testable.
 enum ClipboardContentDescriber {
     /// Maximum per-representation rows in the summary view before the rest
     /// collapse into an "and N more" line.
@@ -39,15 +37,12 @@ enum ClipboardContentDescriber {
                 primary = displayName(forUTI: uti)
             }
         case .file(let filename, let uti, _):
-            // Name · type, e.g. "notes.txt · Plain Text Document" — the size is
-            // appended below like every other mode.
             primary = "\(filename) · \(displayName(forUTI: uti))"
         case .files(let files):
-            // The chip list enumerates each file, so the indicator is a count +
-            // total size header ("3 files · 4.2 MB") — return early to skip the
-            // generic "+ N more" tail, which would double-count here. Sum the
-            // listed files (not `totalByteCount`) so the header's size always
-            // matches its count, never folding in a coexisting inline rep.
+            // Return early to skip the generic "+ N more" tail, which would
+            // double-count here. Sum the listed files (not `totalByteCount`) so
+            // the header's size always matches its count, never folding in a
+            // coexisting inline rep.
             let totalBytes = files.reduce(0) { $0 + $1.byteCount }
             let totalSize = DataFormatters.formatBytes(UInt64(totalBytes))
             return "\(files.count) files · \(totalSize)"
@@ -69,8 +64,8 @@ enum ClipboardContentDescriber {
     /// the editor produces.
     ///
     /// The per-keystroke path uses this so the indicator never has to build a
-    /// `ClipboardContent` (and SHA-256 the whole buffer) just to render a label
-    /// (CLIPBOARD.md §8); the off-actor commit owns the real content/digest.
+    /// `ClipboardContent` (and SHA-256 the whole buffer) to render a label
+    /// (CLIPBOARD.md §8).
     static func indicatorText(forPlainText text: String) -> String {
         if text.isEmpty { return "Empty" }
         return "Plain text · \(DataFormatters.formatBytes(UInt64(text.utf8.count)))"
@@ -96,10 +91,6 @@ enum ClipboardContentDescriber {
     }
 
     /// A file chip's "type · size" subtitle, e.g. `"PNG image · 3.4 MB"`.
-    ///
-    /// Shared by the single-file (`ClipboardFilePreviewView`) and multi-file
-    /// (`ClipboardFilesPreviewView`) chips so a file's detail line is formatted
-    /// identically in both.
     static func fileDetail(uti: String, byteCount: Int) -> String {
         "\(displayName(forUTI: uti)) · \(DataFormatters.formatBytes(UInt64(byteCount)))"
     }

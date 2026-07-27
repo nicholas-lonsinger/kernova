@@ -3,9 +3,6 @@ import KernovaKit
 import os
 
 /// Snapshot of the toggle state delivered to the guest agent via `PolicyUpdate` on the control channel.
-///
-/// Decouples `VsockControlService` from `VMConfiguration` — the host supplies a closure that reads
-/// the fields each time policy is sent.
 struct AgentPolicySnapshot: Equatable, Sendable {
     var logForwardingEnabled: Bool
     var clipboardSharingEnabled: Bool
@@ -14,56 +11,33 @@ struct AgentPolicySnapshot: Equatable, Sendable {
 /// Drives the always-on control channel between the host and the macOS guest
 /// agent.
 ///
-/// The control channel is independent of any feature toggle — its listener is
-/// installed unconditionally for every macOS guest with a `VZVirtioSocketDevice`,
-/// regardless of whether clipboard sharing is enabled. It carries:
-/// - the bidirectional `Hello` handshake (each side advertises protocol
-///   version, capabilities, and identifying agent info), and
-/// - a bidirectional `Heartbeat` stream — each side sends one on a recurring
-///   timer and treats extended silence from the peer as the peer being hung.
-///
-/// `agentStatus` is the single source of truth for "is the guest agent
-/// installed, current, outdated, or unresponsive" on macOS guests. The UI reads
-/// it via `VMInstance.agentStatus`.
-///
-/// One instance manages one channel for the lifetime of one accepted connection.
-/// `stop()` is idempotent and is called both on explicit teardown and when the
-/// liveness watchdog gives up after the terminate threshold. After teardown,
-/// `VMInstance.startVsockServices()`'s accept callback will spawn a fresh
-/// instance the next time the guest reconnects.
+/// The listener is installed for every macOS guest with a
+/// `VZVirtioSocketDevice`, independent of any feature toggle, and carries the
+/// bidirectional `Hello` handshake plus a `Heartbeat` stream where extended
+/// peer silence means the peer is hung. One instance manages one channel for
+/// one accepted connection; `stop()` is idempotent.
 @MainActor
 @Observable
 final class VsockControlService {
     // MARK: - Observable state
 
-    /// `true` once the guest agent has sent its `Hello`.
-    ///
-    /// Reset on `stop()`.
+    /// `true` once the guest agent has sent its `Hello`; reset on `stop()`.
     private(set) var isConnected: Bool = false
 
-    /// The guest-reported `Hello.agent_info.agent_version`.
-    ///
-    /// `nil` until the guest sends its `Hello`. Reset on `stop()`.
+    /// The guest-reported `Hello.agent_info.agent_version`, `nil` until that
+    /// `Hello` arrives and again after `stop()`.
     private(set) var agentVersion: String?
 
     /// `true` when the inbound liveness watchdog has fired but the channel has not yet been torn down.
-    ///
-    /// Surfaces as `.unresponsive` in `agentStatus`.
     private(set) var isUnresponsive: Bool = false
 
     /// Whether the guest agent is missing, current, outdated, or unresponsive relative to the bundled binary.
-    ///
-    /// Drives sidebar / clipboard-window install/update affordances and the unresponsive indicator.
     var agentStatus: AgentStatus {
         guard let installed = agentVersion else { return .waiting }
         if isUnresponsive { return .unresponsive(version: installed) }
-        // If the host's sidecar is missing (build regression), don't fight the
-        // user with an "outdated" prompt — accept what the guest reports.
         guard let bundled = bundledAgentVersion else {
             return .current(version: installed)
         }
-        // Current-vs-outdated classification is shared with the host-side
-        // auto-eject decision (see `AgentStatus.isObservedVersionCurrent`).
         return AgentStatus.isObservedVersionCurrent(installed, bundled: bundled)
             ? .current(version: installed)
             : .outdated(installed: installed, bundled: bundled)
@@ -82,50 +56,38 @@ final class VsockControlService {
     /// Reads the latest policy from the host configuration.
     ///
     /// Invoked once per guest `Hello` so the guest receives the current snapshot at every (re)connect.
-    /// `nil` in tests that don't exercise policy delivery.
     private let policyProvider: (@MainActor () -> AgentPolicySnapshot)?
 
     /// Notified each time the guest reports a non-empty `agentVersion` in its `Hello`.
     ///
-    /// Fire-and-forget — this service does not care whether the host persists the value. Wired by
-    /// `VMInstance.startVsockServices()` to write the version into
-    /// `VMConfiguration.lastSeenAgentVersion`. `nil` in tests and contexts where persistence is not
-    /// exercised.
+    /// Fire-and-forget — this service does not care whether the host persists the value.
     private let onAgentVersionObserved: (@MainActor (String) -> Void)?
 
     private var consumeTask: Task<Void, Never>?
     private var outboundHeartbeatTask: Task<Void, Never>?
     private var livenessTask: Task<Void, Never>?
 
-    /// Wall-clock instant of the most recent inbound frame (any kind — Hello
-    /// and Heartbeat both count as liveness signals). `nil` until the first
-    /// inbound frame arrives.
+    /// Instant of the most recent inbound frame of any kind — `Hello` and
+    /// `Heartbeat` both count as liveness signals.
     private var lastInboundFrame: ContinuousClock.Instant?
 
-    /// Outbound heartbeat sequence number.
-    ///
-    /// Echoed only for diagnostics — the
-    /// peer does not respond to a specific nonce.
+    /// Outbound heartbeat sequence number, for diagnostics only — the peer does
+    /// not respond to a specific nonce.
     private var nextHeartbeatNonce: UInt64 = 1
 
     /// Whether the connected guest agent advertised the streaming-clipboard
     /// capability in its `Hello`.
     ///
-    /// Set on Hello; gates the clipboard bit of every
+    /// Set on Hello, reset on stop. Gates the clipboard bit of every
     /// `PolicyUpdate` we send, so an agent that can't stream never has clipboard
-    /// sharing turned on (it surfaces as `.outdated` instead, since the agent
-    /// version is bumped in lockstep with the capability). Read (via
-    /// `guestSupportsClipboardStreaming`) by the clipboard listener's admission
-    /// check (#145). `@MainActor` state; reset on stop.
+    /// sharing turned on.
     private var guestSupportsClipboardStreamingStorage = false
 
     /// Whether the guest agent advertised the folder placeholder-tree capability
     /// (`clipboard.dirtree.v1`) in its `Hello`.
     ///
-    /// Set on Hello; read (via `guestSupportsClipboardDirTree`) at offer/consume
-    /// time by the per-VM `VsockClipboardService` to decide whether a directory
-    /// rep crosses as a placeholder tree or the eager-archive fallback. `@MainActor`
-    /// state; reset on stop.
+    /// Set on Hello, reset on stop. Decides whether a directory rep crosses as a
+    /// placeholder tree or the eager-archive fallback.
     private var guestSupportsClipboardDirTreeStorage = false
 
     /// Whether the guest advertised `clipboard.dirtree.v1` — the mutually
@@ -133,7 +95,7 @@ final class VsockControlService {
     var guestSupportsClipboardDirTree: Bool { guestSupportsClipboardDirTreeStorage }
 
     /// Whether the guest advertised `clipboard.stream.v1` — the capability the
-    /// clipboard-channel admission check requires (#145).
+    /// clipboard-channel admission check requires.
     var guestSupportsClipboardStreaming: Bool { guestSupportsClipboardStreamingStorage }
 
     private static let logger = Logger(subsystem: "app.kernova", category: "VsockControlService")
@@ -150,10 +112,9 @@ final class VsockControlService {
         policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil,
         onAgentVersionObserved: (@MainActor (String) -> Void)? = nil
     ) {
-        // The two-stage watchdog requires `unresponsiveAfter < terminateAfter`
-        // so the `.unresponsive` UI transition is observable before the channel
-        // is torn down. With the relation reversed, `terminateAfter` would fire
-        // first and `.unresponsive` would never be reached.
+        // The two-stage watchdog requires `unresponsiveAfter < terminateAfter`:
+        // reversed, `terminateAfter` fires first and `.unresponsive` is never
+        // reached.
         precondition(
             unresponsiveAfter < terminateAfter,
             "VsockControlService: unresponsiveAfter (\(unresponsiveAfter)) must be < terminateAfter (\(terminateAfter))"
@@ -165,8 +126,7 @@ final class VsockControlService {
         self.unresponsiveAfter = unresponsiveAfter
         self.terminateAfter = terminateAfter
         // Check liveness several times per `unresponsiveAfter` so the
-        // transition fires promptly. Capped at the heartbeat interval so tests
-        // with very small thresholds don't over-spin.
+        // transition fires promptly, capped at the heartbeat interval.
         self.livenessTickInterval = min(heartbeatInterval, unresponsiveAfter / 3)
         self.policyProvider = policyProvider
         self.onAgentVersionObserved = onAgentVersionObserved
@@ -262,11 +222,10 @@ final class VsockControlService {
 
     /// Sends a `PolicyUpdate` frame carrying the current toggle snapshot to the guest.
     ///
-    /// Called once on Hello receipt and again any time the user flips a hot-toggleable setting while
-    /// the VM is running.
+    /// Called on Hello receipt and whenever the user flips a hot-toggleable setting while the VM
+    /// is running.
     func sendPolicyUpdate(_ policy: AgentPolicySnapshot) {
-        // Gate clipboard on the streaming capability: an agent that can't stream
-        // never gets clipboard turned on (require-match, no legacy fallback).
+        // An agent that can't stream never gets clipboard turned on.
         let clipboardEnabled = policy.clipboardSharingEnabled && guestSupportsClipboardStreaming
         if policy.clipboardSharingEnabled && !guestSupportsClipboardStreaming {
             Self.logger.notice(
@@ -303,9 +262,9 @@ final class VsockControlService {
         do {
             try channel.send(frame)
         } catch {
-            // A failed send usually means the channel just tore down. The
-            // consume task will see EOF momentarily and the listener will
-            // accept a fresh connection. Log at .debug — no further fallback.
+            // A failed send usually means the channel just tore down: the
+            // consume task sees EOF momentarily and the listener accepts a
+            // fresh connection.
             Self.logger.debug(
                 "Failed to send heartbeat for '\(self.label, privacy: .public)' (nonce=\(nonce, privacy: .public)): \(error.localizedDescription, privacy: .public)"
             )
@@ -316,8 +275,8 @@ final class VsockControlService {
 
     private func checkLiveness() {
         guard let last = lastInboundFrame else {
-            // No inbound frame ever — agent hasn't connected. `.waiting` is
-            // already what `agentStatus` reports; nothing to update.
+            // No inbound frame ever — the agent hasn't connected, and
+            // `agentStatus` already reports `.waiting`.
             return
         }
         let elapsed = ContinuousClock.now - last
@@ -326,8 +285,7 @@ final class VsockControlService {
                 "Control channel for '\(self.label, privacy: .public)' silent for \(elapsed.formatted(.units(allowed: [.seconds])), privacy: .public) — closing"
             )
             // Tearing the channel down lets the consume task return and the
-            // listener accept a fresh connection. stop() is idempotent so the
-            // subsequent VMInstance teardown is safe.
+            // listener accept a fresh connection.
             channel.close()
         } else if elapsed > unresponsiveAfter {
             if !isUnresponsive {
@@ -388,25 +346,22 @@ final class VsockControlService {
             guestSupportsClipboardDirTreeStorage = hello.capabilities.contains(
                 KernovaCapability.clipboardDirTreeV1)
             // `logDescription` bounds the peer-supplied capability strings so a
-            // malicious peer can't write arbitrary content into the host log (#145).
+            // malicious peer can't write arbitrary content into the host log.
             Self.logger.notice(
                 "Guest agent connected for '\(self.label, privacy: .public)' (service=\(hello.serviceVersion, privacy: .public), agent=\(reportedVersion, privacy: .public), caps=\(KernovaCapability.logDescription(of: hello.capabilities), privacy: .public))"
             )
-            // Notify the host that we have a fresh version sample. Empty
-            // strings indicate an agent that didn't populate the field — skip
+            // An empty string means the agent didn't populate the field — skip
             // those so the host doesn't persist a meaningless value.
             if !reportedVersion.isEmpty {
                 onAgentVersionObserved?(reportedVersion)
             }
-            // Push the current policy snapshot to the freshly connected guest
-            // so it stops/starts log + clipboard work immediately rather than
-            // assuming defaults.
+            // Push the current policy to the freshly connected guest so it
+            // doesn't run on assumed defaults.
             if let provider = policyProvider {
                 sendPolicyUpdate(provider())
             }
         case .heartbeat:
-            // The frame itself is the signal — nothing more to do beyond the
-            // `lastInboundFrame` refresh above. Recovery from `.unresponsive`
+            // The frame itself is the signal; recovery from `.unresponsive`
             // happens on the next `checkLiveness()` tick.
             Self.logger.debug(
                 "Heartbeat from '\(self.label, privacy: .public)'"
@@ -418,13 +373,12 @@ final class VsockControlService {
         case .policyUpdate, .clipboardOffer, .clipboardRequest, .clipboardTreeFetch,
             .clipboardRelease, .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd,
             .clipboardStreamAck, .clipboardStreamAbort, .logRecord, .none:
-            // PolicyUpdate is a host→guest message and never arrives on the
-            // host side; other payloads belong on other channels. Log and
-            // ignore. RATIONALE: unlike the feature channels (which close on a
-            // wrong-port payload, #145), the control channel stays up — it is
-            // the admission anchor those channels gate on, ignoring the frame
-            // discloses nothing, and closing it would flap the agent-status UI
-            // and every dependent channel on a single stray frame.
+            // PolicyUpdate is host→guest and never arrives here; other payloads
+            // belong on other channels. RATIONALE: the clipboard and log
+            // channels close on a wrong-port payload, but this one stays up —
+            // it is the admission anchor they gate on, so closing it would flap
+            // the agent-status UI and every dependent channel on one stray
+            // frame. verified 2026-07-27
             Self.logger.warning(
                 "Unexpected payload on control channel for '\(self.label, privacy: .public)' — wrong port"
             )

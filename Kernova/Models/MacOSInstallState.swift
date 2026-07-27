@@ -7,7 +7,6 @@ struct DownloadProgress: Sendable {
     /// EWMA-smoothed download speed; zero before the first progress report.
     let bytesPerSecond: Double
 
-    /// Fraction complete, derived from `bytesWritten / totalBytes`.
     var fraction: Double {
         totalBytes > 0 ? Double(bytesWritten) / Double(totalBytes) : 0
     }
@@ -25,8 +24,6 @@ enum MacOSInstallPhase: Sendable {
 struct MacOSInstallState: Sendable {
     /// Whether the install includes a download step (false for local IPSW).
     let hasDownloadStep: Bool
-    /// The current active phase.
     var currentPhase: MacOSInstallPhase
-    /// Whether the download phase has completed.
     var downloadCompleted: Bool = false
 }

@@ -12,10 +12,8 @@ final class SettingsWindowController: NSWindowController {
         // main and clipboard windows use. That factory pins a fixed initial content
         // size, and this window has no single correct one — it is non-resizable and
         // its height is whatever the selected pane publishes as `preferredContentSize`,
-        // re-applied by `SettingsTabViewController` on appear and on every tab switch.
-        // The plain initializer's fitting-size behavior is what we want here; the
-        // factory's flexible-content collapse (a split view's minimum thicknesses) has
-        // no analogue in a fixed-width settings pane.
+        // re-applied by `SettingsTabViewController` on every tab switch.
+        // verified 2026-07-27
         let window = NSWindow(
             contentViewController: SettingsTabViewController(viewModel: viewModel))
         window.title = "Settings"
@@ -25,10 +23,10 @@ final class SettingsWindowController: NSWindowController {
         window.isReleasedWhenClosed = false
         // RATIONALE: the autosaved frame is kept for its *position* only — a saved
         // frame also restores a height, which for this non-resizable window is stale
-        // the moment the pane list or a pane's content changes (#629: it stretched the
-        // first pane's cards over the excess). AppKit has no position-only autosave, so
-        // `SettingsTabViewController` re-asserts the height on appear instead; losing
-        // the remembered position would be the worse trade.
+        // the moment the pane list or a pane's content changes (observed stretching
+        // the first pane's cards over the excess). AppKit has no position-only
+        // autosave, so `SettingsTabViewController` re-asserts the height on appear.
+        // verified 2026-07-27
         window.setFrameAutosaveName("KernovaSettings")
         self.init(window: window)
     }

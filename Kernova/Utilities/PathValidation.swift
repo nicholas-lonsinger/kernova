@@ -2,9 +2,6 @@ import Foundation
 import os
 
 /// Shared path validation for user-supplied file and directory paths.
-///
-/// Consolidates the resolve-symlinks → check-exists → check-type → check-permissions
-/// pattern used by `ConfigurationBuilder` and `USBDeviceService`.
 enum PathValidation {
     /// The result of resolving a path through symlinks.
     struct ResolvedPath: Sendable {
@@ -33,13 +30,11 @@ enum PathValidation {
 
     /// Resolves symlinks and validates that a regular file exists at the given path.
     ///
-    // RATIONALE: No `requireReadable` parameter for files. A pre-flight readability
-    // check adds little value since the authoritative test occurs when
+    // RATIONALE: no `requireReadable` parameter for files. A pre-flight readability
+    // check adds little value — the authoritative test occurs when
     // Virtualization.framework opens the file, and a TOCTOU race could invalidate
-    // any earlier check. The writable check is retained because "not writable" is a
-    // common, actionable user misconfiguration worth surfacing early. Callers must
-    // still handle `.notReadable` in their switch for exhaustiveness, but this method
-    // never throws it.
+    // any earlier check. Callers must still handle `.notReadable` in their switch
+    // for exhaustiveness, but this method never throws it. verified 2026-07-27
     static func resolveFile(at path: String, requireWritable: Bool = false) throws(Failure) -> ResolvedPath {
         let resolved = resolve(path)
         let fm = FileManager.default

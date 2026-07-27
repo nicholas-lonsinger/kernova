@@ -10,11 +10,6 @@ enum SpiceConstants {
     static let agentProtocol: UInt32 = 1
 
     /// Destination port for host → guest messages (`VDP_SERVER_PORT`).
-    ///
-    /// Host-side `SpiceClipboardService` writes everything with this port.
-    /// (`VDP_CLIENT_PORT = 1` is part of the SPICE wire format but no longer
-    /// referenced now that macOS guests have moved to vsock — the
-    /// guest-side SPICE agent that used `clientPort` was retired.)
     static let serverPort: UInt32 = 2
 }
 
@@ -136,9 +131,7 @@ enum SpiceAgentCapability: Int, Sendable {
 
 /// Builds complete wire-ready messages (VDI chunk header + VDAgent message header + data).
 ///
-/// Used only by the host-side `SpiceClipboardService` for Linux guests; all
-/// outbound chunks therefore use `VDP_SERVER_PORT`. The retired guest-side
-/// SPICE agent was the only caller that ever needed `VDP_CLIENT_PORT`.
+/// Every outbound chunk is host → guest, so all of them use `VDP_SERVER_PORT`.
 enum SpiceMessageBuilder {
     /// Builds an `ANNOUNCE_CAPABILITIES` message advertising clipboard support.
     static func buildAnnounceCapabilities(request: Bool) -> Data {
@@ -257,7 +250,6 @@ struct SpiceAgentParser: Sendable {
         buffer.append(data)
         didReset = false
 
-        // Guard against unbounded growth from malformed streams
         if buffer.count > Self.maxBufferSize {
             buffer.removeAll()
             didReset = true
@@ -278,12 +270,10 @@ struct SpiceAgentParser: Sendable {
     /// Consumes the bytes on success, leaves the buffer unchanged when incomplete,
     /// or resets it entirely when corruption is detected.
     private mutating func tryParseNext() -> SpiceAgentParsedMessage? {
-        // Need at least a VDI chunk header
         guard buffer.count >= VDIChunkHeader.size else { return nil }
 
         guard let chunkHeader = VDIChunkHeader.deserialize(from: buffer) else { return nil }
 
-        // Reject corrupt chunk headers claiming unreasonable sizes
         guard chunkHeader.dataSize <= Self.maxChunkDataSize else {
             buffer.removeAll()
             didReset = true
@@ -293,13 +283,11 @@ struct SpiceAgentParser: Sendable {
         let totalChunkSize = VDIChunkHeader.size + Int(chunkHeader.dataSize)
         guard buffer.count >= totalChunkSize else { return nil }
 
-        // Consume the chunk from the buffer (trim in-place to avoid full copy)
         let chunkPayload = buffer.subdata(in: VDIChunkHeader.size..<totalChunkSize)
         buffer.removeSubrange(0..<totalChunkSize)
 
-        // Parse the agent message header from the chunk payload.
-        // If the inner header is malformed or has an unknown type, skip the chunk
-        // but continue parsing — don't halt the loop.
+        // A malformed or unknown-type inner header skips the chunk but keeps the
+        // parse loop running.
         guard chunkPayload.count >= VDAgentMessageHeader.size,
             let msgHeader = VDAgentMessageHeader.deserialize(from: chunkPayload)
         else {

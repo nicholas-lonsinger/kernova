@@ -2,37 +2,25 @@ import AppKit
 
 /// Delegate for ``AgentStatusPopoverContentViewController``.
 ///
-/// The view controller is intentionally decoupled from
-/// `VMLibraryViewModel`. The host (the AppKit wrapper button
-/// ``SidebarAgentStatusButtonView``) implements these methods, decides which
-/// view-model action to invoke based on `vc.status`, and closes the
-/// popover.
+/// The host decides which view-model action to invoke from `vc.status`, and
+/// closes the popover.
 @MainActor
 protocol AgentStatusPopoverContentViewControllerDelegate: AnyObject {
     /// Invoked when the user clicks the trailing action button
     /// (Install / Update / Reinstall / Done).
     func agentStatusPopoverDidTapAction(_ vc: AgentStatusPopoverContentViewController)
 
-    /// Invoked when the user clicks the "Don't show again" link.
-    ///
-    /// Only fires when the host has surfaced the link (i.e.
-    /// `hasDismissAction == true`).
+    /// Invoked when the user clicks the "Don't show again" link, which only the
+    /// host's `hasDismissAction` surfaces.
     func agentStatusPopoverDidTapDismiss(_ vc: AgentStatusPopoverContentViewController)
 }
 
 /// Popover content shown when the user clicks the sidebar agent-status
 /// button (the small SF Symbol or spinner next to each VM row).
 ///
-/// Renders a per-status title + body explanation + a trailing action button
-/// (Install / Update / Reinstall / Done). When the host enables it, an
-/// additional "Don't show again" link appears at the bottom-leading edge
-/// (used only for the `.waiting` state — the other states are too urgent
-/// to dismiss).
-///
 /// State is mutable in place via ``update(status:vmName:hasDismissAction:)``
-/// so the host can refresh the popover when `status` flips while the
-/// popover is open (e.g. the agent connects mid-popover, `.waiting` →
-/// `.current`) without dismiss/re-present flicker.
+/// so the host can refresh the popover when `status` flips while it is open,
+/// without dismiss/re-present flicker.
 @MainActor
 final class AgentStatusPopoverContentViewController: NSViewController {
     weak var delegate: AgentStatusPopoverContentViewControllerDelegate?
@@ -46,10 +34,8 @@ final class AgentStatusPopoverContentViewController: NSViewController {
 
     // MARK: - Layout constants
 
-    /// Popover content width.
-    ///
-    /// Slightly wider than `CalloutStyle.width` so the action row's
-    /// buttons (e.g. "Reinstall Guest Agent…") fit on a single line.
+    /// Popover content width — wider than `CalloutStyle.width` so the action
+    /// row's buttons (e.g. "Reinstall Guest Agent…") fit on a single line.
     private static let contentWidth: CGFloat = 360
     private static let padding: CGFloat = 16
     private static let verticalSpacing: CGFloat = 10
@@ -87,8 +73,6 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         dismissSpacer.translatesAutoresizingMaskIntoConstraints = false
         dismissSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         actionRow.setViews([dismissButton, dismissSpacer, actionButton], in: .leading)
-        // The dismiss button trails to the left edge; spacer fills middle;
-        // action button trails to the right edge.
         NSLayoutConstraint.activate([
             actionRow.widthAnchor.constraint(equalToConstant: Self.bodyWidth)
         ])
@@ -124,10 +108,6 @@ final class AgentStatusPopoverContentViewController: NSViewController {
 
     /// Replaces the popover's status, VM name, and dismiss-action flag and
     /// refreshes every label and button in place.
-    ///
-    /// Call this when state changes while the popover is open so the
-    /// existing `NSPopover` content updates without a dismiss/re-present
-    /// flicker.
     func update(status: AgentStatus, vmName: String, hasDismissAction: Bool) {
         self.status = status
         self.vmName = vmName
@@ -153,8 +133,7 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         bodyLabel.lineBreakMode = .byWordWrapping
         bodyLabel.maximumNumberOfLines = 0
         bodyLabel.preferredMaxLayoutWidth = Self.bodyWidth
-        // Non-selectable to match the convention established for the other
-        // AppKit popovers (only `.code`-style snippets are selectable).
+        // Non-selectable: only `.code`-style snippets are selectable.
         bodyLabel.isSelectable = false
     }
 
@@ -166,10 +145,8 @@ final class AgentStatusPopoverContentViewController: NSViewController {
     }
 
     private func configureDismissButton() {
-        // Link-style "Don't show again" button. AppKit doesn't ship a
-        // borderless link bezel out of the box, so we use a bordered button
-        // with a borderless look (no bezel, no background, label-colored
-        // text).
+        // AppKit ships no borderless link bezel, so this is a bordered button
+        // given a borderless look.
         dismissButton.bezelStyle = .accessoryBarAction
         dismissButton.isBordered = false
         dismissButton.target = self
@@ -179,8 +156,6 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         dismissButton.setAccessibilityLabel("Don't show again")
     }
 
-    /// Refreshes labels, action-button title, and dismiss-button visibility
-    /// from the current `status` / `vmName` / `hasDismissAction`.
     private func applyContent() {
         titleLabel.stringValue = Self.title(for: status)
         bodyLabel.stringValue = Self.bodyText(for: status, vmName: vmName)

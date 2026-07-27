@@ -2,11 +2,6 @@ import AppKit
 
 /// Popover content shown by an attachment row's "Get Info" context-menu item
 /// (storage disks and removable media alike).
-///
-/// Built bottom-up in `loadView()` from `CalloutStyle` tokens and the callout
-/// atom factories — no shared container base class (mirrors
-/// ``MissingAttachmentPopoverContentViewController``). Takes a value snapshot,
-/// not the live `VMInstance`, so it stays dumb and is trivial to construct.
 @MainActor
 final class AttachmentInfoPopoverContentViewController: NSViewController {
     private let label: String
@@ -80,7 +75,6 @@ final class AttachmentInfoPopoverContentViewController: NSViewController {
         }
     }
 
-    /// Two-column key/value grid of the disk's short facts.
     private func makeFactsGrid() -> NSGridView {
         let grid = NSGridView()
         grid.translatesAutoresizingMaskIntoConstraints = false

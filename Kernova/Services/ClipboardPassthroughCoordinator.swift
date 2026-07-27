@@ -6,36 +6,14 @@ import os
 /// polls the host pasteboard and forwards changes to the guest, and writes
 /// inbound guest offers straight to the host pasteboard.
 ///
-/// This is passthrough as CLIPBOARD.md §4 requires it — a change to *when
-/// consume is authorized*, not a parallel transport. Both directions funnel
-/// through the exact same choke-points the gated (clipboard-window) path uses:
-///
-/// - **Host → guest:** `ClipboardPasteboardIntake.read` → set
-///   `service.clipboardContent` → `service.grabIfChanged()` — the same steps the
-///   window's Paste/drop gestures run, so the transport, the privacy-marker
-///   filtering, and the metadata-only offer are identical.
-/// - **Guest → host:** `HostClipboardPublisher.publish` — the same lazy write the
-///   window's "Copy to Mac" button runs, shared through one per-VM publisher.
-///
-/// The coordinator only changes *who triggers* those choke-points: a poll timer
-/// (mirroring the guest agent's own 0.5 s pasteboard poll) instead of a window
-/// gesture, and an observation of new inbound offers instead of a button click.
-///
-/// Echo suppression is change-count based: the publisher records the pasteboard
-/// change count of its own writes, and the poll skips that exact change so guest
-/// content just written to the host pasteboard is never re-forwarded to the
-/// guest. (A content digest can't be the key — an inbound write places lazy
-/// promised items, whose materialized digest need not match the offer's
-/// placeholder digest.)
-///
-/// `@MainActor` because everything it touches — the pasteboard, the transport
-/// service, the publisher — is main-actor isolated.
+/// Both directions funnel through the same choke-points the clipboard window's
+/// gestures use, so only *who triggers* them differs. Echo suppression is
+/// change-count based: a content digest can't be the key, since an inbound write
+/// places lazy promised items whose digest need not match the offer's.
 @MainActor
 final class ClipboardPassthroughCoordinator {
-    /// The VM whose live clipboard service this drives.
-    ///
-    /// Weak: `VMInstance` owns the coordinator, so this back-reference must not
-    /// retain it.
+    /// The VM whose live clipboard service this drives, weak because `VMInstance`
+    /// owns the coordinator.
     private weak var instance: VMInstance?
 
     /// The shared per-VM host-pasteboard writer, also used by the clipboard
@@ -46,10 +24,6 @@ final class ClipboardPassthroughCoordinator {
     private let publisher: HostClipboardPublisher
 
     /// The pasteboard polled for outbound changes and written for inbound offers.
-    ///
-    /// `.general` in production; tests inject a private `NSPasteboard(name:)`
-    /// (matching the publisher's write pasteboard) so they never touch the
-    /// developer's real clipboard.
     private let pasteboard: NSPasteboard
 
     /// Poll cadence — matches `VsockGuestClipboardAgent.pollingInterval` so both
@@ -62,9 +36,8 @@ final class ClipboardPassthroughCoordinator {
     /// absorbed.
     ///
     /// Seeded to `-1` on start so the first poll after the guest connects forwards
-    /// the *current* host clipboard (turning passthrough on shares what's already
-    /// copied). A change that happens while the guest is disconnected is caught on
-    /// the first connected poll, since disconnected polls neither forward nor record.
+    /// the *current* host clipboard. A change made while the guest is disconnected
+    /// is caught then too, since disconnected polls neither forward nor record.
     private var lastPasteboardChangeCount = -1
 
     private var inboundObservation: ObservationLoop?
@@ -77,8 +50,8 @@ final class ClipboardPassthroughCoordinator {
     /// archived before it can be offered).
     ///
     /// Separate from the publisher's host-write staging; both stage under the
-    /// launch-swept `"host"` root without collision (each generation is its own
-    /// UUID subdirectory).
+    /// launch-swept `"host"` root without collision, each generation being its own
+    /// UUID subdirectory.
     private let staging = ClipboardFileStaging(label: HostClipboardPublisher.stagingLabel)
     private var stagingGeneration: UInt64 = 1
 
@@ -86,10 +59,6 @@ final class ClipboardPassthroughCoordinator {
 
     #if DEBUG
     /// Fires after each inbound auto-publish completes.
-    ///
-    /// Test seam so a test awaits the publish event-driven (via `AsyncGate`)
-    /// instead of polling the signal-less pasteboard — the poll's deadline would
-    /// otherwise become the pass/fail criterion under a contended CI main actor.
     var onInboundPublishedForTesting: (@MainActor () -> Void)?
     #endif
 
@@ -143,7 +112,7 @@ final class ClipboardPassthroughCoordinator {
         timer.schedule(deadline: .now() + Self.pollInterval, repeating: Self.pollInterval)
         timer.setEventHandler { [weak self] in
             // The timer fires on the main queue, which is the main actor's
-            // executor; assume that isolation to touch main-actor state.
+            // executor.
             MainActor.assumeIsolated { self?.pollHostClipboard() }
         }
         timer.resume()
@@ -152,20 +121,15 @@ final class ClipboardPassthroughCoordinator {
 
     /// Forwards a genuine host-clipboard change to the guest, skipping our own
     /// inbound writes.
-    ///
-    /// Internal (not `private`) so tests can drive one tick deterministically
-    /// rather than waiting out the 0.5 s timer.
     func pollHostClipboard() {
         guard let service = instance?.clipboardService, service.isConnected else {
-            // No live/connected transport yet (macOS constructs it on connect).
-            // Don't record the change count, so the current clipboard is forwarded
-            // on the first connected poll.
+            // Don't record the change count while disconnected, so the current
+            // clipboard is forwarded on the first connected poll.
             return
         }
         let current = pasteboard.changeCount
-        // Skip the change our own host-write produced — an inbound auto-publish, or
-        // a window "Copy to Mac" through the same shared publisher. Never re-forward
-        // guest content back to the guest.
+        // Skip the change our own host-write produced, so guest content is never
+        // re-forwarded back to the guest.
         if let selfWritten = publisher.lastWriteChangeCount, current == selfWritten {
             lastPasteboardChangeCount = current
             return
@@ -176,7 +140,7 @@ final class ClipboardPassthroughCoordinator {
     }
 
     /// Runs the host pasteboard through the shared intake and offers the result to
-    /// the guest — the same path the window's Paste gesture uses.
+    /// the guest.
     private func forwardHostClipboard(to service: any ClipboardServicing) {
         let allowsBinary = service.supportsBinaryRepresentations
         switch ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: allowsBinary) {
@@ -186,8 +150,7 @@ final class ClipboardPassthroughCoordinator {
         case .pendingFiles(let urls):
             resolveAndForward(urls, allowsBinary: allowsBinary)
         case .rejected:
-            // Transient/auto-generated/empty/text-only-unsupported — nothing to
-            // forward. Intake already logged the reason.
+            // Nothing to forward; the intake already logged the reason.
             break
         }
     }
@@ -218,9 +181,8 @@ final class ClipboardPassthroughCoordinator {
     private func observeInbound() {
         inboundObservation = observeRecurring(
             track: { [weak self] in
-                // Reading `clipboardService` (an @Observable VMInstance property)
-                // re-arms the loop when it connects; reading `inboundOfferSeq` fires
-                // it on each new guest offer.
+                // Reading `clipboardService` re-arms the loop when it connects;
+                // reading `inboundOfferSeq` fires it on each new guest offer.
                 _ = self?.instance?.clipboardService?.inboundOfferSeq
             },
             apply: { [weak self] in self?.publishInboundIfAdvanced() }
@@ -236,8 +198,7 @@ final class ClipboardPassthroughCoordinator {
         Task { @MainActor [weak self] in
             guard let self else { return }
             let outcome = await self.publisher.publish(from: service)
-            // Record our own write so the next poll tick recognizes and skips it
-            // (belt-and-braces alongside the poll's `lastWriteChangeCount` check).
+            // Record our own write so the next poll tick skips it.
             if let changeCount = outcome.postWriteChangeCount {
                 self.lastPasteboardChangeCount = changeCount
             }

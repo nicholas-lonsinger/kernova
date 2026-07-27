@@ -3,46 +3,31 @@ import Foundation
 import os
 
 /// Host-side AF_UNIX relay that exposes a running VM's serial port to an
-/// external terminal client (e.g. `socat -,raw,echo=0 UNIX-CONNECT:<path>` or
-/// `nc -U <path>`).
+/// external terminal client (e.g. `socat -,raw,echo=0 UNIX-CONNECT:<path>`).
 ///
-/// Guest serial output is tee'd to a single connected client via
-/// `forwardOutput(_:)` — called from the background serial readability handler
-/// in `VMInstance` — and raw bytes the client sends are written straight into
-/// the guest's serial input pipe. The relay is strictly best-effort: a slow,
-/// absent, or vanished client never blocks or breaks the authoritative
-/// `serial.log` path that owns the same output stream.
-///
-/// Single-client by design (serial-cable semantics): a second connection
-/// supersedes the first, which is the least-surprising behavior when a stale
-/// `socat`/`nc` session didn't clean up.
-///
-/// **Concurrency**: `@unchecked Sendable`. All file-descriptor state is guarded
-/// by a single `NSLock`; the accept loop and the client read loop run on a
-/// private serial `DispatchQueue` via `DispatchSourceRead`. `forwardOutput(_:)`
-/// is therefore safe to call from the background GCD queue that drives serial
-/// output, with no actor hop — mirroring `VsockChannel`'s lock-based model.
+/// Strictly best-effort: a slow, absent, or vanished client never blocks or
+/// breaks the authoritative `serial.log` path that owns the same output stream.
+/// Single-client — a second connection supersedes the first. All
+/// file-descriptor state is guarded by one `NSLock`, so `forwardOutput(_:)` is
+/// safe to call from the background queue that drives serial output.
 final class SerialSocketRelay: @unchecked Sendable {
-    /// Filesystem path of the bound socket, for UI display. `nil` until
-    /// `start()` binds successfully, and `nil` again after `stop()` or if the
-    /// path was too long for `sockaddr_un.sun_path` (see `start()`).
+    /// Filesystem path of the bound socket, for UI display — `nil` until
+    /// `start()` binds successfully, and again after `stop()`.
     private(set) var socketPath: String?
 
     private let path: String
     /// Write end of the guest's serial input pipe.
     ///
-    /// Client bytes are written here verbatim. The relay never closes this
-    /// handle — the `Pipe` that owns it is managed by `VMInstance` and outlives
-    /// the relay's teardown.
+    /// The relay never closes this handle — `VMInstance` owns the `Pipe`, which
+    /// outlives the relay's teardown.
     private let guestInput: FileHandle
     private let label: String
 
     private let queue: DispatchQueue
     private let lock = NSLock()
 
-    // All fields below are guarded by `lock`. An fd of `-1` means inactive;
-    // the relay is re-startable (stop() → start()) so a hot-toggle off→on
-    // re-binds the same instance rather than needing a fresh object.
+    // All fields below are guarded by `lock`; an fd of `-1` means inactive. The
+    // relay is re-startable — stop() then start() re-binds the same instance.
     private var listenFd: Int32 = -1
     private var listenSource: DispatchSourceRead?
     private var clientFd: Int32 = -1
@@ -53,9 +38,6 @@ final class SerialSocketRelay: @unchecked Sendable {
     /// Process-wide `SIGPIPE` suppression so a write to a client whose read
     /// side has vanished surfaces as `EPIPE` from `write(2)` instead of killing
     /// the process.
-    ///
-    /// Belt-and-suspenders alongside the per-fd `SO_NOSIGPIPE` set on each
-    /// socket — the same rationale documented in `VsockChannel`.
     private static let suppressSIGPIPEOnce: Void = {
         signal(SIGPIPE, SIG_IGN)
     }()
@@ -266,8 +248,8 @@ final class SerialSocketRelay: @unchecked Sendable {
 
         // Forward to the guest OUTSIDE the lock. `guestInput.write` is a blocking
         // pipe write that stalls if the guest stops draining its serial input;
-        // holding `lock` across it would block `forwardOutput` (the output tee)
-        // and a MainActor `stop()` / hot-toggle, hanging the app.
+        // holding `lock` across it would block `forwardOutput` and a MainActor
+        // `stop()`, hanging the app.
         let data = Data(buffer[0..<n])
         lock.unlock()
         do {
@@ -282,8 +264,8 @@ final class SerialSocketRelay: @unchecked Sendable {
     /// Closes and forgets the current client.
     ///
     /// Must be called with `lock` held. The fd is closed by the read source's
-    /// cancel handler, so `forwardOutput` (which guards on `clientFd >= 0` under
-    /// the same lock) can never write to a recycled descriptor.
+    /// cancel handler, so `forwardOutput` can never write to a recycled
+    /// descriptor.
     private func tearDownClientLocked() {
         clientSource?.cancel()
         clientSource = nil
@@ -291,12 +273,7 @@ final class SerialSocketRelay: @unchecked Sendable {
     }
 
     #if DEBUG
-    /// `true` once a client connection has been accepted (and not yet torn
-    /// down).
-    ///
-    /// Lets tests await acceptance deterministically before exercising
-    /// `forwardOutput`, which is otherwise a silent no-op until a client is
-    /// attached.
+    /// `true` once a client connection has been accepted and not yet torn down.
     var hasClientForTesting: Bool {
         lock.lock()
         defer { lock.unlock() }

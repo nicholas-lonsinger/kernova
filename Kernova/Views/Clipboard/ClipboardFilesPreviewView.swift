@@ -5,9 +5,7 @@ import UniformTypeIdentifiers
 /// Several copied or dropped files shown as a count + total-size header above a
 /// scrollable list of file rows (icon · name · type · size).
 ///
-/// The multi-file counterpart of `ClipboardFilePreviewView`: the cue that the
-/// buffer holds *several* files, each of which pastes as a real file on the
-/// other side. Drives the `.files` preview mode.
+/// Drives the `.files` preview mode.
 @MainActor
 final class ClipboardFilesPreviewView: NSView {
     /// Document view whose flipped coordinate space keeps the row list anchored
@@ -95,7 +93,6 @@ final class ClipboardFilesPreviewView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// Matches the text editor's background — see `ClipboardImagePreviewView`.
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
@@ -103,9 +100,6 @@ final class ClipboardFilesPreviewView: NSView {
     }
 
     /// Renders the buffer's file payloads as a header plus one row per file.
-    ///
-    /// The header reuses `ClipboardContentDescriber.indicatorText` so it stays
-    /// identical to the command-bar indicator ("3 files · 4.2 MB").
     func configure(content: ClipboardContent) {
         headerLabel.stringValue = ClipboardContentDescriber.indicatorText(for: content)
         rowsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -114,8 +108,7 @@ final class ClipboardFilesPreviewView: NSView {
                 filename: payload.filename, uti: payload.uti, byteCount: payload.byteCount)
             rowsStack.addArrangedSubview(row)
             // Activate the width match only once the row shares an ancestor with
-            // the stack (after it's added), so the row fills the stack's width and
-            // its labels truncate instead of forcing horizontal scroll.
+            // the stack, so its labels truncate instead of forcing a scroll.
             row.widthAnchor.constraint(equalTo: rowsStack.widthAnchor).isActive = true
         }
     }
@@ -126,7 +119,7 @@ final class ClipboardFilesPreviewView: NSView {
 
         let icon = NSImageView(image: NSWorkspace.shared.icon(for: type ?? .data))
         icon.imageScaling = .scaleProportionallyDown
-        // See ClipboardImagePreviewView: keep the icon from intercepting drags.
+        // Keep the icon from intercepting drags.
         icon.unregisterDraggedTypes()
         icon.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -156,8 +149,7 @@ final class ClipboardFilesPreviewView: NSView {
         row.alignment = .centerY
         row.spacing = Spacing.small
         row.translatesAutoresizingMaskIntoConstraints = false
-        // The width match to the stack is activated by the caller once the row is
-        // in the hierarchy (see `configure`).
+        // The caller activates the width match once the row is in the hierarchy.
         return row
     }
 }

@@ -2,13 +2,10 @@ import AppKit
 
 /// Step 1 of the creation wizard: choose the guest operating system.
 ///
-/// A native macOS form: a left-aligned heading and a radio-button group (one
-/// radio per ``VMGuestOS``, each with a secondary description). Selecting a radio
-/// writes ``VMCreationViewModel/selectedOS`` directly — the shared model is the
-/// single source of truth, which the wizard shell observes to drive navigation.
-/// Each radio lives in its own option view (so its description can sit beneath
-/// it), so they aren't siblings and AppKit's automatic radio grouping doesn't
-/// apply — exclusivity is enforced explicitly from the model in ``updateSelection()``.
+/// Selecting a radio writes ``VMCreationViewModel/selectedOS`` directly. Each
+/// radio lives in its own option view so its description can sit beneath it, so
+/// they aren't siblings and AppKit's automatic radio grouping doesn't apply —
+/// exclusivity is enforced explicitly from the model in ``updateSelection()``.
 @MainActor
 final class OSSelectionContentViewController: NSViewController {
     private let creationVM: VMCreationViewModel
@@ -66,8 +63,7 @@ final class OSSelectionContentViewController: NSViewController {
             stack.topAnchor.constraint(equalTo: container.topAnchor),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: inset),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -inset),
-            // Full-width subtitle/options so the wrapping text lays out at the
-            // step width and the option rows fill it.
+            // Full-width so the wrapping text lays out at the step width.
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             options.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])

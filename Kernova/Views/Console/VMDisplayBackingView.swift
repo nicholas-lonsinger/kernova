@@ -3,9 +3,8 @@ import Virtualization
 
 /// Pure AppKit view containing a `VZVirtualMachineView` with built-in pause and transition overlays.
 ///
-/// Used directly as `window.contentView` in the detached display window and layered on top of
-/// the inline detail content (`DetailContainerViewController`). `VZVirtualMachineView` stays
-/// entirely in AppKit.
+/// Used directly as `window.contentView` in the detached display window, and layered on top of
+/// the inline detail content by `DetailContainerViewController`.
 @MainActor
 final class VMDisplayBackingView: NSView {
     private(set) var machineView: VZVirtualMachineView = {
