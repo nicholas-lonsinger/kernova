@@ -7,6 +7,8 @@
 
 Kernova is a pure-AppKit Mac app for creating and running virtual machines directly on Apple Silicon — no third-party hypervisor, no kernel extensions, no licensing. It's for developers, QA engineers, and power users who want fast, disposable macOS and Linux VMs that feel like part of the Mac: a real source list of machines, one-click lifecycle, and deep host integration — shared clipboard, files, audio, and an in-guest agent — all inside the App Sandbox.
 
+Requires macOS 26 (Tahoe) or later on Apple Silicon.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero-dark.png">
@@ -16,27 +18,12 @@ Kernova is a pure-AppKit Mac app for creating and running virtual machines direc
 
 ## Features
 
-### Virtual Machines
+### Virtual machines
 
-- **macOS & Linux guests** — Run macOS virtual machines and Linux VMs with EFI/UEFI or direct kernel boot
-- **Full VM lifecycle** — Start, stop, pause, resume, suspend, and restore
-- **Force Stop** — Terminate a hung running or paused VM immediately without saving state
-- **Recovery mode** — One-shot "Start in Recovery Mode" for macOS guests
-- **VM cloning** — Clone existing VMs with automatic naming and freshly regenerated identifiers
-- **Bundle import** — Import VM bundles (`.kernova`) via double-click or drag-and-drop (also how you bring existing VMs into the sandboxed app's library — on the same volume the copy is an APFS clone, near-instant with no double disk usage)
-- **Headless operation** — The app is a resident menu-bar app (with an opt-in "Open at Login" toggle), so closing the window keeps VMs running headless
-- **Graceful shutdown** — Save-suspends running VMs automatically when the app itself terminates (menu-bar Quit, logout, or shutdown)
-- **Sleep integration** — Auto-pauses running VMs on system sleep and resumes them on wake
-
-### Guest Configuration
-
-- **Creation wizard** — Step-by-step VM creation, including IPSW download for macOS guests
-- **Linux boot modes** — EFI/UEFI boot or direct kernel boot with kernel, initrd, and command-line arguments
-- **Shared directories** — Host-to-guest directory sharing via VirtioFS (read-only or read-write)
-- **Display settings** — Configurable resolution and DPI (width, height, PPI)
-- **Network** — MAC address management with persistent, stable addresses
-- **Audio output** — Route guest audio to the host, on by default, toggleable per VM
-- **Microphone passthrough** — Opt-in per VM (off by default for privacy); streams the host mic into the guest, with a permission-guidance popover when macOS mic access isn't granted
+- **macOS and Linux guests** — a step-by-step creation wizard, including IPSW download for macOS; EFI/UEFI or direct kernel boot for Linux
+- **Full lifecycle** — start, stop, pause, resume, suspend, and restore, plus Force Stop for a hung VM and a one-shot Start in Recovery Mode for macOS guests
+- **Cloning and import** — clone a VM with freshly regenerated identifiers; import `.kernova` bundles by double-click or drag-and-drop, which is also how you bring existing VMs into the sandboxed library (on the same volume it's an APFS clone: near-instant, no double disk usage)
+- **Keeps running in the background** — a resident menu-bar app with an opt-in Open at Login toggle, so closing the window leaves VMs running headless. Quitting save-suspends them; system sleep auto-pauses and wake resumes
 
 <p align="center">
   <picture>
@@ -45,12 +32,14 @@ Kernova is a pure-AppKit Mac app for creating and running virtual machines direc
   </picture>
 </p>
 
-### Storage & Media
+### Virtual hardware
 
-- **ASIF disk images** — Apple Sparse Image Format for near-native SSD performance with space-efficient storage
-- **Additional storage disks** — Attach or create extra ASIF disks beyond the primary disk, each with a read-only toggle, rename, Get Info, and drag-to-reorder boot order
-- **Removable media (hot-plug)** — Attach and eject USB mass-storage devices (ISOs, disk images) at runtime without stopping the VM, with boot-priority support for installation media
-- **Live disk-capacity display** — On-disk footprint vs. allocated capacity, read live for each disk
+- **Storage** — ASIF sparse disks for near-native SSD performance, with live on-disk-vs-allocated capacity, extra disks with per-disk read-only and drag-to-reorder boot order, and hot-plug removable media (ISOs, disk images) attachable and ejectable while the VM runs
+- **Shared directories** — host folders exposed over VirtioFS, read-only or read-write
+- **Display** — configurable resolution and DPI; per-VM choice of inline, pop-out window, or fullscreen, and a toggle between the live display and a read-only settings form while the VM runs
+- **Audio** — guest audio routed to the host, on by default; host microphone passthrough opt-in per VM, off by default for privacy
+- **Network** — persistent, stable MAC addresses
+- **Serial** — output persisted to `serial.log` in the bundle, plus an opt-in AF_UNIX socket relay for external tools (`socat`, `nc -U`), hot-toggleable while running
 
 <p align="center">
   <picture>
@@ -59,21 +48,12 @@ Kernova is a pure-AppKit Mac app for creating and running virtual machines direc
   </picture>
 </p>
 
-### Display & Console
+### Guest integration
 
-- **Native UI** — Pure-AppKit app, Liquid Glass design language
-- **Display modes** — Per-VM preference for where the display opens: inline in the detail pane, a pop-out window, or fullscreen (auto-hides the menu bar and Dock, and remembers the last fullscreen display)
-- **Detail-pane settings toggle** — Flip the detail pane between the live display and the read-only settings form while the VM runs
-- **Serial log** — Every VM's serial output is persisted to `serial.log` in its bundle
-- **Serial socket relay** — Opt-in AF_UNIX socket exposing the serial port to external terminal tools (`socat`, `nc -U`), hot-toggleable while running
-
-### Guest Integration
-
-- **Guest agent (macOS guests)** — A lightweight in-guest menu-bar helper, installed from an attachable installer disk. It reports connection status and version back to the host over vsock, drives the in-app install/update prompt, and powers clipboard sync and log forwarding
-- **Clipboard sync** — Bidirectional host↔guest clipboard sharing for text, rich text, images, and **multiple files and entire folders** (transparently archived and extracted) — chunk-streamed with **no size cap**, integrity-verified, and surfaced through a dedicated clipboard window with live transfer progress. Respects macOS privacy markers: concealed/password content shows a locked placeholder, and transient pasteboard snapshots aren't synced. macOS guests sync over the vsock agent; Linux guests sync clipboard text only (spice-vdagent)
-- **Copy to Mac** — Lazy guest→host file transfer backed by a host File Provider, so pasted files materialize on the host on demand
-- **Large-file paste** — A guest File Provider transport materializes large host files inside the guest on demand
-- **Guest log forwarding (macOS guests)** — Opt-in per VM; the guest's `os.Logger` records surface on the host in Console.app (subsystem `app.kernova.guest`). Live-toggleable while the VM runs
+- **Guest agent (macOS guests)** — a lightweight in-guest menu-bar helper, installed from an attachable installer disk, reporting status and version to the host over vsock
+- **Clipboard sync** — bidirectional host↔guest text, rich text, images, and multiple files or entire folders, with no size cap, integrity verification, and live transfer progress in a dedicated clipboard window. Concealed and password content shows a locked placeholder; transient snapshots aren't synced. macOS guests sync over the vsock agent, Linux guests sync text only via spice-vdagent
+- **Lazy file transfer** — File Providers on both sides materialize pasted files on demand rather than up front, in either direction
+- **Log forwarding (macOS guests)** — opt-in per VM and live-toggleable; the guest's `os.Logger` records surface on the host in Console.app under the `app.kernova.guest` subsystem
 
 <p align="center">
   <picture>
@@ -82,94 +62,42 @@ Kernova is a pure-AppKit Mac app for creating and running virtual machines direc
   </picture>
 </p>
 
-### Management
+### The app itself
 
-- **VM renaming** — Inline rename or via menu
-- **Sidebar reordering** — Drag VMs into a custom, persisted order
-- **Customizable toolbar** — Standard AppKit toolbar customization, with the layout remembered
-- **App preferences** — A Settings window (⌘,) with an Advanced tab (e.g. always-show-advanced-actions)
-- **Directory watching** — Monitors the VMs directory for external filesystem changes and reconciles the library
-- **Safe deletion** — A unified sheet to move a VM to the Trash or delete it immediately, surfacing any external attachments to optionally trash alongside it
-
-## Requirements
-
-- macOS 26 (Tahoe) or later
-- Apple Silicon
-- Xcode 26 or later
-- Swift 6
+Pure AppKit in the Liquid Glass design language: a source-list sidebar with drag reordering and inline rename, a customizable toolbar, a Settings window (⌘,), and a deletion sheet that offers to trash a VM's external attachments alongside it.
 
 ## Development setup
 
-After cloning, run:
+Everything below is for building and working on Kernova itself. You'll need Xcode 26 and Swift 6 on top of the requirements above.
+
+After cloning:
 
 ```bash
-make install-hooks
-make bootstrap
+make install-hooks   # one-time per clone
+make bootstrap       # derives your signing team
 ```
 
-`install-hooks` points the repo at the checked-in `.githooks/` directory — a one-time step per clone, since Git does not auto-activate checked-in hooks. It enables a pre-push `make lint` matching the required `lint` check on `main` (bypass an individual push with `git push --no-verify`) and a post-checkout hook that makes a new git worktree build in Xcode with no manual setup.
+`install-hooks` points the repo at the checked-in `.githooks/`, which Git does not activate on its own: a pre-push `make lint` matching the required `lint` check on `main` (bypass a single push with `git push --no-verify`), and a post-checkout hook that makes a new git worktree build in Xcode with no manual setup.
 
-`bootstrap` derives your own signing team from your Apple Development (or Developer ID) certificate into a gitignored `Config/Local.xcconfig`, so a Debug build signs as *you* rather than a hardcoded team — see [Signing: Debug vs Release](#signing-debug-vs-release) below. `make build` and `make test` run it automatically, so it is only a manual step when building a fresh clone straight from Xcode.
+`bootstrap` derives your own signing team from your Apple Development (or Developer ID) certificate into a gitignored `Config/Local.xcconfig`, so a Debug build signs as *you* rather than a hardcoded team. `make build` and `make test` run it for you; Xcode's ⌘R does not, so run it by hand before building a fresh clone from the IDE. The hook and bootstrap machinery is documented in [docs/BUILD.md](docs/BUILD.md).
 
-The hook and bootstrap machinery is documented in [docs/BUILD.md](docs/BUILD.md).
+Then open `Kernova.xcodeproj`, select the `Kernova` scheme, and build and run (⌘R). The app requires the `com.apple.security.virtualization` entitlement, already in the project configuration.
 
-Run `make doctor` to confirm your local toolchain (macOS, Xcode, Swift, swift-format), signing team, and git hooks match what Kernova needs before building.
+`make doctor` checks that your toolchain, signing team, and hooks match what Kernova needs. `make` with no arguments lists every build, test, format, and lint target.
 
-Run `make` with no arguments to see all build, test, format, and lint targets.
-
-## Building
-
-1. Open `Kernova.xcodeproj` in Xcode 26
-2. Select the `Kernova` scheme
-3. Build and run (Cmd+R)
-
-The app requires the `com.apple.security.virtualization` entitlement, which is included in the project configuration. If you haven't run `make bootstrap` yet (see above), do that first — Xcode's own ⌘R doesn't run it for you.
-
-### Signing: Debug vs Release
-
-Day-to-day development only needs **Debug**, which signs with *any* team — no Apple Developer Program membership or developer-portal setup, just `make bootstrap`. **Release** additionally requires a paid membership and a distribution identity (Developer ID, or Apple Distribution for the Mac App Store), and fails to sign without them; it matters only when cutting a distributable build. The per-configuration app-group and signing story is in [docs/SANDBOX.md](docs/SANDBOX.md).
+**Debug signs with *any* team** — no Apple Developer Program membership or developer-portal setup needed, just `make bootstrap`. **Release** additionally requires a paid membership and a distribution identity (Developer ID, or Apple Distribution for the Mac App Store) and fails to sign without one; it matters only when cutting a distributable build. The per-configuration app-group and signing story is in [docs/SANDBOX.md](docs/SANDBOX.md).
 
 ## Testing
-
-The project has comprehensive test coverage using [Swift Testing](https://developer.apple.com/documentation/testing/) (`@Test`, `#expect`). All services use protocol-based dependency injection with mock implementations for full testability.
 
 ```bash
 make test
 ```
 
-This runs all three test targets via the test plan.
+Runs all three test targets via the test plan. Tests use [Swift Testing](https://developer.apple.com/documentation/testing/) against protocol-based mocks; the conventions are in [docs/TESTING.md](docs/TESTING.md).
 
 ## Architecture
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed component descriptions, data flow diagrams, and design decisions — and [docs/README.md](docs/README.md) for the full documentation index. Design philosophy and UI guidelines live in [docs/SPEC.md](docs/SPEC.md); the clipboard subsystem is documented in [docs/CLIPBOARD.md](docs/CLIPBOARD.md).
-
-Alongside the app target, the repo contains the in-guest menu-bar agent (`KernovaMacOSAgent/`), the shared SwiftPM package (`KernovaKit/`), the guest and host clipboard File Provider extensions (`KernovaMacOSAgentFileProvider/`, `KernovaFileProvider/`), and the relaunch helper (`KernovaRelaunchHelper/`) — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full map.
-
-### Key Components
-
-- **VMConfiguration** — Codable model persisted as `config.json` in each VM bundle
-- **VMInstance** — Runtime wrapper combining config, VZVirtualMachine, and status
-- **ConfigurationBuilder** — Translates VMConfiguration into VZVirtualMachineConfiguration
-- **VirtualizationService** — VM lifecycle management (start/stop/pause/save/restore)
-- **VMStorageService** — VM bundle CRUD at `~/Library/Application Support/Kernova/VMs/`
-- **VMLifecycleCoordinator** — Orchestrates multi-step VM operations with per-VM serialization
-- **VMDirectoryWatcher** — Monitors the VMs directory for external filesystem changes
-- **SystemSleepWatcher** — Pauses running VMs on system sleep and resumes on wake
-
-### VM Bundle Structure
-
-Each VM is stored as a directory under `~/Library/Application Support/Kernova/VMs/<UUID>/`:
-
-```
-<UUID>/
-  config.json           # Serialized VMConfiguration
-  Disk.asif             # ASIF sparse disk image
-  AuxiliaryStorage      # macOS auxiliary storage
-  HardwareModel         # VZMacHardwareModel data
-  MachineIdentifier     # VZMacMachineIdentifier data
-  SaveFile.vzvmsave     # Saved VM state (suspend/resume)
-  serial.log            # Persisted serial console output
-```
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the component map, data flow, and design decisions; [docs/README.md](docs/README.md) indexes the rest, including [docs/SPEC.md](docs/SPEC.md) for design philosophy and UI guidelines and [docs/CLIPBOARD.md](docs/CLIPBOARD.md) for the clipboard subsystem.
 
 ## License
 

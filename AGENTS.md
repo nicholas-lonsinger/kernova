@@ -1,10 +1,10 @@
 # AGENTS.md
 
-The tool-neutral operating guide for anyone working in this repository. Deep-dive docs are indexed in [docs/README.md](docs/README.md); read them on demand.
+The tool-neutral operating guide for this repository. Deep-dive docs are indexed in [docs/README.md](docs/README.md); read them on demand.
 
 > Design philosophy and UI guidelines: [docs/SPEC.md](docs/SPEC.md).
 >
-> Clipboard subsystem principles — authoritative for any host↔guest copy/paste work: [docs/CLIPBOARD.md](docs/CLIPBOARD.md).
+> Clipboard subsystem principles — authoritative for host↔guest copy/paste work: [docs/CLIPBOARD.md](docs/CLIPBOARD.md).
 
 ## Build & Test
 
@@ -14,7 +14,7 @@ The app is Apple Silicon-only (`ARCHS = arm64` project-wide), so `#if arch(arm64
 
 A new top-level target needing a dynamic build number calls `Tools/set-build-number.sh <app|agent>` from a `Set Build Number from Git` build phase — never patch the built `Info.plist`.
 
-Any change requiring a guest-agent reinstall bumps its `MARKETING_VERSION` — all four occurrences together, or the host and guest disagree about which build is current. Conventions: [docs/BUILD.md](docs/BUILD.md).
+Any change requiring a guest-agent reinstall bumps its `MARKETING_VERSION` — all four occurrences together ([docs/BUILD.md](docs/BUILD.md)).
 
 ## Architecture
 
@@ -252,7 +252,7 @@ Confirm `gh pr view <N> --json state -q .state` reports `"MERGED"` first. Then l
 
 Before calling a task done, propose these follow-ups if it changed how components communicate, added or removed a dependency, changed build config/entitlements/tooling, added or reshaped a public type, or changed actor isolation:
 
-1. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — update only when a **component boundary** changed: a new service or protocol, a changed data flow, a changed actor isolation. A file appearing, moving, or being renamed is not a boundary change. Make surgical edits; never rewrite the file.
+1. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — update only when a **component boundary** changed: a new service or protocol, a changed data flow, a changed actor isolation. A file appearing, moving or being renamed is not one. Surgical edits only.
 
 2. **Tests** — cover every new public function, type, or component per the patterns in `KernovaTests/`. If deferred, state what's needed and why.
 

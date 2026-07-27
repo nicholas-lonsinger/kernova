@@ -1,6 +1,7 @@
 # SPEC.md
 
-Design philosophy and guidelines for Kernova.
+Read this before writing UI or making a product decision: the design philosophy
+and GUI guidelines that constrain both.
 
 ## Code Approach
 

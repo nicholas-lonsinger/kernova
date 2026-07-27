@@ -1,14 +1,14 @@
 # Kernova documentation
 
-Deep-dive documentation, read on demand. The always-relevant operating guide — build commands, architecture summary, and the coding/testing/review/git conventions — is [AGENTS.md](../AGENTS.md) at the repo root (loaded by AI agents every session, and the maintainer's own quick reference).
+Deep-dive documentation, read on demand. The always-relevant operating guide — build commands, architecture summary, and the coding, testing, documentation, review, and git conventions — is [AGENTS.md](../AGENTS.md) at the repo root (loaded by AI agents every session, and the maintainer's own quick reference).
 
 | Document | Read it when |
 |----------|--------------|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Making structural changes — the authoritative directory structure, component map, data flow, design decisions, and test-coverage inventory |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Making structural changes — the authoritative component map, data flow, and design decisions, plus the helper targets and dependencies |
 | [SPEC.md](SPEC.md) | Writing UI or making product decisions — design philosophy and GUI guidelines (layout, typography, spacing, colors, controls) |
 | [CLIPBOARD.md](CLIPBOARD.md) | Touching host↔guest copy/paste — the clipboard subsystem's principles and trade-off rules; authoritative for any clipboard work |
-| [TOOLBAR.md](TOOLBAR.md) | Touching toolbar items — the macOS 26 glass-platter model (capsule clustering, the 36×36 metric), the item shapes Kernova uses, and the clipboard button's transfer-bar construction |
-| [BUILD.md](BUILD.md) | Touching build machinery — git hooks and worktree setup, signing-team derivation, test-target topology, DerivedData/IDE build-state sharing, build-number derivation, guest-agent versioning, LaunchServices ghost cleanup |
+| [TOOLBAR.md](TOOLBAR.md) | Adding or changing a toolbar item — the macOS 26 glass-platter model (capsule clustering, the 36×36 metric), the constraints on view-backed items, and the sidebar section's collapse rules |
+| [BUILD.md](BUILD.md) | Touching build machinery — git hooks and worktree setup, signing-team derivation, test-target topology, DerivedData and build arenas, build-number derivation, guest-agent versioning, LaunchServices ghost cleanup |
 | [SANDBOX.md](SANDBOX.md) | Touching entitlements, signing, app groups, or File Provider IPC — the Mac App Store readiness story and launch model behind the sandbox rules in AGENTS.md |
 | [TESTING.md](TESTING.md) | Writing any test that waits on async state or needs private production state — the async-wait seams, the injected-timeout rule, and test-only exposure patterns |
 | [REVIEW.md](REVIEW.md) | Filing review-debt issues or annotating findings — the full severity bar, issue format and labels, issue hygiene, `RATIONALE:` and `periphery:ignore` formats |
