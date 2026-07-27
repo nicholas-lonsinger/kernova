@@ -511,8 +511,14 @@ struct ConfigurationBuilder: Sendable {
     /// `VZSpiceAgentPortAttachment` — the latter syncs the host `NSPasteboard`
     /// automatically, bypassing `SpiceClipboardService`'s gated UI.
     ///
-    /// Returns `nil` for macOS guests (they sync over vsock) and when clipboard
-    /// sharing is disabled.
+    /// Returns `nil` for macOS guests and when clipboard sharing is disabled.
+    ///
+    /// The macOS exclusion is load-bearing rather than routing: SPICE needs a
+    /// userspace agent inside the guest to read the port, and while Linux ships
+    /// `spice-vdagent`, macOS ships nothing comparable. Attaching the port to a
+    /// macOS guest therefore exchanges no clipboard data and leaks a
+    /// `tty.com.redhat.spice.0X` port across save/restore. Those guests reach
+    /// the clipboard over vsock through the guest agent instead.
     private func configureClipboardSharing(
         _ vzConfig: VZVirtualMachineConfiguration,
         config: VMConfiguration
