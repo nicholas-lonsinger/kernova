@@ -112,8 +112,6 @@ final class GatedSink: StagingSink, @unchecked Sendable {
     /// wait event-driven.
     let gate = AsyncGate()
 
-    var url: URL { wrapped.url }
-
     init(wrapping sink: ClipboardFileStaging.Sink) { wrapped = sink }
 
     /// Writes the receiver's write lane has entered — the last of them is
@@ -183,8 +181,6 @@ final class SilentlyDroppingSink: StagingSink, @unchecked Sendable {
     private let lock = NSLock()
     private var attempts = 0
 
-    var url: URL { wrapped.url }
-
     init(wrapping sink: ClipboardFileStaging.Sink, droppingWrite: Int) {
         wrapped = sink
         self.droppingWrite = droppingWrite
@@ -213,8 +209,6 @@ final class FailingSink: StagingSink, @unchecked Sendable {
     private let failingWrite: Int
     private let lock = NSLock()
     private var attempts = 0
-
-    var url: URL { wrapped.url }
 
     init(wrapping sink: ClipboardFileStaging.Sink, failingWrite: Int) {
         wrapped = sink

@@ -164,11 +164,11 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
 /// The final chunk (`bytes >= total`) always forwards, so a determinate readout
 /// reaches 100% rather than stalling one throttle interval short. Stateless — the
 /// caller owns the watermarks.
-public enum FetchProgressThrottle {
+enum FetchProgressThrottle {
     /// Minimum fraction of the total that must accumulate since the last push.
-    public static let minByteFraction = 0.01
+    static let minByteFraction = 0.01
     /// Minimum wall-clock gap between time-triggered pushes.
-    public static let minInterval: TimeInterval = 0.1
+    static let minInterval: TimeInterval = 0.1
 
     /// Whether `bytes`/`total` warrants a push given the last pushed byte count and
     /// the time since the last push.
@@ -194,7 +194,7 @@ public enum FetchProgressThrottle {
 /// republishes at one shared policy.
 ///
 /// `@unchecked Sendable`: every stored property is guarded by `lock`.
-public final class FetchProgressCoalescer: @unchecked Sendable {
+final class FetchProgressCoalescer: @unchecked Sendable {
     private let lock = NSLock()
     private var lastForwardedBytes: UInt64 = 0
     /// When the last update was forwarded; `nil` until the first, so the first
@@ -203,7 +203,7 @@ public final class FetchProgressCoalescer: @unchecked Sendable {
 
     /// Creates a coalescer with empty watermarks, so its first forward-progress
     /// update always passes.
-    public init() {}
+    init() {}
 
     /// Records that an update was forwarded without asking `shouldForward` —
     /// a consumer that bypasses the throttle for something the user must see
@@ -212,7 +212,7 @@ public final class FetchProgressCoalescer: @unchecked Sendable {
     /// Without it the watermarks would still describe the last *throttled*
     /// forward, so the next update would measure its delta from a byte count
     /// already on screen and sail through the policy however small it was.
-    public func markForwarded(bytesTransferred: UInt64) {
+    func markForwarded(bytesTransferred: UInt64) {
         lock.withLock {
             lastForwardedBytes = max(lastForwardedBytes, bytesTransferred)
             lastForwardAt = DispatchTime.now()
@@ -221,7 +221,7 @@ public final class FetchProgressCoalescer: @unchecked Sendable {
 
     /// Whether `(bytesTransferred, totalBytes)` should be forwarded now,
     /// advancing the watermarks when it should.
-    public func shouldForward(bytesTransferred: UInt64, totalBytes: UInt64) -> Bool {
+    func shouldForward(bytesTransferred: UInt64, totalBytes: UInt64) -> Bool {
         let now = DispatchTime.now()
         return lock.withLock {
             let elapsed =
