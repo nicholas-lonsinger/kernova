@@ -11,10 +11,6 @@ import Testing
 /// It asserts the call doesn't trap in the `SecCode` FFI, and that any
 /// non-nil result has the exact shape the entitlement/app-group substitution
 /// and the XPC peer pin depend on (a 10-char uppercase-alphanumeric Team ID).
-/// A stability/caching test is intentionally omitted: `teamIdentifier()` reads
-/// a `static let` of the immutable running binary, so repeated calls are
-/// trivially equal regardless of implementation — such a test would assert
-/// nothing.
 @Suite("KernovaCodeSignature")
 struct KernovaCodeSignatureTests {
     @Test("Resolves without crashing, returning nil or a well-formed team ID")

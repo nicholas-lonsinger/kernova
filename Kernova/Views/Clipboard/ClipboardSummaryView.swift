@@ -18,8 +18,8 @@ final class ClipboardSummaryView: NSView {
         )
         iconView.symbolConfiguration = .init(pointSize: 36, weight: .regular)
         iconView.contentTintColor = .tertiaryLabelColor
-        // See ClipboardImagePreviewView: keep this read-only view's image view
-        // from intercepting drags so the whole area bubbles to the container.
+        // Keep this read-only image view from intercepting drags, so the whole
+        // area bubbles to the container.
         iconView.unregisterDraggedTypes()
         self.iconView = iconView
 
@@ -62,7 +62,6 @@ final class ClipboardSummaryView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// Matches the text editor's background — see `ClipboardImagePreviewView`.
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {

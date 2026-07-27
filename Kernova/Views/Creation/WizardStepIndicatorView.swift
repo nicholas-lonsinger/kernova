@@ -5,11 +5,6 @@ import AppKit
 /// Renders one dot + title per ``VMCreationStep`` with thin connectors between
 /// them, highlighting the current step in the accent color. Purely a display of
 /// ``currentStep`` — it holds no model reference and reports no events.
-///
-/// The dots are `NSImageView`s (filled-circle SF Symbols tinted via
-/// `contentTintColor`) and the connectors are `NSBox` separators, so all colors
-/// adapt to light/dark automatically — no `viewDidChangeEffectiveAppearance`
-/// override or manual `CGColor` resolution.
 @MainActor
 final class WizardStepIndicatorView: NSView {
     private struct StepViews {
@@ -19,9 +14,7 @@ final class WizardStepIndicatorView: NSView {
 
     private var stepViews: [VMCreationStep: StepViews] = [:]
 
-    /// The step to highlight.
-    ///
-    /// Setting it restyles the dots and labels.
+    /// The step to highlight; setting it restyles the dots and labels.
     var currentStep: VMCreationStep = .osSelection {
         didSet {
             guard oldValue != currentStep else { return }

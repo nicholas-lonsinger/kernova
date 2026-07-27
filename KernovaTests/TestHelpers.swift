@@ -12,14 +12,10 @@ import Testing
 // primitives (`AsyncGate`, `waitUntil`, `TestFailure`), the ephemeral-
 // `UserDefaults` helpers (`makeEphemeralDefaults`, `withEphemeralDefaults`),
 // and the blocking-bridge GCD hop (`offCooperativePool`) live in the shared
-// `KernovaTestSupport` package product — see its doc comments for why they
-// were hoisted out of this file (formerly triplicated, #526; the
-// ephemeral-defaults helpers followed in #581 once a second bundle needed the
-// identical ceremony for `AgentPreferences`, and `offCooperativePool` in #618
-// once the guest bundle needed the identical hop).
+// `KernovaTestSupport` package product — see its doc comments.
 //
-// `waitForChange` below is KernovaTests-only and was never one of the
-// triplicated copies: it observes `@MainActor` `@Observable` production state
+// `waitForChange` below is KernovaTests-only: it observes `@MainActor`
+// `@Observable` production state
 // directly via `withObservationTracking`, which only this bundle's tests need
 // — the GuestAgent/KernovaKit bundles' predicates read `Sendable` boxes
 // (`AtomicInt`, `PolicyBox`) with no such observable type to track.

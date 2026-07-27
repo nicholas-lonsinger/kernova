@@ -3,11 +3,7 @@
 #     lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #     . "$lib_dir/lib/output.sh"
 #
-# This file exists because ghosts.sh, doctor.sh and bootstrap-team.sh each
-# carried a byte-identical copy of the colour block and the marker helpers, and
-# copies drift: the moment one script's palette was corrected the other two were
-# silently left behind. Colours and the presentation rules below now live here
-# once. Semantics stay with each script — a marker that also increments a
+# Semantics stay with each script — a marker that also increments a
 # counter (doctor's `fail`, ghosts' `ghost`/`fixed`) is defined by its owner,
 # because the counter is what the script's summary reports on.
 #

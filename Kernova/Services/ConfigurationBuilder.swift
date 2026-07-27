@@ -7,26 +7,18 @@ import os
 ///
 /// Resolves symlinks and validates all user-supplied file paths (kernel, initrd, disk image,
 /// additional disks, shared directories) before passing them to Virtualization.framework.
-///
-/// Supports three boot paths:
-/// - **macOS**: `VZMacPlatformConfiguration` + `VZMacOSBootLoader` (Apple Silicon only)
-/// - **EFI**: `VZGenericPlatformConfiguration` + `VZEFIBootLoader` (Linux guests)
-/// - **Linux Kernel**: `VZGenericPlatformConfiguration` + `VZLinuxBootLoader`
 struct ConfigurationBuilder: Sendable {
-    /// Contains the built VZ configuration along with bidirectional serial port pipes
-    /// and optional SPICE clipboard pipes.
     struct BuildResult: @unchecked Sendable {
         let configuration: VZVirtualMachineConfiguration
         let serialInputPipe: Pipe
         let serialOutputPipe: Pipe
         let clipboardInputPipe: Pipe?
         let clipboardOutputPipe: Pipe?
-        /// `USBDeviceInfo` for each item in `config.removableMedia`,
-        /// attached on the XHCI controller at config-build time.
+        /// `USBDeviceInfo` for each item in `config.removableMedia`, attached on
+        /// the XHCI controller at config-build time.
         ///
-        /// UUIDs match `VZUSBMassStorageDeviceConfiguration.uuid` so the
-        /// runtime tracking in `instance.liveRemovableMedia` can locate
-        /// the devices for hot-detach.
+        /// UUIDs match `VZUSBMassStorageDeviceConfiguration.uuid` so
+        /// `instance.liveRemovableMedia` can locate the devices for hot-detach.
         let coldRemovableMedia: [USBDeviceInfo]
     }
 
@@ -39,11 +31,9 @@ struct ConfigurationBuilder: Sendable {
 
     /// Assembles the `BuildResult` with optional VZ validation.
     ///
-    /// Production callers go through `build(from:bundleURL:)` and always
-    /// validate. The `validate: false` path exists for tests that need to
-    /// inspect the assembled configuration on hosts where `vzConfig.validate()`
-    /// throws `VZErrorDomain Code=2 ("Virtualization is not available on this
-    /// hardware")` — most notably GitHub's macOS runners, which are themselves
+    /// `validate: false` exists for tests running on hosts where
+    /// `vzConfig.validate()` throws `VZErrorDomain Code=2` ("Virtualization is
+    /// not available on this hardware") — GitHub's macOS runners are themselves
     /// nested VMs without virtualization support.
     func assemble(from config: VMConfiguration, bundleURL: URL, validate: Bool) throws -> BuildResult {
         let vzConfig = VZVirtualMachineConfiguration()
@@ -52,11 +42,9 @@ struct ConfigurationBuilder: Sendable {
             "Building config: cpuCount=\(config.cpuCount, privacy: .public), memoryMB=\(config.memorySizeInBytes / (1024 * 1024), privacy: .public), bootMode=\(config.bootMode.displayName, privacy: .public)"
         )
 
-        // Resources
         vzConfig.cpuCount = config.cpuCount
         vzConfig.memorySize = config.memorySizeInBytes
 
-        // Platform & boot loader
         switch config.bootMode {
         case .macOS:
             try configureMacOSBoot(vzConfig, config: config, bundleURL: bundleURL)
@@ -68,7 +56,6 @@ struct ConfigurationBuilder: Sendable {
             try configureLinuxKernelBoot(vzConfig, config: config)
         }
 
-        // Common devices.
         // configureUSBControllers must run before configureRemovableMedia so the
         // XHCI controller exists for items to attach to.
         configureUSBControllers(vzConfig)
@@ -79,21 +66,16 @@ struct ConfigurationBuilder: Sendable {
         configureAudio(vzConfig, config: config)
         try configureDirectorySharing(vzConfig, config: config)
 
-        // Serial port
         let (inputPipe, outputPipe) = configureSerialPort(vzConfig)
 
-        // Clipboard sharing (SPICE agent console port)
         let clipboardPipes = configureClipboardSharing(vzConfig, config: config)
 
-        // Vsock device for the Kernova guest <-> host channel (macOS guests only).
-        // The listener and any per-service consumers are wired up post-VM-create
-        // by VMInstance.startVsockServices(); the Linux SPICE/virtio-console path
-        // remains the clipboard transport for Linux guests.
+        // The Kernova guest <-> host channel is macOS-only; Linux guests keep the
+        // SPICE/virtio-console transport.
         if config.bootMode == .macOS {
             configureVsockDevice(vzConfig)
         }
 
-        // Validate
         if validate {
             try vzConfig.validate()
         }
@@ -121,10 +103,8 @@ struct ConfigurationBuilder: Sendable {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         let platform = VZMacPlatformConfiguration()
 
-        // Auxiliary storage
         platform.auxiliaryStorage = VZMacAuxiliaryStorage(contentsOf: layout.auxiliaryStorageURL)
 
-        // Hardware model
         if let modelData = config.hardwareModelData,
             let hardwareModel = VZMacHardwareModel(dataRepresentation: modelData)
         {
@@ -137,7 +117,6 @@ struct ConfigurationBuilder: Sendable {
             platform.hardwareModel = hardwareModel
         }
 
-        // Machine identifier
         if let idData = config.machineIdentifierData,
             let machineID = VZMacMachineIdentifier(dataRepresentation: idData)
         {
@@ -153,7 +132,6 @@ struct ConfigurationBuilder: Sendable {
         vzConfig.platform = platform
         vzConfig.bootLoader = VZMacOSBootLoader()
 
-        // macOS-specific devices
         let graphics = VZMacGraphicsDeviceConfiguration()
         graphics.displays = [
             VZMacGraphicsDisplayConfiguration(
@@ -195,7 +173,6 @@ struct ConfigurationBuilder: Sendable {
         bootLoader.variableStore = variableStore
         vzConfig.bootLoader = bootLoader
 
-        // Linux graphics
         let graphics = VZVirtioGraphicsDeviceConfiguration()
         graphics.scanouts = [
             VZVirtioGraphicsScanoutConfiguration(
@@ -244,7 +221,6 @@ struct ConfigurationBuilder: Sendable {
         bootLoader.commandLine = config.kernelCommandLine ?? "console=hvc0"
         vzConfig.bootLoader = bootLoader
 
-        // Linux graphics
         let graphics = VZVirtioGraphicsDeviceConfiguration()
         graphics.scanouts = [
             VZVirtioGraphicsScanoutConfiguration(
@@ -262,21 +238,16 @@ struct ConfigurationBuilder: Sendable {
 
     /// Resolves a `StorageDisk` entry's filesystem location.
     ///
-    /// Internal disks are bundle-relative; external disks carry an absolute
-    /// host path. The main bundle disk is the conventional internal entry
-    /// with `path == "Disk.asif"`.
-    ///
-    /// For internal disks the resolved URL must stay within the bundle
-    /// directory — a `..`-traversing path in a hand-edited / corrupted
-    /// `config.json` would otherwise escape the sandbox and read from
-    /// arbitrary host locations.
+    /// Internal disks are bundle-relative; external disks carry an absolute host
+    /// path. An internal disk must resolve *inside* the bundle directory — a
+    /// `..`-traversing path in a hand-edited or corrupted `config.json` would
+    /// otherwise read from arbitrary host locations.
     private func resolvedURL(for disk: StorageDisk, bundleURL: URL) throws -> URL {
         if disk.isInternal {
             let bundlePath = bundleURL.standardizedFileURL.path(percentEncoded: false)
             let resolved = bundleURL.appendingPathComponent(disk.path).standardizedFileURL
             let resolvedPath = resolved.path(percentEncoded: false)
-            // Require the resolved path to be inside the bundle. The trailing
-            // separator on the prefix guards against bundle "Foo" matching a
+            // The trailing separator guards against bundle "Foo" matching a
             // sibling "Foobar".
             let bundlePrefix = bundlePath.hasSuffix("/") ? bundlePath : bundlePath + "/"
             guard resolvedPath.hasPrefix(bundlePrefix) else {
@@ -290,23 +261,18 @@ struct ConfigurationBuilder: Sendable {
         return URL(fileURLWithPath: disk.path)
     }
 
-    /// Returns `true` when this disk represents the bundle's primary disk
-    /// (`Disk.asif`) — the implicit "main disk" that historically had no
-    /// `VZVirtioBlockDeviceConfiguration.blockDeviceIdentifier` set on it.
+    /// Returns `true` when this disk is the bundle's primary disk (`Disk.asif`).
     ///
-    /// Path-based (not id-based) so it stays correct after `clonedForNewInstance`
-    /// regenerates disk ids; also used by `VMLibraryViewModel.isMainDisk`.
+    /// Path-based, not id-based, so it stays correct after `clonedForNewInstance`
+    /// regenerates disk ids.
     static func isMainBundleDisk(_ disk: StorageDisk, layout: VMBundleLayout) -> Bool {
         disk.isInternal && disk.path == layout.diskImageURL.lastPathComponent
     }
 
     /// Builds the ordered `storageDevices` array from `config.storageDisks`.
     ///
-    /// Position [0] boots first on EFI guests. Each entry maps to either a
-    /// `VZVirtioBlockDeviceConfiguration` (kind `.virtio`) or a
-    /// `VZUSBMassStorageDeviceConfiguration` (kind `.usbMassStorage`).
-    /// When the list is `nil` or empty, the builder synthesizes a single
-    /// main-disk entry at the bundle's `Disk.asif`.
+    /// Position [0] boots first on EFI guests. When the list is `nil` or empty,
+    /// a single main-disk entry at the bundle's `Disk.asif` is synthesized.
     private func configureStorageDisks(
         _ vzConfig: VZVirtualMachineConfiguration,
         config: VMConfiguration,
@@ -322,14 +288,8 @@ struct ConfigurationBuilder: Sendable {
 
         var built: [VZStorageDeviceConfiguration] = []
         for disk in disks {
-            // Resolve the on-disk URL VZ will attach. Internal disks are
-            // bundle-relative and go through `resolvedURL(for:bundleURL:)`
-            // for path-traversal containment + existence. External disks
-            // go through the full `PathValidation.resolveFile` pipeline
-            // (existence, type check, symlink resolution, writability);
-            // we then hand VZ the symlink-resolved URL so the attachment
-            // doesn't depend on a host-side symlink that could break at
-            // runtime.
+            // VZ is handed the symlink-resolved URL, so the attachment doesn't
+            // depend on a host-side symlink that could break at runtime.
             let attachmentURL: URL
             if disk.isInternal {
                 attachmentURL = try self.resolvedURL(for: disk, bundleURL: bundleURL)
@@ -357,13 +317,6 @@ struct ConfigurationBuilder: Sendable {
                 Self.logger.error(
                     "Failed to attach storage disk '\(disk.label, privacy: .public)' at '\(attachmentURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
-                // Wrap in a typed error carrying the item's identity: the raw
-                // framework error ("Operation not supported") names neither the
-                // file nor the fix, and the start-failure alert needs the ID to
-                // offer removal (see VMLibraryViewModel.start's catch). The
-                // framework error is carried along, not discarded — the start
-                // path classifies file-lock contention off its NSError shape
-                // (`VirtualizationService.isFileLockContention`).
                 throw ConfigurationBuilderError.storageDiskAttachFailed(
                     id: disk.id,
                     path: attachmentURL.path(percentEncoded: false),
@@ -374,14 +327,11 @@ struct ConfigurationBuilder: Sendable {
             switch disk.kind {
             case .virtio:
                 let blockDevice = VZVirtioBlockDeviceConfiguration(attachment: attachment)
-                // Leave the main bundle disk's `blockDeviceIdentifier` unset
-                // to match pre-refactor behavior: Linux guests historically
-                // had no `/dev/disk/by-id/virtio-*` symlink for the primary
-                // disk. Setting it from the synthesized default's fresh UUID
-                // would make the by-id name vary across launches, which
-                // would break any guest-side `/etc/fstab` entry that relied
-                // on it. User-added disks DO get a UUID-derived identifier
-                // because their UUID is persisted with the disk entry.
+                // The main bundle disk's `blockDeviceIdentifier` stays unset: it
+                // would come from the synthesized default's fresh UUID, making the
+                // guest's `/dev/disk/by-id/virtio-*` name vary across launches and
+                // breaking any `/etc/fstab` entry relying on it. User-added disks
+                // persist their UUID, so they do get an identifier.
                 if !Self.isMainBundleDisk(disk, layout: layout) {
                     blockDevice.blockDeviceIdentifier = disk.blockDeviceIdentifier
                 }
@@ -409,8 +359,6 @@ struct ConfigurationBuilder: Sendable {
     ) throws -> [USBDeviceInfo] {
         guard let items = config.removableMedia, !items.isEmpty else { return [] }
         guard let xhci = vzConfig.usbControllers.first else {
-            // configureUSBControllers runs unconditionally upstream, so this is
-            // a programming error rather than a recoverable state.
             Self.logger.fault("USB controller missing when attaching removable media")
             preconditionFailure("USB controller must be configured before removable media")
         }
@@ -433,8 +381,6 @@ struct ConfigurationBuilder: Sendable {
                 Self.logger.error(
                     "Failed to attach removable media '\(item.label, privacy: .public)' at '\(item.path, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
-                // Same wrapping as the storage-disk attach above: typed error
-                // with the item's identity, carrying the framework error.
                 throw ConfigurationBuilderError.removableMediaAttachFailed(
                     id: item.id,
                     path: item.path,
@@ -455,11 +401,8 @@ struct ConfigurationBuilder: Sendable {
         return infos
     }
 
-    /// Synthesizes the default main-disk entry for a VM whose
-    /// `storageDisks` list is empty or absent.
-    ///
-    /// Visible to other layers so the settings UI can materialize the
-    /// implicit main disk into an explicit list entry on first edit.
+    /// Synthesizes the default main-disk entry for a VM whose `storageDisks`
+    /// list is empty or absent.
     static func defaultMainDisk(layout: VMBundleLayout) -> StorageDisk {
         StorageDisk(
             id: stableMainDiskID(forBundleAt: layout.bundleURL),
@@ -471,16 +414,11 @@ struct ConfigurationBuilder: Sendable {
         )
     }
 
-    /// Deterministic UUID for the synthesized main disk, derived from
-    /// the bundle path.
+    /// Deterministic UUID for the synthesized main disk, derived from the bundle path.
     ///
-    /// The synthesizer fires whenever `storageDisks` is nil/empty.
-    /// Without stable identity, `removeStorageDisk`'s entry-lookup-by-id
-    /// would miss the row the user just clicked —
-    /// silently no-op'ing the entry removal while still trashing the
-    /// underlying file. Once the user makes any edit, the list is
-    /// persisted with this id and the synthesizer is no longer
-    /// consulted.
+    /// Without stable identity, `removeStorageDisk`'s lookup-by-id would miss the
+    /// row the user just clicked — silently no-op'ing the entry removal while
+    /// still trashing the underlying file.
     private static func stableMainDiskID(forBundleAt bundleURL: URL) -> UUID {
         let digest = SHA256.hash(data: Data(bundleURL.path.utf8))
         let bytes = Array(digest.prefix(16))
@@ -531,8 +469,8 @@ struct ConfigurationBuilder: Sendable {
             streams.append(outputStream)
         }
 
-        // A virtio sound device with no streams is pointless, so omit it entirely
-        // when both directions are off, leaving VZ's default-empty `audioDevices`.
+        // Omit the device entirely when both directions are off, leaving VZ's
+        // default-empty `audioDevices`.
         guard !streams.isEmpty else { return }
 
         let audioDevice = VZVirtioSoundDeviceConfiguration()
@@ -569,18 +507,12 @@ struct ConfigurationBuilder: Sendable {
 
     /// Configures a SPICE agent console port for clipboard sharing using raw pipe I/O.
     ///
-    /// Instead of using `VZSpiceAgentPortAttachment` (which automatically syncs with
-    /// the host `NSPasteboard`), we attach `VZFileHandleSerialPortAttachment` to the
-    /// SPICE-named port. This lets `SpiceClipboardService` speak the SPICE protocol
-    /// directly and present clipboard data in a gated UI rather than hijacking the
-    /// host clipboard.
+    /// The port takes a `VZFileHandleSerialPortAttachment`, not a
+    /// `VZSpiceAgentPortAttachment` — the latter syncs the host `NSPasteboard`
+    /// automatically, bypassing `SpiceClipboardService`'s gated UI.
     ///
-    /// Linux guests only — macOS guests sync clipboard over vsock (port
-    /// `KernovaVsockPort.clipboard`) instead of a SPICE console port, so the
-    /// SPICE pipes are not configured for them.
-    ///
-    /// Returns the (input, output) pipes, or `nil` when clipboard sharing is
-    /// disabled or routed over vsock instead.
+    /// Returns `nil` for macOS guests (they sync over vsock) and when clipboard
+    /// sharing is disabled.
     private func configureClipboardSharing(
         _ vzConfig: VZVirtualMachineConfiguration,
         config: VMConfiguration
@@ -612,9 +544,8 @@ struct ConfigurationBuilder: Sendable {
 
     /// Adds a single virtio-socket device to the configuration.
     ///
-    /// Listeners are
-    /// installed post-VM-create against the live `VZVirtioSocketDevice` rather
-    /// than declared on the configuration.
+    /// Listeners are installed post-VM-create against the live
+    /// `VZVirtioSocketDevice`, not declared on the configuration.
     private func configureVsockDevice(_ vzConfig: VZVirtualMachineConfiguration) {
         let socketDevice = VZVirtioSocketDeviceConfiguration()
         vzConfig.socketDevices.append(socketDevice)
@@ -657,12 +588,10 @@ struct ConfigurationBuilder: Sendable {
         directories: [SharedDirectory],
         resolvedURLs: [URL]
     ) {
-        // macOS guests use a single device with the automount tag.
-        // All directories are bundled into a VZMultipleDirectoryShare.
         var shareMap: [String: VZSharedDirectory] = [:]
         for (index, directory) in directories.enumerated() {
             var name = directory.displayName
-            // Handle name collisions by prefixing with a UUID fragment
+            // Resolve name collisions with a UUID fragment prefix.
             if shareMap[name] != nil {
                 name = "\(directory.id.uuidString.prefix(8))-\(name)"
             }
@@ -682,7 +611,6 @@ struct ConfigurationBuilder: Sendable {
         directories: [SharedDirectory],
         resolvedURLs: [URL]
     ) {
-        // Linux guests get one device per directory with sequential tags (share0, share1, ...).
         var devices: [VZVirtioFileSystemDeviceConfiguration] = []
         for (index, directory) in directories.enumerated() {
             let share = VZSingleDirectoryShare(
@@ -798,16 +726,13 @@ enum ConfigurationBuilderError: LocalizedError {
     case storageDiskNotFound(String, String)
     case storageDiskPathIsDirectory(String, String)
     case storageDiskNotWritable(String, String)
-    /// The disk file exists but `VZDiskImageStorageDeviceAttachment` refused
-    /// it — most commonly the sandbox denying `open` on a path the app no
-    /// longer holds a grant for (surfaced by the framework as the unhelpful
-    /// "Operation not supported"), or an invalid/unaligned image.
+    /// The disk file exists but `VZDiskImageStorageDeviceAttachment` refused it —
+    /// commonly the sandbox denying `open` on a path the app no longer holds a
+    /// grant for (surfaced as "Operation not supported"), or an invalid image.
     ///
-    /// `underlying` is the framework error verbatim. It must be preserved,
-    /// not flattened to a string: the start path classifies file-lock
-    /// contention (a *transient* condition with its own bounded retry) off
-    /// that error's NSError domain/code, so discarding it would turn a
-    /// retryable boot into a hard failure. Read it via ``underlyingAttachError``.
+    /// `underlying` must be preserved verbatim, not flattened to a string: the
+    /// start path classifies transient file-lock contention off its NSError
+    /// domain/code, so discarding it turns a retryable boot into a hard failure.
     case storageDiskAttachFailed(id: UUID, path: String, label: String, underlying: any Error)
     case removableMediaNotFound(String, String)
     case removableMediaPathIsDirectory(String, String)
@@ -862,12 +787,7 @@ enum ConfigurationBuilderError: LocalizedError {
         }
     }
 
-    /// The framework error behind an attach failure, or `nil` for every other
-    /// case.
-    ///
-    /// The single seam for classifying a wrapped attach failure by what the
-    /// framework actually reported (see the note on
-    /// ``storageDiskAttachFailed(id:path:label:underlying:)``).
+    /// The framework error behind an attach failure, or `nil` for every other case.
     var underlyingAttachError: (any Error)? {
         switch self {
         case .storageDiskAttachFailed(_, _, _, let underlying),

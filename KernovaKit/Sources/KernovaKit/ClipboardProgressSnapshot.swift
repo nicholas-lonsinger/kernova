@@ -1,19 +1,11 @@
 import Foundation
 
 /// One clipboard operation's aggregate transfer progress — the single value every
-/// Kernova progress surface renders (#643, #652).
+/// Kernova progress surface renders.
 ///
 /// **Aggregate per operation, never per file.** `bytesTransferred`/`totalBytes`
-/// span every transfer the operation makes, whether they run sequentially (Finder
-/// walking a flat multi-file paste) or concurrently (a folder's children), so a
-/// bar built from this climbs once instead of refilling per file.
-/// `filesCompleted`/`fileCount` count individual *files* — flat reps and a
-/// folder's file nodes alike — while `currentItemName` names what is streaming
-/// right now (a folder's children stream under the folder's own name).
-///
-/// Rendered on the side where the bytes land or leave: the host app's clipboard
-/// window bar, its toolbar button's under-bar, and both status items' rings and
-/// dropdown readouts.
+/// span every transfer the operation makes, sequential or concurrent, so a bar
+/// built from this climbs once instead of refilling per file.
 public struct ClipboardProgressSnapshot: Equatable, Sendable {
     /// Which way the bytes are moving, from the rendering side's point of view.
     public enum Direction: Equatable, Sendable {
@@ -30,7 +22,7 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
     public let peerName: String
     /// What is currently streaming — a flat file by its own name, a folder's
     /// children by the *folder's* name (concurrent children would flicker through
-    /// sibling filenames) — or `nil` when nothing is in flight between two files.
+    /// sibling filenames) — or `nil` when nothing is in flight.
     public let currentItemName: String?
     /// Files fully transferred so far.
     public let filesCompleted: Int
@@ -46,15 +38,10 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
     /// estimated (no rate yet, or nothing left to move).
     public let secondsRemaining: Double?
     /// Whether this is a File Provider paste — a manifest-backed materialization
-    /// the user started with ⌘V on this machine.
-    ///
-    /// The only operation allowed to open a status-item dropdown by itself: it is
-    /// the one with no surface of its own, since the window that would have shown
-    /// a bar is Finder's, not ours. Every other flow starts from the clipboard
-    /// window, which is already rendering this same snapshot.
+    /// the user started with ⌘V on this machine, and the only operation allowed
+    /// to open a status-item dropdown by itself.
     public let isPasteSession: Bool
-    /// How long this operation has been running, for gates that need a floor the
-    /// 300 ms reveal is far too short to provide (the dropdown auto-open).
+    /// How long this operation has been running.
     public let elapsedSeconds: TimeInterval
 
     /// Creates a snapshot of one clipboard operation in flight.

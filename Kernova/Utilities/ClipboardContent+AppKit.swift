@@ -10,14 +10,10 @@ extension UTType {
     /// copy with an embedded image advertises *both*, so the image survives only
     /// if flat-RTFD is preferred — hence the order. flat-RTFD does **not** conform
     /// to `.rtf`, so a bare `conforms(to: .rtf)` check misses the image-bearing
-    /// flavor. The bundle form `com.apple.rtfd` (`UTType.rtfd`) is intentionally
-    /// absent: it never appears as an inline pasteboard flavor — the flat form
-    /// does — and as a directory bundle its bytes aren't decodable like a flat
-    /// stream, so modeling it would be speculative.
+    /// flavor.
     static let rtfFamilyByPreference: [UTType] = [.flatRTFD, .rtf]
 
-    /// Whether this type is any RTF-family rich-text flavor (see
-    /// `rtfFamilyByPreference`).
+    /// Whether this type is any RTF-family rich-text flavor.
     var conformsToRTFFamily: Bool {
         UTType.rtfFamilyByPreference.contains { conforms(to: $0) }
     }
@@ -33,17 +29,14 @@ extension ClipboardContent {
     /// Every file payload — each a representation tagged with a suggested
     /// filename (a copied/dragged file's bytes).
     ///
-    /// Partitions the buffer with `inlineRepresentations`: a non-empty filename
-    /// marks a distinct file the receiver materializes, so several of these mean
-    /// several files. `filePayloads.first` is the single-file representative.
+    /// A non-empty filename marks a distinct file the receiver materializes, so
+    /// several of these mean several files.
     var filePayloads: [Representation] {
         representations.filter { !$0.filename.isEmpty }
     }
 
     /// The inline representations — alternative encodings of one inline content
     /// item (text + RTF + image data; the consumer picks the richest).
-    ///
-    /// The complement of `filePayloads`.
     var inlineRepresentations: [Representation] {
         representations.filter { $0.filename.isEmpty }
     }
@@ -51,17 +44,12 @@ extension ClipboardContent {
     /// The inline rich-text representation best suited to a styled preview, or
     /// `nil` when none is present.
     ///
-    /// Prefers the richest RTF-family flavor (flat-RTFD over plain RTF) so a copy
-    /// with an embedded inline image previews *with* the image — the image bytes
-    /// live only in the flat-RTFD flavor, never in plain RTF. File payloads are
-    /// excluded — a copied `.rtf`/`.rtfd` *file* is a file attachment, not inline
-    /// rich text. HTML is deliberately *not* rendered styled: `NSAttributedString`'s
-    /// HTML import can synchronously fetch remote resources and block the main
-    /// thread, which is unsafe for untrusted clipboard bytes — HTML copies fall
-    /// through to the plain-text preview instead.
+    /// Prefers the richest RTF-family flavor so a copy with an embedded inline
+    /// image previews *with* the image. HTML is deliberately *not* rendered
+    /// styled: `NSAttributedString`'s HTML import can synchronously fetch remote
+    /// resources and block the main thread, which is unsafe for untrusted
+    /// clipboard bytes.
     var richTextRepresentation: Representation? {
-        // Single pass: parse each inline rep's UTType once and keep the one with
-        // the best (lowest-index) `rtfFamilyByPreference` rank.
         var best: (rank: Int, rep: Representation)?
         for representation in representations where representation.filename.isEmpty {
             guard let type = UTType(representation.uti),
@@ -76,9 +64,8 @@ extension ClipboardContent {
     /// The representation best suited to an image preview, or `nil` when
     /// none of the representations is an image.
     ///
-    /// Preference order: PNG, TIFF, JPEG, HEIC, then anything whose UTI
-    /// conforms to `public.image` — the well-known formats decode reliably
-    /// and cheaply; the conformance fallback catches the long tail.
+    /// Preference order: PNG, TIFF, JPEG, HEIC, then anything whose UTI conforms
+    /// to `public.image`.
     var imageRepresentation: Representation? {
         let preferred = [
             UTType.png.identifier,
@@ -101,9 +88,8 @@ extension ClipboardContent {
     /// image, not real text content.
     ///
     /// The preview policy uses this so a dragged/copied image whose pasteboard
-    /// also carried its path/URL string shows the **image**, not the path —
-    /// while a genuine text copy (prose, even if it mentions a URL) still
-    /// shows as text.
+    /// also carried its path shows the **image**, not the path, while a genuine
+    /// text copy still shows as text.
     var textIsPathOrURLOnly: Bool {
         guard imageRepresentation != nil else { return false }
         // A standalone URL representation alongside an image is a descriptor.
@@ -115,9 +101,8 @@ extension ClipboardContent {
 
     /// Whether a string is a single-line `file://`/`http://`/`https://` URL.
     ///
-    /// Strict by design: multi-line text or a non-URL string is treated as
-    /// prose (returns false) so real captions never trigger the
-    /// image-beats-text rule.
+    /// Strict by design: multi-line text or a non-URL string is treated as prose,
+    /// so real captions never trigger the image-beats-text rule.
     private static func looksLikePathOrURL(_ string: String) -> Bool {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.contains("\n") else { return false }

@@ -1,31 +1,14 @@
 import FileProvider
 import Foundation
 
-// Shared clipboard File Provider domain host (issues #376 guest / #424 host).
-//
-// Owns the container-app side of the File Provider transport, parameterized by
-// a `FileProviderConfig` so the guest agent (host→guest paste) and the
-// main app (guest→host "Copy to Mac") share one implementation:
-//  1. The XPC relay the sandboxed extension calls on `fetchContents` — the
-//     extension can't open vsock, so the owning process (which does) pulls for
-//     it. (The relay object itself — `FileProviderRelayService` — and its
-//     per-pull progress machinery live in FileProviderRelayService.swift.)
-//  2. Registration of the clipboard File Provider domain so the system
-//     instantiates the extension and surfaces the domain in Finder.
-//  3. The offer manifest + `signalEnumerator` that declare the current file rep
-//     to the system as a dataless placeholder.
-//
-// Gated on clipboard policy: the domain stands up only once clipboard sharing is
-// enabled, so nothing registers a domain in a context that didn't enable
-// clipboard (e.g. the CI test host).
+// The container-app side of the clipboard File Provider transport,
+// parameterized by a `FileProviderConfig` so the guest agent (host→guest paste)
+// and the main app (guest→host "Copy to Mac") share one implementation.
 //
 // Host↔extension IPC uses the canonical `NSFileProviderServicing` anonymous-XPC
-// pattern (#460): the domain host injects a `FileProviderServicingConnector`
-// that exports the relay to the extension so the extension can call it back at
-// `fetchContents`. Both directions share this one connector — the only
-// differences come from `FileProviderConfig`. The
-// registration/manifest/availability machinery below is direction-agnostic and
-// shared as-is.
+// pattern: the sandboxed extension can't open vsock, so the owning process
+// exports the relay and pulls for it at `fetchContents`. The domain stands up
+// only once clipboard sharing is enabled — never in a context that didn't.
 
 // MARK: - Collaboration with the clipboard owner
 
@@ -37,27 +20,25 @@ public protocol FileProviderPullProvider: AnyObject, Sendable {
     /// Pulls `(generation, repIndex)` over vsock, stages it into the shared
     /// container, and returns the staged file path (or why it failed).
     ///
-    /// `onProgress` is fed the receiver's cumulative `(bytesTransferred,
-    /// totalBytes)` per chunk accepted off the wire, so the relay can drive the
-    /// paste readout (#643) and the window's in-app bar (#354). It fires off-main
-    /// on the transfer's receive lane and must be cheap. Since #615 it reports
-    /// *arrived* bytes, which can lead the staging writes by up to one credit
-    /// window — fine for a progress bar, but it is not a durability signal.
+    /// `onProgress` fires off-main on the transfer's receive lane per chunk
+    /// accepted off the wire and must be cheap. It reports *arrived* bytes,
+    /// which can lead the staging writes by up to one credit window — fine for
+    /// a progress bar, but it is not a durability signal.
     func fetchStagedFile(
         generation: UInt64, repIndex: Int,
         onProgress: @escaping @Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void
     ) -> Result<String, FileProviderPullError>
 
-    /// Aborts an in-flight `fetchStagedFile` for `(generation, repIndex)` (#464):
-    /// stops the vsock transfer and wakes the blocked pull. Best-effort and
-    /// idempotent — a cancel for an unknown or already-finished transfer is a
-    /// no-op.
+    /// Aborts an in-flight `fetchStagedFile` for `(generation, repIndex)`.
+    ///
+    /// Best-effort and idempotent — a cancel for an unknown or already-finished
+    /// transfer is a no-op.
     func cancelStagedPull(generation: UInt64, repIndex: Int)
 
     /// Pulls one child file `(generation, repIndex, childSeq)` at `relativePath`
-    /// within a directory rep (folder D1b), stages it into the shared container,
-    /// and returns the staged path (or why it failed). Same off-main, no-deadline
-    /// contract as `fetchStagedFile`.
+    /// within a directory rep, stages it into the shared container, and returns
+    /// the staged path (or why it failed). Same off-main, no-deadline contract
+    /// as `fetchStagedFile`.
     func fetchStagedChild(
         generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
         onProgress: @escaping @Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void
@@ -98,12 +79,10 @@ public struct FileProviderPublishItem: Equatable, Sendable {
     }
 }
 
-/// A directory representation to publish as a placeholder **tree** (folder D1b).
+/// A directory representation to publish as a placeholder **tree**.
 ///
-/// Salt-less: the domain host stamps its own `sessionSalt` (#541) onto the
-/// resulting `FileProviderManifest.FolderRep`. The consumer builds this from a
-/// received tree listing (see `ClipboardDirectoryTree.makeFolderRep`, whose
-/// `nodes` this carries).
+/// Salt-less: the domain host stamps its own `sessionSalt` onto the resulting
+/// `FileProviderManifest.FolderRep`.
 public struct FileProviderPublishFolder: Equatable, Sendable {
     /// Index of the directory representation within the offer.
     public var repIndex: Int
@@ -138,42 +117,29 @@ public struct FileProviderPublishFolder: Equatable, Sendable {
 /// Implemented by the host so the clipboard owner can surface file reps as
 /// placeholders.
 ///
-/// Lets the clipboard owner publish an offer's file reps as dataless
-/// placeholders and get their pasteboard URLs. Called only on the main queue.
+/// Every method and property here is called only on the main queue.
 public protocol FileProviderPublishing: AnyObject, Sendable {
-    /// Current File Provider usability, read on the main queue (like every method
-    /// here). Lets a paste-time caller skip the more expensive routing work (e.g.
-    /// a folder tree's listing fetch) when the domain isn't `.ready`, rather than
-    /// doing it only for `publishItems` to fall back to `nil`.
+    /// Current File Provider usability, letting a paste-time caller skip the
+    /// expensive routing work (e.g. a folder tree's listing fetch) when the
+    /// domain isn't `.ready`.
     var availability: FileProviderAvailability { get }
 
-    /// Publishes `items` as the current offer and returns each item's `file://`
-    /// pasteboard URL keyed by rep index, or `nil` when the File Provider isn't
-    /// usable (sharing off, domain not registered, or the user toggle is off)
-    /// so the caller falls back to the synchronous provider path.
+    /// Publishes `items` and `folders` as the current offer and returns each
+    /// rep's `file://` pasteboard URL keyed by rep index, or `nil` when the File
+    /// Provider isn't usable and the caller must fall back to the synchronous
+    /// provider path.
     ///
-    /// `waitForPlaceholder` selects when the placeholder dirents must exist:
-    /// `true` blocks on a root enumeration before returning — the paste-time
-    /// caller hands the URLs straight to a consumer that resolves them
-    /// immediately — while `false` forces the enumeration asynchronously, for
-    /// an offer-time caller whose offer→paste gap covers the listing.
-    ///
-    /// `folders` publishes directory reps as placeholder *trees* (folder D1b)
-    /// alongside the flat `items`; the returned map keys both by rep index. The
-    /// paste-time barrier verifies only the root-level dirents (flat files +
-    /// folder roots) — a folder's descendants enumerate lazily as the consumer
-    /// descends.
-    ///
-    /// `sourceName` names the machine the bytes come from, for the paste
-    /// progress readout (#643): the VM's name on the host, "Mac" in the guest.
+    /// `waitForPlaceholder` blocks until the root-level dirents are verified on
+    /// disk, for a caller that resolves the URLs immediately; `false` enumerates
+    /// asynchronously. `sourceName` names the machine the bytes come from.
     func publishItems(
         generation: UInt64, sourceName: String, items: [FileProviderPublishItem],
         folders: [FileProviderPublishFolder], waitForPlaceholder: Bool
     ) -> [Int: URL]?
 
-    /// Cheap warm-up ahead of a possible paste-time publish: pre-connects the
-    /// servicing control connection so `publishItems` isn't also paying
-    /// doorbell/extension-launch latency inside the paste.
+    /// Pre-connects the servicing control connection so a paste-time
+    /// `publishItems` isn't also paying doorbell/extension-launch latency
+    /// inside the paste.
     func prepareForOffer()
 
     /// Clears the current offer's items on supersession/teardown.
@@ -187,8 +153,7 @@ public enum FileProviderAvailability: Equatable, Sendable {
     /// Domain registered and the user has it enabled — working.
     case ready
     /// Domain registered but the user's System-Settings File-Providers toggle is
-    /// off (`userEnabled == false`); large-file paste falls back to the
-    /// size-capped synchronous path.
+    /// off (`userEnabled == false`).
     case needsEnabling
     /// The extension couldn't be found/launched or registration failed — an
     /// install/signing problem, not a user toggle.
@@ -198,13 +163,12 @@ public enum FileProviderAvailability: Equatable, Sendable {
 // MARK: - Host
 
 /// Hosts the File Provider XPC relay, registers the clipboard domain, and
-/// publishes the current offer's single file item — for one direction's config.
+/// publishes the current offer's file reps — for one direction's config.
 ///
 /// `@unchecked Sendable`: registration/manifest/availability state is touched
-/// only on the main queue; `pullProvider`, `config`, `logger`, and `container`
-/// are immutable `let`s the XPC listener delegate reads off-main; the two
-/// exceptions (`domainChangeObserver`, `clearReconciliationInFlight`) are
-/// guarded by their own locks — see each property's doc.
+/// only on the main queue, the immutable `let`s are read off-main by the XPC
+/// listener delegate, and the two exceptions (`domainChangeObserver`,
+/// `clearReconciliationInFlight`) are guarded by their own locks.
 public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     @unchecked Sendable
 {
@@ -212,21 +176,18 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     private let logger: KernovaLogger
     private let container: FileProviderContainer
     /// Salts this host instance's item identifiers so a new owner session's
-    /// offers can never collide with a previous session's (#541).
+    /// offers can never collide with a previous session's.
     ///
     /// The offer `generation` restarts at 1 with each session while placeholder
     /// dirents survive teardown on disk; an unsalted identifier collision makes
     /// fileproviderd treat the new offer as an in-place rename of the stale —
     /// possibly materialized — placeholder with `shouldFetch:false`, so a paste
-    /// serves the previous offer's bytes. See `FileProviderItemIdentifier`.
+    /// serves the previous offer's bytes.
     private let sessionSalt = UInt64.random(in: .min ... .max)
     private let pullProvider: FileProviderPullProvider
     private let domain: NSFileProviderDomain
     /// Connects to the extension and exports the relay so the extension can call
-    /// it back at `fetchContents` (the servicing connector, #460).
-    ///
-    /// The domain host owns the relay *service*; the transport owns the XPC
-    /// connection to the extension.
+    /// it back at `fetchContents`.
     private let relayTransport: FileProviderRelayTransport
     private let relayService: FileProviderRelayService
     private let notificationCenter: NotificationCenter
@@ -234,11 +195,9 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     private let addDomainToSystem: @Sendable (NSFileProviderDomain, @escaping @Sendable (Error?) -> Void) -> Void
     /// The reconciliation barrier, injected for tests.
     ///
-    /// Production is `NSFileProviderManager.waitForStabilization`: completes
-    /// once the system is caught up with both the file system's and the
-    /// provider's changes up to the time of the call (per its header doc) —
-    /// i.e. once manifest-reported creations/deletions have been applied to
-    /// the on-disk replica.
+    /// Production is `NSFileProviderManager.waitForStabilization`, which per its
+    /// header doc completes once the system is caught up with both the file
+    /// system's and the provider's changes up to the time of the call.
     private let waitForStabilization: @Sendable (_ completion: @escaping @Sendable (Error?) -> Void) -> Void
     /// Maps a user-visible URL to its provider-assigned item identifier,
     /// injected for tests.
@@ -248,25 +207,22 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     private let resolveItemIdentifier:
         @Sendable (_ url: URL, _ completion: @escaping @Sendable (String?) -> Void) -> Void
     /// How many times a *throwing* enable-time registry read is retried before
-    /// the cycle latches `.unavailable` for good (#598).
+    /// the cycle latches `.unavailable` for good.
     ///
-    /// Injected for tests. On an agent's first launch right after install the
-    /// just-installed extension isn't discoverable yet, so
-    /// `NSFileProviderManager.domains()` throws ("The application cannot be used
-    /// right now.") until the system finishes registering it. The read is
-    /// non-destructive — the same `domains()` call `refreshAvailability` already
-    /// repeats freely — so retrying it (never an `add`) is safe; `limit × delay`
-    /// bounds the window (~60 s) to post-install extension discovery.
+    /// On an agent's first launch right after install the just-installed
+    /// extension isn't discoverable yet, so `NSFileProviderManager.domains()`
+    /// throws ("The application cannot be used right now.") until the system
+    /// finishes registering it. Only that non-destructive read is retried —
+    /// never an `add`; `limit × delay` bounds the window to ~60 s.
     private let registrationReadRetryLimit: Int
     /// Delay between enable-time registry-read retries (see
     /// `registrationReadRetryLimit`).
     ///
     /// Injected for tests (0 chains retries immediately).
     private let registrationReadRetryDelay: TimeInterval
-    /// Guards `domainChangeObserver`, which — unlike the rest of the state
-    /// below — is also read/removed from `deinit`. `deinit` runs on whatever
-    /// thread drops the last strong reference, not necessarily main, so that
-    /// access can't rely on the "Main-queue state" convention.
+    /// Guards `domainChangeObserver`, which is also read/removed from `deinit` —
+    /// and `deinit` runs on whatever thread drops the last strong reference, so
+    /// that access can't rely on the "Main-queue state" convention below.
     private let domainChangeObserverLock = NSLock()
 
     // MARK: Main-queue state
@@ -275,9 +231,9 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// Whether the authoritative `domains()` read (or a successful `add`) has
     /// confirmed our domain is present in the system registry.
     ///
-    /// Derived from that read / add outcome — never from a *throwing* availability
-    /// probe, which leaves a genuinely-registered domain marked registered so it
-    /// stays publishable (see `handleRegistrationRead`/`addDomain`).
+    /// Derived only from that read / add outcome — never from a *throwing*
+    /// availability probe, which must leave a genuinely-registered domain marked
+    /// registered so it stays publishable.
     private var domainRegistered = false
     /// User-visible domain root, resolved after registration; `nil` until then
     /// (the File Provider path is unused while it's `nil`).
@@ -288,46 +244,34 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     private var rootURLScopeActive = false
     /// Bumped on every `registerDomain()` call and on disable; a captured value
     /// stale by the time an `addDomainToSystem` completion lands means that cycle
-    /// was superseded (or the host was disabled) — so its stale completion must
-    /// not mutate `domainRegistered`/availability (#428).
-    ///
-    /// Without this, a `setEnabled(true)`→`setEnabled(false)`→`setEnabled(true)`
-    /// churn faster than one `NSFileProviderManager.add` round-trip lets the first
-    /// cycle's late completion land after a second cycle already succeeded,
-    /// clobbering state out of order.
+    /// was superseded (or the host was disabled), so its completion must not
+    /// mutate `domainRegistered`/availability.
     private var registrationEpoch: UInt64 = 0
-    /// Throwing enable-time registry reads retried so far this cycle (#598),
-    /// reset to 0 on each enable and bounded by `registrationReadRetryLimit`.
+    /// Throwing enable-time registry reads retried so far this cycle, reset to 0
+    /// on each enable and bounded by `registrationReadRetryLimit`.
     private var registrationReadAttempts = 0
     private var availabilityStorage: FileProviderAvailability = .inactive
-    /// Token for the `NSFileProviderDomainDidChange` observer.
+    /// Token for the `NSFileProviderDomainDidChange` observer, the primary
+    /// availability signal while enabled.
     ///
-    /// The primary availability signal while enabled. Removed on disable and in
-    /// deinit (deinit-removal pattern, see Kernova/Services/SystemSleepWatcher.swift).
-    /// Guarded by `domainChangeObserverLock`, not the main queue — see that
-    /// property's doc.
+    /// Removed on disable and in deinit. Guarded by `domainChangeObserverLock`,
+    /// not the main queue.
     private var domainChangeObserver: (any NSObjectProtocol)?
     /// Discriminates overlapping `refreshAvailability()` probes so a stale
     /// completion can't clobber a fresher one applied out of order.
     private var refreshGeneration: UInt64 = 0
-    /// Notified on the main queue on every availability transition.
-    ///
-    /// Lets an owner mirror availability into observable UI state. Set on main;
-    /// invoked on main. Single-slot; see `setAvailabilityObserver`.
+    /// Notified on the main queue on every availability transition; single-slot,
+    /// see `setAvailabilityObserver`.
     private var availabilityObserver: (@MainActor (FileProviderAvailability) -> Void)?
-    /// Aggregates this side's paste pulls into the clipboard progress readout
-    /// (#643, #652).
+    /// Aggregates this side's paste pulls into the clipboard progress readout.
     ///
     /// Injected by the owner rather than created here, because the same tracker
-    /// also measures the flows that never touch a File Provider manifest — a
-    /// preview fetch, a Copy to Mac, this side serving a peer's pull — and one
-    /// readout can only come from one tracker. `nil` until the owner wires it
-    /// (and in tests that never do), which simply means no readout. Read on main.
+    /// also measures the flows that never touch a File Provider manifest and one
+    /// readout can only come from one tracker. `nil` means no readout. Read on
+    /// main.
     private var progressTracker: ClipboardProgressTracker?
 
-    /// Current File Provider usability, for the UI.
-    ///
-    /// Read on main.
+    /// Current File Provider usability, for the UI, read on main.
     public var availability: FileProviderAvailability {
         dispatchPrecondition(condition: .onQueue(.main))
         return availabilityStorage
@@ -335,8 +279,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
 
     #if DEBUG
     /// Test-only view of `domainRegistered` (which gates `publishItems`), so a
-    /// test can assert a *throwing* confirm read doesn't clear it — the wedge
-    /// `refreshAvailability` must never cause (state-first registration, #2).
+    /// test can assert a *throwing* confirm read doesn't clear it.
     var domainRegisteredForTesting: Bool {
         dispatchPrecondition(condition: .onQueue(.main))
         return domainRegistered
@@ -347,23 +290,8 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// Registers an observer notified on the main queue whenever `availability`
     /// changes, and immediately delivers the current value.
     ///
-    /// The owner mirrors this into observable UI state; the domain-change
-    /// observer keeps it live, so a user flipping the System-Settings toggle is
-    /// reflected without a restart.
-    ///
-    /// Single-observer by design: each host instance has exactly one owner, so a
-    /// later call replaces the prior registration (standard setter semantics,
-    /// the same shape as a Cocoa `delegate`). An owner driving several consumers
-    /// fans them out inside its one closure — see the guest agent's
-    /// `AgentAppDelegate`, which forwards to both the #429 re-publish path and
-    /// the #581 status-item badge.
-    ///
-    /// `RATIONALE:` a multicast observer registry here would be speculative
-    /// structure for a second registrant that doesn't exist — no instance
-    /// registers twice today (the host side has one observer; the guest fans
-    /// out at its single call site). The single-slot contract is documented
-    /// here and at that call site instead of defended with new machinery. See
-    /// #588.
+    /// Single-slot: a later call replaces the prior registration, so an owner
+    /// driving several consumers must fan them out inside its one closure.
     public func setAvailabilityObserver(
         _ observer: @escaping @MainActor (FileProviderAvailability) -> Void
     ) {
@@ -372,10 +300,8 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         MainActor.assumeIsolated { observer(availabilityStorage) }
     }
 
-    /// Registers an observer notified on the main queue with the paste
-    /// materialization readout to render, or `nil` to clear it (#643).
-    ///
-    /// Points this host's paste pulls at the owner's progress tracker.
+    /// Points this host's paste pulls at the owner's progress tracker, or `nil`
+    /// to render no readout.
     ///
     /// The relay captures the tracker at each pull's *entry*, so re-pointing
     /// mid-paste leaves an in-flight pull reporting to the tracker it started
@@ -387,11 +313,8 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         relayService.progressTracker = tracker
     }
 
-    /// Updates the cached availability and notifies the observer on a transition.
-    ///
-    /// Centralizes the storage write + observer notification + transition log so
-    /// every path (registration probe, domain-change notification, usage-trigger,
-    /// policy disable) keeps the UI mirror in sync. Runs on main.
+    /// Updates the cached availability and notifies the observer on a
+    /// transition, on main.
     private func setAvailability(_ availability: FileProviderAvailability) {
         guard availabilityStorage != availability else { return }
         availabilityStorage = availability
@@ -404,13 +327,10 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// `pullProvider` when the extension reads a placeholder, and exporting the
     /// relay through `relayTransport`.
     ///
-    /// `relayTransport` defaults to a `FileProviderServicingConnector`
-    /// built from `config` — production callers omit it; tests inject a no-op so
-    /// they never stand up a live anonymous-XPC connection. `waitForStabilization`
-    /// and `resolveItemIdentifier` are the reconciliation seams (production:
-    /// `NSFileProviderManager.waitForStabilization` /
-    /// `getIdentifierForUserVisibleFile`); tests inject recorders, since
-    /// fileproviderd's reconciliation itself is not unit-testable.
+    /// Production callers take every default. Tests inject a no-op
+    /// `relayTransport` so they never stand up a live anonymous-XPC connection,
+    /// plus recorders for the `waitForStabilization`/`resolveItemIdentifier`
+    /// seams, since fileproviderd's reconciliation is not unit-testable.
     public init(
         config: FileProviderConfig,
         pullProvider: FileProviderPullProvider,
@@ -448,8 +368,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         self.registrationReadRetryLimit = registrationReadRetryLimit
         self.registrationReadRetryDelay = registrationReadRetryDelay
         // The domain is rebuilt from `config` inside the closure — the stored
-        // `self.domain` is main-queue state a `@Sendable` closure can't capture
-        // (same shape as the connector's per-attempt `config.makeDomain()`).
+        // `self.domain` is main-queue state a `@Sendable` closure can't capture.
         self.waitForStabilization =
             waitForStabilization
             ?? { completion in
@@ -488,58 +407,35 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         guard self.enabled != enabled else { return }
         self.enabled = enabled
         if enabled {
-            // Arm the connector with the relay service. Deferred to enable so no
-            // servicing connection / doorbell observer is armed in a context that
-            // didn't enable clipboard sharing (notably the CI test host). The
-            // connector self-guards idempotency and reconnects after an
-            // invalidation, so this runs on every enable — no outer latch, which
-            // would defeat the connector's "re-arm on next enable" recovery.
+            // Arming is deferred to enable so no servicing connection / doorbell
+            // observer exists in a context that didn't enable clipboard sharing
+            // (notably the CI test host). Runs on every enable — the connector
+            // self-guards idempotency, and an outer latch would defeat its
+            // "re-arm on next enable" recovery after an invalidation.
             relayTransport.startServing(relayService)
             startObservingDomainChanges()
-            // Fresh retry budget per enable cycle for the enable-time registry
-            // read (#598); see `handleRegistrationReadFailure`.
             registrationReadAttempts = 0
             registerDomain()
         } else {
             stopObservingDomainChanges()
             setAvailability(.inactive)
-            // No offer can be valid while disabled (the manifest is cleared
-            // below), so the domain-root scope has no consumer until the next
-            // enable's registration re-resolves the root and re-opens it.
             releaseRootURLScope()
-            // Disarm the connector: drop the control connection and stop observing
-            // the doorbell so a stray fetch while disabled fails cleanly
-            // (serverUnreachable) instead of reaching a relay whose offer was just
-            // cleared.
+            // Drop the control connection and stop observing the doorbell so a
+            // stray fetch while disabled fails cleanly (serverUnreachable)
+            // instead of reaching a relay whose offer was just cleared.
             relayTransport.stopServing()
-            // Invalidate any registration cycle still outstanding from before this
-            // disable (#428) — its eventual `addDomainToSystem` completion must not
-            // mutate state for what is now a superseded epoch; see
-            // `registrationEpoch`'s doc.
             registrationEpoch &+= 1
-            // Keep the domain registered across a policy off→on cycle: re-adding a
-            // domain re-creates it in the consent-gated OFF state, which would wipe
-            // the user's System-Settings enablement on every restart. Just clear
-            // the offer's items so nothing lingers.
+            // Keep the domain registered across a policy off→on cycle: re-adding
+            // a domain re-creates it in the consent-gated OFF state, which would
+            // wipe the user's System-Settings enablement on every restart.
             clearOfferOnMain()
             logger.notice("File Provider disabled by clipboard policy")
         }
     }
 
-    // RATIONALE: `publishItems` is synchronous and decides
-    // File-Provider-vs-sync-fallback purely from the cached `availabilityStorage`;
-    // it never re-probes (it can't await an async `signalEnumerator`). A prior
-    // version kept that cache honest with a 3s repeating poll timer for the whole
-    // enabled lifetime. That's replaced by event/usage-driven refreshes instead of
-    // indefinite polling: `NSFileProviderDomainDidChange` (below) is the primary
-    // detector for a mid-session System-Settings disable — the system posts it on
-    // a `userEnabled` flip. `publishItems`'s usage-triggered refresh is a
-    // backstop that bounds staleness to at most one publish cycle if a
-    // notification is ever missed, so a disabled domain is caught by the next
-    // paste even without the notification firing. `signalEnumerator` error
-    // feedback (see `signalEnumerator()`) is a narrower backstop — per that
-    // method's doc, it does not reliably surface a mid-offer disable, only other
-    // failure modes (e.g. the domain having been removed outright).
+    /// Observes `NSFileProviderDomainDidChange`, the primary detector for a
+    /// mid-session System-Settings disable — the system posts it on a
+    /// `userEnabled` flip.
     private func startObservingDomainChanges() {
         domainChangeObserverLock.withLock {
             guard domainChangeObserver == nil else { return }
@@ -566,28 +462,11 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// Brings the clipboard domain to a deliberate, logged registration state
     /// from the authoritative system registry — never a blind re-add.
     ///
-    /// A single `domains()` read decides the action: an already-present domain is
+    /// A single `domains()` read decides the action: a present domain is
     /// *adopted* (no `add`, so a healthy registration and the user's toggle are
-    /// never touched); a genuinely absent domain is *added* once; a read that
-    /// *throws* — e.g. the version conflict when a stale older copy of the app is
-    /// registered, where every `NSFileProviderManager` call fails — lands
-    /// `.unavailable` honestly. This read also arms `NSFileProviderDomainDidChange`
-    /// (Apple posts it only after the process's first `domains()` call), replacing
-    /// the old throwaway priming read; a *throwing* read does not arm it, so the
-    /// cycle recovers only through the bounded enable-time read retry (see
-    /// `handleRegistrationReadFailure`) — and failing that, clears on a re-enable.
-    ///
-    /// Per Apple, re-adding an existing identifier would merely update it in place
-    /// and preserve the read-only `userEnabled`, so adopting instead of re-adding
-    /// loses nothing while keeping the action deliberate. (Our `domainDisplayName`
-    /// is a static constant; a future change to it would need a deliberate re-add,
-    /// since the adopt path skips `add`.) An `add` *failure* is not retried or
-    /// healed (#567/#590): availability is reported from the registry, and only
-    /// the orphaned-directory signature is logged (see `diagnoseOrphanIfNeeded`).
-    ///
-    /// This method decides `domainRegistered` and runs the post-registration steps
-    /// on main; availability is always applied by `refreshAvailability()`, the
-    /// single `enabled`+`refreshGeneration`-guarded reader.
+    /// never touched), an absent one is *added* once, a *throwing* read lands
+    /// `.unavailable`. That read also arms `NSFileProviderDomainDidChange` —
+    /// Apple posts it only after the process's first `domains()` call.
     private func registerDomain() {
         dispatchPrecondition(condition: .onQueue(.main))
         registrationEpoch &+= 1
@@ -609,11 +488,10 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         }
     }
 
-    /// Applies the authoritative read's verdict: adopt a present domain, or add an
-    /// absent one.
+    /// Applies the authoritative read's verdict: adopt a present domain, or add
+    /// an absent one.
     ///
-    /// Runs on main; a superseded cycle (epoch bumped by a disable or a newer
-    /// `registerDomain`) or a disable in flight is a no-op.
+    /// Runs on main; a superseded epoch or a disable in flight is a no-op.
     private func handleRegistrationRead(epoch: UInt64, present: Bool) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard enabled, registrationEpoch == epoch else { return }
@@ -633,23 +511,11 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// The registry read itself failed — the domain's state is unknown, so report
     /// `.unavailable` and retry the read, bounded, before giving up.
     ///
-    /// On an agent's first launch right after install the extension isn't
-    /// discoverable yet and `domains()` throws until the system registers it
-    /// (#598); a throwing read also never armed the change observer, so without a
-    /// retry the cycle is terminal until a manual re-enable. So this keeps the
-    /// honest immediate state (`domainRegistered = false`, `.unavailable` — the UI
-    /// stays red through the window and the transition log dedupes), then, while
-    /// the budget lasts, re-schedules `registerDomain()` after
-    /// `registrationReadRetryDelay`. The retry re-runs only the non-destructive
-    /// `domains()` read — never an `add`, which stays terminally un-healed
-    /// (#567/#590) — and captures the current `registrationEpoch`, so a disable or
-    /// a newer cycle silently cancels the scheduled attempt. On exhaustion
-    /// `.unavailable` stands, clearing only on a re-enable — today's semantics,
-    /// now reached after the bounded retry rather than on the first failure.
-    ///
-    /// Written directly (not via `refreshAvailability`): keeping the write
-    /// synchronous inside this epoch/`enabled`-guarded handler avoids a phantom
-    /// re-read disagreeing with `domainRegistered = false`.
+    /// A throwing read never armed the change observer, so without a retry the
+    /// cycle would be terminal until a manual re-enable. The retry re-runs only
+    /// the non-destructive `domains()` read — never an `add` — and captures the
+    /// current `registrationEpoch`, so a disable or a newer cycle silently
+    /// cancels it. On exhaustion `.unavailable` stands until a re-enable.
     private func handleRegistrationReadFailure(epoch: UInt64, message: String) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard enabled, registrationEpoch == epoch else { return }
@@ -662,17 +528,9 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             return
         }
         registrationReadAttempts += 1
-        // `.warning`, not `.notice`: a failed read we are recovering from is
-        // degraded-but-recoverable operation, which is what AGENTS.md's level
-        // table assigns to `.warning` (`.notice` is for definitive lifecycle
-        // events). Both persist, so the post-mortem trail is unaffected.
         logger.warning(
             "File Provider registry read failed at enable (attempt \(self.registrationReadAttempts, privacy: .public)/\(self.registrationReadRetryLimit, privacy: .public)): \(message, privacy: .public) — retrying the read (post-install extension discovery race, #598)"
         )
-        // `epoch` is this cycle's — the guard above already proved it equals
-        // `registrationEpoch`, so re-reading the property would say the same
-        // thing less clearly. A disable or a newer cycle bumps it, which is what
-        // makes the scheduled retry a silent no-op.
         DispatchQueue.main.asyncAfter(deadline: .now() + registrationReadRetryDelay) { [weak self] in
             guard let self, self.enabled, self.registrationEpoch == epoch else { return }
             self.registerDomain()
@@ -681,17 +539,13 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
 
     /// Marks the domain registered and runs the one-time post-registration steps,
     /// then applies availability.
-    ///
-    /// Shared by the adopt and add-success paths.
     private func markRegistered(epoch: UInt64) {
         dispatchPrecondition(condition: .onQueue(.main))
         domainRegistered = true
-        // Warm the servicing connection at registration (not only at publish) —
-        // load-bearing for the reconnect doorbell: after an owner relaunch, a paste
-        // of a still-on-disk placeholder (the domain stays registered across
-        // restarts) rings the doorbell with no offer having been published yet, and
-        // the connector only acts on the doorbell once a connect has been requested
-        // (#460). Idempotent with the publish-time `ensureConnected`.
+        // Warming at registration (not only at publish) is load-bearing for the
+        // reconnect doorbell: after an owner relaunch, a paste of a still-on-disk
+        // placeholder rings the doorbell with no offer published yet, and the
+        // connector only acts on the doorbell once a connect has been requested.
         relayTransport.ensureConnected()
         resolveRootURL(epoch: epoch)
         refreshAvailability()
@@ -699,9 +553,9 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
 
     /// Adds the domain when the authoritative read found it absent.
     ///
-    /// Called on main so `self.domain` (non-`Sendable`) is only ever touched there;
-    /// the completion hops back to main and no-ops for a superseded epoch or after a
-    /// disable (#428).
+    /// Called on main so `self.domain` (non-`Sendable`) is only ever touched
+    /// there; the completion hops back to main and no-ops for a superseded epoch
+    /// or after a disable.
     private func addDomain(epoch: UInt64) {
         dispatchPrecondition(condition: .onQueue(.main))
         addDomainToSystem(domain) { [weak self] error in
@@ -713,10 +567,6 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                     )
                     self.domainRegistered = false
                     self.diagnoseOrphanIfNeeded(error: error)
-                    // Report from the registry (the domain was absent and the add
-                    // failed → `.unavailable`); the guarded reader also orders this
-                    // against any notification-driven probe the armed HOP-1 read
-                    // may have enabled.
                     self.refreshAvailability()
                     return
                 }
@@ -731,13 +581,11 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// Logs a diagnostic breadcrumb — no heal — when an `add` fails with
     /// `NSFileWriteFileExistsError` yet the domain is genuinely absent: the
     /// signature of an orphaned `~/Library/CloudStorage/<App>-<Domain>/`
-    /// replication directory left by a prior install (#471).
+    /// replication directory left by a prior install.
     ///
-    /// We deliberately do NOT auto-heal. A `remove(domain)`+re-add against an
-    /// orphan the registry doesn't even list is unverified to clear the on-disk
-    /// directory (its documented cleanup is manual), so firing it would risk
-    /// churning without fixing anything — the same reasoning that removed the prior
-    /// blind heal (#567/#590). Root-cause on recurrence.
+    /// Do not auto-heal: a `remove(domain)`+re-add against an orphan the registry
+    /// doesn't even list is unverified to clear the on-disk directory (its
+    /// documented cleanup is manual). Root-cause on recurrence.
     private func diagnoseOrphanIfNeeded(error: Error) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard Self.isFileExistsError(error) else { return }
@@ -771,10 +619,10 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// Caches the user-visible root URL so an offer can construct `root/filename`
     /// for the pasteboard without a per-item round-trip.
     ///
-    /// Epoch-guarded: a disable (or a newer registration cycle) landing between the
-    /// async `getUserVisibleURL` call and its completion must not `adoptRootURL` —
-    /// that would re-open a security scope *after* the disable's
-    /// `releaseRootURLScope()`, leaking it until the next disable/deinit.
+    /// Epoch-guarded: a disable landing between the async `getUserVisibleURL`
+    /// call and its completion must not `adoptRootURL`, which would re-open a
+    /// security scope *after* `releaseRootURLScope()` and leak it until the next
+    /// disable/deinit.
     private func resolveRootURL(epoch: UInt64) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let manager = NSFileProviderManager(for: domain) else { return }
@@ -792,25 +640,15 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         }
     }
 
-    /// Caches the root URL and opens its security scope, holding it for as long
-    /// as the root stays current (released on disable, replacement, and deinit).
+    /// Caches the root URL and opens its security scope, held while the root
+    /// stays current (released on disable, replacement, and deinit).
     ///
-    /// The URL `getUserVisibleURL` returns is security-scoped (per its header
-    /// doc) — the sandboxed host app's only access to the domain root under
-    /// `~/Library/CloudStorage`, which no entitlement covers (#539). The scope is
-    /// held open rather than wrapped around individual calls because TWO
-    /// consumers need it live:
-    /// - `forceRootEnumeration`'s readdir (denied Cocoa 257 otherwise), and
-    /// - the pasteboard server's sandbox validation when the placeholder's
-    ///   `public.file-url` lands on the host pasteboard: pboard mints the
-    ///   *pasting* app's sandbox extension from OUR live access to the referenced
-    ///   path, at whatever moment the promised data is provided (Universal
-    ///   Clipboard's eager read makes that copy time, a paste makes it later).
-    ///   Without the scope the entry is silently rejected ("Entry failed
-    ///   validation" in pboard's log) and a Finder ⌘V just beeps.
-    ///
-    /// In the unsandboxed guest agent `startAccessingSecurityScopedResource`
-    /// reports no scope was taken and all access works on ordinary permissions.
+    /// `getUserVisibleURL` returns a security-scoped URL per its header doc —
+    /// the sandboxed app's only access to `~/Library/CloudStorage`, without
+    /// which the root readdir is denied Cocoa 257. It must stay open, not wrap
+    /// individual calls: pboard mints the *pasting* app's sandbox extension from
+    /// our live access whenever the promised data is provided, and silently
+    /// rejects the entry otherwise ("Entry failed validation").
     private func adoptRootURL(_ url: URL) {
         releaseRootURLScope()
         rootURL = url
@@ -820,9 +658,8 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// Balances the scope opened by `adoptRootURL`, if one is active.
     ///
     /// Called on disable and on root replacement; also from `deinit`, where no
-    /// concurrent access can exist (this is the last reference) so the
-    /// main-queue-state convention on `rootURL`/`rootURLScopeActive` can't be
-    /// violated by another thread.
+    /// concurrent access can exist so the main-queue-state convention on
+    /// `rootURL`/`rootURLScopeActive` can't be violated by another thread.
     private func releaseRootURLScope() {
         if rootURLScopeActive, let rootURL {
             rootURL.stopAccessingSecurityScopedResource()
@@ -833,23 +670,12 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// Re-checks whether the user has enabled the domain by reading the live
     /// `userEnabled` flag off the system's copy of the domain.
     ///
-    /// `NSFileProviderDomain.userEnabled` reflects the macOS System Settings →
-    /// Login Items & Extensions → File Providers toggle directly (it goes `false`
-    /// the moment the user turns the extension off), which is the authoritative
-    /// signal. A `signalEnumerator` probe is unreliable for this: its completion
-    /// reports only that the *signal was delivered*, so it returns success even
-    /// when the domain is disabled — the `-2011` surfaces later, on an actual
-    /// content fetch, too late to gate `publishItems`. The locally-held
-    /// `domain` carries a stale flag, so the live copy is fetched via `domains()`.
-    ///
-    /// Called on registration, on an `NSFileProviderDomainDidChange` notification,
-    /// on every `publishItems` usage, and on `signalEnumerator` error
-    /// feedback — so flipping the toggle in System Settings takes effect without
-    /// restarting the owner, with no indefinite polling. Each call is async, so
-    /// it only ever lands on a *later* read of `availabilityStorage`, never the
-    /// one in progress when it was triggered; `refreshGeneration` stops a stale
-    /// completion from clobbering a fresher one applied out of order. A no-op
-    /// while disabled. Logs every transition for diagnosis.
+    /// `NSFileProviderDomain.userEnabled` is the authoritative signal; the
+    /// locally-held `domain` carries a stale flag, so the live copy comes from
+    /// `domains()`. Do not probe with `signalEnumerator` instead — its completion
+    /// reports only that the *signal was delivered*, so it succeeds even when the
+    /// domain is disabled and the `-2011` surfaces later, on an actual content
+    /// fetch, too late to gate `publishItems`.
     private func refreshAvailability() {
         guard enabled else { return }
         let identifier = domain.identifier
@@ -872,10 +698,8 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         }
     }
 
-    /// Maps the system's domain registry to availability: a matching domain with
-    /// `userEnabled == true` is `.ready`, a matching domain with `userEnabled ==
-    /// false` is `.needsEnabling` (the System-Settings toggle is off), and a
-    /// lookup error or a missing domain is `.unavailable`.
+    /// Maps the system's domain registry to availability, a lookup error or a
+    /// missing domain both being `.unavailable`.
     ///
     /// `internal` (not `private`) so `KernovaKitTests` can lock the mapping.
     static func availability(
@@ -890,8 +714,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         return availability(userEnabled: domain.userEnabled)
     }
 
-    /// Maps a domain's `userEnabled` flag to availability: `true` is `.ready`,
-    /// `false` is `.needsEnabling` (the user's System-Settings toggle is off).
+    /// Maps a domain's `userEnabled` flag to availability.
     ///
     /// Split out so `KernovaKitTests` can lock the toggle mapping without a live
     /// `NSFileProviderDomain` (whose `userEnabled` is read-only).
@@ -911,44 +734,33 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         dispatchPrecondition(condition: .onQueue(.main))
         guard !items.isEmpty || !folders.isEmpty else { return nil }
         // Only advertise placeholders we can actually materialize: a disabled or
-        // not-yet-ready domain would leave a paste that never completes, so fall
-        // back to the synchronous provider path in those cases.
+        // not-yet-ready domain would leave a paste that never completes.
         guard enabled, domainRegistered, let rootURL else {
             logger.debug(
                 "FP publish skipped (enabled=\(self.enabled, privacy: .public), registered=\(self.domainRegistered, privacy: .public), root=\(self.rootURL != nil, privacy: .public)) — using sync path"
             )
             return nil
         }
-        // Kicks off an async re-probe so a *later* publish self-corrects if a
-        // mid-session disable was missed by the domain-change observer — this
-        // call is synchronous, so the `.ready` guard right below still reads
-        // whatever was cached before this refresh started.
+        // Async re-probe so a *later* publish self-corrects if a mid-session
+        // disable was missed by the domain-change observer; the `.ready` guard
+        // below still reads whatever was cached before this refresh started.
         refreshAvailability()
         guard availabilityStorage == .ready else {
-            // The domain is registered but the user hasn't enabled it in System
-            // Settings (or the probe hasn't confirmed yet) — fall back so the paste
-            // isn't a placeholder that never downloads. The UI prompts.
             logger.debug(
                 "FP publish skipped — domain not user-enabled (availability=\(String(describing: self.availabilityStorage), privacy: .public)) — using sync path"
             )
             return nil
         }
-        // Warm the servicing control connection PROACTIVELY (not an optimization):
-        // a consumer can read the placeholder immediately after the URL lands on
-        // the pasteboard, and with the pipe already up that read doesn't race the
-        // doorbell handshake inside `fetchContents` and blow Finder's ~60s paste
-        // deadline (clipboard-paste-finder-60s-deadline). The connection carries
-        // NO bytes — the vsock pull stays fully lazy, running only when
-        // `fetchContents` is actually invoked. The connector runs the connect on
-        // its own queue, so this call doesn't block main. #460. Idempotent with
-        // the offer-time `prepareForOffer` warm-up.
+        // Warming the control connection here is not an optimization: a consumer
+        // can read the placeholder the moment the URL lands on the pasteboard,
+        // and with the pipe already up that read doesn't race the doorbell
+        // handshake inside `fetchContents` and blow Finder's ~60s paste deadline.
+        // The connection carries no bytes — the vsock pull stays fully lazy.
         relayTransport.ensureConnected()
 
         // Root-level placeholders (flat files + folder roots) share one flat
         // domain root, so names must be unique across BOTH — a multi-item copy
         // can legitimately carry two same-named entries from different folders.
-        // Dedup them together in a stable order (flat items first, then folder
-        // roots) so a flat file and a folder root never collide on a dirent.
         let rootNames = Self.deduplicatedFilenames(items.map(\.filename) + folders.map(\.filename))
         let itemNames = Array(rootNames.prefix(items.count))
         let folderNames = Array(rootNames.suffix(folders.count))
@@ -972,11 +784,8 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 "Failed to write File Provider manifest: \(error.localizedDescription, privacy: .public)")
             return nil
         }
-        // Denominators for the paste readout (#643), adopted from the same
-        // manifest the enumerator serves so the two can never describe different
-        // sets of files. A publish that fails its reconciliation barrier below
-        // falls back to the sync path and simply never produces a pull, so the
-        // adopted offer stays unused rather than needing to be rolled back.
+        // Denominators for the paste readout, adopted from the same manifest the
+        // enumerator serves so the two can never describe different sets of files.
         progressTracker?.offerPublished(manifest, peerName: sourceName)
         signalEnumerator()
         // `signalEnumerator`'s completion means only that the signal was
@@ -988,22 +797,13 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         // mid-swap. The paste-time branch below is therefore a real
         // reconciliation barrier, not a courtesy readdir.
         if waitForPlaceholder {
-            // Paste-time publish (#427 leading edge): the caller is about to hand
-            // the URLs to a consumer that resolves them immediately, so wait on
-            // `waitForStabilization` — the documented catch-up barrier ("wait
-            // until [the system] is caught up with the provider's changes up to
-            // the time of the call") — and then verify each returned item's
-            // dirent resolves to ITS OWN manifest identifier via
-            // `getIdentifierForUserVisibleFile`: identity, not just presence.
-            // Bounded (`placeholderEnumerationWait` total): a hung fileproviderd
-            // must not strand the caller's (main) thread past the paste deadline;
-            // on timeout or an unverified dirent this degrades to the size-capped
-            // sync path (`nil`) instead of advertising a URL that would fail the
-            // paste with -43.
-            // Root-level dirents only (flat files + folder roots); a folder's
-            // descendants enumerate lazily as the consumer descends, so verifying
-            // them here would be both unnecessary and (for a 100k-entry tree)
-            // impossible within the barrier budget.
+            // Verify each dirent resolves to ITS OWN manifest identifier —
+            // identity, not just presence — bounded by
+            // `placeholderEnumerationWait` so a hung fileproviderd can't strand
+            // the caller's (main) thread past the paste deadline. Root-level
+            // dirents only; a folder's descendants enumerate lazily as the
+            // consumer descends, and a 100k-entry tree could not be verified
+            // inside the barrier budget anyway.
             var expected: [String: String] = Dictionary(
                 uniqueKeysWithValues: manifestItems.map { ($0.filename, $0.itemIdentifier) })
             for folder in manifestFolders { expected[folder.filename] = folder.rootIdentifier }
@@ -1011,19 +811,16 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 return nil
             }
         } else {
-            // Offer-time publish: the offer→paste gap (the user switches and
-            // pastes) is far longer than the reconciliation, so run the readdir
-            // off-main and let the paste-time consumers re-verify.
+            // Offer-time publish: the offer→paste gap is far longer than the
+            // reconciliation, so run the readdir off-main and let the paste-time
+            // consumers re-verify.
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 self?.enumerateRoot(root: rootURL)
             }
         }
-        // Derive the pasteboard promise URLs — root + the current manifest's
-        // (de-duplicated) dirent names — through `visibleFileURL`, so the URL put
-        // on the pasteboard names the identical on-disk file the enumerator
-        // serves, rather than re-deriving `rootURL + filename` here where a second
-        // derivation could drift from the first (over a de-duplicated filename,
-        // say).
+        // Derive the pasteboard promise URLs through `visibleFileURL` so they
+        // name the identical on-disk file the enumerator serves; re-deriving
+        // `rootURL + filename` here could drift over a de-duplicated filename.
         var urls: [Int: URL] = [:]
         for item in manifestItems {
             urls[item.repIndex] = Self.visibleFileURL(
@@ -1045,25 +842,20 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// connection so a paste-time `publishItems` doesn't also pay
     /// doorbell/extension-launch latency inside the paste.
     ///
-    /// Deliberately publishes nothing — routing is decided at paste (#427
-    /// leading edge) — and skips a `signalEnumerator` ping: the owner clears the
-    /// superseded offer right before calling this, and that clear already
-    /// signals the enumerator, spinning the extension up.
+    /// Publishes nothing — routing is decided at paste — and skips a
+    /// `signalEnumerator` ping, since the owner's supersession clear right before
+    /// this already signalled the enumerator and spun the extension up.
     public func prepareForOffer() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard enabled, domainRegistered else { return }
         relayTransport.ensureConnected()
     }
 
-    /// The user-visible URL of one published placeholder — used to derive the
-    /// pasteboard promise URLs in `publishItems`.
+    /// The user-visible URL of one published placeholder.
     ///
-    /// Resolves a flat rep to `root/filename`, a directory rep's root
-    /// (`childSeq == 0`) to `root/folder`, and a tree node to
-    /// `root/folder/relativePath` — all against the *current* manifest, so a
-    /// superseded generation resolves `nil` rather than a stale offer's URL. The
-    /// manifest's filenames are the on-disk dirent names (`publishItems`
-    /// de-duplicates before writing).
+    /// Resolves against the *current* manifest, so a superseded generation
+    /// resolves `nil` rather than a stale offer's URL. The manifest's filenames
+    /// are the on-disk dirent names.
     ///
     /// `internal` (not `private`) so `KernovaKitTests` can lock the lookup.
     static func visibleFileURL(
@@ -1086,9 +878,8 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         return folderRoot.appendingPathComponent(node.relativePath)
     }
 
-    /// De-duplicates colliding filenames within one offer, in order: the second
-    /// "report.pdf" becomes "report (2).pdf" — the same collision style
-    /// `ClipboardFileStaging` mints for staged files.
+    /// De-duplicates colliding filenames within one offer, in order, in the same
+    /// collision style `ClipboardFileStaging` mints for staged files.
     ///
     /// `internal` (not `private`) so `KernovaKitTests` can lock the scheme.
     static func deduplicatedFilenames(_ filenames: [String]) -> [String] {
@@ -1109,17 +900,15 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// Upper bound on the paste-time reconciliation barrier (and the async
     /// clear flush).
     ///
-    /// Generous against the normal sub-second stabilization (it covers a cold
-    /// extension launch), yet comfortably inside Finder's ~60 s paste deadline
-    /// with headroom left for the sync fallback the timeout degrades to.
+    /// Covers a cold extension launch, yet stays inside Finder's ~60 s paste
+    /// deadline with headroom for the sync fallback the timeout degrades to.
     private static let placeholderEnumerationWait: TimeInterval = 30
 
     /// Pacing between reconciliation verification rounds.
     ///
-    /// RATIONALE: the event-driven wait is `waitForStabilization` itself —
-    /// this delay only paces the round where stabilization returns while the
-    /// verification still fails (state landed mid-flight), so the loop can't
-    /// spin hot. It is not a poll substitute for a missing signal.
+    /// The event-driven wait is `waitForStabilization` itself; this only paces
+    /// the round where stabilization returns while the verification still fails,
+    /// so the loop can't spin hot.
     private static let reconciliationRecheckDelay: TimeInterval = 0.2
 
     /// Outcome of one replica verification round.
@@ -1136,9 +925,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         case missingOrMismatched
     }
 
-    /// Pure decision for one verification round: compares the expected
-    /// `filename → itemIdentifier` map against the listed dirent names and the
-    /// identifiers those dirents resolved to.
+    /// Pure decision for one verification round.
     static func replicaVerdict(
         expected: [String: String], listedNames: Set<String>,
         resolvedIdentifiers: [String: String]
@@ -1157,10 +944,8 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// Returns `false` when any EXPECTED dirent stays missing or mismatched at
     /// the deadline — the caller then falls back to the sync path. Stale extras
     /// alone do not fail the paste: the returned URLs are already
-    /// verified-correct, and refusing a valid paste over a leftover sibling
-    /// would cost more than the cosmetic lag — that case proceeds with a
-    /// `.warning`. The loop runs off-thread so the outer wait can bound even a
-    /// wedged readdir.
+    /// verified-correct, so that case proceeds with a `.warning`. The loop runs
+    /// off-thread so the outer wait can bound even a wedged readdir.
     private func awaitPlaceholderReconciliation(
         rootURL: URL, expected: [String: String]
     ) -> Bool {
@@ -1173,9 +958,8 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 ?? false
             semaphore.signal()
         }
-        // +1 s over the inner deadline: the loop self-bounds every step; the
-        // outer wait only catches the loop's own thread wedging (e.g. inside a
-        // hung readdir).
+        // +1 s over the inner deadline: the loop self-bounds every step, so the
+        // outer wait only catches the loop's own thread wedging.
         guard semaphore.wait(timeout: deadline + 1) == .success else {
             logger.warning(
                 "FP publish barrier thread stalled past its deadline — using sync path")
@@ -1242,9 +1026,9 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
 
     /// User-visible dirent names under the domain root (hidden files skipped).
     ///
-    /// Sandbox access comes from the security scope held while the root is
-    /// current (`adoptRootURL`, #539). A failed listing returns empty — the
-    /// verdict then reads missing and the barrier keeps waiting.
+    /// Sandbox access comes from the security scope `adoptRootURL` holds. A
+    /// failed listing returns empty — the verdict then reads missing and the
+    /// barrier keeps waiting.
     private func listRootNames(rootURL: URL) -> Set<String> {
         let entries =
             (try? FileManager.default.contentsOfDirectory(
@@ -1293,13 +1077,8 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// Reads the domain root directory to trigger a root-container enumeration,
     /// which writes the offered items' dataless placeholders to disk.
     ///
-    /// Blocks the calling thread on the extension's enumeration round-trip; see
-    /// `publishItems` for who calls it where.
+    /// Blocks the calling thread on the extension's enumeration round-trip.
     private func enumerateRoot(root: URL) {
-        // Sandbox access to the domain root comes from the security scope the
-        // domain host holds open while the root is current (`adoptRootURL`,
-        // #539) — publishItems' `enabled`+`rootURL` guard means it is always
-        // active here.
         do {
             // `.skipsHiddenFiles` so the diagnostic count reflects user-visible
             // entries, not bookkeeping dirents (`.Trash`, `.DS_Store`).
@@ -1315,13 +1094,10 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
 
     /// Clears the current offer's items on supersession/teardown.
     public func clearOffer() {
-        // Runs synchronously on the main queue — all callers (handleOffer,
-        // handleRelease, teardown) are already there. This is load-bearing: in
-        // handleOffer the supersession clear is immediately followed by a
-        // synchronous publishItems, so an async clear would be reordered to
-        // run AFTER the publish and overwrite the just-written item manifest back
-        // to empty (the extension then enumerates 0 items and no placeholder is
-        // created). The async branch is a defensive fallback only.
+        // Must run synchronously when already on main: a supersession clear is
+        // immediately followed by a synchronous `publishItems`, so an async clear
+        // would be reordered to run AFTER the publish and overwrite the
+        // just-written manifest back to empty, leaving no placeholder at all.
         if Thread.isMainThread {
             clearOfferOnMain()
         } else {
@@ -1331,8 +1107,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
 
     private func clearOfferOnMain() {
         // Ahead of the `domainRegistered` guard: a superseded offer must stop
-        // driving the paste readout even in a context that never registered
-        // (where the tracker holds nothing anyway, making this a no-op).
+        // driving the paste readout even in a context that never registered.
         progressTracker?.offerCleared()
         // Only touch the manifest if the domain ever published — avoids creating
         // the container in a context where the File Provider is unused.
@@ -1347,8 +1122,8 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         scheduleClearReconciliation()
     }
 
-    /// Guards `clearReconciliationInFlight`, which — unlike the main-queue state
-    /// above — is also cleared from the flush's background completion.
+    /// Guards `clearReconciliationInFlight`, which is also cleared from the
+    /// flush's background completion.
     private let clearReconciliationLock = NSLock()
     /// Whether a clear-path stabilization flush is currently running, so a
     /// burst of supersessions (e.g. passthrough copies every poll tick) queues
@@ -1366,14 +1141,10 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// Drives reconciliation of a cleared offer without blocking main.
     ///
     /// Observed live: the empty-manifest write + `signalEnumerator` alone left
-    /// superseded dirents on disk indefinitely (they accumulated across offers)
-    /// — nothing forces fileproviderd to apply the deletions until something
-    /// waits for stabilization. This runs the bounded wait on a background
-    /// queue so superseded items disappear at copy time; the paste-time barrier
-    /// remains the correctness backstop. Coalesced: a clear landing while a
-    /// flush is already waiting is skipped — its deletions are picked up by the
-    /// next clear or the next paste barrier, which is tolerable staleness in
-    /// exchange for never stacking blocked threads under a copy burst.
+    /// superseded dirents on disk indefinitely — nothing forces fileproviderd to
+    /// apply the deletions until something waits for stabilization. Coalesced: a
+    /// clear landing while a flush is already waiting is skipped, its deletions
+    /// picked up by the next clear or the next paste barrier.
     private func scheduleClearReconciliation() {
         let alreadyRunning: Bool = clearReconciliationLock.withLock {
             if clearReconciliationInFlight { return true }
@@ -1413,14 +1184,10 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// the offer declared without a Finder window open) and the root container
     /// (so an open Finder window refreshes too).
     ///
-    /// A non-nil completion error re-probes availability as a defensive
-    /// backstop — but not for a mid-offer disable specifically: per the note on
-    /// `refreshAvailability`, a `signalEnumerator` completion reports only that
-    /// the signal was delivered, so it won't surface `-2011` for that case
-    /// either. This instead catches other failure modes (e.g. the domain having
-    /// been removed outright) within one offer cycle. The completion handler's
-    /// queue isn't documented, so the re-probe hops to main explicitly rather
-    /// than assuming it's already there.
+    /// A non-nil completion error re-probes availability, catching failure modes
+    /// such as the domain having been removed outright — not a mid-offer disable,
+    /// which this channel cannot surface. The completion handler's queue isn't
+    /// documented, so the re-probe hops to main explicitly.
     private func signalEnumerator() {
         guard let manager = NSFileProviderManager(for: domain) else { return }
         let handleCompletion: @Sendable (String, Error?) -> Void = { [weak self, logger] target, error in
@@ -1437,9 +1204,8 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     // MARK: - Teardown helpers
 
     /// Removes this app's File Provider domains, blocking until done — backs the
-    /// `--remove-clipboard-domain` teardown flag wired by both the host app
-    /// (`AppDelegate.main()`) and the guest agent (`AgentAppDelegate.main()`), so
-    /// dev/test iteration on either side leaves no lingering Finder location behind.
+    /// `--remove-clipboard-domain` teardown flag on both the host app and the
+    /// guest agent.
     public static func removeAllDomainsBlocking() {
         let semaphore = DispatchSemaphore(value: 0)
         NSFileProviderManager.removeAllDomains { error in

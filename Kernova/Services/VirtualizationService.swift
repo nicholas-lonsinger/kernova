@@ -15,10 +15,9 @@ final class VirtualizationService {
 
     /// Starts a virtual machine, optionally restoring from a saved state.
     ///
-    /// When `bootIntoRecovery` is `true` and the guest is macOS, the cold-boot
-    /// path boots into macOS Recovery for this launch only. It has no effect on
-    /// Linux guests or on the restore-from-save path — a stopped VM eligible for
-    /// recovery never has a save file, so it always cold-boots.
+    /// `bootIntoRecovery` boots into macOS Recovery for this launch only, and
+    /// applies to a macOS cold boot alone — no effect on Linux guests or on the
+    /// restore-from-save path.
     func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async throws {
         Self.logger.debug(
             "start: status=\(instance.status.displayName, privacy: .public), hasSaveFile=\(instance.hasSaveFile, privacy: .public), bootIntoRecovery=\(bootIntoRecovery, privacy: .public)"
@@ -38,12 +37,9 @@ final class VirtualizationService {
             }
 
             instance.status = .running
-            // Once we've reached `.running`, the guest agent has roughly the
-            // grace period to say Hello. If we've seen the agent before on
-            // this VM and it doesn't reconnect, the watchdog flips
-            // `agentExpectedButMissing` so the UI surfaces a louder
-            // "didn't reconnect" badge instead of the generic install nudge.
-            // No-op for fresh VMs (no `lastSeenAgentVersion`) and for Linux.
+            // The watchdog flips `agentExpectedButMissing` when a VM that has seen
+            // the agent before gets no Hello within the grace period. No-op for
+            // fresh VMs (no `lastSeenAgentVersion`) and for Linux.
             instance.startAgentPostStartWatchdog()
             if bootIntoRecovery {
                 Self.logger.notice("Started VM '\(instance.name, privacy: .public)' in recovery mode")
@@ -51,9 +47,6 @@ final class VirtualizationService {
                 Self.logger.notice("Started VM '\(instance.name, privacy: .public)'")
             }
         } catch {
-            // Log the error's domain/code (and the underlying error's, when
-            // present) alongside the localized text: classification bugs are
-            // undiagnosable from `localizedDescription` alone.
             let nsError = error as NSError
             let underlying =
                 (nsError.userInfo[NSUnderlyingErrorKey] as? NSError)
@@ -70,17 +63,14 @@ final class VirtualizationService {
 
     // MARK: - Cold Boot
 
-    /// Cold-boots `instance`, retrying with bounded backoff when the start
-    /// fails on VZ file-lock contention (see ``isFileLockContention(_:)``).
+    /// Cold-boots `instance`, retrying with bounded backoff when the start fails on
+    /// VZ file-lock contention (see ``isFileLockContention(_:)``).
     ///
-    /// A previous `VZVirtualMachine` on the same bundle — the install-time VM
-    /// during the post-install auto-boot, or a just-stopped VM on a rapid
-    /// stop→start — releases its advisory lock on the auxiliary-storage and
-    /// disk-image files only when it is fully *deallocated*, which lags
-    /// `vm.state == .stopped` by longer the more guest memory there is to tear
-    /// down. There is no public VZ API to observe the release, so gating on
-    /// state (as `MacOSInstallService.install` does) cannot be airtight; a
-    /// bounded retry against the ground-truth failure is.
+    /// A previous `VZVirtualMachine` on the same bundle releases its advisory lock
+    /// on the auxiliary-storage and disk-image files only when fully *deallocated*,
+    /// which lags `vm.state == .stopped` by more the more guest memory there is to
+    /// tear down. No public VZ API observes the release, so gating on state cannot
+    /// be airtight; a bounded retry against the ground-truth failure is.
     private func coldBootRetryingLockContention(
         _ instance: VMInstance, bootIntoRecovery: Bool
     ) async throws {
@@ -97,15 +87,13 @@ final class VirtualizationService {
                 Self.logger.warning(
                     "Cold boot of '\(instance.name, privacy: .public)' hit file-lock contention; retry \(attempt, privacy: .public) in \(String(describing: delay), privacy: .public)"
                 )
-                // Drop the failed VM and its session plumbing before rebuilding.
                 instance.tearDownSession()
                 do {
                     try await Task.sleep(for: delay)
                 } catch {
                     // Cancelled mid-backoff: surface the original lock failure
-                    // rather than leaking a `CancellationError` into the
-                    // status/alert classification paths, which aren't shaped
-                    // for it.
+                    // rather than leak a `CancellationError` into the status/alert
+                    // classification paths, which aren't shaped for it.
                     throw startError
                 }
             }
@@ -115,8 +103,8 @@ final class VirtualizationService {
     /// Builds a fresh configuration and `VZVirtualMachine`, wires the session
     /// plumbing, and starts the machine — one cold-boot attempt.
     private func coldBoot(_ instance: VMInstance, bootIntoRecovery: Bool) async throws {
-        // Per attempt, not once per start: the lock-contention retry loop
-        // tears the session down (releasing these scopes) between attempts.
+        // Per attempt, not once per start: the lock-contention retry loop tears the
+        // session down — releasing these scopes — between attempts.
         instance.openRuntimeFileAccess()
         let result = try await buildConfiguration(for: instance)
         instance.serialInputPipe = result.serialInputPipe
@@ -135,16 +123,12 @@ final class VirtualizationService {
 
     /// Detects VZ's advisory file-lock contention on a VM's backing files.
     ///
-    /// Matches "Failed to lock auxiliary storage" (or the disk-image
-    /// equivalent): `.invalidVirtualMachineConfiguration` carrying a POSIX
-    /// `EAGAIN` underneath. The underlying error distinguishes it from a
-    /// genuinely invalid configuration (same VZ code, no `EAGAIN`); matching
-    /// on the localized text would be locale-fragile.
-    ///
-    /// A disk-image attach failure reaches here wrapped in a
-    /// `ConfigurationBuilderError` (which adds the item's identity so the UI
-    /// can offer to remove it), and the lock is taken on exactly those files —
-    /// so unwrap before matching, or the contention retry never fires.
+    /// Matches "Failed to lock auxiliary storage" (or the disk-image equivalent):
+    /// `.invalidVirtualMachineConfiguration` carrying a POSIX `EAGAIN` underneath,
+    /// which is what separates it from a genuinely invalid configuration (same VZ
+    /// code, no `EAGAIN`) — matching localized text would be locale-fragile. A
+    /// disk-image attach failure arrives wrapped in a `ConfigurationBuilderError`,
+    /// so unwrap before matching or the contention retry never fires.
     static func isFileLockContention(_ error: Error) -> Bool {
         if let builderError = error as? ConfigurationBuilderError,
             let underlying = builderError.underlyingAttachError
@@ -161,10 +145,8 @@ final class VirtualizationService {
 
     /// Backoff before file-lock-contention cold-boot retry number `attempt`.
     ///
-    /// `attempt` is 0-based; returns `nil` once the ~3.75 s budget is
-    /// exhausted. Escalates because the holder's teardown time scales with
-    /// guest memory size (a 32 GB guest reliably needs more than one short
-    /// beat on Apple Silicon).
+    /// `attempt` is 0-based; returns `nil` once the ~3.75 s budget is exhausted.
+    /// Escalates because the holder's teardown time scales with guest memory size.
     static func fileLockRetryDelay(forAttempt attempt: Int) -> Duration? {
         let delays: [Duration] = [
             .milliseconds(250), .milliseconds(500), .seconds(1), .seconds(2),
@@ -175,9 +157,8 @@ final class VirtualizationService {
 
     /// Builds the one-shot start options for a recovery boot.
     ///
-    /// Returns `nil` (i.e. a normal boot) unless a recovery boot is requested for
-    /// a macOS guest. Pure and side-effect free so it can be unit-tested without
-    /// a live VZ machine.
+    /// Returns `nil` — a normal boot — unless a recovery boot is requested for a
+    /// macOS guest.
     static func recoveryStartOptions(
         bootIntoRecovery: Bool, guestOS: VMGuestOS
     ) -> VZMacOSVirtualMachineStartOptions? {
@@ -210,7 +191,6 @@ final class VirtualizationService {
         Self.logger.notice("Requested stop for VM '\(instance.name, privacy: .public)'")
     }
 
-    /// Immediately terminates the virtual machine.
     func forceStop(_ instance: VMInstance) async throws {
         Self.logger.debug(
             "forceStop: status=\(instance.status.displayName, privacy: .public), isColdPaused=\(instance.isColdPaused, privacy: .public)"
@@ -234,7 +214,6 @@ final class VirtualizationService {
 
     // MARK: - Pause / Resume
 
-    /// Pauses the virtual machine.
     func pause(_ instance: VMInstance) async throws {
         Self.logger.debug("pause: status=\(instance.status.displayName, privacy: .public)")
         guard instance.status.canPause, let vm = instance.virtualMachine else {
@@ -257,9 +236,8 @@ final class VirtualizationService {
 
     /// Resumes a paused virtual machine.
     ///
-    /// Handles two cases:
-    /// - **Hot resume**: VM is in memory — calls `vm.resume()` directly.
-    /// - **Cold resume**: VM state is on disk only — rebuilds the VM and restores from save file.
+    /// Hot resume when the VM is still in memory; cold resume rebuilds it and
+    /// restores from the save file.
     func resume(_ instance: VMInstance) async throws {
         Self.logger.debug(
             "resume: status=\(instance.status.displayName, privacy: .public), hasVM=\(instance.virtualMachine != nil, privacy: .public), hasSaveFile=\(instance.hasSaveFile, privacy: .public)"
@@ -270,12 +248,10 @@ final class VirtualizationService {
 
         do {
             if let vm = instance.virtualMachine {
-                // Hot resume — VM is already in memory
                 try await vm.resume()
                 instance.status = .running
                 instance.removeSaveFile()
             } else if instance.hasSaveFile {
-                // Cold resume — rebuild VM from disk state
                 try await restoreOrColdBoot(instance)
                 instance.status = .running
             } else {
@@ -306,17 +282,14 @@ final class VirtualizationService {
         instance.status = .saving
 
         do {
-            // Pause first if running
             if vm.state == .running {
                 try await vm.pause()
             }
 
             try await saveMachineState(vm, to: instance.saveFileURL)
-            // No sidecar metadata needed alongside the save file: every
-            // hot-pluggable removable media item carries a stable UUID in
-            // `config.removableMedia`, and storage disks carry stable
-            // virtio block identifiers in `config.storageDisks`. VZ matches
-            // both on restore.
+            // No sidecar metadata is needed beside the save file: removable media
+            // carry stable UUIDs and storage disks stable virtio block identifiers
+            // in `config`, and VZ matches both on restore.
             instance.tearDownSession()
             instance.status = .paused
             Self.logger.notice("Saved state for VM '\(instance.name, privacy: .public)'")
@@ -336,15 +309,12 @@ final class VirtualizationService {
     /// Returns `true` when the error is a transient environmental condition (e.g. too many
     /// concurrent VMs) rather than a problem with the VM itself.
     ///
-    /// Transient errors leave the
-    /// VM in `.stopped` so the indicator stays grey; permanent errors set `.error` (red).
+    /// Transient errors leave the VM in `.stopped` so the indicator stays grey;
+    /// permanent errors set `.error` (red).
     static func isTransientStartError(_ error: Error) -> Bool {
-        // Transient by construction: the lock holder is a dying
-        // VZVirtualMachine whose advisory lock is released at deallocation —
-        // even when the bounded retry budget didn't outlast the teardown, a
-        // manual retry will. Checked ahead of the builder-error rule below
-        // because contention on a disk image surfaces *as* a builder error
-        // (the attach wraps it), and that is still a transient condition.
+        // Checked ahead of the builder-error rule below: contention on a disk image
+        // surfaces *as* a builder error and is still transient — the lock holder is
+        // a dying VZVirtualMachine that releases it at deallocation.
         if isFileLockContention(error) { return true }
 
         if error is ConfigurationBuilderError { return false }
@@ -377,10 +347,6 @@ final class VirtualizationService {
     /// On restore failure, deletes the stale save file and falls back to a cold boot.
     private func restoreOrColdBoot(_ instance: VMInstance) async throws {
         instance.openRuntimeFileAccess()
-        // Per-item UUIDs in `VMConfiguration.removableMedia` and per-disk
-        // identifiers in `VMConfiguration.storageDisks` are applied by the
-        // builder, so the rebuilt configuration matches what VZ recorded
-        // when the save was written.
         let result = try await buildConfiguration(for: instance)
 
         instance.serialInputPipe = result.serialInputPipe
@@ -405,11 +371,11 @@ final class VirtualizationService {
             )
             instance.removeSaveFile()
 
-            // Create a fresh VZVirtualMachine since the previous one may be in a bad state
+            // A fresh VZVirtualMachine: the previous one may be in a bad state.
             Self.logger.debug("restoreOrColdBoot: falling back to cold boot with fresh VM")
             let freshVM = instance.attachVirtualMachine(from: result.configuration)
-            // Re-attach vsock listener to the fresh VM's socket device — the
-            // previous listener referenced the now-dead VM. Idempotent.
+            // Re-attach the vsock listener — the previous one referenced the
+            // now-dead VM. Idempotent.
             instance.startVsockServices()
             instance.status = .starting
             try await freshVM.start()
@@ -418,10 +384,10 @@ final class VirtualizationService {
 
     // MARK: - Private Async Wrappers
 
-    /// Starts `vm`, using the options-aware overload only when `options` are
-    /// supplied. `VZVirtualMachine.start(options:completionHandler:)` has no
-    /// `async` variant, so it is bridged through a continuation; the plain
-    /// `start()` async overload handles the common no-options case.
+    /// Starts `vm`, using the options-aware overload only when `options` are supplied.
+    ///
+    /// `VZVirtualMachine.start(options:completionHandler:)` has no `async` variant,
+    /// so it is bridged through a continuation.
     private func startMachine(_ vm: VZVirtualMachine, options: VZVirtualMachineStartOptions?) async throws {
         guard let options else {
             try await vm.start()

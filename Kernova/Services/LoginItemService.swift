@@ -3,29 +3,27 @@ import ServiceManagement
 import os
 
 /// The registration operations `LoginItemService` needs, abstracted so tests can
-/// inject a fake in place of the real `SMAppService.mainApp` (mirrors the
-/// injectable-`UserDefaults` seam in `AppPreferences`).
+/// inject a fake in place of the real `SMAppService.mainApp`.
 protocol LoginItemRegistration {
     var status: SMAppService.Status { get }
     func register() throws
     func unregister() throws
 }
 
-/// Production backend over `SMAppService.mainApp` — registers the app *itself* to
-/// open at login (not a helper `.loginItem` bundle, because the VM runs
-/// in-process so the background process has to be the full app).
+/// Registers the app *itself* to open at login, not a helper `.loginItem`
+/// bundle — the VM runs in-process, so the background process must be the app.
 struct MainAppLoginItemRegistration: LoginItemRegistration {
     var status: SMAppService.Status { SMAppService.mainApp.status }
     func register() throws { try SMAppService.mainApp.register() }
     func unregister() throws { try SMAppService.mainApp.unregister() }
 }
 
-/// Thin "Open at Login" wrapper over `SMAppService.mainApp` (#460), driving the
-/// General settings toggle.
+/// "Open at Login" wrapper over `SMAppService.mainApp`, driving the General
+/// settings toggle.
 ///
 /// `.status` is the source of truth and is **never persisted locally** — the
-/// toggle reads it live (and refreshes on window re-focus) so a change made in
-/// System Settings is always reflected. Defaults OFF (App Store expects opt-in).
+/// toggle reads it live, so a change made in System Settings is always
+/// reflected.
 struct LoginItemService {
     private let registration: LoginItemRegistration
 
@@ -38,19 +36,16 @@ struct LoginItemService {
 
     private static let logger = Logger(subsystem: "app.kernova", category: "LoginItem")
 
-    /// The live registration status — the source of truth.
     var status: SMAppService.Status { registration.status }
 
-    /// `true` iff the app is registered and enabled to open at login.
     var isEnabled: Bool { registration.status == .enabled }
 
     /// Registers or unregisters the app as a login item, returning the resulting
     /// status.
     ///
-    /// `.status` (not the result of `register()`) is authoritative: when the user
-    /// has disabled the login item in System Settings, `register()` *throws* while
-    /// `status` still reports `.requiresApproval`. So the throw is logged and the
-    /// fresh status returned; the caller deep-links Settings on `.requiresApproval`.
+    /// The returned `.status`, not the outcome of `register()`, is authoritative:
+    /// with the item disabled in System Settings, `register()` throws while
+    /// `status` reports `.requiresApproval`, which the caller deep-links on.
     @discardableResult
     func setEnabled(_ enabled: Bool) -> SMAppService.Status {
         do {
@@ -67,8 +62,7 @@ struct LoginItemService {
         return status
     }
 
-    /// Opens System Settings → General → Login Items & Extensions so the user can
-    /// approve a `.requiresApproval` item.
+    /// Opens System Settings → General → Login Items & Extensions.
     func openLoginItemsSettings() {
         SMAppService.openSystemSettingsLoginItems()
     }

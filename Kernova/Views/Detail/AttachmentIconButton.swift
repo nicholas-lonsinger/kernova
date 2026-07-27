@@ -1,11 +1,6 @@
 import AppKit
 
 /// Leading icon for a storage / removable-media row.
-///
-/// When the file backing the row is missing, the icon swaps to a red
-/// triangle button that opens an ``NSPopover`` containing the full
-/// untruncated path. Otherwise the icon renders the supplied SF Symbol
-/// in secondary label color.
 @MainActor
 final class AttachmentIconButton: NSView {
     private let warningButton = NSButton()
@@ -15,9 +10,7 @@ final class AttachmentIconButton: NSView {
 
     /// Optional action for clicking the icon in its non-missing (plain) state.
     ///
-    /// Receives `self` so the caller can anchor a popover to the icon. When
-    /// `nil` the plain icon is inert (the default for rows that don't offer an
-    /// info affordance); the missing-file warning button is unaffected.
+    /// Receives `self` so the caller can anchor a popover to the icon.
     var onActivate: ((NSView) -> Void)? {
         didSet {
             activateRecognizer.isEnabled = onActivate != nil
@@ -44,10 +37,9 @@ final class AttachmentIconButton: NSView {
         plainIcon.contentTintColor = .secondaryLabelColor
         plainIcon.imageScaling = .scaleProportionallyUpOrDown
         plainIcon.addGestureRecognizer(activateRecognizer)
-        // Hidden until `configure(systemName:missingPath:)` reveals the
-        // correct state. Without this, the unconfigured cell briefly
-        // shows an empty 20×20 icon slot between `init()` and the first
-        // configure call.
+        // Hidden until `configure(systemName:missingPath:)` reveals the correct
+        // state; otherwise the unconfigured cell briefly shows an empty 20×20
+        // icon slot.
         plainIcon.isHidden = true
         addSubview(plainIcon)
         NSLayoutConstraint.activate([
@@ -84,9 +76,7 @@ final class AttachmentIconButton: NSView {
         fatalError("AttachmentIconButton does not support NSCoder")
     }
 
-    /// Configure the icon.
-    ///
-    /// Pass `missingPath` to render the warning state.
+    /// Pass `missingPath` to render the missing-file warning state.
     func configure(systemName: String, missingPath: String?) {
         currentPath = missingPath
         if missingPath != nil {
@@ -110,9 +100,7 @@ final class AttachmentIconButton: NSView {
         // `warningButton` so `NSPopover.preferredEdge` is interpreted in an
         // unflipped coordinate system — AppKit controls like `NSButton` can
         // return `isFlipped == true`, which inverts `.minY` to mean the top
-        // edge and places the popover above instead of below. Mirrors the
-        // wrapper-anchor pattern used by `InfoButton` and the
-        // `Create*PopoverAnchor` types.
+        // edge and places the popover above instead of below.
         popoverPresenter.show(content: content, from: self, preferredEdge: .minY)
     }
 }

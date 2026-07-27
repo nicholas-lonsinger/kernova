@@ -26,22 +26,18 @@ final class ClipboardImagePreviewView: NSView {
         wantsLayer = true
 
         // The preview must never dictate the window's size: NSImageView's
-        // intrinsic size is the (thumbnail) image size, and required
-        // compression resistance would force the window to grow to fit a
-        // large paste through Auto Layout. Floor the priorities and pin the
-        // image view to the container instead — `scaleProportionallyDown`
-        // then aspect-fits the displayed image into whatever space the
-        // window currently has (and never upscales).
+        // intrinsic size is the thumbnail's, and required compression resistance
+        // would force the window to grow to fit a large paste. Floor the
+        // priorities and pin the image view to the container instead.
         imageView.setContentCompressionResistancePriority(.init(1), for: .horizontal)
         imageView.setContentCompressionResistancePriority(.init(1), for: .vertical)
         imageView.setContentHuggingPriority(.init(1), for: .horizontal)
         imageView.setContentHuggingPriority(.init(1), for: .vertical)
 
-        // NSImageView registers itself as a drag destination, so a drag over
-        // the image is consumed here (and silently rejected, since it isn't
-        // editable) instead of bubbling to the window's drop container. This
-        // read-only preview has no drag behavior of its own — unregister it so
-        // the whole content area, image included, is one drop target.
+        // NSImageView registers itself as a drag destination, so a drag over the
+        // image is consumed here (and silently rejected) instead of bubbling to
+        // the window's drop container. Unregister it so the whole content area,
+        // image included, is one drop target.
         imageView.unregisterDraggedTypes()
 
         imageView.translatesAutoresizingMaskIntoConstraints = false
@@ -58,9 +54,8 @@ final class ClipboardImagePreviewView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// Matches the text editor's background so switching preview modes
-    /// doesn't shift the window's tone. `updateLayer` re-resolves the
-    /// dynamic color on appearance changes.
+    /// Matches the text editor's background so switching preview modes doesn't
+    /// shift the window's tone.
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
@@ -69,9 +64,8 @@ final class ClipboardImagePreviewView: NSView {
 
     /// Decodes resident `data` into the preview.
     ///
-    /// Returns `false` when the bytes are not a decodable image — the
-    /// caller falls back to the summary view. Runtime data, so failure is a
-    /// logged condition, not a programming error.
+    /// Returns `false` when the bytes are not a decodable image — the caller
+    /// falls back to the summary view.
     func configure(data: Data, uti: String) -> Bool {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
             Self.logger.warning(
@@ -86,10 +80,8 @@ final class ClipboardImagePreviewView: NSView {
     /// Decodes a thumbnail straight from a file-backed image at `url`.
     ///
     /// The whole file is never loaded into memory — ImageIO memory-maps it and
-    /// only materializes the downsampled thumbnail. The on-disk counterpart of
-    /// `configure(data:uti:)` for a copied/streamed image file. Returns `false`
-    /// when the file is missing or not a decodable image — the caller falls back
-    /// to a file chip.
+    /// only materializes the downsampled thumbnail. Returns `false` when the file
+    /// is missing or not a decodable image — the caller falls back to a file chip.
     func configure(url: URL, uti: String) -> Bool {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
             Self.logger.warning(

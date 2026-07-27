@@ -1,16 +1,8 @@
 import AppKit
 
 /// Shared design tokens for callout-style popovers.
-///
-/// All popover content view controllers across the app (missing-attachment,
-/// info, create-disk, agent-status, …) should reference these constants
-/// when building their layout. Visual consistency comes from shared tokens,
-/// **not** from a shared container class — each popover is its own concrete
-/// `NSViewController` that owns its full `loadView()`.
 enum CalloutStyle {
     /// Standard popover content width.
-    ///
-    /// Matches the SwiftUI predecessor.
     static let width: CGFloat = 340
 
     /// Inset from popover edges to the content stack.
@@ -39,9 +31,6 @@ enum CalloutStyle {
 }
 
 /// Builds a headline `NSTextField` configured for a callout's leading row.
-///
-/// Used by every concrete callout popover content view controller so they
-/// look identical without inheriting from a shared base class.
 @MainActor
 func makeCalloutHeadline(_ text: String) -> NSTextField {
     let label = NSTextField(labelWithString: text)
@@ -54,13 +43,6 @@ func makeCalloutHeadline(_ text: String) -> NSTextField {
 }
 
 /// Builds a wrapping body `NSTextField` configured for a callout row.
-///
-/// - Parameters:
-///   - text: Row text content.
-///   - color: Pass `.labelColor` for the primary body row (lead sentence
-///     after the headline), `.secondaryLabelColor` (the default) for
-///     explanatory tail rows.
-/// - Returns: A configured `NSTextField` ready to add to an `NSStackView`.
 @MainActor
 func makeCalloutBody(_ text: String, color: NSColor = CalloutStyle.bodyColor) -> NSTextField {
     let label = NSTextField(wrappingLabelWithString: text)
@@ -69,19 +51,14 @@ func makeCalloutBody(_ text: String, color: NSColor = CalloutStyle.bodyColor) ->
     label.preferredMaxLayoutWidth = CalloutStyle.bodyWidth
     label.lineBreakMode = .byWordWrapping
     label.maximumNumberOfLines = 0
-    // `NSTextField(wrappingLabelWithString:)` returns a label that is
-    // selectable by default — surprising for prose-style body text. Only
-    // `.code` paragraphs (via `makeCalloutCode`) want selection.
+    // `NSTextField(wrappingLabelWithString:)` returns a label that is selectable
+    // by default — surprising for prose-style body text.
     label.isSelectable = false
     return label
 }
 
 /// Builds a monospaced, selectable `NSTextField` for code snippets (shell
 /// commands, paths, identifiers the user is expected to copy).
-///
-/// Matches the SwiftUI predecessor's `.font(.system(.callout, design: .monospaced))`
-/// plus `.textSelection(.enabled)` for the same intent — the snippet
-/// remains legible and copy-able inside the popover.
 @MainActor
 func makeCalloutCode(_ text: String) -> NSTextField {
     let label = NSTextField(wrappingLabelWithString: text)

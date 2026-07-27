@@ -4,9 +4,6 @@ import UniformTypeIdentifiers
 import os
 
 /// Result of reading a pasteboard into the clipboard buffer.
-///
-/// `Sendable` so the off-main folder-archive resolve can return it across the
-/// actor boundary back to the `@MainActor` controller.
 enum ClipboardIntakeResult: Equatable, Sendable {
     /// Usable content. `note` carries a user-visible caveat when some
     /// representations were skipped (e.g. an oversized TIFF dropped while
@@ -14,10 +11,10 @@ enum ClipboardIntakeResult: Equatable, Sendable {
     case content(ClipboardContent, note: String?)
     /// Nothing usable; `message` says why in user-facing terms.
     case rejected(message: String)
-    /// One or more files resolved on disk whose bytes still have to be read —
-    /// `read(from:)` returns this so the caller can read them asynchronously
-    /// (off the main actor) via `read(filesAt:)` before they become `.content`.
-    /// A multi-select copy/drag carries several URLs, in pasteboard order. Never
+    /// One or more files resolved on disk whose bytes still have to be read off
+    /// the main actor via `read(filesAt:)` before they become `.content`.
+    ///
+    /// Several URLs, in pasteboard order, for a multi-select copy/drag. Never
     /// applied directly.
     case pendingFiles([URL])
 }
@@ -31,9 +28,6 @@ enum ClipboardIntakeResult: Equatable, Sendable {
 /// becomes a disk-backed representation whose bytes stream on demand.
 @MainActor
 enum ClipboardPasteboardIntake {
-    // `nonisolated` so the off-main folder-archive resolve (`read(filesAt:…
-    // staging:generation:)` and its `fileRepresentation`/`directoryRepresentation`
-    // helpers) can log and reuse the transport message; both are `Sendable`.
     nonisolated private static let logger = Logger(
         subsystem: "app.kernova", category: "ClipboardPasteboardIntake")
 
@@ -41,41 +35,29 @@ enum ClipboardPasteboardIntake {
 
     /// Reads `pasteboard` into clipboard content.
     ///
-    /// Files already on disk — whether concrete `public.file-url`s (Finder
-    /// drag/copy) or a `promised-file-url` whose file the source has already
-    /// written (the floating screenshot thumbnail) — are expanded across *every*
-    /// item: each becomes its own filename-tagged representation (a multi-select
-    /// copy yields several). The inline snapshot, taken only when no item is a
-    /// file, reads item 0. With `allowsBinary == false` (text-only transports)
-    /// only the plain-text representation is taken.
+    /// Files already on disk are expanded across *every* item, each becoming its
+    /// own filename-tagged representation; the inline snapshot reads item 0 and is
+    /// taken only when no item is a file.
     ///
-    /// When the drag is clearly a file/image (a file URL or file promise is
-    /// present) but no file is readable, the URL/path text representations are
-    /// just the file's descriptor and are never returned as content — the
-    /// caller falls through to asynchronous promise receipt instead of showing
-    /// a path string.
+    /// When a file URL or promise is present but no file is readable, the URL/path
+    /// text representations are only the file's descriptor and are never returned.
     static func read(from pasteboard: NSPasteboard, allowsBinary: Bool) -> ClipboardIntakeResult {
         guard let items = pasteboard.pasteboardItems, let item = items.first else {
             return .rejected(message: "The Mac clipboard is empty")
         }
 
-        // Snapshot-level `org.nspasteboard.*` marker handling, decided from the
-        // unfiltered type list before any representation is dropped or read. A
-        // transient or auto-generated snapshot is throwaway/unintended and never
-        // shared; a concealed snapshot (a password) is still shared so it can be
-        // pasted into the guest, but flagged so the window hides it.
+        // Decided from the unfiltered type list, before any representation is
+        // dropped or read. A concealed snapshot (a password) is still shared so it
+        // can be pasted into the guest, but flagged so the window hides it.
         let disposition = ClipboardSnapshotPolicy.disposition(forTypes: item.types.map(\.rawValue))
         if case .suppress(let reason) = disposition {
             return .rejected(message: Self.suppressionMessage(for: reason))
         }
         let isConcealed = disposition == .conceal
 
-        // A concrete-or-promised file already on disk carries a URL, not the
-        // file's bytes. File enumeration spans every item (a multi-select copy
-        // puts one file per item); defer them so the caller reads each off the
-        // main actor via `read(filesAt:)` (a large file mustn't block the UI).
-        // Only file *enumeration* spans items — the inline snapshot below stays
-        // item-0-scoped, since inline content is genuinely one item.
+        // Defer files so the caller reads each off the main actor via
+        // `read(filesAt:)` — a large file mustn't block the UI. Only file
+        // enumeration spans items; the inline snapshot below stays item-0-scoped.
         let fileURLs = items.compactMap { existingFileURL(in: $0) }
         if !fileURLs.isEmpty {
             return .pendingFiles(fileURLs)
@@ -90,10 +72,9 @@ enum ClipboardPasteboardIntake {
 
         let isFileOrPromiseDrag = item.types.contains { isFileOrPromiseType($0.rawValue) }
 
-        // Identity-based skips run before any data is read, mirroring the
-        // guest agent's poll. For a file/promise drag we additionally drop the
-        // URL/path text fallbacks so a screenshot thumbnail (or any file drag)
-        // can never surface its path as text content.
+        // Identity-based skips run before any data is read. A file/promise drag
+        // additionally drops the URL/path text fallbacks, so a file drag can never
+        // surface its path as text content.
         let raw: [(uti: String, data: Data)] = item.types.compactMap { type in
             guard !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: type.rawValue) else {
                 return nil
@@ -118,8 +99,7 @@ enum ClipboardPasteboardIntake {
         }
 
         // `evaluate` builds non-concealed content; re-stamp the concealed flag
-        // when the marker called for it. `withConcealed` reuses the digest
-        // (isConcealed is excluded from it), so no second hash of the payload.
+        // when the marker called for it.
         return .content(outcome.content.withConcealed(isConcealed), note: nil)
     }
 
@@ -143,11 +123,8 @@ enum ClipboardPasteboardIntake {
     /// A concrete `public.file-url` or a `promised-file-url` that already
     /// points at an on-disk file.
     ///
-    /// Returns nil when neither resolves to an existing file (e.g. a promise
-    /// whose file hasn't been written yet — the caller receives it
-    /// asynchronously instead). The floating screenshot thumbnail's temp file
-    /// *is* already on disk during the drag, so its `promised-file-url`
-    /// resolves here and is read as an image.
+    /// `nil` when neither resolves to an existing file — e.g. a promise whose
+    /// file hasn't been written yet, which the caller receives asynchronously.
     private static func existingFileURL(in item: NSPasteboardItem) -> URL? {
         let candidates: [NSPasteboard.PasteboardType] = [
             .fileURL,
@@ -180,12 +157,10 @@ enum ClipboardPasteboardIntake {
     /// Resolves dropped/copied *files* into disk-backed representations, one per
     /// URL in pasteboard order.
     ///
-    /// Files only: a folder URL is skipped here. Each file crosses as a
-    /// disk-backed `.file` representation built by `fileRepresentation(at:)`. A
-    /// file that fails to stat (or is empty) is skipped and noted; if *every*
-    /// file fails the result is `.rejected`. Every gesture that can carry a
-    /// folder (a multi-select copy/drag, the file-promise receipt path) uses the
-    /// `staging`/`generation` overload below instead.
+    /// Files only: a folder URL is skipped here, so every gesture that can carry
+    /// a folder uses the `staging`/`generation` overload below instead. A file
+    /// that fails to stat (or is empty) is skipped and noted; if *every* file
+    /// fails the result is `.rejected`.
     static func read(filesAt urls: [URL], allowsBinary: Bool) -> ClipboardIntakeResult {
         guard allowsBinary else {
             return .rejected(message: Self.textOnlyTransportMessage)
@@ -210,21 +185,13 @@ enum ClipboardPasteboardIntake {
     }
 
     /// Resolves copied/dropped files **and folders** into representations, one
-    /// per URL in pasteboard order — the multi-select `public.file-url`
-    /// expansion that can mix the two.
+    /// per URL in pasteboard order.
     ///
-    /// Runs off the main actor (stat + archive are I/O). A plain file is stat'd
-    /// into a `.file` representation (name + size + content UTI), its bytes
-    /// streamed on demand. A directory — including an OS package such as
-    /// `.app`/`.rtfd` — crosses as one directory representation:
-    ///  - `dirTree == true` (`clipboard.dirtree.v1` negotiated with the guest): a
-    ///    `.directory` **source** rep (no archive) with a stat-walk size estimate,
-    ///    walked and streamed on demand as a placeholder tree (folder D1b).
-    ///  - `dirTree == false` (old guest): the folder is packed *eagerly* into a
-    ///    single AppleArchive (`.aar`, LZFSE) under `staging`/`generation`, which
-    ///    the receiver extracts back into a real folder.
-    /// An item that fails to stat/archive is skipped and noted; if *every* item
-    /// fails the result is `.rejected`. Text-only transports can't carry files.
+    /// Runs off the main actor (stat + archive are I/O). A directory — including
+    /// an OS package such as `.app`/`.rtfd` — crosses as one representation: with
+    /// `dirTree` (`clipboard.dirtree.v1` negotiated with the guest) a source rep
+    /// streamed on demand, otherwise packed *eagerly* into a single AppleArchive.
+    /// An item that fails is skipped and noted; if *every* item fails, `.rejected`.
     nonisolated static func read(
         filesAt urls: [URL], allowsBinary: Bool, staging: ClipboardFileStaging, generation: UInt64,
         dirTree: Bool
@@ -282,12 +249,8 @@ enum ClipboardPasteboardIntake {
             filename: url.lastPathComponent)
     }
 
-    /// Builds a `.directory` **source** representation for a folder (folder D1b,
-    /// `clipboard.dirtree.v1`) — no archive, a stat-walk size estimate, and the
-    /// folder's content UTI (a package UTI for a bundle).
-    ///
-    /// The tree is walked and
-    /// streamed on demand by the producer.
+    /// Builds a `.directory` **source** representation for a folder — no archive,
+    /// a stat-walk size estimate, and the folder's content UTI.
     nonisolated private static func directorySourceRepresentation(
         at url: URL
     ) -> ClipboardContent.Representation? {
@@ -302,10 +265,6 @@ enum ClipboardPasteboardIntake {
 
     /// Archives the directory at `url` into a staged directory representation, or
     /// `nil` if archiving fails (skipped + noted by callers).
-    ///
-    /// A thin logging wrapper over the shared
-    /// `ClipboardDirectoryArchive.archivedRepresentation`, which the guest agent
-    /// also calls so the archive/UTI/sizing rules stay identical on both ends.
     nonisolated private static func directoryRepresentation(
         at url: URL, staging: ClipboardFileStaging, generation: UInt64
     ) -> ClipboardContent.Representation? {

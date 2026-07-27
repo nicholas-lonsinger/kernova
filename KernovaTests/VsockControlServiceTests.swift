@@ -79,13 +79,12 @@ struct VsockControlServiceTests {
     /// short windows to opt back in.
     ///
     /// The watchdog measures `ContinuousClock.now - lastInboundFrame`, which
-    /// keeps advancing while a contended CI MainActor stalls the test. With the
-    /// old 160 ms / 400 ms defaults, any non-watchdog test that paused past the
-    /// window (waiting on a frame, a `waitUntil`, or scheduler jitter) saw the
-    /// channel closed out from under it — surfacing as an EOF / `.closed` flake.
-    /// Sixteen tests inherited those defaults despite not testing liveness; this
-    /// makes the watchdog an explicit opt-in instead of an implicit deadline
-    /// coupled to every test's runtime. See docs/TESTING.md "Async waits in tests".
+    /// keeps advancing while a contended CI MainActor stalls the test: a
+    /// sub-second window makes every test's runtime an implicit deadline, so a
+    /// test that pauses past it (waiting on a frame, a `waitUntil`, or scheduler
+    /// jitter) sees the channel closed out from under it as an EOF / `.closed`
+    /// flake. These values make the watchdog an explicit opt-in instead. See
+    /// docs/TESTING.md "Async waits in tests".
     private static let watchdogDisabledUnresponsive: Duration = .seconds(3_600)
     private static let watchdogDisabledTerminate: Duration = .seconds(7_200)
 
@@ -299,8 +298,8 @@ struct VsockControlServiceTests {
 
         // Property under test: heartbeats fire repeatedly on the cadence.
         //
-        // Earlier shape — "≥ N heartbeats inside a fixed wall-clock window" —
-        // was brittle on macos-26 runners. Gap-based: read three consecutive
+        // Gap-based, not a count inside a fixed wall-clock window, which a
+        // MainActor stall on macos-26 runners defeats: read three consecutive
         // heartbeats and check that the maximum inter-frame gap stays within
         // a generous tolerance of the cadence. Mirrors the agent-side test
         // in VsockGuestControlAgentTests.

@@ -5,11 +5,9 @@ import UniformTypeIdentifiers
 /// EFI (boot an ISO) or direct Linux-kernel boot (kernel + optional initrd and
 /// command line).
 ///
-/// Native macOS layout: a left-aligned heading, a segmented mode switch, and a
-/// grouped card holding the selected mode's file pickers / fields. The segmented
-/// control and file pickers mutate the shared ``VMCreationViewModel`` and rebuild
-/// the conditional card in place. The shell observes the model separately to keep
-/// its Next button in sync.
+/// The segmented control and file pickers mutate the shared
+/// ``VMCreationViewModel`` and rebuild the conditional card in place. The shell
+/// observes the model separately to keep its Next button in sync.
 @MainActor
 final class BootConfigContentViewController: NSViewController, NSTextFieldDelegate {
     private let creationVM: VMCreationViewModel
@@ -17,9 +15,8 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
     private let bootModeControl = NSSegmentedControl(
         labels: ["EFI (ISO Image)", "Linux Kernel"], trackingMode: .selectOne, target: nil, action: nil)
     private let conditionalContainer = NSStackView()
-    /// Shows the "more content below" cue while this step's content — the mode
-    /// switch plus the conditional kernel/initrd fields — overflows the sheet; a
-    /// hint only.
+    /// Shows the "more content below" cue while this step's content overflows the
+    /// sheet; a hint only.
     private var scrollMoreIndicator: ScrollMoreIndicator?
 
     /// Default kernel command line shown — and committed — when none is set.
@@ -174,9 +171,8 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         }
     }
 
-    /// `browse` + `SecurityScopedBookmark.capture` + refresh, shared by the
-    /// three pickers; `assign` writes the captured pair onto its model
-    /// fields.
+    /// `browse` + `SecurityScopedBookmark.capture` + refresh, shared by the three
+    /// pickers; `assign` writes the captured pair onto its model fields.
     private func browseAndCapture(
         title: String, types: [UTType],
         assign: @escaping (VMCreationViewModel, String, Data?) -> Void

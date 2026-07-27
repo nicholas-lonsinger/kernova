@@ -73,13 +73,11 @@ struct FileProviderRelayServiceTests {
     /// Blocks inside `fetchStagedFile` until the test releases it, and records
     /// `cancelStagedPull` calls.
     ///
-    /// Used to prove the #464 regression this fix closes: a `cancelFetch` call
-    /// made while a `fetchFile` pull for the same connection is still in flight
-    /// must still reach `cancelStagedPull`. That would be impossible if
-    /// `fetchFile` still blocked its caller for the whole pull (the removed
-    /// "blocks the XPC queue... safe" behavior) — `NSXPCConnection` delivers
-    /// every incoming call, `cancelFetch` included, on one private serial queue
-    /// per connection, so a still-blocking `fetchFile` would starve it.
+    /// Proves that a `cancelFetch` made while a `fetchFile` pull for the same
+    /// connection is still in flight reaches `cancelStagedPull`. `NSXPCConnection`
+    /// delivers every incoming call, `cancelFetch` included, on one private serial
+    /// queue per connection, so `fetchFile` must return before its pull completes
+    /// or it starves that queue.
     ///
     /// `DispatchSemaphore`, not `AsyncGate`, guards the block itself:
     /// `fetchStagedFile` runs synchronously inside `pullQueue`'s plain

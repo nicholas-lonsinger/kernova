@@ -4,10 +4,7 @@ import UniformTypeIdentifiers
 /// A copied or dropped file shown as a chip: the file-type icon, its name, and
 /// a "Type · size" subtitle.
 ///
-/// This is the visual cue that the buffer holds a *file* (which pastes as a
-/// file on the other side — Finder creates it, Notes attaches it) rather than
-/// inline content. Images get their own pixel preview; every other file lands
-/// here.
+/// Images get their own pixel preview; every other file lands here.
 @MainActor
 final class ClipboardFilePreviewView: NSView {
     private let iconView: NSImageView
@@ -17,8 +14,8 @@ final class ClipboardFilePreviewView: NSView {
     init() {
         let iconView = NSImageView()
         iconView.imageScaling = .scaleProportionallyDown
-        // See ClipboardImagePreviewView: keep this read-only view's image view
-        // from intercepting drags so the whole area bubbles to the container.
+        // Keep this read-only image view from intercepting drags, so the whole
+        // area bubbles to the container.
         iconView.unregisterDraggedTypes()
         self.iconView = iconView
 
@@ -68,7 +65,6 @@ final class ClipboardFilePreviewView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// Matches the text editor's background — see `ClipboardImagePreviewView`.
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {

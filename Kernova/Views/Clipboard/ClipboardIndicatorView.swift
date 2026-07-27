@@ -4,10 +4,7 @@ import AppKit
 ///
 /// Shows the persistent content-type text (e.g. "PNG image · 1920 × 1080 ·
 /// 3.4 MB") and temporarily takes over to show transient messages — send
-/// failures, size-cap skips, copy confirmations — reverting after a few
-/// seconds. Lives in the bottom status row, right-aligned beside the agent
-/// connection status, so the command row above stays a clean set of action
-/// buttons.
+/// failures, size-cap skips, copy confirmations — reverting after a few seconds.
 @MainActor
 final class ClipboardIndicatorView: NSTextField {
     /// Tone of a transient message.

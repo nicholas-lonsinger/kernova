@@ -3,12 +3,6 @@ import Foundation
 /// An append-only sink for one streamed file representation: bytes are fed with
 /// `write(_:)` and finalized with `commit()` (keep) or `abort()` (delete the
 /// partial).
-///
-/// `ClipboardFileStaging.Sink` is the production implementation. The protocol
-/// exists so `ClipboardStreamReceiver` can be driven against a sink that parks
-/// or fails a write on demand — the receiver's write lane holds a backlog only
-/// while a write is outstanding, which a real staging file never does long
-/// enough for a test to observe.
 public protocol StagingSink: Sendable {
     /// The local file the bytes are being written to.
     var url: URL { get }
@@ -29,37 +23,21 @@ public protocol StagingSink: Sendable {
 /// mechanism by which a Finder **Paste** creates a file (a pasteboard
 /// `NSFilePromiseProvider` is a drag-session API and is not fulfilled by paste).
 ///
-/// Bytes are appended through a `Sink` as chunks arrive off the wire — the whole
-/// file is never resident in memory. A `Sink` is opened with `makeSink(...)`,
-/// fed via `write(_:)`, and finalized with `commit()` (keep) or `abort()`
-/// (delete the partial).
-///
-/// One *generation* directory per offer generation. To protect a large paste
-/// still being copied out by Finder, the **last `maxGenerations` (3)** generation
-/// directories are retained; a new generation evicts only the oldest beyond that
-/// window. `sweep()` clears everything (crash orphans and all live generations).
-///
-/// `@unchecked Sendable` with an internal lock: a host window controller and a
-/// guest agent each own one instance and call it from a single queue/actor, but
-/// the lock makes concurrent use safe regardless.
+/// One directory per offer generation; the last `maxGenerations` are retained so
+/// a paste still being copied out by Finder survives, and `sweep()` clears
+/// everything.
 public final class ClipboardFileStaging: @unchecked Sendable {
     /// Queries free capacity (in bytes) for important, user-initiated writes at
     /// the given directory.
-    ///
-    /// Injected so tests can simulate a full disk.
     public typealias FreeSpaceProvider = @Sendable (URL) -> Int64?
 
     /// Number of recent generation directories kept alive.
-    ///
-    /// A large paste copied
-    /// out by Finder survives until this many newer generations exist, so a
-    /// rapid sequence of copies can't delete a directory mid-copy.
     public static let maxGenerations = 3
 
     /// An open append-only sink for one streamed file representation.
     ///
-    /// `@unchecked Sendable`: the receiver writes from one transfer queue at a
-    /// time; the internal lock makes concurrent `write`/`commit`/`abort` safe.
+    /// `@unchecked Sendable`: an internal lock makes concurrent
+    /// `write`/`commit`/`abort` safe.
     public final class Sink: StagingSink, @unchecked Sendable {
         /// The local file the bytes are being written to.
         public let url: URL
@@ -76,8 +54,7 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         /// Appends a chunk to the file.
         ///
         /// - Throws: any error from `FileHandle.write(contentsOf:)` (e.g. the
-        ///   volume filling mid-stream). On a throw the caller aborts the
-        ///   transfer, which calls `abort()` to delete the partial.
+        ///   volume filling mid-stream).
         public func write(_ data: Data) throws {
             lock.lock()
             defer { lock.unlock() }
@@ -90,11 +67,9 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         /// Returns the final URL. Idempotent.
         ///
         /// - Throws: an error from `FileHandle.close()`. With `F_NOCACHE` and no
-        ///   `fsync`, the kernel can defer a write failure (e.g. the volume
-        ///   filling on the final extent) to `close()`; propagating it lets the
-        ///   receiver fail the transfer rather than deliver a truncated file that
-        ///   still passed the in-flight digest check. The partial is deleted on a
-        ///   close failure. [L3]
+        ///   `fsync` the kernel can defer a write failure to `close()`, so
+        ///   swallowing it delivers a truncated file that still passed the
+        ///   in-flight digest check. The partial is deleted on a close failure.
         @discardableResult
         public func commit() throws -> URL {
             lock.lock()
@@ -127,20 +102,14 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     private let freeSpaceProvider: FreeSpaceProvider
     private let lock = NSLock()
 
-    /// Generation directories in arrival order (oldest first), each tagged with
-    /// the offer generation it belongs to.
-    ///
-    /// Bounded to `maxGenerations`.
+    /// Generation directories in arrival order (oldest first), bounded to
+    /// `maxGenerations`.
     private var generationDirs: [(generation: UInt64, dir: URL)] = []
 
     /// - Parameters:
-    ///   - label: distinguishes co-resident roots (e.g. `"agent"` vs `"host"`);
-    ///     the host app and guest agent run in different processes and
-    ///     filesystems, but the label keeps multiple roots from colliding.
-    ///   - tempRoot: parent directory for the staging root. Defaults to the
-    ///     system temporary directory; injected in tests.
-    ///   - freeSpaceProvider: queries available capacity; injected in tests to
-    ///     simulate a full disk. Defaults to
+    ///   - label: distinguishes co-resident roots (e.g. `"agent"` vs `"host"`).
+    ///   - tempRoot: parent directory for the staging root.
+    ///   - freeSpaceProvider: queries available capacity; defaults to
     ///     `volumeAvailableCapacityForImportantUsageKey`.
     public init(
         label: String,
@@ -160,20 +129,18 @@ public final class ClipboardFileStaging: @unchecked Sendable {
 
     /// Whether `url` points inside this staging root.
     ///
-    /// The outbound pasteboard poll uses this to skip a `public.file-url` that we
-    /// materialized ourselves on a prior inbound paste, so a received file can
-    /// never be offered back to the peer (echo suppression for file payloads).
+    /// The outbound pasteboard poll skips these so a file received from the peer
+    /// is never offered back to it.
     public func isInStagingRoot(_ url: URL) -> Bool {
         url.standardizedFileURL.path.hasPrefix(root.standardizedFileURL.path)
     }
 
     /// Whether `byteCount` bytes (plus `margin`) fit on the staging volume.
     ///
-    /// `RATIONALE:` `volumeAvailableCapacityForImportantUsageKey` **includes
-    /// purgeable space**, so it can exceed raw free bytes (WWDC17 "What's New in
+    /// `volumeAvailableCapacityForImportantUsageKey` **includes purgeable
+    /// space**, so it can exceed raw free bytes (WWDC17 "What's New in
     /// Foundation"); the margin keeps a transfer from filling the volume to the
-    /// last byte. An unknown capacity is treated as "fits" — we don't block a
-    /// transfer on a failed query.
+    /// last byte. An unknown capacity is treated as "fits".
     public func hasCapacity(
         forByteCount byteCount: Int, margin: Int = ClipboardStreamTuning.freeSpaceMargin
     ) -> Bool {
@@ -191,13 +158,9 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         defer { lock.unlock() }
 
         let dir = try directory(for: generation)
-        // Uniquify within the generation so two same-named payloads in one copy
-        // don't collapse onto one path. createFile below claims the name, so a
-        // later sink/adopt in this generation sees it taken.
         let url = Self.uniqueDestination(in: dir, filename: filename)
-        // Create an empty file, then open it for writing. `F_NOCACHE` keeps a
-        // multi-GB transfer from evicting the page cache (the DTS-preferred
-        // behaviour for streaming large files).
+        // `F_NOCACHE` keeps a multi-GB transfer from evicting the page cache —
+        // the DTS-preferred behavior for streaming large files.
         FileManager.default.createFile(atPath: url.path, contents: nil)
         let handle = try FileHandle(forWritingTo: url)
         _ = fcntl(handle.fileDescriptor, F_NOCACHE, 1)
@@ -207,17 +170,10 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// Reserves an empty child directory named exactly `name` under the
     /// generation directory, for the receiver to extract a directory tree into.
     ///
-    /// `makeSink`/`adopt` are per-file (a `Sink` appends bytes, `adopt`
-    /// hardlinks a single file); neither materializes a tree. This creates an
-    /// empty directory for `ClipboardDirectoryArchive.extract(...)` to populate.
-    /// The directory is nested under a fresh UUID parent so it keeps the *exact*
-    /// folder name — a sibling staged `.aar` of the same name (the streamed
-    /// archive lands beside it) can't force a Finder-style ` (n)` suffix, which
-    /// would rename the pasted folder. `name` is sanitized to a single path
-    /// component so a crafted offer can't escape the generation dir (defense in
-    /// depth alongside AppleArchive's own confinement). The extracted tree rides
-    /// generation rotation + the teardown sweep, and `isInStagingRoot` (a prefix
-    /// check) echo-suppresses it.
+    /// Nested under a fresh UUID parent so the folder keeps its *exact* name: a
+    /// sibling staged `.aar` of the same name would otherwise force a
+    /// Finder-style ` (n)` suffix onto it. `name` is sanitized to one path
+    /// component so a crafted offer can't escape the generation directory.
     ///
     /// - Throws: a filesystem error if the directory can't be created.
     public func reserveDirectory(generation: UInt64, name: String) throws -> URL {
@@ -234,10 +190,8 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// sender's directory archive before it is offered.
     ///
     /// Unlike `makeSink`, no `Sink` is returned: the caller writes the bytes
-    /// itself (AppleArchive opens its own stream at the returned URL). An empty
-    /// placeholder claims the name so a later reserve/sink/adopt in the same
-    /// generation can't collide on it, and the file rides generation rotation +
-    /// the teardown sweep.
+    /// itself. An empty placeholder claims the name so a later
+    /// reserve/sink/adopt in the same generation can't collide on it.
     ///
     /// - Throws: a filesystem error if the directory can't be created.
     public func reserveURL(generation: UInt64, filename: String) throws -> URL {
@@ -264,8 +218,7 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// Returns the directory for `generation`, creating it on first use and
     /// evicting the oldest directories beyond `maxGenerations`.
     ///
-    /// Caller holds the
-    /// lock.
+    /// Caller holds the lock.
     private func directory(for generation: UInt64) throws -> URL {
         if let existing = generationDirs.first(where: { $0.generation == generation }) {
             return existing.dir
@@ -284,11 +237,9 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// with a ` (n)` suffix before the extension when that name is already
     /// taken.
     ///
-    /// A single multi-file copy can carry two payloads that share a name (a
-    /// crafted offer, or files gathered from different folders); without this
-    /// the second `makeSink`/`adopt` in the generation would reuse the first's
-    /// path and the two files would collapse into one. Finder applies the same
-    /// ` (n)` disambiguation when pasting. Caller holds the lock.
+    /// One multi-file copy can carry two payloads that share a name; without
+    /// this the second sink in the generation reuses the first's path and the
+    /// two files collapse into one. Caller holds the lock.
     private static func uniqueDestination(in dir: URL, filename: String) -> URL {
         let sanitized = sanitize(filename)
         let candidate = dir.appendingPathComponent(sanitized)
@@ -317,9 +268,6 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// Default free-space query: `volumeAvailableCapacityForImportantUsageKey`
     /// (Apple's documented key for user-initiated/important writes, vs. the
     /// opportunistic key for predictive downloads).
-    ///
-    /// Falls back to the
-    /// parent-of-root volume when the root doesn't exist yet.
     private static let defaultFreeSpace: FreeSpaceProvider = { url in
         // The root may not exist yet; query its parent, which does.
         let probe = FileManager.default.fileExists(atPath: url.path) ? url : url.deletingLastPathComponent()

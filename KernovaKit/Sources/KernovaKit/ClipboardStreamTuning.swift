@@ -2,57 +2,18 @@ import Foundation
 
 /// Chunk and flow-control sizing for the streamed clipboard protocol.
 ///
-/// These are the production defaults; the sender and receiver take the same
-/// values as constructor parameters so tests can inject tiny sizes to exercise
-/// multi-chunk and windowed-backpressure paths without moving real megabytes.
-/// (Constructor injection rather than a mutable global keeps parallel test runs
-/// from racing on a shared override.)
-///
-/// ## Why 64 KiB chunks
 /// 64 KiB is the vsock max packet size on **both** ends — Linux
 /// `VIRTIO_VSOCK_MAX_PKT_BUF_SIZE` and macOS/XNU `VSOCK_MAX_PACKET_SIZE` are
-/// both 65536; a larger `write` is just fragmented into 64 KiB packets.
-/// Throughput plateaus at this size (benchmarks show < 3% past it), it is the
-/// size Firecracker uses, and it is page-aligned on both 4 KiB and 16 KiB page
-/// sizes. The absolute ceiling on Apple's hypervisor is unmeasured, so the size
-/// is left tunable for later benchmarking — but the knee is structural (the
-/// shared packet cap), not an Apple-published figure.
-///
-/// ## Why a 1 MiB window
-/// The in-flight credit window starts from the native credit-window defaults
-/// (Linux `buf_alloc` 256 KiB; XNU socket buffer 512 KiB) and goes a little
-/// deeper. On a same-host link the bandwidth-delay product is microscopic, so
-/// the window is headroom rather than the throughput limiter — going bigger only
-/// pins more un-acked RAM per stream.
-///
-/// The window is deliberately larger than the ~512 KiB socket send buffer, so
-/// a sender with open credit can still fill the buffer and block inside
-/// `write(2)`. That's fine: `VsockChannel`'s write and inbound-decode paths use
-/// separate locks (#457), so a blocked write never starves the acks that would
-/// advance the window, and channel teardown unblocks a parked write via
-/// `shutdown(2)`. Shrinking the window wouldn't remove the blocking possibility
-/// anyway — a single chunk write to an already-full buffer can still park.
-///
-/// Since #615 the window carries a second meaning on the receive side. A
-/// disk-streamed transfer hands each chunk to a write lane and acks from there,
-/// so bytes can sit accepted-but-not-yet-written; because the ack still reports
-/// only durably-written bytes, the sender may never run more than one window
-/// ahead of them, and the window is therefore also the bound on that backlog's
-/// RAM. The receiver is write-lane-bound after that change, not window-bound —
-/// enlarging the window buys no throughput on its own, only a deeper backlog.
-/// It would become a throughput lever again if the write lane ever coalesced
-/// its backlog into one `writev(2)` per wakeup.
+/// both 65536 — so a larger `write` is only fragmented into 64 KiB packets.
 public enum ClipboardStreamTuning {
     /// Default per-chunk payload size: 64 KiB (the shared vsock packet cap).
     public static let defaultChunkPayloadSize = 64 * 1024
 
     /// Default in-flight credit window: 1 MiB (16 chunks).
     ///
-    /// Larger than the native 256 KiB default: on a same-host vsock the limiter
-    /// is per-chunk round-trip latency, not bandwidth, so a deeper window keeps
-    /// the pipe full across the ack round-trip (the un-acked RAM cost is a few
-    /// MiB per transfer, negligible). Stream frames are processed off the owning
-    /// actor, so the receiver can drain at full rate.
+    /// Deeper than the native 256 KiB credit-window default (Linux `buf_alloc`)
+    /// because a same-host vsock is bounded by per-chunk ack round-trip latency,
+    /// not bandwidth.
     public static let defaultWindowBytes = 1024 * 1024
 
     /// Hard cap on the credit window: 2 MiB.
@@ -62,16 +23,8 @@ public enum ClipboardStreamTuning {
     /// least 1 byte) — 256 KiB at the production 1 MiB window.
     ///
     /// The receiver acks once at least this many durably-written bytes have
-    /// accumulated since its last ack, instead of after every 64 KiB chunk —
-    /// ~75% fewer reverse-path frames and syscalls per transfer (#377). The
-    /// coarser cadence is safe by construction: acks are cumulative (credit
-    /// only moves forward, so the schedule is self-healing); the quantum stays
-    /// well under the window, so a draining receiver always frees at least 3/4
-    /// of the window — and a single chunk at/above the quantum acks
-    /// immediately, so no chunk/window shape can starve the sender; the
-    /// go-signal, duplicate re-ack, and final ack at End remain unconditional;
-    /// and `ackLatencyBound` keeps the *wall-clock* gap between acks bounded
-    /// when durable writes run slow.
+    /// accumulated since its last ack, rather than after every 64 KiB chunk.
+    /// Acks are cumulative, so the coarser cadence is self-healing.
     public static func ackQuantum(forWindowBytes windowBytes: Int) -> Int {
         max(1, windowBytes / 4)
     }
@@ -80,26 +33,17 @@ public enum ClipboardStreamTuning {
     /// durably-written chunk forces a fresh ack regardless of the byte
     /// quantum: 1 s.
     ///
-    /// The byte quantum alone stretches the gap between credit-opening acks to
-    /// four chunk-write times, and the sender's no-ack deadline (10 s) does not
-    /// extend on an ack that opens too little credit — so under degraded I/O
-    /// (contention, swap pressure) sustained per-chunk writes in the 2.5–10 s
-    /// range would abort a live transfer the old per-chunk cadence tolerated.
-    /// This bound restores per-chunk acking exactly when writes are slow
-    /// (below ~quantum/bound throughput) while leaving the hot path's
-    /// coalescing untouched; the check reuses the per-chunk clock read the
-    /// stall watchdog's anchor already pays for.
+    /// Without it the quantum stretches the gap between credit-opening acks to
+    /// four chunk-write times, so under degraded I/O sustained per-chunk writes
+    /// in the 2.5–10 s range trip the sender's 10 s no-ack deadline and abort a
+    /// live transfer.
     public static let ackLatencyBound: Duration = .seconds(1)
 
     /// Upper bound on how much an inline reassembly buffer pre-reserves: 64 MiB.
     ///
-    /// Reserving toward the sender's declared `total_bytes` (rather than the 2 MiB
-    /// credit window) lets a large inline rep grow in one allocation instead of the
-    /// geometric reallocations a 2 MiB reserve forces. The 64 MiB cap keeps an
-    /// attacker-declared `total_bytes` from forcing an unbounded up-front
-    /// allocation — beyond it the buffer still grows geometrically, and the rep
-    /// spills to disk at `maxResidentInlineBytes` (256 MiB) anyway, so this sits
-    /// deliberately below that spill point.
+    /// The buffer reserves toward the sender's declared `total_bytes`; this cap
+    /// keeps a peer-declared size from forcing an unbounded up-front allocation.
+    /// Beyond it the buffer still grows geometrically.
     public static let maxInlineReserveBytes = 64 * 1024 * 1024
 
     /// Margin kept free above a transfer's size when checking disk space, so a
@@ -108,76 +52,52 @@ public enum ClipboardStreamTuning {
 
     /// RAM-residency threshold for an inline representation: 256 MiB.
     ///
-    /// An inline rep (text/RTF/inline image) is reassembled in memory up to this
-    /// size — matching native, where small clipboard content stays RAM-resident
-    /// and the consuming app holds it in RAM too. Beyond it the rep is **not**
-    /// rejected: the receiver spills it to a staging file and serves it back via
-    /// a memory-mapped read, so residency is an implementation detail and there
-    /// is **no** Kernova-imposed size cap (CLIPBOARD.md §1). The blast radius of
-    /// a peer-declared `total_bytes` is then bounded by the disk free-space guard
-    /// — exactly as a file rep already is — rather than by a fixed heap ceiling.
-    ///
-    /// This is a spill point, not a hard cap: lowering it trades less Kernova RAM
-    /// for a disk round-trip on medium payloads (§2 prefers matching native
-    /// residency), so any change is a measurement call, not a correctness one.
+    /// A spill point, not a hard cap: beyond it the rep is not rejected, the
+    /// receiver stages it to a file and serves it back memory-mapped, so there is
+    /// **no** Kernova-imposed size cap (CLIPBOARD.md §1).
     public static let maxResidentInlineBytes = 256 * 1024 * 1024
 
     /// Hard ceiling on a single received chunk: 16 MiB.
     ///
     /// The negotiated chunk is 64 KiB, but one frame can legally carry up to
-    /// `VsockFrame.maxPayloadSize` (128 MiB). Rejecting an over-large chunk
-    /// bounds the per-chunk memory/disk pressure a misbehaving peer can apply
-    /// between the once-per-window disk re-check.
+    /// `VsockFrame.maxPayloadSize` (128 MiB); rejecting an over-large chunk
+    /// bounds what a misbehaving peer can apply between disk re-checks.
     public static let maxChunkBytes = 16 * 1024 * 1024
 
     /// How long an inbound transfer waits for its next chunk before aborting a
     /// silent sender: 30 s.
     ///
-    /// Symmetric to the sender's no-ack deadline (which bounds a receiver that
-    /// stops *acking*); this bounds a sender that stops *sending* after Begin, so
-    /// a dropped or hung peer can't pin an open file descriptor and a partial
-    /// temp file until channel teardown. Comfortably larger than the sender's
-    /// 10 s no-ack timeout so a slow-but-live transfer is never killed.
+    /// Bounds a sender that stops sending after Begin, so a hung peer can't pin
+    /// an open file descriptor and a partial temp file until channel teardown.
+    /// Larger than the sender's 10 s no-ack timeout so a slow-but-live transfer
+    /// is never killed.
     public static let inboundStallTimeout: Duration = .seconds(30)
 
     /// Backstop on how long a lazy pull blocks the consuming thread *without
     /// progress* before giving up: 120 s of **inactivity**.
     ///
-    /// This is an inactivity window, not an absolute deadline — each arriving
-    /// chunk re-arms it (`LazyPullCoordinator.heartbeat`, driven by the
-    /// receiver's per-chunk progress hook), so a healthy transfer of any size
-    /// never trips it no matter how long it runs. (An earlier absolute 120 s
-    /// ceiling silently killed large, still-progressing transfers — e.g. a
-    /// multi-GB file that simply needed more than two minutes to stream, which
-    /// left the paste hanging then failing with no feedback.) It is not the
-    /// primary liveness guard either: the receiver's `inboundStallTimeout` (30 s
-    /// of no chunk) aborts a dead transfer and wakes the blocked pull first, and
-    /// channel teardown unblocks it immediately. The backstop fires only if
-    /// neither delivers an outcome after a full window of silence (a
-    /// coordinator/receiver bug). Tests inject a tiny value to exercise it.
+    /// An inactivity window, never an absolute deadline — each arriving chunk
+    /// re-arms it (`LazyPullCoordinator.heartbeat`), so a healthy transfer of any
+    /// size never trips it. Made absolute, it silently kills large,
+    /// still-progressing transfers that need more than one window to stream.
     public static let lazyPullTimeout: Duration = .seconds(120)
 
     /// Sentinel `maxAcceptByteCount` meaning "no explicit ceiling" — the
-    /// requester could not measure its free space, so it relies on the receiver's
-    /// mid-stream disk guard and the write-failure backstop instead.
+    /// requester could not measure its free space.
     ///
-    /// `RATIONALE:` `0` is a *real* ceiling (zero acceptable bytes), so it must
-    /// not double as "unlimited"; a measured-full volume advertising `0` would
-    /// otherwise read as "send anything". Unknown capacity maps to this sentinel.
+    /// `0` is a *real* ceiling (zero acceptable bytes) and must never double as
+    /// "unlimited": a measured-full volume advertising `0` would then read as
+    /// "send anything".
     public static let unlimitedAcceptByteCount = UInt64.max
 
     /// Largest guest→host file served via the synchronous paste fallback when the
     /// host File Provider is disabled: 256 MiB.
     ///
-    /// `RATIONALE:` with the System-Settings File-Providers toggle off there is no
-    /// `fetchContents` escape hatch, so a "Copy to Mac" of a file must pull + stage
-    /// the bytes inside the OS paste deadline — Finder gives up at ~60 s (see the
-    /// `clipboard-paste-finder-60s-deadline` note). 256 MiB completes comfortably
-    /// within that on a same-host vsock link; a larger file is dropped (with an
-    /// enable-File-Sharing affordance) rather than risk a beachballed paste. This
-    /// cap applies *only* to the toggle-off fallback — with the File Provider on,
-    /// `fetchContents` has no deadline and there is no size limit (CLIPBOARD.md §1).
-    /// Validate against measured vsock throughput.
+    /// With the File-Providers toggle off there is no `fetchContents` escape
+    /// hatch, so the bytes must be pulled and staged inside Finder's ~60 s paste
+    /// deadline; a larger file is dropped instead. The cap applies *only* to that
+    /// fallback — with the File Provider on there is no size limit
+    /// (CLIPBOARD.md §1).
     public static let maxDeadlineSafeFileBytes = 256 * 1024 * 1024
 }
 

@@ -2,16 +2,11 @@ import AppKit
 import KernovaKit
 
 /// Content for the transient popover the menu-bar status item shows after a soft
-/// quit (#624) — a reminder that Kernova is still resident, with a
-/// "Stop Reminding Me" opt-out.
+/// quit — a reminder that Kernova is still resident, with a "Stop Reminding Me"
+/// opt-out.
 ///
-/// Built from the shared `CalloutStyle` tokens and atoms (`makeCalloutHeadline` /
-/// `makeCalloutBody`), the same way `InfoPopoverContentViewController` is, so
-/// every popover in the app renders at one width with identical type — and, like
-/// it, re-pins `preferredContentSize` in `viewDidLayout` so `NSPopover` sizes to
-/// the measured content. The opt-out is a link-styled button whose tap invokes
-/// `onStopReminding`; the presenter (`HostAgentStatusItemController`) owns the
-/// preference write and the popover close.
+/// The opt-out only invokes `onStopReminding`; the presenter
+/// (`HostAgentStatusItemController`) owns the preference write and the close.
 @MainActor
 final class MenuBarQuitReminderViewController: NSViewController {
     private let onStopReminding: () -> Void
@@ -30,10 +25,9 @@ final class MenuBarQuitReminderViewController: NSViewController {
         let title = makeCalloutHeadline("Kernova is still running in the menu bar.")
         let body = makeCalloutBody(
             "Your virtual machines keep running. Quit Kernova fully from this menu-bar icon.")
-        // The same title the status item's File Provider reminder uses
-        // for its opt-out (`ClipboardFileProviderReminder.stopRemindingCommandTitle`),
-        // so one menu-bar item doesn't word the identical concept two ways. Read
-        // from that shared helper rather than duplicating the literal.
+        // The same title the status item's File Provider reminder uses for its
+        // opt-out, so one menu-bar item doesn't word the identical concept two
+        // ways.
         let stopReminding = makeLinkButton(
             ClipboardFileProviderReminder.stopRemindingCommandTitle(),
             target: self, action: #selector(stopRemindingTapped))

@@ -686,13 +686,8 @@ struct VMInstanceTests {
         return instance
     }
 
-    // CI timing notes (see docs/TESTING.md "Async waits in tests"):
-    //   - macos-26 GitHub Actions runners have substantial MainActor jitter
-    //     compared to local hardware. Use cadences ≥100 ms and waitUntil
-    //     deadlines ≥10× the cadence; end-state assertions, not per-iteration.
-    //   - Initial CI run failed three watchdog tests with grace=50ms /
-    //     timeout=2s — Task.sleep(50ms) was getting delayed past the deadline.
-    //   - Settling on grace=200ms with the 5s waitUntil default below.
+    // Sized past macos-26 GitHub Actions MainActor jitter, which far exceeds
+    // local hardware (docs/TESTING.md "Async waits in tests").
     private static let testWatchdogGrace: Duration = .milliseconds(200)
 
     @Test("Watchdog flips agentExpectedButMissing when no Hello arrives in the grace window")

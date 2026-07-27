@@ -3,14 +3,8 @@ import AppKit
 /// The clipboard window's command row: icon buttons for host-pasteboard
 /// transfers and clearing the buffer.
 ///
-/// Leading-aligned `Paste from Mac` / `Copy to Mac` / `Clear` buttons, each an
-/// SF Symbol plus a short label and a tooltip. The content-type indicator and
-/// transient-status surface live in the status row (`ClipboardIndicatorView`),
-/// so this row is actions only. The owner hides the whole bar (via `isHidden`)
-/// while automatic passthrough is on — the manual transfer/clear actions are
-/// redundant once the host and guest clipboards sync automatically; it carries
-/// its own hairline so it self-delineates from the content area below, the same
-/// pattern `ClipboardPassthroughBanner` uses.
+/// The bar carries its own hairline, so it self-delineates from the content
+/// area below when the owner collapses it via `isHidden`.
 @MainActor
 final class ClipboardCommandBarView: NSView {
     // RATIONALE: No keyEquivalent on any button — a Cmd+V / Cmd+C equivalent
@@ -34,8 +28,7 @@ final class ClipboardCommandBarView: NSView {
 
         super.init(frame: .zero)
 
-        // Trailing spacer with low hugging so the stack grows it rather than a
-        // button — keeps the buttons leading-aligned.
+        // Low hugging so the stack grows the spacer rather than a button.
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 

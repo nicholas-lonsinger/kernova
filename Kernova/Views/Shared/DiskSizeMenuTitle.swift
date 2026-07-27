@@ -4,9 +4,6 @@ import AppKit
 /// unit left-aligned to shared tab stops, so the number/unit columns line up
 /// (and sit centered as a block) down the menu — using generic AppKit tab
 /// stops, no custom menu-item view.
-///
-/// Shared by the creation wizard's disk-size popup and the "Create New Disk" /
-/// "Create New Removable Disk" popover so both render identically.
 func diskSizeMenuItemTitle(_ sizeInGB: Int) -> NSAttributedString {
     let formatted = DataFormatters.formatDiskSize(sizeInGB)
         .replacingOccurrences(of: "\u{2007}", with: " ")

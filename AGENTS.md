@@ -1,110 +1,72 @@
 # AGENTS.md
 
-This is the tool-neutral operating guide for anyone — human or AI agent — working in this repository: build commands, architecture summary, and the coding, testing, review, and git conventions. Claude Code loads it via `CLAUDE.md`'s import; other agents read it directly. Deep-dive documentation lives in [docs/](docs/README.md) — follow the links below on demand instead of guessing.
+The tool-neutral operating guide for this repository. Deep-dive docs are indexed in [docs/README.md](docs/README.md); read them on demand.
 
-> Design philosophy and UI guidelines are in [docs/SPEC.md](docs/SPEC.md).
+> Design philosophy and UI guidelines: [docs/SPEC.md](docs/SPEC.md).
 >
-> Clipboard subsystem principles (host↔guest copy/paste — the authoritative rules for any clipboard work) are in [docs/CLIPBOARD.md](docs/CLIPBOARD.md).
+> Clipboard subsystem principles — authoritative for host↔guest copy/paste work: [docs/CLIPBOARD.md](docs/CLIPBOARD.md).
 
 ## Build & Test
 
-This is an Xcode project (not Swift Package Manager). Inside Xcode, use ⌘B / ⌘U as normal. From the terminal, prefer the `Makefile` wrapper (`make help` lists every target):
+Xcode project, not SwiftPM. From the terminal go through the `Makefile` (`make help` lists every target) — never hand-write an `xcodebuild` invocation; the flags are not the obvious ones. Fresh-clone setup: [README](README.md#development-setup); machinery: [docs/BUILD.md](docs/BUILD.md).
 
-```bash
-make build               # Build for macOS
-make test                # Run the full test suite (all three test targets via Kernova.xctestplan)
-make test-suite SUITE=KernovaTests/VMConfigurationTests   # Run a single suite
-make test-package        # Run only the KernovaKit SwiftPM package tests
-make format              # Rewrite Swift sources in place via swift-format
-make lint                # Check Swift sources (swift-format --strict) + shell scripts (bash -n; shellcheck when installed, required on CI)
-make install-hooks       # One-time: enable .githooks/ (pre-push lint; post-checkout worktree setup)
-make doctor              # Check the local toolchain (macOS, Xcode, Swift, swift-format) and repo setup (hooks, .worktreeinclude)
-make clean               # Remove this checkout's build arenas (unregistering the bundles inside first)
-```
+The app is Apple Silicon-only (`ARCHS = arm64` project-wide), so `#if arch(arm64)` guards are unnecessary.
 
-Run `make install-hooks` once after cloning to enable the checked-in `.githooks/`: pre-push runs `make lint` (bypass an individual push with `git push --no-verify`), and post-checkout sets up new git worktrees so they inherit the gitignored local files and sign without a manual step. `DEVELOPMENT_TEAM` is not hardcoded in the project — `make bootstrap` derives it from your own signing certificate into the gitignored `Config/Local.xcconfig`, and `make build`/`make test`/`make test-suite` run it automatically. Raw `xcodebuild` (and Xcode's own ⌘B/⌘R) assume it has already run, so on a fresh clone (where hooks aren't active yet) run `make bootstrap` once first — otherwise `DEVELOPMENT_TEAM` resolves empty and the Manual/profile-less Debug targets fail to sign. The full build machinery — the hooks and `.worktreeinclude`, the bootstrap derivation, why a single `xcodebuild test` runs all three test targets, and the DerivedData layout / IDE build-state sharing — is documented in [docs/BUILD.md](docs/BUILD.md).
+A new top-level target needing a dynamic build number calls `Tools/set-build-number.sh <app|agent>` from a `Set Build Number from Git` build phase — never patch the built `Info.plist`.
 
-`make test` is the canonical `xcodebuild` invocation:
-
-```bash
-xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination 'platform=macOS' -derivedDataPath DerivedData/Kernova -configuration Debug <build|test>
-```
-
-### Build version
-
-`CFBundleVersion` is derived from git — squash-merge aware — by a single shared script, `Tools/set-build-number.sh <app|agent>`, called from every target's `Set Build Number from Git` build phase. When adding a new top-level target that needs a dynamic build number, call the shared script with the appropriate mode instead of patching the built `Info.plist` after the fact. The derivation rules, the app/agent mode split, and the guest agent's own `MARKETING_VERSION` bump conventions are in [docs/BUILD.md](docs/BUILD.md).
-
-Requires the toolchain listed under [Requirements](README.md#requirements) in the README. The app is Apple Silicon-only (`ARCHS = arm64` at the project level) — Virtualization.framework's macOS-guest and save/restore APIs don't exist on x86_64, and macOS 26 is the last Intel release, so no Intel slice is built and `#if arch(arm64)` guards are unnecessary. The app uses the `com.apple.security.virtualization` entitlement.
+Any change requiring a guest-agent reinstall bumps its `MARKETING_VERSION` — every occurrence together ([docs/BUILD.md](docs/BUILD.md)).
 
 ## Architecture
 
-> Full directory structure, component map, data flow diagrams, design decisions, and test coverage details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Consult it before making structural changes. The summary below is a quick reference; if it conflicts with ARCHITECTURE.md, ARCHITECTURE.md is authoritative.
+> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has what exists and how the pieces connect — consult it before structural changes.
 
-Kernova is a pure-AppKit app that manages virtual machines via Apple's `Virtualization.framework`, supporting macOS and Linux guests.
+Kernova is a **pure-AppKit** app managing macOS and Linux guests via `Virtualization.framework`.
 
-**Data flow:** `AppDelegate` → `VMLibraryViewModel` → `VMLifecycleCoordinator` → services + AppKit view controllers. `MainWindowController` hosts an `NSSplitViewController` with sidebar (`SidebarViewController`, a pure-AppKit source-list `NSOutlineView`) and detail (`DetailContainerViewController`) panes, plus a native `NSToolbar` with `NSToolbarItem`s. The detail pane layers a pure-AppKit `VMDisplayBackingView` (for `VZVirtualMachineView`) over the AppKit detail content — an empty-state view or `VMDetailRouterViewController`, which routes by VM status to `VMSettingsViewController`, a status placeholder, the macOS install progress VC, or the display placeholder. Lifecycle confirmation alerts are presented by `DetailAlertsPresenter`. `VMDirectoryWatcher` monitors the VMs directory for external filesystem changes and triggers reconciliation in the view model.
+**Concurrency model:** Swift 6 strict concurrency. Everything touching `VZVirtualMachine`, including every service that talks to VZ, is `@MainActor`; stateless services are `Sendable` structs. VZ delegate callbacks bridge back with `nonisolated(unsafe)` plus `MainActor.assumeIsolated`.
 
-**Concurrency model:** Everything touching `VZVirtualMachine` is `@MainActor`. The codebase uses Swift 6 strict concurrency. Services that interact with VZ are `@MainActor`-isolated; stateless services are `Sendable` structs. Some VZ delegate callbacks use `nonisolated(unsafe)` with `MainActor.assumeIsolated` to bridge back.
-
-**No third-party dependencies.** The Kernova app target uses only Apple system frameworks. Apple-published Swift Packages (e.g. `apple/swift-protobuf`, currently consumed by the local `KernovaKit/` package) are acceptable when they pull their weight; non-Apple packages still require explicit sign-off.
+**No third-party dependencies.** Apple-published Swift Packages (e.g. `apple/swift-protobuf`) are acceptable when they pull their weight; non-Apple packages require explicit sign-off.
 
 ## App Sandbox rules
 
-Kernova is intended for **Mac App Store distribution**, and the main app **runs under the App Sandbox in every build configuration** (#89) — write code that lives within it. The full entitlement inventory, the per-configuration app-group and signing story, and the launch model are in [docs/SANDBOX.md](docs/SANDBOX.md). The rules for new code:
+The app **runs under the App Sandbox in every build configuration** and targets the **Mac App Store** — write code that lives within both ([docs/SANDBOX.md](docs/SANDBOX.md)):
 
-- **User-picked files persist their grant as an app-scoped security bookmark** stored next to the raw path (`SecurityScopedBookmark.capture` at the panel pick site; see `StorageDisk.bookmark` and friends). Access sites resolve through the RAII `ScopedAccess`: VM-runtime scopes are owned by `VMInstance.runtimeFileAccess` (`RuntimeFileAccess`), opened by `openRuntimeFileAccess()` per boot attempt (which also heals stale bookmarks and moved paths) and released exactly once in `tearDownSession()`; momentary probes (existence checks, trashing) open and release a `ScopedAccess` locally. A `nil`/dead bookmark falls through to the raw-path attempt, which under the sandbox surfaces the *existing* missing-file UX (start-time not-found errors, the settings warning icon) and re-picking mints a fresh bookmark — **never add special-case handling for pre-sandbox data** (no decode-time migrations, no `Container Migration.plist`; users move their VMs via the documented drag-and-drop import).
-- **App-internal state belongs in the container.** `.applicationSupportDirectory` (the VM library), `FileManager.temporaryDirectory`, and the app-group container all resolve correctly under the sandbox. Never build paths off `homeDirectoryForCurrentUser` expecting the *real* home — in a sandboxed app it is the container home (ask the system for the folder instead, e.g. `.downloadsDirectory`).
-- **Prefer in-process Apple framework APIs over shelling out** to system command-line tools (`Process` / `NSTask` → `/usr/bin/ditto`, `unzip`, `tar`, …), which a sandboxed app cannot usefully spawn, and over adding entitlements unavailable to MAS apps. (This is also why VM disks are created by decompressing bundled ASIF templates — macOS 26 has no public in-process ASIF-creation API, and `diskutil` is unreachable from the sandbox.)
+- **User-picked files persist their grant as an app-scoped security bookmark** stored next to the raw path (`SecurityScopedBookmark.capture` at the pick site), resolved through the RAII `ScopedAccess`. A dead bookmark falls through to the raw path and re-picking mints a fresh one, so **never add special-case handling for pre-sandbox data** — no decode-time migrations, no `Container Migration.plist`.
+- **App-internal state belongs in the container** — `.applicationSupportDirectory`, `FileManager.temporaryDirectory`, and the app group all resolve correctly there. Never build paths off `homeDirectoryForCurrentUser` expecting the *real* home; it is the container home, so ask the system for the folder (e.g. `.downloadsDirectory`).
+- **Prefer in-process Apple framework APIs over shelling out** to command-line tools (`Process` / `NSTask` → `/usr/bin/ditto`, `unzip`, `tar`, …), which a sandboxed app cannot usefully spawn — and over entitlements unavailable to MAS apps.
 
 ## Development Guidelines
 
 ### Unit Tests
 
-When adding new functionality or modifying existing behavior, include unit tests for the changes. Follow the existing patterns in `KernovaTests/`:
+New and changed behavior ships with tests, following `KernovaTests/`:
 
-- Use Swift Testing (`@Suite`, `@Test`, `#expect`) — not XCTest
-- Create mock implementations using protocols (see `KernovaTests/Mocks/`)
-- Test models, services, and view models — UI views don't need unit tests
-- Test both happy paths and error paths; use error injection in mocks (e.g., setting a per-method `<method>Error` property such as `startError`)
-- Reuse shared test helpers and factories (e.g., `makeInstance()`) rather than duplicating setup logic across test files
-- Run the full test suite before committing to ensure nothing is broken
+- Swift Testing (`@Suite`, `@Test`, `#expect`) — never XCTest; protocol-based mocks in `KernovaTests/Mocks/`
+- Test models, services, and view models — UI views need none
+- Cover happy *and* error paths, injecting failures via a per-method `<method>Error` property
+- Reuse shared helpers and factories (`makeInstance()`), don't duplicate setup
+- Run the full test suite before committing
 
-**Async waits in tests must be event-driven, not poll loops.** CI runners have heavy `@MainActor` scheduling jitter, and with a poll loop the timeout deadline *is* the pass/fail criterion — a starved scheduler fails a test whose condition would have become true. Before writing any test wait, pick the seam (`waitForChange`, `AsyncGate`, or awaiting the production `Task`) per the table in [docs/TESTING.md](docs/TESTING.md); polling is acceptable only for genuinely signal-less predicates and needs a one-line `RATIONALE:` naming which signal-less category applies. The same document covers the companion rule — an injected production timeout must be either the behavior under test or sized past any scheduler stall (production default or ≥60s), never a small "tidy" value — and the test-only seam conventions (`private(set)` vs a `#if DEBUG …ForTesting` accessor).
+**Async waits in tests must be event-driven, not poll loops.** Pick the seam per the table in [docs/TESTING.md](docs/TESTING.md), which also owns the injected-timeout and test-seam rules. Polling is acceptable only for genuinely signal-less predicates, and needs a one-line `RATIONALE:` naming the category.
 
 ### Logging
 
-The app uses Apple's `os.Logger` with per-component categories. Each service, view model, or model that logs declares a `private static let logger`. Subsystems are per-target:
+Every type that logs declares its own `private static let logger = Logger(subsystem: "app.kernova", category: "ComponentName")`. Never use `print()`, `NSLog()`, or file-based logging. Subsystems are per-target:
 
 | Subsystem | Who logs there |
 |-----------|----------------|
-| `app.kernova` | The host app and all `KernovaKit` shared code — including KernovaKit types running *inside* the guest agent's processes |
+| `app.kernova` | The host app and all `KernovaKit` code, including KernovaKit types running *inside* the agent's processes |
 | `app.kernova.fileprovider` | The host clipboard File Provider extension |
 | `app.kernova.macosagent` | The guest agent's own components |
 | `app.kernova.macosagent.fileprovider` | The guest agent's File Provider extension |
-| `app.kernova.guest` | Host-side re-logging of forwarded guest records (the log-forwarding toggle; category = VM name) |
+| `app.kernova.guest` | Host-side re-logging of forwarded guest records (category = VM name) |
 
-When capturing logs with `log stream`/`log show`, filter with `subsystem BEGINSWITH "app.kernova"`. An exact `subsystem == "app.kernova"` match silently drops the agent's and both extensions' records — and because KernovaKit code inside those processes still matches, the truncated capture *looks* complete.
+Capture with `subsystem BEGINSWITH "app.kernova"`: an exact `== "app.kernova"` match silently drops the agent's and both extensions' records, and because KernovaKit code inside those processes still matches, the truncated capture *looks* complete.
 
-When adding or modifying functionality, include log calls at appropriate levels:
-
-| Level | When to use | Persistence |
-|-------|-------------|-------------|
-| `.debug` | Method entry with parameter snapshots, intermediate states, per-item iteration results. Diagnostic detail only useful when actively investigating. | Discarded unless streaming via Console.app or `log stream` |
-| `.info` | General operational context: routine progress, non-critical outcomes, sub-step completion. | In-memory only; evicted under pressure |
-| `.notice` | Definitive lifecycle events: VM started/stopped/paused/resumed/saved, bundle created/deleted, app launch. Events you need for post-mortem analysis. | Persisted to disk |
-| `.warning` | Unexpected but recoverable situations: missing files, fallback paths taken, degraded operation. | Persisted to disk |
-| `.error` | Failures: operations that did not complete, exceptions caught, error states entered. | Persisted to disk |
-| `.fault` | Programming errors: impossible states, compile-time-known inputs that failed lookup. Paired with `assertionFailure`. | Persisted to disk; always visible; never redacted |
-
-**Guidelines:**
-- Every new service or view model should declare its own `private static let logger = Logger(subsystem: "app.kernova", category: "ComponentName")`
-- State transitions and irreversible actions (creating/deleting bundles, starting/stopping VMs) should be `.notice`
-- Method entry points in complex flows should have `.debug` logs with relevant parameter values
-- Do not use `print()`, `NSLog()`, or file-based logging
+Only `.notice` and above persist to disk; `.debug` reaches no store at all and exists only while a client streams (`log stream`, Console.app). Use `.debug` for method entry and intermediate state; `.info` for routine progress; `.notice` for state transitions and irreversible actions (VM started/stopped/saved, bundle created/deleted, launch); `.warning` for recoverable trouble (missing files, fallbacks, degraded operation); `.error` for operations that did not complete; `.fault` for programming errors, paired with `assertionFailure`.
 
 ### Defensive Unwrapping
 
-When calling an API that returns an optional but is invoked with compile-time-known inputs (SF Symbol names, known resource identifiers, hardcoded keys), use `assertionFailure` with a graceful fallback:
+An optional-returning API called with compile-time-known input (SF Symbol names, resource identifiers, hardcoded keys) gets `assertionFailure` and a graceful fallback:
 
 ```swift
 guard let value = knownGoodAPI("compile-time-constant") else {
@@ -114,167 +76,177 @@ guard let value = knownGoodAPI("compile-time-constant") else {
 }
 ```
 
-- **Debug builds** crash immediately at the call site, catching typos and deployment-target mismatches on first test run
-- **Release builds** return the fallback and log at `.fault` level for post-mortem diagnosis
-- Do not force-unwrap (`!`) — it crashes end users. Do not silently return a fallback without `assertionFailure` — it masks bugs during development.
+Never force-unwrap (`!`) — it crashes end users — and never return a fallback silently, without `assertionFailure`; that masks bugs during development.
 
 ### File Operations
 
-- When deleting files, prefer `trash` over `rm` whenever possible (moves to Trash instead of permanent deletion).
+Prefer `trash` over `rm` when deleting files.
 
 ### Review Feedback Handling
 
-When reviewing code — via review tooling, post-implementation review agents, external PR review feedback (bot or human), or while working on adjacent code — every finding must be triaged into one of four categories:
+Every review finding — tooling, a bot or human PR comment, your own reading of adjacent code — gets one of four triage categories:
 
-| Category | Action | When to use |
-|----------|--------|-------------|
-| **Fix now** | Apply the fix as part of the current work | Valid finding, in scope, reasonable effort |
-| **Fix later** | File a GitHub issue immediately (format and labels in [docs/REVIEW.md](docs/REVIEW.md)) | Valid finding, but out of scope or too large for the current task |
-| **Annotate** | Add a `RATIONALE:` comment — a **last resort**, allowed only when it clears all four conditions in [docs/REVIEW.md](docs/REVIEW.md) and disclosed in the commit/PR summary. Or `// periphery:ignore - <reason>` for dead-code-scan false positives (lower bar; same file) | The concern was *actually* raised (not "a reviewer would flag this"), no test or doc is a better home, there is re-checkable evidence to cite, and "fixing" it would break something real |
-| **Dismiss** | No action needed | Pure style nits, cosmetic preferences, trivial improvements with negligible impact — and anything failing the severity bar below that doesn't clear the annotation bar |
+| Category | What it means |
+|---|---|
+| **Fix now** | Valid, in scope, reasonable effort — fix it as part of the current work |
+| **Fix later** | Valid but out of scope or too large — file a GitHub issue immediately |
+| **Annotate** | A **last resort**: add a `RATIONALE:` comment only when it clears all four conditions in [docs/REVIEW.md](docs/REVIEW.md), disclosed in the commit/PR summary. Or `// periphery:ignore - <reason>` for dead-code-scan false positives (lower bar; same file) |
+| **Dismiss** | Style nits, cosmetic preferences, negligible-impact improvements — and anything failing the severity bar that doesn't clear the annotation bar |
 
-**The severity bar — Dismiss and Annotate are real options.** A finding earns **Fix now** or **Fix later** only if it is both **reachable** (a user doing normal things, or a supported automated flow, can actually hit it) and **consequential** (worse than a transient cosmetic glitch, a logged self-recovering retry, or a state an obvious user action recovers from). Findings about hypothetical future code, adversarial scheduling no real flow produces, degenerate inputs, or pre-existing behavior merely surfaced by an unrelated diff default to **Dismiss**; escalating to **Annotate** takes a pattern that has *actually* been re-flagged across reviews, not one that might be. And when a review chain has moved from defects in the code to meta-findings about prior fixes, stop the chain — dismiss rather than filing the next link, and resist annotating it, since a comment defending the previous fix is the same dead end in another form.
+**The severity bar — Dismiss and Annotate are real options.**
 
-Read [docs/REVIEW.md](docs/REVIEW.md) before filing review-debt issues or annotating: it has the full severity bar with worked examples, the issue template and label conventions, the issue-hygiene rules (report observed behavior and facts, never a diagnosis — unverified causal theories only under a caveated hypothesis heading; cite symbols, never line numbers; keep bodies to what/why with no forward-looking implementation sketch — these apply to *every* issue you file), and the annotation formats.
+- A finding earns **Fix now** or **Fix later** only if it is both **reachable** (a user doing normal things, or a supported automated flow, can actually hit it) and **consequential** (worse than a cosmetic glitch, a logged self-recovering retry, or a state an obvious user action recovers from).
+- Hypothetical future code, adversarial scheduling no real flow produces, degenerate inputs, and pre-existing behavior merely surfaced by an unrelated diff default to **Dismiss**. Escalating to **Annotate** takes a pattern *actually* re-flagged across reviews, not one that might be.
+- When a review chain has moved from defects in the code to meta-findings about prior fixes, stop the chain: dismiss rather than filing the next link, and resist annotating it — a comment defending the previous fix is the same dead end.
 
-**Reading an existing `RATIONALE:` — it is evidence, not authority.** You will meet these far more often than you write one, so the rule belongs here rather than only in `docs/REVIEW.md`. An annotation is a claim *as of when it was written*, with the same standing as an old issue: accurate then, not authoritative now. It never settles a contradicting observation — if the code looks wrong *today*, investigate; the comment is a head start on where to look, never a reason to stop looking. Re-check its claim whenever you edit the code it covers, then correct and re-date it or delete it. Most predate the current bar and cite no evidence and no date: treat those as **unverified**, worth no more than an ordinary comment until someone re-confirms them. Deleting one that no longer holds is maintenance, not churn.
+Read [docs/REVIEW.md](docs/REVIEW.md) before filing an issue or writing an annotation — it owns the severity-bar examples, issue template, labels, hygiene rules, and formats.
+
+**Reading an existing `RATIONALE:` — it is evidence, not authority.** It is a claim *as of when it was written*, with the standing of an old issue: accurate then, not authoritative now. If the code looks wrong *today*, investigate — it is a head start on where to look, never a reason to stop looking.
+
+Re-check its claim whenever you edit the code it covers, then correct and re-date it or delete it. Treat one citing no evidence and no date as **unverified**, worth no more than an ordinary comment. Deleting one that no longer holds is maintenance, not churn.
+
+## Documentation and Comments
+
+Every reader has the repo checked out and can grep it in seconds: the maintainer, an AI agent starting each session with fresh context, and people reading source-available code. Outside code contributions are not accepted ([CONTRIBUTING.md](CONTRIBUTING.md)), so anyone acting on a process doc already holds push, merge, and label rights.
+
+Write to that baseline — no onboarding prose, no introducing a term, no explaining why a rule exists unless the why changes what you do. Every doc opens with a read-trigger, matching [docs/README.md](docs/README.md)'s "Read it when" column, and names its reader; naming the reader is what lets [docs/RELEASING.md](docs/RELEASING.md) omit everything that reader already knows.
+
+**A fact is stated in exactly one layer.** The deepest layer that can hold it owns it; every other layer links or says nothing. Repeating a fact across layers is duplication that drifts, not thoroughness.
+
+| Layer, deepest first | Owns |
+|---|---|
+| Code | Behavior |
+| A symbol's `///` | The contract a caller needs, plus at most one non-obvious constraint |
+| A test | Any constraint an assertion can state |
+| `RATIONALE:` | Why the obvious-looking fix is wrong here |
+| AGENTS.md | Rules that must fire without a lookup |
+| A principles doc (SPEC, CLIPBOARD) | Rules constraining *future* decisions — never a description of what was built |
+| ARCHITECTURE.md | What exists and how pieces connect — never what a component does internally |
+| A runbook (BUILD, RELEASING, TESTING, REVIEW) | The procedure you follow while doing it |
+| `docs/research/YYYY-MM-DD-*.md` | A finding plus its method. Immutable — superseded by a new note, never edited |
+| A GitHub issue | Known gaps, planned work, triage |
+| The PR body | The argument, the route taken, rejected alternatives |
+| The squash commit body | The merged change |
+| **Nowhere** | Everything else. The common destination, not a failure |
+
+### Routing
+
+Run these on every sentence a diff adds or keeps, in order:
+
+0. Does it state an external fact carrying evidence (a vendor doc, a WWDC session, an FB number, a dated observation), or a constraint the code's structure does not reveal? Yes → keep, and stop. Such a fact usually names something outside the tree, so this gate precedes test 3. State it as what is true, never as what failed — a negative claim has no expiry and nothing triggers a re-test, so it outlives the limitation it describes.
+1. Would this sentence exist if someone else had made this change a year ago? No → PR body.
+2. Can a reader with the repo derive it — a grep, `wc`, `git log`, reading the project file? Yes → delete. A derivable value written down is a second source of truth that can disagree with the first, and a reader cannot tell which is current without deriving it anyway.
+3. Does it name something not in the codebase today? Yes → delete.
+4. Is it stated in another layer? Yes → keep the deepest one only.
+5. Is it true-as-of-a-date rather than always-true? Yes → dated research note, or nowhere.
+
+**If you are unsure it has value, cut it.** Not "move it somewhere" — cut. Relocation is only for material whose value in the other layer is already established.
+
+### Never kept
+
+Deleted wholesale, not adjudicated sentence by sentence:
+
+- Annotated file trees
+- Decision or triage tables keyed to issue numbers
+- Hand-maintained test inventories
+- Version changelogs written into prose
+- Roadmap, status, and known-gap notes ("currently only logs", "D1b follows") — an issue, or nothing
+- An "Alternatives" clause in a doc defending a rejected design — the PR body holds the argument, or a call-site `RATIONALE:` clearing [docs/REVIEW.md](docs/REVIEW.md)'s four conditions
+
+### Comments
+
+Same rules, and the default is none — a comment says what the code cannot. A bare trailing `(#NNN)` is a provenance stamp, not a citation: cite the vendor doc, the radar, or a dated observation, or say nothing.
+
+### Size
+
+When you add to a durable doc, read the whole document, not the diff, and decide what no longer earns its place. Growth is invisible at diff altitude: a 5,267-character line was once edited to 5,577 inside a `+1 -1` diff.
+
+Removing nothing is legitimate when the subject genuinely grew; not looking is not. Keep a sentence carrying external evidence, or a constraint the code does not reveal, whatever it costs in length — test 0 outranks size, always.
+
+A `//` block over eight lines raises a placement question, not a deletion one: that content usually belongs on the symbol as `///`, or nowhere. The one hard cap is no doc line over 80 words, because an over-long line is unreviewable at any content quality and the fix is always to break the line.
+
+### When this fires
+
+Before committing, with the diff in view — in the same pass as the `## Notes` disclosure for `RATIONALE:` additions. Route then, not while drafting, when the change is all you see.
 
 ## Git Workflow
 
 ### Branch Naming
 
-Remote/PR branches use a clean `<type>/<short-description>` name. `<type>` matches the commit type prefixes below (e.g., `feat`, `fix`, `refactor`); keep the description concise (2-4 words, kebab-case) so the PR's purpose is clear at a glance:
-
-```
-feat/vm-snapshot-support
-fix/display-sizing-on-switch
-refactor/extract-lifecycle-coordinator
-```
-
-A PR's head branch must always carry this clean name. (Renaming a branch on GitHub *after* a PR exists does not retarget the PR — it closes it — so name it correctly at first push.)
+Remote/PR branches use a clean `<type>/<short-description>` name — `<type>` matches the commit type prefixes below, description 2-4 kebab-case words (`fix/display-sizing-on-switch`). A PR's head branch must carry this name from the first push: renaming a branch on GitHub *after* a PR exists closes the PR instead of retargeting.
 
 ### Commit Messages
 
-These conventions apply to **all** forms of committing: local commits, PR squash/merge commits, and any other git operations that produce commits. The subject-line format, type prefixes, and trailer below are universal; the sectioned body is for commits you author on a branch. A squash merge's body is written differently — see [Merging Pull Requests](#merging-pull-requests).
-
-Use the following format for all commits:
+The subject line, type prefix, and trailer below apply to **every** commit; the sectioned body is for branch commits — a squash merge's body differs ([Merging Pull Requests](#merging-pull-requests)).
 
 ```
 <type>: <concise subject line>
 
 ## Summary
-- <user-facing intent: what capability was added/fixed/changed and why>
+- <what capability was added/fixed/changed, and why>
 
 ## Changes
-- <implementation details: specific files, types, or components modified>
+- <files, types, or components modified>
 
 ## Test plan
-- [ ] <verification step as a checkbox>
+- [ ] <verification step>
 ```
 
-A `## Notes` section may be added optionally if there are caveats, follow-ups, or things reviewers should know.
-
-**`## Notes` is required when the change adds a `RATIONALE:` comment.** List each one — file, symbol, and the evidence it cites — so the maintainer can strike it at review time rather than discovering it in a `grep` months later. There is no approval gate on writing one; this disclosure is what replaces it, so a silent addition is the one thing that isn't allowed.
+`## Notes` is optional for caveats and follow-ups, and **required when the change adds a `RATIONALE:` comment** — list each one's file, symbol, and cited evidence. No approval gate governs annotations; this disclosure replaces it, so a silent addition is the one thing not allowed.
 
 #### Type prefixes
 
-| Prefix     | Usage                                      |
-|------------|--------------------------------------------|
-| `feat`     | New feature or capability                  |
-| `fix`      | Bug fix                                    |
-| `refactor` | Code restructuring with no behavior change |
-| `docs`     | Documentation only                         |
-| `test`     | Adding or updating tests                   |
-| `chore`    | Build, CI, tooling, or dependency updates  |
-| `style`    | Formatting, whitespace, or cosmetic changes|
-
-#### Example
-
-```
-feat: Add VM snapshot support
-
-## Summary
-- Add the ability to take and restore snapshots of running virtual machines
-- Enables users to save and revert VM state at any point
-
-## Changes
-- Add SnapshotService with create/restore/delete operations
-- Add snapshot UI to VMDetailView toolbar
-- Persist snapshot metadata in VMConfiguration
-
-## Test plan
-- [ ] Built successfully on macOS 26
-- [ ] Tested snapshot create/restore cycle with macOS and Linux guests
-- [ ] All existing tests pass
-```
+| Prefix     | Usage                     |
+|------------|---------------------------|
+| `feat`     | New feature or capability |
+| `fix`      | Bug fix                   |
+| `refactor` | No behavior change        |
+| `docs`     | Documentation only        |
+| `test`     | Tests only                |
+| `chore`    | Build, CI, tooling, deps  |
+| `style`    | Formatting or cosmetic    |
 
 #### Scoping the message
 
-Commit messages must reflect the full intent and scope of all changes, not just the last operation performed. Before writing a commit message, review both the task context (what was asked for, the steps taken) and the staged diff holistically. Lead with the primary purpose; secondary details (naming conventions, formatting choices) belong in the body.
+A commit message reflects the full scope of the change, not just the last operation — review the task context and the staged diff first. Lead with the primary purpose; secondary details belong in the body.
 
-An AI agent authoring a commit ends the message with a `Co-authored-by: Claude <noreply@anthropic.com>` trailer — no model name, substituting the agent's own identity if it isn't Claude. The trailer is **not** appended automatically — add it explicitly (e.g. `git commit --trailer "Co-authored-by: Claude <noreply@anthropic.com>"`). Include it exactly once; do not duplicate it in the message body. A squash merge does not inherit it from the branch's commits either — it comes from the `--body` you pass at merge time (see [Merging Pull Requests](#merging-pull-requests)).
+An AI agent ends its commit message with a `Co-authored-by: Claude <noreply@anthropic.com>` trailer — no model name, its own identity if it isn't Claude. It is **not** automatic: add it explicitly (`git commit --trailer "…"`), exactly once, never also in the body. A squash merge doesn't inherit it from the branch — it comes from the `--body` at merge time.
 
 ### Merging Pull Requests
 
-When merging PRs with `gh pr merge`, always squash-merge with `--squash --subject` using the PR title and appending the PR number in parentheses (e.g., `--squash --subject "fix: Title (#11)"`), matching the repo's existing convention.
+Always squash-merge. `--subject` is the PR title plus the PR number in parentheses: `"fix: Title (#11)"`.
 
-**Always pass `--body`, and never pass it empty.** `gh` forwards `--subject`/`--body` to the merge API as the commit title and message verbatim, so the squash commit says exactly what you pass and nothing more — in particular it does not pick up the `Co-authored-by` trailers from the branch's commits (observed on `4fb1829`, which lost its trailer to a `--body ""`). Omitting `--body` is not the fix either: GitHub then falls back to its default squash message, the branch's commit messages concatenated — fourteen of them, for a branch like #650. Write the body yourself:
+**Always pass `--body`, and never pass it empty.** `gh` forwards it verbatim: the squash commit gets no `Co-authored-by` trailer from the branch, and omitting `--body` falls back to the branch's commit messages concatenated. Write it yourself:
 
 ```
 gh pr merge <N> --squash \
-  --subject "<type>: <PR title> (#<PR number>)" \
+  --subject "<type>: <PR title> (#<N>)" \
   --body "$(cat <<'EOF'
-<one short paragraph, or a few bullets, describing the change as merged>
+<one short paragraph describing the change as merged>
 
 Co-authored-by: Claude <noreply@anthropic.com>
 EOF
 )"
 ```
 
-**Describe the merged state, not the route to it.** Write the body from the final diff. Work that was superseded, reverted, or corrected mid-branch is not part of what lands: if the branch replaced one approach with another, describe only the one that shipped; if it rolled something back, that work doesn't appear at all. Review-fix and follow-up commits are absorbed into the change they fix rather than listed as their own steps. Squash bodies are prose about the result — the branch's commit-by-commit history stays on the PR, which is where the path is legible.
+**Describe the merged state, not the route to it.** Write from the final diff: only the approach that shipped, review-fix commits absorbed into what they fix. Keep it to the PR's `## Summary` — `## Changes` and `## Test plan` belong on the PR, not in `git log`.
 
-Keep it to the equivalent of the PR's `## Summary`. The full `## Changes` restates the diff a reader is already looking at, and `## Test plan` checkboxes are a review artifact; both belong on the PR, not in `git log`.
+**Do not use `--delete-branch`.** Remote branches are auto-deleted on merge, and the flag makes `gh` run `git checkout main`, which fails in worktree contexts.
 
-**Do not use `--delete-branch`.** The repo has `delete_branch_on_merge` enabled on GitHub, so remote branches are auto-deleted. The `--delete-branch` flag causes `gh` to run `git checkout main` locally, which fails in worktree contexts.
-
-**Linking issues for auto-close:** When a PR resolves GitHub issues, include `Closes #N` (or `Fixes #N`) in the PR body — not just a table reference like `| #N |`. GitHub only auto-closes an issue when the merge commit or PR body has the keyword `closes`, `fixes`, or `resolves` immediately before its `#N`, **repeated for each issue**: `Closes #12, closes #34, closes #56` (or one `Closes #N` per line).
+**Linking issues for auto-close:** put `Closes #N` (or `Fixes #N`) in the PR body — a bare `#N` or table reference doesn't count. The keyword must sit immediately before the number and be **repeated for each issue**: `Closes #12, closes #34` (or one per line).
 
 #### Post-merge cleanup
 
-After a successful merge, confirm it landed, then sync `main` and tear down the merged branch:
-
-1. `gh pr view <N> --json state -q .state` — confirm `"MERGED"` before deleting anything.
-2. Get off the merged branch first: `git switch main`, or `git checkout --detach` in a manually-created worktree (you can't switch to `main` there — the primary checkout holds it).
-3. `git branch -D <merged-branch>` — force `-D`, since the squash commit makes `-d` reject the branch as "not fully merged".
-4. `git branch -d -r origin/<merged-branch>` — drop the stale remote-tracking ref (GitHub auto-deletes the remote branch on merge).
-5. `git pull --ff-only`.
+Confirm `gh pr view <N> --json state -q .state` reports `"MERGED"` first. Then leave the branch (`git switch main`, or `git checkout --detach` in a manual worktree), `git branch -D <merged-branch>` (force `-D`; the squash commit makes `-d` refuse), `git branch -d -r origin/<merged-branch>` for the stale remote-tracking ref, and `git pull --ff-only`.
 
 ## Architecture Change Protocol
 
-After completing any task that hits one or more of the following triggers, suggest follow-up updates before considering the task complete.
+Before calling a task done, propose these follow-ups if it changed how components communicate, added or removed a dependency, changed build config/entitlements/tooling, added or reshaped a public type, or changed actor isolation:
 
-### Triggers
-- Added, removed, renamed, or moved a file or directory
-- Changed how components communicate (new API surface, changed data flow, new service)
-- Added or removed a dependency or framework
-- Changed build configuration, entitlements, or tooling
-- Created a new public type/protocol or significantly changed an existing one
-- Changed the concurrency model or actor isolation of a component
+1. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — update only when a **component boundary** changed: a new service or protocol, a changed data flow, a changed actor isolation. A file appearing, moving or being renamed is not one. Surgical edits only.
 
-### Required Follow-ups
+2. **Tests** — cover every new public function, type, or component per the patterns in `KernovaTests/`. If deferred, state what's needed and why.
 
-1. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — Read the relevant sections first, then propose specific, targeted updates to reflect the change. Update the directory structure, component map, design decisions, or test coverage sections as needed. Do not rewrite the entire file — make surgical edits.
+3. **AGENTS.md** — update only if a rule stated here changed.
 
-2. **Testing** — For any new public function, type, or component:
-   - Write tests following the patterns in KernovaTests/ (Swift Testing, mocks, factories)
-   - If tests are deferred, explicitly state what's needed and why it was skipped
-
-3. **AGENTS.md** — Update only if build commands, the concurrency model summary, or the data flow summary changed. Preserve commit message format and development guidelines as-is.
-
-4. **Maintenance Notes** — At the end of your response, include a summary:
-
-   ### Maintenance Notes
-   - ✅ Updated docs/ARCHITECTURE.md directory structure
-   - ✅ Added tests for NewComponent
-   - ⚠️ No tests yet for `newFunction()` — needs mock for ExternalDependency
-   - ✅ AGENTS.md unchanged (no structural impact)
+4. **Maintenance Notes** — end the response with a `### Maintenance Notes` list: one ✅/⚠️ line per follow-up above, updated or skipped-and-why.

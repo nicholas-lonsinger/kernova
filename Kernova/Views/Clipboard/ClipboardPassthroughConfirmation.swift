@@ -4,10 +4,8 @@ import AppKit
 /// passthrough.
 ///
 /// Turning passthrough on grants the (untrusted, CLIPBOARD.md §10) guest
-/// continuous read of whatever is copied on the host — so the enable path must be
-/// deliberate. Both places that can turn it on (the VM settings toggle and the
-/// clipboard window banner) present *this* alert, so the copy and button roles
-/// stay identical.
+/// continuous read of whatever is copied on the host, so the enable path must be
+/// deliberate. Every place that can turn it on presents *this* alert.
 enum ClipboardPassthroughConfirmation {
     static let title = "Turn on automatic clipboard passthrough?"
 

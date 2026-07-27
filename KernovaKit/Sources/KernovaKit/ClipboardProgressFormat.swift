@@ -1,21 +1,12 @@
 import Foundation
 
-/// Display strings for the clipboard transfer readout (#643, #652).
-///
-/// Shared by the host app and the guest agent so both directions word the same
-/// transfer identically, and free of AppKit so the wording is unit-testable
-/// without a status item — the same pure-mapper convention as
-/// `ClipboardFileProviderReminder` and `AgentMenuText`.
+/// Display strings for the clipboard transfer readout.
 public enum ClipboardProgressFormat {
     /// Headline naming the operation and the machine on the other end.
     ///
-    /// A paste says so by name — it is the one operation the user started with ⌘V
-    /// somewhere outside Kernova, so naming it is how the readout explains why it
-    /// appeared. Everything else reports plainly which way the bytes are going.
-    ///
-    /// Trailing ellipsis because it describes work still under way, the same as
-    /// the system's own "Copying…" progress titles. (Not the HIG's
-    /// gathers-more-input ellipsis, which applies to commands.)
+    /// The trailing ellipsis marks work still under way, matching the system's own
+    /// "Copying…" progress titles — not the HIG's gathers-more-input ellipsis,
+    /// which applies to commands.
     public static func headline(
         direction: ClipboardProgressSnapshot.Direction, peerName: String, isPaste: Bool
     ) -> String {
@@ -27,13 +18,11 @@ public enum ClipboardProgressFormat {
     }
 
     /// Progress through the operation's files ("2 of 5" — a folder's file nodes
-    /// count individually), or `nil` for a single-file transfer, where the file's
-    /// own name already says everything a counter would.
+    /// count individually), or `nil` for a single-file transfer.
     public static func itemCounter(completed: Int, total: Int) -> String? {
         guard total > 1 else { return nil }
-        // A count that has been delivered but not yet incremented past the file
-        // currently streaming reads better as "3 of 5" than "2 of 5" — the user
-        // counts the file on screen as the one in progress.
+        // Counts the file currently streaming as the one in progress, so a
+        // delivered count of 2 of 5 reads as "3 of 5".
         let position = min(completed + 1, total)
         return "\(position) of \(total)"
     }
@@ -67,10 +56,6 @@ public enum ClipboardProgressFormat {
 
     /// Time remaining in Safari's download phrasing ("6 minutes, 27 seconds
     /// remaining"), or `nil` when it can't be estimated.
-    ///
-    /// Under an hour the seconds are always spelled out — the ticking figure is
-    /// what makes the countdown read as live. Above an hour the seconds would be
-    /// noise, so the line coarsens to hours and minutes.
     public static func timeRemaining(seconds: Double?) -> String? {
         guard let seconds, seconds.isFinite, seconds > 0 else { return nil }
         func unit(_ count: Int, _ name: String) -> String {

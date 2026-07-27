@@ -21,30 +21,25 @@ enum ClipboardPreviewMode: Equatable {
     case richText(data: Data, uti: String)
     /// Image preview decoded from `data`.
     case image(data: Data, uti: String)
-    /// Image preview decoded straight from a file-backed image payload at
-    /// `url` — a thumbnail is read via ImageIO without loading the whole file.
-    /// The on-disk counterpart of `.image`; used for a copied image *file* and
-    /// a streamed/materialized guest image file.
+    /// Image preview decoded straight from a file-backed image payload at `url`
+    /// — a thumbnail read via ImageIO, without loading the whole file.
     case imageFile(url: URL, uti: String)
     /// A copied/dropped file shown as a chip (icon + name + type · size).
     case file(filename: String, uti: String, byteCount: Int)
     /// Several copied/dropped files shown as a list of chips with a count+size
-    /// header. The on-screen counterpart of multiple file payloads in one copy.
+    /// header.
     case files([ClipboardFileEntry])
     /// Non-editable per-representation summary (unknown formats, or text too
-    /// large for `NSTextView` — still sendable and copyable, just not edited
-    /// in place).
+    /// large for `NSTextView`) — still sendable and copyable, just not edited
+    /// in place.
     case summary([ClipboardContent.Representation])
-    /// Confidential content (`org.nspasteboard.ConcealedType`, e.g. a password):
-    /// a read-only placeholder, never the secret bytes — the content still pastes
-    /// into the peer, only its on-screen display is suppressed.
+    /// Confidential content (`org.nspasteboard.ConcealedType`): a read-only
+    /// placeholder, never the secret bytes — the content still pastes into the
+    /// peer, only its on-screen display is suppressed.
     case concealed
 }
 
 /// Pure decision logic for which preview a `ClipboardContent` gets.
-///
-/// Extracted from the view controller so the priority rules are unit-testable
-/// without views.
 enum ClipboardPreviewPolicy {
     /// Text larger than this renders as `.summary` instead of the editor —
     /// `NSTextView` freezes the UI laying out multi-megabyte strings.
@@ -53,37 +48,19 @@ enum ClipboardPreviewPolicy {
     /// An image or inline rich-text representation up to this size is eagerly
     /// pulled (lazy mode) so the window shows a real preview rather than a chip;
     /// a larger payload stays a metadata placeholder until "Copy to Mac".
-    ///
-    /// A generous bound that covers typical screenshots/photos while capping a
-    /// pathological auto-pull; tunable.
     static let maxEagerPreviewBytes = 32 * 1024 * 1024
 
     /// Chooses the preview for a buffer, in priority order.
     ///
-    /// 0. A *concealed* snapshot (`org.nspasteboard.ConcealedType`) short-circuits
-    ///    to `.concealed` before any rule below — the window never renders the
-    ///    secret bytes, whatever representation type they carry.
-    /// 1. *Several file payloads* (multiple filename-tagged reps) show as the
-    ///    multi-file chip list (`.files`).
-    /// 2. A single *file payload* shows as the file itself — an image file as
-    ///    its image, any other file as a file chip — before any inline-content
-    ///    rule, so a copied `.rtf` file attaches as a file rather than rendering
-    ///    as rich text.
-    /// 3. Inline content: an image beats a coexisting path/URL *descriptor*
-    ///    text; then inline RTF renders styled; then plain text lands in the
-    ///    editor; then a bare image; else a summary.
-    /// A file-backed *image* payload renders its thumbnail straight from disk
-    /// (`.imageFile`, decoded via ImageIO without loading the whole file) so a
-    /// copied/streamed image file previews like an inline one; any other
-    /// file-backed payload renders as a file chip. A metadata-only
-    /// `.pendingRemote` placeholder (no resident bytes and no on-disk file) is a
-    /// chip until its bytes are pulled.
+    /// Concealed content short-circuits ahead of every other rule — the window
+    /// never renders the secret bytes, whatever representation carries them.
+    /// Then several file payloads; then a single file payload (an image file as
+    /// its image, anything else as a chip) ahead of any inline-content rule, so a
+    /// copied `.rtf` file attaches as a file rather than rendering as rich text.
     static func mode(for content: ClipboardContent) -> ClipboardPreviewMode {
         if content.isEmpty {
             return .empty
         }
-        // Confidential content is a placeholder regardless of its representation
-        // type — the window never renders the secret bytes.
         if content.isConcealed {
             return .concealed
         }

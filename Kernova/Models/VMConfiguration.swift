@@ -7,16 +7,11 @@ enum VMDisplayPreference: String, Codable, Sendable, Equatable {
     case fullscreen
 }
 
-/// Persistent configuration for a virtual machine.
+/// Persistent configuration for a virtual machine, serialized to `config.json`
+/// inside each VM bundle directory.
 ///
-/// This type is serialized to `config.json` inside each VM bundle directory.
-///
-/// > Important: This struct uses a custom `init(from:)` (see the `Codable`
-/// > section) instead of synthesized `Decodable` so newly added optional
-/// > defaults can be migrated cleanly. **Any new property must be added to
-/// > the custom `init(from:)` as well.** Optional properties decoded via
-/// > synthesized `init(from:)` would default to `nil` silently; the manual
-/// > initializer makes that decision explicit.
+/// > Important: **Any new property must be added to the custom `init(from:)`
+/// > as well.**
 struct VMConfiguration: Codable, Sendable, Equatable {
     // MARK: - Identity
 
@@ -55,19 +50,15 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// the host clipboard — removing the clipboard window's manual gate in both
     /// directions.
     ///
-    /// Host-side only (no guest cooperation, no wire change), so it drives both
-    /// transports and is hot-toggleable for either guest OS while the VM runs.
-    /// Gated on `clipboardSharingEnabled` and, because the guest gains continuous
-    /// read of whatever is copied on the host, requires explicit confirmation to
-    /// enable. Off by default for privacy. See `ClipboardPassthroughCoordinator`.
+    /// Gated on `clipboardSharingEnabled`; because the guest gains continuous
+    /// read of whatever is copied on the host, enabling it requires explicit
+    /// confirmation. Off by default.
     var clipboardPassthroughEnabled: Bool
 
     // MARK: - Serial Console
 
     /// When `true`, the running VM exposes its serial port over a host-side
     /// AF_UNIX socket so an external terminal (e.g. `socat`/`nc -U`) can attach.
-    ///
-    /// Host-only and hot-toggleable — see `VMInstance.applyLiveSerialRelayPolicy`.
     var serialSocketRelayEnabled: Bool
 
     // MARK: - Audio
@@ -81,48 +72,31 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// When `true`, guest audio is routed to the host's audio output as a virtio
     /// sound output stream.
     ///
-    /// Defaults to `true`. When both this and `audioInputEnabled` are `false`,
-    /// no virtio sound device is configured at all.
+    /// When both this and `audioInputEnabled` are `false`, no virtio sound
+    /// device is configured at all.
     var audioOutputEnabled: Bool
 
     // MARK: - Guest Agent
 
     /// When `true`, the macOS guest agent forwards `os.Logger` records to the
-    /// host over vsock so they appear in Console.app under
-    /// `app.kernova.guest`.
+    /// host over vsock so they appear in Console.app under `app.kernova.guest`.
     ///
-    /// Defaults to `false` for new and existing VMs:
-    /// log forwarding is opt-in. Linux guests have no Kernova agent and ignore
-    /// this flag.
-    ///
-    /// Hot-toggleable while the VM is running — see `VsockControlService`'s
-    /// `PolicyUpdate` delivery.
+    /// Opt-in. Linux guests have no Kernova agent and ignore this flag.
     var agentLogForwardingEnabled: Bool
 
     /// The most recent guest-reported agent version observed on this VM's
-    /// control channel (`Hello.agent_info.agent_version`). `nil` until the
+    /// control channel (`Hello.agent_info.agent_version`), or `nil` until the
     /// host has seen at least one successful Hello.
     ///
-    /// Drives two pieces of UX:
-    /// 1. Suppressing the sidebar "install agent" nudge for stopped VMs whose
-    ///    agent has previously connected.
-    /// 2. Arming the post-start watchdog (`VMInstance.startAgentPostStartWatchdog`)
-    ///    so a VM whose agent was previously installed but doesn't reconnect
-    ///    after boot surfaces a "didn't reconnect" badge instead of the
-    ///    generic install nudge.
-    ///
-    /// Persisted, never reset on stop. Updated whenever the guest reports a
-    /// new version (e.g. user-side update or downgrade inside the VM).
+    /// Persisted, never reset on stop: it suppresses the sidebar install nudge
+    /// for stopped VMs and arms the post-start watchdog.
     var lastSeenAgentVersion: String?
 
     /// When `true`, the user has explicitly dismissed the sidebar "install
     /// guest agent" nudge for this VM.
     ///
-    /// Suppresses only the gentle `.waiting`
-    /// affordance — the `.outdated`, `.unresponsive`, and `.expectedMissing`
-    /// states still surface because they imply something more urgent than
-    /// "you could install this." Defaults to `false` for new and migrated
-    /// configs.
+    /// Suppresses only the gentle `.waiting` affordance — `.outdated`,
+    /// `.unresponsive`, and `.expectedMissing` still surface.
     var agentInstallNudgeDismissed: Bool
 
     // MARK: - macOS-specific
@@ -152,12 +126,11 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     // MARK: - Storage Disks
 
-    /// Ordered list of disks attached on `vzConfig.storageDevices`.
+    /// Ordered list of disks attached on `vzConfig.storageDevices`; position [0]
+    /// boots first on EFI guests.
     ///
-    /// Position [0] boots first on EFI guests. The list includes the
-    /// bundle's primary disk (`Disk.asif`) and any user-added internal
-    /// disks or installer images. `nil` means "use defaults" — the
-    /// builder synthesizes a single main-disk entry on first load.
+    /// `nil` means "use defaults" — the builder synthesizes a single main-disk
+    /// entry on first load.
     var storageDisks: [StorageDisk]?
 
     // MARK: - Removable Media
@@ -166,8 +139,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     ///
     /// Each item's `id` is used as the `VZUSBMassStorageDeviceConfiguration.uuid`
     /// so save-state restore can match the configured item against the
-    /// saved-state device list. Mutations while the VM is running trigger
-    /// a live attach/detach reconcile in `VMLibraryViewModel`.
+    /// saved-state device list.
     var removableMedia: [RemovableMediaItem]?
 
     // MARK: - Shared Directories
@@ -178,11 +150,9 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     /// Pending macOS install plan from the creation wizard.
     ///
-    /// Non-nil ⇔ this VM has never completed its initial boot. Cleared exactly
-    /// once, after `MacOSInstallService.install(...)` returns successfully. The
-    /// presence of this field is what drives `start(_:)` to route through the
-    /// install pipeline (and the `.initialBoot` status assignment in reconcile).
-    /// Always `nil` for Linux guests.
+    /// Non-nil ⇔ this VM has never completed its initial boot: its presence
+    /// routes `start(_:)` through the install pipeline. Cleared exactly once,
+    /// after a successful install. Always `nil` for Linux guests.
     var installContext: MacOSInstallContext?
 
     // MARK: - Metadata
@@ -267,13 +237,11 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     // MARK: - Codable
 
-    // RATIONALE: Custom `init(from:)` for the non-optional fields with
-    // defaults (`clipboardPassthroughEnabled ?? false`, `audioOutputEnabled
-    // ?? true`, …): synthesized `Codable` would `decode` them and fail the
-    // whole decode when the key is absent in an older config. (Optionals are
-    // not the reason — synthesis already gives those `decodeIfPresent`.)
-    // Every new property must be added here as well, so the absent-key
-    // behavior is an explicit per-property choice.
+    // Custom `init(from:)` for the non-optional fields with defaults
+    // (`clipboardPassthroughEnabled ?? false`, `audioOutputEnabled ?? true`, …):
+    // synthesized `Codable` would `decode` them and fail the whole decode when
+    // the key is absent from a config. (Optionals are not the reason —
+    // synthesis already gives those `decodeIfPresent`.)
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(UUID.self, forKey: .id)
@@ -318,9 +286,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     // MARK: - Persistence Coding
 
     /// Decoder configured for `config.json` (ISO-8601 dates).
-    ///
-    /// The single coding configuration for reading `config.json`, so every read
-    /// site decodes identically.
     static func makeJSONDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -346,12 +311,9 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     /// Returns a new configuration suitable for a cloned VM instance.
     ///
-    /// Identity fields (`id`, `createdAt`) are regenerated. The name is derived
-    /// from the original via ``generateCloneName(baseName:existingNames:)`` to
-    /// avoid collisions. Platform identity fields (`macAddress`,
-    /// `machineIdentifierData`, `genericMachineIdentifierData`) are **not**
-    /// regenerated here — the caller must replace them with fresh VZ framework
-    /// values after cloning.
+    /// Platform identity fields (`macAddress`, `machineIdentifierData`,
+    /// `genericMachineIdentifierData`) are **not** regenerated here — the caller
+    /// must replace them with fresh VZ framework values after cloning.
     func clonedForNewInstance(existingNames: [String]) -> VMConfiguration {
         var clone = self
         clone.id = UUID()
@@ -360,11 +322,9 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         clone.displayPreference = .inline
         clone.lastFullscreenDisplayID = nil
 
-        // Regenerate storage disk IDs so virtio block device identifiers
-        // and USB UUIDs don't collide with the source bundle. Internal
-        // disk paths are updated by the caller after copying files.
-        // Bookmarks carry through: the clone references the same external
-        // files, so the same access grants remain valid.
+        // Regenerate IDs so virtio block device identifiers and USB UUIDs don't
+        // collide with the source bundle. Bookmarks carry through — the clone
+        // references the same external files.
         clone.storageDisks = storageDisks?.map { disk in
             StorageDisk(
                 id: UUID(),
@@ -394,16 +354,13 @@ struct VMConfiguration: Codable, Sendable, Equatable {
             SharedDirectory(id: UUID(), path: dir.path, readOnly: dir.readOnly, bookmark: dir.bookmark)
         }
 
-        // Clones copy the source bundle's post-install artifacts (HardwareModel,
-        // MachineIdentifier, Disk.asif contents) so they're already installed.
-        // Preserving installContext would falsely mark the clone as awaiting
-        // an initial boot.
+        // The clone copies the source bundle's post-install artifacts, so
+        // preserving installContext would falsely mark it as awaiting an
+        // initial boot.
         clone.installContext = nil
 
-        // A clone is a distinct VM whose own guest-agent state the user hasn't
-        // evaluated yet, so let the sidebar install nudge surface again rather
-        // than inheriting the source VM's dismissal. (Contrast lastSeenAgentVersion,
-        // preserved deliberately because the agent binary is copied with the disk.)
+        // A clone's guest-agent state hasn't been evaluated by the user, so let
+        // the install nudge surface again rather than inheriting the dismissal.
         clone.agentInstallNudgeDismissed = false
 
         return clone
@@ -424,16 +381,9 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     /// Fields the user may edit while the VM is running.
     ///
-    /// Changes to these
-    /// bypass the `VMSettingsView` read-only settings lock so the user can
-    /// flip them mid-session.
-    ///
-    /// Most also affect runtime guest behavior and are pushed to the live
-    /// guest agent via `PolicyUpdate` on the vsock control channel — but the
-    /// `applyLivePolicy` handler checks each such field directly rather than
-    /// iterating this list, so a host-only UI preference like
-    /// `agentInstallNudgeDismissed` (which suppresses a sidebar nudge but
-    /// has no guest-side effect) is safe to include.
+    /// Changes to these bypass the read-only settings lock. Entries need not
+    /// have a guest-side effect — `applyLivePolicy` checks the fields it pushes
+    /// to the guest directly rather than iterating this list.
     static let hotToggleFields: [KeyPath<VMConfiguration, Bool> & Sendable] = [
         \.agentLogForwardingEnabled,
         \.clipboardSharingEnabled,
@@ -444,10 +394,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     /// Returns `true` if any field that is editable while the VM is running
     /// differs between `old` and `new`.
-    ///
-    /// Combines the `Bool`-typed `hotToggleFields` with the removable
-    /// media list (which is not `Bool` and therefore can't fit in the
-    /// typed key-path array).
     static func liveEditableFieldsChanged(
         old: VMConfiguration,
         new: VMConfiguration
@@ -458,11 +404,6 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         return removableMediaChanged(old: old, new: new)
     }
 
-    /// Returns `true` if the removable media list differs between `old`
-    /// and `new`.
-    ///
-    /// Compares the lists by value; the reconcile flow does the per-item
-    /// diff to determine which entries need attach / detach / reattach.
     static func removableMediaChanged(old: VMConfiguration, new: VMConfiguration) -> Bool {
         (old.removableMedia ?? []) != (new.removableMedia ?? [])
     }

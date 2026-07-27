@@ -1,6 +1,6 @@
 import AppKit
 
-/// Display-layer properties that distinguish preparing, cold-paused ("Suspended"), and live-paused ("Paused") states.
+/// Display-layer properties derived from a VM's status.
 extension VMInstance {
     /// Display name that distinguishes preparing, cold-paused ("Suspended"), and live-paused ("Paused").
     var statusDisplayName: String {
@@ -8,7 +8,7 @@ extension VMInstance {
         return isColdPaused ? "Suspended" : status.displayName
     }
 
-    /// Color used to tint the pure-AppKit sidebar's OS icon.
+    /// Color used to tint the sidebar's OS icon.
     ///
     /// Preparing and cold-paused are orange, live-paused is yellow, and the
     /// remaining states follow `status`.
@@ -35,10 +35,8 @@ extension VMInstance {
             : "VM is paused in memory"
     }
 
-    /// The flavor of the Start control for this VM, shared by the menu bar, sidebar
-    /// context menu, and toolbar so every surface labels the action identically:
-    /// install-flavored when a macOS install is pending, reflecting what Start
-    /// will actually do.
+    /// The flavor of the Start control for this VM: install-flavored when a macOS
+    /// install is pending, reflecting what Start will actually do.
     enum StartAction {
         case start
         case install
@@ -59,11 +57,11 @@ extension VMInstance {
         return hasResumableInstallDownload ? .resumeInstall : .install
     }
 
-    /// Menu item title for the stop slot, shared by the menu bar and sidebar context menu.
+    /// Menu item title for the stop slot.
     ///
     /// A cold-paused VM has no live `VZVirtualMachine` to stop gracefully — the
     /// action discards the on-disk saved state instead, and the title names that
-    /// consequence (with an ellipsis: the discard variant always confirms first).
+    /// consequence; the ellipsis is there because the discard variant confirms.
     var stopActionMenuTitle: String {
         isColdPaused ? "Discard Saved State…" : "Stop"
     }
@@ -78,9 +76,8 @@ extension VMInstance {
     /// `.kernovadownload` bundle still holding partial bytes at the chosen path,
     /// and no completed IPSW yet at the same path.
     ///
-    /// Drives the "Resume Install" label variant. The bytes check (`isResumable`
-    /// rather than `exists`) keeps a husk left by a failed disposal from
-    /// labelling a from-scratch download as a resume.
+    /// The bytes check (`isResumable` rather than `exists`) keeps a husk left by a
+    /// failed disposal from labelling a from-scratch download as a resume.
     var hasResumableInstallDownload: Bool {
         guard let context = configuration.installContext,
             context.source == .downloadLatest,

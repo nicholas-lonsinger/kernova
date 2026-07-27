@@ -1,16 +1,12 @@
 import AppKit
 
 /// `NSTextView` for the clipboard editor that diverts file / image / file-promise
-/// drags to the owning controller instead of inserting the dragged file's path
-/// as text.
+/// drags to the owning controller.
 ///
-/// An editable `NSTextView` is itself a drag destination: dropping a file or a
-/// screenshot onto it inserts the file's URL/path *as text*, which silently
-/// bypasses the window's image-aware drop intake (`handleDrop`) entirely — the
-/// text view consumes the drag before the surrounding container ever sees it.
-/// These overrides hand such drags to `onDivertedDrop` (the same path as a drop
-/// on the container) while leaving plain-text/RTF/HTML drags — and the user
-/// rearranging text within this editor — to the standard text-view behavior.
+/// An editable `NSTextView` is itself a drag destination and consumes the drag
+/// before the surrounding container sees it, inserting the file's URL/path *as
+/// text*. These overrides hand such drags to `onDivertedDrop`, leaving text
+/// drags — and text rearranged within this editor — to the standard behavior.
 @MainActor
 final class ClipboardEditorTextView: NSTextView {
     /// Handles a diverted file/image/promise drop; returns `true` when taken.

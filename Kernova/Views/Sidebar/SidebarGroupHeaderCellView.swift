@@ -2,11 +2,8 @@ import AppKit
 
 /// Group-row cell for a sidebar section header (e.g. "Virtual Machines").
 ///
-/// `NSOutlineView` in `.sourceList` style draws the group-row background and
-/// the hover disclosure control; this cell only supplies the title label,
-/// styled to match the standard Finder-style source-list header. Assigning
-/// the label to ``NSTableCellView/textField`` lets the row view treat it as
-/// the cell's primary text.
+/// `NSOutlineView` in `.sourceList` style draws the group-row background and the
+/// hover disclosure control; this cell only supplies the title label.
 @MainActor
 final class SidebarGroupHeaderCellView: NSTableCellView {
     private let label = NSTextField(labelWithString: "")

@@ -110,9 +110,10 @@ if [[ "${choice}" =~ ^[Yy]$ ]]; then
     # the deleted bundle.
     stop_file_provider
 
-    # RATIONALE: rm is used instead of trash because this runs inside a guest VM
-    # where the trash CLI is not a standard macOS utility, and Finder-based trash
-    # (osascript) requires a GUI session that may not be available in headless VMs.
+    # RATIONALE: rm, not trash — the same exception Tools/ghosts.sh's
+    # evict_dd_arena takes. A trashed app bundle is still a valid on-disk copy
+    # that Launch Services can rediscover and re-elect until the Trash is
+    # emptied, so trashing the agent would leave the uninstall incomplete.
     rm -rf "${INSTALL_DIR:?}/${APP_NAME}"
     # Also remove the pre-rename app bundle name if a stale copy lingers, and
     # any staging/backup leftovers from an interrupted install.

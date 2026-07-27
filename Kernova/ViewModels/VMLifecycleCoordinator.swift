@@ -3,20 +3,12 @@ import os
 
 /// Coordinates VM lifecycle operations and macOS installation.
 ///
-/// Groups all state-changing VM operations into a single type, keeping
-/// `VMLibraryViewModel` focused on list management and UI state.
 /// All methods re-throw errors — the caller is responsible for presentation.
 ///
-/// **Operation serialization:** Each VM can have at most one in-flight lifecycle
-/// operation at a time. Concurrent requests for the same VM are rejected with
-/// ``LifecycleError/operationInProgress``. A token-based `[UUID: UUID]` dictionary
-/// maps each VM to its current operation token. Since the coordinator is `@MainActor`,
-/// no locks are required.
-///
-/// **Interruption-aware:** `stop` and `forceStop` bypass serialization entirely —
-/// they clear the active-operation token *before* calling the underlying service.
-/// This invalidates any in-flight operation's token so its `defer` cleanup won't
-/// clobber a subsequent operation's entry.
+/// Each VM can have at most one in-flight lifecycle operation at a time;
+/// concurrent requests for the same VM are rejected with
+/// ``LifecycleError/operationInProgress``. `stop` and `forceStop` bypass that
+/// serialization entirely, so a hung operation can always be interrupted.
 @MainActor
 final class VMLifecycleCoordinator {
     private static let logger = Logger(subsystem: "app.kernova", category: "VMLifecycleCoordinator")
@@ -30,9 +22,7 @@ final class VMLifecycleCoordinator {
     /// The directory IPSW downloads must land in — the one location the
     /// sandbox's downloads entitlement covers.
     ///
-    /// Injectable so tests can point
-    /// the destination invariant at a temp directory; `nil` (no system
-    /// Downloads folder — not expected in practice) disables normalization.
+    /// `nil` disables normalization.
     private let downloadsDirectory: URL?
 
     /// Maps VM ID → operation token for VMs that currently have a lifecycle operation in flight.
@@ -73,7 +63,6 @@ final class VMLifecycleCoordinator {
 
     // MARK: - Operation Serialization
 
-    /// Returns `true` if the given VM currently has a lifecycle operation in progress.
     func hasActiveOperation(for instanceID: UUID) -> Bool {
         activeOperations[instanceID] != nil
     }
@@ -87,9 +76,9 @@ final class VMLifecycleCoordinator {
 
     /// Executes `body` only if no other operation is already in flight for this VM.
     ///
-    /// Generates a unique token per invocation. The `defer` block only removes the
-    /// entry if its token still matches, preventing a stale removal from clobbering
-    /// a token written by `stop`/`forceStop` or a subsequent operation.
+    /// The `defer` removes the entry only if its token still matches, so a stale
+    /// removal cannot clobber a token written by `stop`/`forceStop` or by a
+    /// subsequent operation.
     private func serialized<T>(
         _ instance: VMInstance,
         action: String,
@@ -125,10 +114,9 @@ final class VMLifecycleCoordinator {
 
     /// Requests a graceful stop.
     ///
-    /// Bypasses serialization so users can always
-    /// interrupt an in-progress operation (e.g. a hung start). Clears the
-    /// active-operation token *before* calling the service, invalidating any
-    /// in-flight operation's defer guard.
+    /// Bypasses serialization so users can always interrupt an in-progress
+    /// operation, clearing the active-operation token *before* calling the
+    /// service to invalidate any in-flight operation's defer guard.
     func stop(_ instance: VMInstance) throws {
         activeOperations.removeValue(forKey: instance.id)
         try virtualizationService.stop(instance)
@@ -136,10 +124,9 @@ final class VMLifecycleCoordinator {
 
     /// Immediately terminates the VM.
     ///
-    /// Bypasses serialization so users can
-    /// always force-kill, even during another in-flight operation. Clears the
-    /// active-operation token *before* calling the service, invalidating any
-    /// in-flight operation's defer guard.
+    /// Bypasses serialization so users can always force-kill, even during
+    /// another in-flight operation, clearing the active-operation token *before*
+    /// calling the service to invalidate that operation's defer guard.
     func forceStop(_ instance: VMInstance) async throws {
         activeOperations.removeValue(forKey: instance.id)
         try await virtualizationService.forceStop(instance)
@@ -165,15 +152,13 @@ final class VMLifecycleCoordinator {
 
     // MARK: - macOS Installation
 
-    /// The effective IPSW download destination for a persisted path:
-    /// the path itself when it lives in `downloadsDirectory`, the wizard
-    /// default otherwise.
+    /// The effective IPSW download destination for a persisted path: the path
+    /// itself when it lives in `downloadsDirectory`, the wizard default otherwise.
     ///
-    /// Downloads is the only destination the app supports (the sandbox
-    /// entitlement covers it, resume sidecar included, with no per-pick
-    /// grant). Comparison is symlink-resolved because the sandbox
-    /// container's `Downloads` and the real `~/Downloads` are the same
-    /// directory spelled two ways.
+    /// Downloads is the only destination the app supports — the sandbox
+    /// entitlement covers it, resume sidecar included, with no per-pick grant.
+    /// Comparison is symlink-resolved because the sandbox container's `Downloads`
+    /// and the real `~/Downloads` are the same directory spelled two ways.
     func normalizedDownloadDestination(for persisted: URL) -> URL {
         guard let downloads = downloadsDirectory else { return persisted }
         let persistedParent = persisted.deletingLastPathComponent()
@@ -195,12 +180,10 @@ final class VMLifecycleCoordinator {
             do {
                 let ipswURL: URL
 
-                // Live for the install's duration when the local IPSW
-                // carries a security bookmark (the context survives app
-                // relaunches, so the wizard's panel grant is long gone);
-                // released on every exit path by the defer. The download
-                // path needs no scope — its destination is
-                // entitlement-covered Downloads.
+                // Live for the install's duration when the local IPSW carries a
+                // security bookmark — the context survives app relaunches, so the
+                // wizard's panel grant is long gone. The download path needs no
+                // scope; its destination is entitlement-covered Downloads.
                 var localIPSWScope: ScopedAccess?
                 defer { localIPSWScope?.release() }
 
@@ -209,16 +192,9 @@ final class VMLifecycleCoordinator {
                     guard let persistedDestination = context.downloadDestinationURL else {
                         throw IPSWError.noDownloadURL
                     }
-                    // The app only supports downloading into the Downloads
-                    // folder — the one location the sandbox's entitlement
-                    // covers together with the resume sidecar. A persisted
-                    // destination anywhere else (a pre-sandbox config's
-                    // custom pick, or a hand-edited config.json) can never
-                    // be written, and no picker exists to re-point it, so
-                    // enforce the invariant at use time by falling back to
-                    // the default. Symlink-resolved comparison because the
-                    // container's Downloads path and the real ~/Downloads
-                    // are the same folder spelled two ways.
+                    // A persisted destination outside Downloads (a hand-edited
+                    // config.json) can never be written and has no picker to
+                    // re-point it, so the invariant is enforced at use time.
                     let downloadDestination = normalizedDownloadDestination(
                         for: persistedDestination)
                     if downloadDestination != persistedDestination {
@@ -227,27 +203,17 @@ final class VMLifecycleCoordinator {
                         )
                     }
 
-                    // Honor "Download & Replace" intent ONCE: trash the
-                    // existing IPSW file plus any in-progress download bundle
-                    // sitting next to it, then clear the flag through the
-                    // persistence pipeline so retries after a partial-install
-                    // failure reuse the freshly-downloaded file instead of
-                    // re-trashing and re-downloading. Trash (not unlink) so
-                    // the user can recover from Trash, matching the policy
-                    // already established for VM-delete cleanup.
-                    //
-                    // Trash failure is a hard error: if we can't remove the
-                    // stale file, the skip-existing fast path inside
-                    // `downloadRestoreImage` would silently use it — the very
-                    // bug the fresh-download flag was added to close. Surface
-                    // the failure to the user via `errorMessage` so they can
-                    // resolve the permission / volume issue.
+                    // Honor "Download & Replace" intent ONCE: trash the existing
+                    // IPSW plus any in-progress download bundle beside it, then
+                    // clear the flag so a retry after a partial-install failure
+                    // reuses the freshly-downloaded file. Trash failure is a hard
+                    // error — the skip-existing fast path inside
+                    // `downloadRestoreImage` would otherwise silently reuse the
+                    // stale file.
                     if context.requestedFreshDownload {
-                        // Guard against pointing the trash at something that
-                        // isn't an IPSW — `downloadDestinationPath` survives
-                        // through `config.json` on disk, so a bug or stray
-                        // edit could otherwise have us trashing an arbitrary
-                        // file. We only ever expect `.ipsw` here.
+                        // `downloadDestinationPath` survives through `config.json`
+                        // on disk, so a stray edit could otherwise have us
+                        // trashing an arbitrary file.
                         guard downloadDestination.pathExtension.lowercased() == "ipsw" else {
                             Self.logger.error(
                                 "installMacOS: refusing to honor requestedFreshDownload for non-IPSW destination '\(downloadDestination.path(percentEncoded: false), privacy: .public)'"
@@ -273,22 +239,20 @@ final class VMLifecycleCoordinator {
                                 )
                             }
                         }
-                        // Fresh-download cleanup is recoverable on purpose: trash the
-                        // stale partial so the user can restore it if needed.
+                        // Recoverable on purpose: the stale partial goes to the
+                        // Trash so the user can restore it.
                         ipswService.discardResumeData(at: downloadDestination, permanently: false)
                         instance.performConfigurationMutation {
                             $0.installContext?.requestedFreshDownload = false
                         }
                     }
 
-                    // Set up two-step install state before changing status
                     instance.installState = MacOSInstallState(
                         hasDownloadStep: true,
                         currentPhase: .downloading(.zero)
                     )
                     instance.status = .installing
 
-                    // Download the latest IPSW to user-chosen location
                     let remoteURL = try await ipswService.fetchLatestRestoreImageURL()
                     try await ipswService.downloadRestoreImage(
                         from: remoteURL,
@@ -297,7 +261,6 @@ final class VMLifecycleCoordinator {
                         instance.installState?.currentPhase = .downloading(progress)
                     }
 
-                    // Mark download complete, transition to install phase
                     instance.installState?.downloadCompleted = true
                     instance.installState?.currentPhase = .installing(progress: 0)
                     ipswURL = downloadDestination
@@ -309,12 +272,11 @@ final class VMLifecycleCoordinator {
                     localIPSWScope = context.localIPSWBookmark.flatMap {
                         ScopedAccess(bookmark: $0)
                     }
-                    // Prefer the bookmark's resolved URL — it tracks the
-                    // file if it moved since the wizard pick.
+                    // Prefer the bookmark's resolved URL — it tracks the file if
+                    // it moved since the wizard pick.
                     ipswURL = localIPSWScope?.url ?? localURL
-                    // Heal a stale bookmark like every other bookmarked
-                    // field (the context survives relaunches until the
-                    // install succeeds, so it can go stale between retries).
+                    // The context survives relaunches until the install succeeds,
+                    // so its bookmark can go stale between retries.
                     if let scope = localIPSWScope, scope.isStale,
                         let fresh = SecurityScopedBookmark.make(for: scope.url)
                     {
@@ -323,7 +285,6 @@ final class VMLifecycleCoordinator {
                         }
                     }
 
-                    // Local file: single-step install (no download)
                     instance.installState = MacOSInstallState(
                         hasDownloadStep: false,
                         currentPhase: .installing(progress: 0)
@@ -331,7 +292,6 @@ final class VMLifecycleCoordinator {
                     instance.status = .installing
                 }
 
-                // Run macOS installation
                 try await installService.install(
                     into: instance,
                     restoreImageURL: ipswURL
@@ -339,10 +299,8 @@ final class VMLifecycleCoordinator {
                     instance.installState?.currentPhase = .installing(progress: progress)
                 }
 
-                // Success: clear the persisted install intent through the
-                // configuration dispatcher so config.json is written. Subsequent
-                // Starts will see installContext == nil and go down the normal
-                // boot path. Also clear installState so the install progress UI
+                // Clear the persisted install intent so subsequent Starts take the
+                // normal boot path, and clear `installState` so the progress UI
                 // tears down before the caller chains an auto-boot.
                 instance.performConfigurationMutation { $0.installContext = nil }
                 instance.installState = nil
@@ -360,30 +318,19 @@ final class VMLifecycleCoordinator {
                 instance.errorMessage = error.localizedDescription
                 throw error
             }
-            // installTask lifecycle is owned by the caller (installAndAutoBoot);
-            // the coordinator just runs the install pipeline.
         }
     }
 
     // MARK: - USB Device Management
 
-    /// Attaches a USB mass storage device to a running VM and appends it
-    /// to `instance.liveRemovableMedia`.
-    ///
-    /// Does not use the lifecycle operation token — USB operations are
-    /// short and independent of start/stop/save lifecycle transitions.
+    /// Attaches a USB mass storage device to a running VM and appends it to
+    /// `instance.liveRemovableMedia`.
     ///
     /// `desiredUUID` overrides the framework-generated
-    /// `VZUSBDeviceConfiguration.uuid` so the runtime device matches the
-    /// caller's persisted identity (e.g. `RemovableMediaItem.id`),
-    /// which is required for save-state restore matching.
-    ///
-    /// `resolvedURL`, when supplied, is the security bookmark's live
-    /// location and is what actually gets attached — a bookmark tracks a
-    /// moved file where the stored path goes stale. The *tracked* identity
-    /// (`USBDeviceInfo.path`, compared against config entries by the live
-    /// reconcile) stays `diskImagePath`, so a heal-at-boot remains the one
-    /// place stored paths change.
+    /// `VZUSBDeviceConfiguration.uuid` so the runtime device matches the caller's
+    /// persisted identity, which save-state restore matches on. `resolvedURL`,
+    /// when supplied, is what actually gets attached, while the *tracked* identity
+    /// stays `diskImagePath`.
     func attachUSBDevice(
         diskImagePath: String,
         readOnly: Bool,
@@ -404,8 +351,6 @@ final class VMLifecycleCoordinator {
         return tracked
     }
 
-    /// Detaches a USB mass storage device from a running VM and removes
-    /// it from `instance.liveRemovableMedia`.
     func detachUSBDevice(_ deviceInfo: USBDeviceInfo, from instance: VMInstance) async throws {
         try await usbDeviceService.detach(deviceInfo: deviceInfo, from: instance)
         instance.liveRemovableMedia.removeAll { $0.id == deviceInfo.id }

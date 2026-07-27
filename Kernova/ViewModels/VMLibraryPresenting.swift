@@ -15,11 +15,8 @@ enum GuestAgentInstallerPurpose: Equatable {
 /// where removing that attachment (detach only — the file is untouched) is a
 /// valid way to get the VM running again.
 ///
-/// Built by `VMLibraryViewModel` from `ConfigurationBuilderError`'s attach
-/// failures; never built for the disk the guest boots from (a VM can't
-/// meaningfully start without it). All attachment kinds are treated
-/// uniformly — a stale guest-agent installer entry, a moved ISO, and an
-/// external disk with a dead bookmark all surface the same offer.
+/// Never built for the disk the guest boots from — a VM can't meaningfully
+/// start without it.
 struct StartFailedAttachment: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
         case storageDisk
@@ -37,12 +34,6 @@ struct StartFailedAttachment: Equatable, Sendable {
 
 /// Imperative presentation interface the view model calls to surface alerts,
 /// sheets, and the creation wizard.
-///
-/// Replaces the former observed `show*` boolean flags on `VMLibraryViewModel`.
-/// Instead of flipping observable state and having a presenter react to it, the
-/// view model calls these methods directly. `DetailContainerViewController` (the
-/// always-present window owner) implements them — forwarding alerts and the
-/// delete sheet to `DetailAlertsPresenter` and owning the wizard sheet itself.
 @MainActor
 protocol VMLibraryPresenting: AnyObject {
     /// Show a generic error alert with `message`.
@@ -50,11 +41,9 @@ protocol VMLibraryPresenting: AnyObject {
     /// Show the start-failed alert for an attachment that couldn't be opened,
     /// offering to remove it from the configuration and start again.
     func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance)
-    /// Show the unified delete sheet: the VM's in-bundle disks (removed with
-    /// the VM) plus any external files, each individually selectable for
-    /// deletion. Used for every delete. `permanently` selects the immediate
-    /// (bypass-Trash) variant, which the sheet reflects in its wording and
-    /// confirm button.
+    /// Show the unified delete sheet: the VM's in-bundle disks plus any external
+    /// files, each individually selectable for deletion. `permanently` selects
+    /// the immediate (bypass-Trash) variant.
     func presentDeleteSheet(for instance: VMInstance, permanently: Bool)
     /// Show the force-stop / discard-saved-state confirmation.
     func presentForceStop(for instance: VMInstance)

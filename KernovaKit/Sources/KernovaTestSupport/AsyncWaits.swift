@@ -1,44 +1,18 @@
 import Foundation
 
-// Shared event-driven/poll wait primitives for the three test bundles
-// (KernovaTests, KernovaMacOSAgentTests, KernovaKitTests). Formerly
-// triplicated — each bundle carried its own copy because Xcode 16
-// synchronized folders make each bundle's own files target-private — and had
-// already drifted once (#526). `KernovaTestSupport` is a plain Foundation
-// SwiftPM product all three test targets depend on, so there is now exactly
-// one copy.
-//
-// `AsyncGate.wait`/`waitUntil` take the caller's isolation via `#isolation`,
-// so the same implementation serves both `@MainActor` callers (predicates
-// reading MainActor-isolated state, e.g. KernovaTests) and nonisolated
-// callers (predicates reading `Sendable` boxes, e.g. the GuestAgent/
-// KernovaKit bundles) without forking the type. `waitForChange` — the one
-// genuinely KernovaTests-only helper, built on `withObservationTracking`
-// over `@MainActor` `@Observable` production state — stays local to
-// `KernovaTests/TestHelpers.swift`; it was never one of the triplicated
-// copies.
-
 // MARK: - testWaitBackstop
 
 /// Default stuck-condition backstop for every test wait helper.
 ///
-/// Sized past any plausible CI scheduler stall (starved macos-26 runners have
-/// defeated 5 s and 10 s backstops). The happy path resolves via
-/// `notify()`/observation and never reaches this deadline, so the generous
-/// value costs nothing on a green run — it only delays the failure report for
-/// a genuinely stuck condition. Success-path waits should not pass a smaller
-/// explicit timeout; explicit values are for behavior-under-test deadlines
-/// only. See docs/TESTING.md "Async waits in tests".
+/// Sized past any plausible CI scheduler stall — starved macos-26 runners have
+/// defeated 5 s and 10 s backstops. Success-path waits must not pass a smaller
+/// explicit timeout; explicit values are for behavior-under-test deadlines only
+/// (docs/TESTING.md, "Async waits in tests").
 public let testWaitBackstop: Duration = .seconds(60)
 
 // MARK: - TestFailure
 
 /// A test failure with a diagnostic message, thrown by the wait helpers below.
-///
-/// Shared by all three test bundles. `KernovaKitTests`'s `pollUntil` and
-/// stream helpers keep their own `StreamTestFailure` (see
-/// `StreamTestSupport.swift`) — that type is package-specific and was never
-/// one of the triplicated copies this module consolidates.
 public struct TestFailure: Error, CustomStringConvertible {
     /// The diagnostic text describing what condition was not met.
     public let message: String
@@ -53,8 +27,9 @@ public struct TestFailure: Error, CustomStringConvertible {
 // MARK: - ResumeOnce
 
 /// Resumes its continuation at most once, regardless of how many racing paths
-/// (a `notify()` and the timeout backstop) try to fire it. `CheckedContinuation`
-/// traps on a second resume, so this guard makes the race safe.
+/// (a `notify()` and the timeout backstop) try to fire it.
+///
+/// `CheckedContinuation` traps on a second resume.
 public final class ResumeOnce: @unchecked Sendable {
     private let lock = NSLock()
     private var fired = false
@@ -78,14 +53,8 @@ public final class ResumeOnce: @unchecked Sendable {
 ///
 /// A producer calls `notify()` after each observable state change; the consumer
 /// awaits `wait(until:)`, which suspends until the predicate holds — re-checked
-/// on every `notify()` — or throws `TestFailure` after `timeout`.
-///
-/// Unlike a poll loop, an idle waiter adds **zero** wake-ups to the shared (and,
-/// on CI, contended) executor, and `timeout` is a stuck-condition backstop the
-/// happy path never reaches rather than the success deadline — so a slow runner
-/// no longer fails the wait, only a genuinely stuck condition does. This is the
-/// fix for the timing-sensitive flakes documented in the flaky-CI investigation
-/// (see docs/TESTING.md's "Async waits in tests").
+/// on every `notify()` — or throws `TestFailure` after `timeout`, a
+/// stuck-condition backstop the happy path never reaches.
 public final class AsyncGate: @unchecked Sendable {
     private let lock = NSLock()
     private var waiters: [UUID: () -> Void] = [:]
@@ -121,24 +90,16 @@ public final class AsyncGate: @unchecked Sendable {
     /// Suspends until the next `notify()`, an immediate hit (the predicate
     /// already holds at arm time, closing the arm-vs-notify race), or the
     /// `deadline` backstop — whichever comes first.
-    ///
-    /// `isolation` is forwarded from `wait` rather than re-derived via
-    /// `#isolation`, so the synchronous body below — which calls `predicate()`
-    /// — runs on the same actor as the original caller with no hop. The
-    /// backstop `Task` touches only `Sendable` state (never `predicate`), so
-    /// it needs no isolation of its own.
     // `isolation` uses the Swift `isolated` keyword to pin this helper to the
-    // caller's actor (forwarded from `wait`, see above), so it is intentionally
-    // never referenced by name. Periphery reports it as an unused parameter.
+    // caller's actor, so it is intentionally never referenced by name.
     // periphery:ignore:parameters isolation
     private func armOnce(
         deadline: ContinuousClock.Instant,
         isolation: isolated (any Actor)?,
         predicate: () -> Bool
     ) async {
-        // Captured so it can be cancelled once `notify()` (or the immediate-hit
-        // re-check) resolves the wait; otherwise every happy-path arm would leak
-        // a Task sleeping until `deadline`.
+        // Cancelled once the wait resolves, so a happy-path arm doesn't leak a
+        // Task sleeping until `deadline`.
         var backstop: Task<Void, Never>?
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             let id = UUID()
@@ -146,9 +107,8 @@ public final class AsyncGate: @unchecked Sendable {
             lock.lock()
             waiters[id] = { once.fire { cont.resume() } }
             lock.unlock()
-            // Close the arm-vs-notify race: if the state already satisfies the
-            // predicate (a notify may have landed before we registered), resume
-            // now so the outer loop re-checks promptly instead of blocking.
+            // Close the arm-vs-notify race: a notify may have landed before we
+            // registered, so re-check now instead of blocking.
             if predicate() {
                 lock.lock()
                 waiters.removeValue(forKey: id)
@@ -156,16 +116,14 @@ public final class AsyncGate: @unchecked Sendable {
                 once.fire { cont.resume() }
                 return
             }
-            // Backstop: resume at the deadline even if no notify arrives, so a
-            // genuinely stuck condition fails the wait instead of hanging.
+            // Resume at the deadline even if no notify arrives, so a stuck
+            // condition fails the wait instead of hanging.
             backstop = Task {
                 try? await Task.sleep(until: deadline, clock: ContinuousClock())
                 self.lock.withLock { self.waiters[id] = nil }
                 once.fire { cont.resume() }
             }
         }
-        // Resolved via notify() or the immediate hit; cancel the backstop so it
-        // doesn't linger asleep until `deadline`.
         backstop?.cancel()
     }
 }
@@ -173,16 +131,12 @@ public final class AsyncGate: @unchecked Sendable {
 // MARK: - waitUntil
 
 // `isolation` uses the Swift `isolated` keyword to inherit the caller's actor
-// isolation so the synchronous `predicate()` calls need no hop; it is
-// intentionally never referenced by name. Periphery reports it as unused.
+// isolation, so it is intentionally never referenced by name.
 // periphery:ignore:parameters isolation
 /// Polls `predicate` every 50 ms until it returns `true` or `timeout` elapses.
 ///
-/// Unlike the event-driven helpers, the deadline here *is* the pass/fail
-/// criterion, so the generous `testWaitBackstop` default matters even more.
-/// See docs/TESTING.md's "Async waits in tests" — prefer the event-driven
-/// `AsyncGate` above for new timing-sensitive waits; polling is retained for
-/// predicates with no underlying signal to await.
+/// The deadline here *is* the pass/fail criterion — prefer `AsyncGate` for a new
+/// timing-sensitive wait; polling is for predicates with no signal to await.
 public func waitUntil(
     timeout: Duration = testWaitBackstop,
     isolation: isolated (any Actor)? = #isolation,
@@ -200,25 +154,16 @@ public func waitUntil(
 // MARK: - offCooperativePool
 
 /// Runs a **synchronous, blocking** bridge call on a GCD global-queue thread,
-/// mirroring production's callers (the File Provider relay's XPC queue, the
-/// pasteboard's `provideData` callback, the guest agent's `fetchStagedFile`).
+/// mirroring production's callers.
 ///
-/// RATIONALE: never wrap these in `Task.detached`. Such a call parks its thread
-/// until the transfer resolves; on the cooperative pool that pins one of its few
-/// threads (CI runners have 3-4). Enough parked pulls exhaust the pool, the
-/// tasks the transfer's reply depends on (the test driving the host response, a
-/// blocked `@MainActor` responder) starve, and the bundle freezes until the
-/// shortest injected timeout fires — the 2026-07-19 CI mass failures (#608), and
-/// again #618 for the guest bundle, whose inbound-pull tests starved behind the
-/// File-Provider-relay `fetchStagedFile` pulls' parked cooperative threads. GCD
-/// global queues overcommit, so a parked pull costs a kernel thread, never a
-/// cooperative slot. Shared by every test bundle (formerly KernovaTests-only);
-/// see docs/TESTING.md "Blocking bridge calls run on GCD".
-///
-/// The queue is `.userInitiated` to match the paste that drives these bridges in
-/// production: a `.default` thread is scheduled behind the very CPU saturation
-/// that makes the pool exhaust in the first place, which would slow the pulls
-/// whose wall-clock bounds several of these tests assert.
+/// RATIONALE: a blocking bridge call parks its thread until the transfer
+/// resolves, so it belongs on a GCD global queue — those overcommit, and a
+/// parked pull there costs a kernel thread rather than one of the cooperative
+/// pool's 3-4 CI threads. Parked on the cooperative pool instead, enough pulls
+/// exhaust it, the tasks the reply depends on starve, and the bundle freezes
+/// until the shortest injected timeout fires — the 2026-07-19 CI mass failures
+/// (#608), #618 for the guest bundle. See docs/TESTING.md "Blocking bridge calls
+/// run on GCD".
 public func offCooperativePool<T: Sendable>(
     _ body: @escaping @Sendable () -> T
 ) async -> T {

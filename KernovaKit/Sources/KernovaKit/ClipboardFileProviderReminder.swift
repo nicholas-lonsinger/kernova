@@ -1,27 +1,19 @@
 import Foundation
 
-/// Decision + copy for the File Provider status-item badge (#581) and its
-/// `.unavailable` counterpart (#591).
+/// Decision + copy for the File Provider status-item badge.
 ///
-/// Shared by the host app (`HostAgentStatusItemController`) and the guest
-/// agent (`AgentStatusItemController`) so the badge-visibility rules live in
-/// one place; each side supplies its own direction-specific summaries, since
-/// the toggle-off (and unavailable) fallback differs between the two
-/// directions (see the per-method docs). Free of AppKit so it's unit-testable
-/// without a status item — the same pure-mapper convention as `AgentMenuText`
-/// and `MicPermissionPresentation`.
+/// Shared by the host app and the guest agent so the badge-visibility rules
+/// live in one place; each side supplies its own direction-specific summaries,
+/// since the toggle-off and unavailable fallbacks differ between the two.
 public enum ClipboardFileProviderReminder {
     /// Whether the menu's dismissible "Stop Reminding Me" command applies to
     /// the current availability.
     ///
     /// Only `.needsEnabling` — a registered domain the user hasn't flipped the
-    /// System-Settings toggle for — is a routine, silenceable nudge (every
-    /// fresh install hits it, since the toggle defaults off); `.inactive`
-    /// (clipboard sharing off), `.ready`, and `.unavailable` never offer this
-    /// command. `dismissed` silences the current `.needsEnabling` episode —
-    /// see `dismissalAfterAvailabilityChange` for when the owner should clear
-    /// it. For whether the status-item badge itself should show, see
-    /// `shouldShowBadge` — `.unavailable` badges too, but isn't dismissible.
+    /// System-Settings toggle for — is a routine, silenceable nudge, and every
+    /// fresh install hits it because the toggle defaults off. `dismissed`
+    /// silences the current episode; `dismissalAfterAvailabilityChange` says
+    /// when the owner clears it.
     public static func shouldShowReminder(
         availability: FileProviderAvailability, dismissed: Bool
     ) -> Bool {
@@ -31,13 +23,9 @@ public enum ClipboardFileProviderReminder {
     /// Whether the proactive status-item badge (and tooltip) should currently
     /// show.
     ///
-    /// `.needsEnabling` is the routine, dismissible nudge covered by
-    /// `shouldShowReminder` above. `.unavailable` (#591) is a should-never-
-    /// happen registration/install failure with no user toggle to flip — it
-    /// always badges, regardless of `dismissed`, until the domain becomes
-    /// usable again (`dismissalAfterAvailabilityChange` still resets
-    /// `dismissed` to `false` on `.unavailable`, so a later `.needsEnabling`
-    /// episode isn't pre-silenced). `.inactive` and `.ready` never badge.
+    /// `.unavailable` is a registration/install failure with no user toggle to
+    /// flip, so it badges regardless of `dismissed` until the domain becomes
+    /// usable again.
     public static func shouldShowBadge(
         availability: FileProviderAvailability, dismissed: Bool
     ) -> Bool {
@@ -51,16 +39,11 @@ public enum ClipboardFileProviderReminder {
     /// The dismissal value the owner should persist after an availability
     /// change, given the `dismissed` value it currently holds.
     ///
-    /// Resets to `false` whenever `availability` is anything other than
-    /// `.needsEnabling` — `.ready` is the common case (the user flipped the
-    /// toggle), but `.inactive`/`.unavailable` also end the "episode" a
-    /// dismissal was silencing: a `.needsEnabling` → transient-failure →
-    /// `.needsEnabling` cycle (e.g. clipboard sharing toggled off and back on)
-    /// never passes through `.ready` at all, and without this broader reset
-    /// the badge would stay silently suppressed even though the user never
-    /// confirmed the newer `.needsEnabling` episode is the same one they
-    /// dismissed. Staying in `.needsEnabling` leaves `dismissed` untouched, so
-    /// "Stop Reminding Me" keeps silencing the badge across the same episode.
+    /// Any availability other than `.needsEnabling` ends the "episode" a
+    /// dismissal was silencing, `.inactive`/`.unavailable` included: a
+    /// `.needsEnabling` → transient-failure → `.needsEnabling` cycle never
+    /// passes through `.ready`, so a narrower reset would leave the badge
+    /// suppressed for an episode the user never dismissed.
     public static func dismissalAfterAvailabilityChange(
         _ availability: FileProviderAvailability, dismissed: Bool
     ) -> Bool {
@@ -70,33 +53,31 @@ public enum ClipboardFileProviderReminder {
     /// Degraded-mode summary for the host side (guest→host "Copy to Mac").
     ///
     /// With the toggle off, a file copy falls back to a synchronous,
-    /// deadline-bound path capped at `ClipboardStreamTuning
-    /// .maxDeadlineSafeFileBytes`, and an over-cap file is dropped with its own
-    /// message (`ClipboardContentViewController.dropMessage`) — so this
-    /// summary deliberately doesn't restate the byte figure. Text and images
-    /// are unaffected regardless of the toggle (docs/CLIPBOARD.md §2).
+    /// deadline-bound path capped at
+    /// `ClipboardStreamTuning.maxDeadlineSafeFileBytes`, and an over-cap file is
+    /// dropped with its own message — so this summary doesn't restate the byte
+    /// figure.
     public static func hostDegradedSummary() -> String {
         "Text and images copy normally. Enable File Provider to copy larger files to your Mac."
     }
 
     /// Degraded-mode summary for the guest side (host→guest paste).
     ///
-    /// A file or folder paste falls back to a synchronous, deadline-bound pull
-    /// capped at `ClipboardStreamTuning.maxDeadlineSafeFileBytes` — mirroring the
-    /// host direction (#561) — and an over-cap rep is refused with its own
-    /// `clipboard.paste.too.large` error frame, surfaced in the host's clipboard
-    /// window. This summary deliberately doesn't restate the byte figure,
-    /// matching `hostDegradedSummary`.
+    /// Mirrors `hostDegradedSummary`: the paste falls back to a synchronous,
+    /// deadline-bound pull capped at
+    /// `ClipboardStreamTuning.maxDeadlineSafeFileBytes`, and an over-cap rep is
+    /// refused with a `clipboard.paste.too.large` error frame surfaced in the
+    /// host's clipboard window.
     public static func guestDegradedSummary() -> String {
         "Text and images paste normally. Enable File Provider to reliably paste files from your Mac."
     }
 
     /// Unavailable-mode summary for the host side (guest→host "Copy to Mac").
     ///
-    /// `.unavailable` (#591) is a registration/install failure, not a user
-    /// toggle — there's nothing to enable in System Settings, so unlike
-    /// `hostDegradedSummary` this doesn't point there; reopening the app
-    /// retries domain registration from scratch.
+    /// `.unavailable` is a registration/install failure, not a user toggle —
+    /// there is nothing to enable in System Settings, so unlike
+    /// `hostDegradedSummary` this doesn't point there; reopening the app retries
+    /// domain registration from scratch.
     public static func hostUnavailableSummary() -> String {
         "Text and images copy normally. File sharing for larger files is unavailable — reopen Kernova to restore it."
     }
@@ -110,8 +91,7 @@ public enum ClipboardFileProviderReminder {
     }
 
     /// Actionable command opening System Settings to enable the extension —
-    /// identical wording on both sides (see `ClipboardFileProviderSettings
-    /// .openEnablementSettings()`).
+    /// identical wording on both sides.
     ///
     /// Ellipsis: it navigates to System Settings to gather the user's action.
     public static func enableCommandTitle() -> String {
@@ -121,8 +101,7 @@ public enum ClipboardFileProviderReminder {
     /// Command silencing the proactive status-item badge — identical wording
     /// on both sides.
     ///
-    /// No ellipsis: it acts immediately, gathering no further input. The
-    /// passive dropdown line + enable command stay regardless.
+    /// No ellipsis: it acts immediately, gathering no further input.
     public static func stopRemindingCommandTitle() -> String {
         "Stop Reminding Me"
     }

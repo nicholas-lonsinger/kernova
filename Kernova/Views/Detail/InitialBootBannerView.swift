@@ -3,9 +3,8 @@ import AppKit
 /// Banner shown above the settings pane for a macOS VM that hasn't completed
 /// its initial boot yet.
 ///
-/// AppKit reimplementation of the former SwiftUI `InitialBootBanner`. Adapts
-/// its subtitle to the persisted install context so the user knows what Start
-/// will do (download + install vs. install from local IPSW vs. resume an
+/// Adapts its subtitle to the persisted install context so the user knows what
+/// Start will do (download + install vs. install from local IPSW vs. resume an
 /// interrupted download).
 @MainActor
 final class InitialBootBannerView: NSView {
@@ -82,7 +81,7 @@ final class InitialBootBannerView: NSView {
         ])
     }
 
-    /// Install-context-aware subtitle, mirroring the SwiftUI predecessor.
+    /// Install-context-aware subtitle.
     private static func subtitle(for instance: VMInstance) -> String {
         guard let context = instance.configuration.installContext else {
             return "Click Start to install macOS."

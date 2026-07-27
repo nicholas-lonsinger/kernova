@@ -44,12 +44,9 @@ final class VMCreationViewModel {
     var selectedBootMode: VMBootMode = .efi
     var ipswSource: IPSWSource = .downloadLatest
     var ipswPath: String?
-    /// Non-optional since the custom-destination picker was removed with
-    /// the sandbox adoption: the destination is always the Downloads
-    /// default, set once here.
+    /// Always the Downloads default — there is no custom-destination picker.
     var ipswDownloadPath: String = VMCreationViewModel.defaultIPSWDownloadPath {
         didSet {
-            // Reset overwrite confirmation when the download destination changes
             if ipswDownloadPath != confirmedOverwritePath {
                 confirmedOverwritePath = nil
             }
@@ -61,11 +58,10 @@ final class VMCreationViewModel {
     var initrdPath: String?
     var kernelCommandLine: String?
 
-    /// Security bookmarks paired with the panel-picked paths above; each is
-    /// set alongside its path at pick time and flows into the built
-    /// configuration / install context. `nil` for paths adopted without a
-    /// panel (e.g. "Use Existing File", whose Downloads location the
-    /// entitlement already covers).
+    /// Security bookmarks paired with the panel-picked paths above; each is set
+    /// alongside its path at pick time. `nil` for paths adopted without a panel
+    /// (e.g. "Use Existing File", whose Downloads location the entitlement
+    /// already covers).
     var ipswBookmark: Data?
     var isoBookmark: Data?
     var kernelBookmark: Data?
@@ -81,12 +77,8 @@ final class VMCreationViewModel {
 
     // MARK: - Step 4: Review
 
-    /// Whether to auto-start the VM immediately after the wizard creates it.
-    ///
-    /// When `true` (the default), `VMLibraryViewModel.createVM` calls
-    /// `start(_:)` on the newly created instance so the user can jump
-    /// straight from the wizard into the VM. Backs the "Start this VM
-    /// after creation" toggle on the Review step.
+    /// Whether to auto-start the VM immediately after the wizard creates it,
+    /// backing the "Start this VM after creation" toggle on the Review step.
     var startAfterCreate: Bool = true
 
     // MARK: - Navigation
@@ -190,8 +182,7 @@ final class VMCreationViewModel {
         // Ask the system for the Downloads location rather than assuming a
         // home-relative layout: under the sandbox this resolves through the
         // container's `Downloads` symlink, which the downloads.read-write
-        // entitlement covers — no save panel or bookmark needed for the
-        // default destination. Same API the save panel's directoryURL uses.
+        // entitlement covers — no save panel or bookmark needed.
         guard
             let downloads = FileManager.default.urls(
                 for: .downloadsDirectory, in: .userDomainMask
@@ -231,17 +222,13 @@ final class VMCreationViewModel {
     /// Snapshots the wizard's macOS install choice into a persistable
     /// `MacOSInstallContext`.
     ///
-    /// Called by `VMLibraryViewModel.createVM` so the VM's bundle records the
-    /// install plan; the install pipeline then reads from the bundle (not the
-    /// wizard) on every Start until the install completes and the context is
-    /// cleared.
+    /// The install pipeline reads from the VM's bundle, not the wizard, on every
+    /// Start until the install completes and the context is cleared.
     func buildInstallContext() -> MacOSInstallContext {
         switch ipswSource {
         case .downloadLatest:
-            // `confirmedOverwritePath` is set by `confirmOverwrite()` when the
-            // user clicks past the "this file already exists" warning. The
-            // `!= nil` guard prevents the meaningless `nil == nil` match (no
-            // path AND no confirmation) from accidentally setting the flag.
+            // The `!= nil` guard prevents the meaningless `nil == nil` match (no
+            // path AND no confirmation) from setting the flag.
             return MacOSInstallContext(
                 source: .downloadLatest,
                 downloadDestinationPath: ipswDownloadPath,
@@ -264,10 +251,8 @@ final class VMCreationViewModel {
     /// holds its partial bytes, *and* no completed IPSW already exists at the
     /// path.
     ///
-    /// A completed file takes priority — the overwrite warning flow handles that
-    /// case instead. The bytes check (`isResumable` rather than `exists`) keeps a
-    /// husk left by a failed disposal from offering a resume with nothing behind
-    /// it.
+    /// The bytes check (`isResumable` rather than `exists`) keeps a husk left by
+    /// a failed disposal from offering a resume with nothing behind it.
     var hasResumableDownload: Bool {
         guard ipswSource == .downloadLatest,
             !ipswDownloadPathFileExists
@@ -283,9 +268,9 @@ final class VMCreationViewModel {
     func useExistingDownloadFile() {
         ipswSource = .localFile
         ipswPath = ipswDownloadPath
-        // Adopted without a panel: no grant to bookmark, and none needed —
-        // the Downloads location is entitlement-covered. Clearing also drops
-        // any bookmark left over from an earlier local-file pick.
+        // Adopted without a panel: no grant to bookmark, and none needed — the
+        // Downloads location is entitlement-covered. Clearing also drops any
+        // bookmark left over from an earlier local-file pick.
         ipswBookmark = nil
     }
 
@@ -300,17 +285,14 @@ final class VMCreationViewModel {
             ? VZMACAddress.randomLocallyAdministered().string
             : nil
 
-        // For EFI/Linux VMs, generate a stable machine identifier
         let genericMachineIdentifierData: Data? =
             (bootMode == .efi || bootMode == .linuxKernel)
             ? VZGenericMachineIdentifier().dataRepresentation
             : nil
 
-        // Storage disks: for EFI installs that picked an ISO, prepend the
-        // installer as `storageDevices[0]` so EFI boots it ahead of the
-        // main disk. macOS install uses `VZMacOSInstaller` (not boot media),
-        // and Linux Kernel boot loads the kernel directly — both leave the
-        // list as nil so the builder synthesizes the default main disk.
+        // For an EFI install that picked an ISO, the installer goes in as
+        // `storageDevices[0]` so EFI boots it ahead of the main disk. Other boot
+        // modes leave the list nil so the builder synthesizes the default disk.
         var storageDisks: [StorageDisk]? = nil
         if selectedBootMode == .efi, let isoPath, !isoPath.isEmpty {
             let installerDisk = StorageDisk(

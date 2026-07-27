@@ -1,22 +1,16 @@
 import Foundation
 
 // Shared ephemeral-`UserDefaults` test helpers for the test bundles that
-// exercise a `UserDefaults`-backed preferences wrapper (KernovaTests'
-// `AppPreferences`, KernovaMacOSAgentTests' `AgentPreferences`). Consolidated
-// here so a suite-cleanup fix (or a new wrapper type gaining the same
-// ceremony) lands once instead of being re-derived per test bundle.
+// exercise a `UserDefaults`-backed preferences wrapper.
 
 // MARK: - makeEphemeralDefaults
 
 /// Opens an isolated, pre-cleaned `UserDefaults` suite for a `.serialized` test suite.
 ///
-/// State never bleeds in from another test or a prior run: a run hard-killed
-/// mid-test (CI timeout, SIGKILL) skips any `defer`, so clearing *before* use is
-/// the load-bearing half. Pass a fixed `suiteName` unique to the calling suite —
-/// a fixed name (not a per-call UUID) bounds the on-disk footprint to a single
-/// reusable tombstone plist. Shared by every suite (`AppPreferencesTests`,
-/// `AgentPreferencesTests`, #449/#506) that needs a test never to read or write
-/// the real `.standard` domain.
+/// A run hard-killed mid-test (CI timeout, SIGKILL) skips any `defer`, so
+/// clearing *before* use is the load-bearing half. Pass a fixed `suiteName`
+/// unique to the calling suite — not a per-call UUID, which would leave one
+/// tombstone plist per run.
 public func makeEphemeralDefaults(suiteName: String) -> UserDefaults {
     guard let defaults = UserDefaults(suiteName: suiteName) else {
         fatalError("Could not open test UserDefaults suite '\(suiteName)'")
@@ -34,14 +28,8 @@ public func makeEphemeralDefaults(suiteName: String) -> UserDefaults {
 
 /// Runs `body` with a fresh value of `T` wrapping an isolated, pre-cleaned
 /// `UserDefaults` suite (via `makeEphemeralDefaults`), then tears the suite
-/// down — including its cfprefsd tombstone plist (#449) — so tests never leak
-/// state into another test, another run, or the real `.standard` domain.
-///
-/// Generic over the wrapper type so each `UserDefaults`-backed preferences
-/// type (`AppPreferences`, `AgentPreferences`, …) gets this create/teardown
-/// ceremony once instead of re-deriving it per test file; callers typically
-/// wrap this in a thin, locally-named `withEphemeralPreferences` for
-/// call-site readability.
+/// down — including its cfprefsd tombstone plist — so tests never leak state
+/// into another test, another run, or the real `.standard` domain.
 public func withEphemeralDefaults<T>(
     suiteName: String,
     wrap: (UserDefaults) -> T,

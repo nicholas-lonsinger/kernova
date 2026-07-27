@@ -1,16 +1,14 @@
 import Foundation
 
 /// Collision-free name generation shared by every "pick the next free name"
-/// site (clone names, default disk labels), so the de-duplication rule lives in
-/// one place instead of being hand-rolled at each call.
+/// site (clone names, default disk labels).
 enum UniqueName {
     /// Returns `prefix` when it's free, otherwise the first available
     /// `"<prefix> 2"`, `"<prefix> 3"`, and so on.
     ///
-    /// Callers fold any infix into `prefix` (e.g. `"\(name) Copy"`), so the same
-    /// loop backs both bare-numeric labels and `" Copy"`-style clone names. Matching is
-    /// case-sensitive by default; pass `caseInsensitive: true` for filename reservation on a
-    /// case-insensitive volume (the returned name keeps `prefix`'s original casing).
+    /// Callers fold any infix into `prefix` (e.g. `"\(name) Copy"`). Matching is
+    /// case-sensitive unless `caseInsensitive` is set, for filename reservation on
+    /// a case-insensitive volume; the returned name keeps `prefix`'s casing.
     static func firstAvailable(prefix: String, existing: [String], caseInsensitive: Bool = false) -> String {
         func isTaken(_ candidate: String) -> Bool {
             if caseInsensitive {

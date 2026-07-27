@@ -3,13 +3,9 @@ import AppKit
 /// Banner shown at the top of the clipboard window while automatic passthrough
 /// is on, indicating the editor is no longer the primary pathway.
 ///
-/// While passthrough is on, the host clipboard syncs with the guest
-/// automatically in both directions, so the window's Paste / Copy-to-Mac / editor
-/// gestures are no longer required. The banner makes that state legible and
-/// offers a one-click runtime "Turn Off" (turning off needs no confirmation —
-/// unlike turning on, which the settings toggle gates). The owner toggles it via
-/// `isHidden`; it carries its own hairline so it self-delineates from the command
-/// bar below.
+/// The banner makes that state legible and offers a one-click runtime "Turn
+/// Off" — turning off needs no confirmation, unlike turning on. It carries its
+/// own hairline, so it self-delineates from the command bar below.
 @MainActor
 final class ClipboardPassthroughBanner: NSView {
     /// Invoked when the user clicks "Turn Off" — the owner disables passthrough.

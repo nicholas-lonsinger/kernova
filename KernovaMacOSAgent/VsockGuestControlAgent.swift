@@ -2,31 +2,14 @@ import Foundation
 import KernovaKit
 import os
 
-/// Guest-side control-channel agent that talks to the host's `VsockControlService`
-/// on `KernovaVsockPort.control` (49154).
+/// Guest-side control-channel agent that talks to the host's
+/// `VsockControlService` on `KernovaVsockPort.control`.
 ///
-/// The control channel is the always-on home for the agent's version handshake
-/// and a bidirectional heartbeat. It is independent of any feature toggle on
-/// the host — even when clipboard sharing is disabled this connection still
-/// runs, so the host can detect agent presence and liveness.
-///
-/// Per-connection responsibilities:
-/// - Send `Hello` immediately on connect, advertising agent OS / version /
-///   capabilities.
-/// - Send `Heartbeat` frames on a recurring timer (default 5 s).
-/// - Refresh a "last inbound frame" clock from any inbound traffic. If that
-///   clock falls more than `terminateAfter` (default 30 s) behind, assume the
-///   host is hung and close the channel — `VsockGuestClient.runReconnectLoop`
-///   will rebuild it.
-///
-/// Connection lifecycle (connect, retry on failure, EOF) is owned by
-/// `VsockGuestClient`. This class layers the control protocol on top.
-///
-/// RATIONALE: Logs use raw `os.Logger` rather than `KernovaLogger`. The log
-/// channel and this control channel share the same vsock device; routing
-/// connection-lifecycle logs through `KernovaLogger` would risk a feedback
-/// loop where a heartbeat send failure schedules another forwarded log frame
-/// through the same broken transport.
+/// The channel is always on, independent of any feature toggle, so the host can
+/// detect agent presence and liveness even with clipboard sharing disabled. It
+/// carries the version handshake, a recurring heartbeat, and a watchdog that
+/// closes the channel once inbound traffic stops for `terminateAfter`, leaving
+/// `VsockGuestClient` to rebuild it.
 final class VsockGuestControlAgent: @unchecked Sendable {
     private static let logger = Logger(subsystem: "app.kernova.macosagent", category: "VsockGuestControlAgent")
 
@@ -36,18 +19,12 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     private let terminateAfter: Duration
     private let livenessTickInterval: Duration
 
-    /// Invoked on every inbound `PolicyUpdate`.
-    ///
-    /// The closure receives the raw
-    /// protobuf snapshot; main.swift wires it to `VsockHostConnection` and
-    /// `VsockGuestClipboardAgent` so each capability honors host policy.
+    /// Invoked on every inbound `PolicyUpdate`, with the raw protobuf snapshot.
     private let onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)?
 
-    /// Invoked whenever `connectionState` changes, so the menu-bar UI can update
-    /// the status-item icon without polling.
+    /// Invoked whenever `connectionState` changes.
     ///
-    /// Called off the main thread; the receiver is responsible for hopping to the
-    /// main actor.
+    /// Called off the main thread; the receiver must hop to the main actor.
     private let onStateChange: (@Sendable (HostConnectionState) -> Void)?
 
     private let lock = NSLock()
@@ -57,38 +34,27 @@ final class VsockGuestControlAgent: @unchecked Sendable {
 
     /// Connection state surfaced to the menu-bar UI.
     ///
-    /// Guarded by `lock`; mutated only through `updateConnectionState(_:)` so the
+    /// Guarded by `lock`; mutate only through `updateConnectionState(_:)` so the
     /// change callback fires exactly on real transitions.
     private var connectionStateStorage: HostConnectionState = .connecting
 
-    /// The guest-agent version the host bundles, learned from the host's `Hello`
-    /// (`bundled_agent_version`).
+    /// The guest-agent version the host bundles, learned from its `Hello`.
     ///
-    /// Guarded by `lock`. Empty until a Hello arrives, or when the host predates
-    /// the field — the UI treats empty as "unknown" and shows no update prompt.
+    /// Guarded by `lock`; empty means unknown, which the UI shows as no update.
     private var hostBundledAgentVersionStorage: String = ""
 
-    /// Whether the host advertised the streaming-clipboard capability in its
-    /// `Hello`.
+    /// Whether the host advertised the streaming-clipboard capability.
     ///
-    /// Reset per connection; gates the clipboard bit of every inbound
-    /// `PolicyUpdate` so a host that can't stream never turns clipboard on here
-    /// (symmetric with the host's own gate). Guarded by `lock`.
+    /// Guarded by `lock` and reset per connection; gates the clipboard bit of
+    /// every inbound `PolicyUpdate`, symmetric with the host's own gate.
     private var hostSupportsClipboardStreaming = false
 
-    /// Whether the host advertised the folder placeholder-tree capability
-    /// (`clipboard.dirtree.v1`) in its `Hello`.
+    /// Whether the host advertised the folder placeholder-tree capability.
     ///
-    /// Guarded by `lock`; read (via
-    /// `hostSupportsClipboardDirTree`) at offer/consume time by the clipboard
-    /// agent to decide whether a directory rep crosses as a placeholder tree or
-    /// the eager-archive fallback. Reset per connection.
+    /// Guarded by `lock` and reset per connection.
     private var hostSupportsClipboardDirTreeStorage = false
 
-    /// Whether the host advertised `clipboard.dirtree.v1` — the mutually
-    /// negotiated gate for folder placeholder trees.
-    ///
-    /// Thread-safe.
+    /// Thread-safe read of the negotiated gate for folder placeholder trees.
     var hostSupportsClipboardDirTree: Bool { lock.withLock { hostSupportsClipboardDirTreeStorage } }
 
     /// Production init — connects to the control port with default cadences.
@@ -112,10 +78,6 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
         onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil
     ) {
-        // The two-stage watchdog requires `unresponsiveAfter < terminateAfter`
-        // so the "host appears unresponsive" warning is observable before the
-        // channel is torn down. With the relation reversed, `terminateAfter`
-        // would fire first and the unresponsive log path would never run.
         precondition(
             unresponsiveAfter < terminateAfter,
             "VsockGuestControlAgent: unresponsiveAfter (\(unresponsiveAfter)) must be < terminateAfter (\(terminateAfter))"
@@ -124,9 +86,8 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         self.heartbeatInterval = heartbeatInterval
         self.unresponsiveAfter = unresponsiveAfter
         self.terminateAfter = terminateAfter
-        // Check liveness several times per `unresponsiveAfter`. Capped at the
-        // heartbeat interval so tests with very small thresholds don't
-        // over-spin.
+        // Several checks per `unresponsiveAfter`, capped at the heartbeat
+        // interval so small test thresholds don't over-spin.
         self.livenessTickInterval = min(heartbeatInterval, unresponsiveAfter / 3)
         self.onPolicy = onPolicy
         self.onStateChange = onStateChange
@@ -134,18 +95,12 @@ final class VsockGuestControlAgent: @unchecked Sendable {
 
     // MARK: - UI state accessors
 
-    /// Current host-connection state for the menu-bar UI to pull when its menu
-    /// opens.
-    ///
-    /// Thread-safe.
+    /// Thread-safe host-connection state for the menu-bar UI to pull on open.
     var connectionState: HostConnectionState {
         lock.withLock { connectionStateStorage }
     }
 
-    /// The guest-agent version the host bundles, as learned from the most recent
-    /// `Hello`.
-    ///
-    /// Empty when unknown. Thread-safe.
+    /// Thread-safe read of the host's bundled agent version; empty when unknown.
     var hostBundledAgentVersion: String {
         lock.withLock { hostBundledAgentVersionStorage }
     }
@@ -182,16 +137,13 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     // MARK: - Per-connection serve
 
     private func serve(channel: VsockChannel) async {
-        // Reset per-connection state so `checkLiveness` doesn't fire on a
-        // stale clock from the previous connection, and so a stale capability
-        // from a prior host can't leak into this connection's policy gating.
+        // Neither a stale liveness clock nor a stale capability may leak across
+        // connections.
         lock.withLock {
             lastInboundFrame = nil
             unresponsiveLogged = false
             hostSupportsClipboardStreaming = false
         }
-        // The channel is established; the menu shows "connected" until the host
-        // either goes silent (`.unresponsive`) or the channel drops (`.connecting`).
         updateConnectionState(.connected)
 
         sendHello(on: channel)
@@ -223,7 +175,6 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         defer {
             heartbeatTask.cancel()
             livenessTask.cancel()
-            // Channel is gone; the reconnect loop will rebuild it.
             updateConnectionState(.connecting)
         }
 
@@ -254,8 +205,6 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             lastInboundFrame = ContinuousClock.now
             unresponsiveLogged = false
         }
-        // Fresh traffic means the host is responding again (recovers from
-        // `.unresponsive`); a no-op when already `.connected`.
         updateConnectionState(.connected)
 
         switch frame.payload {
@@ -267,14 +216,13 @@ final class VsockGuestControlAgent: @unchecked Sendable {
                 hostSupportsClipboardDirTreeStorage = hostDirTree
                 hostBundledAgentVersionStorage = hello.bundledAgentVersion
             }
-            // `logDescription` bounds the peer-supplied capability strings —
-            // symmetric with the host's Hello logging (#145), and these guest
+            // `logDescription` bounds the peer-supplied capability strings; these
             // records can be forwarded into the host's log store.
             Self.logger.notice(
                 "Host control service ready (service=\(hello.serviceVersion, privacy: .public), caps=\(KernovaCapability.logDescription(of: hello.capabilities), privacy: .public))"
             )
         case .heartbeat:
-            // The frame itself is the signal. Liveness clock already refreshed.
+            // The frame itself is the signal; the liveness clock is refreshed above.
             break
         case .error(let error):
             Self.logger.warning(
@@ -338,9 +286,8 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         do {
             try channel.send(frame)
         } catch {
-            // A failed send usually means the channel just tore down; the
-            // serve loop will see EOF momentarily and VsockGuestClient will
-            // reconnect. Log at .debug — no further fallback.
+            // A failed send usually means the channel just tore down; the serve
+            // loop sees EOF and `VsockGuestClient` reconnects.
             Self.logger.debug(
                 "Failed to send heartbeat (nonce=\(nonce, privacy: .public)): \(error.localizedDescription, privacy: .public)"
             )
@@ -362,8 +309,6 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             Self.logger.warning(
                 "Host control channel silent for \(elapsed.formatted(.units(allowed: [.seconds])), privacy: .public) — closing"
             )
-            // Tearing down lets serve()'s read loop see EOF and return; the
-            // reconnect loop in VsockGuestClient will rebuild.
             channel.close()
         } else if elapsed > unresponsiveAfter {
             if !snapshot.alreadyLogged {
@@ -372,8 +317,6 @@ final class VsockGuestControlAgent: @unchecked Sendable {
                 )
                 lock.withLock { unresponsiveLogged = true }
             }
-            // Channel is still open but the host has gone quiet; surface it in
-            // the menu. Recovers to `.connected` on the next inbound frame.
             updateConnectionState(.unresponsive)
         }
     }

@@ -2,10 +2,6 @@ import AppKit
 
 /// Popover content shown when the user clicks a missing-attachment warning
 /// icon in a storage / removable-media row.
-///
-/// Built bottom-up in `loadView()` using `CalloutStyle` tokens and the
-/// `makeCalloutHeadline` / `makeCalloutBody` atom factories — no shared
-/// container base class.
 @MainActor
 final class MissingAttachmentPopoverContentViewController: NSViewController {
     private let path: String
@@ -59,7 +55,6 @@ final class MissingAttachmentPopoverContentViewController: NSViewController {
         }
     }
 
-    /// Header row: red warning icon + "File Missing" headline.
     private func makeHeader() -> NSView {
         let header = NSStackView()
         header.orientation = .horizontal

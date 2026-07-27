@@ -5,10 +5,9 @@ import Foundation
 protocol USBDeviceProviding: Sendable {
     /// Attaches a disk image as a USB mass storage device.
     ///
-    /// `desiredUUID` overrides the auto-generated `VZUSBDeviceConfiguration.uuid`
-    /// so the runtime device's identity matches a persisted value (e.g.
-    /// `RemovableMediaItem.id`) for save-state restore matching. Pass
-    /// `nil` for ad-hoc attaches.
+    /// `desiredUUID` overrides the auto-generated device UUID so the runtime
+    /// device matches a persisted `RemovableMediaItem.id` for save-state restore
+    /// matching; `nil` for ad-hoc attaches.
     func attach(
         diskImagePath: String,
         readOnly: Bool,

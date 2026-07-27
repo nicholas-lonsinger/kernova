@@ -4,12 +4,7 @@ import AppKit
 /// "Microphone permission is denied" warning bar in the Audio settings.
 ///
 /// Explains why Kernova needs the permission and walks the user through
-/// the steps to grant it via System Settings. Unique among the AppKit
-/// popovers in this codebase because it carries structure (a horizontal
-/// divider, a sub-headline, three numbered steps with inline bold) that
-/// doesn't fit the generic `InfoPopoverContentViewController` paragraph
-/// shape — built as its own concrete subclass per the per-popover-subclass
-/// pattern.
+/// the steps to grant it via System Settings.
 @MainActor
 final class MicrophonePermissionPopoverContentViewController: NSViewController {
     init() {
@@ -84,8 +79,6 @@ final class MicrophonePermissionPopoverContentViewController: NSViewController {
         return divider
     }
 
-    /// `.subheadline`-styled, medium-weight label used to break the popover
-    /// into named regions (e.g. "How to enable").
     private func makeSubheadline(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
         label.font = .systemFont(
@@ -99,12 +92,7 @@ final class MicrophonePermissionPopoverContentViewController: NSViewController {
         return label
     }
 
-    /// Numbered-step row with a bold-emphasized phrase.
-    ///
-    /// Renders as `"<number>. <lead><bold>"` where `bold` is the app or
-    /// setting name to emphasize — mirrors the SwiftUI predecessor's
-    /// inline `**bold**` markdown by building an `NSAttributedString`
-    /// with a bold run on the trailing portion.
+    /// Numbered-step row rendered as `"<number>. <lead><bold>"`.
     private func makeStep(number: Int, lead: String, bold: String) -> NSTextField {
         let label = NSTextField(labelWithString: "")
         let font = CalloutStyle.bodyFont

@@ -4,13 +4,9 @@ import os
 /// AppKit content view controller for the detail-pane "console" placeholder.
 ///
 /// Shows a centered empty-state (icon + title + description + optional action
-/// buttons) for the non-inline display states — `Fullscreen`, `Popped Out`,
-/// `Display Closed` (running headless), `Suspended` (cold-paused), and
-/// `No Display` — and falls back to an inert black fill while a live VM
-/// display is layered on top by `DetailContainerViewController`.
-///
-/// Observes `VMInstance.displayMode`, `isColdPaused`, and `virtualMachine` via
-/// `observeRecurring` and recomputes the visible state in `apply()`.
+/// buttons) for the non-inline display states, and falls back to an inert black
+/// fill while a live VM display is layered on top by
+/// `DetailContainerViewController`.
 @MainActor
 final class VMDisplayPlaceholderContentViewController: NSViewController {
     private var instance: VMInstance
@@ -35,9 +31,8 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
 
     override func loadView() {
         let container = NSView()
-        // Layer-backed so `apply()` can paint a black fill for the `.live`
-        // case where the AppKit VM display layer is expected to cover this
-        // view. Background is set per state in `apply()` — never here.
+        // Layer-backed so `apply()` can paint a black fill for the `.live` case.
+        // Background is set per state in `apply()` — never here.
         container.wantsLayer = true
 
         emptyState.translatesAutoresizingMaskIntoConstraints = false
@@ -121,12 +116,10 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
 
     private func apply() {
         let state = consoleState()
-        // Paint black only for `.live`: that case is meant to sit underneath
-        // the AppKit VM display layer in `DetailContainerViewController`, so a
-        // black fill is the right inert appearance. For every other state we
-        // render the empty-state on the system background like the SwiftUI
-        // `ContentUnavailableView` predecessor did — otherwise `.labelColor`
-        // text becomes unreadable on a black panel in Light Appearance.
+        // Paint black only for `.live`, which sits underneath the VM display
+        // layer. Every other state renders the empty-state on the system
+        // background — `.labelColor` text is unreadable on black in Light
+        // Appearance.
         view.layer?.backgroundColor = (state == .live) ? NSColor.black.cgColor : nil
 
         switch state {
@@ -208,11 +201,8 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
 /// AppKit empty-state placeholder: a centered SF Symbol, title, description,
 /// and an optional row of action buttons.
 ///
-/// Approximates SwiftUI's `ContentUnavailableView` styling without inheriting
-/// any of its declarative machinery. Action buttons use `target = nil` so
-/// `NSControl`'s built-in responder-chain dispatch routes through `NSApp`
-/// to the configured selector (matching how the SwiftUI predecessor reached
-/// `AppDelegate.toggleFullscreen(_:)` / `togglePopOut(_:)`).
+/// Action buttons use `target = nil` so `NSControl`'s built-in responder-chain
+/// dispatch routes through `NSApp` to the configured selector.
 @MainActor
 private final class DisplayPlaceholderEmptyStateView: NSView {
     struct Action: Equatable {
@@ -228,13 +218,10 @@ private final class DisplayPlaceholderEmptyStateView: NSView {
 
     /// The actions currently materialized as buttons in `buttonRow`.
     ///
-    /// `configure` re-runs on every observation tick (a status change, a VM
-    /// reference swap), but the action set only changes on a state transition —
-    /// and often not even then (Popped Out and Display Closed share the same two
-    /// actions). Rebuilding buttons unconditionally would churn `NSButton`
-    /// allocations and stack-view constraints on every tick, so the rebuild is
-    /// guarded on this, mirroring the label-equality guard `VMToolbarManager`
-    /// uses for its swap-on-state items. `nil` until the first `configure`.
+    /// `configure` re-runs on every observation tick, but the action set only
+    /// changes on a state transition — and often not even then. Rebuilding
+    /// buttons unconditionally would churn `NSButton` allocations and stack-view
+    /// constraints on every tick, so the rebuild is guarded on this.
     private var renderedActions: [Action]?
 
     /// Soft cap so multi-line descriptions wrap reasonably instead of stretching

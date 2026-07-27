@@ -3,8 +3,6 @@ import os
 
 /// Manages the main library window using an `NSSplitViewController` for sidebar/detail layout
 /// and an `NSToolbar` with native toolbar items.
-///
-/// AppKit view controllers render content inside each pane.
 @MainActor
 final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindowDelegate {
     private let viewModel: VMLibraryViewModel
@@ -18,9 +16,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// The toolbar index New VM was programmatically removed from for a
     /// collapsed sidebar, or `nil` when it is in the toolbar (or the user
     /// removed it themselves via customization).
-    ///
-    /// Mirrored into `AppPreferences` on every change so the removal survives a
-    /// relaunch — see `adoptPersistedNewVMRemoval`.
     private var newVMCollapseRemovalIndex: Int? {
         didSet { preferences.mainToolbarNewVMCollapseIndex = newVMCollapseRemovalIndex }
     }
@@ -30,9 +25,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private static let toolbarNewVM = NSToolbarItem.Identifier("newVM")
 
     // Palette-only items (offered in the customize sheet, not in the default
-    // set). Enablement mirrors the menu bar's validateMenuItem gating for the
-    // same actions, via validateToolbarItem below. VM-scoped verbs only —
-    // app-global commands like "Open VMs Folder" stay menu-bar-only.
+    // set). VM-scoped verbs only — app-global commands like "Open VMs Folder"
+    // stay menu-bar-only.
     private static let toolbarClone = NSToolbarItem.Identifier("cloneVM")
     private static let toolbarShowInFinder = NSToolbarItem.Identifier("showInFinder")
     private static let toolbarMoveToTrash = NSToolbarItem.Identifier("moveToTrash")
@@ -79,6 +73,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         // below overrides both the size and this placement.
         window.center()
         window.title = "Kernova"
+        // Order matters: assigning `contentViewController` resizes the window to the
+        // content view's fitting size, and `minSize` then clamps to that. Setting
+        // `minSize` first lets the fitting size overwrite it.
         window.minSize = NSSize(width: 800, height: 500)
 
         super.init(window: window)
@@ -87,9 +84,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
         let toolbar = NSToolbar(identifier: "KernovaMainToolbar")
         toolbar.delegate = self
-        // First-run default; once customization autosave kicks in, the saved
-        // configuration (restored when the toolbar is attached to the window)
-        // overrides this, so all properties must be set before the attach below.
+        // The autosaved configuration is restored when the toolbar is attached to
+        // the window, so every property must be set before the attach below.
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = true
@@ -99,10 +95,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         window.setFrameAutosaveName("KernovaMainWindow")
 
         // Finder-style snap: while dragging the divider, magnetize it to the
-        // width that fully shows the longest VM name, clamped to the sidebar's
-        // min/max thickness. The closure reports the width the *outline view*
-        // needs plus its current width; the split controller converts that to a
-        // divider position (they differ by fixed divider chrome) and clamps.
+        // width that fully shows the longest VM name.
         splitViewController.sidebarMetrics = { [weak self] in
             guard let self, let needed = self.sidebarViewController.widthToFitLongestRow() else {
                 return nil
@@ -127,7 +120,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// Makes the window visible behind other windows without stealing focus.
     func showWindowInBackground() {
         window?.orderBack(nil)
     }
@@ -141,8 +133,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     // MARK: - Window State Observation
 
-    /// Observes the selection and the selected VM's state to keep the toolbar
-    /// items and the window title in sync.
     private func observeWindowState() {
         windowStateObservation = observeRecurring(
             track: { [weak self] in
@@ -165,15 +155,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     // MARK: - Sidebar-Collapse New VM Visibility
 
-    /// Hides New VM while the sidebar is collapsed and restores it on expand —
-    /// Safari's New Tab Group pattern.
+    /// Hides New VM while the sidebar is collapsed and restores it on expand.
     ///
     /// Implemented as remove/insert rather than `NSToolbarItem.isHidden`: on
     /// the glass toolbar a hidden item's slot keeps its width (measured on
     /// macOS 27 beta 4), leaving a dead gap between the window controls and
-    /// the sidebar toggle, while removal reclaims the space. Applies only while
-    /// New VM sits in the sidebar section — a user who moved it into the
-    /// content section keeps it visible.
+    /// the sidebar toggle, while removal reclaims the space.
     private func observeSidebarCollapse() {
         sidebarCollapseObservation = sidebarItem.observe(\.isCollapsed, options: [.initial]) {
             [weak self] _, _ in
@@ -193,8 +180,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 }),
                 index < separatorIndex
             else { return }
-            // Only the *removal* is kept out of the saved layout — the collapsed
-            // toolbar is a transient presentation, not a customization.
+            // The collapsed toolbar is a transient presentation, not a
+            // customization, so the removal stays out of the saved layout.
             withAutosaveSuspended(toolbar) { toolbar.removeItem(at: index) }
             newVMCollapseRemovalIndex = index
         } else if let index = newVMCollapseRemovalIndex {
@@ -204,16 +191,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     /// Reinstates a collapse-removed New VM at the slot it came from.
     ///
-    /// The index is remembered rather than recomputed from the sidebar toggle's
-    /// position because New VM is user-movable within the sidebar section, so
-    /// anchoring to the toggle would silently reorder a layout that had put New
-    /// VM on the toggle's trailing side. Clamped because a ⌘-drag move while the
-    /// sidebar is collapsed has no AppKit hook to keep the index current.
-    ///
-    /// The insert deliberately runs with autosave *live*: it returns the toolbar
-    /// to the user's canonical layout, which is exactly what should be persisted,
-    /// and writing it through heals a saved configuration that a foreign autosave
-    /// captured mid-collapse.
+    /// The index is clamped because a ⌘-drag move while the sidebar is collapsed
+    /// has no AppKit hook to keep it current. The insert deliberately runs with
+    /// autosave *live*: it returns the toolbar to the user's canonical layout,
+    /// which is exactly what should be persisted.
     private func restoreNewVMItem(in toolbar: NSToolbar, at index: Int) {
         newVMCollapseRemovalIndex = nil
         guard !toolbar.items.contains(where: { $0.itemIdentifier == Self.toolbarNewVM }) else {
@@ -230,12 +211,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     ///
     /// `withAutosaveSuspended` keeps *our* mutation out of the saved layout, but
     /// an autosave triggered by anything else while New VM is out (View ▸ Hide
-    /// Toolbar, a display-mode change) persists the New-VM-less item list — and
-    /// since the collapsed layout differs from the default set, AppKit writes
-    /// that list rather than omitting it. Without re-adopting, the next launch
-    /// has no way to tell that removal from a deliberate one and never puts the
-    /// item back. Adopted only when New VM really is absent: an uncontaminated
-    /// saved layout still has it, and the collapse path owns it from there.
+    /// Toolbar, a display-mode change) persists the New-VM-less item list, and
+    /// the next launch cannot tell that removal from a deliberate one. Adopted
+    /// only when New VM really is absent.
     private func adoptPersistedNewVMRemoval() {
         guard let index = preferences.mainToolbarNewVMCollapseIndex,
             let toolbar = window?.toolbar,
@@ -258,9 +236,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         toolbar.autosavesConfiguration = autosaved
     }
 
-    /// Titles the window after the selected VM ("Kernova — <name>", plain
-    /// "Kernova" with no selection) so the active VM stays identifiable when
-    /// the sidebar is collapsed.
+    /// Titles the window after the selected VM, so the active VM stays
+    /// identifiable when the sidebar is collapsed.
     private func updateWindowTitle() {
         let name = viewModel.selectedInstance?.name
         window?.title = name.map { "Kernova — \($0)" } ?? "Kernova"
@@ -278,9 +255,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     // MARK: - NSToolbarDelegate
 
     // The leading flexible space right-aligns New VM and the toggle against
-    // the sidebar's trailing edge. While the sidebar is collapsed, New VM is
-    // removed from the toolbar entirely (`syncNewVMVisibilityToSidebarState`)
-    // — Safari's New Tab Group pattern.
+    // the sidebar's trailing edge.
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
             .flexibleSpace,
@@ -304,17 +279,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         ]
     }
 
-    /// Pins the sidebar region — toggle and tracking separator — the way Mail and
-    /// Notes do; everything else is user-customizable.
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
         [.toggleSidebar, .sidebarTrackingSeparator]
     }
 
     func toolbarWillAddItem(_ notification: Notification) {
-        // A palette-added item is born with factory-default labels and enablement
-        // (autovalidates is false on the shared items), and during will-add it is
-        // not yet in toolbar.items — refresh one runloop turn later so it
-        // immediately reflects VM state.
+        // A palette-added item is born with factory-default labels and enablement,
+        // and during will-add it is not yet in `toolbar.items` — refresh one
+        // runloop turn later so it reflects VM state.
         Task { @MainActor [weak self] in
             self?.updateToolbarItems()
         }
@@ -323,13 +295,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     // MARK: - Customize Sheet Cleanup
 
     func windowWillBeginSheet(_ notification: Notification) {
-        // The window hosts other sheets too (alerts, the creation wizard);
-        // remember whether this one is the customize palette so the recreate
-        // below only runs when the layout could actually have changed.
+        // The window hosts other sheets too (alerts, the creation wizard), so the
+        // recreate in `windowDidEndSheet` must only run for the palette.
         sheetIsCustomizationPalette = window?.toolbar?.customizationPaletteIsRunning ?? false
         // The palette must present the user's canonical layout, so a
-        // collapse-removed New VM is restored for the sheet's duration
-        // (windowDidEndSheet re-applies the collapse state afterwards).
+        // collapse-removed New VM is restored for the sheet's duration.
         if sheetIsCustomizationPalette, let index = newVMCollapseRemovalIndex,
             let toolbar = window?.toolbar
         {
@@ -339,20 +309,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     /// Recreates the app's custom toolbar items when the customize sheet closes.
     ///
-    /// RATIONALE: AppKit bakes the section-specific glass treatment (flat in the
-    /// sidebar section, bordered capsule in the content section) into a bordered
-    /// item's view when the item is created, and a customization drag across the
+    /// RATIONALE: AppKit bakes the section-specific glass treatment into a
+    /// bordered item's view at creation, and a customization drag across the
     /// sidebar tracking separator reuses the existing instance without firing
-    /// toolbarWillAddItem/toolbarDidRemoveItem (verified empirically) — so a
-    /// moved item keeps the wrong treatment until it is recreated. Removing and
-    /// reinserting at the same index routes through the delegate factory, giving
-    /// the fresh instance the treatment of the section it now lives in, while
-    /// leaving the autosaved layout untouched (same identifiers, same order).
-    /// Applies to every custom item (New VM and the manager's items can all be
-    /// dragged across the separator); AppKit's own items handle this themselves.
-    /// Known limitation: a ⌘-drag move across the separator outside the sheet
-    /// has no AppKit hook, so its stale treatment persists until the next
-    /// sheet close or relaunch.
+    /// toolbarWillAddItem or toolbarDidRemoveItem (verified empirically), so a
+    /// moved item keeps the wrong treatment. Reinserting at the same index routes
+    /// through the delegate factory.
     func windowDidEndSheet(_ notification: Notification) {
         guard sheetIsCustomizationPalette, let toolbar = window?.toolbar else { return }
         sheetIsCustomizationPalette = false
@@ -377,7 +339,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             toolbar.insertItem(withItemIdentifier: identifier, at: index)
         }
         updateToolbarItems()
-        // Re-apply the collapse-driven New VM removal that windowWillBeginSheet
+        // Re-apply the collapse-driven New VM removal that `windowWillBeginSheet`
         // undid for the palette.
         syncNewVMVisibilityToSidebarState()
     }
@@ -458,7 +420,6 @@ extension MainWindowController: NSToolbarItemValidation {
 
         switch item.itemIdentifier {
         case Self.toolbarNewVM:
-            // VM-independent; always available.
             return true
         case Self.toolbarShowInFinder:
             // Enabled even while preparing — the bundle already exists on disk.
@@ -485,13 +446,6 @@ extension MainWindowController: NSToolbarItemValidation {
 
 // MARK: - Snap-to-fit split view controller
 
-/// `NSSplitViewController` that magnetizes the sidebar divider to a caller-
-/// supplied "fit" width during a drag, the way Finder snaps its sidebar to the
-/// width of the longest item.
-///
-/// The sidebar's hard min/max thickness is still enforced by the split view
-/// item; this only adds a soft snap point in between. `sidebarMetrics` returns
-/// the outline geometry to snap to, or `nil` when there's nothing to snap to.
 /// Live sidebar geometry the snap controller needs to convert a "fit the
 /// longest name" outline width into a divider position.
 struct SidebarSnapMetrics {
@@ -521,14 +475,11 @@ final class SnapToFitSplitViewController: NSSplitViewController {
             let sidebarItem = splitViewItems.first
         else { return proposedPosition }
 
-        // `proposedPosition` is a divider coordinate; the sidebar's content
-        // (the outline) is inset a few points from the pane's trailing edge, so
-        // the snap target must be expressed as a pane width, not an outline
-        // width. Find the sidebar's arranged subview (a direct child of the
-        // split view — a sidebar item may wrap its content) and use its trailing
-        // edge as the live divider position, against the outline's current
-        // width. The view controller's own `view.frame` is in its wrapper's
-        // coordinates, so walk up to the split view's child.
+        // `proposedPosition` is a divider coordinate; the outline is inset a few
+        // points from the pane's trailing edge, so the snap target must be
+        // expressed as a pane width, not an outline width. The view controller's
+        // own `view.frame` is in its wrapper's coordinates, so walk up to the
+        // split view's direct child for the live divider position.
         var arranged: NSView? = sidebarItem.viewController.view
         while let view = arranged, view.superview !== splitView { arranged = view.superview }
         let dividerNow = arranged?.frame.maxX ?? proposedPosition

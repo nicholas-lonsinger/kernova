@@ -4,25 +4,16 @@ import Foundation
 /// Streams one clipboard representation at a time to a peer in reply to a
 /// `ClipboardRequest`, with windowed flow control and a streaming SHA-256.
 ///
-/// One sender drives all outbound transfers on a channel, keyed by
-/// `transfer_id`. Each transfer runs on its own serial queue so a transfer
-/// blocked on credit never head-of-line-blocks another. File sources are read
-/// 64 KiB at a time with `F_NOCACHE` (never loaded whole); in-memory sources are
-/// sliced. The bytes' SHA-256 is computed incrementally and sent in
-/// `ClipboardStreamEnd`.
+/// Each transfer runs on its own serial queue, so a transfer blocked on credit
+/// never head-of-line-blocks another and the synchronous
+/// `FileHandle.read(upToCount:)` in the flow-control loop never blocks a
+/// Swift-concurrency cooperative thread. Per-transfer state is guarded by each
+/// transfer's `NSCondition`; the transfer table is guarded by `lock`.
 ///
-/// The owning service routes inbound `ClipboardStreamAck` / `ClipboardStreamAbort`
-/// frames here via `handleAck` / `handleAbort`, and cancels transfers on
-/// supersession or teardown via `cancel(generation:)` / `cancelAll()`.
-///
-/// `@unchecked Sendable`: per-transfer state is guarded by each transfer's
-/// `NSCondition`; the transfer table is guarded by `lock`.
-///
-/// RATIONALE: synchronous `FileHandle.read(upToCount:)` on a dedicated GCD queue
-/// (not a Swift-concurrency cooperative thread) is the DTS-sanctioned fallback
-/// to `DispatchIO`; `F_NOCACHE` recovers the page-cache-friendliness DTS prefers
-/// for streaming large files. This keeps the windowed-flow-control loop simple
-/// and synchronous while never blocking a cooperative thread.
+/// RATIONALE: Apple DTS sanctions a synchronous read on a dedicated GCD queue as
+/// the fallback to `DispatchIO`, and `F_NOCACHE` recovers the page-cache behavior
+/// DTS prefers for streaming large files. The blocking read is deliberate: the
+/// dedicated queue is what keeps it off the cooperative pool.
 public final class ClipboardStreamSender: @unchecked Sendable {
     private let channel: VsockChannel
     private let chunkSize: Int
@@ -34,12 +25,11 @@ public final class ClipboardStreamSender: @unchecked Sendable {
 
     /// - Parameters:
     ///   - channel: the wire to write frames on (`writeFramed` is thread-safe).
-    ///   - chunkSize: per-chunk payload size; defaults to 64 KiB. Tests inject a
-    ///     small size to exercise multi-chunk paths.
+    ///   - chunkSize: per-chunk payload size; defaults to 64 KiB.
     ///   - windowBytes: in-flight credit window; clamped up to at least one
     ///     chunk so a transfer can always make progress.
     ///   - noAckTimeout: how long a transfer waits for credit to advance before
-    ///     aborting a hung peer. Defaults to 10 s.
+    ///     aborting a hung peer.
     public init(
         channel: VsockChannel,
         chunkSize: Int = ClipboardStreamTuning.defaultChunkPayloadSize,
@@ -54,11 +44,9 @@ public final class ClipboardStreamSender: @unchecked Sendable {
 
     /// Begins streaming `representation` in reply to a request.
     ///
-    /// Sends `ClipboardStreamBegin`, then chunks under the credit window, then
-    /// `ClipboardStreamEnd`. Refuses up front (with `Abort{disk.full}`) when the
-    /// requester's `maxAcceptByteCount` can't hold the payload. Calls
-    /// `isCurrent(generation)` between chunks and aborts (`Abort{superseded}`)
-    /// once the offer is no longer current.
+    /// Refuses up front with `Abort{disk.full}` when the requester's
+    /// `maxAcceptByteCount` can't hold the payload, and aborts with
+    /// `Abort{superseded}` once `isCurrent(generation)` goes false.
     ///
     /// - Parameters:
     ///   - transferID: identifies this transfer across its frames.
@@ -73,8 +61,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
     ///   - onProgress: fired off the caller's actor after each chunk is handed to
     ///     the socket, carrying the cumulative `(bytesSent, totalBytes)`.
     ///   - onComplete: fired off the caller's actor exactly once when the transfer
-    ///     ends, with `success` true only when all bytes were streamed (false on
-    ///     any abort/refusal/channel-death). Lets the owner clear progress UI.
+    ///     ends, with `success` true only when all bytes were streamed.
     public func startTransfer(
         transferID: UInt64,
         generation: UInt64,
@@ -88,7 +75,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         let transfer = OutboundTransfer(
             transferID: transferID, generation: generation, windowBytes: windowBytes)
         // Ignore a duplicate transfer_id rather than overwrite an in-flight
-        // transfer (which would orphan its open reader). [L4]
+        // transfer, which would orphan its open reader.
         let inserted = lock.withLock { () -> Bool in
             guard transfers[transferID] == nil else { return false }
             transfers[transferID] = transfer
@@ -127,9 +114,8 @@ public final class ClipboardStreamSender: @unchecked Sendable {
 
     /// Stops a transfer in response to an inbound `ClipboardStreamAbort`.
     ///
-    /// The owning service is responsible for surfacing the abort to the user;
-    /// this only tears down the sending loop and does **not** echo an abort back
-    /// to the peer (it already aborted).
+    /// Tears down the sending loop only: it does **not** echo an abort back to
+    /// the peer, which already aborted, nor surface it to the user.
     public func handleAbort(transferID: UInt64) {
         guard let transfer = transfer(transferID) else { return }
         transfer.markAborted(.peer)
@@ -153,10 +139,8 @@ public final class ClipboardStreamSender: @unchecked Sendable {
     /// `ClipboardStreamAbort` so the requester's parked pull wakes immediately
     /// off-main instead of stalling to its `lazyPullTimeout` backstop.
     ///
-    /// Unlike the `sendAbort(transfer:)` teardown path, no `OutboundTransfer` is
-    /// ever registered — the request is dropped before any transfer exists. The
-    /// peer's `ClipboardStreamReceiver.handleAbort` delivers it to the awaiter
-    /// keyed on `transferID` even with no in-flight transfer.
+    /// No `OutboundTransfer` is ever registered — the request is dropped before
+    /// any transfer exists.
     public func rejectRequest(transferID: UInt64, code: String, message: String) {
         sendAbort(transferID: transferID, code: code, message: message)
     }
@@ -180,20 +164,17 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         onProgress: (@Sendable (_ bytesSent: Int, _ totalBytes: Int) -> Void)?,
         onComplete: (@Sendable (_ success: Bool) -> Void)?
     ) {
-        // `onComplete` must fire on every exit path (success or abort) so the
-        // owner can clear any progress UI; it runs *after* `remove` because this
-        // `defer` is declared later (defers run LIFO).
+        // `onComplete` must fire on every exit path so the owner can clear any
+        // progress UI; it runs *after* `remove` (defers run LIFO).
         var didComplete = false
         defer { onComplete?(didComplete) }
         defer { remove(transfer.transferID) }
 
         let totalBytes = representation.byteCount
 
-        // The requester advertised its free-space ceiling; refuse a transfer it
-        // can't accept rather than stream bytes that will be dropped.
-        // `unlimitedAcceptByteCount` (UInt64.max) means the requester could not
-        // measure its free space; any other value — including 0 — is a real
-        // ceiling. [M2]
+        // Refuse a transfer the requester can't accept rather than stream bytes
+        // that will be dropped. Any ceiling other than `unlimitedAcceptByteCount`
+        // — including 0 — is a real one.
         if maxAcceptByteCount != ClipboardStreamTuning.unlimitedAcceptByteCount
             && UInt64(totalBytes) > maxAcceptByteCount
         {
@@ -221,10 +202,8 @@ public final class ClipboardStreamSender: @unchecked Sendable {
                 message: "Cannot stream a pending-remote representation")
             return
         case .directory:
-            // A source-directory rep (folder placeholder tree) is never streamed
-            // directly — the producer walks it for a listing, streams a confined
-            // child, or archives it at request time, converting to `.inMemory`/
-            // `.file` first.
+            // A source-directory rep is never streamed directly: the producer
+            // converts it to `.inMemory`/`.file` at request time first.
             assertionFailure("Cannot stream a source-directory representation")
             sendAbort(
                 transfer: transfer, code: "read.error",
@@ -312,8 +291,8 @@ public final class ClipboardStreamSender: @unchecked Sendable {
                     $0.sha256 = digest
                 }
             })
-        // All bytes were streamed; a failed End-send still counts as success here
-        // (delivery becomes the receiver's stall concern, not a send failure).
+        // All bytes were streamed; a failed End-send still counts as success —
+        // delivery is then the receiver's stall concern, not a send failure.
         didComplete = true
     }
 
@@ -334,10 +313,6 @@ public final class ClipboardStreamSender: @unchecked Sendable {
     }
 
     /// Writes a `ClipboardStreamAbort` for `transferID`.
-    ///
-    /// Shared by the in-flight `sendAbort(transfer:)` teardown and the
-    /// pre-transfer `rejectRequest` path, which has no `OutboundTransfer` to
-    /// key on.
     private func sendAbort(transferID: UInt64, code: String, message: String) {
         _ = send(
             .with {
@@ -399,7 +374,7 @@ private final class OutboundTransfer: @unchecked Sendable {
         while true {
             if aborted { return .aborted(abortReason) }
             // Honor the receiver-advertised window (updated by acks under this
-            // lock), never the sender's own constant. [L1]
+            // lock), never the sender's own constant.
             let effectiveWindow = max(windowBytes, chunkSize)
             let inFlight = offset - ackedBytes
             if started && inFlight + chunkSize <= effectiveWindow { return .proceed }
@@ -445,12 +420,9 @@ private final class InMemoryChunkReader: ChunkReader {
         guard offset < end else { return Data() }
         let slice = data[offset..<end]
         offset = end
-        // RATIONALE: `Data.SubSequence` is `Data`, so returning the slice avoids a
-        // per-chunk 64 KiB alloc+copy. It aliases `data`, which this reader already
-        // retains for the whole transfer, so there is no extra retention. The slice
-        // has a non-zero `startIndex`; the consumers handle that — `hasher.update`
-        // and the protobuf `bytes` field accept it, and `serializedData()` copies
-        // it into the wire buffer regardless.
+        // Returning the slice avoids a per-chunk 64 KiB alloc+copy; it aliases
+        // `data`, which this reader retains for the whole transfer anyway. The
+        // slice has a non-zero `startIndex`, which every consumer here handles.
         return slice
     }
     func close() {}

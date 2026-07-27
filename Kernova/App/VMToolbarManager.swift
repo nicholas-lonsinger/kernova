@@ -3,14 +3,11 @@ import os
 
 /// Shared toolbar logic for VM window controllers.
 ///
-/// Creates and manages the lifecycle,
-/// suspend, clipboard, and display toolbar items that appear in both the main
-/// window and per-VM display windows.
-///
-/// Each window controller creates its own `VMToolbarManager` with a ``Configuration``
-/// that captures per-controller differences (toolbar item identifiers, preparing checks,
-/// display capability gating) and an `instanceProvider` closure that resolves the
-/// current `VMInstance`.
+/// Creates and manages the lifecycle, suspend, clipboard, and display toolbar
+/// items that appear in both the main window and per-VM display windows. Each
+/// window controller creates its own manager with a ``Configuration`` capturing
+/// the per-controller differences and an `instanceProvider` closure that
+/// resolves the current `VMInstance`.
 @MainActor
 final class VMToolbarManager: NSObject {
     struct Configuration {
@@ -22,18 +19,12 @@ final class VMToolbarManager: NSObject {
         let fullscreenID: NSToolbarItem.Identifier
         /// When non-nil, a gear-icon button that toggles the detail pane between the live
         /// display and the (read-only) settings form.
-        ///
-        /// Only the main window sets this; the
-        /// pop-out window has no settings pane.
         let settingsToggleID: NSToolbarItem.Identifier?
 
         /// When `true`, checks `instance.isPreparing` and disables all items while preparing.
-        /// `MainWindowController` sets this to `true`; `VMDisplayWindowController` sets it to `false`.
         let checksPreparing: Bool
 
         /// When `true`, gates display button enablement on `instance.canUseExternalDisplay`.
-        /// `MainWindowController` sets this to `true`; `VMDisplayWindowController` sets it to `false`
-        /// (display buttons are always enabled in the pop-out window).
         let gatesDisplayOnCapability: Bool
     }
 
@@ -53,12 +44,8 @@ final class VMToolbarManager: NSObject {
     /// glass capsule clusters.
     ///
     /// Adjacent bordered items merge into one shared capsule platter (see
-    /// docs/TOOLBAR.md), so the spaces choose the groupings: Suspend and
-    /// Clipboard each in their own circle, the display pair together, the
-    /// settings toggle on its own. The lifecycle group needs no space — an
-    /// `NSToolbarItemGroup` always gets its own platter.
-    ///
-    /// Derived from `sharedItemIdentifiers` so the two orders can never drift.
+    /// docs/TOOLBAR.md), so the spaces choose the groupings. The lifecycle group
+    /// needs no space — an `NSToolbarItemGroup` always gets its own platter.
     var defaultItemIdentifiers: [NSToolbarItem.Identifier] {
         let clusterStarts = clusterStartIdentifiers
         return sharedItemIdentifiers.flatMap { clusterStarts.contains($0) ? [.space, $0] : [$0] }
@@ -83,9 +70,8 @@ final class VMToolbarManager: NSObject {
     // MARK: - Clipboard transfer-progress state
 
     /// The VM whose `transferProgress` the clipboard item currently reflects;
-    /// weak so it never keeps an instance alive.
-    ///
-    /// Identity-compared to re-arm the observation only on a real selection swap.
+    /// weak so it never keeps an instance alive, and identity-compared to re-arm
+    /// the observation only on a real selection swap.
     private weak var clipboardObservedInstance: VMInstance?
     private weak var clipboardProgressToolbar: NSToolbar?
     private var clipboardProgressObservation: ObservationLoop?
@@ -128,9 +114,6 @@ final class VMToolbarManager: NSObject {
 
     /// Creates the `NSToolbarItem` for the given identifier, or returns `nil` if it is not
     /// a shared item managed by this manager.
-    ///
-    /// Called from the controller's
-    /// `toolbar(_:itemForItemIdentifier:willBeInsertedIntoToolbar:)`.
     func makeToolbarItem(for identifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
         switch identifier {
         case configuration.lifecycleID:
@@ -164,9 +147,7 @@ final class VMToolbarManager: NSObject {
 
         case configuration.clipboardID:
             // A view-backed item so the transfer bar is a real subview over the
-            // glyph (Safari's downloads-button construction) rather than baked
-            // into the item's image; the button reproduces the native platter
-            // treatment (see ClipboardToolbarButton). The nil target sends
+            // glyph rather than baked into the item's image. The nil target sends
             // showClipboard down the responder chain, as the bordered items do.
             let button = ClipboardToolbarButton()
             button.action = #selector(AppDelegate.showClipboard(_:))
@@ -176,10 +157,8 @@ final class VMToolbarManager: NSObject {
             item.paletteLabel = "Clipboard"
             item.view = button
             // AppKit builds an item's automatic menu form representation from the
-            // *item's* own action, which a view-backed item leaves nil — so the
-            // overflow menu ("»") entry would be inert while every bordered item's
-            // still works. Supply one explicitly; `AppDelegate.validateMenuItem`
-            // already covers the selector, so the menu enables it correctly.
+            // *item's* own action, which a view-backed item leaves nil, so the
+            // overflow menu ("»") entry would be inert without an explicit one.
             let menuForm = NSMenuItem(
                 title: "Clipboard",
                 action: #selector(AppDelegate.showClipboard(_:)),
@@ -229,7 +208,6 @@ final class VMToolbarManager: NSObject {
 
     // MARK: - Toolbar State Updates
 
-    /// Updates all shared toolbar items in the given toolbar to reflect current VM state.
     func updateToolbarItems(in toolbar: NSToolbar) {
         let instance = resolveActiveInstance()
         updateLifecycleGroup(in: toolbar, instance: instance)
@@ -252,8 +230,7 @@ final class VMToolbarManager: NSObject {
     ///
     /// A `nil` identifier (an item this controller doesn't configure) or an item
     /// missing from the toolbar is a silent skip — the user may have removed it
-    /// via customization. Returns the item so a caller that needs it for more
-    /// than this (the clipboard's transfer bar) can carry on.
+    /// via customization.
     @discardableResult
     private func updateItem(
         in toolbar: NSToolbar,
@@ -277,8 +254,6 @@ final class VMToolbarManager: NSObject {
         return item
     }
 
-    /// Whether the display items should be enabled for the given instance,
-    /// honoring the per-controller capability gate.
     private func displayItemsEnabled(for instance: VMInstance?) -> Bool {
         guard let instance else { return false }
         return configuration.gatesDisplayOnCapability ? instance.canUseExternalDisplay : true
@@ -286,8 +261,7 @@ final class VMToolbarManager: NSObject {
 
     private func updateLifecycleGroup(in toolbar: NSToolbar, instance: VMInstance?) {
         // Absence is legitimate — the user may have removed the item via toolbar
-        // customization (matching the silent skips in updateClipboardItem and
-        // updateSettingsToggleItem).
+        // customization.
         guard let item = toolbar.items.first(where: { $0.itemIdentifier == configuration.lifecycleID })
         else { return }
         guard let group = item as? NSToolbarItemGroup, group.subitems.count == 3 else {
@@ -301,9 +275,8 @@ final class VMToolbarManager: NSObject {
         }
 
         let canResume = instance.status.canResume
-        // `startAction` triggers on installContext (not status) so .error retries —
-        // which happen when a previous install attempt failed — also get the
-        // install-flavored labels and reflect what Start will actually do.
+        // `startAction` triggers on installContext (not status), so an .error
+        // retry also gets the install-flavored labels.
         let startAction = instance.startAction
         let playLabel: String
         let playToolTip: String
@@ -332,9 +305,9 @@ final class VMToolbarManager: NSObject {
         play.isEnabled = instance.status.canStart || canResume
         group.subitems[LifecycleSegment.pause.rawValue].isEnabled = instance.status.canPause
 
-        // canStop excludes cold-paused (no graceful stop possible); isColdPaused enables
-        // the "discard saved state" path, and the label names that consequence
-        // (matching the menu bar and sidebar context menu).
+        // canStop excludes cold-paused (no graceful stop possible); isColdPaused
+        // enables the "discard saved state" path, and the label names that
+        // consequence.
         let stop = group.subitems[LifecycleSegment.stop.rawValue]
         let stopLabel = instance.stopActionToolbarLabel
         if stop.label != stopLabel {
@@ -354,9 +327,9 @@ final class VMToolbarManager: NSObject {
             ) != nil
         else { return }
 
-        // Re-arm the transfer-progress observation onto the current VM so the
-        // button's bar tracks in-flight transfers — without re-running the
-        // whole toolbar update on every chunk.
+        // Re-arm the transfer-progress observation onto the current VM, so the
+        // button's bar tracks in-flight transfers without re-running the whole
+        // toolbar update on every chunk.
         if instance !== clipboardObservedInstance {
             clipboardObservedInstance = instance
             clipboardProgressToolbar = toolbar
@@ -373,8 +346,6 @@ final class VMToolbarManager: NSObject {
         refreshClipboardTransferBar()
     }
 
-    /// Pushes the current transfer fraction (or idle `nil`) into the clipboard
-    /// button's bar.
     private func refreshClipboardTransferBar() {
         guard let clipboardID = configuration.clipboardID,
             let toolbar = clipboardProgressToolbar,
@@ -391,9 +362,8 @@ final class VMToolbarManager: NSObject {
         updateItem(
             in: toolbar,
             configuration.settingsToggleID,
-            // Only meaningful when there's an actual display the user could be looking at.
-            // In other states (stopped, starting, installing) the settings form is already
-            // — or is about to become — the only view, so there's nothing to toggle to.
+            // Only meaningful when there's an actual display to toggle away from;
+            // in other states the settings form is already the only view.
             isEnabled: instance?.status.hasActiveDisplay ?? false,
             state: inSettingsMode
                 ? ItemState(
@@ -405,8 +375,6 @@ final class VMToolbarManager: NSObject {
         )
     }
 
-    /// Pop Out and Fullscreen share a shape — capability-gated enablement plus a
-    /// two-state relabel — so they share one update path.
     private func updateDisplayItems(in toolbar: NSToolbar, instance: VMInstance?) {
         let isEnabled = displayItemsEnabled(for: instance)
         updateItem(
@@ -473,9 +441,6 @@ final class VMToolbarManager: NSObject {
 
     /// Creates a bordered image-backed item — the standard single-button shape,
     /// which merges into a shared glass capsule with adjacent bordered items.
-    ///
-    /// The factory label doubles as the stable palette label; state-dependent
-    /// relabeling (Pop Out ⇆ Pop In) happens in the update methods.
     private func makeBorderedItem(
         identifier: NSToolbarItem.Identifier,
         label: String,

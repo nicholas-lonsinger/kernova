@@ -1,12 +1,9 @@
 # RELEASING.md
 
-How to cut a **notarized Developer ID release** of Kernova. This is the only
-distribution channel that exists today: the app already runs under the App
-Sandbox in every configuration (#89 — see [SANDBOX.md](SANDBOX.md)), so
-TestFlight and the Mac App Store are a
-matter of App Store Connect setup rather than further code work. Developer ID
-("Direct Distribution" in Xcode's Organizer) remains the shipping channel; the
-sandbox changes nothing in the flow below.
+Read this before cutting a release: the **notarized Developer ID** flow
+("Direct Distribution" in Xcode's Organizer), the one-time signing
+prerequisites behind it, and the verification checklist. The entitlement and
+app-group story is in [SANDBOX.md](SANDBOX.md).
 
 Releasing is **Nicholas-specific** and does not touch CI or the clone-and-run
 story. CI builds Debug with `CODE_SIGNING_ALLOWED=NO`, and the Debug
@@ -101,7 +98,7 @@ into *build*-action products for debugger attachment — the agent targets set
 the DMG is notarization-clean regardless of whether it came from a `build` or
 an `archive` action.
 
-All five product targets set `ENABLE_HARDENED_RUNTIME = YES` in Release. The
+Every product target sets `ENABLE_HARDENED_RUNTIME = YES` in Release. The
 agent and `KernovaRelaunchHelper` each set `SKIP_INSTALL = YES` so the archive
 contains only `Kernova.app` — either one installing as a second product turns
 the archive into a generic *Other Items* archive with **Distribute App
@@ -111,11 +108,10 @@ install.)
 
 ## Release flow
 
-1. **Version.** Decide whether to bump `MARKETING_VERSION` for the app
-   (currently `0.9.1`). The guest agent has its **own** version (currently
-   `0.38.0`) — bump it only when agent behavior changed, per the guest-agent
-   versioning conventions in [BUILD.md](BUILD.md). `CFBundleVersion` is automatic (git
-   commit count) and needs no manual edit.
+1. **Version.** Decide whether to bump the app's `MARKETING_VERSION`. The guest
+   agent has its **own** version — bump it only when agent behavior changed, per
+   the guest-agent versioning conventions in [BUILD.md](BUILD.md).
+   `CFBundleVersion` is derived from git and needs no manual edit.
 2. **Archive.** In Xcode, select the **Kernova** scheme, then **Product →
    Archive** (archiving builds Release).
 3. **Confirm the archive type.** In the Organizer, verify the new archive

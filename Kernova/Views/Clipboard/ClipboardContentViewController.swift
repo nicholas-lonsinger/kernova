@@ -4,30 +4,11 @@ import os
 
 /// Pure AppKit view controller for the clipboard sharing window content.
 ///
-/// A command bar tops the window: explicit host-pasteboard actions
-/// ("Paste from Mac" / "Copy to Mac", also reachable through the responder
-/// chain as `paste:`/`copy:` outside the editor) plus "Clear" to empty the
-/// buffer. The bar (and those responder-chain equivalents) is hidden while
-/// automatic passthrough is on — the host and guest clipboards sync
-/// automatically, so the manual actions are redundant and the
-/// `ClipboardPassthroughBanner` takes its place. Below it the content area
-/// renders the buffer per
-/// `ClipboardPreviewPolicy`: an editable `NSTextView` for text (and the empty
-/// buffer), a styled-RTF / image / file-chip preview, or a generic
-/// per-representation summary; drag-and-drop anywhere in the window feeds the
-/// same intake path as the Paste button. The bottom status bar shows the guest
-/// agent connection state (and the install/update affordance for macOS guests —
-/// Linux guests use `spice-vdagent`, so it's hidden for them) on the left and
-/// the content-type indicator — which doubles as the transient status surface —
-/// right-aligned.
-///
 /// Conflict policy is last-writer-wins: every keystroke pushes the edit into
-/// `clipboardService.clipboardContent`, so "unsent edits" are model state and
-/// a guest update that lands mid-edit is simply a newer writer. Echo
-/// suppression is digest-based — `lastAppliedDigest` is set *before* writing
-/// the model, so the resulting observation pass recognizes the content as
-/// already displayed instead of re-applying it (this replaces the fragile
-/// reentrancy flag the previous implementation used).
+/// `clipboardService.clipboardContent`, so a guest update landing mid-edit is
+/// simply a newer writer. Echo suppression is digest-based — `lastAppliedDigest`
+/// is set *before* writing the model, so the resulting observation pass
+/// recognizes the content as already displayed instead of re-applying it.
 @MainActor
 final class ClipboardContentViewController: NSViewController, NSTextViewDelegate,
     NSUserInterfaceValidations
@@ -49,39 +30,20 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private let summaryView = ClipboardSummaryView()
     private let concealedPreview = ClipboardConcealedPreviewView()
     private let commandBar = ClipboardCommandBarView()
-    /// Top-of-window nudge shown only when the host "Copy to Mac" File Provider is
-    /// registered but the user hasn't enabled it in System Settings.
     private let enablementBanner = ClipboardEnablementBanner()
-    /// Active = the banner is collapsed to zero height (the common case, toggle
-    /// on); deactivated to reveal it when the toggle is off.
     private lazy var bannerCollapsed = enablementBanner.heightAnchor.constraint(equalToConstant: 0)
-    /// Shown while automatic passthrough is on, indicating the editor/buttons are
-    /// no longer the primary pathway; carries a runtime "Turn Off".
     private let passthroughBanner = ClipboardPassthroughBanner()
-    /// Active = the passthrough banner is collapsed to zero height (passthrough
-    /// off, the default); deactivated to reveal it when passthrough is on.
     private lazy var passthroughBannerCollapsed = passthroughBanner.heightAnchor.constraint(
         equalToConstant: 0)
-    /// Active = the command bar is collapsed to zero height (automatic
-    /// passthrough on — the manual transfer/clear actions are redundant);
-    /// deactivated to reveal it in the normal gated mode.
     private lazy var commandBarCollapsed = commandBar.heightAnchor.constraint(equalToConstant: 0)
-    /// Content-type indicator + transient-status surface, placed in the status
-    /// row (right-aligned) so the command row stays a clean set of buttons.
+    /// Content-type indicator; doubles as the transient-status surface.
     private let indicatorView = ClipboardIndicatorView()
 
-    /// Determinate transfer progress bar, pinned just above the status row.
-    ///
-    /// Shown (and collapsed when idle via `transferBarCollapsed`) by
-    /// `updateTransferProgress`.
     private let transferProgressBar = NSProgressIndicator()
-    /// Active = the bar is collapsed to zero height (the idle resting state);
-    /// deactivated to reveal the bar at its intrinsic system height.
     private lazy var transferBarCollapsed = transferProgressBar.heightAnchor.constraint(
         equalToConstant: 0)
 
     /// Every content view stacked in the content area; exactly one is visible.
-    /// `scrollView` (the editable plain-text editor) is first — the default.
     private var contentViews: [NSView] {
         [
             scrollView, richTextPreview, imagePreview, filePreview, filesPreview, summaryView,
@@ -96,19 +58,16 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     /// Digest of the content currently rendered in the content area.
     ///
-    /// When the observed model digest matches, the content rebuild is
-    /// skipped — both for cheap no-op passes and for the echo of our own
-    /// writes.
+    /// A matching observed digest skips the rebuild — both for no-op passes and
+    /// for the echo of our own writes.
     private var lastAppliedDigest: Data?
 
     /// Debounced off-actor commit of the editor buffer.
     ///
     /// `textDidChange` does only cheap, hash-free work per keystroke (CLIPBOARD.md
-    /// §8) and schedules this; after `editDebounceInterval` of quiet the buffer is
-    /// hashed off the main actor and written to the model. `editSeq` bumps per
-    /// keystroke so an in-flight commit can tell it was superseded; `hasPendingEdit`
-    /// records that a keystroke has not yet reached the model, so `flushPendingEdit`
-    /// can commit the latest text synchronously before a grab/copy.
+    /// §8) and schedules this. `editSeq` bumps per keystroke so an in-flight commit
+    /// can tell it was superseded; `hasPendingEdit` records that a keystroke has
+    /// not yet reached the model.
     private var editDebounceTask: Task<Void, Never>?
     private var editSeq: UInt64 = 0
     private var hasPendingEdit = false
@@ -116,61 +75,41 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// Whether the user authored the current buffer — the condition
     /// `flushAndAnnounceEdit` announces on.
     ///
-    /// Set by both editor writes, cleared when an external update replaces the
-    /// edit; **not** cleared by the announcement (unlike `hasPendingEdit`, which
-    /// spans only the debounce).
+    /// Cleared when an external update replaces the edit; **not** cleared by the
+    /// announcement.
     private var hasUserEdit = false
 
     /// Quiet period before a keystroke burst commits off-actor.
-    ///
-    /// Injectable so tests drive the commit deterministically instead of waiting
-    /// out 200 ms.
     private let editDebounceInterval: Duration
 
-    /// Last transfer issue already shown as a transient.
-    ///
-    /// Tracked so re-observation doesn't re-show it; compared by value
-    /// (`date` is the re-fire identity).
+    /// Last transfer issue already shown as a transient, so re-observation
+    /// doesn't re-show it.
     private var lastShownIssue: ClipboardTransferIssue?
 
     private var serviceObservation: ObservationLoop?
     /// Drives only the bottom transfer bar, separate from `serviceObservation`.
-    ///
-    /// Chunk-cadence progress flushes then refresh just the bar — not the full
-    /// `updateUI()`. See `observeServiceChanges()`.
     private var transferProgressObservation: ObservationLoop?
 
-    /// Queue handed to `NSFilePromiseReceiver` for writing promised files;
-    /// the completion hops back to the main actor before touching state.
+    /// Queue handed to `NSFilePromiseReceiver` for writing promised files.
     private let promiseQueue = OperationQueue()
 
-    /// Writes the buffer to the host pasteboard for "Copy to Mac".
+    /// Writes the buffer to the host pasteboard for "Copy to Mac" (CLIPBOARD.md §4).
     ///
-    /// The window-independent inbound-publication path (CLIPBOARD.md §4). In
-    /// production the same per-VM instance is shared with the passthrough
-    /// coordinator; tests inject one built over a private pasteboard/registry.
+    /// In production the same per-VM instance is shared with the passthrough
+    /// coordinator, so echo suppression sees a manual "Copy to Mac" too.
     private let publisher: HostClipboardPublisher
 
     /// Stages dropped/pasted *folders* into archives before they reach the guest.
     ///
-    /// Only the inbound intake (Paste button, responder `paste:`, drag-and-drop)
-    /// uses this — the "Copy to Mac" host-write staging moved to
-    /// `HostClipboardPublisher`. Both stage under the same launch-swept `"host"`
-    /// root (each generation is its own UUID subdirectory, so the two never
-    /// collide); recent generations are retained so a just-resolved URL stays valid.
+    /// Shares the launch-swept `"host"` staging root with `HostClipboardPublisher`;
+    /// each generation is its own UUID subdirectory, so the two never collide.
     private let staging = ClipboardFileStaging(label: HostClipboardPublisher.stagingLabel)
 
-    /// Monotonic generation for this controller's slice of the launch-swept
-    /// staging root.
-    ///
-    /// Bumped per folder-resolving intake so each supersedes older staged
-    /// artifacts within the staging recency window.
+    /// Monotonic generation bumped per folder-resolving intake, so each supersedes
+    /// older staged artifacts within the staging recency window.
     private var stagingGeneration: UInt64 = 1
 
-    /// The host pasteboard "Paste from Mac" reads from — `.general` in
-    /// production; tests inject a private one so a paste never depends on (or
-    /// disturbs) the developer's real clipboard, mirroring the injected
-    /// `writePasteboard` on the publish side.
+    /// The host pasteboard "Paste from Mac" reads from — `.general` in production.
     private let readPasteboard: NSPasteboard
 
     /// `true` while a "Copy to Mac" is materializing/writing.
@@ -198,9 +137,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         self.instance = instance
         self.viewModel = viewModel
         self.readPasteboard = readPasteboard
-        // In production the window shares the VM's publisher with the passthrough
-        // coordinator (so echo suppression sees a manual "Copy to Mac" too); tests
-        // inject one over a private pasteboard/registry via the params above.
         self.publisher =
             publisher
             ?? HostClipboardPublisher(
@@ -258,9 +194,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         super.init(nibName: nil, bundle: nil)
 
         textView.delegate = self
-        // An editable text view would otherwise swallow a file/image/screenshot
-        // drop and insert the file's path as text — divert those to the same
-        // image-aware intake as a drop on the container.
+        // An editable text view would otherwise swallow a file/image drop and
+        // insert the file's path as text — divert those to the container's intake.
         textView.onDivertedDrop = { [weak self] in self?.handleDrop($0) ?? false }
         button.target = self
         button.action = #selector(actionButtonClicked(_:))
@@ -287,9 +222,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             self?.handleDrop(draggingInfo) ?? false
         }
 
-        // All content views are installed once and toggled via isHidden — no
-        // add/remove churn when the preview mode changes. The editor leads
-        // (the default visible view); the rest start hidden.
         for contentView in contentViews {
             contentView.translatesAutoresizingMaskIntoConstraints = false
             contentView.isHidden = contentView !== scrollView
@@ -327,10 +259,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(statusBar)
 
-        // Vertical order: enablement banner → passthrough banner (both top,
-        // collapsed when not needed) → command bar (self-delineating, and
-        // collapsed while passthrough is on) → content → divider → progress bar →
-        // status row.
         var constraints: [NSLayoutConstraint] = [
             enablementBanner.topAnchor.constraint(equalTo: container.topAnchor),
             enablementBanner.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -358,9 +286,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             statusDivider.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             statusDivider.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
-            // The progress bar sits between the divider and the status row, inset
-            // to align with the status row's content. Collapsed to zero height at
-            // rest, so the resting layout is pixel-identical to before.
             transferProgressBar.topAnchor.constraint(equalTo: statusDivider.bottomAnchor),
             transferProgressBar.leadingAnchor.constraint(
                 equalTo: container.leadingAnchor, constant: Spacing.medium),
@@ -390,8 +315,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     override func viewDidAppear() {
         super.viewDidAppear()
-        // The window is now visible — pull the representations it renders richly
-        // for a guest offer that arrived (or stayed a placeholder) while hidden.
+        // Now visible — pull representations for an offer that arrived while hidden.
         triggerPreviewMaterialization()
     }
 
@@ -403,9 +327,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 "Clipboard edit ignored — clipboardService is nil for VM '\(self.instance.name, privacy: .public)'")
             return
         }
-        // Per keystroke: only cheap, hash-free work (CLIPBOARD.md §8). The
-        // indicator and button state derive from the live string; the buffer's
-        // content/digest is committed off-actor by the debounced `commitEdit`.
+        // Per keystroke: only cheap, hash-free work (CLIPBOARD.md §8).
         let text = textView.string
         editSeq &+= 1
         hasPendingEdit = true
@@ -416,7 +338,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     }
 
     /// Schedules the off-actor commit of `text` after a quiet period, replacing
-    /// any still-pending commit (mirrors `VMDirectoryWatcher.scheduleReconciliation`).
+    /// any still-pending commit.
     private func scheduleEditCommit(text: String, seq: UInt64) {
         editDebounceTask?.cancel()
         editDebounceTask = Task { [weak self] in
@@ -432,24 +354,19 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         guard let service = instance.clipboardService else { return }
         let edited = await ClipboardContent.makeOffActor(text: text)
         // A newer keystroke (seq) or a guest update that rebuilt the editor while
-        // the hash ran (string mismatch) supersedes this commit; dropping it is
-        // safe — the newer writer owns the model.
+        // the hash ran (string mismatch) supersedes this commit; the newer writer
+        // owns the model.
         guard seq == editSeq, textView.string == text else { return }
         hasPendingEdit = false
         hasUserEdit = true
-        // Prime the digest before the write so the resulting observation pass
-        // recognizes the content as already displayed (the editor IS the source)
-        // and doesn't rebuild the view out from under the user.
+        // Prime the digest before the write so the observation pass doesn't
+        // rebuild the view out from under the user.
         lastAppliedDigest = edited.digest
         service.clipboardContent = edited
     }
 
     /// Synchronously commits the live editor text if a keystroke has not yet
     /// reached the model, so a grab/copy/close offers the latest text.
-    ///
-    /// A no-op in the common case (the debounced commit already landed), so no
-    /// hash is paid; when an edit is pending it pays a single synchronous hash on
-    /// a discrete user action — acceptable under §8 (it is not per keystroke).
     func flushPendingEdit() {
         editDebounceTask?.cancel()
         editDebounceTask = nil
@@ -464,13 +381,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// The window's blur/close hand-off: commit a pending keystroke, then announce
     /// the buffer — but only content the user typed here.
     ///
-    /// The editor is the one surface with no send of its own; a paste/drop
-    /// announces at the gesture (`apply(intake:)`).
-    ///
     /// The `hasUserEdit` guard is not redundant with `grabIfChanged()`, which
     /// answers "does this differ from the last *successful* send" — also true of
     /// content nobody touched whose send failed. Announcing unconditionally here
-    /// therefore retries other components' failed transfers.
+    /// would retry other components' failed transfers.
     func flushAndAnnounceEdit() {
         flushPendingEdit()
         guard hasUserEdit else { return }
@@ -489,34 +403,23 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     }
 
     #if DEBUG
-    /// Simulates a keystroke burst landing `text` in the editor — sets the
-    /// text view and fires the delegate callback — so tests drive the
-    /// debounced off-actor commit without synthesizing real key events.
+    /// Simulates a keystroke burst landing `text` in the editor.
     func setEditorTextForTesting(_ text: String) {
         textView.string = text
         textDidChange(Notification(name: NSText.didChangeNotification, object: textView))
     }
 
-    /// Runs one UI/observation pass, as the service-change observer would, so
-    /// tests can drive the external-update rebuild path (which cancels a
-    /// pending edit) deterministically.
+    /// Runs one UI/observation pass, as the service-change observer would.
     func simulateObservationForTesting() {
         updateUI()
     }
 
-    /// Whether the manual command bar is currently withdrawn, so tests assert
-    /// the passthrough chrome without reaching into private views.
     var isCommandBarHiddenForTesting: Bool { commandBar.isHidden }
 
-    /// The command bar's laid-out height, so tests assert the collapse actually
+    /// The command bar's laid-out height, so a test can assert the collapse
     /// resolves to zero rather than only that `isHidden` was set.
     var commandBarLaidOutHeightForTesting: CGFloat { commandBar.frame.height }
 
-    /// Whether a "Copy to Mac" is in flight.
-    ///
-    /// `copyToMac` sets this synchronously before launching its publish `Task`,
-    /// so it is the one signal that distinguishes "the action returned at a
-    /// guard" from "the action started a publish" without awaiting anything.
     var isCopyingToMacForTesting: Bool { isCopyingToMac }
     #endif
 
@@ -526,21 +429,14 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         serviceObservation = observeRecurring(
             track: { [weak self] in
                 guard let self else { return }
-                // Read each property so observation re-fires when any of them
-                // transitions: clipboardService (nil → non-nil on connect),
-                // vsockControlService (drives agentStatus for macOS guests),
-                // and the per-property fields the UI mirrors.
+                // Read each property so observation re-fires when any transitions.
                 let clipService = self.instance.clipboardService
                 _ = clipService?.clipboardContent
                 _ = clipService?.isConnected
                 _ = clipService?.lastTransferIssue
                 _ = self.instance.vsockControlService?.agentStatus
                 _ = self.instance.agentStatus
-                // The host "Copy to Mac" File Provider's enablement, so the
-                // top-of-window banner reacts when the user flips the toggle.
                 _ = HostClipboardFileProvider.shared.availability
-                // Passthrough state, so the passthrough banner reveals/collapses
-                // when it's toggled (from settings or its own "Turn Off").
                 _ = self.instance.configuration.clipboardPassthroughEnabled
             },
             apply: { [weak self] in
@@ -549,10 +445,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         )
 
         // The transfer bar updates at chunk-flush cadence — many times a second
-        // for a multi-GB transfer. Drive it from its own lightweight loop so a
-        // progress flush refreshes only the bar, not the full `updateUI()` (which
-        // re-diffs the content digest and re-triggers lazy preview
-        // materialization). Mirrors the toolbar item's dedicated progress loop.
+        // for a multi-GB transfer. Its own loop keeps a progress flush from
+        // running the full `updateUI()` (content re-diff, preview materialization).
         transferProgressObservation = observeRecurring(
             track: { [weak self] in _ = self?.instance.clipboardService?.transferProgress },
             apply: { [weak self] in
@@ -562,9 +456,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         )
     }
 
-    /// Shows/collapses the bottom transfer bar from the service's `transferProgress`.
-    /// `nil` (no active transfer, or cleared on any terminal state) collapses it, so
-    /// the bar can never get stuck.
+    /// Shows the bottom transfer bar from `transferProgress`; `nil` collapses it,
+    /// so the bar can never get stuck.
     private func updateTransferProgress(service: ClipboardServicing?) {
         guard let progress = service?.transferProgress else {
             // Hide first, then reset the value while hidden so the next transfer
@@ -603,10 +496,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         if let service {
             let content = service.clipboardContent
             if content.digest != lastAppliedDigest {
-                // An external update (guest content, paste) is replacing the
-                // editor; drop any debounced edit so it can't later flush stale
-                // text over this content. (Our own primed writes match the digest
-                // and never reach this branch.)
+                // An external update is replacing the editor; drop any debounced
+                // edit so it can't later flush stale text over this content.
                 cancelPendingEdit()
                 lastAppliedDigest = content.digest
                 apply(content: content)
@@ -625,10 +516,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     }
 
     /// Reveals the passthrough banner and hides the manual command bar while
-    /// automatic passthrough is on: with the host and guest clipboards syncing
-    /// automatically, Paste from Mac / Copy to Mac / Clear are redundant, and the
-    /// banner (which carries its own hairline) delineates the content area
-    /// instead.
+    /// automatic passthrough is on.
     private func updatePassthroughChrome() {
         let on = instance.configuration.clipboardPassthroughEnabled
         if passthroughBanner.isHidden == on {
@@ -637,7 +525,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
         guard commandBar.isHidden != on else { return }
         // Full Keyboard Access can park focus on a command button; move it off
-        // before the bar disappears, mirroring `show(contentView:)`.
+        // before the bar disappears.
         if on, let responder = view.window?.firstResponder as? NSView,
             responder.isDescendant(of: commandBar)
         {
@@ -647,18 +535,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         commandBarCollapsed.isActive = on
     }
 
-    /// Turns automatic passthrough off from the window banner (no confirmation —
-    /// only enabling, which the settings toggle gates, needs one).
     private func disablePassthrough() {
         viewModel?.updateConfiguration(of: instance) { $0.clipboardPassthroughEnabled = false }
     }
 
-    /// Reveals the top-of-window banner for the host "Copy to Mac" File
-    /// Provider states that need attention: `.needsEnabling` (registered but
-    /// the System-Settings toggle is off — the user can act) and
-    /// `.unavailable` (a registration/install failure with no toggle to flip,
-    /// #591). `.inactive`/`.ready` keep it collapsed. `ClipboardEnablementBanner
-    /// .present(_:)` picks the mode-appropriate copy and button visibility.
+    /// Reveals the top-of-window banner for the host "Copy to Mac" File Provider
+    /// states that need attention.
     private func updateEnablementBanner() {
         let visible: Bool
         switch HostClipboardFileProvider.shared.availability {
@@ -676,16 +558,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         bannerCollapsed.isActive = !visible
     }
 
-    /// Opens System Settings so the user can enable the host File Provider
-    /// (see `ClipboardFileProviderSettings.openEnablementSettings()`).
     private func openFileProviderSettings() {
         if !ClipboardFileProviderSettings.openEnablementSettings() {
             Self.logger.error("Failed to open File Providers settings deep link")
         }
     }
 
-    /// Pulls the representations the window renders richly for the current guest
-    /// offer, when the window is visible — the lazy "pull on display" trigger.
+    /// Pulls the representations the window renders richly, when it is visible.
     ///
     /// The service guards against re-pulling per generation, so calling this on
     /// every appear/update is cheap.
@@ -706,7 +585,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             if richTextPreview.configure(data: data, uti: uti) {
                 show(contentView: richTextPreview)
             } else {
-                // Undecodable RTF degrades to the summary.
                 summaryView.configure(content: content)
                 show(contentView: summaryView)
             }
@@ -714,7 +592,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             if imagePreview.configure(data: data, uti: uti) {
                 show(contentView: imagePreview)
             } else {
-                // Undecodable image bytes degrade to the summary.
                 summaryView.configure(content: content)
                 show(contentView: summaryView)
             }
@@ -722,7 +599,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             if imagePreview.configure(url: url, uti: uti) {
                 show(contentView: imagePreview)
             } else if let file = content.filePayloads.first {
-                // Unreadable/undecodable file image degrades to the file chip.
                 filePreview.configure(
                     filename: file.filename, uti: file.uti, byteCount: file.byteCount)
                 show(contentView: filePreview)
@@ -740,8 +616,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             summaryView.configure(content: content)
             show(contentView: summaryView)
         case .concealed:
-            // The placeholder is static — nothing to configure; the secret bytes
-            // are never handed to a view.
+            // The secret bytes are never handed to a view.
             show(contentView: concealedPreview)
         }
     }
@@ -799,9 +674,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     /// The message shown when "Copy to Mac" placed nothing on the pasteboard, by
     /// the most actionable drop reason first.
-    ///
-    /// The over-cap case points the user at enabling the File Provider (the same
-    /// fix the top-of-window banner offers), since that lifts the size cap.
     private static func dropMessage(for reasons: [CopyToMacDropReason]) -> String {
         guard !reasons.isEmpty else { return "Couldn't fetch the clipboard content to copy" }
         if reasons.contains(.tooLargeWithoutFileProvider) {
@@ -819,8 +691,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// Empties the window's clipboard buffer.
     ///
     /// Clears only the gated buffer/preview — the host and guest pasteboards
-    /// are the user's real clipboards and are left untouched. The observation
-    /// pass resets the editor to empty and the indicator to "Empty".
+    /// are the user's real clipboards and are left untouched.
     @objc private func clearClipboard(_: Any?) {
         guard let service = instance.clipboardService, !service.clipboardContent.isEmpty else {
             return
@@ -833,21 +704,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     }
 
     @objc private func copyToMac(_: Any?) {
-        // Commit any keystroke still inside the debounce window so an immediate
-        // type-then-Copy offers the latest text (and passes the emptiness guard).
         flushPendingEdit()
         guard let service = instance.clipboardService else { return }
         guard !service.clipboardContent.isEmpty else { return }
-        // A pull landing mid-copy republishes clipboardContent, firing the
-        // observation pass that re-enables the Copy button (updateUI) while this
-        // copy is still in flight. Guard re-entry explicitly so a second click
-        // can't launch a concurrent materialize + last-writer-wins pasteboard
-        // write; the disabled button is only cosmetic.
         guard !isCopyingToMac else { return }
         isCopyingToMac = true
 
-        // A large stage mustn't block the UI, so disable the button until the
-        // publish resolves. The publish materializes + writes off the main actor.
         commandBar.copyButton.isEnabled = false
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -864,9 +726,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private func showCopyOutcome(_ outcome: HostPublishOutcome) {
         switch outcome {
         case .nothingServed(let reasons):
-            // `materializeForCopy` counted the file payloads it couldn't serve
-            // (the plain-file set over the deadline-safe cap with the File Provider
-            // off, or a failed eager pull).
             indicatorView.showTransientMessage(Self.dropMessage(for: reasons), style: .error)
         case .stagingFailed:
             indicatorView.showTransientMessage(
@@ -875,8 +734,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             if droppedReasons.isEmpty {
                 indicatorView.showTransientMessage("Copied to Mac clipboard", style: .info)
             } else {
-                // Partial success: some payloads (e.g. a folder that failed to
-                // extract) were dropped — don't claim an unqualified success.
+                // Partial success — don't claim an unqualified one.
                 let count = droppedReasons.count
                 indicatorView.showTransientMessage(
                     "Copied to Mac clipboard — \(count) item\(count == 1 ? "" : "s") couldn't be prepared",
@@ -904,14 +762,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     /// Resolves `.pendingFiles` URLs off the main actor — archiving any folder
     /// into the staging root — and applies the result on the way back.
-    ///
-    /// Shared by the Paste / responder path and drag-and-drop.
     private func resolveAndApply(pendingFiles urls: [URL], allowsBinary: Bool) {
         let staging = self.staging
         let generation = stagingGeneration
         stagingGeneration += 1
-        // A folder archives eagerly; warn the user it may take a moment. A cheap
-        // stat only — the tree walk happens off-main in the resolve below.
+        // A folder archives eagerly; warn the user it may take a moment.
         if Self.containsDirectory(urls) {
             indicatorView.showTransientMessage("Archiving folder…", style: .info)
         }
@@ -925,9 +780,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
     }
 
-    /// Whether any URL points at a directory (a folder or OS package), via a
-    /// cheap stat — gates the "Archiving folder…" transient before the off-main
-    /// resolve.
     nonisolated private static func containsDirectory(_ urls: [URL]) -> Bool {
         urls.contains { url in
             var isDirectory: ObjCBool = false
@@ -936,8 +788,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
     }
 
-    /// Commits an intake result to the buffer (and the guest) or surfaces
-    /// the rejection.
     private func apply(intake: ClipboardIntakeResult) -> Bool {
         guard let service = instance.clipboardService else { return false }
 
@@ -957,8 +807,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             Self.logger.info("Pasteboard intake rejected: \(message, privacy: .public)")
             return false
         case .pendingFiles:
-            // Pending files must be resolved via read(filesAt:) (off the main
-            // actor) before apply — reaching here is a programming error.
             Self.logger.fault(
                 "apply(intake:) received .pendingFiles — resolve it via read(filesAt:) first")
             assertionFailure("apply(intake:) received .pendingFiles")
@@ -971,13 +819,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// Routes a performed drop, image-first, so a dragged screenshot shows the
     /// image like other Mac apps.
     ///
-    /// Synchronous intake (`read(from:)`) handles inline image data, a
-    /// concrete-or-promised file already on disk (incl. the floating
-    /// screenshot thumbnail, whose temp file screencaptureui has already
-    /// written), and plain/rich text — and never surfaces a path string for a
-    /// file/promise drag. Only when nothing usable resolves synchronously, and
-    /// a modern file promise is present (Photos, browsers, or a screenshot
-    /// whose file isn't on disk yet), is the file received asynchronously.
+    /// Synchronous intake handles inline image data, a file already on disk, and
+    /// plain/rich text — and never surfaces a path string for a file/promise
+    /// drag. Only when nothing usable resolves synchronously is a file promise
+    /// received asynchronously.
     private func handleDrop(_ draggingInfo: NSDraggingInfo) -> Bool {
         guard let service = instance.clipboardService else { return false }
         let pasteboard = draggingInfo.draggingPasteboard
@@ -997,14 +842,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             resolveAndApply(pendingFiles: urls, allowsBinary: allowsBinary)
             return true
         case .rejected:
-            // Nothing usable synchronously. Receive a modern file promise async.
             if let receiver = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self])?
                 .compactMap({ $0 as? NSFilePromiseReceiver }).first
             {
                 receivePromisedFile(receiver)
                 return true
             }
-            // Surface the rejection (never a path string for a file/promise drag).
             return apply(intake: result)
         }
     }
@@ -1031,18 +874,16 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
 
         // The reader block runs once per promised file. The buffer models a
-        // single item, so the first successfully received file wins; the
-        // gate is @MainActor state shared by the per-file completions.
+        // single item, so the first successfully received file wins.
         let firstFileGate = PromiseFirstFileGate()
 
         receiver.receivePromisedFiles(atDestination: destination, options: [:], operationQueue: promiseQueue) {
             [weak self] url, error in
             Task { @MainActor [weak self] in
-                // Per-file cleanup happens even if the window closed before
-                // the promise resolved (self gone). Removing the directory
-                // is best-effort and only when it has drained — removeItem
-                // on a directory is recursive and must not race files still
-                // being written by a multi-file promise.
+                // Cleanup runs even if the window closed before the promise
+                // resolved. The directory goes only once it has drained —
+                // removeItem on a directory is recursive and must not race
+                // files still being written by a multi-file promise.
                 defer {
                     try? FileManager.default.removeItem(at: url)
                     if let remaining = try? FileManager.default.contentsOfDirectory(atPath: destination.path),
@@ -1061,11 +902,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 }
                 guard !firstFileGate.taken else { return }
                 firstFileGate.taken = true
-                // Resolve off the main actor through the archive-aware overload so
-                // a promised *folder* is archived just like a concrete file-URL
-                // drag, instead of being silently rejected as "unreadable" (a
-                // directory has no `.fileSize`). Still single-item — the gate above
-                // takes only the first promised entry.
+                // The archive-aware overload archives a promised *folder* instead
+                // of rejecting it as unreadable (a directory has no `.fileSize`).
                 let generation = self.stagingGeneration
                 self.stagingGeneration += 1
                 let staging = self.staging
@@ -1081,14 +919,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     // MARK: - Responder-chain edit actions
 
     // Cover image/summary/empty-unfocused modes; in text mode the focused
-    // NSTextView handles Cmd+V/Cmd+C natively (and pasting an image with the
-    // editor focused does nothing — the Paste button is the affordance).
+    // NSTextView handles Cmd+V/Cmd+C natively.
     //
     // Each body re-checks `isPassthroughOn` rather than trusting
-    // `validateUserInterfaceItem` to have gated it: validation is advisory — it
-    // runs for menu/toolbar senders, but a direct `sendAction` (scripting, a
-    // service, a future non-validating sender) reaches the action regardless.
-    // The action is the enforcement point; validation only greys the item out.
+    // `validateUserInterfaceItem`: validation is advisory, and a direct
+    // `sendAction` reaches the action regardless.
     @objc func paste(_ sender: Any?) {
         guard !isPassthroughOn else { return }
         takeIn(pasteboard: readPasteboard)
@@ -1113,10 +948,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     /// `true` while automatic passthrough owns the transfer.
     ///
-    /// The manual actions (buttons, and their responder-chain `paste:`/`copy:`
-    /// equivalents) are redundant and are withdrawn. A focused `NSTextView`
-    /// handles/validates `paste:`/`copy:` itself, so normal editor text editing
-    /// is unaffected.
+    /// The manual actions are withdrawn. A focused `NSTextView` handles
+    /// `paste:`/`copy:` itself, so editor text editing is unaffected.
     private var isPassthroughOn: Bool { instance.configuration.clipboardPassthroughEnabled }
 
     @objc private func actionButtonClicked(_: Any?) {
@@ -1138,10 +971,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             actionButton.isHidden = !canInstallKernovaAgent
             actionButton.title = "Update Guest Agent…"
         case .connecting(let expected):
-            // Live session for a previously-installed agent that hasn't
-            // said Hello yet. No install/reinstall affordance — the agent
-            // is expected to reconnect; the watchdog will surface
-            // `.expectedMissing` if it doesn't.
+            // No install/reinstall affordance — the agent is expected to
+            // reconnect; the watchdog surfaces `.expectedMissing` if it doesn't.
             statusCircle.layer?.backgroundColor = StatusColor.inactive.cgColor
             statusLabel.stringValue = "Connecting (was \(expected))"
             actionButton.isHidden = true
@@ -1164,17 +995,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     // MARK: - View Construction
 
     private func makeStatusBar() -> NSView {
-        // Spacer needs an explicit low horizontal hugging priority to actually
-        // expand inside the NSStackView. NSView's default hugging priority is
-        // 250 — same as the label's — so without this, the stack view has no
-        // signal to grow the spacer rather than the label, and the button
-        // wouldn't reliably end up flush against the trailing edge.
+        // NSView's default hugging priority (250) matches the label's, so without
+        // lowering it the stack view has no signal to grow the spacer rather than
+        // the label, and the button wouldn't sit flush against the trailing edge.
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        // Connection status leads; the content-type indicator is right-aligned
-        // (flush right in the common case where the agent-action button is
-        // hidden, sliding just left of it when an install/update prompt shows).
         let stack = NSStackView(views: [statusCircle, statusLabel, spacer, indicatorView, actionButton])
         stack.orientation = .horizontal
         stack.spacing = Spacing.small
@@ -1189,12 +1015,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 /// test can substitute a fake that forces `writeObjects` to fail.
 ///
 /// `NSPasteboard` is a class cluster with no public initializer and can't be
-/// subclassed, so its write can't be made to fail from a test. This write-only
-/// seam (prepare, an objects-write returning `Bool`, and the post-write
-/// `changeCount` the passthrough coordinator reads for echo suppression) is
-/// deliberately separate from the guest agent's richer `Pasteboard` protocol,
-/// which also carries poll/read members the host write path never uses.
-/// `NSPasteboard` satisfies all of them as-is.
+/// subclassed, so its write can't be made to fail from a test.
 protocol HostWritePasteboard: AnyObject {
     /// Monotonically increasing count of pasteboard changes — the value right
     /// after a write identifies that write to a coordinator polling the same

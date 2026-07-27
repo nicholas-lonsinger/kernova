@@ -14,14 +14,8 @@ final class VMLibraryViewModel {
     let diskImageService: any DiskImageProviding
     let lifecycle: VMLifecycleCoordinator
 
-    /// Seam for trash/remove operations (see `FileSystemOperating`);
-    /// tests inject a mock so fixture files never land in the real Trash.
     private let fileSystem: any FileSystemOperating
 
-    /// Backing store for selection/order persistence.
-    ///
-    /// Injectable so tests use an ephemeral suite instead of the real `.standard`
-    /// domain; production passes the default.
     private let preferences: AppPreferences
 
     // MARK: - State
@@ -36,10 +30,8 @@ final class VMLibraryViewModel {
 
     /// Presentation delegate for alerts, sheets, and the creation wizard.
     ///
-    /// Set by `DetailContainerViewController`. The view model calls these
-    /// methods imperatively instead of toggling observed `show*` flags. Errors
-    /// raised before a presenter is attached (e.g. the initial `loadVMs()` in
-    /// `init`) are buffered and flushed when one is set.
+    /// Errors raised before a presenter is attached (e.g. the initial `loadVMs()`
+    /// in `init`) are buffered and flushed when one is set.
     @ObservationIgnored weak var presenter: (any VMLibraryPresenting)? {
         didSet {
             guard presenter != nil, !bufferedErrorMessages.isEmpty else { return }
@@ -49,45 +41,35 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Error messages raised while `presenter` was nil, flushed when it is set.
     @ObservationIgnored private var bufferedErrorMessages: [String] = []
 
     /// VMs with an in-flight removable-media reconciliation Task.
     ///
-    /// Together with `pendingRemovableMediaTarget`, implements a
-    /// coalesce-and-drain loop so multiple rapid edits to the removable
-    /// media list collapse to a single in-flight Task per instance that
-    /// always converges on the latest configuration. Without this, two
-    /// `await` suspensions inside `applyLiveRemovableMediaChange`
-    /// (detach, attach) leave the actor reentrant and let a second Task
-    /// read the same tracking and issue duplicate operations.
+    /// With `pendingRemovableMediaTarget`, coalesces rapid edits into one Task per
+    /// instance: the `await`s inside `applyLiveRemovableMediaChange` leave the actor
+    /// reentrant, so a second Task would read the same tracking and issue duplicate
+    /// detach/attach operations.
     private var reconcilingRemovableMediaInstances: Set<UUID> = []
 
-    /// Latest desired removable media list per instance, written every
-    /// time `applyLivePolicy` sees a list change on a running/paused VM
-    /// and drained by `runRemovableMediaReconciliation` until empty.
+    /// Latest desired removable media list per instance, drained by
+    /// `runRemovableMediaReconciliation` until empty.
     private var pendingRemovableMediaTarget: [UUID: [RemovableMediaItem]] = [:]
     var activeRename: RenameTarget?
 
     /// `true` when any instance is mid-clone or mid-import.
-    // RATIONALE: Deliberately global and unbounded — Clone/Edit Settings/reconcile
-    // stay disabled while any import/clone copy is in flight, and
-    // FileManager.copyItem has no timeout, so a copy wedged by a dead volume holds
-    // the gate until relaunch (#502). Accepted: ordinary failures (eject, I/O
-    // error) make copyItem return and the gate lifts; scoping or timing out the
-    // gate would reopen the reconcile-resurrection races the preparing gate exists
-    // to prevent (#496).
+    // RATIONALE: global and unbounded on purpose. `reconcileWithDisk` skips while
+    // this is true, and `cancelPreparingConfirmed` keeps a cancelling row in
+    // `instances` for the same reason: any gap lets reconcile resurrect a bundle
+    // whose uninterruptible copy is still settling. A wedged `FileManager.copyItem`
+    // therefore holds the gate until relaunch.
     var hasPreparing: Bool { instances.contains(where: \.isPreparing) }
 
-    /// Current VM ordering used by sortInstances(); synchronized with `AppPreferences.vmOrder` via persistOrder().
     private var customOrder: [UUID] = []
 
     /// Bundle names whose load failures have already been reported to the user.
     ///
-    /// Prevents repeated error dialogs for persistently corrupted bundles across successive
-    /// `reconcileWithDisk()` calls. Populated by both `loadVMs()` and `reconcileWithDisk()`.
-    /// Reset on full reload (`loadVMs`), when a previously-failed bundle loads successfully,
-    /// or when a bundle is removed from disk.
+    /// Prevents repeated error dialogs for persistently corrupted bundles across
+    /// successive `reconcileWithDisk()` calls.
     private var reportedFailedBundles: Set<String> = []
 
     /// Called when a VM with a non-inline `displayPreference` is about to start or resume,
@@ -139,9 +121,9 @@ final class VMLibraryViewModel {
     // MARK: - Initial Status
 
     /// Status to assign to a VM when it's first loaded from disk or imported.
-    /// `.initialBoot` takes priority over `.paused`/`.stopped` whenever an
-    /// install context is still on file — that's the canonical signal that the
-    /// VM has never completed its initial boot.
+    ///
+    /// A surviving install context is the canonical signal that the VM has never
+    /// completed its initial boot, so it outranks `.paused`/`.stopped`.
     static func initialStatus(for config: VMConfiguration, layout: VMBundleLayout) -> VMStatus {
         if config.installContext != nil {
             return .initialBoot
@@ -177,8 +159,6 @@ final class VMLibraryViewModel {
                 presentError(LoadError.bundleLoadFailed(names: failedBundles))
             }
 
-            // Load persisted order, sort by it, then normalize customOrder to match
-            // the actual instance list (prunes stale UUIDs, incorporates new VMs).
             if let savedOrder = preferences.vmOrder {
                 customOrder = savedOrder
                 Self.logger.debug("Loaded custom VM order: \(self.customOrder.count, privacy: .public) UUID(s)")
@@ -210,17 +190,15 @@ final class VMLibraryViewModel {
     /// Creates a VM bundle and disk image from a wizard model, optionally
     /// auto-starting it.
     ///
-    /// Returns `.success` on success, or `.failure(error)` if bundle/disk
-    /// creation failed. The error is returned (not presented) so the wizard host
-    /// can show it on the wizard's own sheet and keep it open for a retry.
+    /// The error is returned rather than presented so the wizard host can show it on
+    /// the wizard's own sheet and keep it open for a retry.
     @discardableResult
     func createVM(from wizard: VMCreationViewModel) async -> Result<Void, Error> {
         do {
             var config = wizard.buildConfiguration()
 
-            // For macOS guests, persist the install intent so the next Start
-            // can drive the install pipeline (and download resume) without
-            // the wizard. Linux guests have no Kernova-managed install step.
+            // Persist the install intent so the next Start can drive the install
+            // pipeline without the wizard. Linux guests have no managed install step.
             if config.guestOS == .macOS {
                 config.installContext = wizard.buildInstallContext()
             }
@@ -231,7 +209,6 @@ final class VMLibraryViewModel {
             let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: initialStatus)
             wirePersistence(for: instance)
 
-            // Create disk image
             try await diskImageService.createDiskImage(
                 at: instance.diskImageURL,
                 sizeInGB: config.diskSizeInGB
@@ -246,12 +223,6 @@ final class VMLibraryViewModel {
             )
 
             if wizard.startAfterCreate {
-                // For macOS VMs with an installContext, `start(_:)` routes
-                // through `installAndAutoBoot` which kicks off an install
-                // Task and returns immediately. For other VMs, it awaits
-                // the VZ start. Errors are surfaced by `start(_:)` via
-                // `presentError`, so the wizard's caller can dismiss as
-                // soon as `createVM` returns.
                 Self.logger.notice(
                     "Auto-starting VM '\(config.name, privacy: .public)' from wizard"
                 )
@@ -270,8 +241,8 @@ final class VMLibraryViewModel {
     /// `installContext`) VM and, on success, chains an auto-boot.
     ///
     /// Non-cancel errors leave the VM in `.error` so the user sees the message;
-    /// cancel returns it to `.initialBoot` for a future retry that will resume
-    /// the download from the `.resumedata` sidecar if present.
+    /// cancel returns it to `.initialBoot` for a retry that resumes the download
+    /// from the `.resumedata` sidecar if present.
     private func installAndAutoBoot(_ instance: VMInstance) {
         guard let context = instance.configuration.installContext else {
             assertionFailure("installAndAutoBoot called without installContext")
@@ -280,28 +251,15 @@ final class VMLibraryViewModel {
         if instance.installTask != nil { return }  // guard against rapid double-click
         instance.installTask = Task { [weak self] in
             guard let self else { return }
-            // Caller owns installTask cleanup; defer nils it out on every exit
-            // path (success, cancel, error) so the coordinator doesn't have to.
             defer { instance.installTask = nil }
             do {
                 try await self.lifecycle.installMacOS(on: instance, context: context)
-                // `installMacOS` cleared both `installContext` and
-                // `installState` on its success path; this is a
-                // belt-and-braces redundant clear so a future refactor
-                // that relocates the coordinator-level cleanup doesn't
-                // silently leave install-progress UI armed. `start(_:)`
-                // now sees no installContext and goes down the normal
-                // boot path (via the post-install hand-off branch).
                 instance.installState = nil
                 await self.start(instance)
             } catch is CancellationError {
-                // Tear down the VM if `MacOSInstallService.install` attached
-                // one before cancellation fired (i.e. cancel landed during
-                // `installer.install()` rather than the download phase).
-                // Without this, retry would build a fresh
-                // `VZMacAuxiliaryStorage(contentsOf:)` while the old one is
-                // still alive on `instance.virtualMachine` — same lock race
-                // this PR closes for the success path.
+                // Tear down a VM the install attached before cancellation fired: a
+                // retry would otherwise build a fresh `VZMacAuxiliaryStorage` while
+                // the old one is still alive on `instance.virtualMachine`.
                 instance.tearDownSession()
                 instance.installState = nil
                 instance.errorMessage = nil
@@ -310,19 +268,14 @@ final class VMLibraryViewModel {
                     "Install cancelled for '\(instance.name, privacy: .public)' — VM remains in .initialBoot"
                 )
             } catch {
-                // Same teardown rationale as the cancel branch above:
-                // whether the user cancelled (race branch below) or the
-                // pipeline failed for real, an attached VM from a partial
-                // install must not bleed into the next retry.
+                // Same teardown reason as the cancel branch: an attached VM from a
+                // partial install must not bleed into the next retry.
                 instance.tearDownSession()
                 instance.installState = nil
                 if Task.isCancelled {
-                    // The user cancelled and a non-cancellation error arrived
-                    // before the cancel propagated (e.g. a network failure
-                    // raced the cancel). The coordinator's generic catch set
-                    // status to `.error`; user intent was cancel, so route
-                    // back to `.initialBoot` and drop the error message —
-                    // the VM stays ready for retry, no dialog.
+                    // A non-cancellation error arrived before the cancel propagated
+                    // (e.g. a network failure raced it). User intent was cancel, so
+                    // route back to `.initialBoot` and drop the message — no dialog.
                     instance.errorMessage = nil
                     instance.status = .initialBoot
                     Self.logger.notice(
@@ -340,27 +293,20 @@ final class VMLibraryViewModel {
 
     /// Cancels an in-progress macOS install.
     ///
-    /// The VM returns to `.initialBoot` so a subsequent Start can resume
-    /// (downloads pick up from the `.resumedata` sidecar at the chosen path).
-    /// Bundle is preserved. For destructive removal, use the existing delete
-    /// flow ("Move to Trash").
+    /// The VM returns to `.initialBoot` so a subsequent Start can resume, and the
+    /// bundle is preserved — this is the non-destructive cancel.
     func cancelInstallation(_ instance: VMInstance) {
         Self.logger.info("Cancelling installation for '\(instance.name, privacy: .public)'")
         instance.installTask?.cancel()
-        // installAndAutoBoot's CancellationError catch handles the status
-        // transition to .initialBoot and installState cleanup. Don't duplicate
-        // that work here, and don't trash the bundle — non-destructive cancel.
+        // `installAndAutoBoot`'s cancel catch owns the status transition and
+        // `installState` cleanup — don't duplicate it here.
     }
 
     // MARK: - Lifecycle
 
     func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async {
-        // VMs awaiting initial boot route through the install pipeline. The
-        // pipeline clears installContext on success and chains an auto-boot;
-        // failure leaves .error / .initialBoot, ready for the user to retry.
-        // Check by installContext (not status) so .error retries also dispatch.
-        // Recovery boots never reach here — they're gated to stopped (installed)
-        // macOS guests, which have no installContext.
+        // Dispatch on installContext, not status, so `.error` retries route through
+        // the install pipeline too.
         if instance.configuration.installContext != nil {
             installAndAutoBoot(instance)
             return
@@ -374,9 +320,6 @@ final class VMLibraryViewModel {
         } catch {
             Self.logger.error(
                 "Failed to start '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
-            // An attachment the framework couldn't open gets an actionable
-            // alert (name the item, offer to remove it and start) instead of
-            // the raw error; everything else keeps the generic alert.
             if let presenter, let failure = startFailedAttachment(from: error, on: instance) {
                 presenter.presentStartFailedAttachment(failure, for: instance)
             } else {
@@ -387,9 +330,6 @@ final class VMLibraryViewModel {
 
     /// The storage disk `id` refers to, resolving the synthesized main disk
     /// when the VM has no explicit list.
-    ///
-    /// Shared by the offer and its confirmed action so the two can never
-    /// disagree about which disks exist.
     private func storageDisk(id: UUID, on instance: VMInstance) -> StorageDisk? {
         (instance.configuration.storageDisks ?? Self.defaultStorageDisks(for: instance))
             .first { $0.id == id }
@@ -399,11 +339,9 @@ final class VMLibraryViewModel {
     /// attachment the user can remove to get the VM running, or `nil` when the
     /// generic error alert is the right surface.
     ///
-    /// Two exclusions, both cases where removal is the wrong advice: the disk
-    /// the guest boots from (removing it trades an unbootable VM for a
-    /// differently unbootable VM), and file-lock contention, which is
-    /// transient — the file is fine and the lock holder is a VM still tearing
-    /// down, so the fix is to wait and retry, not to detach a working disk.
+    /// Two exclusions where removal is the wrong advice: the disk the guest boots
+    /// from, and file-lock contention — the file is fine and the lock holder is a VM
+    /// still tearing down, so the fix is to wait and retry.
     private func startFailedAttachment(
         from error: Error, on instance: VMInstance
     ) -> StartFailedAttachment? {
@@ -419,9 +357,8 @@ final class VMLibraryViewModel {
                 kind: .storageDisk, id: id, label: label,
                 message: builderError.localizedDescription)
         case .removableMediaAttachFailed(let id, _, let label, _):
-            // Confirm the entry is really in the list, mirroring the disk
-            // branch: an offer whose action could only no-op is worse than
-            // the generic error, because the button appears to do nothing.
+            // Confirm the entry is really in the list: an offer whose action could
+            // only no-op leaves a button that appears to do nothing.
             guard (instance.configuration.removableMedia ?? []).contains(where: { $0.id == id })
             else { return nil }
             return StartFailedAttachment(
@@ -435,13 +372,9 @@ final class VMLibraryViewModel {
     /// Confirmed action of the start-failed alert: detach the failing
     /// attachment (file untouched) and immediately retry the start.
     ///
-    /// No-ops if the VM is gone or the entry has already been removed. Alerts
-    /// are serialized, so this confirmation can arrive arbitrarily long after
-    /// the failed start — by which point the user may have deleted the VM (see
-    /// the same guard in ``deleteConfirmed(_:deletingExternalIDs:permanently:)``)
-    /// or removed the attachment in Settings. Retrying the start after a
-    /// removal that found nothing would just re-raise the identical failure
-    /// and re-present this alert.
+    /// No-ops if the VM is gone or the entry has already been removed: alerts are
+    /// serialized, so this confirmation can arrive long after the failed start, and
+    /// retrying after a removal that found nothing would re-raise the same failure.
     func removeStartFailedAttachmentAndStart(
         _ failure: StartFailedAttachment, on instance: VMInstance
     ) async {
@@ -501,15 +434,6 @@ final class VMLibraryViewModel {
     }
 
     /// Resumes a paused VM then requests a graceful ACPI shutdown.
-    ///
-    /// Used by the
-    /// stop-paused confirmation sheet's "Resume and Shut Down" action.
-    ///
-    /// Note: `lifecycle.resume` is serialized through the lifecycle coordinator,
-    /// but `lifecycle.stop` deliberately bypasses serialization (so users can
-    /// always interrupt a hung op). The two calls are therefore not atomic; in
-    /// practice the UI gates lifecycle buttons during transitions, so an
-    /// interleaved op is not reachable through normal user input.
     func resumeAndStop(_ instance: VMInstance) async {
         do {
             try await lifecycle.resume(instance)
@@ -523,7 +447,6 @@ final class VMLibraryViewModel {
     }
 
     /// Force-stops a paused VM via the stop-paused confirmation sheet's "Force Stop" action.
-    /// Wrapper around `forceStop` that clears the alert state, matching `deleteConfirmed`'s pattern.
     func forceStopFromPaused(_ instance: VMInstance) async {
         await forceStop(instance)
     }
@@ -554,8 +477,6 @@ final class VMLibraryViewModel {
 
     /// Presents the confirmation alert for booting a stopped macOS guest into
     /// macOS Recovery.
-    ///
-    /// The affordance is gated in the UI by `VMInstance.canStartInRecovery`.
     func confirmStartInRecovery(_ instance: VMInstance) {
         presenter?.presentRecoveryBoot(for: instance)
     }
@@ -613,15 +534,9 @@ final class VMLibraryViewModel {
 
     /// Begins the delete-VM flow.
     ///
-    /// Always presents the unified delete sheet, which lists the VM's
-    /// in-bundle disks (removed with the VM) and any external files (each
-    /// individually selectable for deletion). There is no longer a separate
-    /// "simple alert" path: every VM has at least its main disk to show.
-    ///
-    /// `permanently` selects the destructive variant: when `false` (the
-    /// default) the bundle and chosen externals are moved to Trash; when
-    /// `true` they are deleted immediately, bypassing the Trash. The sheet
-    /// reflects the mode and routes back through ``deleteConfirmed(_:deletingExternalIDs:permanently:)``.
+    /// `permanently` selects the destructive variant: `false` (the default) moves
+    /// the bundle and the chosen externals to Trash, `true` deletes them
+    /// immediately, bypassing it.
     func confirmDelete(_ instance: VMInstance, permanently: Bool = false) {
         presenter?.presentDeleteSheet(for: instance, permanently: permanently)
     }
@@ -629,28 +544,17 @@ final class VMLibraryViewModel {
     /// Deletes the VM bundle and the chosen external files, either to the
     /// Trash or immediately (bypassing it).
     ///
-    /// Bundle-internal disks ride along inside the deleted bundle. External
-    /// storage disks and removable media live outside the bundle, so each
-    /// one whose `id` is in `deletingExternalIDs` is removed via a detached
-    /// Task (mirroring `removeStorageDisk` / `removeRemovableMedia` — see
-    /// those for the rationale on `Task.detached`). `permanently` is threaded
-    /// through to both the bundle and the externals so the whole operation
-    /// uses one disposition.
-    ///
-    /// Files shared with other VMs are **never** deleted even if their id is
-    /// passed in: the sheet locks their toggle off, and this guard enforces
-    /// the same invariant at the model layer so a delete can never break
-    /// another VM. Externals are deleted *after* the bundle so the VM
-    /// disappears from the library even if a downstream op fails, and the
-    /// returned Tasks let tests await completion.
+    /// Files shared with other VMs are **never** deleted even if their id is passed
+    /// in, so a delete can never break another VM. Externals are deleted *after* the
+    /// bundle so the VM disappears from the library even if a downstream op fails;
+    /// the returned Tasks let tests await completion.
     @discardableResult
     func deleteConfirmed(
         _ instance: VMInstance, deletingExternalIDs: Set<UUID> = [], permanently: Bool = false
     ) -> [Task<Void, Never>] {
-        // Guard against a stale repeat confirm: a delete sheet is window-modal but
-        // doesn't disable the menu bar, so the user can queue two delete sheets for
-        // the same VM. Once the first removes it, a second confirm would hit a missing
-        // bundle (`bundleNotFound`) and surface a spurious error — bail instead.
+        // A delete sheet is window-modal but doesn't disable the menu bar, so two
+        // sheets can be queued for the same VM; the second confirm would hit a
+        // missing bundle and surface a spurious error.
         guard instances.contains(where: { $0.id == instance.id }) else {
             Self.logger.debug(
                 "Ignoring delete confirm for already-removed VM '\(instance.name, privacy: .public)'"
@@ -708,10 +612,8 @@ final class VMLibraryViewModel {
     /// The VM's in-bundle (internal) disks, shown read-only in the delete
     /// sheet's "Removed with the VM" section.
     ///
-    /// Falls back to the synthesized main disk when `storageDisks` is `nil`
-    /// (the same default `removeStorageDisk` uses), so a freshly created VM
-    /// still shows its `Disk.asif`. External disks are excluded — those are
-    /// the user's individually selectable attachments.
+    /// Falls back to the synthesized main disk when `storageDisks` is `nil`, so a
+    /// freshly created VM still shows its `Disk.asif`.
     func bundledDisks(for instance: VMInstance) -> [StorageDisk] {
         (instance.configuration.storageDisks ?? Self.defaultStorageDisks(for: instance))
             .filter(\.isInternal)
@@ -719,36 +621,20 @@ final class VMLibraryViewModel {
 
     /// `true` when `disk` is the VM's primary (boot) `Disk.asif`.
     ///
-    /// Used to warn before removing the disk the VM starts from. Delegates to
-    /// `ConfigurationBuilder.isMainBundleDisk`, which matches by bundle-relative
-    /// path so it stays correct on cloned VMs (whose disk ids are regenerated).
+    /// Matches by bundle-relative path, so it stays correct on cloned VMs (whose
+    /// disk ids are regenerated).
     func isMainDisk(_ disk: StorageDisk, of instance: VMInstance) -> Bool {
         ConfigurationBuilder.isMainBundleDisk(disk, layout: VMBundleLayout(bundleURL: instance.bundleURL))
     }
 
     /// Returns the external (non-bundle) files referenced by `instance`.
     ///
-    /// Each attachment is annotated with the names of any other VMs in
-    /// the library that reference the same path. The shared-with list
-    /// lets the delete confirmation warn before trashing a file that
-    /// another VM still depends on (e.g., a shared installer ISO).
+    /// Each is annotated with the names of other VMs sharing the same path. The
+    /// bundled Guest Agent installer DMG is excluded: its path points *inside the
+    /// app bundle*, so trashing it would corrupt the app for every VM.
     ///
-    /// The bundled Guest Agent installer DMG is deliberately excluded: it
-    /// is mounted as a read-only `RemovableMediaItem` whose path points
-    /// *inside the app bundle* (see ``mountGuestAgentInstaller(on:purpose:)``), so
-    /// it is never a user-owned file. Surfacing it in the delete sheet is
-    /// meaningless, and trashing it would corrupt the app bundle and break
-    /// Guest Agent installation for every VM in the library. Identified by
-    /// path equality with `KernovaMacOSAgentInfo.installerDiskImageURL`,
-    /// the same mechanism ``unmountGuestAgentInstaller(from:)`` uses.
-    ///
-    /// Existence is **not** resolved here — every attachment's
-    /// ``ExternalAttachment/isMissing`` is left `false`. This keeps the method
-    /// free of filesystem syscalls so it stays cheap on the main actor (the
-    /// delete fan-out in ``deleteConfirmed(_:deletingExternalIDs:permanently:)`` only
-    /// needs id/sharing). The delete sheet, which *does* surface missing-file state,
-    /// uses ``externalAttachmentsResolvingExistence(for:)`` to fill `isMissing`
-    /// off-main.
+    /// Existence is **not** resolved — every ``ExternalAttachment/isMissing`` is
+    /// `false`; use ``externalAttachmentsResolvingExistence(for:)`` when it matters.
     func externalAttachments(for instance: VMInstance) -> [ExternalAttachment] {
         let agentPath = Self.guestAgentInstallerPath
         var attachments: [ExternalAttachment] = []
@@ -782,14 +668,10 @@ final class VMLibraryViewModel {
     /// ``externalAttachments(for:)`` with each attachment's
     /// ``ExternalAttachment/isMissing`` resolved against the filesystem.
     ///
-    /// The existence syscalls run on a detached task so a stale or
-    /// unreachable mount can't freeze the main actor while the delete sheet
-    /// is assembled — the same reason ``AttachmentFileMonitor`` probes
-    /// off-main. Probes go through each attachment's security bookmark
-    /// (``SecurityScopedBookmark/fileExists(atPath:bookmark:)``) — a raw
-    /// check on an out-of-container path is sandbox-denied and would render
-    /// every row as missing. Used by `DetailAlertsPresenter` before
-    /// presenting the sheet.
+    /// The syscalls run detached so a stale or unreachable mount can't freeze the
+    /// main actor. Probes go through each attachment's security bookmark — a raw
+    /// check on an out-of-container path is sandbox-denied and would render every
+    /// row as missing.
     func externalAttachmentsResolvingExistence(for instance: VMInstance) async -> [ExternalAttachment] {
         let attachments = externalAttachments(for: instance)
         guard !attachments.isEmpty else { return attachments }
@@ -815,9 +697,8 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// The persisted security bookmark backing an external attachment,
-    /// looked up by id in the configuration the attachment was projected
-    /// from (``ExternalAttachment`` itself is a bookmark-free UI projection).
+    /// The persisted security bookmark backing an external attachment
+    /// (``ExternalAttachment`` itself is a bookmark-free UI projection).
     private func bookmark(
         for attachment: ExternalAttachment, in config: VMConfiguration
     ) -> Data? {
@@ -832,11 +713,9 @@ final class VMLibraryViewModel {
     /// Names of other VMs in the library that reference `path` as an external
     /// storage disk or removable medium.
     ///
-    /// The single source of truth for "who else uses this file", shared by the
-    /// VM-delete sheet (``externalAttachments(for:)``) and the per-row delete
-    /// confirmations in settings. Only *external* (non-bundle) storage disks
-    /// count — bundle-relative paths are per-VM by construction. `instance` is
-    /// excluded so the file isn't reported as shared with itself.
+    /// Only *external* (non-bundle) storage disks count — bundle-relative paths are
+    /// per-VM by construction. `instance` is excluded so the file isn't reported as
+    /// shared with itself.
     func sharingVMNames(forPath path: String, excluding instance: VMInstance) -> [String] {
         instances.compactMap { other -> String? in
             guard other.id != instance.id else { return nil }
@@ -853,10 +732,8 @@ final class VMLibraryViewModel {
 
     /// `true` when `item` is the bundled Guest Agent installer DMG.
     ///
-    /// The installer lives *inside the app bundle* and is mounted read-only by
-    /// ``mountGuestAgentInstaller(on:purpose:)``; it is never a user-owned file, so a
-    /// "remove" of it must only detach the entry and never trash the file.
-    /// Identified by path equality, the same mechanism the delete flow uses.
+    /// The installer lives *inside the app bundle*, so a "remove" of it must only
+    /// detach the entry and never trash the file.
     func isGuestAgentInstaller(_ item: RemovableMediaItem) -> Bool {
         guard let agentPath = Self.guestAgentInstallerPath else { return false }
         return item.path == agentPath
@@ -864,21 +741,14 @@ final class VMLibraryViewModel {
 
     /// Filesystem path of the bundled Guest Agent installer DMG, if present.
     ///
-    /// Resolved at the call site (not cached) so it always reflects the
-    /// running app bundle's location. `nil` when the DMG is missing — in
-    /// that case nothing is filtered, which is correct: there is no bundled
-    /// resource to protect. Mirrors the path-equality identity used by
-    /// ``mountGuestAgentInstaller(on:purpose:)`` / ``unmountGuestAgentInstaller(from:)``.
+    /// Resolved at the call site (not cached) so it always reflects the running app
+    /// bundle's location.
     private static var guestAgentInstallerPath: String? {
         KernovaMacOSAgentInfo.installerDiskImageURL?.path(percentEncoded: false)
     }
 
     /// `true` when the bundled Guest Agent installer DMG is currently in this
     /// VM's `removableMedia` list (live-attached, pending attach, or cold).
-    ///
-    /// Drives the menubar item's attach-vs-eject mode and is the shared
-    /// path-equality check used by ``mountGuestAgentInstaller(on:purpose:)`` /
-    /// ``unmountGuestAgentInstaller(from:)``.
     func isGuestAgentInstallerMounted(on instance: VMInstance) -> Bool {
         guard let path = Self.guestAgentInstallerPath else { return false }
         return (instance.configuration.removableMedia ?? []).contains { $0.path == path }
@@ -886,15 +756,10 @@ final class VMLibraryViewModel {
 
     /// Trashes any in-progress IPSW download bundle for a VM that's being deleted.
     ///
-    /// The `.kernovadownload` bundle sitting next to the chosen destination
-    /// holds the partial download bytes plus resume metadata. Once the VM is
-    /// gone the bundle is meaningless, so it's discarded unconditionally on
-    /// delete (not gated on the "delete externals" toggle), using the same
-    /// disposition as the VM itself — `permanently` removes it immediately
-    /// instead of trashing it so an immediate delete leaves nothing behind. The
-    /// completed IPSW file at `downloadDestinationPath`, if present, lives at a
-    /// user-known path and is intentionally left alone. No-op for VMs without a
-    /// `.downloadLatest` install context.
+    /// The `.kernovadownload` bundle holding the partial bytes and resume metadata
+    /// is discarded unconditionally (not gated on the "delete externals" toggle),
+    /// using the same disposition as the VM itself. The completed IPSW at
+    /// `downloadDestinationPath` lives at a user-known path and is left alone.
     private func cleanupInstallResumeData(for instance: VMInstance, permanently: Bool) {
         guard let context = instance.configuration.installContext,
             context.source == .downloadLatest,
@@ -909,10 +774,9 @@ final class VMLibraryViewModel {
     /// Detached delete for a single external attachment, to Trash or
     /// immediately depending on `permanently`.
     ///
-    /// Mirrors the error policy of `removeStorageDisk` / `removeRemovableMedia`:
-    /// missing files are swallowed at `.notice` (the source may have been
-    /// moved or deleted out-of-band), other failures log `.warning` and
-    /// surface a single error alert on the MainActor.
+    /// Missing files are swallowed at `.notice` (the source may have been moved or
+    /// deleted out-of-band); other failures log `.warning` and surface a single
+    /// error alert on the MainActor.
     private func deleteExternalAttachment(
         at url: URL, bookmark: Data?, label: String, vmName: String, permanently: Bool
     ) -> Task<Void, Never> {
@@ -922,9 +786,9 @@ final class VMLibraryViewModel {
                 try SecurityScopedBookmark.withResolvedURL(bookmark: bookmark, fallback: url) {
                     target in
                     if permanently {
-                        // RATIONALE: the user-confirmed "Delete Immediately" path; the deliberate
-                        // exception to AGENTS.md's "prefer trash over rm" guideline (see also
-                        // `VMStorageService.permanentlyDeleteVMBundle`).
+                        // RATIONALE: the user-confirmed "Delete Immediately" path — the
+                        // deliberate exception to AGENTS.md's "Prefer `trash` over `rm`"
+                        // guideline.
                         try fileSystem.removeItem(at: target)
                     } else {
                         try fileSystem.trashItem(at: target)
@@ -953,10 +817,8 @@ final class VMLibraryViewModel {
 
     /// Adds a freshly-built phantom `VMInstance` to the library and selects it.
     ///
-    /// Shared by `reserveAndImport(from:)` and `cloneVM(_:)`, which each build their own phantom
-    /// (differing in `configuration`/`bundleURL`/`status`) before handing it here. Clone and
-    /// import can run concurrently (#487), so a second phantom registering while the
-    /// first is still preparing doesn't steal the sidebar's focus away from the operation the
+    /// Selection moves only when nothing else is preparing, so a second phantom
+    /// registering mid-operation can't steal the sidebar's focus from the one the
     /// user is already watching.
     private func registerPhantom(_ phantom: VMInstance) {
         wirePersistence(for: phantom)
@@ -970,12 +832,10 @@ final class VMLibraryViewModel {
 
     /// Bounds the blocking bundle copies import and clone run.
     ///
-    /// Without a cap, a large multi-select drop would spawn N concurrent blocking `FileManager`
-    /// calls on Swift's cooperative pool and saturate it. This queue runs the copies off the pool
-    /// and caps concurrency (#497). The cap is deliberately small — copies serialize at the device
-    /// anyway, so a low bound avoids cross-volume disk thrash without losing throughput; the
-    /// reservation/phantom work (the #491 responsiveness win) already happens synchronously
-    /// regardless of this cap.
+    /// Uncapped, a large multi-select drop would spawn N concurrent blocking
+    /// `FileManager` calls on Swift's cooperative pool and saturate it. The cap is
+    /// deliberately small — copies serialize at the device anyway, so a low bound
+    /// avoids cross-volume disk thrash without losing throughput.
     private static let copyQueue: OperationQueue = {
         let queue = OperationQueue()
         queue.maxConcurrentOperationCount = 2
@@ -985,9 +845,6 @@ final class VMLibraryViewModel {
 
     /// Runs blocking file work off the cooperative pool on the bounded ``copyQueue``, awaiting its
     /// result.
-    ///
-    /// Awaited inside a `copyWork` closure so the phantom's `preparingState.task` still completes
-    /// only after the copy finishes.
     private static func runBoundedCopy<T: Sendable>(
         _ work: @escaping @Sendable () throws -> T
     ) async throws -> T {
@@ -1001,15 +858,9 @@ final class VMLibraryViewModel {
     /// Registers `phantom`, runs `copyWork` off a spawned `Task`, and wires the cleanup both clone
     /// and import need around a preparing row's file copy.
     ///
-    /// The `Task` is held on the phantom's `preparingState`. Import and clone both run their copies
-    /// fire-and-forget, so a batch's copies run concurrently and cancelling one can't stall the rest
-    /// (#444/#486).
-    ///
-    /// `copyWork` runs on a detached `Task` and is uninterruptible (a blocking `FileManager`
-    /// call), so a user cancel (`cancelPreparingConfirmed`) cancels this outer `Task` but the copy
-    /// keeps writing until it settles on its own. Cancel leaves the "Cancelling…" row in place; this
-    /// task is the single owner of the settle — on cancel it removes the row and trashes the bundle
-    /// here (no race, the copy is done), instead of logging a phantom import/clone (#496).
+    /// `copyWork` is uninterruptible (a blocking `FileManager` call), so a user cancel cancels this
+    /// outer `Task` while the copy keeps writing. This task is the single owner of the settle: on
+    /// cancel it removes the "Cancelling…" row and trashes the bundle once the copy is done.
     private func prepareBundle(
         _ phantom: VMInstance,
         operation: VMInstance.PreparingOperation,
@@ -1019,14 +870,10 @@ final class VMLibraryViewModel {
         registerPhantom(phantom)
         let fileSystem = fileSystem
         let task = Task { [weak self] in
-            // Clear preparing state on every exit path — the row's UI should always reflect
-            // completion, even if the view model was deallocated.
             defer { phantom.preparingState = nil }
             do {
                 try await copyWork()
                 guard let self else {
-                    // View model gone. If cancelled, trash the settled bundle; otherwise the copy
-                    // finished but there's no library to add it to.
                     if Task.isCancelled {
                         Self.trashPartialBundle(at: phantom.bundleURL, fileSystem: fileSystem)
                     } else {
@@ -1037,16 +884,14 @@ final class VMLibraryViewModel {
                     return
                 }
                 if Task.isCancelled {
-                    // Cancelled while the uninterruptible copy was in flight: `cancelPreparingConfirmed`
-                    // left the "Cancelling…" row in place, so remove it now and trash the settled
-                    // bundle here — no race, the copy is done (#496).
+                    // Cancelled mid-copy: `cancelPreparingConfirmed` left the "Cancelling…" row in
+                    // place, so remove it and trash the settled bundle now that the copy is done.
                     self.cleanupPhantomInstance(phantom)
                     return
                 }
                 onSuccess()
             } catch {
                 guard let self else {
-                    // Trash the partial bundle even without the view model.
                     Self.trashPartialBundle(at: phantom.bundleURL, fileSystem: fileSystem)
                     Self.logger.error(
                         "\(operation.displayNoun, privacy: .public) failed and view model was deallocated — trashed partial bundle '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -1069,13 +914,10 @@ final class VMLibraryViewModel {
 
     /// A collision-free destination bundle URL under `vmsDir` for a bundle named like `sourceURL`.
     ///
-    /// The taken names are the union of on-disk `.kernova` bundles in `vmsDir` AND the reserved
-    /// names of already-registered phantoms there — the in-flight set is essential because under
-    /// synchronous reservation a prior bundle's copy hasn't run yet, so a disk listing alone can't
-    /// see it. That lets a whole batch (and two overlapping triggers) reserve distinct names
-    /// atomically without serializing behind each other's copies (#487). Delegates the
-    /// "Name / Name 2 / …" climb to `UniqueName` (shared with clone), matched case-insensitively to
-    /// mirror the default case-insensitive APFS volume (#498).
+    /// Taken names are the union of on-disk `.kernova` bundles in `vmsDir` AND the reserved names
+    /// of already-registered phantoms there: a prior bundle's copy hasn't run yet, so a disk
+    /// listing alone can't see it. Matched case-insensitively to mirror the default
+    /// case-insensitive APFS volume.
     private func reserveDestination(for sourceURL: URL, in vmsDir: URL) -> URL {
         let onDiskStems =
             (try? FileManager.default.contentsOfDirectory(
@@ -1101,19 +943,16 @@ final class VMLibraryViewModel {
     /// synchronously, and spawns the file copy — a no-op when the source is already in the library
     /// by UUID.
     ///
-    /// The single per-bundle import step, reached only through ``importVMs(fromDroppedURLs:)``.
     /// Everything before the copy `Task` is spawned is synchronous (no `await`), so a batch's
     /// reservations — and two overlapping triggers' — run atomically on the MainActor and see each
-    /// other's phantoms in `instances`; the copies then run concurrently (#444, #486, #491). That
-    /// atomicity is inherent to this method, not to any external ordering, so calling it directly
-    /// cannot reintroduce a destination-collision race (#492/#493).
+    /// other's phantoms in `instances`; the copies then run concurrently.
     private func reserveAndImport(from sourceURL: URL) {
         do {
             let vmsDir = try storageService.vmsDirectory
             let config = try storageService.loadConfiguration(from: sourceURL)
 
-            // Already in the library (same UUID, including a source already inside the VMs
-            // directory) — just select it rather than re-importing.
+            // Already in the library by UUID (including a source already inside the VMs
+            // directory) — select it rather than re-importing.
             if let existing = instances.first(where: { $0.id == config.id }) {
                 selectedID = existing.id
                 Self.logger.info(
@@ -1121,16 +960,13 @@ final class VMLibraryViewModel {
                 return
             }
 
-            // Check save file from source bundle (destination doesn't exist yet)
+            // The save file has to come from the source bundle — the destination doesn't exist yet.
             let sourceLayout = VMBundleLayout(bundleURL: sourceURL)
             let initialStatus = Self.initialStatus(for: config, layout: sourceLayout)
 
-            // Reserve the destination and register the phantom row synchronously, so the next
-            // reservation in this batch (and any overlapping trigger) sees it in `instances`.
             let destinationURL = reserveDestination(for: sourceURL, in: vmsDir)
             let phantom = VMInstance(configuration: config, bundleURL: destinationURL, status: initialStatus)
 
-            // Spawn the copy fire-and-forget; it runs concurrently, bounded by `copyQueue`.
             prepareBundle(
                 phantom, operation: .importing,
                 copyWork: {
@@ -1153,18 +989,11 @@ final class VMLibraryViewModel {
 
     /// Filters `urls` to `.kernova` bundles and imports the batch.
     ///
-    /// Keeps a synchronous AppKit callback (an odoc handler, a drag-drop `acceptDrop`) from
-    /// blocking. Shared by `AppDelegate` (Finder open) and `SidebarViewController`
-    /// (drag-and-drop) so the filter sequence isn't duplicated per caller.
-    ///
     /// Each bundle's destination is reserved and its phantom row registered synchronously (see
-    /// ``reserveAndImport(from:)``), so two overlapping triggers — e.g. a drag-and-drop batch still
-    /// copying bundle 3 of 5 when a Finder double-click of another bundle arrives — never collide
-    /// on a destination name (the second trigger's reservation sees the first's phantoms in
-    /// `instances`) and never wait behind each other's copies (#487/#491). The copies then run
-    /// concurrently in the background.
+    /// ``reserveAndImport(from:)``), so two overlapping triggers never collide on a destination
+    /// name and never wait behind each other's copies.
     ///
-    /// Returns whether any bundle was accepted for import — `true` means at least one `.kernova`
+    /// Returns whether any bundle was accepted for import — `true` means at least one
     /// bundle was reserved, not that every import will succeed.
     @discardableResult
     func importVMs(fromDroppedURLs urls: [URL]) -> Bool {
@@ -1179,10 +1008,6 @@ final class VMLibraryViewModel {
 
     #if DEBUG
     /// Test-only seam awaiting every in-flight preparing (clone/import) copy task.
-    ///
-    /// One snapshot of `instances` suffices: reservation registers every phantom synchronously
-    /// before `importVMs(fromDroppedURLs:)` returns, so no new phantom appears after the caller
-    /// regains control.
     func awaitPreparingForTesting() async {
         for task in instances.compactMap({ $0.preparingState?.task }) {
             await task.value
@@ -1199,9 +1024,8 @@ final class VMLibraryViewModel {
 
     /// One of the two inline-rename surfaces, without the instance baked in.
     ///
-    /// Commit/cancel call sites pass the surface and the instance separately so
-    /// an instance/target id mismatch is unrepresentable; the view model pairs
-    /// them into a ``RenameTarget`` itself.
+    /// Commit/cancel call sites pass the surface and the instance separately so an
+    /// instance/target id mismatch is unrepresentable.
     enum RenameSurface {
         case sidebar
         case detail
@@ -1226,12 +1050,11 @@ final class VMLibraryViewModel {
 
     /// Commits the rename text from one of the two rename surfaces.
     ///
-    /// The marker is only cleared while it still belongs to `surface`'s rename
-    /// of `instance`: a commit can fire from a field editor resigning *because*
-    /// a rename just started on the other surface (its `makeFirstResponder`
-    /// synchronously ends the pending session mid-handoff), and clearing
-    /// unconditionally would wipe the newer rename's marker before its UI ever
-    /// opened.
+    /// The marker is only cleared while it still belongs to `surface`'s rename of
+    /// `instance`: a commit can fire from a field editor resigning *because* a rename
+    /// just started on the other surface (its `makeFirstResponder` synchronously ends
+    /// the pending session), and clearing unconditionally would wipe the newer
+    /// rename's marker before its UI ever opened.
     func commitRename(for instance: VMInstance, newName: String, from surface: RenameSurface) {
         let trimmed = newName.trimmingCharacters(in: .whitespaces)
         if !trimmed.isEmpty {
@@ -1243,16 +1066,12 @@ final class VMLibraryViewModel {
         clearRename(ifOwnedBy: surface.target(for: instance))
     }
 
-    /// Cancels the rename that `surface` has open on `instance`.
-    ///
-    /// A rename that has since moved to the other surface is left untouched
-    /// (see ``commitRename(for:newName:from:)``).
+    /// Cancels the rename that `surface` has open on `instance`, leaving a rename
+    /// that has since moved to the other surface untouched.
     func cancelRename(for instance: VMInstance, from surface: RenameSurface) {
         clearRename(ifOwnedBy: surface.target(for: instance))
     }
 
-    /// The single ownership rule shared by commit and cancel: the marker is
-    /// cleared only while it still points at the surface that is ending.
     private func clearRename(ifOwnedBy target: RenameTarget) {
         if activeRename == target {
             activeRename = nil
@@ -1272,26 +1091,20 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Wires `instance.onUpdateConfiguration` so guest-driven mutations
-    /// (e.g. the guest reporting a new agent version via `Hello`, or the
-    /// post-start watchdog clearing the install-nudge dismissal) flow
-    /// through the centralized `updateConfiguration` dispatcher.
+    /// Routes guest-driven mutations through the centralized `updateConfiguration`
+    /// dispatcher.
     ///
     /// Called at every `VMInstance` construction site in this view model.
     private func wirePersistence(for instance: VMInstance) {
-        // Both closures are stored *on* `instance`, so they capture it weakly:
-        // a strong capture forms a self-retain cycle that leaks the VMInstance
-        // after it's removed from `instances`. Each only ever fires through the
-        // instance (e.g. `performConfigurationMutation`, the vsock handshake),
-        // so the weak ref is always live at call time.
+        // Both closures are stored *on* `instance`, so they must capture it weakly:
+        // a strong capture forms a self-retain cycle that leaks the VMInstance after
+        // it's removed from `instances`.
         instance.onUpdateConfiguration = { [weak self, weak instance] mutate in
             guard let self, let instance else { return }
             self.updateConfiguration(of: instance, mutate: mutate)
         }
-        // Auto-eject the installer disk once the agent handshakes a current
-        // version (install/update complete). Centralized here so it fires
-        // regardless of which window is open — replacing the former
-        // clipboard-window-bound auto-eject.
+        // Auto-eject the installer disk once the agent handshakes a current version.
+        // Wired here so it fires regardless of which window is open.
         instance.onAgentBecameCurrent = { [weak self, weak instance] in
             guard let self, let instance else { return }
             self.unmountGuestAgentInstaller(from: instance)
@@ -1301,19 +1114,8 @@ final class VMLibraryViewModel {
     /// The single entry point for any UI-driven or programmatic mutation of
     /// `instance.configuration`.
     ///
-    /// Applies the mutation, persists the result, and dispatches the live
-    /// policy / removable-media reconcile. No-ops when the mutation produces
-    /// the same value, so calls that don't actually change anything are
-    /// free.
-    ///
-    /// All settings-view bindings, the guest-agent installer mount/unmount,
-    /// storage-disk add/remove, display-window window-state writes, and
-    /// guest-driven mutations (via `instance.onUpdateConfiguration`) route
-    /// through here, so there is exactly one place where the "config
-    /// changed" side effects fire. For mutations to fields that don't
-    /// affect live policy (e.g. `displayPreference`, `lastSeenAgentVersion`),
-    /// the `applyLivePolicy` call returns early — there is no overhead beyond
-    /// the dispatch check.
+    /// Applies the mutation, persists the result, and dispatches the live policy /
+    /// removable-media reconcile. No-ops when the mutation produces the same value.
     func updateConfiguration(
         of instance: VMInstance,
         mutate: (inout VMConfiguration) -> Void
@@ -1329,29 +1131,18 @@ final class VMLibraryViewModel {
 
     /// Pushes a configuration change to a running VM.
     ///
-    /// Hot-toggleable fields (`agentLogForwardingEnabled`,
-    /// `clipboardSharingEnabled`) take effect immediately via
-    /// `VMInstance.applyLivePolicy`; changes to `removableMedia` trigger
-    /// a runtime XHCI list-diff via `applyLiveRemovableMediaChange`;
-    /// everything else is persisted-only and waits for next start.
-    ///
-    /// Called from `updateConfiguration` after the new value has been
-    /// written to `instance.configuration` and persisted to disk.
+    /// Hot-toggleable fields (`agentLogForwardingEnabled`, `clipboardSharingEnabled`)
+    /// take effect immediately via `VMInstance.applyLivePolicy`; changes to
+    /// `removableMedia` trigger a runtime XHCI list-diff; everything else is
+    /// persisted-only and waits for next start.
     func applyLivePolicy(for instance: VMInstance, old: VMConfiguration, new: VMConfiguration) {
         instance.applyLivePolicy(oldConfig: old, newConfig: new)
 
         let mediaChanged = VMConfiguration.removableMediaChanged(old: old, new: new)
-        // Only dispatch when running/paused — stopped VMs persist the new
-        // media list and pick it up on next start. The lifecycle layer
-        // surfaces a noVirtualMachine error if status is running but no live
-        // VZ machine is present (rare race during teardown), so we don't
-        // duplicate that guard here.
+        // Only dispatch when running/paused — stopped VMs persist the new media list
+        // and pick it up on next start.
         guard mediaChanged, instance.status == .running || instance.status == .paused else { return }
 
-        // Record the latest target and start a reconciliation Task if one
-        // isn't already draining. The Task loops until
-        // `pendingRemovableMediaTarget` is empty so rapid edits converge on
-        // the final state without spawning racing detach/attach pairs.
         let id = instance.instanceID
         pendingRemovableMediaTarget[id] = new.removableMedia ?? []
         guard !reconcilingRemovableMediaInstances.contains(id) else { return }
@@ -1363,17 +1154,12 @@ final class VMLibraryViewModel {
 
     /// Drains `pendingRemovableMediaTarget` for a single instance until empty.
     ///
-    /// Each pass calls `applyLiveRemovableMediaChange` to reconcile the
-    /// live device list to the latest pending target. New writes that
-    /// arrive during a pass (between the dictionary read at the top of the
-    /// loop and the next iteration) are picked up by the next iteration so
-    /// rapid edits always converge to the final user-selected state.
+    /// Writes that arrive during a pass are picked up by the next iteration, so rapid
+    /// edits always converge to the final user-selected state.
     private func runRemovableMediaReconciliation(for instance: VMInstance, id: UUID) async {
         defer { reconcilingRemovableMediaInstances.remove(id) }
         while let target = pendingRemovableMediaTarget.removeValue(forKey: id) {
-            // If the VM stopped (or transitioned out of a hot-pluggable state)
-            // while we were awaiting the previous pass, abandon reconciliation:
-            // the stopped VM picks up the latest config on next start, and
+            // A VM that stopped mid-pass picks up the latest config on next start;
             // hitting XHCI on a torn-down VM would surface a spurious
             // `noVirtualMachine` error to the user.
             guard instance.status == .running || instance.status == .paused else { break }
@@ -1381,42 +1167,33 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Reconciles the live removable media list with `target`.
+    /// Reconciles the live removable media list with `target`, diffing per id against
+    /// `instance.liveRemovableMedia`.
     ///
-    /// Performs a per-id diff against `instance.liveRemovableMedia`:
-    /// - present in tracking but not target → detach
-    /// - present in target but not tracking → attach
-    /// - present in both with changed `path` or `readOnly` → detach + reattach
+    /// Detaches run before attaches, so swapping the medium in a slot cannot collide
+    /// with itself on a duplicate UUID.
     ///
-    /// On unexpected detach or attach errors, the persisted config is
-    /// rolled back to match `instance.liveRemovableMedia` so the UI snaps
-    /// to what is actually attached and the user sees an alert describing
-    /// the failure. `deviceNotFound` and `noVirtualMachine` errors are
-    /// handled as confirmed-gone / silent bail respectively (this is also
-    /// what covers the case where the user ejected the disk from inside
-    /// the guest).
+    /// On unexpected detach or attach errors the persisted config is rolled back to
+    /// match `instance.liveRemovableMedia`, so the UI snaps to what is actually
+    /// attached rather than describing a state VZ refused. `deviceNotFound` (which
+    /// also covers a guest-side eject) and `noVirtualMachine` are handled as
+    /// confirmed-gone / silent bail.
     private func applyLiveRemovableMediaChange(
         for instance: VMInstance,
         target: [RemovableMediaItem]
     ) async {
         let tracked = instance.liveRemovableMedia
-        // Tolerate duplicate ids defensively — a hand-edited or corrupted
-        // config.json could in theory ship two `removableMedia` entries with
-        // the same UUID. Crashing here would take the host app down; instead,
-        // keep the first occurrence so the reconcile can still make progress.
+        // Tolerate duplicate ids: a hand-edited or corrupted config.json could ship
+        // two `removableMedia` entries with the same UUID, and a uniquing-free
+        // Dictionary init would trap and take the host app down.
         let targetByID = Dictionary(target.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let trackedByID = Dictionary(tracked.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
-        // Lookup table used by the rollback path so a failed reconcile can
-        // rebuild `config.removableMedia` from whatever is still in live
-        // tracking. Tracked entries win over target entries on id collisions
-        // so a mutated row that failed mid-swap restores its original
-        // path/readOnly; new ids only present in target supply metadata
-        // for successful attaches. A rebuilt entry keeps its persisted
-        // security bookmark only when the config row still matches the live
-        // path — a mid-swap rollback can't recover the old path's bookmark
-        // (the config already carries the new one), so it rolls back
-        // bookmark-less and the missing-file UX handles it on next boot.
+        // Rollback lookup: tracked entries win over target entries on id collisions,
+        // so a row that failed mid-swap restores its original path/readOnly. A
+        // rebuilt entry keeps its persisted bookmark only when the config row still
+        // matches the live path — a mid-swap rollback can't recover the old path's
+        // bookmark, so it rolls back bookmark-less and the missing-file UX takes over.
         let configuredByID = Dictionary(
             (instance.configuration.removableMedia ?? []).map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first })
@@ -1431,7 +1208,6 @@ final class VMLibraryViewModel {
             rollbackLookup[item.id] = item
         }
 
-        // Classify each id by what action it needs.
         var toDetach: [USBDeviceInfo] = []
         var toAttach: [RemovableMediaItem] = []
         for trackedItem in tracked {
@@ -1462,10 +1238,8 @@ final class VMLibraryViewModel {
                 )
                 return
             } catch USBDeviceError.deviceNotFound {
-                // Guest ejected this item (or it was never attached). The
-                // lifecycle layer's `removeAll` is skipped when the framework
-                // call throws, so clear stale tracking explicitly to keep
-                // the host model converged with reality.
+                // The lifecycle layer's `removeAll` is skipped when the framework call
+                // throws, so clear stale tracking explicitly here.
                 Self.logger.notice(
                     "Removable media '\(device.displayName, privacy: .public)' was already gone on '\(instance.name, privacy: .public)' (deviceNotFound); clearing tracking"
                 )
@@ -1483,12 +1257,9 @@ final class VMLibraryViewModel {
 
         for item in toAttach {
             do {
-                // Scoped access must be live while the service resolves the
-                // path and opens the disk attachment; registered with the
-                // instance on success (released at detach or teardown), and
-                // released by deinit if the attach throws. The scope's
-                // resolved URL is what gets attached, so a file the bookmark
-                // tracked through a move still hot-attaches.
+                // The scope must stay live while the service resolves the path and
+                // opens the attachment; on success it is registered with the instance
+                // (released at detach or teardown), and released by deinit if it throws.
                 let scope = item.bookmark.flatMap { ScopedAccess(bookmark: $0) }
                 _ = try await lifecycle.attachUSBDevice(
                     diskImagePath: item.path,
@@ -1522,12 +1293,8 @@ final class VMLibraryViewModel {
     /// Rolls `instance.configuration.removableMedia` back to whatever is
     /// actually attached in `liveRemovableMedia`.
     ///
-    /// Called from the reconcile error paths so the user sees an alert
-    /// AND a UI that matches reality, rather than a persisted config
-    /// describing devices the framework refused to attach (or refused to
-    /// detach). The write bypasses `updateConfiguration` to avoid
-    /// re-entering the reconcile pipeline — we want to land on the
-    /// rolled-back state, not retry it.
+    /// The write bypasses `updateConfiguration` to avoid re-entering the reconcile
+    /// pipeline — the rolled-back state is the destination, not a retry.
     private func reconcileConfigToLiveState(
         for instance: VMInstance,
         lookup: [UUID: RemovableMediaItem]
@@ -1548,17 +1315,9 @@ final class VMLibraryViewModel {
     /// Mounts the bundled `KernovaMacOSAgent.dmg` as a read-only USB device so
     /// the user can run `install.command` inside the guest.
     ///
-    /// Used by the
-    /// clipboard window's "Install Guest Agent…" affordance, the sidebar's
-    /// agent-status popover, and the menubar item.
-    ///
-    /// On mount (or when the disk is already mounted), asks the presenter to
-    /// show an alert explaining the next step (open the disk in the guest's
-    /// Finder, run install.command). The alert unifies the post-click
-    /// experience across all three entry points.
-    ///
-    /// No-op if the bundled DMG is already present in this VM's
-    /// `removableMedia` list — duplicate mounts don't help the user.
+    /// On mount — and when the disk is already mounted — asks the presenter to show
+    /// the next-step alert, so every entry point gives the user feedback. The mount
+    /// itself is a no-op when the DMG is already in this VM's `removableMedia` list.
     func mountGuestAgentInstaller(
         on instance: VMInstance, purpose: GuestAgentInstallerPurpose = .install
     ) {
@@ -1569,9 +1328,6 @@ final class VMLibraryViewModel {
         }
         if isGuestAgentInstallerMounted(on: instance) {
             Self.logger.debug("Guest agent installer already mounted on '\(instance.name, privacy: .public)'")
-            // Still surface the instructions — the user just clicked an
-            // install/update affordance and is owed feedback even if the
-            // disk happens to already be mounted from a prior click.
             presenter?.presentInstallerMounted(vmName: instance.name, purpose: purpose)
             return
         }
@@ -1592,9 +1348,8 @@ final class VMLibraryViewModel {
 
     /// Marks this VM's `.waiting` install nudge as dismissed and persists the choice.
     ///
-    /// The sidebar icon for `.waiting` will no longer surface; `.outdated`, `.unresponsive`, and
-    /// `.expectedMissing` continue to surface (those imply something more urgent than "you could
-    /// install this").
+    /// `.outdated`, `.unresponsive`, and `.expectedMissing` still surface — those imply
+    /// something more urgent than "you could install this".
     func dismissAgentInstallNudge(for instance: VMInstance) {
         setAgentInstallNudgeDismissed(true, for: instance)
     }
@@ -1602,11 +1357,8 @@ final class VMLibraryViewModel {
     /// Sets whether this VM's agent-install nudge is dismissed and persists the
     /// choice.
     ///
-    /// The single write path for the per-VM `agentInstallNudgeDismissed` flag —
-    /// `dismissAgentInstallNudge(for:)` (sidebar popover, VM Settings) and the
-    /// Reminders settings pane both route through here. Routes through
-    /// `updateConfiguration(of:)`, which no-ops when the value is unchanged.
-    /// `dismissed == true` silences the `.waiting` nudge; `false` re-arms it.
+    /// The single write path for the per-VM `agentInstallNudgeDismissed` flag:
+    /// `true` silences the `.waiting` nudge, `false` re-arms it.
     func setAgentInstallNudgeDismissed(_ dismissed: Bool, for instance: VMInstance) {
         guard instance.configuration.agentInstallNudgeDismissed != dismissed else { return }
         Self.logger.notice(
@@ -1618,10 +1370,8 @@ final class VMLibraryViewModel {
     /// Re-arms the agent-install nudge for every VM by clearing its dismissed
     /// flag, so each VM's `.waiting` nudge can surface again.
     ///
-    /// Invoked by the Reminders settings pane's *Reset All Reminders* action.
     /// Each VM's flag lives in its own bundle configuration and is persisted
-    /// individually via `setAgentInstallNudgeDismissed(_:for:)`; VMs already
-    /// armed no-op.
+    /// individually; VMs already armed no-op.
     func resetAllAgentInstallNudges() {
         for instance in instances {
             setAgentInstallNudgeDismissed(false, for: instance)
@@ -1631,11 +1381,7 @@ final class VMLibraryViewModel {
     /// Removes the bundled guest agent installer entry from
     /// `removableMedia` if currently present.
     ///
-    /// Identified by path equality with
-    /// `KernovaMacOSAgentInfo.installerDiskImageURL`. The reconcile flow
-    /// performs the runtime detach. Reached three ways: the menubar item's
-    /// eject mode, the user-driven "Eject" in Settings, and the post-install
-    /// auto-eject wired in ``wirePersistence(for:)``.
+    /// The reconcile flow performs the runtime detach.
     func unmountGuestAgentInstaller(from instance: VMInstance) {
         guard let url = KernovaMacOSAgentInfo.installerDiskImageURL else { return }
         guard isGuestAgentInstallerMounted(on: instance) else { return }
@@ -1651,17 +1397,12 @@ final class VMLibraryViewModel {
 
     /// Removes a storage disk entry from the configuration.
     ///
-    /// When `trashFile` is `true`, the underlying file is moved to Trash —
-    /// internal (bundle-owned) disks resolve against `instance.bundleURL`,
-    /// external disks resolve against their absolute path. If the file is
-    /// already gone, the missing-file error is logged and swallowed so the
-    /// user doesn't see an alert for a no-op cleanup.
+    /// When `trashFile` is `true` the underlying file is moved to Trash — internal
+    /// (bundle-owned) disks resolve against `instance.bundleURL`, external disks
+    /// against their absolute path; an already-missing file is logged and swallowed.
     ///
-    /// `FileManager.trashItem` is a synchronous call that can block for
-    /// seconds on slow or unresponsive volumes (network shares, sleeping
-    /// external drives), so the trash runs in `Task.detached` to keep the
-    /// MainActor responsive. The returned Task lets tests await completion;
-    /// production callers use `@discardableResult` and ignore it.
+    /// `FileManager.trashItem` can block for seconds on slow or unresponsive volumes,
+    /// so the trash runs in `Task.detached`. The returned Task lets tests await it.
     @discardableResult
     func removeStorageDisk(
         _ disk: StorageDisk, from instance: VMInstance, trashFile: Bool
@@ -1673,10 +1414,8 @@ final class VMLibraryViewModel {
         }
 
         guard trashFile else { return nil }
-        // Never trash a file another VM still references. Only external disks
-        // can be shared (bundle-relative paths are per-VM), so the check is
-        // scoped to those. The UI hard-blocks the trash option for shared
-        // disks; this enforces the same invariant at the model layer.
+        // Never trash a file another VM still references; only external disks can be
+        // shared, since bundle-relative paths are per-VM.
         if !disk.isInternal, !sharingVMNames(forPath: disk.path, excluding: instance).isEmpty {
             Self.logger.notice(
                 "Kept shared disk '\(disk.label, privacy: .public)' — still used by another VM; removed entry only"
@@ -1715,17 +1454,13 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Renames a storage disk's user-facing label, persisting through
-    /// `updateConfiguration`.
+    /// Renames a storage disk's user-facing label.
     ///
-    /// The label is cosmetic — it has no effect on the guest (the virtio block
-    /// identifier is derived from the disk's UUID, not its label), so renaming
-    /// is safe for any disk including the main disk and costs nothing on the
-    /// filesystem (the backing file keeps its stable UUID name). Whitespace is
-    /// trimmed and an empty result is ignored, so clearing the field doesn't
-    /// blank the label. Duplicate labels are allowed on an explicit rename —
-    /// only machine-generated defaults are uniqued (see
-    /// `StorageDisk.uniqueLabel`).
+    /// The label is cosmetic — the virtio block identifier derives from the disk's
+    /// UUID and the backing file keeps its UUID name — so renaming is safe for any
+    /// disk including the main disk. Whitespace is trimmed and an empty result
+    /// ignored. Duplicate labels are allowed on an explicit rename; only
+    /// machine-generated defaults are uniqued.
     func renameStorageDisk(_ disk: StorageDisk, newLabel: String, on instance: VMInstance) {
         let trimmed = newLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -1737,14 +1472,11 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Renames a removable medium's user-facing label, persisting through
-    /// `updateConfiguration`.
+    /// Renames a removable medium's user-facing label.
     ///
-    /// Like ``renameStorageDisk(_:newLabel:on:)`` the label is purely cosmetic.
-    /// It's safe to rename while the VM is running: the change persists and the
-    /// live reconciliation (`applyLiveRemovableMediaChange`) only detaches/
-    /// reattaches when `path` or `readOnly` differs, so a label-only edit leaves
-    /// the medium mounted. Whitespace is trimmed and an empty result is ignored.
+    /// Safe while the VM is running: the live reconciliation only detaches and
+    /// reattaches when `path` or `readOnly` differs, so a label-only edit leaves the
+    /// medium mounted. Whitespace is trimmed and an empty result ignored.
     func renameRemovableMedia(
         _ item: RemovableMediaItem, newLabel: String, on instance: VMInstance
     ) {
@@ -1760,23 +1492,12 @@ final class VMLibraryViewModel {
 
     /// Removes a removable media entry from the configuration.
     ///
-    /// When `trashFile` is `true`, the underlying file at the item's
-    /// absolute path is moved to Trash. Every removable item is a
-    /// user-picked external file, so there's no bundle-relative case to
-    /// disambiguate. Missing files are swallowed (`.notice` log, no error
-    /// alert) because removable media are often transient — a user may
-    /// have already deleted or unmounted the source. Other failures are
-    /// surfaced via the error alert.
+    /// When `trashFile` is `true` the file at the item's absolute path is moved to
+    /// Trash — every removable item is a user-picked external file. Missing files are
+    /// swallowed at `.notice` because removable media are often transient.
     ///
-    /// Mutating `config.removableMedia` through `updateConfiguration`
-    /// triggers `applyLivePolicy` → `applyLiveRemovableMediaChange`, so
-    /// the hot-detach reconciliation runs automatically when the VM is
-    /// running. `trashItem` succeeds even while the VM still holds the
-    /// file open, so we don't need to wait for the detach to complete.
-    ///
-    /// The trash runs in `Task.detached` (see `removeStorageDisk` for the
-    /// reasoning). The returned Task lets tests await completion;
-    /// `@discardableResult` lets the UI callers ignore it.
+    /// `trashItem` succeeds even while the VM still holds the file open, so this
+    /// doesn't wait for the hot-detach. The returned Task lets tests await it.
     @discardableResult
     func removeRemovableMedia(
         _ item: RemovableMediaItem, from instance: VMInstance, trashFile: Bool
@@ -1788,17 +1509,15 @@ final class VMLibraryViewModel {
         }
 
         guard trashFile else { return nil }
-        // The bundled Guest Agent installer lives inside the app bundle and is
-        // app-owned: removing it only detaches the entry, never trashes the
-        // file (trashing it would corrupt the bundle for every VM).
+        // The bundled Guest Agent installer is app-owned: removing it only detaches
+        // the entry — trashing it would corrupt the app bundle for every VM.
         if isGuestAgentInstaller(item) {
             Self.logger.notice(
                 "Kept Guest Agent installer '\(item.label, privacy: .public)' — app-owned; removed entry only"
             )
             return nil
         }
-        // Never trash a file another VM still references (the UI hard-blocks
-        // the trash option for shared media; this enforces it at the model layer).
+        // Never trash a file another VM still references.
         if !sharingVMNames(forPath: item.path, excluding: instance).isEmpty {
             Self.logger.notice(
                 "Kept shared media '\(item.label, privacy: .public)' — still used by another VM; removed entry only"
@@ -1837,10 +1556,8 @@ final class VMLibraryViewModel {
     /// Returns the storage disks list to render when `storageDisks` is
     /// `nil` / empty.
     ///
-    /// The settings view uses this so the user always sees the main disk
-    /// as a row, and mutating helpers fall back to it when initializing
-    /// the list on first edit. Static because it depends only on the
-    /// bundle layout, not on view-model state.
+    /// The settings view uses this so the user always sees the main disk as a row,
+    /// and mutating helpers fall back to it when initializing the list on first edit.
     static func defaultStorageDisks(for instance: VMInstance) -> [StorageDisk] {
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
         return [ConfigurationBuilder.defaultMainDisk(layout: layout)]
@@ -1849,9 +1566,7 @@ final class VMLibraryViewModel {
     /// Creates a new ASIF disk image inside the VM bundle and adds it to
     /// `storageDisks`.
     ///
-    /// The returned Task lets tests await completion of the async create +
-    /// persist; production callers use `@discardableResult` and ignore it
-    /// (mirrors ``removeStorageDisk(_:from:trashFile:)``).
+    /// The returned Task lets tests await completion of the async create + persist.
     @discardableResult
     func createStorageDisk(for instance: VMInstance, sizeInGB: Int) -> Task<Void, Never> {
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
@@ -1865,12 +1580,11 @@ final class VMLibraryViewModel {
 
                 try await diskImageService.createDiskImage(at: diskURL, sizeInGB: sizeInGB)
 
-                // Bundle-relative path (`AdditionalDisks/<id>.asif`) so the
-                // entry travels with the bundle on clone / move.
+                // Bundle-relative so the entry travels with the bundle on clone / move.
                 let relativePath = "AdditionalDisks/\(diskID.uuidString).asif"
-                // Compute the unique default label *inside* the mutate closure
-                // against the live config, so two rapid creates can't both read
-                // the same snapshot and pick the same "… 2" suffix.
+                // Compute the unique default label *inside* the mutate closure against
+                // the live config, so two rapid creates can't read the same snapshot
+                // and pick the same "… 2" suffix.
                 var createdLabel = "\(sizeInGB) GB Disk"
                 updateConfiguration(of: instance) { config in
                     var disks = config.storageDisks ?? Self.defaultStorageDisks(for: instance)
@@ -1916,17 +1630,15 @@ final class VMLibraryViewModel {
     /// Creates a new ASIF disk image at a user-chosen external location and
     /// attaches it to the VM as a hot-pluggable removable disk.
     ///
-    /// The backing file is **not** bundle-owned — its lifecycle is the user's
-    /// responsibility. Removal from the list does not trash the file, and
-    /// cloning the VM references the same path rather than duplicating it.
+    /// The backing file is **not** bundle-owned: removal from the list does not trash
+    /// it, and cloning the VM references the same path rather than duplicating it.
     func createRemovableMedia(for instance: VMInstance, sizeInGB: Int, destinationURL: URL) {
         Task {
             do {
                 try await diskImageService.createDiskImage(at: destinationURL, sizeInGB: sizeInGB)
 
-                // Bookmark after the write succeeds: the file must exist to
-                // be bookmarked, and the write itself rides the still-live
-                // save-panel grant.
+                // Bookmark after the write succeeds: the file must exist to be
+                // bookmarked, and the write rides the still-live save-panel grant.
                 let item = RemovableMediaItem(
                     path: destinationURL.path(percentEncoded: false),
                     readOnly: false,
@@ -1941,10 +1653,9 @@ final class VMLibraryViewModel {
                     "Created removable disk '\(item.label, privacy: .public)' (\(sizeInGB, privacy: .public) GB) at '\(destinationURL.path, privacy: .public)' for VM '\(instance.name, privacy: .public)'"
                 )
             } catch {
-                // Only attempt cleanup when the write itself failed — earlier
-                // phases throw before the destination file is touched, so trashing
-                // there would either be a no-op or, in the user-chosen-path case,
-                // remove an unrelated pre-existing file.
+                // Only clean up when the write itself failed — earlier phases throw
+                // before the destination is touched, and the path is user-chosen, so
+                // trashing there could remove an unrelated pre-existing file.
                 if case DiskImageError.writeFailed = error {
                     do {
                         try fileSystem.trashItem(at: destinationURL)
@@ -1974,7 +1685,6 @@ final class VMLibraryViewModel {
         let existingNames = instances.map(\.configuration.name)
         var clonedConfig = instance.configuration.clonedForNewInstance(existingNames: existingNames)
 
-        // Regenerate platform identity fields
         clonedConfig.macAddress = VZMACAddress.randomLocallyAdministered().string
 
         if clonedConfig.guestOS == .macOS {
@@ -1985,7 +1695,6 @@ final class VMLibraryViewModel {
             clonedConfig.genericMachineIdentifierData = VZGenericMachineIdentifier().dataRepresentation
         }
 
-        // Determine which bundle files to copy
         var filesToCopy = ["Disk.asif"]
         switch clonedConfig.guestOS {
         case .macOS:
@@ -1996,10 +1705,9 @@ final class VMLibraryViewModel {
             }
         }
 
-        // Track internal storage disks that need to be copied. The main
-        // bundle disk (`Disk.asif`) lives at a fixed relative path so it
-        // doesn't need remapping — only `AdditionalDisks/<id>.asif` entries
-        // do, because the cloned IDs differ from the originals.
+        // The main bundle disk lives at a fixed relative path, so only
+        // `AdditionalDisks/<id>.asif` entries need remapping — their cloned ids
+        // differ from the originals.
         let originalDisks = instance.configuration.storageDisks ?? []
         let clonedDisks = clonedConfig.storageDisks ?? []
         let internalDiskMapping: [(sourceID: UUID, clonedDisk: StorageDisk)] = zip(originalDisks, clonedDisks)
@@ -2008,7 +1716,6 @@ final class VMLibraryViewModel {
                 return (sourceID: original.id, clonedDisk: cloned)
             }
 
-        // Derive the destination bundle URL (may touch disk to ensure VMs directory exists)
         let bundleURL: URL
         do {
             bundleURL = try storageService.bundleURL(for: clonedConfig)
@@ -2020,11 +1727,8 @@ final class VMLibraryViewModel {
             return
         }
 
-        // Create phantom row immediately
         let phantom = VMInstance(configuration: clonedConfig, bundleURL: bundleURL)
 
-        // Launch the file copy fire-and-forget; like import, clone runs its copy concurrently
-        // (see `prepareBundle`).
         let sourceBundleURL = instance.bundleURL
         let sourceName = instance.name
         let config = clonedConfig
@@ -2039,13 +1743,11 @@ final class VMLibraryViewModel {
                     let resultURL = try storage.cloneVMBundle(
                         from: sourceBundleURL, newConfiguration: config, filesToCopy: bundleFilesToCopy)
 
-                    // Write regenerated MachineIdentifier file for macOS clones (off main thread)
                     if let machineIDData = config.machineIdentifierData, config.guestOS == .macOS {
                         let layout = VMBundleLayout(bundleURL: resultURL)
                         try machineIDData.write(to: layout.machineIdentifierURL, options: .atomic)
                     }
 
-                    // Copy internal additional disk files and track any missing sources
                     var skipped: Set<UUID> = []
                     if !diskMapping.isEmpty {
                         let sourceLayout = VMBundleLayout(bundleURL: sourceBundleURL)
@@ -2069,14 +1771,11 @@ final class VMLibraryViewModel {
                     return skipped
                 }
 
-                // Remove skipped disks and remap each kept internal additional
-                // disk's `path` to its regenerated id-based filename.
-                // `clonedForNewInstance` gives every disk a fresh `id` (so
-                // virtio/USB device identifiers don't collide with the source
-                // bundle) but copies the old `path` verbatim; the file copy
-                // above wrote each disk to `AdditionalDisks/<new-id>.asif`, so
-                // the stored path must follow or boot-time resolution looks for
-                // the source bundle's old id and fails with `storageDiskNotFound`.
+                // `clonedForNewInstance` gives every disk a fresh `id` but copies its
+                // `path` verbatim, while the copy above wrote each file to
+                // `AdditionalDisks/<new-id>.asif` — without this remap, boot-time
+                // resolution looks for the source bundle's id and fails with
+                // `storageDiskNotFound`.
                 if !diskMapping.isEmpty {
                     let remappedPaths: [UUID: String] = Dictionary(
                         uniqueKeysWithValues: diskMapping.map { mapping in
@@ -2105,10 +1804,8 @@ final class VMLibraryViewModel {
 
     // MARK: - Sleep/Wake
 
-    /// Pauses all running VMs before system sleep.
-    ///
-    /// Tracks which VMs were auto-paused
-    /// so only those are resumed on wake (preserving user-paused VMs).
+    /// Pauses all running VMs before system sleep, tracking which were auto-paused so
+    /// only those are resumed on wake.
     func pauseAllForSleep() async {
         let runningInstances = instances.filter { $0.status == .running }
         guard !runningInstances.isEmpty else {
@@ -2214,7 +1911,6 @@ final class VMLibraryViewModel {
         do {
             let diskBundles = try storageService.listVMBundles()
 
-            // Build a map of UUID → bundle URL for bundles currently on disk
             var diskConfigs: [(VMConfiguration, URL)] = []
             var failedBundles: [String] = []
             for bundleURL in diskBundles {
@@ -2233,7 +1929,6 @@ final class VMLibraryViewModel {
             let diskIDs = Set(diskConfigs.map(\.0.id))
             let memoryIDs = Set(instances.map(\.id))
 
-            // Additions: bundles on disk that aren't in memory
             var didChange = false
             for (config, bundleURL) in diskConfigs where !memoryIDs.contains(config.id) {
                 let layout = VMBundleLayout(bundleURL: bundleURL)
@@ -2249,8 +1944,7 @@ final class VMLibraryViewModel {
                 didChange = true
             }
 
-            // Removals: instances in memory whose bundles no longer exist on disk
-            // Only remove resting-state VMs — never touch running/paused/preparing ones
+            // Only remove resting-state VMs — never touch running/paused/preparing ones.
             let instancesToRemove = instances.filter { instance in
                 !diskIDs.contains(instance.id)
                     && !instance.isPreparing
@@ -2259,9 +1953,8 @@ final class VMLibraryViewModel {
                         || instance.status == .initialBoot)
             }
             for instance in instancesToRemove {
-                // Cancel any in-flight install task before evicting — otherwise
-                // the task keeps mutating an orphan instance the view model no
-                // longer knows about, wasting work and potentially racing.
+                // Cancel any in-flight install task before evicting — otherwise it keeps
+                // mutating an orphan instance the view model no longer knows about.
                 instance.installTask?.cancel()
                 instances.removeAll { $0.id == instance.id }
                 if selectedID == instance.id {
@@ -2309,17 +2002,16 @@ final class VMLibraryViewModel {
 
     func cancelPreparingConfirmed(_ instance: VMInstance) {
         guard var state = instance.preparingState else {
-            // The copy already settled (finished before the user confirmed) — the row is a real VM
-            // now. Remove it and trash the completed bundle; safe, nothing is in flight (#496).
+            // The copy settled before the user confirmed — nothing is in flight, so
+            // remove the row and trash the completed bundle here.
             cleanupPhantomInstance(instance)
             return
         }
         guard !state.isCancelling else { return }  // already cancelling
 
-        // Cancel the task and mark the row "Cancelling…", but keep it in `instances`. The copy is
-        // uninterruptible, so trashing/removing now would race the still-writing copy and briefly
-        // drop `hasPreparing` (letting reconcile resurrect the bundle). The copy task removes the
-        // row and trashes the bundle once the copy settles (#496).
+        // Mark the row "Cancelling…" but keep it in `instances`: the copy is uninterruptible, so
+        // removing it now would race the still-writing copy and briefly drop `hasPreparing`,
+        // letting reconcile resurrect the bundle. The copy task cleans up once it settles.
         state.task.cancel()
         state.isCancelling = true
         instance.preparingState = state
@@ -2342,8 +2034,6 @@ final class VMLibraryViewModel {
     // MARK: - Reorder
 
     /// Moves VMs in the sidebar list and persists the new order.
-    ///
-    /// Called by the sidebar outline view's drag-drop `acceptDrop`.
     func moveVM(fromOffsets source: IndexSet, toOffset destination: Int) {
         instances.move(fromOffsets: source, toOffset: destination)
         persistOrder()
@@ -2377,9 +2067,8 @@ final class VMLibraryViewModel {
 
     /// Moves a partial VM bundle to the Trash in the background, logging on failure.
     ///
-    /// Static (with the file-system seam passed in) because two call sites run
-    /// after `guard let self else` — the cleanup must not depend on the view
-    /// model still being alive.
+    /// Static (with the file-system seam passed in) because it must stay callable after
+    /// `guard let self else` — the cleanup must not depend on the view model.
     private static func trashPartialBundle(at url: URL, fileSystem: any FileSystemOperating) {
         let log = logger
         Task.detached {

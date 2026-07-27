@@ -703,14 +703,10 @@ struct IPSWServiceDownloadTests {
         // of the picture.
         //
         // No synchronization with the consumer's for-await suspension is
-        // attempted, on purpose. Earlier revisions tried to use a `SignalGate`
-        // + `AsyncStream` driven off the first `progressHandler` invocation
-        // as a "consumer is now parked on next()" proxy. That proxy was
-        // always a fiction: the initial-progress emission in `streamBytes`
-        // happens *before* the for-await loop is entered, so the signal
-        // raced with the actual suspension and the test flaked when the
-        // race went the wrong way. The synchronization is also unnecessary —
-        // Task cancellation is sticky, and the only legal outcomes of cancel
+        // needed. The initial-progress emission in `streamBytes` happens
+        // *before* the for-await loop is entered, so no `progressHandler`
+        // signal marks the suspension. Task cancellation is sticky, and the
+        // only legal outcomes of cancel
         // + yield(non-empty chunk) + finish, regardless of interleaving, all
         // route through the loop body's `try Task.checkCancellation()` (or
         // the catch handler that re-throws `CancellationError`):

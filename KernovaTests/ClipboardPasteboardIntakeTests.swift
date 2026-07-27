@@ -481,11 +481,10 @@ struct ClipboardPasteboardIntakeTests {
         #expect(content.representations[0].fileURL == url)
     }
 
-    @Test("read(filesAt:) accepts a file far larger than the old cap (no size limit)")
+    @Test("read(filesAt:) accepts a large file — there is no per-rep size limit")
     func directFileReadLargeAccepted() throws {
-        // A file over the old 100 MiB per-rep cap is no longer rejected — it
-        // becomes a disk-backed rep whose bytes stream on demand. A sparse file
-        // keeps the test fast.
+        // A large file becomes a disk-backed rep whose bytes stream on demand.
+        // A sparse file keeps the test fast.
         let url = try makeTempFile(name: "huge.bin", contents: Data())
         let handle = try FileHandle(forWritingTo: url)
         try handle.truncate(atOffset: 200 * 1024 * 1024)  // 200 MiB sparse

@@ -1,21 +1,6 @@
 import FileProvider
 import Foundation
 
-// The owner-side relay the extension calls back at `fetchContents`, plus the
-// per-pull progress machinery it drives (split out of FileProviderDomainHost.swift,
-// which owns registration/manifest/availability).
-//
-// Each relay pull feeds `ClipboardProgressTracker` — Kernova's own progress
-// readout (#643, #652) — from the receiver's per-chunk `onProgress` callback, plus
-// each pull's start and terminal so the tracker can aggregate many pulls into one
-// session. Two earlier Finder-facing consumers of that same callback — the
-// servicing-XPC push that drove the extension's `fetchContents` `Progress` (#426)
-// and the published `NSProgress` Finder's copy dialog was meant to render (#634) —
-// were removed by #644 after #639 found no Finder surface ever rendered them. Since
-// #652 there is exactly one owner-side consumer: the same tracker drives every
-// progress surface, so a paste can no longer read differently in the menu bar than
-// in the clipboard window.
-
 /// The XPC-exported relay object.
 ///
 /// Pulls a file rep through the clipboard owner and replies with the staged-file
@@ -26,14 +11,11 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
     /// Runs each `fetchFile` pull, and each `cancelFetch` signal, off the XPC
     /// delivery queue.
     ///
-    /// `NSXPCConnection` delivers every incoming exported-object call — including
-    /// `cancelFetch` — on one private *serial* queue per connection (WWDC 2012
-    /// session 241), so blocking that queue for the whole vsock pull (as `fetchFile`
-    /// used to) would starve any `cancelFetch` for the very fetch it's trying to
-    /// abort — and `cancelFetch` itself can block on a stalled peer's vsock write,
-    /// so it needs the same treatment. Dispatching here frees the delivery queue
-    /// immediately; `.concurrent` also lets independent multi-file pulls actually
-    /// run in parallel, which the receiver/coordinator already support.
+    /// `NSXPCConnection` delivers every incoming exported-object call on one
+    /// private *serial* queue per connection (WWDC 2012 session 241), so blocking
+    /// it for a whole vsock pull starves the `cancelFetch` trying to abort that
+    /// fetch — and `cancelFetch` can itself block on a stalled peer's vsock write.
+    /// `.concurrent` lets independent multi-file pulls run in parallel.
     private let pullQueue = DispatchQueue(
         label: "app.kernova.fileprovider.relay.pull", attributes: .concurrent)
 
@@ -43,17 +25,13 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
     private var progressTrackerStorage: ClipboardProgressTracker?
 
     /// Receives each pull's start, byte counts, and terminal so the owner can
-    /// render one aggregate readout for the whole paste (#643, #652).
+    /// render one aggregate readout for the whole paste.
     ///
-    /// `nil` (a context that never registered a domain, e.g. most tests) simply
-    /// means no readout.
-    ///
-    /// Every pull below captures this **once, at entry**, and reports to that
-    /// tracker for its whole life. That is load-bearing on the host, where the
-    /// shared File Provider domain is re-pointed at whichever VM published most
-    /// recently: an in-flight pull keeps feeding the VM it started under, so a
-    /// superseded VM's paste goes on rendering its own session rather than
-    /// disappearing mid-transfer.
+    /// `nil` (a context that never registered a domain, e.g. most tests) means no
+    /// readout. Every pull captures this **once, at entry** and reports to that
+    /// tracker for its whole life: the host re-points the shared domain at
+    /// whichever VM published most recently, so an in-flight pull must keep
+    /// feeding the VM it started under.
     public var progressTracker: ClipboardProgressTracker? {
         get { wiringLock.withLock { progressTrackerStorage } }
         set { wiringLock.withLock { progressTrackerStorage = newValue } }
@@ -74,13 +52,10 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
     ) {
         logger.debug(
             "Relay fetchFile (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public))")
-        // Announced before the queue hop, so the readout can name this file from
-        // the moment the pull is asked for rather than from its first byte.
+        // Announced before the queue hop, so the readout names this file from the
+        // moment the pull is asked for rather than from its first byte.
         let tracker = progressTracker
         tracker?.pullBegan(generation: generation, repIndex: repIndex, childSeq: nil)
-        // Off the XPC delivery queue: the File Provider read path has no 60s
-        // deadline so a long block is safe, but it must not be *this* queue — see
-        // `pullQueue`'s doc for why.
         pullQueue.async { [pullProvider, logger] in
             let onProgress: @Sendable (UInt64, UInt64) -> Void = { bytes, _ in
                 tracker?.pullProgressed(
@@ -107,16 +82,10 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
 
     /// Relays a best-effort cancel to the owner's pull provider.
     ///
-    /// Dispatched onto `pullQueue`, the same as `fetchFile`, rather than run
-    /// directly on the connection's serial delivery queue: `cancelStagedPull`
-    /// bottoms out in a vsock write (`ClipboardStreamReceiver.cancel(transferID:)`
-    /// sending a `ClipboardStreamAbort`) that can block for real time against a
-    /// stalled peer, and this delivery queue is shared with every other
-    /// `fetchFile`/`cancelFetch` on the connection — blocking it here would
-    /// reintroduce exactly the starvation problem moving `fetchFile` off the
-    /// queue was meant to solve. (No readout teardown here: the abort surfaces
-    /// as the in-flight pull's failure reply, whose branch reports the terminal
-    /// to the materialization tracker.)
+    /// Dispatched onto `pullQueue` like `fetchFile`: `cancelStagedPull` bottoms
+    /// out in a vsock write that can block for real time against a stalled peer.
+    /// No readout teardown here — the abort surfaces as the in-flight pull's
+    /// failure reply, whose branch reports the terminal.
     public func cancelFetch(generation: UInt64, repIndex: Int) {
         logger.debug(
             "Relay cancelFetch (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public))"
@@ -127,9 +96,7 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
     }
 
     /// Pulls one child file of a directory rep's placeholder tree through the
-    /// owner and replies with the staged path (folder D1b).
-    ///
-    /// Mirrors `fetchFile`.
+    /// owner and replies with the staged path, mirroring `fetchFile`.
     public func fetchChild(
         generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
         reply: @escaping @Sendable (String?, NSError?) -> Void
@@ -194,11 +161,9 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
 ///
 /// A multi-GB pull fires the receiver's per-chunk callback tens of thousands of
 /// times; forwarding every one would flood a consumer's main-queue republishes.
-/// This coalesces to at most one update per ~1% of the total OR per ~100 ms, and
-/// always forwards the final chunk (`bytes >= total`) so a determinate readout
-/// always reaches 100% rather than stalling one throttle interval short.
-/// Stateless and testable in isolation; the caller owns the watermarks
-/// (`lastPushedBytes`, elapsed since the last push).
+/// The final chunk (`bytes >= total`) always forwards, so a determinate readout
+/// reaches 100% rather than stalling one throttle interval short. Stateless — the
+/// caller owns the watermarks.
 public enum FetchProgressThrottle {
     /// Minimum fraction of the total that must accumulate since the last push.
     public static let minByteFraction = 0.01
@@ -208,11 +173,8 @@ public enum FetchProgressThrottle {
     /// Whether `bytes`/`total` warrants a push given the last pushed byte count and
     /// the time since the last push.
     ///
-    /// Requires strictly forward progress (`bytes > lastPushedBytes`), then pushes
-    /// when it's the final chunk, when `minInterval` has elapsed, or when at least
-    /// `minByteFraction` of `total` has accrued since the last push. Seed
-    /// `elapsedSinceLastPush` with a large value for the first push so the bar
-    /// leaves zero promptly.
+    /// Seed `elapsedSinceLastPush` with a large value for the first push, so the
+    /// bar leaves zero promptly.
     static func shouldPush(
         bytes: UInt64, total: UInt64, lastPushedBytes: UInt64, elapsedSinceLastPush: TimeInterval
     ) -> Bool {
@@ -227,11 +189,9 @@ public enum FetchProgressThrottle {
 /// The stateful half of the throttle: owns one consumer's watermarks and
 /// answers "forward this update?" under its own lock.
 ///
-/// `FetchProgressThrottle` is the pure decision; this is the per-consumer
-/// bookkeeping around it (last-forwarded byte count and elapsed since the last
-/// forward). `ClipboardProgressTracker` holds one per *session* — the aggregate
-/// is a single byte stream even when several transfers feed it — so every
-/// progress surface republishes at one shared policy and none can drift.
+/// `ClipboardProgressTracker` holds one per *session* — the aggregate is a single
+/// byte stream even when several transfers feed it — so every progress surface
+/// republishes at one shared policy.
 ///
 /// `@unchecked Sendable`: every stored property is guarded by `lock`.
 public final class FetchProgressCoalescer: @unchecked Sendable {
@@ -249,10 +209,9 @@ public final class FetchProgressCoalescer: @unchecked Sendable {
     /// a consumer that bypasses the throttle for something the user must see
     /// (a reveal, a terminal, an item finishing).
     ///
-    /// Without this the watermarks would still describe the last *throttled*
-    /// forward, so the very next update would measure its delta from a byte
-    /// count that is already on screen and sail through the policy no matter how
-    /// small it was.
+    /// Without it the watermarks would still describe the last *throttled*
+    /// forward, so the next update would measure its delta from a byte count
+    /// already on screen and sail through the policy however small it was.
     public func markForwarded(bytesTransferred: UInt64) {
         lock.withLock {
             lastForwardedBytes = max(lastForwardedBytes, bytesTransferred)

@@ -2,10 +2,8 @@ import AppKit
 
 /// Delegate for ``VMCreationWizardViewController``.
 ///
-/// The wizard is intentionally decoupled from `VMLibraryViewModel`. The host
-/// (`DetailContainerViewController`) implements these methods to dismiss the
-/// sheet and perform the actual VM creation, mirroring the
-/// `DeleteVMSheetContentViewController` decoupling.
+/// The host implements these methods to dismiss the sheet and perform the actual
+/// VM creation.
 @MainActor
 protocol VMCreationWizardViewControllerDelegate: AnyObject {
     /// Invoked when the user clicks Cancel (or presses Escape).
@@ -27,12 +25,9 @@ protocol VMCreationWizardViewControllerDelegate: AnyObject {
 ///
 /// Owns three regions — a step-progress indicator, a swappable content area
 /// hosting one step view controller at a time, and a navigation bar. The shell
-/// observes the shared ``VMCreationViewModel`` (the single source of truth all
-/// steps read/write) and reacts to changes in `currentStep`, `canAdvance`,
-/// `canCreate`, and `validationMessage` — it never receives per-step delegate
-/// callbacks. Button actions mutate the model (`goNext()`/`goBack()`) and let
-/// observation drive the transition, so menu-driven and button-driven state
-/// take the identical path.
+/// observes the shared ``VMCreationViewModel`` and never receives per-step
+/// delegate callbacks. Button actions mutate the model and let observation drive
+/// the transition, so menu-driven and button-driven state take one path.
 @MainActor
 final class VMCreationWizardViewController: NSViewController {
     weak var delegate: VMCreationWizardViewControllerDelegate?
@@ -112,8 +107,7 @@ final class VMCreationWizardViewController: NSViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        // Mount the initial step and set the initial chrome. `apply()` mounts
-        // because `displayedStep` is still nil.
+        // `apply()` mounts the initial step because `displayedStep` is still nil.
         apply()
     }
 
@@ -249,19 +243,14 @@ final class VMCreationWizardViewController: NSViewController {
         }
     }
 
-    /// Swaps the content area to the view controller for `step`.
-    ///
-    /// No animation — determinism over flourish, matching the SwiftUI
-    /// predecessor (which had no step transition).
     private func showStep(_ step: VMCreationStep) {
         let newChild = makeStepViewController(for: step)
         addChild(newChild)
         newChild.view.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.addSubview(newChild.view)
         // The step view spans the full content width so a scrolling step's
-        // scroller sits flush with the sheet edge (matching the settings pane);
-        // the step insets its own content via `contentSideInset`. Vertical
-        // padding stays at the full content padding.
+        // scroller sits flush with the sheet edge; the step insets its own
+        // content via `contentSideInset`.
         let vPad = WizardStyle.contentPadding
         NSLayoutConstraint.activate([
             newChild.view.topAnchor.constraint(
@@ -286,8 +275,6 @@ final class VMCreationWizardViewController: NSViewController {
         case .osSelection:
             return OSSelectionContentViewController(creationVM: creationVM)
         case .bootConfig:
-            // OS-conditional: read `selectedOS` fresh each time the step is
-            // entered so going Back and changing the OS rebuilds the right VC.
             if creationVM.selectedOS == .macOS {
                 return IPSWSelectionContentViewController(creationVM: creationVM)
             }
@@ -308,10 +295,8 @@ final class VMCreationWizardViewController: NSViewController {
     @objc private func backTapped() {
         commitPendingEdits()
         creationVM.goBack()
-        // Apply synchronously for an immediate, flicker-free transition. The
-        // observation loop is the backstop for model changes originating inside
-        // a step (e.g. typing a name toggles `canAdvance`); `apply()` is
-        // idempotent, so the later observation fire is a harmless no-op.
+        // Apply synchronously for an immediate, flicker-free transition;
+        // `apply()` is idempotent, so the later observation fire is a no-op.
         apply()
     }
 
@@ -323,10 +308,9 @@ final class VMCreationWizardViewController: NSViewController {
 
     @objc private func createTapped() {
         commitPendingEdits()
-        // VM creation is async and takes seconds (bundle write + sparse disk
-        // allocation). Disable navigation immediately so a second click can't
-        // spawn a duplicate create and Cancel can't tear the sheet down mid-
-        // creation; the host dismisses the sheet when createVM completes.
+        // VM creation takes seconds. Disable navigation immediately so a second
+        // click can't spawn a duplicate create and Cancel can't tear the sheet
+        // down mid-creation; the host dismisses it when createVM completes.
         createButton.isEnabled = false
         backButton.isEnabled = false
         cancelButton.isEnabled = false
@@ -337,9 +321,8 @@ final class VMCreationWizardViewController: NSViewController {
     /// committed to the model before we navigate.
     ///
     /// Step fields like CPU/Memory commit on `controlTextDidEndEditing`. Clicking
-    /// a button resigns first responder and triggers that, but pressing Return
-    /// (the Next/Create key equivalent) can fire the button action without first
-    /// ending the field's edit; resigning first responder here closes that gap.
+    /// a button triggers that, but pressing Return (the Next/Create key
+    /// equivalent) fires the button action without ending the field's edit.
     private func commitPendingEdits() {
         view.window?.makeFirstResponder(nil)
     }
@@ -350,9 +333,8 @@ final class VMCreationWizardViewController: NSViewController {
     /// sheet on the wizard's own window so the user can read it and retry.
     ///
     /// The error is shown here rather than via the host's main-window alert
-    /// because the wizard sheet is still attached to that window; a sheet-on-
-    /// sheet (the alert atop the wizard) is well-defined, whereas two sheets on
-    /// the same window would contend.
+    /// because the wizard sheet is still attached to that window: an alert atop
+    /// the wizard is well-defined, two sheets on the same window contend.
     func presentCreationFailure(message: String?) {
         cancelButton.isEnabled = true
         backButton.isEnabled = true

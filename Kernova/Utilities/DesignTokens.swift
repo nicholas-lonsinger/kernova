@@ -2,16 +2,13 @@ import AppKit
 
 /// Centralized design tokens for the AppKit UI.
 ///
-/// These replace scattered magic numbers and ad-hoc `NSColor` choices so the
-/// visual language lives in one place. They are the AppKit realization of the
-/// design rhythm described in `SPEC.md`. Prefer these over inline literals when
-/// building view hierarchies.
+/// The AppKit realization of the design rhythm described in `SPEC.md`; prefer
+/// these over inline literals when building view hierarchies.
 
 /// Standard inter-element spacing for `NSStackView`s and manual layout.
 ///
 /// The names describe magnitude, not a single fixed purpose — the same value is
-/// reused across contexts. Values are the deliberate tiers already in use across
-/// the app; do not introduce off-scale values without a reason.
+/// reused across contexts. Do not introduce off-scale values without a reason.
 enum Spacing {
     /// Flush — no gap (`0`).
     static let none: CGFloat = 0
@@ -36,9 +33,6 @@ enum Spacing {
 }
 
 /// Status → color mapping shared by VM-status and guest-agent-status indicators.
-///
-/// Single source of truth for the semantic status palette so VM-status dots and
-/// the agent-status icon stay visually consistent and can be retuned in one place.
 enum StatusColor {
     /// Inert / not-yet-connected (stopped VM, agent waiting/connecting).
     static let inactive = NSColor.secondaryLabelColor
@@ -54,9 +48,6 @@ enum StatusColor {
 }
 
 /// Shared text styles.
-///
-/// Wraps the common `NSFont.preferredFont(forTextStyle:)` choices that were
-/// otherwise duplicated inline across view controllers.
 enum Typography {
     /// Primary body text — the default for form labels and list-row titles.
     static var body: NSFont { .preferredFont(forTextStyle: .body) }

@@ -3,9 +3,7 @@ import Foundation
 /// Handle to a recurring observation started by ``observeRecurring(track:apply:)``.
 ///
 /// The observation runs until this handle is deallocated OR ``cancel()`` is
-/// called, whichever comes first. Callers typically store the handle as a
-/// stored property on the object whose state is being observed and drop it or
-/// cancel it during teardown.
+/// called, whichever comes first.
 @MainActor
 final class ObservationLoop {
     fileprivate var isCancelled = false
@@ -18,9 +16,7 @@ final class ObservationLoop {
         register()
     }
 
-    /// Stops the observation loop.
-    ///
-    /// Idempotent; safe to call multiple times.
+    /// Stops the observation loop; idempotent.
     func cancel() {
         isCancelled = true
     }
@@ -34,11 +30,11 @@ final class ObservationLoop {
                 guard let self, !self.isCancelled else { return }
                 // Re-arm BEFORE applying: `apply()` can synchronously mutate
                 // tracked state (e.g. a `makeFirstResponder` inside it forces
-                // another field's edit session to commit, writing the model),
-                // and re-arming afterwards would leave that mutation
-                // unobserved — a lost wakeup. Registering first turns it into
-                // one coalesced follow-up pass instead; `apply` closures are
-                // idempotent refreshes, so the loop quiesces.
+                // another field's edit session to commit, writing the model), and
+                // re-arming afterwards would leave that mutation unobserved — a
+                // lost wakeup. Registering first turns it into one coalesced
+                // follow-up pass; `apply` closures are idempotent refreshes, so
+                // the loop quiesces.
                 self.register()
                 self.apply()
             }
@@ -50,33 +46,10 @@ final class ObservationLoop {
 /// each time one of them changes, and automatically re-registering after each
 /// fire so the loop continues indefinitely.
 ///
-/// Prefer this helper over hand-rolling the `withObservationTracking` +
-/// `Task { @MainActor }` + recursive re-register dance at each call site. Both
-/// closures run on the main actor. Callers should use `[weak self]` captures
-/// inside both closures to avoid retain cycles and to short-circuit gracefully
-/// after the observing object is deallocated.
-///
-/// The returned ``ObservationLoop`` must be retained by the caller — typically
-/// as a stored property. When the caller drops the reference or calls
-/// ``ObservationLoop/cancel()``, the loop stops at (or before) the next
-/// scheduled fire.
-///
-/// Example:
-/// ```swift
-/// private var toolbarObservation: ObservationLoop?
-///
-/// private func startToolbarObservation() {
-///     toolbarObservation = observeRecurring(
-///         track: { [weak self] in
-///             guard let self else { return }
-///             _ = self.viewModel.selectedInstance?.status
-///         },
-///         apply: { [weak self] in
-///             self?.updateToolbarItems()
-///         }
-///     )
-/// }
-/// ```
+/// Both closures run on the main actor; use `[weak self]` captures inside them
+/// to avoid retain cycles. The returned ``ObservationLoop`` must be retained by
+/// the caller — dropping it or calling ``ObservationLoop/cancel()`` stops the
+/// loop at (or before) the next scheduled fire.
 @MainActor
 func observeRecurring(
     track: @escaping () -> Void,

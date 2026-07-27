@@ -2,12 +2,8 @@ import AppKit
 
 /// Routes the detail pane to the right content for the selected VM's status.
 ///
-/// AppKit replacement for the former SwiftUI `VMDetailView`: it resolves a
-/// ``DetailRoute`` from the instance's status (via the pure mapping function)
-/// and swaps its visible child accordingly — settings, a transient-status
-/// spinner, the macOS install progress UI, or the display placeholder. Child
-/// controllers are reused across route changes; switching the bound VM rebuilds
-/// per-instance state (mirroring the SwiftUI `.id(selected.id)` reset).
+/// Child controllers are reused across route changes; switching the bound VM
+/// rebuilds per-instance state.
 @MainActor
 final class VMDetailRouterViewController: NSViewController {
     private var instance: VMInstance

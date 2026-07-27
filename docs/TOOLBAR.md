@@ -1,12 +1,10 @@
 # Toolbar
 
-How Kernova builds its `NSToolbar` items on the glass toolbar introduced in
-macOS 26, and the measured platform behaviors the construction relies on
-(measurements taken on macOS 27 developer beta 4). The shared item
-machinery lives in `VMToolbarManager`; the clipboard button in
-`ClipboardToolbarButton`. Safari's toolbar is the visual reference for this
-design: independent adjacent buttons sharing glass capsules, per-item circular
-hover, and a downloads-style progress bar inside the clipboard button.
+Read this before adding or changing an `NSToolbar` item: the behaviors of the
+glass toolbar introduced in macOS 26 that toolbar code has to satisfy
+(measured on macOS 27 developer beta 4). Safari is the visual reference —
+independent adjacent buttons sharing glass capsules, per-item circular hover,
+a downloads-style progress bar inside a button.
 
 ## Glass-toolbar platter model (measured)
 
@@ -24,85 +22,61 @@ named here for debugging orientation only; Kernova references none of them):
 - A multi-segment group's hover highlight is capsule-shaped (the segmented
   control's treatment), not a per-segment circle.
 
-## Item shapes Kernova uses
+## View-backed items
 
-| Shape | Items | Treatment |
-|-------|-------|-----------|
-| `NSToolbarItemGroup` (segmented) | Lifecycle (play/pause/stop) | Own capsule; segment-shaped hover |
-| Plain bordered image item (`makeBorderedItem`) | Suspend, Pop Out, Fullscreen, settings toggle, New VM, palette-only verbs | Circle in its own platter, or a merged capsule when adjacent; system circular hover |
-| View-backed item (`ClipboardToolbarButton`) | Clipboard | Identical to the bordered items — see below |
+A view-backed item can be made indistinguishable from a native bordered one —
+Safari's downloads button is the construction, a standard `.toolbar`-bezel
+`NSButton` hosting the progress bar as a real Auto Layout subview, so the bar
+stays a live view while the item keeps the platter treatment
+(`ClipboardToolbarButton`). What that costs:
 
-`VMToolbarManager.defaultItemIdentifiers` places fixed spaces to choose the
-default capsule clusters: [lifecycle] [Suspend] [Clipboard] [Pop Out +
-Fullscreen] [settings toggle] — every standalone action in its own circle, with
-only the display pair sharing a capsule.
-
-## The clipboard button
-
-`ClipboardToolbarButton` uses Safari's downloads-button construction — a
-standard `.toolbar`-bezel `NSButton` hosting the transfer bar as a real
-Auto Layout subview — so the bar is a live view (dynamic colors, no dimming
-with the item image) while the item keeps the full native platter treatment.
-
-- **The bar is decoration, not a control.** It overrides `hitTest` to return
-  `nil` so the whole platter stays one button while a transfer is in flight;
-  without that, the bar's 22×6 strip swallows clicks over the bottom of the
-  circle.
+- **The pinned 36×36 size is load-bearing.** At exactly the platter metric the
+  bezel's rollover *is* the platter's circular hover — measured pixel-identical
+  to a native bordered item's. At any other size the rollover no longer matches
+  the platter circle.
+- **A decorative subview must return `nil` from `hitTest`.** Otherwise it
+  swallows clicks over its own area — the 22×6 pt transfer bar takes the bottom
+  of the circle — and the platter stops behaving as one button.
 - **The item needs an explicit `menuFormRepresentation`.** AppKit builds an
   item's automatic overflow-menu ("»") entry from the *item's* own action, which
   a view-backed item leaves `nil` — so the entry would be inert while every
   bordered item's still worked.
-- **The pinned 36×36 size is load-bearing.** At exactly the platter metric the
-  bezel's rollover *is* the platter's circular hover — measured pixel-identical
-  to a native bordered item's (#645). At any other size the rollover no longer
-  matches the platter circle.
-- At that size the button renders its template symbol at the same on-screen
-  size as a native image-backed item's glyph, so the glyph is identical whether
-  or not the bar is showing.
 - Bar metrics, taken from Safari's `ToolbarDownloadsButtonProgressBar`:
   **22×6 pt capsule, horizontally centered, bottom edge 3 pt above the
   circle's rim** — fully inside the circle.
-- The bar draws in `draw(_:)` with dynamic colors: opaque track grays (system
-  fill colors are translucent and illegible over the glass) and an
-  accent-colored fill never narrower than its round cap.
+- **Draw with opaque colors.** System fill colors are translucent and illegible
+  over the glass.
 
 ## Sidebar section and collapse
 
-Items left of the `.sidebarTrackingSeparator` (New VM, the sidebar toggle) get
-the flat sidebar-section glass treatment, not capsule platters — that's the
-platform's sectioning (Mail/Notes behave the same). While the sidebar is
-collapsed, New VM is removed from the toolbar and restored on expand
-(`MainWindowController.syncNewVMVisibilityToSidebarState`) — Safari's New Tab
-Group pattern. The mechanism is **remove/insert, not `NSToolbarItem.isHidden`**:
-on the glass toolbar a hidden item's slot keeps its width (measured on macOS 27
-beta 4), leaving a dead gap between the window controls and the toggle, while
-removal reclaims the space. The removal applies only while New VM actually sits
-in the sidebar section, and the customize palette is always presented with the
-canonical layout (New VM restored before the sheet opens, the collapse state
-re-applied after it closes).
+Items left of the `.sidebarTrackingSeparator` get the flat sidebar-section glass
+treatment, not capsule platters — the platform's sectioning (Mail and Notes
+behave the same).
 
-Autosave is handled asymmetrically, which is load-bearing:
+To take an item out of that section while the sidebar is collapsed
+(`MainWindowController.syncNewVMVisibilityToSidebarState`), **remove and
+re-insert it — never `NSToolbarItem.isHidden`**: on the glass toolbar a hidden
+item's slot keeps its width (measured on macOS 27 beta 4), leaving a dead gap
+between the window controls and the toggle, while removal reclaims the space.
+Constraints follow:
 
-- **The removal runs with `autosavesConfiguration` suspended.** A collapsed
-  toolbar is a transient presentation, not a customization, so it must never
-  reach the saved layout.
-- **The restore runs with autosave live.** It returns the toolbar to the user's
-  canonical layout — exactly what should be persisted — and writing it through
-  *heals* a configuration that some other autosave captured mid-collapse.
-- **The removal is mirrored into `AppPreferences.mainToolbarNewVMCollapseIndex`.**
-  Suspending autosave around our own mutation does not stop an autosave
-  triggered by anything *else* while New VM is out (View ▸ Hide Toolbar, a
-  display-mode change) from persisting the New-VM-less item list — and because
-  the collapsed layout differs from the default set, AppKit writes that list
-  rather than omitting it. The mirrored index is what lets the next launch tell
-  that removal apart from a deliberate customization removal
-  (`adoptPersistedNewVMRemoval`, which re-adopts only when New VM is genuinely
-  absent); without it the button would be stranded until Restore Default Set.
-
-The index is remembered rather than recomputed from the sidebar toggle's
-position: New VM is user-movable within the sidebar section, so anchoring the
-reinsert to the toggle would silently reorder a layout that had put New VM on
-the toggle's trailing side.
+- **Remove with `autosavesConfiguration` suspended, restore with autosave live.**
+  A collapsed toolbar is a transient presentation, not a customization, so it
+  must never reach the saved layout; the restore, by contrast, writes back the
+  user's canonical layout and *heals* a configuration that some other autosave
+  captured mid-collapse.
+- **Mirror the removal into a preference**
+  (`AppPreferences.mainToolbarNewVMCollapseIndex`). Suspending autosave around
+  our own mutation does not stop an autosave triggered by anything *else* while
+  the item is out (View ▸ Hide Toolbar, a display-mode change) from persisting
+  the item-less list. The mirrored index is what lets the next launch tell that
+  removal apart from a deliberate customization removal
+  (`adoptPersistedNewVMRemoval`); without it the item is stranded until Restore
+  Default Set. Remember the index rather than recomputing it from a neighbor's
+  position — the item is user-movable within the section, so anchoring the
+  reinsert to a neighbor silently reorders the user's layout.
+- **Present the customize palette with the canonical layout** — restore the item
+  before the sheet opens, re-apply the collapse after it closes.
 
 ## Constraints to respect
 
@@ -110,9 +84,9 @@ the toggle's trailing side.
   toolbar — keep every subview inside the 36×36 circle. (`cacheDisplay`-based
   captures bypass the glass machinery and *do* show such content; verify
   toolbar rendering on screen, never from offscreen captures.)
-- All shared items set `autovalidates = false`; the manager's update methods
-  own enablement (autovalidation forces `isEnabled = true` and produces a
-  visible flicker fighting the observation-driven writes).
-- State-dependent relabeling (Pop Out ⇆ Pop In, Fullscreen ⇆ Exit Fullscreen,
-  Show ⇆ Hide Settings) is guarded by label-equality checks so no-op updates
-  don't trigger AppKit redraws; palette labels keep the stable factory names.
+- Set `autovalidates = false` on any item whose enablement is driven by
+  observation — autovalidation forces `isEnabled = true` and flickers against
+  those writes.
+- Guard state-dependent relabeling (Pop Out ⇆ Pop In, Fullscreen ⇆ Exit
+  Fullscreen) with a label-equality check so no-op updates don't trigger AppKit
+  redraws. Palette labels keep the stable factory names.

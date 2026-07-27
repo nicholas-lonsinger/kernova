@@ -3,11 +3,8 @@ import Foundation
 /// Capability tags advertised on the control-channel `Hello`.
 ///
 /// Capabilities are how the two sides negotiate optional features. The control
-/// plane tags are always advertised; `clipboardStreamV1` gates the chunk-streamed
-/// clipboard protocol: a peer enables clipboard sharing only when the other side
-/// advertises it. An agent that predates streaming simply doesn't advertise it,
-/// so clipboard stays off and the host surfaces its existing "update the guest
-/// agent" affordance (the agent version is bumped in lockstep with this tag).
+/// plane tags are always advertised; a peer enables an optional feature only when
+/// the other side advertises its tag, so an older agent leaves the feature off.
 public enum KernovaCapability {
     /// Control-channel protocol, version 1.
     public static let controlV1 = "control.v1"
@@ -18,19 +15,17 @@ public enum KernovaCapability {
     /// The chunk-streamed clipboard protocol (offer → request → begin/chunk/end
     /// with windowed flow control).
     ///
-    /// Required on both sides for clipboard sharing
-    /// to be enabled; there is no legacy fallback.
+    /// Required on both sides for clipboard sharing to be enabled.
     public static let clipboardStreamV1 = "clipboard.stream.v1"
 
     /// The folder placeholder-tree protocol (directory reps paste as a File
     /// Provider placeholder tree with per-child fetch, `ClipboardTreeFetch`),
     /// version 1.
     ///
-    /// Optional and mutually negotiated: a directory rep crosses as a placeholder
-    /// tree only when **both** sides advertise this — otherwise it falls back to
-    /// the eager-archive path (which needs no capability). A copy/paste never
-    /// depends on it for correctness; it changes only *how* a folder crosses.
-    /// Bump the guest agent version whenever this tag's behavior changes.
+    /// A directory rep crosses as a placeholder tree only when **both** sides
+    /// advertise this; otherwise it takes the eager-archive path, which needs no
+    /// capability. Bump the guest agent version whenever this tag's behavior
+    /// changes.
     public static let clipboardDirTreeV1 = "clipboard.dirtree.v1"
 
     /// The capabilities advertised by both the host control service and the
@@ -43,15 +38,12 @@ public enum KernovaCapability {
     /// `logDescription(of:)`.
     public static let recognized: Set<String> = Set(controlChannelDefaults)
 
-    /// A log-safe rendering of a peer-supplied capability list (#145).
+    /// A log-safe rendering of a peer-supplied capability list.
     ///
-    /// The `Hello.capabilities` strings arrive from the peer unauthenticated, so
-    /// interpolating them verbatim would let a malicious peer write arbitrary
-    /// content into the persisted log. Recognized tags render verbatim (first
-    /// occurrence order, duplicates collapsed); everything else is reduced to a
-    /// count — bounded output no matter what the peer advertises. A newer peer's
-    /// genuinely-new tag surfaces as unrecognized; the logged agent/service
-    /// versions identify it.
+    /// `Hello.capabilities` strings arrive from the peer unauthenticated: never
+    /// interpolate them into a log verbatim, or a malicious peer writes arbitrary
+    /// content into the persisted log. Recognized tags render verbatim, everything
+    /// else collapses to a count.
     public static func logDescription(of capabilities: [String]) -> String {
         var seen: Set<String> = []
         var known: [String] = []

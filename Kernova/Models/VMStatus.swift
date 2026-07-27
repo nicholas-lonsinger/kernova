@@ -9,9 +9,8 @@ enum VMStatus: String, Codable, Sendable {
     case saving
     case restoring
     case installing
-    /// VM exists in the library but has never completed its initial boot
-    /// (macOS install pipeline hasn't run). Clicking Start kicks off the
-    /// install (which may resume an interrupted download), then auto-boots.
+    /// VM exists in the library but has never completed its initial boot.
+    /// Clicking Start kicks off the macOS install, then auto-boots.
     case initialBoot
     case error
 
@@ -36,8 +35,7 @@ enum VMStatus: String, Codable, Sendable {
         }
     }
 
-    /// Overlay label for save/restore transitions, or `nil` for all other states
-    /// (including `.starting` and `.installing`, which use a generic progress view instead).
+    /// Overlay label for save/restore transitions, or `nil` for all other states.
     var transitionLabel: String? {
         switch self {
         case .saving: "Suspending…"
@@ -49,15 +47,13 @@ enum VMStatus: String, Codable, Sendable {
     var canStart: Bool { self == .stopped || self == .error || self == .initialBoot }
     /// Status-level stop eligibility.
     ///
-    /// Does not account for cold-paused state;
-    /// prefer `VMInstance.canStop` for runtime checks.
+    /// Does not account for cold-paused state; prefer `VMInstance.canStop`.
     var canStop: Bool { self == .running || self == .paused }
     var canPause: Bool { self == .running }
     var canResume: Bool { self == .paused }
     /// Status-level save eligibility.
     ///
-    /// Does not account for cold-paused state;
-    /// prefer `VMInstance.canSave` for runtime checks.
+    /// Does not account for cold-paused state; prefer `VMInstance.canSave`.
     var canSave: Bool { self == .running || self == .paused }
     var canEditSettings: Bool { self == .stopped || self == .error || self == .initialBoot }
     var canRename: Bool { !isTransitioning }
@@ -79,8 +75,8 @@ enum VMStatus: String, Codable, Sendable {
 
     /// Whether this status represents an active VM that should keep the app alive.
     ///
-    /// Note: live-paused VMs (`.paused` with a non-nil `VZVirtualMachine`) should
-    /// be handled separately by the caller.
+    /// Live-paused VMs (`.paused` with a live `VZVirtualMachine`) must be
+    /// handled separately by the caller.
     var isActive: Bool {
         switch self {
         case .running, .starting, .saving, .restoring, .installing:

@@ -4,17 +4,11 @@ import os
 
 /// Manages SPICE clipboard sharing between the host and a single guest VM.
 ///
-/// Instead of using Apple's `VZSpiceAgentPortAttachment` (which automatically syncs
-/// with the host `NSPasteboard`), this service speaks the SPICE agent protocol directly
-/// over raw pipe I/O. Clipboard data is surfaced in an observable property for the UI
-/// rather than written to the system clipboard.
-///
-/// The service acts as the SPICE **client** (host side). The guest runs a standard
-/// SPICE agent (`spice-vdagent` on Linux, or a macOS equivalent).
-///
-/// ## Lifecycle
-/// - Created by `VMInstance.startClipboardService()` after VM start
-/// - Destroyed by `VMInstance.stopClipboardService()` on teardown
+/// Speaks the SPICE agent protocol directly over raw pipe I/O rather than using
+/// `VZSpiceAgentPortAttachment`, which would sync the guest clipboard straight
+/// into the host `NSPasteboard`; clipboard data is surfaced in an observable
+/// property for the UI instead. This side is the SPICE **client** (host); the
+/// guest runs a standard agent (`spice-vdagent` on Linux).
 @MainActor
 @Observable
 final class SpiceClipboardService: ClipboardServicing {
@@ -22,41 +16,27 @@ final class SpiceClipboardService: ClipboardServicing {
 
     /// Unified clipboard buffer shared between guest and host.
     ///
-    /// - Set by the guest agent when the guest copies text (via `handleClipboardData`)
-    /// - Editable by the user in the clipboard window
-    /// - Announced to the guest (via `CLIPBOARD_GRAB`) when the clipboard window loses
-    ///   focus; the guest then requests the actual data via `CLIPBOARD_REQUEST`
-    ///
-    /// Only the UTF-8 text representation crosses this transport; content
-    /// without one makes `grabIfChanged()` a no-op (see the rich-format
-    /// follow-up to issue #112).
+    /// Only the UTF-8 text representation crosses this transport; content without
+    /// one makes `grabIfChanged()` a no-op.
     var clipboardContent: ClipboardContent = .empty
 
     /// `true` once the guest agent has completed the capabilities handshake.
     private(set) var isConnected: Bool = false
 
     /// Always `nil` — the SPICE path keeps its log-only error handling.
-    ///
-    /// Computed (not stored) so it costs nothing.
     var lastTransferIssue: ClipboardTransferIssue? { nil }
 
-    /// Text-only until the SPICE rich-format follow-up to issue #112.
     var supportsBinaryRepresentations: Bool { false }
 
     // Linux/SPICE is text-only, so folder placeholder trees never apply.
     var supportsDirectoryTree: Bool { false }
 
-    /// Bumped once per inbound guest clipboard text (see `ClipboardServicing`),
-    /// so the passthrough coordinator writes guest content to the host pasteboard.
+    /// Bumped once per inbound guest clipboard text.
     private(set) var inboundOfferSeq: UInt64 = 0
 
-    /// SPICE agents (e.g. `spice-vdagent` on Linux) are user-installed and
-    /// version-tracked by the guest's package manager — Kernova does not bundle
-    /// or update them.
-    ///
-    /// The UI distinguishes Linux guests from macOS guests
-    /// before offering an install affordance, so reporting `.current` once
-    /// connected is enough to suppress the host-side install/update flow.
+    /// SPICE agents are user-installed and version-tracked by the guest's package
+    /// manager — Kernova does not bundle or update them, so reporting `.current`
+    /// once connected is enough to suppress the host-side install/update flow.
     var agentStatus: AgentStatus {
         isConnected ? .current(version: "spice-vdagent") : .waiting
     }
@@ -75,7 +55,7 @@ final class SpiceClipboardService: ClipboardServicing {
 
     /// Whether the guest advertised `VD_AGENT_CAP_CLIPBOARD_BY_DEMAND`.
     ///
-    /// When `false` (legacy mode), we send clipboard data immediately after GRAB
+    /// When `false` (legacy mode), clipboard data is sent immediately after GRAB
     /// instead of waiting for a REQUEST.
     private var guestSupportsByDemand = false
 
@@ -110,8 +90,7 @@ final class SpiceClipboardService: ClipboardServicing {
 
     func clearBuffer() {
         clipboardContent = .empty
-        // Reset send-dedup so re-copying the just-cleared content re-grabs
-        // (otherwise the unchanged text would suppress the next grab).
+        // Reset send-dedup so re-copying the just-cleared content re-grabs.
         lastGrabbedText = nil
     }
 
@@ -119,10 +98,8 @@ final class SpiceClipboardService: ClipboardServicing {
     /// `clipboardContent` was edited since the last grab (or since the guest
     /// last sent us data).
     ///
-    /// Called by `ClipboardWindowController` when the clipboard window loses focus.
-    /// - **By-demand guests** (modern): the guest sends a `CLIPBOARD_REQUEST` when
-    ///   something pastes, and we respond with the pending text at that point.
-    /// - **Legacy guests**: we send `CLIPBOARD` data immediately after the GRAB.
+    /// A by-demand guest answers with `CLIPBOARD_REQUEST` when something pastes;
+    /// a legacy guest never will, so it is sent the data immediately.
     func grabIfChanged() {
         guard isConnected else { return }
         guard let text = clipboardContent.text, !text.isEmpty else {
@@ -144,7 +121,6 @@ final class SpiceClipboardService: ClipboardServicing {
         pendingOutboundText = text
 
         if !guestSupportsByDemand {
-            // Legacy mode: guest won't send REQUEST, deliver data immediately.
             // Reset lastGrabbedText on failure so the next call retries.
             if !sendClipboardText(text) {
                 lastGrabbedText = nil
@@ -160,7 +136,7 @@ final class SpiceClipboardService: ClipboardServicing {
 
     /// Hooks the readability handler on the output pipe to receive guest messages.
     private func startReading() {
-        // Capture for the closure (runs on a background GCD queue)
+        // Captured for the closure, which runs on a background GCD queue.
         let logger = Self.logger
 
         outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
@@ -219,9 +195,9 @@ final class SpiceClipboardService: ClipboardServicing {
 
     // MARK: - Message Handlers
 
-    // RATIONALE: Modern agents (spice-vdagent, UTM) only set VD_AGENT_CAP_CLIPBOARD_BY_DEMAND
-    // (bit 5) — the legacy VD_AGENT_CAP_CLIPBOARD (bit 3) is the old "always-sync" mode that
-    // no current agent advertises. We accept either bit as proof of clipboard support.
+    // Either capability bit counts as clipboard support: a guest advertising only
+    // `VD_AGENT_CAP_CLIPBOARD_BY_DEMAND` (bit 5) and not the always-sync
+    // `VD_AGENT_CAP_CLIPBOARD` (bit 3) must still connect.
     private func handleCapabilities(request: Bool, caps: [UInt32]) {
         let hasClipboard = SpiceMessageBuilder.hasCapability(caps, .clipboard)
         let byDemand = SpiceMessageBuilder.hasCapability(caps, .clipboardByDemand)
@@ -236,7 +212,6 @@ final class SpiceClipboardService: ClipboardServicing {
         isConnected = true
         guestSupportsByDemand = byDemand
 
-        // If the guest requested our capabilities, send them back (non-requesting)
         if request {
             let reply = SpiceMessageBuilder.buildAnnounceCapabilities(request: false)
             guard writeToGuest(reply) else { return }
@@ -251,7 +226,6 @@ final class SpiceClipboardService: ClipboardServicing {
     private func handleClipboardGrab(types: [SpiceClipboardType]) {
         Self.logger.debug("Guest clipboard grab: types=\(types.map(\.rawValue), privacy: .public)")
 
-        // We only handle UTF-8 text for now
         guard types.contains(.utf8Text) else {
             Self.logger.debug("Guest clipboard has no UTF-8 text type, ignoring")
             return
@@ -294,7 +268,6 @@ final class SpiceClipboardService: ClipboardServicing {
 
         clipboardContent = ClipboardContent(text: text)
         lastGrabbedText = nil  // New text is from the guest, not us
-        // Signal the passthrough coordinator to mirror this onto the host pasteboard.
         inboundOfferSeq &+= 1
         Self.logger.debug("Received guest clipboard text (\(text.count, privacy: .public) characters)")
     }

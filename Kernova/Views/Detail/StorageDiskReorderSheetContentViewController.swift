@@ -1,18 +1,10 @@
 import AppKit
 
 /// Delegate for ``StorageDiskReorderSheetContentViewController``.
-///
-/// The view controller is intentionally decoupled from
-/// `VMLibraryViewModel`; the host (the presenting view controller, e.g.
-/// `VMSettingsViewController`) implements these methods and forwards the
-/// user's choice to the view model.
 @MainActor
 protocol StorageDiskReorderSheetContentViewControllerDelegate: AnyObject {
-    /// Invoked after a successful drag-reorder.
-    ///
-    /// - Parameters:
-    ///   - vc: The sheet view controller firing the event.
-    ///   - disks: The new ordering of disks, top to bottom.
+    /// Invoked after a successful drag-reorder, with the new ordering top to
+    /// bottom.
     func storageDiskReorderSheet(
         _ vc: StorageDiskReorderSheetContentViewController,
         didReorderTo disks: [StorageDisk]
@@ -27,19 +19,11 @@ protocol StorageDiskReorderSheetContentViewControllerDelegate: AnyObject {
 /// AppKit Boot Order sheet: shows a draggable list of the VM's storage
 /// disks so the user can change boot priority / guest device
 /// enumeration order.
-///
-/// Drag-anywhere reorder via the native `NSTableView` drag-and-drop
-/// machinery (`pasteboardWriterForRow:`, `validateDrop:`, `acceptDrop:`)
-/// — no visible drag handle, since AppKit list reorder is conventionally
-/// discoverable through direct manipulation (Finder, Mail).
 @MainActor
 final class StorageDiskReorderSheetContentViewController: NSViewController {
     weak var delegate: StorageDiskReorderSheetContentViewControllerDelegate?
 
-    /// Current ordering.
-    ///
-    /// Mutated in place by drag-and-drop; the delegate is fired with a
-    /// snapshot of the new ordering each time a drop is accepted.
+    /// Current ordering, mutated in place by drag-and-drop.
     private(set) var disks: [StorageDisk]
 
     private let instance: VMInstance
@@ -50,10 +34,9 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
 
     /// `true` once `viewWillDisappear` has fired.
     ///
-    /// Checked by the re-arming `withObservationTracking` closure below
-    /// to break the recursion the moment the sheet starts dismissing —
-    /// without this, the closure keeps re-registering for the lifetime
-    /// of `self`.
+    /// Checked by the re-arming `withObservationTracking` closure below to break
+    /// the recursion the moment the sheet starts dismissing — without it, the
+    /// closure keeps re-registering for the lifetime of `self`.
     private var hasDisappeared = false
 
     // MARK: - Layout constants
@@ -263,12 +246,8 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
 
     /// Re-arming `withObservationTracking` subscription on `fileMonitor.existsByPath`.
     ///
-    /// When a file's existence flag flips, the table reloads so the
-    /// missing-file affordance updates without the user having to close
-    /// and re-open the sheet. The re-arming chain terminates when
-    /// `hasDisappeared` flips in `viewWillDisappear` — without that
-    /// guard the closure keeps registering for the lifetime of `self`,
-    /// even after the sheet has been dismissed.
+    /// When a file's existence flag flips, the table reloads so the missing-file
+    /// affordance updates without the user having to close and re-open the sheet.
     private func observeFileMonitor() {
         if hasDisappeared { return }
         withObservationTracking { [fileMonitor] in
@@ -333,18 +312,11 @@ extension StorageDiskReorderSheetContentViewController: NSTableViewDataSource {
         return performReorder(sourceRow: sourceRow, proposedRow: row)
     }
 
-    /// Pure reorder primitive — separated from `acceptDrop` so tests can
-    /// exercise the index math (and the delegate firing) without
-    /// constructing an `NSDraggingInfo` mock.
+    /// Pure reorder primitive backing `acceptDrop`.
     ///
-    /// - Parameters:
-    ///   - sourceRow: Index of the row being dragged.
-    ///   - proposedRow: Insertion index AppKit reports as the drop
-    ///     target (the gap *above* row N, so `proposedRow == disks.count`
-    ///     means "drop at the very end").
-    /// - Returns: `true` when the reorder happened; `false` when the
-    ///   inputs were invalid or the drop was a no-op (drag to its own
-    ///   slot).
+    /// `proposedRow` is the insertion index AppKit reports — the gap *above* row
+    /// N, so `disks.count` means "drop at the very end". Returns `false` when the
+    /// inputs are invalid or the drop is a no-op (drag to its own slot).
     @discardableResult
     func performReorder(sourceRow: Int, proposedRow: Int) -> Bool {
         guard sourceRow >= 0, sourceRow < disks.count else { return false }
@@ -367,10 +339,6 @@ extension StorageDiskReorderSheetContentViewController: NSTableViewDataSource {
 // MARK: - NSTableViewDelegate
 
 extension StorageDiskReorderSheetContentViewController: NSTableViewDelegate {
-    /// Builds the per-row cell view.
-    ///
-    /// Reuses dequeued ``StorageDiskReorderRowCellView`` instances when
-    /// available; creates a fresh one otherwise.
     func tableView(
         _ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int
     ) -> NSView? {
@@ -392,13 +360,6 @@ extension StorageDiskReorderSheetContentViewController: NSTableViewDelegate {
 }
 
 /// Per-row cell for the Boot Order table.
-///
-/// Lays out the AppKit ``AttachmentIconButton`` (which shows a red
-/// warning glyph + popover when the backing file is missing) next to a
-/// vertical text stack with the disk's display label and a path-or-stats
-/// subtitle. Built fresh in code rather than via a XIB — composition is
-/// small enough that an Auto Layout setup in `init` is the cleanest
-/// expression of the layout.
 @MainActor
 final class StorageDiskReorderRowCellView: NSTableCellView {
     private let iconButton = AttachmentIconButton()
@@ -446,21 +407,16 @@ final class StorageDiskReorderRowCellView: NSTableCellView {
         fatalError("StorageDiskReorderRowCellView does not support NSCoder")
     }
 
-    /// Apply the disk's icon + label + subtitle to the cell.
-    ///
-    /// Updates the icon, label, and subtitle in place so the missing-file
-    /// color/weight updates as the live ``AttachmentFileMonitor`` flips
-    /// a path's `exists` state — without tearing down the reused cell's views.
+    /// Applies the disk's icon, label, and subtitle to the cell in place, so a
+    /// reused cell isn't torn down when the missing-file state flips.
     func configure(disk: StorageDisk, instance: VMInstance, isMissing: Bool) {
         iconButton.configure(
             systemName: diskIconSystemName(for: disk),
             missingPath: isMissing ? disk.path : nil
         )
         titleLabel.stringValue = disk.label
-        // Reads in-bundle sizes off-main; the `identifier` token guards against
-        // this reused cell being rebound to a different disk mid-read. Painted
-        // without the fade — a drag-drop reorder triggers `reloadData()`, and a
-        // fade on every rebound cell reads as a flicker on each reorder.
+        // Painted without the fade — a drag-drop reorder triggers `reloadData()`,
+        // and a fade on every rebound cell reads as a flicker on each reorder.
         populateDiskSubtitle(
             subtitleLabel, for: disk, bundleLayout: instance.bundleLayout, isMissing: isMissing,
             animated: false)

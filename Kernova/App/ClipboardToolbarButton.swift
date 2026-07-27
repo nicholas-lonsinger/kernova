@@ -2,12 +2,11 @@ import Cocoa
 
 /// The clipboard toolbar item's view: a standard `.toolbar`-bezel button with a
 /// transfer-progress bar overlaid as a subview across the bottom of the platter
-/// circle — the same construction Safari uses for its downloads button.
+/// circle.
 ///
 /// The button is pinned to the glass toolbar platter's 36×36 metric; at exactly
-/// that size the bezel's rollover is the platter's circular hover highlight, so
-/// the item looks and behaves like an image-backed bordered item while hosting
-/// the bar as a real view (see docs/TOOLBAR.md for the platter metrics).
+/// that size the bezel's rollover is the platter's circular hover highlight (see
+/// docs/TOOLBAR.md for the platter metrics).
 final class ClipboardToolbarButton: NSButton {
     /// The button's glyph, shared with the toolbar item's menu form
     /// representation so the overflow menu shows the same symbol.
@@ -21,9 +20,6 @@ final class ClipboardToolbarButton: NSButton {
     private let bar = TransferBarView()
 
     /// The in-flight transfer's completion fraction, or `nil` when idle.
-    ///
-    /// Idle hides the bar entirely; in flight the bar shows filled to the
-    /// clamped 0…1 fraction.
     var transferFraction: Double? {
         didSet {
             guard transferFraction != oldValue else { return }
@@ -72,11 +68,11 @@ private final class TransferBarView: NSView {
         }
     }
 
-    /// Opaque track grays, sampled from Safari's download bar: light gray on
-    /// the dark toolbar, a slightly darker gray on the light one.
+    /// Opaque track grays: light gray on the dark toolbar, a slightly darker
+    /// gray on the light one.
     ///
-    /// Deliberately not a system fill color — those are translucent, which
-    /// makes the track illegible over the glass platter.
+    /// Deliberately not a system fill color — those are translucent, which makes
+    /// the track illegible over the glass platter.
     private static let trackColor = NSColor(
         name: nil,
         dynamicProvider: { appearance in
@@ -85,9 +81,8 @@ private final class TransferBarView: NSView {
                 : NSColor(white: 0.75, alpha: 1)
         })
 
-    /// Decoration only: hand every event through to the button underneath so the
-    /// whole platter stays one control while a transfer is in flight, instead of
-    /// the bar swallowing hits over the bottom of the circle.
+    /// Decoration only: hands every event through to the button underneath, so
+    /// the bar can't swallow hits over the bottom of the circle.
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func draw(_ dirtyRect: NSRect) {

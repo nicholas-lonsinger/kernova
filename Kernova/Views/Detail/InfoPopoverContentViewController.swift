@@ -1,11 +1,6 @@
 import AppKit
 
 /// One paragraph rendered inside an ``InfoPopoverContentViewController``.
-///
-/// Most info-popover content is plain prose (`.body`). When a paragraph is
-/// a shell command, identifier, or path the user is expected to read and
-/// copy verbatim, use `.code` — it gets monospaced font and selectable text
-/// via ``makeCalloutCode(_:)``.
 enum InfoPopoverParagraph: Equatable {
     /// Plain wrapping body text in the shared `.callout` style.
     case body(String)
@@ -14,14 +9,10 @@ enum InfoPopoverParagraph: Equatable {
     case code(String)
 }
 
-/// Popover content for an ``InfoButton``.
+/// Popover content for an ``InfoButtonView``.
 ///
-/// Renders the supplied paragraphs as a vertical stack of wrapping labels
-/// sized to the shared ``CalloutStyle`` tokens. Each paragraph's case
-/// selects its visual style: `.body` uses ``makeCalloutBody(_:color:)``,
-/// `.code` uses ``makeCalloutCode(_:)``. No headline is shown — the
-/// surrounding `InfoButton` carries the section or control name as its
-/// hover tooltip and VoiceOver label.
+/// No headline is shown — the surrounding button carries the section or control
+/// name as its hover tooltip and VoiceOver label.
 @MainActor
 final class InfoPopoverContentViewController: NSViewController {
     /// Paragraphs rendered, in order.

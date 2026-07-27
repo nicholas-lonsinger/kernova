@@ -1,32 +1,20 @@
 import Foundation
 
 /// Smoothed throughput and time-remaining estimate for a monotonically growing
-/// byte count (#643).
+/// byte count.
 ///
-/// A raw Δbytes/Δt reading swings wildly across a chunked vsock transfer — a
-/// credit stall reads as 0 B/s, the chunk that follows it as a burst — and a
-/// speed/ETA that flickers between "8 seconds" and "3 minutes" is worse than
-/// none. This keeps an exponential moving average instead, so the displayed rate
-/// tracks real changes (a genuinely slower phase) without chasing per-chunk
-/// noise.
-///
-/// A pure value type with an explicit sample time: the caller passes its own
-/// clock, so tests are deterministic and the estimator never reads the wall
-/// clock itself.
+/// A raw Δbytes/Δt reading swings wildly across a chunked vsock transfer (a
+/// credit stall reads as 0 B/s, the chunk after it as a burst), so this keeps an
+/// exponential moving average instead. The caller passes its own sample time;
+/// the estimator never reads the wall clock itself.
 public struct TransferRateEstimator: Equatable, Sendable {
     /// Weight of the newest instantaneous reading in the moving average.
-    ///
-    /// Low enough that one stalled or bursty interval can't dominate the
-    /// display, high enough that the estimate still converges within a few
-    /// seconds of updates at the shared throttle's ~10 Hz ceiling.
     private static let smoothing = 0.25
 
     /// Shortest interval that yields a usable instantaneous rate.
     ///
-    /// Below this, the division amplifies timer granularity into a meaningless
-    /// figure. Such a sample is *skipped*, not folded in — the anchor stays put
-    /// so the next sample measures across the whole interval rather than losing
-    /// those bytes.
+    /// A shorter sample is *skipped*, not folded in — the anchor stays put so the
+    /// next sample measures the whole interval rather than losing those bytes.
     private static let minimumSampleInterval: TimeInterval = 0.05
 
     /// Byte count and time of the last folded-in sample, or `nil` before the
@@ -44,8 +32,8 @@ public struct TransferRateEstimator: Equatable, Sendable {
     /// Folds a cumulative byte count observed at `seconds` (any monotonic
     /// timebase) into the average.
     ///
-    /// Ignores a regression in `bytes` — the caller's counts are monotonic, and
-    /// treating a reorder as negative throughput would poison the average.
+    /// A regression in `bytes` is ignored rather than folded in as negative
+    /// throughput.
     public mutating func record(bytes: UInt64, seconds: TimeInterval) {
         guard let previousBytes = anchorBytes, let previousSeconds = anchorSeconds else {
             anchorBytes = bytes

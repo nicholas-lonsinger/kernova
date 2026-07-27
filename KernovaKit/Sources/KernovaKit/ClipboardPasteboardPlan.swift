@@ -2,15 +2,6 @@ import Foundation
 
 /// The minimal facts about one offered representation that the pasteboard-item
 /// grouping decision needs.
-///
-/// Both sides of the clipboard bridge build these from their own source — the
-/// host from a `ClipboardContent.Representation` (`isInline` =
-/// `shouldInlineOnPasteboard`, every rep `isPromisable`), the guest agent from a
-/// wire `ClipboardRepresentationInfo` (`isInline` = the offered bit,
-/// `isPromisable` = the receive-side sanitization gate) — then hand the list to
-/// `ClipboardPasteboardItemPlan.plan(for:)`. Keeping the grouping free of any
-/// `ClipboardContent` / protobuf / AppKit type makes it pure, `Sendable`, and
-/// directly testable.
 public struct ClipboardRepresentationDescriptor: Equatable, Sendable {
     /// Uniform Type Identifier naming the representation's format.
     public let uti: String
@@ -23,9 +14,7 @@ public struct ClipboardRepresentationDescriptor: Equatable, Sendable {
     /// per `ClipboardContent.Representation.shouldInlineOnPasteboard`.
     public let isInline: Bool
 
-    /// Whether the representation may be promised at all — the host admits every
-    /// rep; the guest drops empty reps and identity-skip smuggles before they can
-    /// be pulled.
+    /// Whether the representation may be promised at all.
     public let isPromisable: Bool
 
     /// Creates a descriptor from the four grouping inputs.
@@ -37,25 +26,17 @@ public struct ClipboardRepresentationDescriptor: Equatable, Sendable {
     }
 }
 
-/// The pasteboard items to promise for one clipboard offer — the grouping
-/// decision shared by the host "Copy to Mac" path and the guest inbound-paste
-/// path, expressed purely in terms of representation indices.
+/// The pasteboard items to promise for one clipboard offer, expressed purely in
+/// terms of representation indices.
 ///
-/// A single inline item promises every inline (filename-less) representation;
-/// each file payload becomes its own item promising exactly one `.fileURL` (and,
-/// for an image file, its inline image bytes too). One `.fileURL` per item is
-/// what a Finder paste needs to create N files — a single item holds only one
-/// value per type, so several file URLs in one item would collide. Each promised
-/// type carries the index of the representation that backs it, so a caller maps
-/// an index to its own byte source (the host stages a file / serves resident
-/// bytes; the guest streams the bytes over vsock on demand).
+/// Each file payload gets its own item promising exactly one `.fileURL`: that is
+/// what a Finder paste needs to create N files, since an item holds only one
+/// value per type and several file URLs in one item would collide. A promised
+/// type carries the index of the representation backing it, so a caller can map
+/// an index to its own byte source.
 public struct ClipboardPasteboardItemPlan: Equatable, Sendable {
     /// One promised pasteboard type within an item, tagged with the index of the
     /// representation that backs it.
-    ///
-    /// `isFileURL` marks the `public.file-url` promise of a file payload (the
-    /// caller substitutes `.fileURL` for `uti` when realizing the item); a
-    /// `false` value promises the representation's content `uti` directly.
     public struct PromisedType: Equatable, Sendable {
         /// The content UTI to promise — ignored by the caller when `isFileURL`.
         public let uti: String
@@ -64,7 +45,8 @@ public struct ClipboardPasteboardItemPlan: Equatable, Sendable {
         /// this type.
         public let representationIndex: Int
 
-        /// Whether this promises `public.file-url` rather than the content UTI.
+        /// Whether this promises `public.file-url` rather than the content UTI —
+        /// the caller substitutes `.fileURL` for `uti` when realizing the item.
         public let isFileURL: Bool
 
         /// Creates a promised type tagged with its backing representation index.
@@ -96,19 +78,14 @@ public struct ClipboardPasteboardItemPlan: Equatable, Sendable {
 
     /// Groups offered representations into the pasteboard items to promise.
     ///
-    /// One shared inline item collects every promisable, filename-less, inline
-    /// representation, deduped by UTI with the first (richest, since offers are
-    /// richest-first) winning and offer order preserved. Each promisable file
-    /// payload then becomes its own item — its image UTI first when it inlines,
-    /// then `.fileURL`. Non-promisable representations are skipped in place, so
-    /// every surviving `representationIndex` still indexes the *input* list (a
-    /// caller resolves a requested type to the correct backing representation).
+    /// Offers arrive richest-first, so the first rep of a duplicated UTI wins the
+    /// shared inline item. Non-promisable representations are skipped in place:
+    /// every surviving `representationIndex` still indexes the *input* list.
     public static func plan(
         for reps: [ClipboardRepresentationDescriptor]
     ) -> ClipboardPasteboardItemPlan {
         var items: [Item] = []
 
-        // One shared inline item for all inline-only (filename-less) reps.
         var inlineTypes: [PromisedType] = []
         var seenUTIs: Set<String> = []
         for (index, rep) in reps.enumerated()
@@ -120,7 +97,7 @@ public struct ClipboardPasteboardItemPlan: Equatable, Sendable {
         }
         if !inlineTypes.isEmpty { items.append(Item(types: inlineTypes)) }
 
-        // One item per file payload (image files also promise their image UTI).
+        // One item per file payload; image files also promise their image UTI.
         for (index, rep) in reps.enumerated()
         where rep.isPromisable && !rep.filename.isEmpty {
             var types: [PromisedType] = []

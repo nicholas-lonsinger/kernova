@@ -5,18 +5,16 @@ import Testing
 
 @testable import Kernova
 
-/// Unit tests for `HostClipboardPullRouter` (#464 review fix) — specifically
-/// that `cancelStagedPull` reaches the service that actually dispatched a
-/// given `(generation, repIndex)` pull, not whichever service happens to be
-/// `source` *now*.
+/// Unit tests for `HostClipboardPullRouter` — that `cancelStagedPull` reaches
+/// the service that actually dispatched a given `(generation, repIndex)` pull,
+/// not whichever service happens to be `source` *now*.
 ///
 /// `HostClipboardFileProvider` is a single app-wide singleton router shared
 /// across every VM's clipboard service ("the last Copy to Mac wins" — see its
-/// doc comment), and a slow pull can run for a long time. Before this fix, a
-/// cancel for VM A's still-in-flight pull would forward to whichever VM last
-/// published — silently no-op'ing (VM A's real transfer keeps streaming) or,
-/// worse, aborting an unrelated live transfer on VM B if their small per-VM
-/// generation counters happened to collide.
+/// doc comment), and a slow pull can run for a long time, so a cancel routed to
+/// `source` would reach the wrong VM: a no-op against VM A's still-streaming
+/// transfer, or an abort of an unrelated live transfer on VM B whose small
+/// per-VM generation counter collided.
 @MainActor
 @Suite("HostClipboardPullRouter")
 struct HostClipboardPullRouterTests {
