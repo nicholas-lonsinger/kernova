@@ -7,7 +7,7 @@ import Foundation
 /// credit stall reads as 0 B/s, the chunk after it as a burst), so this keeps an
 /// exponential moving average instead. The caller passes its own sample time;
 /// the estimator never reads the wall clock itself.
-public struct TransferRateEstimator: Equatable, Sendable {
+struct TransferRateEstimator: Equatable, Sendable {
     /// Weight of the newest instantaneous reading in the moving average.
     private static let smoothing = 0.25
 
@@ -24,17 +24,17 @@ public struct TransferRateEstimator: Equatable, Sendable {
 
     /// The moving average, or `nil` until two samples a usable interval apart
     /// have landed.
-    public private(set) var bytesPerSecond: Double?
+    private(set) var bytesPerSecond: Double?
 
     /// Creates an estimator with no samples.
-    public init() {}
+    init() {}
 
     /// Folds a cumulative byte count observed at `seconds` (any monotonic
     /// timebase) into the average.
     ///
     /// A regression in `bytes` is ignored rather than folded in as negative
     /// throughput.
-    public mutating func record(bytes: UInt64, seconds: TimeInterval) {
+    mutating func record(bytes: UInt64, seconds: TimeInterval) {
         guard let previousBytes = anchorBytes, let previousSeconds = anchorSeconds else {
             anchorBytes = bytes
             anchorSeconds = seconds
@@ -54,7 +54,7 @@ public struct TransferRateEstimator: Equatable, Sendable {
 
     /// Seconds until `total` is reached at the current rate, or `nil` when there
     /// is no rate yet, nothing left to transfer, or the total is unknown.
-    public func secondsRemaining(bytes: UInt64, total: UInt64) -> Double? {
+    func secondsRemaining(bytes: UInt64, total: UInt64) -> Double? {
         guard let rate = bytesPerSecond, rate > 0, total > bytes else { return nil }
         return Double(total - bytes) / rate
     }

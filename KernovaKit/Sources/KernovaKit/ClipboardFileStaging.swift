@@ -4,9 +4,6 @@ import Foundation
 /// `write(_:)` and finalized with `commit()` (keep) or `abort()` (delete the
 /// partial).
 public protocol StagingSink: Sendable {
-    /// The local file the bytes are being written to.
-    var url: URL { get }
-
     /// Appends a chunk to the file.
     func write(_ data: Data) throws
 
@@ -40,7 +37,7 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// `write`/`commit`/`abort` safe.
     public final class Sink: StagingSink, @unchecked Sendable {
         /// The local file the bytes are being written to.
-        public let url: URL
+        let url: URL
 
         private let handle: FileHandle
         private let lock = NSLock()
