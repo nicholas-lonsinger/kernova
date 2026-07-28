@@ -56,7 +56,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks bootstrap doctor ghosts clean-ghosts fp-reset
+.PHONY: help build test test-suite test-package clean format lint regen-proto install-hooks check-hooks bootstrap doctor ghosts clean-ghosts fp-reset
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -162,6 +162,13 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, and docs
 	@test -n '$(strip $(SWIFT_SOURCE_DIRS))' || { echo 'No tracked Swift sources found — not a git checkout?' >&2; exit 1; }
 	$(SWIFT_FORMAT) lint --strict --recursive $(SWIFT_SOURCE_DIRS)
 	@bash Tools/check-docs.sh
+
+# Regenerates the checked-in Swift bindings from KernovaKit/Proto/kernova.proto.
+# The script builds its own protoc-gen-swift from the revision pinned in the
+# xcworkspace's Package.resolved, so this and .github/workflows/proto-drift.yml
+# generate with the same version; a generator taken from PATH would not.
+regen-proto: ## Regenerate the Swift protobuf bindings from kernova.proto
+	@Tools/regen-proto.sh
 
 # Environment sanity check: verifies the local toolchain (macOS, Xcode, Swift,
 # swift-format) and repo setup (git hooks, .worktreeinclude) match what Kernova

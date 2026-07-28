@@ -85,6 +85,9 @@ jobs:
           brew install protobuf
           protoc --version
 
+      # Tools/regen-proto.sh resolves the pin and builds the generator into this
+      # directory, so caching it is what keeps the drift check from paying a
+      # release build of swift-protobuf on every run.
       - name: Cache SwiftPM build for protoc-gen-swift
         if: steps.filter.outputs.changed == 'true'
         uses: actions/cache@v5
@@ -92,29 +95,10 @@ jobs:
           path: KernovaKit/.build
           key: ${{ runner.os }}-proto-drift-${{ env.XCODE_BUILD }}-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
-      - name: Build protoc-gen-swift from resolved swift-protobuf
-        if: steps.filter.outputs.changed == 'true'
-        run: |
-          set -euo pipefail
-          # Mirror the xcworkspace's Package.resolved into the SwiftPM
-          # package so `swift package resolve` honors the exact revision
-          # Kernova.app links against, rather than recomputing against
-          # the `from:` constraint in Package.swift (which could pick a
-          # newer minor). This is what makes the drift check stable: the
-          # generator is built from the same source tree as the runtime.
-          cp \
-            Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved \
-            KernovaKit/Package.resolved
-          swift package --package-path KernovaKit resolve
-          CHECKOUT="KernovaKit/.build/checkouts/swift-protobuf"
-          swift build \
-            --package-path "$CHECKOUT" \
-            -c release \
-            --product protoc-gen-swift
-          BIN_DIR="$GITHUB_WORKSPACE/$CHECKOUT/.build/release"
-          echo "$BIN_DIR" >> "$GITHUB_PATH"
-          "$BIN_DIR/protoc-gen-swift" --version || true
-
+      # The script owns the whole generation environment — mirroring
+      # Package.resolved, building protoc-gen-swift from that revision, and
+      # naming it via --plugin. CI adds nothing, which is what makes this check
+      # meaningful: it runs exactly what a developer runs.
       - name: Regenerate Swift bindings
         if: steps.filter.outputs.changed == 'true'
         run: Tools/regen-proto.sh
@@ -124,7 +108,7 @@ jobs:
         run: |
           set -euo pipefail
           if ! git diff --quiet KernovaKit/Sources/KernovaKit/Generated; then
-            echo "::error::Generated Swift bindings are out of sync with kernova.proto and/or the pinned swift-protobuf version. Run 'Tools/regen-proto.sh' locally with swift-protobuf installed at the version pinned in Package.resolved, then commit the result."
+            echo "::error::Generated Swift bindings are out of sync with kernova.proto. Run 'make regen-proto' and commit the result — it builds the same pinned generator this job does, so the output will match."
             echo
             echo "--- Diff ---"
             git diff KernovaKit/Sources/KernovaKit/Generated
