@@ -373,7 +373,7 @@ while IFS= read -r pid; do
     fi
 done < <(pgrep -f -i kernova 2>/dev/null)
 
-[ "$proc_found" -eq 0 ] && clean 'No orphaned Kernova processes found'
+[ "$proc_found" -eq 0 ] && pass 'No orphaned Kernova processes found'
 
 # ---- stale git worktrees ------------------------------------------------------
 
@@ -819,7 +819,7 @@ done
 # ---- verdicts, then one block per location ------------------------------------
 
 case "$copies_verdict_kind" in
-    clean) clean "$copies_verdict" ;;
+    clean) pass "$copies_verdict" ;;
     warn)  warn "$copies_verdict" ;;
     ghost) ghost "$copies_verdict" ;;
 esac

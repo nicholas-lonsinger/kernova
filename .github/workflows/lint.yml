@@ -25,7 +25,7 @@ jobs:
       - name: Select Xcode
         run: |
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-          xcrun swift-format --version
+          xcodebuild -version
 
       # The macOS runner images ship shellcheck; install it only if a future
       # image drops it, so `make lint` never silently skips static analysis
