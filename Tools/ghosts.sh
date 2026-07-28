@@ -43,12 +43,25 @@ FIX=0
 SWEEP=0
 EVICT=0
 EVICT_DIR=
+# No argument is the report mode, so '' is an arm rather than falling to *).
+# Printed with plain printf, not the lib's helpers: output.sh is sourced below,
+# after this dispatch, so a bad flag can be rejected before anything else runs.
+usage='Usage: Tools/ghosts.sh [--fix | --sweep | --evict <dir>]'
 case "${1:-}" in
+    '') ;;
     --fix) FIX=1 ;;
     --sweep | --sweep-ls) SWEEP=1 ;;
     --evict)
         EVICT=1
         EVICT_DIR="${2:-}"
+        ;;
+    -h | --help)
+        printf '%s\n' "$usage"
+        exit 0
+        ;;
+    *)
+        printf 'ghosts.sh: unknown option %s\n%s\n' "$1" "$usage" >&2
+        exit 2
         ;;
 esac
 
@@ -373,7 +386,7 @@ while IFS= read -r pid; do
     fi
 done < <(pgrep -f -i kernova 2>/dev/null)
 
-[ "$proc_found" -eq 0 ] && clean 'No orphaned Kernova processes found'
+[ "$proc_found" -eq 0 ] && pass 'No orphaned Kernova processes found'
 
 # ---- stale git worktrees ------------------------------------------------------
 
@@ -819,7 +832,7 @@ done
 # ---- verdicts, then one block per location ------------------------------------
 
 case "$copies_verdict_kind" in
-    clean) clean "$copies_verdict" ;;
+    clean) pass "$copies_verdict" ;;
     warn)  warn "$copies_verdict" ;;
     ghost) ghost "$copies_verdict" ;;
 esac
@@ -943,6 +956,10 @@ if [ "$found_count" -eq 0 ]; then
     exit 0
 fi
 
+# Findings are this script's output, not a failure, so the two report-mode arms
+# below exit 0 — `make ghosts` would otherwise stamp "Error 1" over its own
+# closing instruction. A non-zero exit is reserved for not doing the requested
+# job: `--fix` repairing less than it found, and the --evict failures above.
 if [ "$FIX" = 1 ]; then
     printf '%d issue(s) found, %d fixed.\n' "$found_count" "$fixed_count"
     [ "$manual_count" -gt 0 ] && printf '%d need the manual step noted above; --fix does not perform it.\n' "$manual_count"
@@ -951,7 +968,7 @@ if [ "$FIX" = 1 ]; then
 elif [ "$manual_count" -eq "$found_count" ]; then
     printf '%s%d issue(s) found.%s Follow the step(s) noted above — %smake clean-ghosts%s does not repair these.\n' \
         "$c_yellow" "$found_count" "$c_reset" "$c_bold" "$c_reset"
-    exit 1
+    exit 0
 else
     # `make` first, direct invocation second: this script is normally reached
     # through the Makefile, and `make ghosts --fix` does not do what leading
@@ -959,5 +976,5 @@ else
     # options and bails with "unrecognized option".
     printf '%s%d issue(s) found.%s Run %smake clean-ghosts%s (or `Tools/ghosts.sh --fix`) to clean them up.\n' \
         "$c_yellow" "$found_count" "$c_reset" "$c_bold" "$c_reset"
-    exit 1
+    exit 0
 fi
