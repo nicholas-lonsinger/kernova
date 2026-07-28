@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Virtualization
 @testable import Kernova
 
 @Suite("USBDeviceService Tests")
@@ -22,6 +23,36 @@ struct USBDeviceServiceTests {
     func usbDeviceInfoDisplayName() {
         let info = USBDeviceInfo(path: "/Users/test/disk.dmg", readOnly: true)
         #expect(info.displayName == "disk.dmg")
+    }
+
+    // MARK: - Error Messages
+
+    @Test("Hot-attach of an invalid disk image explains the format and offers a conversion")
+    func attachFailureDescribesInvalidDiskImage() {
+        let invalid = NSError(
+            domain: VZError.errorDomain, code: VZError.Code.invalidDiskImage.rawValue)
+        let error = USBDeviceError.diskImageAttachFailed(
+            path: "/tmp/bad.dmg", underlying: invalid)
+
+        #expect(error.errorDescription?.contains("/tmp/bad.dmg") == true)
+        #expect(error.errorDescription?.contains("512") == true)
+        #expect(error.suggestedCommand?.contains("'/tmp/bad.dmg' '/tmp/bad.asif'") == true)
+    }
+
+    @Test("Hot-attach failures from other causes keep their message and suggest nothing")
+    func attachFailureFromOtherCauseIsUnchanged() {
+        let denied = NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP))
+        let error = USBDeviceError.diskImageAttachFailed(
+            path: "/tmp/gone.asif", underlying: denied)
+
+        #expect(error.errorDescription?.contains("moved or replaced") == true)
+        #expect(error.suggestedCommand == nil)
+    }
+
+    @Test("Errors that aren't attach failures suggest no command")
+    func nonAttachErrorsSuggestNoCommand() {
+        #expect(USBDeviceError.noVirtualMachine.suggestedCommand == nil)
+        #expect(USBDeviceError.diskImageNotFound("/tmp/x").suggestedCommand == nil)
     }
 
     // MARK: - Mock Service Tests

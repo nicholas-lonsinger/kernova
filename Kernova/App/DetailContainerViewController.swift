@@ -267,8 +267,8 @@ extension DetailContainerViewController: VMCreationWizardViewControllerDelegate 
 // MARK: - VMLibraryPresenting
 
 extension DetailContainerViewController: VMLibraryPresenting {
-    func presentError(_ message: String) {
-        alertsPresenter.presentError(message)
+    func presentError(_ message: String, copyableCommand: String?) {
+        alertsPresenter.presentError(message, copyableCommand: copyableCommand)
     }
 
     func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance) {

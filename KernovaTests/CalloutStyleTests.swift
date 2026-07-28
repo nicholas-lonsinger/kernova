@@ -52,5 +52,13 @@ struct CalloutStyleTests {
         let label = makeCalloutCode("mount -t virtiofs share0 /mnt/myshare")
         #expect(label.isSelectable)
         #expect(label.font?.isFixedPitch == true)
+        #expect(label.font?.pointSize == CalloutStyle.bodyFont.pointSize)
+    }
+
+    @Test("makeCalloutCode honors an explicit size and stays monospaced")
+    func codeFactoryHonorsSize() {
+        let label = makeCalloutCode("diskutil image create from", size: NSFont.smallSystemFontSize)
+        #expect(label.font?.pointSize == NSFont.smallSystemFontSize)
+        #expect(label.font?.isFixedPitch == true)
     }
 }

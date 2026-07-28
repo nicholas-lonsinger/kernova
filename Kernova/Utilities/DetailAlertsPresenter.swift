@@ -112,8 +112,8 @@ final class DetailAlertsPresenter: NSObject {
 
     // MARK: - Imperative presentation
 
-    func presentError(_ message: String) {
-        enqueue { $0.present($0.errorConfig(message)) }
+    func presentError(_ message: String, copyableCommand: String?) {
+        enqueue { $0.present($0.errorConfig(message, copyableCommand)) }
     }
 
     func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance) {
@@ -331,25 +331,43 @@ final class DetailAlertsPresenter: NSObject {
             ])
     }
 
-    private func errorConfig(_ message: String) -> AlertConfiguration {
+    private func errorConfig(_ message: String, _ copyableCommand: String?) -> AlertConfiguration {
         AlertConfiguration(
-            title: "Error", message: message, buttons: [AlertButton("OK", role: .cancel)])
+            title: "Error",
+            message: Self.appendingConvertPrompt(to: message, command: copyableCommand),
+            buttons: [AlertButton("OK", role: .cancel)],
+            accessory: Self.commandAccessory(copyableCommand))
     }
 
     private func startFailedAttachmentConfig(
         _ failure: StartFailedAttachment, _ vm: VMInstance
     ) -> AlertConfiguration {
-        AlertConfiguration(
+        let message =
+            "\(failure.message)\n\nYou can remove “\(failure.label)” from this virtual machine and start without it. The file itself is not deleted, and you can re-attach it later in Settings."
+        return AlertConfiguration(
             title: "Couldn't Start “\(vm.name)”",
-            message:
-                "\(failure.message)\n\nYou can remove “\(failure.label)” from this virtual machine and start without it. The file itself is not deleted, and you can re-attach it later in Settings.",
+            message: Self.appendingConvertPrompt(
+                to: message, command: failure.conversionCommand),
             buttons: [
                 AlertButton("Remove and Start", role: .default) { [weak self] in
                     guard let self else { return }
                     Task { await self.viewModel.removeStartFailedAttachmentAndStart(failure, on: vm) }
                 },
                 AlertButton("Cancel", role: .cancel),
-            ])
+            ],
+            accessory: Self.commandAccessory(failure.conversionCommand))
+    }
+
+    /// Introduces the command shown in the accessory, or returns `message`
+    /// unchanged when there is no command.
+    private static func appendingConvertPrompt(to message: String, command: String?) -> String {
+        guard command != nil else { return message }
+        return "\(message)\n\n\(DiskImageFormatGuidance.convertPrompt)"
+    }
+
+    private static func commandAccessory(_ command: String?) -> (@MainActor () -> NSView)? {
+        guard let command else { return nil }
+        return { CopyableCommandView(command: command) }
     }
 
     private func installerMountedConfig(

@@ -59,11 +59,14 @@ func makeCalloutBody(_ text: String, color: NSColor = CalloutStyle.bodyColor) ->
 
 /// Builds a monospaced, selectable `NSTextField` for code snippets (shell
 /// commands, paths, identifiers the user is expected to copy).
+///
+/// `size` defaults to the callout body size; pass the surrounding text's size
+/// where the snippet sits among prose set at a different scale.
 @MainActor
-func makeCalloutCode(_ text: String) -> NSTextField {
+func makeCalloutCode(_ text: String, size: CGFloat? = nil) -> NSTextField {
     let label = NSTextField(wrappingLabelWithString: text)
     label.font = .monospacedSystemFont(
-        ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize,
+        ofSize: size ?? NSFont.preferredFont(forTextStyle: .callout).pointSize,
         weight: .regular
     )
     label.textColor = .labelColor

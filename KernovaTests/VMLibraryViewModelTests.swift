@@ -183,6 +183,27 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errorMessage != nil)
     }
 
+    @Test("An error buffered before a presenter attaches keeps its conversion command")
+    func bufferedErrorKeepsConversionCommand() {
+        let viewModel = VMLibraryViewModel(
+            storageService: MockVMStorageService(),
+            diskImageService: MockDiskImageService(),
+            virtualizationService: MockVirtualizationService(),
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            preferences: preferences
+        )
+        viewModel.presentError(
+            ConfigurationBuilderError.storageDiskAttachFailed(
+                id: UUID(), path: "/tmp/compressed.dmg", label: "Data",
+                underlying: NSError(
+                    domain: VZError.errorDomain, code: VZError.Code.invalidDiskImage.rawValue)))
+
+        viewModel.presenter = presenter
+
+        #expect(presenter.errorCopyableCommand?.contains("/tmp/compressed.asif") == true)
+    }
+
     @Test("loadVMs falls back to first VM when stored ID is invalid")
     func loadVMsFallsBackWhenStoredIDInvalid() {
         let storage = MockVMStorageService()
@@ -1172,6 +1193,87 @@ struct VMLibraryViewModelTests {
         #expect(presenter.startFailedAttachments.first?.kind == .storageDisk)
         #expect(presenter.startFailedAttachments.first?.id == external.id)
         #expect(presenter.errors.isEmpty)
+    }
+
+    @Test("start's removal offer carries the conversion command for an invalid disk image")
+    func startOfferCarriesConversionCommand() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
+        let external = StorageDisk(
+            id: UUID(), path: "/tmp/compressed.dmg", readOnly: true, label: "External",
+            isInternal: false, kind: .virtio)
+        instance.configuration.storageDisks = [
+            ConfigurationBuilder.defaultMainDisk(layout: layout), external,
+        ]
+        viewModel.instances.append(instance)
+        virtService.startError = ConfigurationBuilderError.storageDiskAttachFailed(
+            id: external.id, path: external.path, label: external.label,
+            underlying: NSError(
+                domain: VZError.errorDomain, code: VZError.Code.invalidDiskImage.rawValue))
+
+        await viewModel.start(instance)
+
+        let failure = presenter.startFailedAttachments.first
+        #expect(failure?.conversionCommand?.contains("/tmp/compressed.asif") == true)
+        #expect(failure?.message.contains("512") == true)
+    }
+
+    @Test("start's removal offer carries no command for a non-format failure")
+    func startOfferCarriesNoCommandForOtherFailures() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
+        let external = StorageDisk(
+            id: UUID(), path: "/tmp/gone.img", readOnly: false, label: "External",
+            isInternal: false, kind: .virtio)
+        instance.configuration.storageDisks = [
+            ConfigurationBuilder.defaultMainDisk(layout: layout), external,
+        ]
+        viewModel.instances.append(instance)
+        virtService.startError = ConfigurationBuilderError.storageDiskAttachFailed(
+            id: external.id, path: external.path, label: external.label,
+            underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP)))
+
+        await viewModel.start(instance)
+
+        #expect(presenter.startFailedAttachments.first?.conversionCommand == nil)
+    }
+
+    @Test("The generic error alert carries the conversion command too")
+    func genericErrorCarriesConversionCommand() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+        // The boot disk never qualifies for the removal offer, so a format
+        // failure on it falls through to the generic alert.
+        virtService.startError = ConfigurationBuilderError.storageDiskAttachFailed(
+            id: UUID(), path: "/tmp/compressed.dmg", label: "Main Disk",
+            underlying: NSError(
+                domain: VZError.errorDomain, code: VZError.Code.invalidDiskImage.rawValue))
+
+        await viewModel.start(instance)
+
+        #expect(presenter.startFailedAttachments.isEmpty)
+        #expect(presenter.errorCopyableCommand?.contains("/tmp/compressed.asif") == true)
+    }
+
+    @Test("Errors with no command remedy offer none")
+    func genericErrorCarriesNoCommandForOtherFailures() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+        virtService.startError = VirtualizationError.invalidStateTransition(
+            from: .stopped, action: "start")
+
+        await viewModel.start(instance)
+
+        #expect(presenter.showError == true)
+        #expect(presenter.errorCopyableCommand == nil)
     }
 
     @Test("start does not offer removal for transient file-lock contention")

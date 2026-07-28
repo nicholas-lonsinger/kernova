@@ -341,6 +341,39 @@ struct ConfigurationBuilderTests {
         }
     }
 
+    @Test("Attach-failure messages explain an invalid disk image and offer a conversion")
+    func attachFailureDescribesInvalidDiskImage() {
+        let invalid = NSError(
+            domain: VZError.errorDomain, code: VZError.Code.invalidDiskImage.rawValue)
+        let disk = ConfigurationBuilderError.storageDiskAttachFailed(
+            id: UUID(), path: "/tmp/bad.dmg", label: "Bad Disk", underlying: invalid)
+        let media = ConfigurationBuilderError.removableMediaAttachFailed(
+            id: UUID(), path: "/tmp/bad.iso", label: "Bad ISO", underlying: invalid)
+
+        #expect(disk.errorDescription?.contains("Bad Disk") == true)
+        #expect(disk.errorDescription?.contains("512") == true)
+        #expect(disk.suggestedCommand?.contains("'/tmp/bad.dmg' '/tmp/bad.asif'") == true)
+        #expect(media.errorDescription?.contains("Bad ISO") == true)
+        #expect(media.suggestedCommand?.contains("'/tmp/bad.iso' '/tmp/bad.asif'") == true)
+    }
+
+    @Test("Attach failures from other causes keep their message and suggest nothing")
+    func attachFailureFromOtherCauseIsUnchanged() {
+        let denied = NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP))
+        let error = ConfigurationBuilderError.storageDiskAttachFailed(
+            id: UUID(), path: "/tmp/gone.asif", label: "Data", underlying: denied)
+
+        #expect(error.errorDescription?.contains("moved or replaced") == true)
+        #expect(error.errorDescription?.contains("512") == false)
+        #expect(error.suggestedCommand == nil)
+    }
+
+    @Test("Errors that aren't attach failures suggest no command")
+    func nonAttachErrorsSuggestNoCommand() {
+        #expect(ConfigurationBuilderError.invalidHardwareModel.suggestedCommand == nil)
+        #expect(ConfigurationBuilderError.storageDiskNotFound("/tmp/x", "Data").suggestedCommand == nil)
+    }
+
     @Test("Attach failure for external storage disk throws typed error with item identity")
     func storageDiskAttachFailureThrowsTypedError() throws {
         let bundleURL = try makeTempBundle(withDisk: true)

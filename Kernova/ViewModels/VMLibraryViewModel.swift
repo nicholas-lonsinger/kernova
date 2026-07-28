@@ -34,14 +34,20 @@ final class VMLibraryViewModel {
     /// in `init`) are buffered and flushed when one is set.
     @ObservationIgnored weak var presenter: (any VMLibraryPresenting)? {
         didSet {
-            guard presenter != nil, !bufferedErrorMessages.isEmpty else { return }
-            let buffered = bufferedErrorMessages
-            bufferedErrorMessages.removeAll()
-            buffered.forEach { presenter?.presentError($0) }
+            guard presenter != nil, !bufferedErrors.isEmpty else { return }
+            let buffered = bufferedErrors
+            bufferedErrors.removeAll()
+            buffered.forEach { presenter?.presentError($0.message, copyableCommand: $0.copyableCommand) }
         }
     }
 
-    @ObservationIgnored private var bufferedErrorMessages: [String] = []
+    /// An error raised before a presenter was attached, held until one is.
+    private struct BufferedError {
+        let message: String
+        let copyableCommand: String?
+    }
+
+    @ObservationIgnored private var bufferedErrors: [BufferedError] = []
 
     /// VMs with an in-flight removable-media reconciliation Task.
     ///
@@ -355,7 +361,8 @@ final class VMLibraryViewModel {
             else { return nil }
             return StartFailedAttachment(
                 kind: .storageDisk, id: id, label: label,
-                message: builderError.localizedDescription)
+                message: builderError.localizedDescription,
+                conversionCommand: builderError.suggestedCommand)
         case .removableMediaAttachFailed(let id, _, let label, _):
             // Confirm the entry is really in the list: an offer whose action could
             // only no-op leaves a button that appears to do nothing.
@@ -363,7 +370,8 @@ final class VMLibraryViewModel {
             else { return nil }
             return StartFailedAttachment(
                 kind: .removableMedia, id: id, label: label,
-                message: builderError.localizedDescription)
+                message: builderError.localizedDescription,
+                conversionCommand: builderError.suggestedCommand)
         default:
             return nil
         }
@@ -2116,16 +2124,18 @@ final class VMLibraryViewModel {
     }
 
     func presentError(_ error: Error) {
-        surfaceError(error.localizedDescription)
+        surfaceError(
+            error.localizedDescription,
+            copyableCommand: (error as? any CommandSuggestingError)?.suggestedCommand)
     }
 
     /// Routes an error message to the presenter, buffering it if none is
     /// attached yet (e.g. during the initial `loadVMs()` in `init`).
-    private func surfaceError(_ message: String) {
+    private func surfaceError(_ message: String, copyableCommand: String? = nil) {
         if let presenter {
-            presenter.presentError(message)
+            presenter.presentError(message, copyableCommand: copyableCommand)
         } else {
-            bufferedErrorMessages.append(message)
+            bufferedErrors.append(BufferedError(message: message, copyableCommand: copyableCommand))
         }
     }
 }

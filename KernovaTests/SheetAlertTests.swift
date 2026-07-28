@@ -112,6 +112,28 @@ struct SheetAlertTests {
         #expect(config.buttons[2].role == .cancel)
     }
 
+    @Test("AlertConfiguration has no accessory unless one is supplied")
+    func configurationAccessoryDefaultsToNil() {
+        let config = AlertConfiguration(title: "Test", message: "body", buttons: [])
+        #expect(config.accessory == nil)
+    }
+
+    @Test("AlertConfiguration builds its accessory on demand")
+    func configurationBuildsAccessory() {
+        var built = 0
+        let config = AlertConfiguration(
+            title: "Test", message: "body", buttons: [],
+            accessory: {
+                built += 1
+                return NSView()
+            })
+        // The builder runs at presentation time, not construction time — a
+        // queued configuration must not hold a live view while it waits.
+        #expect(built == 0)
+        _ = config.accessory?()
+        #expect(built == 1)
+    }
+
     @Test("AlertButton init defaults to .standard role and a no-op action")
     func alertButtonDefaults() {
         let button = AlertButton("Plain")

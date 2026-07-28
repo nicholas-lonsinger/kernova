@@ -11,6 +11,8 @@ import Foundation
 @MainActor
 final class MockVMLibraryPresenting: VMLibraryPresenting {
     private(set) var errors: [String] = []
+    /// Parallel to `errors`: the copyable command offered with each, if any.
+    private(set) var errorCopyableCommands: [String?] = []
     private(set) var startFailedAttachments: [StartFailedAttachment] = []
     private(set) var startFailedAttachmentInstances: [VMInstance] = []
     private(set) var deleteSheetInstances: [VMInstance] = []
@@ -25,7 +27,10 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     private(set) var installerMountedPurposes: [GuestAgentInstallerPurpose] = []
     private(set) var creationWizardCount = 0
 
-    func presentError(_ message: String) { errors.append(message) }
+    func presentError(_ message: String, copyableCommand: String?) {
+        errors.append(message)
+        errorCopyableCommands.append(copyableCommand)
+    }
     func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance) {
         startFailedAttachments.append(failure)
         startFailedAttachmentInstances.append(instance)
@@ -48,6 +53,8 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
 
     var showError: Bool { !errors.isEmpty }
     var errorMessage: String? { errors.last }
+    /// The copyable command offered with the most recent error, if any.
+    var errorCopyableCommand: String? { errorCopyableCommands.last ?? nil }
     var showDeleteSheet: Bool { !deleteSheetInstances.isEmpty }
     var instanceToDelete: VMInstance? { deleteSheetInstances.last }
     /// Whether the most recent delete-sheet request asked for immediate delete.
@@ -68,6 +75,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     /// Clears all recorded requests (mirrors resetting the former flags).
     func reset() {
         errors.removeAll()
+        errorCopyableCommands.removeAll()
         startFailedAttachments.removeAll()
         startFailedAttachmentInstances.removeAll()
         deleteSheetInstances.removeAll()

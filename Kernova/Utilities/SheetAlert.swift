@@ -39,11 +39,23 @@ struct AlertConfiguration {
     let title: String
     let message: String
     let buttons: [AlertButton]
+    /// Builds the view shown between the message and the buttons.
+    ///
+    /// A builder rather than a stored view: configurations wait in
+    /// ``DetailAlertsPresenter``'s queue, and one shouldn't hold a live view
+    /// while it does.
+    let accessory: (@MainActor () -> NSView)?
 
-    init(title: String, message: String, buttons: [AlertButton]) {
+    init(
+        title: String,
+        message: String,
+        buttons: [AlertButton],
+        accessory: (@MainActor () -> NSView)? = nil
+    ) {
         self.title = title
         self.message = message
         self.buttons = buttons
+        self.accessory = accessory
     }
 }
 
@@ -59,6 +71,7 @@ func presentSheetAlert(
     let alert = NSAlert()
     alert.messageText = config.title
     alert.informativeText = config.message
+    alert.accessoryView = config.accessory?()
 
     for button in config.buttons {
         let nsButton = alert.addButton(withTitle: button.title)

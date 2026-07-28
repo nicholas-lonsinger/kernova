@@ -721,7 +721,7 @@ struct ConfigurationBuilder: Sendable {
 
 // MARK: - Errors
 
-enum ConfigurationBuilderError: LocalizedError {
+enum ConfigurationBuilderError: LocalizedError, CommandSuggestingError {
     case invalidHardwareModel
     case invalidMachineIdentifier
     case missingKernelPath
@@ -773,7 +773,8 @@ enum ConfigurationBuilderError: LocalizedError {
         case .storageDiskNotWritable(let path, let label):
             "Storage disk '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
         case .storageDiskAttachFailed(_, let path, let label, let underlying):
-            "Couldn't open storage disk '\(label)' at \(path). The file may have been moved or replaced, or Kernova may no longer have permission to read it. (\(underlying.localizedDescription))"
+            DiskImageFormatGuidance.attachFailureMessage(
+                subject: "storage disk '\(label)'", path: path, underlying: underlying)
         case .removableMediaNotFound(let path, let label):
             "Removable media '\(label)' not found at \(path)."
         case .removableMediaPathIsDirectory(let path, let label):
@@ -781,7 +782,8 @@ enum ConfigurationBuilderError: LocalizedError {
         case .removableMediaNotWritable(let path, let label):
             "Removable media '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
         case .removableMediaAttachFailed(_, let path, let label, let underlying):
-            "Couldn't open removable media '\(label)' at \(path). The file may have been moved or replaced, or Kernova may no longer have permission to read it. (\(underlying.localizedDescription))"
+            DiskImageFormatGuidance.attachFailureMessage(
+                subject: "removable media '\(label)'", path: path, underlying: underlying)
         case .sharedDirectoryNotFound(let path):
             "Shared directory not found at \(path)."
         case .sharedDirectoryNotADirectory(let path):
@@ -799,6 +801,16 @@ enum ConfigurationBuilderError: LocalizedError {
         case .storageDiskAttachFailed(_, _, _, let underlying),
             .removableMediaAttachFailed(_, _, _, let underlying):
             underlying
+        default:
+            nil
+        }
+    }
+
+    var suggestedCommand: String? {
+        switch self {
+        case .storageDiskAttachFailed(_, let path, _, let underlying),
+            .removableMediaAttachFailed(_, let path, _, let underlying):
+            DiskImageFormatGuidance.suggestedCommand(forPath: path, underlying: underlying)
         default:
             nil
         }

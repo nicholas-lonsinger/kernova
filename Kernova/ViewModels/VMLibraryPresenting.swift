@@ -30,14 +30,26 @@ struct StartFailedAttachment: Equatable, Sendable {
     let label: String
     /// The full user-facing error description (item, path, likely cause).
     let message: String
+    /// A shell command that would make the image usable, offered for copying;
+    /// `nil` when the failure has no such remedy.
+    let conversionCommand: String?
+
+    init(kind: Kind, id: UUID, label: String, message: String, conversionCommand: String? = nil) {
+        self.kind = kind
+        self.id = id
+        self.label = label
+        self.message = message
+        self.conversionCommand = conversionCommand
+    }
 }
 
 /// Imperative presentation interface the view model calls to surface alerts,
 /// sheets, and the creation wizard.
 @MainActor
 protocol VMLibraryPresenting: AnyObject {
-    /// Show a generic error alert with `message`.
-    func presentError(_ message: String)
+    /// Show a generic error alert with `message`, offering `copyableCommand`
+    /// for copying when the failure has a command-line remedy.
+    func presentError(_ message: String, copyableCommand: String?)
     /// Show the start-failed alert for an attachment that couldn't be opened,
     /// offering to remove it from the configuration and start again.
     func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance)

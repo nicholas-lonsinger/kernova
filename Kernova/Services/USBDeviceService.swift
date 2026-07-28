@@ -52,7 +52,7 @@ final class USBDeviceService: USBDeviceProviding {
             Self.logger.error(
                 "Failed to create disk attachment for '\(resolved.url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            throw error
+            throw USBDeviceError.diskImageAttachFailed(path: diskImagePath, underlying: error)
         }
         let usbConfig = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
         if let desiredUUID {
@@ -117,12 +117,15 @@ final class USBDeviceService: USBDeviceProviding {
 
 // MARK: - Errors
 
-enum USBDeviceError: LocalizedError {
+enum USBDeviceError: LocalizedError, CommandSuggestingError {
     case noVirtualMachine
     case noUSBController
     case diskImageNotFound(String)
     case diskImageIsDirectory(String)
     case diskImageNotWritable(String)
+    /// The file exists but `VZDiskImageStorageDeviceAttachment` refused it —
+    /// the hot-attach counterpart of `ConfigurationBuilderError`'s attach cases.
+    case diskImageAttachFailed(path: String, underlying: any Error)
     case deviceNotFound
 
     var errorDescription: String? {
@@ -137,8 +140,20 @@ enum USBDeviceError: LocalizedError {
             "Path is a directory, not a file: \(path)."
         case .diskImageNotWritable(let path):
             "Disk image is not writable: \(path). Try attaching as read-only."
+        case .diskImageAttachFailed(let path, let underlying):
+            DiskImageFormatGuidance.attachFailureMessage(
+                subject: "the disk image", path: path, underlying: underlying)
         case .deviceNotFound:
             "The USB device could not be found on the controller."
+        }
+    }
+
+    var suggestedCommand: String? {
+        switch self {
+        case .diskImageAttachFailed(let path, let underlying):
+            DiskImageFormatGuidance.suggestedCommand(forPath: path, underlying: underlying)
+        default:
+            nil
         }
     }
 }
