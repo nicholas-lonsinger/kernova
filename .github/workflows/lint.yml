@@ -25,6 +25,10 @@ jobs:
       - name: Select Xcode
         run: |
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          # xcodebuild, not the linter itself: `swift-format --version` reports
+          # the branch name `main`, which names no toolchain, while this records
+          # the Xcode whose bundled rule set decides the run. It doubles as the
+          # full-Xcode assert — Command Line Tools carries swift-format alone.
           xcodebuild -version
 
       # The macOS runner images ship shellcheck; install it only if a future
