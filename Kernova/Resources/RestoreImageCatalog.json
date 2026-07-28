@@ -1,0 +1,711 @@
+{
+  "device" : "VirtualMac2,1",
+  "generatedAt" : "2026-07-28",
+  "imageCount" : 73,
+  "images" : [
+    {
+      "build" : "25G72",
+      "lastModified" : "Fri, 24 Jul 2026 02:16:52 GMT",
+      "sizeBytes" : 19772077142,
+      "source" : "apple-live",
+      "url" : "https://updates.cdn-apple.com/2026SummerFCS/fullrestores/140-65618/10445B26-DE2C-43EC-9149-0A831602E74B/UniversalMac_26.6_25G72_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "26.6"
+    },
+    {
+      "build" : "25F84",
+      "lastModified" : "Thu, 25 Jun 2026 14:41:06 GMT",
+      "sizeBytes" : 19769902281,
+      "snapshot" : "20260703050121",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2026SpringFCS/fullrestores/140-24263/B95838F0-6815-4F0B-A039-156526C081AD/UniversalMac_26.5.2_25F84_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "26.5.2"
+    },
+    {
+      "build" : "25F80",
+      "lastModified" : "Thu, 28 May 2026 20:45:07 GMT",
+      "sizeBytes" : 19769808058,
+      "snapshot" : "20260611082616",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2026SpringFCS/fullrestores/122-88870/E47EBB85-45F2-4E3C-B9E7-6FF7868C2FBA/UniversalMac_26.5.1_25F80_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "26.5.1"
+    },
+    {
+      "build" : "25F71",
+      "lastModified" : "Fri, 01 May 2026 16:42:44 GMT",
+      "sizeBytes" : 19769944180,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2026SpringFCS/fullrestores/122-58869/DFB1CEEF-5619-4591-9924-E20DB2C8FED0/UniversalMac_26.5_25F71_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "26.5"
+    },
+    {
+      "build" : "25E253",
+      "lastModified" : "Mon, 06 Apr 2026 22:27:00 GMT",
+      "sizeBytes" : 19734779897,
+      "snapshot" : "20260427224811",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2026WinterFCS/fullrestores/122-28781/DCB2FF13-06CB-44C2-BCA2-DFCAF3521D46/UniversalMac_26.4.1_25E253_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "26.4.1"
+    },
+    {
+      "build" : "25E246",
+      "lastModified" : "Fri, 20 Mar 2026 21:29:00 GMT",
+      "sizeBytes" : 19734835218,
+      "snapshot" : "20260328034751",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2026WinterFCS/fullrestores/122-00766/062A6121-2ABE-45D7-BCB1-72B666B6D2C2/UniversalMac_26.4_25E246_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "26.4"
+    },
+    {
+      "build" : "25D2128",
+      "lastModified" : "Fri, 27 Feb 2026 01:24:40 GMT",
+      "sizeBytes" : 19330833456,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2026WinterFCS/fullrestores/047-88313/2E098049-1731-4415-A206-546D09301973/UniversalMac_26.3.1_25D2128_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "26.3.1"
+    },
+    {
+      "build" : "25D125",
+      "lastModified" : "Sat, 07 Feb 2026 17:34:58 GMT",
+      "sizeBytes" : 18877622182,
+      "snapshot" : "20260219083010",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2026WinterFCS/fullrestores/047-60229/6D5DBEA5-75A0-4BEF-ACC9-5ACF9B8DF6B7/UniversalMac_26.3_25D125_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "26.3"
+    },
+    {
+      "build" : "25C56",
+      "lastModified" : "Mon, 01 Dec 2025 15:22:10 GMT",
+      "sizeBytes" : 18741508230,
+      "snapshot" : "20251231150543",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2025FallFCS/fullrestores/093-37399/E144C918-CF99-4BBC-B1D0-3E739B9A3F2D/UniversalMac_26.2_25C56_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "26.2"
+    },
+    {
+      "build" : "25B78",
+      "lastModified" : "Thu, 30 Oct 2025 05:50:08 GMT",
+      "sizeBytes" : 18718884780,
+      "snapshot" : "20251112234846",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2025FallFCS/fullrestores/089-04148/791B6F00-A30B-4EB0-B2E3-257167F7715B/UniversalMac_26.1_25B78_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "26.1"
+    },
+    {
+      "build" : "25A362",
+      "lastModified" : "Thu, 25 Sep 2025 23:19:15 GMT",
+      "sizeBytes" : 18267682409,
+      "snapshot" : "20251002214113",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2025FallFCS/fullrestores/093-50898/60AE7E97-3E60-441B-9B34-E603C694C5C1/UniversalMac_26.0.1_25A362_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "26.0.1"
+    },
+    {
+      "build" : "25A354",
+      "lastModified" : "Thu, 11 Sep 2025 02:34:48 GMT",
+      "sizeBytes" : 18267586270,
+      "snapshot" : "20250916023020",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2025FallFCS/fullrestores/093-37622/CE01FAB2-7F26-48EE-AEE4-5E57A7F6D8BB/UniversalMac_26.0_25A354_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "26.0"
+    },
+    {
+      "build" : "24G90",
+      "lastModified" : "Mon, 18 Aug 2025 07:54:22 GMT",
+      "sizeBytes" : 16814137790,
+      "snapshot" : "20250825041725",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2025SummerFCS/fullrestores/093-10809/CFD6DD38-DAF0-40DA-854F-31AAD1294C6F/UniversalMac_15.6.1_24G90_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "15.6.1"
+    },
+    {
+      "build" : "24G84",
+      "lastModified" : "Sat, 19 Jul 2025 21:07:56 GMT",
+      "sizeBytes" : 16814076831,
+      "snapshot" : "20250803132412",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2025SummerFCS/fullrestores/082-08674/51294E4D-A273-44BE-A280-A69FC347FB87/UniversalMac_15.6_24G84_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "15.6"
+    },
+    {
+      "build" : "24F74",
+      "lastModified" : "Sun, 04 May 2025 20:10:32 GMT",
+      "sizeBytes" : 16879691985,
+      "snapshot" : "20250607174149",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2025SpringFCS/fullrestores/082-44534/CE6C1054-99A3-4F67-A823-3EE9E6510CDE/UniversalMac_15.5_24F74_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "15.5"
+    },
+    {
+      "build" : "24E263",
+      "lastModified" : "Sat, 12 Apr 2025 21:04:31 GMT",
+      "sizeBytes" : 16808445859,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2025SpringFCS/fullrestores/082-23340/61923341-EE73-4C6E-BB3E-DAB3069548BF/UniversalMac_15.4.1_24E263_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "15.4.1"
+    },
+    {
+      "build" : "24E248",
+      "lastModified" : "Fri, 28 Mar 2025 16:08:21 GMT",
+      "sizeBytes" : 16808408047,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2025SpringFCS/fullrestores/082-16517/AACDDC33-9683-4431-98AF-F04EF7C15EE3/UniversalMac_15.4_24E248_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "15.4"
+    },
+    {
+      "build" : "24E246",
+      "lastModified" : "Sat, 22 Mar 2025 20:14:10 GMT",
+      "sizeBytes" : 16808427372,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2025SpringFCS/fullrestores/082-13013/C3CAC9AF-B139-4924-BE1B-10ED6EF931A4/UniversalMac_15.4_24E246_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "15.4"
+    },
+    {
+      "build" : "24D81",
+      "lastModified" : "Fri, 07 Mar 2025 18:47:47 GMT",
+      "sizeBytes" : 16532705221,
+      "snapshot" : "20250312191026",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2025WinterFCS/fullrestores/082-01504/828B8EF9-8134-49D5-B24A-0BA504FC5ECC/UniversalMac_15.3.2_24D81_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "15.3.2"
+    },
+    {
+      "build" : "24D70",
+      "lastModified" : "Wed, 05 Feb 2025 16:23:32 GMT",
+      "sizeBytes" : 16532837554,
+      "snapshot" : "20250211074947",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2025WinterFCS/fullrestores/072-70618/42F1A8CC-7E07-4329-958A-757FF600C303/UniversalMac_15.3.1_24D70_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "15.3.1"
+    },
+    {
+      "build" : "24D60",
+      "lastModified" : "Fri, 17 Jan 2025 21:51:49 GMT",
+      "sizeBytes" : 16532796141,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2025WinterFCS/fullrestores/072-08269/7CAAB9F7-E970-428D-8764-4CD7BCD105CD/UniversalMac_15.3_24D60_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "15.3"
+    },
+    {
+      "build" : "24C101",
+      "lastModified" : "Sun, 08 Dec 2024 01:55:12 GMT",
+      "sizeBytes" : 16532456817,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2024FallFCS/fullrestores/072-44245/E811A1B0-28A9-4FCD-AE32-322E796F0EB8/UniversalMac_15.2_24C101_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "15.2"
+    },
+    {
+      "build" : "24B91",
+      "lastModified" : "Fri, 15 Nov 2024 21:24:38 GMT",
+      "sizeBytes" : 15755042223,
+      "snapshot" : "20241119234816",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2024FallFCS/fullrestores/072-30094/44BD016F-6EE3-4EE5-8890-6F9AA008C537/UniversalMac_15.1.1_24B91_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "15.1.1"
+    },
+    {
+      "build" : "24B2091",
+      "lastModified" : "Fri, 15 Nov 2024 18:47:34 GMT",
+      "sizeBytes" : 15516666958,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2024FallFCS/fullrestores/072-29960/5EEC3C20-D7CB-4DD1-9CE4-7C177F531A41/UniversalMac_15.1.1_24B2091_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "15.1.1"
+    },
+    {
+      "build" : "24B83",
+      "lastModified" : "Tue, 22 Oct 2024 22:04:06 GMT",
+      "sizeBytes" : 15738221177,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2024FallFCS/fullrestores/072-12340/78D28AC4-CCFC-45D2-BD27-1E5D915E43F9/UniversalMac_15.1_24B83_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "15.1"
+    },
+    {
+      "build" : "24B2083",
+      "lastModified" : "Fri, 25 Oct 2024 05:42:30 GMT",
+      "sizeBytes" : 15516638342,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2024FallFCS/fullrestores/072-12302/3786987A-AD94-4BFB-81B8-56D3841CA81B/UniversalMac_15.1_24B2083_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "15.1"
+    },
+    {
+      "build" : "24A348",
+      "lastModified" : "Tue, 01 Oct 2024 20:35:13 GMT",
+      "sizeBytes" : 15737037399,
+      "snapshot" : "20241005020743",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2024FallFCS/fullrestores/072-01423/566E5B4E-1100-4643-91B3-131247351844/UniversalMac_15.0.1_24A348_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "15.0.1"
+    },
+    {
+      "build" : "24A335",
+      "lastModified" : "Fri, 06 Sep 2024 20:06:41 GMT",
+      "sizeBytes" : 15736994120,
+      "snapshot" : "20240917014820",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2024FallFCS/fullrestores/062-78489/BDA44327-C79E-4608-A7E0-455A7E91911F/UniversalMac_15.0_24A335_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "15.0"
+    },
+    {
+      "build" : "23G93",
+      "lastModified" : "Mon, 05 Aug 2024 04:08:14 GMT",
+      "sizeBytes" : 14790601661,
+      "snapshot" : "20240808173034",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2024SummerFCS/fullrestores/062-52859/932E0A8F-6644-4759-82DA-F8FA8DEA806A/UniversalMac_14.6.1_23G93_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "14.6.1"
+    },
+    {
+      "build" : "23G80",
+      "lastModified" : "Fri, 19 Jul 2024 22:18:23 GMT",
+      "sizeBytes" : 14790718754,
+      "snapshot" : "20240731013815",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2024SummerFCS/fullrestores/052-69922/F5DA2B64-25EB-4370-9E89-FA5689859796/UniversalMac_14.6_23G80_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "14.6"
+    },
+    {
+      "build" : "23F79",
+      "lastModified" : "Tue, 07 May 2024 21:22:51 GMT",
+      "sizeBytes" : 14801044197,
+      "snapshot" : "20240515014237",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2024SpringFCS/fullrestores/062-01897/C874907B-9F82-4109-87EB-6B3C9BF1507D/UniversalMac_14.5_23F79_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "14.5"
+    },
+    {
+      "build" : "23E224",
+      "lastModified" : "Fri, 22 Mar 2024 10:20:51 GMT",
+      "sizeBytes" : 14744062393,
+      "snapshot" : "20240403014910",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2024WinterFCS/fullrestores/052-77579/4569734E-120C-4F31-AD08-FC1FF825D059/UniversalMac_14.4.1_23E224_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "14.4.1"
+    },
+    {
+      "build" : "23E214",
+      "lastModified" : "Thu, 29 Feb 2024 22:09:09 GMT",
+      "sizeBytes" : 14744505377,
+      "snapshot" : "20240308021401",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2024WinterFCS/fullrestores/052-61990/47F0DD06-1106-4F2E-9CD6-AE6B361A0EC6/UniversalMac_14.4_23E214_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "14.4"
+    },
+    {
+      "build" : "23D60",
+      "lastModified" : "Mon, 05 Feb 2024 19:42:16 GMT",
+      "sizeBytes" : 14503964718,
+      "snapshot" : "20240209015528",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2024WinterFCS/fullrestores/052-40770/72916BCC-D357-422D-A4A2-EF1DEDF6968C/UniversalMac_14.3.1_23D60_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "14.3.1"
+    },
+    {
+      "build" : "23D56",
+      "lastModified" : "Sat, 13 Jan 2024 17:34:49 GMT",
+      "sizeBytes" : 14505910832,
+      "snapshot" : "20240123020945",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2024WinterFCS/fullrestores/042-78241/B45074EB-2891-4C05-BCA4-7463F3AC0982/UniversalMac_14.3_23D56_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "14.3"
+    },
+    {
+      "build" : "23C71",
+      "lastModified" : "Sat, 16 Dec 2023 19:32:18 GMT",
+      "sizeBytes" : 14489499738,
+      "snapshot" : "20231220015017",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2023FallFCS/fullrestores/052-22662/ECE59A41-DACC-4CA5-AB23-FDED1A4567DE/UniversalMac_14.2.1_23C71_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "14.2.1"
+    },
+    {
+      "build" : "23C64",
+      "lastModified" : "Tue, 05 Dec 2023 23:14:52 GMT",
+      "sizeBytes" : 14488791535,
+      "snapshot" : "20231212021609",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2023FallFCS/fullrestores/052-15117/DC2EE605-ABF3-41AE-9652-D137A8AA5907/UniversalMac_14.2_23C64_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "14.2"
+    },
+    {
+      "build" : "23B92",
+      "lastModified" : "Tue, 28 Nov 2023 18:11:41 GMT",
+      "sizeBytes" : 13980816431,
+      "snapshot" : "20231202193305",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2023FallFCS/fullrestores/052-09443/E8752548-0B80-480C-9FB4-67246672C1B5/UniversalMac_14.1.2_23B92_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "14.1.2"
+    },
+    {
+      "build" : "23B81",
+      "lastModified" : "Fri, 03 Nov 2023 23:23:22 GMT",
+      "sizeBytes" : 13981156491,
+      "snapshot" : "20231108020434",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2023FallFCS/fullrestores/042-89681/55BD14DB-5535-4203-9359-E2C070E43FBE/UniversalMac_14.1.1_23B81_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "14.1.1"
+    },
+    {
+      "build" : "23B74",
+      "lastModified" : "Sat, 21 Oct 2023 06:00:58 GMT",
+      "sizeBytes" : 13981550665,
+      "snapshot" : "20231102015639",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2023FallFCS/fullrestores/042-86430/DBE44960-58A6-4715-948B-D64F33F769BD/UniversalMac_14.1_23B74_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "14.1"
+    },
+    {
+      "build" : "23A344",
+      "lastModified" : "Sun, 17 Sep 2023 02:25:30 GMT",
+      "sizeBytes" : 13905898651,
+      "snapshot" : "20231002015258",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2023FallFCS/fullrestores/042-54934/0E101AD6-3117-4B63-9BF1-143B6DB9270A/UniversalMac_14.0_23A344_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "14.0"
+    },
+    {
+      "build" : "23A339",
+      "lastModified" : "Fri, 08 Sep 2023 20:41:11 GMT",
+      "sizeBytes" : 13905892847,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2023FallFCS/fullrestores/002-81996/596571C1-9856-4BB3-B5BF-B5A48F4B406E/UniversalMac_14.0_23A339_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "14.0"
+    },
+    {
+      "build" : "22G120",
+      "lastModified" : "Mon, 18 Sep 2023 19:44:33 GMT",
+      "sizeBytes" : 12893555341,
+      "snapshot" : "20230922015708",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2023FallFCS/fullrestores/042-55833/C0830847-A2F8-458F-B680-967991820931/UniversalMac_13.6_22G120_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "13.6"
+    },
+    {
+      "build" : "22G91",
+      "lastModified" : "Sat, 02 Sep 2023 23:20:53 GMT",
+      "sizeBytes" : 12892043230,
+      "snapshot" : "20230908014808",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2023SummerFCS/fullrestores/042-43686/945D434B-DA5D-48DB-A558-F6D18D11AD69/UniversalMac_13.5.2_22G91_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "13.5.2"
+    },
+    {
+      "build" : "22G90",
+      "lastModified" : "Wed, 09 Aug 2023 22:58:48 GMT",
+      "sizeBytes" : 12892897195,
+      "snapshot" : "20230818014505",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2023SummerFCS/fullrestores/042-25658/2D6BE8DB-5549-4F85-8C54-39FC23BABC68/UniversalMac_13.5.1_22G90_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "13.5.1"
+    },
+    {
+      "build" : "22G74",
+      "lastModified" : "Thu, 13 Jul 2023 21:47:33 GMT",
+      "sizeBytes" : 12893195726,
+      "snapshot" : "20230725022109",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2023SummerFCS/fullrestores/032-69606/D3E05CDF-E105-434C-A4A1-4E3DC7668DD0/UniversalMac_13.5_22G74_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "13.5"
+    },
+    {
+      "build" : "22F82",
+      "lastModified" : "Fri, 16 Jun 2023 16:01:42 GMT",
+      "sizeBytes" : 12739802320,
+      "snapshot" : "20230622021900",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2023SpringFCS/fullrestores/042-01877/2F49A9FE-7033-41D0-9D0C-64EFCE6B4C22/UniversalMac_13.4.1_22F82_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "13.4.1"
+    },
+    {
+      "build" : "22F66",
+      "lastModified" : "Sat, 13 May 2023 15:52:36 GMT",
+      "sizeBytes" : 12739995153,
+      "snapshot" : "20230519020120",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2023SpringFCS/fullrestores/032-84884/F97A22EE-9B5E-4FD5-94C1-B39DCEE8D80F/UniversalMac_13.4_22F66_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "13.4"
+    },
+    {
+      "build" : "22F63",
+      "lastModified" : "Tue, 09 May 2023 21:06:14 GMT",
+      "sizeBytes" : 12739473501,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2023SpringFCS/fullrestores/032-83954/6E06237C-1B56-4932-A8E1-3A07A3EE03A8/UniversalMac_13.4_22F63_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "13.4"
+    },
+    {
+      "build" : "22F62",
+      "lastModified" : "Fri, 05 May 2023 16:38:06 GMT",
+      "sizeBytes" : 12738586980,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2023SpringFCS/fullrestores/032-44024/731F1533-53BE-4CEB-AA05-74F333CA904A/UniversalMac_13.4_22F62_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "13.4"
+    },
+    {
+      "build" : "22E261",
+      "lastModified" : "Mon, 03 Apr 2023 20:07:16 GMT",
+      "sizeBytes" : 12726460903,
+      "snapshot" : "20230408014909",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2023WinterFCS/fullrestores/032-66602/418BC37A-FCD9-400A-B4FA-022A19576CD4/UniversalMac_13.3.1_22E261_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "13.3.1"
+    },
+    {
+      "build" : "22E252",
+      "lastModified" : "Sat, 18 Mar 2023 16:23:12 GMT",
+      "sizeBytes" : 12727918028,
+      "snapshot" : "20230328020123",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2023WinterSeed/fullrestores/002-75537/8250FA0E-0962-46D6-8A90-57A390B9FFD7/UniversalMac_13.3_22E252_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "13.3"
+    },
+    {
+      "build" : "22D68",
+      "lastModified" : "Fri, 10 Feb 2023 03:32:43 GMT",
+      "sizeBytes" : 12494476408,
+      "snapshot" : "20230214021204",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2023WinterFCS/fullrestores/032-48346/EFF99C1E-C408-4E7A-A448-12E1468AF06C/UniversalMac_13.2.1_22D68_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "13.2.1"
+    },
+    {
+      "build" : "22D49",
+      "lastModified" : "Sat, 14 Jan 2023 18:25:21 GMT",
+      "sizeBytes" : 12494248692,
+      "snapshot" : "20230124021434",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2023WinterFCS/fullrestores/032-35688/0350BB21-2B4B-4850-BF77-70B830283B28/UniversalMac_13.2_22D49_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "13.2"
+    },
+    {
+      "build" : "22C65",
+      "lastModified" : "Fri, 02 Dec 2022 23:24:04 GMT",
+      "sizeBytes" : 12279576859,
+      "snapshot" : "20221214020108",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2022FallFCS/fullrestores/012-60270/0A7F49BA-FC31-4AD9-8E45-49B1FB9128A6/UniversalMac_13.1_22C65_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "13.1"
+    },
+    {
+      "build" : "22A400",
+      "lastModified" : "Wed, 02 Nov 2022 18:25:39 GMT",
+      "sizeBytes" : 12197932579,
+      "snapshot" : "20221110023607",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2022FallFCS/fullrestores/012-93802/A7270B0F-05F8-43D1-A9AD-40EF5699E82C/UniversalMac_13.0.1_22A400_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "13.0.1"
+    },
+    {
+      "build" : "22A380",
+      "lastModified" : "Tue, 18 Oct 2022 23:19:01 GMT",
+      "sizeBytes" : 12197669257,
+      "snapshot" : "20221025022832",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2022FallFCS/fullrestores/012-92188/2C38BCD1-2BFF-4A10-B358-94E8E28BE805/UniversalMac_13.0_22A380_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "13.0"
+    },
+    {
+      "build" : "22A379",
+      "lastModified" : "Sat, 15 Oct 2022 00:25:37 GMT",
+      "sizeBytes" : 12197156665,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2022FallFCS/fullrestores/071-08994/1118ADF4-1CC9-4554-9333-B1F64CF0C820/UniversalMac_13.0_22A379_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "13.0"
+    },
+    {
+      "build" : "21G217",
+      "lastModified" : "Tue, 01 Nov 2022 21:34:21 GMT",
+      "sizeBytes" : 14086558415,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2022FallFCS/fullrestores/012-66032/8D8D90C6-A876-4FFF-BBF4-D158939B3841/UniversalMac_12.6.1_21G217_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "12.6.1"
+    },
+    {
+      "build" : "21G115",
+      "lastModified" : "Thu, 01 Sep 2022 00:22:18 GMT",
+      "sizeBytes" : 14081739387,
+      "snapshot" : "20220912175216",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2022FallFCS/fullrestores/012-40537/0EC7C669-13E9-49FB-BD64-9EECC1D174B2/UniversalMac_12.6_21G115_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "12.6"
+    },
+    {
+      "build" : "21G83",
+      "lastModified" : "Fri, 12 Aug 2022 16:55:26 GMT",
+      "sizeBytes" : 14088266331,
+      "snapshot" : "20220818010611",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2022SummerFCS/fullrestores/012-51674/A7019DDB-3355-470F-A355-4162A187AB6C/UniversalMac_12.5.1_21G83_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "12.5.1"
+    },
+    {
+      "build" : "21G72",
+      "lastModified" : "Thu, 14 Jul 2022 21:21:12 GMT",
+      "sizeBytes" : 14084058716,
+      "snapshot" : "20220721000824",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2022SummerFCS/fullrestores/012-42731/BD9917E0-262C-41C5-A69F-AC316A534A39/UniversalMac_12.5_21G72_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "12.5"
+    },
+    {
+      "build" : "21F79",
+      "lastModified" : "Tue, 10 May 2022 06:48:43 GMT",
+      "sizeBytes" : 13837340777,
+      "snapshot" : "20220517002718",
+      "source" : "apple-archived",
+      "url" : "https://updates.cdn-apple.com/2022SpringFCS/fullrestores/012-06874/9CECE956-D945-45E2-93E9-4FFDC81BB49A/UniversalMac_12.4_21F79_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "12.4"
+    },
+    {
+      "build" : "21F2081",
+      "lastModified" : "Wed, 01 Jun 2022 01:08:04 GMT",
+      "sizeBytes" : 14079345804,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2022SpringFCS/fullrestores/012-17781/F045A95A-44B4-4BA9-8A8A-919ECCA2BB31/UniversalMac_12.4_21F2081_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "12.4"
+    },
+    {
+      "build" : "21E258",
+      "lastModified" : "Sat, 26 Mar 2022 19:16:07 GMT",
+      "sizeBytes" : 13875260060,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2022SpringFCS/fullrestores/002-79219/851BEDF0-19DB-4040-B765-0F4089D1530D/UniversalMac_12.3.1_21E258_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "12.3.1"
+    },
+    {
+      "build" : "21E230",
+      "lastModified" : "Tue, 01 Mar 2022 17:07:12 GMT",
+      "sizeBytes" : 13872566478,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2022SpringFCS/fullrestores/071-08757/74A4F2A1-C747-43F9-A22A-C0AD5FB4ECB6/UniversalMac_12.3_21E230_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "12.3"
+    },
+    {
+      "build" : "21D62",
+      "lastModified" : "Mon, 07 Feb 2022 18:00:30 GMT",
+      "sizeBytes" : 14139692117,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2022WinterFCS/fullrestores/002-66272/FB0B40F5-49EB-421B-81EC-8B56B8468D3C/UniversalMac_12.2.1_21D62_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "12.2.1"
+    },
+    {
+      "build" : "21D49",
+      "lastModified" : "Sun, 23 Jan 2022 01:13:24 GMT",
+      "sizeBytes" : 14140430556,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2022WinterFCS/fullrestores/002-57044/F1C9CC9E-28BE-49E2-82F9-C7BBBBCC42F8/UniversalMac_12.2_21D49_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "12.2"
+    },
+    {
+      "build" : "21D48",
+      "lastModified" : "Tue, 18 Jan 2022 14:26:53 GMT",
+      "sizeBytes" : 14140394588,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2022WinterFCS/fullrestores/002-55683/C906700F-79F2-4948-98F0-E8A7D2FB129D/UniversalMac_12.2_21D48_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "12.2"
+    },
+    {
+      "build" : "21C52",
+      "lastModified" : "Wed, 08 Dec 2021 20:08:40 GMT",
+      "sizeBytes" : 14141114913,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2021FCSWinter/fullrestores/002-42433/F3F6D5CD-67FE-449C-9212-F7409808B6C4/UniversalMac_12.1_21C52_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "12.1"
+    },
+    {
+      "build" : "21C51",
+      "lastModified" : "Fri, 03 Dec 2021 20:12:30 GMT",
+      "sizeBytes" : 14141308604,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2021FCSWinter/fullrestores/071-93435/E79725F0-BB22-462E-B846-FAB30DA7D389/UniversalMac_12.1_21C51_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "12.1"
+    },
+    {
+      "build" : "21A559",
+      "lastModified" : "Tue, 19 Oct 2021 15:51:02 GMT",
+      "sizeBytes" : 14102871779,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2021FCSFall/fullrestores/002-23780/D3417F21-41BD-4DDF-9135-FA5A129AF6AF/UniversalMac_12.0.1_21A559_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "12.0.1"
+    },
+    {
+      "build" : "21A558",
+      "lastModified" : "Sat, 16 Oct 2021 20:08:28 GMT",
+      "sizeBytes" : 14102733145,
+      "source" : "apple-indexed",
+      "url" : "https://updates.cdn-apple.com/2021FCSFall/fullrestores/071-78663/75110021-A2D3-44BB-B90F-3AC39F7A4F00/UniversalMac_12.0.1_21A558_Restore.ipsw",
+      "verifiedAt" : "2026-07-28",
+      "version" : "12.0.1"
+    }
+  ]
+}
