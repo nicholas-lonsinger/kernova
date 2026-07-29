@@ -204,10 +204,10 @@ final class RestoreImageCatalogSheetContentViewController: NSViewController {
         scrollView.hasHorizontalScroller = false
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
-        scrollView.automaticallyAdjustsContentInsets = false
-        scrollView.contentInsets = NSEdgeInsetsZero
-        scrollView.contentView.automaticallyAdjustsContentInsets = false
-        scrollView.contentView.contentInsets = NSEdgeInsetsZero
+        // Automatic content insets stay ON, unlike the header-less sheets that
+        // zero them to kill implicit padding: the reserved space at the top is
+        // what the column header occupies, and zeroing it renders the first row
+        // underneath the header instead of below it.
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         let container = NSView()
