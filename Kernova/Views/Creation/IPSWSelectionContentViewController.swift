@@ -1,12 +1,12 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// Step 2 of the creation wizard for macOS guests: choose the IPSW restore image
-/// source (download latest vs. local file), show the chosen path, and surface
+/// Step 2 of the creation wizard for macOS guests: choose where the IPSW restore
+/// image comes from, show which image that is and where it lands, and surface
 /// overwrite/resume warnings.
 ///
 /// All controls mutate the shared ``VMCreationViewModel`` and then call
-/// ``refresh()`` to reconcile the radios, path badge, and banners in place. The
+/// ``refresh()`` to reconcile the radios, badge, and banners in place. The
 /// shell observes the model separately to keep its Next button in sync.
 @MainActor
 final class IPSWSelectionContentViewController: NSViewController {
@@ -29,10 +29,15 @@ final class IPSWSelectionContentViewController: NSViewController {
     private var existingFileNotice: ExistingFileNotice?
     /// In-flight inspection, so a second click can't race the first.
     private var adoptTask: Task<Void, Never>?
+    /// Redraws the badge once the model's latest-image lookup lands.
+    private var latestImageTask: Task<Void, Never>?
 
     #if DEBUG
     /// Awaited by tests instead of polling for the verdict to land.
     var adoptTaskForTesting: Task<Void, Never>? { adoptTask }
+
+    /// Awaited by tests instead of polling for the badge to be redrawn.
+    var latestImageTaskForTesting: Task<Void, Never>? { latestImageTask }
     #endif
     /// Shows the "more content below" cue while this step's content overflows the
     /// sheet; a hint only.
@@ -107,6 +112,11 @@ final class IPSWSelectionContentViewController: NSViewController {
         refresh()
     }
 
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        startLatestImageLookup()
+    }
+
     override func viewWillDisappear() {
         super.viewWillDisappear()
         // The step is swapped out on navigation; a picker left attached to a
@@ -114,6 +124,27 @@ final class IPSWSelectionContentViewController: NSViewController {
         catalogSheetPresenter.reset()
         adoptTask?.cancel()
         adoptTask = nil
+        // Only this VC's redraw is dropped: the lookup itself belongs to the
+        // model, so it still lands for the Review step.
+        latestImageTask?.cancel()
+        latestImageTask = nil
+    }
+
+    /// Asks the model what "Download Latest" will fetch, and shows it when the
+    /// answer lands.
+    ///
+    /// The model's lookup is idempotent, so re-entering the step joins one
+    /// already running rather than starting a second.
+    private func startLatestImageLookup() {
+        guard latestImageTask == nil, let lookup = creationVM.loadLatestImageDetails() else {
+            return
+        }
+        latestImageTask = Task { [weak self] in
+            await lookup.value
+            guard let self, !Task.isCancelled else { return }
+            self.latestImageTask = nil
+            self.rebuildConditional()
+        }
     }
 
     // MARK: - Source radios
@@ -135,6 +166,8 @@ final class IPSWSelectionContentViewController: NSViewController {
         case .downloadLatest:
             creationVM.selectDownloadLatest()
             refresh()
+            // Retries a lookup that failed while another source was selected.
+            startLatestImageLookup()
         case .catalogVersion:
             // Same deferred-commit rule as Choose Local File below.
             refresh()
@@ -172,23 +205,39 @@ final class IPSWSelectionContentViewController: NSViewController {
 
         switch creationVM.ipswSelection {
         case .downloadLatest:
-            // No "Change…" affordance: the destination is always the Downloads
-            // folder, the one location the sandbox's downloads entitlement covers
-            // without per-pick grants.
-            conditionalContainer.addArrangedSubview(
-                makeWizardPathBadge(path: creationVM.ipswDownloadPath))
+            if let latest = creationVM.latestImage {
+                // Nothing here is the user's to change: installing a particular
+                // build is what the other sources are for, and the destination
+                // is always Downloads, the one location the sandbox's downloads
+                // entitlement covers without per-pick grants.
+                addPinnedImageBadge(
+                    parts: [
+                        "macOS \(latest.version)", "Build \(latest.build)",
+                        creationVM.latestImageSizeBytes.map(DataFormatters.formatBytes),
+                    ],
+                    changeAction: nil
+                )
+            } else {
+                conditionalContainer.addArrangedSubview(
+                    makeWizardPathBadge(path: creationVM.ipswDownloadPath))
+            }
+            // `version: nil` even once the lookup lands: this source pins no
+            // build and shares one destination filename, so the file already
+            // sitting there may be any image, and naming the version the badge
+            // shows would describe that file wrongly.
             addDownloadBanners(version: nil)
         case .catalogVersion(let entry):
             addPinnedImageBadge(
-                summary:
-                    "macOS \(entry.version)  ·  Build \(entry.build)  ·  \(DataFormatters.formatBytes(entry.sizeBytes))",
+                parts: [
+                    "macOS \(entry.version)", "Build \(entry.build)",
+                    DataFormatters.formatBytes(entry.sizeBytes),
+                ],
                 changeAction: #selector(changeCatalogVersion)
             )
             addDownloadBanners(version: entry.version)
         case .customURL(let image):
             addPinnedImageBadge(
-                summary:
-                    "\(image.versionSummary)  ·  \(DataFormatters.formatBytes(image.sizeBytes))",
+                parts: [image.versionSummary, DataFormatters.formatBytes(image.sizeBytes)],
                 changeAction: #selector(changePastedURL)
             )
             addDownloadBanners(version: image.version)
@@ -199,17 +248,21 @@ final class IPSWSelectionContentViewController: NSViewController {
         }
     }
 
-    /// Adds the one badge a pinned-image source shows: what was chosen, and
-    /// where it will land.
+    /// Adds the one badge a download source shows: which image it will fetch,
+    /// and where that image will land.
     ///
     /// One two-line badge rather than two badges — with four sources listed,
-    /// two badges no longer fit the fixed-size sheet without scrolling.
-    private func addPinnedImageBadge(summary: String, changeAction: Selector) {
-        let change = makeLinkButton("Change…", target: self, action: changeAction)
+    /// two badges no longer fit the fixed-size sheet without scrolling. Every
+    /// source composes its title line from `parts` here, so they read alike;
+    /// a part the source doesn't know drops out.
+    private func addPinnedImageBadge(parts: [String?], changeAction: Selector?) {
+        let change = changeAction.map {
+            makeLinkButton("Change…", target: self, action: $0)
+        }
         conditionalContainer.addArrangedSubview(
             makeWizardBadge(
                 symbolName: "shippingbox.fill",
-                text: summary,
+                text: parts.compactMap { $0 }.joined(separator: "  ·  "),
                 secondaryText: wizardAbbreviateWithTilde(creationVM.ipswDownloadPath),
                 trailingButton: change
             ))

@@ -23,10 +23,14 @@ final class MockIPSWService: IPSWProviding, @unchecked Sendable {
     var fetchError: (any Error)?
     var downloadError: (any Error)?
 
-    func fetchLatestRestoreImageURL() async throws -> URL {
+    /// Returned on success; defaults to a plausible newest release.
+    var fetchResult = LatestRestoreImage(
+        url: MockIPSWService.mockRestoreImageURL, version: "26.5.2", build: "25F84")
+
+    func fetchLatestRestoreImage() async throws -> LatestRestoreImage {
         fetchCallCount += 1
         if let error = fetchError { throw error }
-        return Self.mockRestoreImageURL
+        return fetchResult
     }
 
     func downloadRestoreImage(

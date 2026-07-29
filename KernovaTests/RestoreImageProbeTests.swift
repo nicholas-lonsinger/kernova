@@ -168,6 +168,32 @@ struct RestoreImageFilenameTests {
     }
 }
 
+@Suite("MacOSVersion Tests")
+struct MacOSVersionTests {
+    @Test("A version reads the way Apple names the release")
+    func displayStringDropsAZeroPatch() {
+        #expect(
+            MacOSVersion.displayString(
+                OperatingSystemVersion(majorVersion: 26, minorVersion: 5, patchVersion: 2))
+                == "26.5.2")
+        #expect(
+            MacOSVersion.displayString(
+                OperatingSystemVersion(majorVersion: 26, minorVersion: 6, patchVersion: 0))
+                == "26.6")
+        #expect(
+            MacOSVersion.displayString(
+                OperatingSystemVersion(majorVersion: 12, minorVersion: 0, patchVersion: 1))
+                == "12.0.1")
+    }
+
+    @Test("What it renders is what the catalog's own version strings parse as")
+    func displayStringRoundTripsThroughTheParser() {
+        let rendered = MacOSVersion.displayString(
+            OperatingSystemVersion(majorVersion: 26, minorVersion: 5, patchVersion: 2))
+        #expect(MacOSVersion(rendered)?.components == [26, 5, 2])
+    }
+}
+
 /// Stub for the probe's requests.
 ///
 /// Deliberately its own class rather than `StubURLProtocol`: that one's handler
@@ -436,6 +462,16 @@ struct RestoreImageProbeServiceTests {
         #expect(image.url == imageURL)
     }
 
+    @Test("The size alone is read without touching the image's structure")
+    func sizeReadsOnlyTheLength() async throws {
+        // No zip structure at all: a size read must not depend on one, which is
+        // what lets it serve an image Virtualization already vouched for.
+        serve(total: 19_772_077_142, body: Data())
+        defer { ProbeStubURLProtocol.reset() }
+
+        #expect(try await makeService().size(of: imageURL) == 19_772_077_142)
+    }
+
     @Test("An image with no VM hardware model is refused")
     func refusesImageWithoutVirtualMachineModel() async {
         let tail = makeZipTail(containsVMA2: false)
@@ -458,6 +494,45 @@ struct RestoreImageProbeServiceTests {
 
         await #expect(throws: RestoreImageProbeError.insecureURL) {
             _ = try await makeService().probe(http)
+        }
+    }
+
+    @Test("The size read refuses a non-HTTPS URL before any request too")
+    func sizeRefusesInsecureURL() async throws {
+        let http = try #require(URL(string: "http://updates.cdn-apple.com/x/R.ipsw"))
+        ProbeStubURLProtocol.reset()
+        ProbeStubURLProtocol.handler = { _ in
+            Issue.record("The size read issued a request for a non-HTTPS URL")
+            return ProbeStubURLProtocol.Reply(statusCode: 200, body: Data(), headers: [:])
+        }
+        defer { ProbeStubURLProtocol.reset() }
+
+        await #expect(throws: RestoreImageProbeError.insecureURL) {
+            _ = try await makeService().size(of: http)
+        }
+    }
+
+    @Test("A server stating a length of zero is refused, not reported as a size")
+    func refusesZeroLength() async {
+        ProbeStubURLProtocol.reset()
+        ProbeStubURLProtocol.handler = { request in
+            if request.httpMethod == "HEAD" {
+                return ProbeStubURLProtocol.Reply(
+                    statusCode: 200, body: Data(), headers: ["Content-Length": "0"])
+            }
+            return ProbeStubURLProtocol.Reply(
+                statusCode: 206, body: Data([0x00]),
+                headers: ["Content-Range": "bytes 0-0/0"])
+        }
+        defer { ProbeStubURLProtocol.reset() }
+
+        // Both entry points, since a zero reaching either one would be formatted
+        // as a download size.
+        await #expect(throws: RestoreImageProbeError.unknownSize) {
+            _ = try await makeService().size(of: imageURL)
+        }
+        await #expect(throws: RestoreImageProbeError.unknownSize) {
+            _ = try await makeService().probe(imageURL)
         }
     }
 

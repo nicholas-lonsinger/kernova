@@ -70,20 +70,26 @@ final class VMCreationViewModel {
     /// touch it.
     let catalogService: any RestoreImageCatalogProviding
 
-    /// Backs the "Paste an IPSW URL…" sheet's pre-download check.
+    /// Backs the "Paste an IPSW URL…" sheet's pre-download check; its size read
+    /// alone also sizes the image "Download Latest" would fetch.
     let probeService: any RestoreImageProbing
 
     /// Reads an IPSW already on disk before the wizard adopts it.
     let localImageInspector: any LocalRestoreImageInspecting
 
+    /// Names what "Download Latest" will fetch, for the wizard to show.
+    let ipswService: any IPSWProviding
+
     init(
         catalogService: any RestoreImageCatalogProviding = RestoreImageCatalogService(),
         probeService: any RestoreImageProbing = RestoreImageProbeService(),
-        localImageInspector: any LocalRestoreImageInspecting = LocalRestoreImageInspector()
+        localImageInspector: any LocalRestoreImageInspecting = LocalRestoreImageInspector(),
+        ipswService: any IPSWProviding = IPSWService()
     ) {
         self.catalogService = catalogService
         self.probeService = probeService
         self.localImageInspector = localImageInspector
+        self.ipswService = ipswService
     }
 
     // MARK: - Wizard State
@@ -101,6 +107,22 @@ final class VMCreationViewModel {
 
     /// Which source is current, for the radios and the source labels.
     var ipswSource: IPSWSource { ipswSelection.source }
+
+    /// What "Download Latest" will fetch, once ``loadLatestImageDetails()`` has
+    /// answered; `nil` until then, and after a lookup that failed.
+    ///
+    /// Display only, on the terms ``LatestRestoreImage`` states.
+    private(set) var latestImage: LatestRestoreImage?
+
+    /// How large ``latestImage`` is, when the server reported a size.
+    ///
+    /// A second read, so it can be absent while the version and build are
+    /// known; the wizard then names those alone.
+    private(set) var latestImageSizeBytes: UInt64?
+
+    /// The lookup in flight, so a second trigger joins it instead of starting
+    /// another.
+    private var latestImageTask: Task<Void, Never>?
 
     /// The last catalog pick, kept after the source moves off it so the version
     /// picker re-opens on it.
@@ -305,6 +327,47 @@ final class VMCreationViewModel {
     /// is `nil` when the bookmark could not be created.
     func selectLocalFile(path: String, bookmark: Data?) {
         ipswSelection = .localFile(path: path, bookmark: bookmark)
+    }
+
+    // MARK: - Latest Image Lookup
+
+    /// Looks up what "Download Latest" would fetch, so the wizard can name the
+    /// version, build and size that source otherwise leaves unsaid.
+    ///
+    /// Idempotent: calls while a lookup runs join it, calls after one succeeded
+    /// do nothing, and one that failed retries on the next call — a wizard the
+    /// user is walking through triggers this more than once. A failure is not
+    /// surfaced: the wizard names the download destination alone, which is what
+    /// it showed before the lookup existed.
+    ///
+    /// - Returns: the lookup to await for its result, or `nil` when the details
+    ///   are already known and nothing had to run.
+    @discardableResult
+    func loadLatestImageDetails() -> Task<Void, Never>? {
+        if let latestImageTask { return latestImageTask }
+        guard latestImage == nil else { return nil }
+        let ipswService = self.ipswService
+        let probeService = self.probeService
+        let task = Task { [weak self] in
+            defer { self?.latestImageTask = nil }
+            let image: LatestRestoreImage
+            do {
+                image = try await ipswService.fetchLatestRestoreImage()
+            } catch {
+                Self.logger.warning(
+                    "Could not look up the latest restore image: \(error.localizedDescription, privacy: .public)"
+                )
+                return
+            }
+            // The size is a separate request, and the version and build are
+            // worth showing without it.
+            let sizeBytes = try? await probeService.size(of: image.url)
+            guard let self else { return }
+            self.latestImage = image
+            self.latestImageSizeBytes = sizeBytes
+        }
+        latestImageTask = task
+        return task
     }
 
     // MARK: - Apply Defaults

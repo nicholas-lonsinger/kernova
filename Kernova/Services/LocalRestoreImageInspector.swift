@@ -27,7 +27,7 @@ struct LocalRestoreImageInspector: LocalRestoreImageInspecting {
 
         let version = image.operatingSystemVersion
         let inspected = InspectedRestoreImage(
-            version: Self.versionString(version),
+            version: MacOSVersion.displayString(version),
             build: image.buildVersion,
             isSupportedOnThisHost: image.mostFeaturefulSupportedConfiguration != nil
         )
@@ -35,12 +35,5 @@ struct LocalRestoreImageInspector: LocalRestoreImageInspecting {
             "Inspected local restore image: \(inspected.summary, privacy: .public), supported=\(inspected.isSupportedOnThisHost, privacy: .public)"
         )
         return inspected
-    }
-
-    /// Renders a version, dropping a zero patch the way Apple writes it.
-    static func versionString(_ version: OperatingSystemVersion) -> String {
-        version.patchVersion == 0
-            ? "\(version.majorVersion).\(version.minorVersion)"
-            : "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)"
     }
 }

@@ -4,12 +4,21 @@ import AppKit
 ///
 /// Read-only rows plus a "start after create" switch, built from a snapshot of
 /// the shared ``VMCreationViewModel``. The shell rebuilds this VC each time the
-/// review step is entered, so it always reflects current values; no intra-step
-/// observation is needed.
+/// review step is entered, so it always reflects current values; the only
+/// intra-step change is the latest-image lookup landing.
 @MainActor
 final class ReviewContentViewController: NSViewController {
     private let creationVM: VMCreationViewModel
     private let startSwitch = NSSwitch()
+    /// Rebuilt by ``rebuildSummary()`` when the latest-image lookup lands.
+    private let summary = NSStackView()
+    /// Redraws the rows once the model's latest-image lookup lands.
+    private var latestImageTask: Task<Void, Never>?
+
+    #if DEBUG
+    /// Awaited by tests instead of polling for the rows to be redrawn.
+    var latestImageTaskForTesting: Task<Void, Never>? { latestImageTask }
+    #endif
     /// Shows the "more content below" cue while this summary doesn't fit the
     /// sheet; a hint only.
     private var scrollMoreIndicator: ScrollMoreIndicator?
@@ -29,7 +38,12 @@ final class ReviewContentViewController: NSViewController {
         let subtitle = makeWizardSubtitle(
             "Review your virtual machine settings before creating it.")
 
-        let summary = makeSummary()
+        summary.orientation = .vertical
+        summary.alignment = .leading
+        summary.spacing = Spacing.standard
+        summary.translatesAutoresizingMaskIntoConstraints = false
+        rebuildSummary()
+
         let stack = NSStackView(views: [title, subtitle, summary])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -47,12 +61,49 @@ final class ReviewContentViewController: NSViewController {
         scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView)
     }
 
-    private func makeSummary() -> NSView {
-        let form = NSStackView()
-        form.orientation = .vertical
-        form.alignment = .leading
-        form.spacing = Spacing.standard
-        form.translatesAutoresizingMaskIntoConstraints = false
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        startLatestImageLookup()
+    }
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        // Only this VC's redraw is dropped: the lookup itself belongs to the
+        // model, so it still lands for the step shown next.
+        latestImageTask?.cancel()
+        latestImageTask = nil
+    }
+
+    /// Asks the model what "Download Latest" will fetch, and names it in the rows
+    /// when the answer lands.
+    ///
+    /// A user who reached this step before a slow lookup answered would otherwise
+    /// never see those rows. The model's lookup is idempotent, so this joins one
+    /// already running rather than starting a second, and retries one that failed
+    /// on an earlier step.
+    private func startLatestImageLookup() {
+        // The rows it fills in belong to this one source; every other source
+        // already names its image, and a Linux guest has none.
+        guard creationVM.selectedOS == .macOS, creationVM.ipswSource == .downloadLatest else {
+            return
+        }
+        guard latestImageTask == nil, let lookup = creationVM.loadLatestImageDetails() else {
+            return
+        }
+        latestImageTask = Task { [weak self] in
+            await lookup.value
+            guard let self, !Task.isCancelled else { return }
+            self.latestImageTask = nil
+            self.rebuildSummary()
+        }
+    }
+
+    /// Fills the summary in from the model, replacing whatever it already held.
+    private func rebuildSummary() {
+        for view in summary.arrangedSubviews {
+            summary.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
 
         addSection(
             "General",
@@ -60,7 +111,7 @@ final class ReviewContentViewController: NSViewController {
                 valueRow("Name", creationVM.vmName),
                 valueRow("Operating System", creationVM.selectedOS.displayName),
                 valueRow("Boot Mode", creationVM.effectiveBootMode.displayName),
-            ], to: form)
+            ], to: summary)
 
         addSection(
             "Resources",
@@ -68,17 +119,27 @@ final class ReviewContentViewController: NSViewController {
                 valueRow("CPU Cores", "\(creationVM.cpuCount)"),
                 valueRow("Memory", "\(creationVM.memoryInGB) GB"),
                 valueRow("Disk Size", DataFormatters.formatDiskSize(creationVM.diskSizeInGB)),
-            ], to: form)
+            ], to: summary)
 
         addSection(
             "Network",
-            rows: [valueRow("Networking", creationVM.networkEnabled ? "Enabled" : "Disabled")], to: form)
+            rows: [valueRow("Networking", creationVM.networkEnabled ? "Enabled" : "Disabled")], to: summary)
 
         if creationVM.selectedOS == .macOS {
             var rows: [NSView] = []
             switch creationVM.ipswSelection {
             case .downloadLatest:
                 rows.append(valueRow("Restore Image", "Download Latest"))
+                // Only once the lookup has answered — this source names no
+                // particular image on its own.
+                if let latest = creationVM.latestImage {
+                    rows.append(
+                        valueRow("macOS Version", "\(latest.version) (\(latest.build))"))
+                    if let sizeBytes = creationVM.latestImageSizeBytes {
+                        rows.append(
+                            valueRow("Download Size", DataFormatters.formatBytes(sizeBytes)))
+                    }
+                }
             case .catalogVersion(let entry):
                 rows.append(valueRow("Restore Image", "Chosen Version"))
                 rows.append(valueRow("macOS Version", "\(entry.version) (\(entry.build))"))
@@ -97,7 +158,7 @@ final class ReviewContentViewController: NSViewController {
                 rows.append(
                     valueRow("Save to", wizardAbbreviateWithTilde(creationVM.ipswDownloadPath)))
             }
-            addSection("Installation", rows: rows, to: form)
+            addSection("Installation", rows: rows, to: summary)
         }
 
         if creationVM.selectedOS == .linux {
@@ -108,20 +169,18 @@ final class ReviewContentViewController: NSViewController {
             if let path = creationVM.kernelPath {
                 rows.append(valueRow("Kernel", URL(fileURLWithPath: path).lastPathComponent))
             }
-            if !rows.isEmpty { addSection("Boot", rows: rows, to: form) }
+            if !rows.isEmpty { addSection("Boot", rows: rows, to: summary) }
         }
 
         startSwitch.controlSize = .small
         startSwitch.state = creationVM.startAfterCreate ? .on : .off
         startSwitch.target = self
         startSwitch.action = #selector(startToggled)
-        if let last = form.arrangedSubviews.last {
-            form.setCustomSpacing(18, after: last)
+        if let last = summary.arrangedSubviews.last {
+            summary.setCustomSpacing(18, after: last)
         }
         addCard(
-            [makeGroupedFormCardRow("Start this VM after creation", control: startSwitch)], to: form)
-
-        return form
+            [makeGroupedFormCardRow("Start this VM after creation", control: startSwitch)], to: summary)
     }
 
     /// Adds a section: a header followed by a grouped card of its rows.

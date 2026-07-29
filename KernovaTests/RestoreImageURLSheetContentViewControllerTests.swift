@@ -228,6 +228,11 @@ private final class SuspendingProbeService: RestoreImageProbing, @unchecked Send
         return probeResult
     }
 
+    /// Not exercised here: the sheet checks a URL, it never asks for a size alone.
+    func size(of url: URL) async throws -> UInt64 {
+        probeResult.sizeBytes
+    }
+
     /// Suspends until `probe` is in flight.
     func waitUntilProbing() async throws {
         try await gate.wait(until: { self.lock.withLock { self.isProbing } })
