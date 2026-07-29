@@ -57,6 +57,61 @@ struct ReviewContentViewControllerTests {
                 withText: DataFormatters.formatBytes(19_772_077_142), in: vc.view) != nil)
     }
 
+    @Test("A lookup landing after this step appears fills the version and size in")
+    func macOSDownloadFillsInLateLookup() async {
+        let probeService = MockRestoreImageProbeService()
+        probeService.sizeResult = 19_772_077_142
+        let vm = VMCreationViewModel(probeService: probeService, ipswService: MockIPSWService())
+
+        let vc = ReviewContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+        // Reaching the step ahead of the answer, as a slow or offline lookup does.
+        #expect(findLabel(withText: "26.5.2 (25F84)", in: vc.view) == nil)
+
+        vc.viewDidAppear()
+        await vc.latestImageTaskForTesting?.value
+
+        #expect(findLabel(withText: "26.5.2 (25F84)", in: vc.view) != nil)
+        #expect(
+            findLabel(
+                withText: DataFormatters.formatBytes(19_772_077_142), in: vc.view) != nil)
+        // The rows that were already there survive the redraw.
+        #expect(findLabel(withText: "Download Latest", in: vc.view) != nil)
+    }
+
+    @Test("A lookup that fails leaves the step showing the destination alone")
+    func macOSDownloadSurvivesFailedLookup() async {
+        let ipswService = MockIPSWService()
+        ipswService.fetchError = URLError(.notConnectedToInternet)
+        let vm = VMCreationViewModel(
+            probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+
+        let vc = ReviewContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        await vc.latestImageTaskForTesting?.value
+
+        #expect(findLabel(withText: "Download Latest", in: vc.view) != nil)
+        #expect(findLabel(withText: "macOS Version", in: vc.view) == nil)
+        #expect(
+            findLabel(withText: wizardAbbreviateWithTilde(vm.ipswDownloadPath), in: vc.view) != nil)
+    }
+
+    @Test("A Linux review never reaches for a restore image")
+    func linuxSkipsLatestImageLookup() {
+        let ipswService = MockIPSWService()
+        let vm = VMCreationViewModel(
+            probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+        vm.selectedOS = .linux
+
+        let vc = ReviewContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+
+        #expect(vc.latestImageTaskForTesting == nil)
+        #expect(ipswService.fetchCallCount == 0)
+    }
+
     @Test("macOS + local file shows the file basename")
     func macOSLocalFileShowsFile() {
         let vm = VMCreationViewModel()

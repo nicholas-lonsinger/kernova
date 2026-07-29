@@ -42,7 +42,11 @@ protocol RestoreImageProbing: Sendable {
     /// How large the file at `url` is, without downloading it or reading its
     /// structure.
     ///
-    /// The size half of ``probe(_:)``, on its own, for a URL whose contents are
-    /// already trusted — an image Virtualization itself named.
+    /// Holds the URL guarantees ``probe(_:)`` rests on, so both entry points
+    /// enforce them. A scheme other than `https` is refused with
+    /// ``RestoreImageProbeError/insecureURL`` before any request is issued, and a
+    /// server stating a length of zero with
+    /// ``RestoreImageProbeError/unknownSize`` — a returned size is always
+    /// greater than zero.
     func size(of url: URL) async throws -> UInt64
 }

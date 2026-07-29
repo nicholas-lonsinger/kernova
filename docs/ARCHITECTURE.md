@@ -184,7 +184,7 @@ calls `applyLiveRemovableMediaChange(for:target:)`.
   UI-framework dependency. Each macOS restore-image source is backed by an injected service
   protocol, so the wizard can name the version, build and size the source will install before
   anything is downloaded — including "Download Latest", which reaches `IPSWProviding` for what VZ
-  would resolve. The install re-resolves that image itself, so nothing shown here pins it.
+  would resolve.
 - `VMDirectoryWatcher` — a `DispatchSource` on the VMs directory that triggers reconciliation in
   `VMLibraryViewModel` when the library changes on disk.
 

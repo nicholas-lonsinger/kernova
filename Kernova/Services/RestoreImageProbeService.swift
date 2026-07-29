@@ -41,12 +41,9 @@ final class RestoreImageProbeService: RestoreImageProbing {
     }
 
     func probe(_ url: URL) async throws -> ProbedRestoreImage {
-        guard url.scheme?.lowercased() == "https" else {
-            throw RestoreImageProbeError.insecureURL
-        }
-
+        // `size(of:)` owns the HTTPS-only refusal and the non-zero floor.
         let sizeBytes = try await size(of: url)
-        guard sizeBytes > 0, let totalBytes = Int64(exactly: sizeBytes) else {
+        guard let totalBytes = Int64(exactly: sizeBytes) else {
             throw RestoreImageProbeError.unknownSize
         }
 
@@ -77,6 +74,10 @@ final class RestoreImageProbeService: RestoreImageProbing {
     /// non-2xx `HEAD` is not fatal: the one-byte ranged `GET`'s `Content-Range`
     /// settles the size, and its status settles whether the URL is live at all.
     func size(of url: URL) async throws -> UInt64 {
+        guard url.scheme?.lowercased() == "https" else {
+            throw RestoreImageProbeError.insecureURL
+        }
+
         var head = URLRequest(url: url)
         head.httpMethod = "HEAD"
         if let response = try await responseWithoutBody(for: head),
@@ -100,9 +101,13 @@ final class RestoreImageProbeService: RestoreImageProbing {
             throw RestoreImageProbeError.rangeRequestsUnsupported
         }
         // `Content-Range: bytes 0-0/19772077142` — the total is after the slash.
+        // A stated zero is refused here rather than returned: callers format the
+        // result as a download size, and `bytes 0-0/0` is a server that does not
+        // know the length, not a file with no bytes.
         guard let range = response.value(forHTTPHeaderField: "Content-Range"),
             let total = range.split(separator: "/").last,
-            let bytes = UInt64(total.trimmingCharacters(in: .whitespaces))
+            let bytes = UInt64(total.trimmingCharacters(in: .whitespaces)),
+            bytes > 0
         else {
             throw RestoreImageProbeError.unknownSize
         }

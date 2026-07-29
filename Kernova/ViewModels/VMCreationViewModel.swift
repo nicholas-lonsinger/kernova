@@ -111,9 +111,7 @@ final class VMCreationViewModel {
     /// What "Download Latest" will fetch, once ``loadLatestImageDetails()`` has
     /// answered; `nil` until then, and after a lookup that failed.
     ///
-    /// Display only. The install resolves the latest image itself when it
-    /// starts, so this pins nothing — which is why the source still promises no
-    /// particular build (see ``pinnedBuild``).
+    /// Display only, on the terms ``LatestRestoreImage`` states.
     private(set) var latestImage: LatestRestoreImage?
 
     /// How large ``latestImage`` is, when the server reported a size.
