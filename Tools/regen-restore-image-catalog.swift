@@ -45,7 +45,7 @@ let device = "VirtualMac2,1"
 let feedURL = requireURL(
     "https://mesu.apple.com/assets/macos/com_apple_macOSIPSW/com_apple_macOSIPSW.xml")
 let cdxURL = requireURL(
-    "http://web.archive.org/cdx/search/cdx?url=mesu.apple.com/assets/macos/"
+    "https://web.archive.org/cdx/search/cdx?url=mesu.apple.com/assets/macos/"
         + "com_apple_macOSIPSW/com_apple_macOSIPSW.xml&output=json&collapse=digest&fl=timestamp")
 
 /// Only these hosts may appear in a shipped URL.
@@ -53,24 +53,61 @@ let cdxURL = requireURL(
 /// A restore image comes from Apple or it does not ship.
 let allowedHosts: Set<String> = ["updates.cdn-apple.com", "mesu.apple.com"]
 
-/// A seed build number, such as `26A5388g`.
+/// The parts of a build number such as `24B2083`.
 ///
-/// Major, train letter, a 5-prefixed four-digit counter, and a lowercase
-/// revision. Release builds carry a shorter counter (`25G72`) or one that does
-/// not start with 5 (`24B2083`, the M4 spin of 15.1).
+/// The counter's thousands digit is what separates one macOS version's images
+/// from each other: mainline builds count from zero (`24B83`), a hardware
+/// spin counts from two thousand (`24B2083`, the M4 build of 15.1, which ships
+/// alongside `24B83` rather than replacing it), and a seed counts from five
+/// thousand and carries a revision letter (`26A5388g`).
+struct BuildNumber {
+    var major: Int
+    var train: String
+    var counter: Int
+    var revision: String
+
+    /// Which line of one macOS version this build belongs to.
+    var series: Int { counter / 1000 }
+}
+
+func parseBuild(_ build: String) -> BuildNumber? {
+    var rest = Substring(build)
+    let major = rest.prefix(while: \.isNumber)
+    rest = rest.dropFirst(major.count)
+    let train = rest.prefix(while: \.isUppercase)
+    rest = rest.dropFirst(train.count)
+    let counter = rest.prefix(while: \.isNumber)
+    let revision = rest.dropFirst(counter.count)
+    guard let major = Int(major), train.count == 1, let counter = Int(counter),
+        revision.allSatisfy(\.isLowercase)
+    else { return nil }
+    return BuildNumber(
+        major: major, train: String(train), counter: counter, revision: String(revision))
+}
+
+/// Orders two builds of one macOS version, newest first.
+func isNewer(_ a: BuildNumber, _ b: BuildNumber) -> Bool {
+    if a.major != b.major { return a.major > b.major }
+    if a.train != b.train { return a.train > b.train }
+    if a.counter != b.counter { return a.counter > b.counter }
+    return a.revision > b.revision
+}
+
+/// Orders two build strings, newest first: by parsed parts when both parse,
+/// as plain strings when either does not.
+func buildIsNewer(_ a: String, _ b: String) -> Bool {
+    guard let lhs = parseBuild(a), let rhs = parseBuild(b) else { return a > b }
+    return isNewer(lhs, rhs)
+}
+
+/// Whether a build is a seed, such as `26A5388g`.
 ///
 /// The URL is no help here. Apple served the *shipping* build of macOS 13.3
 /// (`22E252`) out of a `2023WinterSeed/` directory, so the path segment marks
 /// which release train produced the image, not whether it is a beta.
-let seedBuild: Regex<AnyRegexOutput> = {
-    guard let pattern = try? Regex(#"^\d+[A-Z]5\d{3}[a-z]$"#) else {
-        fail("seed-build pattern failed to compile")
-    }
-    return pattern
-}()
-
 func isSeed(_ build: String) -> Bool {
-    build.wholeMatch(of: seedBuild) != nil
+    guard let parsed = parseBuild(build) else { return false }
+    return parsed.series == 5 && !parsed.revision.isEmpty
 }
 
 let repoRoot = URL(
@@ -196,7 +233,7 @@ func isDescending(_ a: Candidate, _ b: Candidate) -> Bool {
         let r = i < rhs.count ? rhs[i] : 0
         if l != r { return l > r }
     }
-    return a.build > b.build
+    return buildIsNewer(a.build, b.build)
 }
 
 let session: URLSession = {
@@ -215,13 +252,18 @@ func get(_ url: URL) async -> Data? {
 /// Fetches a byte range.
 ///
 /// Apple's CDN honours `Range` on restore images, which is what makes the
-/// hardware-model check below cost kilobytes instead of gigabytes.
+/// hardware-model check below cost kilobytes instead of gigabytes. Only a 206
+/// is an answer: a 200 means the server ignored `Range` and is sending the
+/// whole multi-gigabyte body, which the caller would then read at offsets
+/// meant for a window of it.
 func getRange(_ url: URL, from offset: Int64, count: Int64) async -> [UInt8]? {
-    guard count > 0 else { return nil }
+    guard offset >= 0, count > 0 else { return nil }
+    let (last, overflowed) = offset.addingReportingOverflow(count - 1)
+    guard !overflowed else { return nil }
     var request = URLRequest(url: url)
-    request.setValue("bytes=\(offset)-\(offset + count - 1)", forHTTPHeaderField: "Range")
+    request.setValue("bytes=\(offset)-\(last)", forHTTPHeaderField: "Range")
     guard let (data, response) = try? await session.data(for: request),
-        let http = response as? HTTPURLResponse, http.statusCode == 206 || http.statusCode == 200
+        let http = response as? HTTPURLResponse, http.statusCode == 206
     else { return nil }
     return [UInt8](data)
 }
@@ -232,6 +274,18 @@ func readLE<T: FixedWidthInteger>(_ bytes: [UInt8], _ offset: Int, _ type: T.Typ
     var value: T = 0
     for i in (0..<width).reversed() { value = (value << 8) | T(bytes[offset + i]) }
     return value
+}
+
+/// Narrows a zip's 64-bit field to a byte position within an image of a known
+/// size, or nil when it does not name one.
+///
+/// Every value passed here was read at an offset a four-byte signature scan
+/// found in arbitrary compressed data, so one that overruns the image is how a
+/// coincidental match announces itself — and one above `Int64.max` would trap
+/// the conversion outright.
+func bounded(_ value: UInt64, atMost limit: Int64) -> Int64? {
+    guard limit >= 0, let position = Int64(exactly: value), position <= limit else { return nil }
+    return position
 }
 
 func lastIndex(of needle: [UInt8], in haystack: [UInt8]) -> Int? {
@@ -260,24 +314,35 @@ func supportsVirtualMachine(_ url: URL, totalBytes: Int64) async -> Bool? {
     let tailStart = max(0, totalBytes - window)
     guard let tail = await getRange(url, from: tailStart, count: totalBytes - tailStart),
         let eocd = lastIndex(of: [0x50, 0x4B, 0x05, 0x06], in: tail),
-        var directorySize = readLE(tail, eocd + 12, UInt32.self).map(Int64.init),
-        var directoryOffset = readLE(tail, eocd + 16, UInt32.self).map(Int64.init)
+        let eocdSize = readLE(tail, eocd + 12, UInt32.self),
+        let eocdOffset = readLE(tail, eocd + 16, UInt32.self)
     else { return nil }
 
     // Every one of these images exceeds 4 GB, so the real offsets live in the
-    // zip64 record the locator points at; the 32-bit fields above are sentinels.
+    // zip64 record the locator points at and the 32-bit fields above read
+    // 0xFFFFFFFF. That sentinel is a valid position inside a 20 GB image, so
+    // reading it as one asks Apple's CDN for 4 GB of arbitrary bytes and then
+    // decides `vma2` on them — a failed zip64 read has to end the attempt
+    // instead.
+    var directorySize = Int64(eocdSize)
+    var directoryOffset = Int64(eocdOffset)
     if let locator = lastIndex(of: [0x50, 0x4B, 0x06, 0x07], in: tail),
-        let zip64Offset = readLE(tail, locator + 8, UInt64.self),
-        let header = await getRange(url, from: Int64(zip64Offset), count: 64),
+        let rawRecord = readLE(tail, locator + 8, UInt64.self),
+        let record = bounded(rawRecord, atMost: totalBytes - 64),
+        let header = await getRange(url, from: record, count: 64),
         Array(header.prefix(4)) == [0x50, 0x4B, 0x06, 0x06],
-        let size = readLE(header, 40, UInt64.self),
-        let offset = readLE(header, 48, UInt64.self)
+        let rawSize = readLE(header, 40, UInt64.self),
+        let rawOffset = readLE(header, 48, UInt64.self),
+        let size = bounded(rawSize, atMost: totalBytes),
+        let offset = bounded(rawOffset, atMost: totalBytes - 1)
     {
-        directorySize = Int64(size)
-        directoryOffset = Int64(offset)
+        directorySize = size
+        directoryOffset = offset
+    } else if eocdSize == .max || eocdOffset == .max {
+        return nil
     }
 
-    guard directorySize > 0, directoryOffset >= 0,
+    guard directorySize > 0, directorySize <= totalBytes - directoryOffset,
         let directory = await getRange(url, from: directoryOffset, count: directorySize)
     else { return nil }
     return lastIndex(of: [UInt8]("vma2".utf8), in: directory) != nil
@@ -344,7 +409,7 @@ log("  \(replayed) snapshot(s) read, \(pool.count) distinct build(s) total")
 
 log("Reading the archive's index of Apple image URLs…")
 let indexURL = requireURL(
-    "http://web.archive.org/cdx/search/cdx?url=updates.cdn-apple.com*"
+    "https://web.archive.org/cdx/search/cdx?url=updates.cdn-apple.com*"
         + "&filter=original:.*UniversalMac.*Restore%5C.ipsw"
         + "&output=json&collapse=urlkey&fl=original")
 var indexed = 0
@@ -373,58 +438,149 @@ if let data = await get(indexURL),
 }
 log("  \(indexed) additional build(s) from the index, \(pool.count) distinct total")
 
-// MARK: - 4. Verify every candidate against Apple
+// MARK: - 4. Verify each release line against Apple
+
+// The index in step 3 hands back every image URL a crawler ever saw, so one
+// macOS version can arrive as several builds Apple replaced within days of
+// each other. Nothing in a picker distinguishes them, so only one build of a
+// line ships — except where the counter's series marks a hardware spin, which
+// Apple ships alongside the mainline build rather than after it. Each line is
+// probed newest build first and stops at the first that verifies: everything
+// older is superseded without a request, and every request not sent is one
+// fewer chance for a throttle to end the run.
+
+/// Which builds are candidates to replace each other: one macOS version, one
+/// release train, one counter series.
+func releaseLine(version: String, build: String) -> String {
+    guard let parsed = parseBuild(build) else { return "\(version)/\(build)" }
+    return "\(version)/\(parsed.major)\(parsed.train)/\(parsed.series)"
+}
+
+var lineIndex: [String: Int] = [:]
+var releaseLines: [[Candidate]] = []
+for candidate in pool.values.sorted(by: isDescending) {
+    let line = releaseLine(version: candidate.version, build: candidate.build)
+    if let index = lineIndex[line] {
+        releaseLines[index].append(candidate)
+    } else {
+        lineIndex[line] = releaseLines.count
+        releaseLines.append([candidate])
+    }
+}
 
 log("Verifying each image against Apple's CDN…")
 var images: [Image] = []
-var rejected: [(String, String)] = []
+/// Apple answered, and the answer was no.
+var declined: [(String, String)] = []
+/// Apple did not answer, so this run has nothing to say about the build.
+var unanswered: [(String, String)] = []
+/// Older than a verified build of the same line, so never asked about.
+var superseded: [(String, String)] = []
+var supersededBuilds: Set<String> = []
 
-for candidate in pool.values.sorted(by: isDescending) {
-    guard candidate.url.scheme == "https",
-        let host = candidate.url.host, allowedHosts.contains(host)
-    else {
-        rejected.append(("\(candidate.version) (\(candidate.build))", "not an Apple HTTPS URL"))
-        continue
-    }
-    var request = URLRequest(url: candidate.url)
-    request.httpMethod = "HEAD"
-    guard let (_, response) = try? await session.data(for: request),
-        let http = response as? HTTPURLResponse
-    else {
-        rejected.append(("\(candidate.version) (\(candidate.build))", "no response"))
-        continue
-    }
-    guard http.statusCode == 200 else {
-        rejected.append(("\(candidate.version) (\(candidate.build))", "HTTP \(http.statusCode)"))
-        continue
-    }
-    let size = http.expectedContentLength
-    guard size > 0 else {
-        rejected.append(("\(candidate.version) (\(candidate.build))", "no content length"))
-        continue
-    }
-    switch await supportsVirtualMachine(candidate.url, totalBytes: size) {
-    case .some(true):
-        break
-    case .some(false):
-        rejected.append(("\(candidate.version) (\(candidate.build))", "no virtual-machine hardware model"))
-        continue
-    case nil:
-        rejected.append(("\(candidate.version) (\(candidate.build))", "could not read hardware models"))
-        continue
-    }
-    images.append(
-        Image(
+for line in releaseLines {
+    var shipped: Image?
+    for candidate in line {
+        let label = "\(candidate.version) (\(candidate.build))"
+        if let shipped {
+            superseded.append((label, "replaced by \(shipped.build)"))
+            supersededBuilds.insert(candidate.build)
+            continue
+        }
+        guard candidate.url.scheme == "https",
+            let host = candidate.url.host, allowedHosts.contains(host)
+        else {
+            declined.append((label, "not an Apple HTTPS URL"))
+            continue
+        }
+        var request = URLRequest(url: candidate.url)
+        request.httpMethod = "HEAD"
+        guard let (_, response) = try? await session.data(for: request),
+            let http = response as? HTTPURLResponse
+        else {
+            unanswered.append((label, "no response"))
+            continue
+        }
+        guard http.statusCode == 200 else {
+            // A 404 or 403 is Apple saying the image is gone. A 5xx or a
+            // throttle is Apple saying nothing.
+            let reason = "HTTP \(http.statusCode)"
+            if (400..<500).contains(http.statusCode) && http.statusCode != 429 {
+                declined.append((label, reason))
+            } else {
+                unanswered.append((label, reason))
+            }
+            continue
+        }
+        let size = http.expectedContentLength
+        guard size > 0 else {
+            unanswered.append((label, "no content length"))
+            continue
+        }
+        switch await supportsVirtualMachine(candidate.url, totalBytes: size) {
+        case .some(true):
+            break
+        case .some(false):
+            declined.append((label, "no virtual-machine hardware model"))
+            continue
+        case nil:
+            unanswered.append((label, "could not read hardware models"))
+            continue
+        }
+        shipped = Image(
             version: candidate.version, build: candidate.build, url: candidate.url,
             sizeBytes: size,
             lastModified: http.value(forHTTPHeaderField: "Last-Modified"),
-            source: candidate.source, snapshot: candidate.snapshot))
+            source: candidate.source, snapshot: candidate.snapshot)
+    }
+    if let shipped { images.append(shipped) }
 }
 
-// MARK: - 4. Emit
+// MARK: - 5. Refuse to publish a run that lost images
+
+// An unreachable Apple leaves candidates unverified rather than erroring, so a
+// run that lost its network and a macOS release Apple withdrew look alike from
+// here: both just produce a shorter catalog. A build Apple never answered for
+// therefore stops the run, and dropping a published build that no newer build
+// superseded needs KERNOVA_CATALOG_ALLOW_SHRINK=1. Images do get withdrawn —
+// never silently.
+
+let allowShrink = ProcessInfo.processInfo.environment["KERNOVA_CATALOG_ALLOW_SHRINK"] == "1"
+
+guard unanswered.isEmpty else {
+    for (version, reason) in unanswered { log("  \(version) — \(reason)") }
+    fail(
+        "\(unanswered.count) image(s) gave no verdict — this run cannot say what Apple serves, "
+            + "so \(outputURL.lastPathComponent) is left as it is")
+}
+guard !images.isEmpty else { fail("no image verified against Apple — nothing to write") }
+
+var previousBuilds: Set<String> = []
+if FileManager.default.fileExists(atPath: outputURL.path(percentEncoded: false)) {
+    guard let existing = try? Data(contentsOf: outputURL),
+        let decoded = try? JSONSerialization.jsonObject(with: existing),
+        let object = decoded as? [String: Any],
+        let rows = object["images"] as? [[String: Any]],
+        rows.allSatisfy({ $0["build"] is String })
+    else {
+        fail(
+            "the published \(outputURL.lastPathComponent) exists but does not parse as a "
+                + "catalog — refusing to replace a file this run cannot compare against")
+    }
+    previousBuilds = Set(rows.compactMap { $0["build"] as? String })
+}
+let lost = previousBuilds.subtracting(images.map(\.build)).subtracting(supersededBuilds)
+guard lost.isEmpty || allowShrink else {
+    fail(
+        "published build(s) \(lost.sorted().joined(separator: ", ")) neither verified nor were "
+            + "superseded — rerun with KERNOVA_CATALOG_ALLOW_SHRINK=1 if Apple really did "
+            + "withdraw them")
+}
+
+// MARK: - 6. Emit
 
 let stamp = ISO8601DateFormatter().string(from: Date()).prefix(10)
-var payload: [String: Any] = [
+let payload: [String: Any] = [
     "device": device,
     "generatedAt": String(stamp),
     "images": images.map { image -> [String: Any] in
@@ -434,14 +590,12 @@ var payload: [String: Any] = [
             "url": image.url.absoluteString,
             "sizeBytes": image.sizeBytes,
             "source": image.source,
-            "verifiedAt": String(stamp),
         ]
         if let lastModified = image.lastModified { row["lastModified"] = lastModified }
         if let snapshot = image.snapshot { row["snapshot"] = snapshot }
         return row
     },
 ]
-payload["imageCount"] = images.count
 
 let json = try JSONSerialization.data(
     withJSONObject: payload, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
@@ -449,7 +603,7 @@ try FileManager.default.createDirectory(
     at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 try json.write(to: outputURL, options: .atomic)
 
-// MARK: - 5. Report
+// MARK: - 7. Report
 
 log("")
 log("Wrote \(outputURL.path)")
@@ -458,8 +612,9 @@ for source in ["apple-live", "apple-archived", "apple-indexed"] {
     log("  \(source.padding(toLength: 22, withPad: " ", startingAt: 0))\(count)")
 }
 log("  ──────────────────────────")
-log("  verified against Apple \(images.count)")
-if !rejected.isEmpty {
-    log("  not shipped            \(rejected.count)")
-    for (version, reason) in rejected { log("      \(version) — \(reason)") }
+log("  shipped                \(images.count)")
+for (heading, entries) in [("superseded", superseded), ("not shipped", declined)]
+where !entries.isEmpty {
+    log("  \(heading.padding(toLength: 22, withPad: " ", startingAt: 0)) \(entries.count)")
+    for (version, reason) in entries { log("      \(version) — \(reason)") }
 }
