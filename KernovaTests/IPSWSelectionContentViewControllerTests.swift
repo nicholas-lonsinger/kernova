@@ -136,6 +136,65 @@ struct IPSWSelectionContentViewControllerTests {
         #expect(findButton(titled: "Download & Replace", in: vc.view) == nil)
     }
 
+    @Test("Switching install source clears a stale mismatch banner")
+    func sourceSwitchClearsMismatchBanner() async {
+        let path = makeTempIPSW()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "14.2", build: "23C64", isSupportedOnThisHost: true)
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
+        vm.selectCatalogEntry(entry)
+        vm.ipswDownloadPath = path
+
+        let vc = IPSWSelectionContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+        findButton(titled: "Use Existing File", in: vc.view)?.performClick(nil)
+        await vc.adoptTaskForTesting?.value
+        #expect(findButton(titled: "Use It Anyway", in: vc.view) != nil)
+
+        // Clicking another source drops the verdict, so the button that would
+        // adopt the file that verdict described has to go with it.
+        radio(titled: "Choose Local File…", in: vc.view)?.performClick(nil)
+
+        #expect(findButton(titled: "Use It Anyway", in: vc.view) == nil)
+        #expect(vm.ipswSelection == .catalogVersion(entry))
+        #expect(radio(titled: "Choose a Version…", in: vc.view)?.state == .on)
+        #expect(radio(titled: "Choose Local File…", in: vc.view)?.state == .off)
+    }
+
+    @Test("Switching install source clears a stale checking banner")
+    func sourceSwitchClearsCheckingBanner() async throws {
+        let path = makeTempIPSW()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let inspector = SuspendingMockLocalRestoreImageInspector()
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.ipswDownloadPath = path
+
+        let vc = IPSWSelectionContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+        findButton(titled: "Use Existing File", in: vc.view)?.performClick(nil)
+        let inFlight = try #require(vc.adoptTaskForTesting)
+        try await inspector.waitUntilInspecting()
+        #expect(findLabelContaining("Checking the file already", in: vc.view) != nil)
+
+        // The switch cancels the check, so its banner would never resolve on its
+        // own — and while it shows it hides the only controls that clear the
+        // overwrite warning blocking Next.
+        radio(titled: "Choose a Version…", in: vc.view)?.performClick(nil)
+
+        #expect(findLabelContaining("Checking the file already", in: vc.view) == nil)
+        #expect(findButton(titled: "Use Existing File", in: vc.view) != nil)
+        #expect(findButton(titled: "Download & Replace", in: vc.view) != nil)
+
+        inspector.release()
+        await inFlight.value
+        #expect(vm.ipswSelection == .downloadLatest)
+    }
+
     // MARK: - Helpers
 
     @MainActor

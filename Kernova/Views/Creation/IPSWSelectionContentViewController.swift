@@ -137,16 +137,16 @@ final class IPSWSelectionContentViewController: NSViewController {
             refresh()
         case .catalogVersion:
             // Same deferred-commit rule as Choose Local File below.
-            updateRadioSelection()
+            refresh()
             selectCatalogVersion()
         case .customURL:
-            updateRadioSelection()
+            refresh()
             selectPastedURL()
         case .localFile:
-            // Selection only commits when the user actually picks a file. Re-sync
-            // the radios to the (still-current) model so the just-clicked radio
-            // doesn't stay selected if the picker is cancelled, then open it.
-            updateRadioSelection()
+            // Selection only commits when the user actually picks a file. Re-render
+            // from the (still-current) model so the just-clicked radio doesn't stay
+            // selected if the picker is cancelled, then open it.
+            refresh()
             selectIPSWFile()
         }
     }
