@@ -320,9 +320,11 @@ final class IPSWSelectionContentViewController: NSViewController {
         adoptTask = Task { [weak self] in
             guard let self else { return }
             let verdict = await self.creationVM.adoptExistingDownloadFile()
-            guard !Task.isCancelled else { return }
-            self.adoptTask = nil
             switch verdict {
+            case .cancelled:
+                // The canceller dropped this task and the notice already, and a
+                // later click may own `adoptTask` by now — so touch neither.
+                return
             case .adopted:
                 self.existingFileNotice = nil
             case .mismatch(let expected, let found):
@@ -330,6 +332,7 @@ final class IPSWSelectionContentViewController: NSViewController {
             case .unusable(let message):
                 self.existingFileNotice = .unusable(message: message)
             }
+            self.adoptTask = nil
             self.refresh()
         }
     }

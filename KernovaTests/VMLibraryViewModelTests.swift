@@ -834,8 +834,15 @@ struct VMLibraryViewModelTests {
         return vm
     }
 
-    @Test("deleteConfirmed discards the IPSW resume-data sidecar")
-    func deleteConfirmedDiscardsResumeData() {
+    @Test(
+        "deleteConfirmed discards the IPSW resume-data sidecar",
+        arguments: [
+            MacOSInstallContext.Source.downloadLatest, .catalogVersion, .customURL,
+        ]
+    )
+    func deleteConfirmedDiscardsResumeData(source: MacOSInstallContext.Source) {
+        // Every source that downloads its image leaves a partial bundle at
+        // `downloadDestinationPath`, so deleting the VM has to discard it.
         let ipswService = MockIPSWService()
         let storage = MockVMStorageService()
         let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
@@ -844,7 +851,7 @@ struct VMLibraryViewModelTests {
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-RestoreImage.ipsw")
         instance.configuration.installContext = MacOSInstallContext(
-            source: .downloadLatest,
+            source: source,
             downloadDestinationPath: destination.path(percentEncoded: false)
         )
         viewModel.instances.append(instance)
@@ -886,6 +893,30 @@ struct VMLibraryViewModelTests {
         #expect(ipswService.lastDiscardResumeDataPermanently == true)
         #expect(storage.permanentlyDeleteVMBundleCallCount == 1)
         #expect(viewModel.instances.isEmpty)
+    }
+
+    @Test("deleteConfirmed leaves resume-data alone for a local-file install")
+    func deleteConfirmedNoResumeDataForLocalFileSource() {
+        let ipswService = MockIPSWService()
+        let storage = MockVMStorageService()
+        let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
+
+        let instance = makeInstance()
+        // A destination path is set so the source — not a nil destination — is
+        // what keeps the cleanup from firing.
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-RestoreImage.ipsw")
+        instance.configuration.installContext = MacOSInstallContext(
+            source: .localFile,
+            downloadDestinationPath: destination.path(percentEncoded: false),
+            localIPSWPath: "/tmp/UserPicked.ipsw"
+        )
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        viewModel.deleteConfirmed(instance)
+
+        #expect(ipswService.discardResumeDataCallCount == 0)
     }
 
     @Test("deleteConfirmed leaves resume-data alone when VM has no install context")

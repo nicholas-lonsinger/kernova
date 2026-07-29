@@ -14,17 +14,9 @@ struct ProbedRestoreImage: Sendable, Equatable {
     /// Apple build parsed from the filename, e.g. `"24G90"`.
     var build: String?
 
-    /// The filename the download lands on, taken from the URL.
-    ///
-    /// Per-image rather than a fixed name for the same reason a catalog pick is:
-    /// a shared filename lets an already-downloaded image of a different version
-    /// satisfy the download step.
+    /// The filename the download lands on, derived from ``url``.
     var suggestedFilename: String {
-        let candidate = url.lastPathComponent
-        guard candidate.lowercased().hasSuffix(".ipsw"), !candidate.hasPrefix(".") else {
-            return "RestoreImage.ipsw"
-        }
-        return candidate
+        RestoreImageFilename.destination(for: url)
     }
 
     /// Version and build as one phrase, or a fallback when the filename did not
@@ -41,20 +33,9 @@ struct ProbedRestoreImage: Sendable, Equatable {
     /// Whether the parsed version is at most `host`.
     ///
     /// `nil` when the filename yielded no version — the answer is unknown, which
-    /// is not the same as a "no". Virtualization refuses a guest newer than the
-    /// host, but it only says so once the image is on disk.
+    /// is not the same as a "no".
     func isSupported(onHost host: OperatingSystemVersion) -> Bool? {
-        guard let version else { return nil }
-        let parsed = version.split(separator: ".").map { Int($0) }
-        guard !parsed.isEmpty, !parsed.contains(nil) else { return nil }
-        var components = parsed.compactMap { $0 }
-        while components.count < 3 { components.append(0) }
-        let hostComponents = [host.majorVersion, host.minorVersion, host.patchVersion]
-        for (guestPart, hostPart) in zip(components.prefix(3), hostComponents)
-        where guestPart != hostPart {
-            return guestPart < hostPart
-        }
-        return true
+        version.flatMap(MacOSVersion.init)?.isSupported(onHost: host)
     }
 
     /// Reads version and build out of Apple's restore-image filename.

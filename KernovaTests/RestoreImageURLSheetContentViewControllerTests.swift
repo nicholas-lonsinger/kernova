@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
@@ -8,7 +9,7 @@ import Testing
 @MainActor
 struct RestoreImageURLSheetContentViewControllerTests {
     private func makeSheet(
-        probe: MockRestoreImageProbeService,
+        probe: any RestoreImageProbing,
         initialURL: String? = nil,
         hostMajor: Int = 26
     ) -> RestoreImageURLSheetContentViewController {
@@ -151,6 +152,30 @@ struct RestoreImageURLSheetContentViewControllerTests {
         #expect(findButton(titled: "Use", in: vc.view)?.isEnabled == false)
     }
 
+    @Test("Editing the URL invalidates a probe still in flight")
+    func editingCancelsTheInFlightProbe() async throws {
+        let probe = SuspendingProbeService()
+        let vc = makeSheet(probe: probe, initialURL: "https://example.com/A.ipsw")
+
+        findButton(titled: "Check", in: vc.view)?.performClick(nil)
+        let inFlight = try #require(vc.probeTaskForTesting)
+        try await probe.waitUntilProbing()
+
+        let field = try #require(findTextField(in: vc.view))
+        field.stringValue = "https://example.com/B.ipsw"
+        vc.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        probe.release()
+        await inFlight.value
+
+        // A's answer must not become B's verdict.
+        #expect(vc.checkedImage == nil)
+        #expect(findButton(titled: "Use", in: vc.view)?.isEnabled == false)
+        #expect(findLabel(containing: "Installs in a virtual machine", in: vc.view) == nil)
+        // Back to idle, so the edited URL can be checked in turn.
+        #expect(findLabel(containing: "Reading the image directory", in: vc.view) == nil)
+        #expect(findButton(titled: "Check", in: vc.view)?.isEnabled == true)
+    }
+
     // MARK: - Helpers
 
     private final class RecordingDelegate: RestoreImageURLSheetContentViewControllerDelegate {
@@ -184,5 +209,33 @@ struct RestoreImageURLSheetContentViewControllerTests {
             if let found = findTextField(in: subview) { return found }
         }
         return nil
+    }
+}
+
+/// Probe stand-in that stays inside `probe` until the test releases it, the way
+/// the real one stays busy across several round trips.
+private final class SuspendingProbeService: RestoreImageProbing, @unchecked Sendable {
+    private let probeResult = makeProbedImage()
+    private let gate = AsyncGate()
+    private let lock = NSLock()
+    private var isProbing = false
+    private var isReleased = false
+
+    func probe(_ url: URL) async throws -> ProbedRestoreImage {
+        lock.withLock { self.isProbing = true }
+        gate.notify()
+        try? await gate.wait(until: { self.lock.withLock { self.isReleased } })
+        return probeResult
+    }
+
+    /// Suspends until `probe` is in flight.
+    func waitUntilProbing() async throws {
+        try await gate.wait(until: { self.lock.withLock { self.isProbing } })
+    }
+
+    /// Lets the in-flight probe finish.
+    func release() {
+        lock.withLock { self.isReleased = true }
+        gate.notify()
     }
 }

@@ -85,7 +85,8 @@ final class VMCreationViewModel {
     private(set) var pastedImage: ProbedRestoreImage?
     /// Always inside Downloads — there is no custom-destination picker.
     ///
-    /// The filename is Apple's for a catalog pick, `RestoreImage.ipsw` otherwise.
+    /// A pinned pick names the file through ``RestoreImageFilename``;
+    /// "Download Latest" keeps the fixed default.
     var ipswDownloadPath: String = VMCreationViewModel.defaultIPSWDownloadPath {
         didSet {
             if ipswDownloadPath != confirmedOverwritePath {
@@ -228,7 +229,7 @@ final class VMCreationViewModel {
     // MARK: - Defaults
 
     static var defaultIPSWDownloadPath: String {
-        downloadPath(forFilename: "RestoreImage.ipsw")
+        downloadPath(forFilename: RestoreImageFilename.fallback)
     }
 
     /// The Downloads path for a given IPSW filename.
@@ -237,6 +238,10 @@ final class VMCreationViewModel {
     /// home-relative layout: under the sandbox this resolves through the
     /// container's `Downloads` symlink, which the downloads.read-write
     /// entitlement covers — no save panel or bookmark needed.
+    ///
+    /// `filename` must be one path component: callers derive it through
+    /// ``RestoreImageFilename``, which is what keeps a URL-supplied name from
+    /// walking out of Downloads.
     static func downloadPath(forFilename filename: String) -> String {
         guard
             let downloads = FileManager.default.urls(
@@ -417,6 +422,9 @@ final class VMCreationViewModel {
         case mismatch(expected: String, found: InspectedRestoreImage)
         /// Not adoptable at all; the message is user-facing.
         case unusable(message: String)
+        /// The caller cancelled while the inspection ran; nothing was changed,
+        /// and the verdict describes a destination the wizard may have left.
+        case cancelled
     }
 
     /// Checks the file sitting at the download destination, and adopts it only
@@ -426,17 +434,23 @@ final class VMCreationViewModel {
     /// that is a *valid but different* macOS installs silently — the same
     /// wrong-image failure the per-build destination fixes for downloads, which
     /// a stale or hand-placed file reintroduces.
+    ///
+    /// Reading a multi-gigabyte image takes seconds, in which the user can pick
+    /// another source or leave the step: a cancelled call returns
+    /// ``ExistingFileVerdict/cancelled`` having changed nothing.
     func adoptExistingDownloadFile() async -> ExistingFileVerdict {
         let url = URL(fileURLWithPath: ipswDownloadPath)
         let inspected: InspectedRestoreImage
         do {
             inspected = try await localImageInspector.inspect(url)
         } catch {
+            if Task.isCancelled { return .cancelled }
             let message =
                 (error as? LocalRestoreImageError)?.errorDescription
                 ?? LocalRestoreImageError.unreadable.errorDescription
             return .unusable(message: message ?? "That file isn't a usable restore image.")
         }
+        if Task.isCancelled { return .cancelled }
 
         guard inspected.isSupportedOnThisHost else {
             return .unusable(

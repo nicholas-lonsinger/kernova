@@ -123,8 +123,7 @@ install.)
    set `KERNOVA_CATALOG_CACHE` to a directory to keep repeat runs off the
    Internet Archive. Commit the result when it changes — an unchanged input
    reproduces the file byte for byte, so a no-op diff means there is nothing
-   new. There is deliberately no CI drift check: Apple ships on its own
-   schedule, so the file is expected to age between releases.
+   new.
 3. **Archive.** In Xcode, select the **Kernova** scheme, then **Product →
    Archive** (archiving builds Release).
 4. **Confirm the archive type.** In the Organizer, verify the new archive

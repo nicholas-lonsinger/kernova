@@ -399,13 +399,14 @@ final class RestoreImageURLSheetContentViewController: NSViewController {
 // MARK: - NSTextFieldDelegate
 
 extension RestoreImageURLSheetContentViewController: NSTextFieldDelegate {
-    /// Editing the URL invalidates the previous verdict, so a stale "Use"
-    /// can't commit an image that isn't the one in the field.
+    /// Editing the URL invalidates the previous verdict and any probe still
+    /// running to produce one, so a stale "Use" can't commit an image that
+    /// isn't the one in the field.
     func controlTextDidChange(_ obj: Notification) {
-        if checkedImage != nil {
-            checkedImage = nil
-            setResult([])
-        }
+        probeTask?.cancel()
+        probeTask = nil
+        checkedImage = nil
+        setResult([])
         updateControls()
     }
 }

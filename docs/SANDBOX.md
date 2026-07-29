@@ -11,7 +11,7 @@ Everything `Kernova/Resources/Kernova.entitlements` claims:
 | Entitlement | Why it is needed |
 |---|---|
 | `com.apple.security.app-sandbox` | Mac App Store eligibility |
-| `com.apple.security.network.client` | Sole network use: `IPSWService`'s macOS restore-image downloads from Apple's CDN |
+| `com.apple.security.network.client` | Sole network use: macOS restore-image traffic — `IPSWService` downloads and `RestoreImageProbeService`'s ranged probe of a user-supplied URL |
 | `com.apple.security.files.user-selected.read-write` | Powerbox grants from open/save panels — disk images, ISOs, shared folders, Linux kernel/initrd, local IPSWs |
 | `com.apple.security.files.downloads.read-write` | The fixed IPSW download destination in `~/Downloads` and its `.kernovadownload` resume sidecar |
 | `com.apple.security.files.bookmarks.app-scope` | Persisting those panel grants across launches |

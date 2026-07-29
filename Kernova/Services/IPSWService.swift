@@ -41,12 +41,64 @@ final class IPSWService: Sendable {
     /// ETag / Last-Modified used for `If-Range`. The bundle is preserved for a
     /// later resume on any failure, cancellation included (which throws
     /// `CancellationError`). A completed IPSW with no bundle beside it is skipped.
+    ///
+    /// Calls are serialized per destination: two VMs pinned to the same image
+    /// share one path and one bundle, so a second caller waits for the download
+    /// already streaming there and then skips over the image it finished.
+    ///
+    /// `discardsExistingDownload` honors a "Download & Replace": the image and
+    /// bundle at the destination are trashed first, inside the claim, so the
+    /// disposal cannot reach bytes another caller is streaming into them.
     func downloadRestoreImage(
         from remoteURL: URL,
         to destinationURL: URL,
+        discardsExistingDownload: Bool = false,
         progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
     ) async throws {
-        Self.logger.info("Downloading restore image from \(remoteURL, privacy: .public)")
+        let key = destinationURL.standardizedFileURL.path(percentEncoded: false)
+        var discardsExisting = discardsExistingDownload
+        while true {
+            try Task.checkCancellation()
+            let discards = discardsExisting
+            let claim = await Self.claimDownload(forKey: key) { [self] in
+                try await performDownload(
+                    from: remoteURL, to: destinationURL, discardsExistingDownload: discards,
+                    progressHandler: progressHandler)
+            }
+            guard claim.isOwner else {
+                Self.logger.notice(
+                    "A download to '\(destinationURL.lastPathComponent, privacy: .public)' is already running — waiting for it to finish"
+                )
+                // That download's failure is its own caller's to report; this one
+                // loops and downloads, resuming from whatever bytes landed. What
+                // it landed is this call's image too — same destination, same
+                // pinned URL — so there is nothing stale left to replace.
+                _ = try? await claim.task.value
+                discardsExisting = false
+                continue
+            }
+            try await withTaskCancellationHandler {
+                try await claim.task.value
+            } onCancel: {
+                claim.task.cancel()
+            }
+            return
+        }
+    }
+
+    /// Runs one download, with this destination already reserved by the caller.
+    private func performDownload(
+        from remoteURL: URL,
+        to destinationURL: URL,
+        discardsExistingDownload: Bool,
+        progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
+    ) async throws {
+        Self.logger.info(
+            "Downloading restore image from \(Self.loggableURL(remoteURL), privacy: .public)")
+
+        if discardsExistingDownload {
+            try discardExistingImage(at: destinationURL)
+        }
 
         let bundleURL = Self.resumeBundleURL(for: destinationURL)
         let bundle = IPSWBundle(url: bundleURL)
@@ -207,7 +259,7 @@ final class IPSWService: Sendable {
 
         if metadata.originalURL != remoteURL {
             Self.logger.notice(
-                "Bundle URL '\(metadata.originalURL, privacy: .public)' ≠ requested '\(remoteURL, privacy: .public)' — discarding stale bundle"
+                "Bundle URL '\(Self.loggableURL(metadata.originalURL), privacy: .public)' ≠ requested '\(Self.loggableURL(remoteURL), privacy: .public)' — discarding stale bundle"
             )
             try? FileManager.default.removeItem(at: bundleURL)
             return nil
@@ -217,6 +269,30 @@ final class IPSWService: Sendable {
             "Resuming prior IPSW download from bundle at '\(bundleURL.lastPathComponent, privacy: .public)' (\(bundle.partialByteCount, privacy: .public) bytes on disk)"
         )
         return metadata
+    }
+
+    /// Trashes the image at `destinationURL` and any partial bundle beside it.
+    ///
+    /// Trashing the completed image is a hard failure: the skip-existing fast
+    /// path would otherwise hand back the very file the caller asked to replace.
+    /// Losing the partial bundle is not — it goes to the Trash on a best-effort
+    /// basis, restorable by the user either way.
+    private func discardExistingImage(at destinationURL: URL) throws {
+        let path = destinationURL.path(percentEncoded: false)
+        if fileSystem.fileExists(atPath: path) {
+            do {
+                try fileSystem.trashItem(at: destinationURL)
+            } catch {
+                Self.logger.error(
+                    "Failed to trash existing IPSW at '\(path, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
+                throw IPSWError.freshDownloadCleanupFailed(path: path, underlying: error)
+            }
+            Self.logger.notice(
+                "Trashed the existing IPSW at '\(destinationURL.lastPathComponent, privacy: .public)' for a fresh download"
+            )
+        }
+        discardResumeData(at: destinationURL)
     }
 
     /// Discards the `.kernovadownload` bundle for the given destination, if present.
@@ -260,7 +336,53 @@ final class IPSWService: Sendable {
         destinationURL.deletingPathExtension().appendingPathExtension("kernovadownload")
     }
 
+    // MARK: - Destination Serialization
+
+    /// Downloads currently streaming, keyed by standardized destination path.
+    ///
+    /// A destination's `.kernovadownload` bundle takes one writer at a time: the
+    /// truncate / append / move sequence produces a corrupt image when two
+    /// downloads to the same path interleave. Keyed by path rather than held per
+    /// instance because the contended resource is the file, not the service.
+    @MainActor private static var inFlightDownloads: [String: Task<Void, any Error>] = [:]
+
+    /// Hands back the download already streaming to `key`, or starts `operation`
+    /// as the one that owns it.
+    ///
+    /// Synchronous on the MainActor, so no second caller can look up an empty
+    /// slot and fill it in between. The task clears its own slot before it
+    /// finishes, so a waiter that sees it complete finds the slot free.
+    @MainActor
+    private static func claimDownload(
+        forKey key: String,
+        operation: @Sendable @escaping () async throws -> Void
+    ) -> (task: Task<Void, any Error>, isOwner: Bool) {
+        if let existing = inFlightDownloads[key] { return (existing, false) }
+        let task = Task<Void, any Error> {
+            defer { inFlightDownloads[key] = nil }
+            try await operation()
+        }
+        inFlightDownloads[key] = task
+        return (task, true)
+    }
+
     // MARK: - Helpers
+
+    /// Renders a remote URL for logging as scheme, host, port and path only.
+    ///
+    /// A user-supplied restore-image URL can carry pre-signed credentials in its
+    /// query or userinfo (S3 and CloudFront signatures), which the unified log
+    /// would otherwise persist.
+    static func loggableURL(_ url: URL) -> String {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url.lastPathComponent
+        }
+        components.user = nil
+        components.password = nil
+        components.query = nil
+        components.fragment = nil
+        return components.string ?? url.lastPathComponent
+    }
 
     /// Issues a GET (with optional `Range` / `If-Range` headers) and returns the
     /// response plus a stream of `Data` chunks delivered by URLSession.

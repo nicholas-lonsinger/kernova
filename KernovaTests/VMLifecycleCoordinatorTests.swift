@@ -5,12 +5,11 @@ import Foundation
 @Suite("VMLifecycleCoordinator Tests")
 @MainActor
 struct VMLifecycleCoordinatorTests {
-    /// `downloadsDirectory` widens the coordinator's Downloads-only
-    /// destination invariant to a test-owned directory so fresh-download
-    /// tests can stage real files without touching the user's Downloads.
+    /// `downloadsDirectory` moves the coordinator's Downloads-only destination
+    /// invariant to a test-owned directory, so destination tests can name paths
+    /// that must be honored without touching the user's Downloads.
     private func makeCoordinator(
-        downloadsDirectory: URL? = nil,
-        fileSystem: any FileSystemOperating = MockFileSystem()
+        downloadsDirectory: URL? = nil
     ) -> (
         VMLifecycleCoordinator,
         MockVirtualizationService,
@@ -27,7 +26,6 @@ struct VMLifecycleCoordinatorTests {
             installService: installService,
             ipswService: ipswService,
             usbDeviceService: usbService,
-            fileSystem: fileSystem,
             downloadsDirectory: downloadsDirectory
                 ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
         )
@@ -444,13 +442,15 @@ struct VMLifecycleCoordinatorTests {
         #expect(ipswService.fetchCallCount == 0)
     }
 
-    @Test("A catalog destination outside Downloads falls back to the pinned filename")
+    @Test("A catalog destination outside Downloads falls back to the pinned image's filename")
     func normalizedDestinationKeepsPinnedFilename() throws {
         let (coordinator, _, _, _, _) = makeCoordinator()
         let elsewhere = URL(fileURLWithPath: "/Users/Shared/UniversalMac_15.6.1_24G90_Restore.ipsw")
+        let pinned = try #require(
+            URL(string: "https://updates.cdn-apple.com/x/UniversalMac_15.6.1_24G90_Restore.ipsw"))
 
         let normalized = coordinator.normalizedDownloadDestination(
-            for: elsewhere, fallbackFilename: "UniversalMac_15.6.1_24G90_Restore.ipsw")
+            for: elsewhere, remoteURL: pinned)
 
         #expect(normalized.lastPathComponent == "UniversalMac_15.6.1_24G90_Restore.ipsw")
         #expect(
@@ -510,17 +510,14 @@ struct VMLifecycleCoordinatorTests {
         #expect(instance.configuration.installContext == originalContext)
     }
 
-    @Test("installMacOS with requestedFreshDownload trashes existing file and clears the flag")
-    func installMacOSFreshDownloadTrashesAndClears() async throws {
-        // The mock reports the destination as existing and records the trash
-        // request, so no real file (or real Trash write) is involved. The
-        // Downloads-invariant root is a unique temp path so the destination
-        // passes normalization without touching the user's Downloads.
+    @Test("installMacOS asks the download to replace what is at the destination")
+    func installMacOSFreshDownloadDelegatesTheDiscard() async throws {
+        // The disposal belongs to the download, which holds the destination's
+        // claim while it runs — trashing from the coordinator could reach a
+        // bundle another VM is streaming into.
         let temp = FileManager.default.temporaryDirectory
             .appendingPathComponent("freshDownloadTrash-\(UUID().uuidString)", isDirectory: true)
-        let fileSystem = MockFileSystem()
-        let (coordinator, _, _, ipswService, _) = makeCoordinator(
-            downloadsDirectory: temp, fileSystem: fileSystem)
+        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
         let instance = makeInstance()
 
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
@@ -535,74 +532,53 @@ struct VMLifecycleCoordinatorTests {
 
         try await coordinator.installMacOS(on: instance, context: context)
 
-        // The existing IPSW must have been trashed, the bundle cleanup must
-        // have been invoked exactly once, and on success the installContext
-        // is cleared by the post-install path — so we can't observe the
-        // cleared `requestedFreshDownload` directly, but the
-        // discardResumeData call count is the proxy that proves the
-        // honor-and-clear branch ran.
-        #expect(fileSystem.trashedURLs == [destination])
-        #expect(ipswService.discardResumeDataCallCount == 1)
-        #expect(ipswService.lastDiscardResumeDataURL == destination)
+        #expect(ipswService.lastDownloadDiscardsExisting == true)
+        #expect(ipswService.lastDownloadDestinationURL == destination)
+        // Nothing is trashed outside the download's claim.
+        #expect(ipswService.discardResumeDataCallCount == 0)
     }
 
-    @Test("installMacOS with requestedFreshDownload skips trash when the file is absent")
-    func installMacOSFreshDownloadSkipsTrashWhenAbsent() async throws {
-        // The file-absent counterpart of the test above: the mock reports the
-        // destination as *not* existing, so the fresh-download cleanup must skip
-        // the trash entirely — but still discard any resume data and clear the
-        // flag, since that cleanup runs unconditionally within the honor branch.
+    @Test("installMacOS clears requestedFreshDownload before the download runs")
+    func installMacOSFreshDownloadClearsTheFlagOnce() async {
+        // A download that fails leaves the context for the retry Start — with
+        // the flag already spent, so the retry resumes the partial rather than
+        // trashing it and starting over.
         let temp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("freshDownloadAbsent-\(UUID().uuidString)", isDirectory: true)
-        let fileSystem = MockFileSystem()
-        fileSystem.fileExistsResult = false
-        let (coordinator, _, _, ipswService, _) = makeCoordinator(
-            downloadsDirectory: temp, fileSystem: fileSystem)
+            .appendingPathComponent("freshDownloadOnce-\(UUID().uuidString)", isDirectory: true)
+        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
+        ipswService.downloadError = IPSWError.downloadFailed(URLError(.notConnectedToInternet))
         let instance = makeInstance()
-
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
 
         let context = MacOSInstallContext(
             source: .downloadLatest,
-            downloadDestinationPath: destination.path(percentEncoded: false),
+            downloadDestinationPath: temp.appendingPathComponent("RestoreImage.ipsw")
+                .path(percentEncoded: false),
             requestedFreshDownload: true
         )
         instance.configuration.installContext = context
         instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
 
-        try await coordinator.installMacOS(on: instance, context: context)
+        await #expect(throws: IPSWError.self) {
+            try await coordinator.installMacOS(on: instance, context: context)
+        }
 
-        // Nothing existed to trash, but the honor-and-clear branch still ran:
-        // resume data was discarded exactly once for the destination.
-        #expect(fileSystem.trashedURLs.isEmpty)
-        #expect(ipswService.discardResumeDataCallCount == 1)
-        #expect(ipswService.lastDiscardResumeDataURL == destination)
+        #expect(ipswService.lastDownloadDiscardsExisting == true)
+        #expect(instance.configuration.installContext?.requestedFreshDownload == false)
     }
 
-    @Test("installMacOS surfaces freshDownloadCleanupFailed when the trash operation throws")
-    func installMacOSFreshDownloadSurfacesTrashFailure() async throws {
-        // Inject a FileSystemOperating that always throws from `trashItem`.
-        // This exercises the catch path that wraps the error in
-        // `IPSWError.freshDownloadCleanupFailed` and proves the failure is
-        // surfaced rather than swallowed.
-        let trashError = NSError(
-            domain: NSCocoaErrorDomain,
-            code: NSFileWriteNoPermissionError,
-            userInfo: [NSLocalizedDescriptionKey: "denied"]
-        )
-        let throwingFS = MockFileSystem()
-        throwingFS.trashError = trashError
-
-        let virtService = MockVirtualizationService()
-        let installService = MockMacOSInstallService()
-        let ipswService = MockIPSWService()
-        let usbService = MockUSBDeviceService()
-        let coordinator = VMLifecycleCoordinator(
-            virtualizationService: virtService,
-            installService: installService,
-            ipswService: ipswService,
-            usbDeviceService: usbService,
-            fileSystem: throwingFS
+    @Test("installMacOS surfaces a cleanup failure raised by the download")
+    func installMacOSFreshDownloadSurfacesTrashFailure() async {
+        // The download reports that it could not clear the way for the
+        // replacement; the install must fail rather than install the file the
+        // user asked to replace.
+        let (coordinator, _, installService, ipswService, _) = makeCoordinator()
+        ipswService.downloadError = IPSWError.freshDownloadCleanupFailed(
+            path: "/tmp/cannot-trash.ipsw",
+            underlying: NSError(
+                domain: NSCocoaErrorDomain,
+                code: NSFileWriteNoPermissionError,
+                userInfo: [NSLocalizedDescriptionKey: "denied"]
+            )
         )
 
         let instance = makeInstance()
@@ -618,9 +594,8 @@ struct VMLifecycleCoordinatorTests {
             try await coordinator.installMacOS(on: instance, context: context)
             Issue.record("Expected freshDownloadCleanupFailed")
         } catch IPSWError.freshDownloadCleanupFailed {
-            // Expected — the trash failure was surfaced.
             #expect(instance.status == .error)
-            #expect(ipswService.downloadCallCount == 0, "Download must not start when cleanup fails")
+            #expect(installService.installCallCount == 0, "Install must not run on a failed download")
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
@@ -659,25 +634,24 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS without requestedFreshDownload leaves existing file alone")
     func installMacOSWithoutFreshDownloadDoesNotTrash() async throws {
-        let fileSystem = MockFileSystem()
-        let (coordinator, _, _, ipswService, _) = makeCoordinator(fileSystem: fileSystem)
-        let instance = makeInstance()
-
-        let destination = FileManager.default.temporaryDirectory
+        let temp = FileManager.default.temporaryDirectory
             .appendingPathComponent("noFreshDownload-\(UUID().uuidString)", isDirectory: true)
-            .appendingPathComponent("RestoreImage.ipsw")
+        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
+        let instance = makeInstance()
 
         let context = MacOSInstallContext(
             source: .downloadLatest,
-            downloadDestinationPath: destination.path(percentEncoded: false)
+            downloadDestinationPath: temp.appendingPathComponent("RestoreImage.ipsw")
+                .path(percentEncoded: false)
         )
         instance.configuration.installContext = context
         instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
 
         try await coordinator.installMacOS(on: instance, context: context)
 
-        // No requestedFreshDownload, so no trash, no discardResumeData call.
-        #expect(fileSystem.trashedURLs.isEmpty)
+        // Nothing at the destination is disturbed: the download resumes or
+        // skips over whatever is already there.
+        #expect(ipswService.lastDownloadDiscardsExisting == false)
         #expect(ipswService.discardResumeDataCallCount == 0)
     }
 
@@ -859,5 +833,52 @@ struct VMLifecycleCoordinatorTests {
         let normalized = coordinator.normalizedDownloadDestination(for: elsewhere)
         #expect(
             normalized.path(percentEncoded: false) == VMCreationViewModel.defaultIPSWDownloadPath)
+    }
+
+    @Test("Every destination a hand-edited config can name lands inside Downloads")
+    func normalizedDownloadDestinationContainsEveryCandidate() throws {
+        let downloads = FileManager.default.temporaryDirectory
+            .appendingPathComponent("normalizedDestination-\(UUID().uuidString)", isDirectory: true)
+        let (coordinator, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
+
+        // Traversal out of Downloads, the directory itself spelled two ways,
+        // and a path that was never in Downloads at all.
+        let persistedSpellings = [
+            downloads.appendingPathComponent("../../evil.ipsw"),
+            downloads.appendingPathComponent("sub/../evil.ipsw"),
+            downloads,
+            downloads.appendingPathComponent(""),
+            URL(fileURLWithPath: "/Users/Shared/RestoreImage.ipsw"),
+        ]
+        // A remote URL is no safer: it comes out of the same `config.json`.
+        // The last names nothing at all, which appended verbatim resolves to
+        // the Downloads directory itself.
+        let traversal = try #require(URL(string: "https://host/a%2F..%2F..%2Fevil.ipsw"))
+        let pathless = try #require(URL(string: "https://example.com"))
+        let remoteSpellings: [URL?] = [nil, traversal, pathless]
+
+        for persisted in persistedSpellings {
+            for remote in remoteSpellings {
+                let normalized = coordinator.normalizedDownloadDestination(
+                    for: persisted, remoteURL: remote)
+                let context =
+                    "persisted '\(persisted.path(percentEncoded: false))', remote '\(remote?.absoluteString ?? "none")'"
+                #expect(
+                    canonicalPath(normalized.deletingLastPathComponent())
+                        == canonicalPath(downloads), "escaped Downloads for \(context)")
+                #expect(
+                    canonicalPath(normalized) != canonicalPath(downloads),
+                    "named Downloads itself for \(context)")
+                #expect(normalized.pathExtension.lowercased() == "ipsw", "not an IPSW for \(context)")
+            }
+        }
+    }
+
+    /// A path with `..` collapsed and any trailing separator dropped, so a
+    /// directory and the same directory named as a parent compare equal.
+    private func canonicalPath(_ url: URL) -> String {
+        let path = url.standardizedFileURL.path(percentEncoded: false)
+        guard path.count > 1, path.hasSuffix("/") else { return path }
+        return String(path.dropLast())
     }
 }

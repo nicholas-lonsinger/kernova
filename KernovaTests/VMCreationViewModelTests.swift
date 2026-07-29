@@ -1,10 +1,22 @@
 import Testing
 import Foundation
+import KernovaTestSupport
 @testable import Kernova
 
 @Suite("VMCreationViewModel Tests")
 @MainActor
 struct VMCreationViewModelTests {
+    /// The standardized directory a path sits in.
+    private func parentPath(of path: String) -> String {
+        URL(fileURLWithPath: path).standardizedFileURL.deletingLastPathComponent()
+            .path(percentEncoded: false)
+    }
+
+    /// The Downloads directory every download destination must stay inside.
+    private var downloadsPath: String {
+        parentPath(of: VMCreationViewModel.defaultIPSWDownloadPath)
+    }
+
     // MARK: - Navigation
 
     @Test("goNext advances through all steps in order")
@@ -790,13 +802,43 @@ struct VMCreationViewModelTests {
         #expect(vm.ipswDownloadPath != VMCreationViewModel.defaultIPSWDownloadPath)
     }
 
-    @Test("An off-convention URL still lands on a real filename")
-    func pastedImageWithoutIPSWNameFallsBack() {
+    @Test("An off-convention URL lands on its own filename, not the shared default")
+    func pastedImageWithoutIPSWNameGetsItsOwnDestination() {
         let vm = VMCreationViewModel()
         vm.selectPastedImage(
             makeProbedImage(urlString: "https://example.com/d/", version: nil, build: nil))
 
-        #expect(vm.ipswDownloadPath == VMCreationViewModel.defaultIPSWDownloadPath)
+        #expect(vm.ipswDownloadPath.hasSuffix(".ipsw"))
+        // Sharing "Download Latest"'s destination would let its image satisfy
+        // this URL's download — a different macOS than the one pinned.
+        #expect(vm.ipswDownloadPath != VMCreationViewModel.defaultIPSWDownloadPath)
+        #expect(parentPath(of: vm.ipswDownloadPath) == downloadsPath)
+    }
+
+    @Test("Two off-convention URLs sharing a basename get different destinations")
+    func pastedImagesWithOneBasenameGetDistinctDestinations() {
+        let vm = VMCreationViewModel()
+        vm.selectPastedImage(
+            makeProbedImage(
+                urlString: "https://a.example.com/restore.ipsw", version: nil, build: nil))
+        let first = vm.ipswDownloadPath
+        vm.selectPastedImage(
+            makeProbedImage(
+                urlString: "https://b.example.com/restore.ipsw", version: nil, build: nil))
+
+        #expect(first != vm.ipswDownloadPath)
+    }
+
+    @Test("A URL whose filename walks out of Downloads cannot move the destination")
+    func pastedImageWithTraversalStaysInDownloads() {
+        let vm = VMCreationViewModel()
+        // Decodes to `a/../../evil.ipsw`, which appended verbatim would
+        // standardize to a path two directories above Downloads.
+        vm.selectPastedImage(
+            makeProbedImage(
+                urlString: "https://host/a%2F..%2F..%2Fevil.ipsw", version: nil, build: nil))
+
+        #expect(parentPath(of: vm.ipswDownloadPath) == downloadsPath)
     }
 
     @Test("The URL source cannot advance until a URL is checked")
@@ -937,6 +979,23 @@ struct VMCreationViewModelTests {
         #expect(await vm.adoptExistingDownloadFile() == .adopted(inspector.inspectResult))
     }
 
+    @Test("An inspection cancelled mid-flight adopts nothing")
+    func cancelledInspectionAdoptsNothing() async throws {
+        let inspector = SuspendingMockLocalRestoreImageInspector()
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        // The build matches, so only the cancellation keeps this from adopting.
+        vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
+
+        let adopt = Task { await vm.adoptExistingDownloadFile() }
+        try await inspector.waitUntilInspecting()
+        adopt.cancel()
+        inspector.release()
+
+        #expect(await adopt.value == .cancelled)
+        #expect(vm.ipswSource == .catalogVersion)
+        #expect(vm.ipswPath == nil)
+    }
+
     @Test("pinnedBuild names the build each source is promising")
     func pinnedBuildTracksTheSource() {
         let vm = VMCreationViewModel()
@@ -952,8 +1011,8 @@ struct VMCreationViewModelTests {
         #expect(vm.pinnedBuild == nil)
     }
 
-    @Test("Switching between pinned sources clears the other one's pick")
-    func switchingPinnedSourcesClearsTheOther() {
+    @Test("Switching between pinned sources keeps both picks; Download Latest clears them")
+    func downloadLatestClearsBothPinnedPicks() {
         let vm = VMCreationViewModel()
         vm.selectCatalogEntry(makeCatalogEntry())
         vm.selectPastedImage(makeProbedImage())
@@ -964,5 +1023,34 @@ struct VMCreationViewModelTests {
         vm.selectDownloadLatest()
         #expect(vm.selectedCatalogEntry == nil)
         #expect(vm.pastedImage == nil)
+    }
+}
+
+/// Inspector stand-in that stays inside `inspect` until the test releases it,
+/// the way a multi-gigabyte image keeps the real one busy for seconds.
+final class SuspendingMockLocalRestoreImageInspector: LocalRestoreImageInspecting, @unchecked Sendable {
+    private let inspectResult = InspectedRestoreImage(
+        version: "15.6.1", build: "24G90", isSupportedOnThisHost: true)
+    private let gate = AsyncGate()
+    private let lock = NSLock()
+    private var isInspecting = false
+    private var isReleased = false
+
+    func inspect(_ url: URL) async throws -> InspectedRestoreImage {
+        lock.withLock { self.isInspecting = true }
+        gate.notify()
+        try? await gate.wait(until: { self.lock.withLock { self.isReleased } })
+        return inspectResult
+    }
+
+    /// Suspends until `inspect` is in flight.
+    func waitUntilInspecting() async throws {
+        try await gate.wait(until: { self.lock.withLock { self.isInspecting } })
+    }
+
+    /// Lets the in-flight inspection finish.
+    func release() {
+        lock.withLock { self.isReleased = true }
+        gate.notify()
     }
 }

@@ -26,6 +26,14 @@ struct RestoreImageCatalogEntryTests {
         #expect(entry.suggestedFilename == "UniversalMac_15.6.1_24G90_Restore.ipsw")
     }
 
+    @Test("A URL whose filename would escape Downloads yields a generated one")
+    func suggestedFilenameRefusesTraversal() {
+        let entry = makeCatalogEntry(
+            urlString: "https://updates.cdn-apple.com/x/a%2F..%2F..%2Fevil.ipsw")
+        #expect(!entry.suggestedFilename.contains("/"))
+        #expect(entry.suggestedFilename.hasSuffix(".ipsw"))
+    }
+
     @Test("A guest equal to the host is supported; one below is, one above is not")
     func hostSupportBoundary() {
         let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")

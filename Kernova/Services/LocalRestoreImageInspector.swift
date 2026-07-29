@@ -31,7 +31,7 @@ struct LocalRestoreImageInspector: LocalRestoreImageInspecting {
             build: image.buildVersion,
             isSupportedOnThisHost: image.mostFeaturefulSupportedConfiguration != nil
         )
-        Self.logger.notice(
+        Self.logger.info(
             "Inspected local restore image: \(inspected.summary, privacy: .public), supported=\(inspected.isSupportedOnThisHost, privacy: .public)"
         )
         return inspected

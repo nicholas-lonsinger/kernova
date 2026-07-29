@@ -93,9 +93,7 @@ substitute mocks. Services split by concurrency: those that touch
   framework's own. Consulted before the wizard adopts a file it did not download itself.
 - `RestoreImageProbeService` (a `final class`, for `URLSession` lifetime) — establishes that a
   user-supplied URL serves an installable restore image, and how large it is, before any download.
-  An IPSW is a zip whose central directory names `kernelcache.release.vma2` exactly when the image
-  carries the virtual-machine hardware model, so ranged reads of the directory settle it in about
-  150 KB. `Tools/regen-restore-image-catalog.swift` applies the same check to every catalog
+  `Tools/regen-restore-image-catalog.swift` applies the same installability check to every catalog
   candidate, which is what puts a pasted URL on the same footing as a catalog row.
 
 `ConfigurationBuilder` translates a `VMConfiguration` into a `VZVirtualMachineConfiguration` — the
@@ -179,9 +177,9 @@ calls `applyLiveRemovableMediaChange(for:target:)`.
   `await`** — that is what reserves the destination atomically on the MainActor, so overlapping
   imports and clones cannot claim the same bundle URL.
 - `VMLifecycleCoordinator` — `@MainActor`; owns `VirtualizationService`, `MacOSInstallService`,
-  `IPSWService`, `USBDeviceService` and the `FileSystemOperating` seam, and orchestrates multi-step
-  flows such as a macOS install. It serializes lifecycle operations per VM; `stop` and `forceStop`
-  deliberately bypass that serialization so a hung operation can always be cancelled.
+  `IPSWService` and `USBDeviceService`, and orchestrates multi-step flows such as a macOS install.
+  It serializes lifecycle operations per VM; `stop` and `forceStop` deliberately bypass that
+  serialization so a hung operation can always be cancelled.
 - `VMCreationViewModel` — a pure `@Observable` state machine for the creation wizard, with no
   UI-framework dependency. Injects `RestoreImageCatalogProviding` for the version picker and
   `RestoreImageProbing` for the paste-a-URL sheet.
@@ -241,7 +239,7 @@ AppDelegate
     │                 ├── VMStorageService
     │                 ├── DiskImageService
     │                 ├── VMDirectoryWatcher, SystemSleepWatcher
-    │                 └── FileSystemOperating (trash/remove seam; shared with the coordinator)
+    │                 └── FileSystemOperating (trash/remove seam; also held by IPSWService)
     ├── creates → VMLifecycleCoordinator
     │                 ├── VirtualizationService
     │                 ├── MacOSInstallService

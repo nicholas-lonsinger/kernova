@@ -17,7 +17,6 @@ final class VMLifecycleCoordinator {
     let installService: any MacOSInstallProviding
     let ipswService: any IPSWProviding
     let usbDeviceService: any USBDeviceProviding
-    let fileSystem: any FileSystemOperating
 
     /// The directory IPSW downloads must land in — the one location the
     /// sandbox's downloads entitlement covers.
@@ -35,7 +34,6 @@ final class VMLifecycleCoordinator {
         installService: any MacOSInstallProviding,
         ipswService: any IPSWProviding,
         usbDeviceService: any USBDeviceProviding = USBDeviceService(),
-        fileSystem: any FileSystemOperating = FileManager.default,
         downloadsDirectory: URL? = FileManager.default.urls(
             for: .downloadsDirectory, in: .userDomainMask
         ).first
@@ -44,7 +42,6 @@ final class VMLifecycleCoordinator {
         self.installService = installService
         self.ipswService = ipswService
         self.usbDeviceService = usbDeviceService
-        self.fileSystem = fileSystem
         self.downloadsDirectory = downloadsDirectory
     }
 
@@ -153,30 +150,47 @@ final class VMLifecycleCoordinator {
     // MARK: - macOS Installation
 
     /// The effective IPSW download destination for a persisted path: the path
-    /// itself when it lives in `downloadsDirectory`, otherwise `fallbackFilename`
-    /// inside Downloads (the wizard default when none is given).
+    /// itself when it names a file directly inside `downloadsDirectory`,
+    /// otherwise the destination `remoteURL` derives inside Downloads (the
+    /// wizard default when there is no pinned URL).
     ///
     /// Downloads is the only destination the app supports — the sandbox
     /// entitlement covers it, resume sidecar included, with no per-pick grant.
-    /// Comparison is symlink-resolved because the sandbox container's `Downloads`
-    /// and the real `~/Downloads` are the same directory spelled two ways.
     ///
-    /// A catalog install passes its pinned image's filename, because the shared
-    /// default name would let a stale download of another version stand in for
-    /// the chosen one.
+    /// The replacement is built from the remote URL through
+    /// ``RestoreImageFilename`` rather than from the persisted path, because
+    /// both the path and the URL come out of a `config.json` a user can edit:
+    /// only a filename this app derived is safe to append to Downloads.
     func normalizedDownloadDestination(
-        for persisted: URL, fallbackFilename: String? = nil
+        for persisted: URL, remoteURL: URL? = nil
     ) -> URL {
         guard let downloads = downloadsDirectory else { return persisted }
-        let persistedParent = persisted.deletingLastPathComponent()
-            .resolvingSymlinksInPath().standardizedFileURL
-        let downloadsResolved = downloads.resolvingSymlinksInPath().standardizedFileURL
-        guard persistedParent.path != downloadsResolved.path else { return persisted }
-        guard let fallbackFilename else {
-            return URL(fileURLWithPath: VMCreationViewModel.defaultIPSWDownloadPath)
-        }
-        return URL(
-            fileURLWithPath: VMCreationViewModel.downloadPath(forFilename: fallbackFilename))
+        guard !isInsideDownloads(persisted) else { return persisted }
+        let filename =
+            remoteURL.map(RestoreImageFilename.destination(for:))
+            ?? RestoreImageFilename.fallback
+        return downloads.appendingPathComponent(filename)
+    }
+
+    /// Whether `candidate` names a file sitting directly in the Downloads
+    /// directory, which the directory itself does not.
+    ///
+    /// Symlink-resolved because the sandbox container's `Downloads` and the real
+    /// `~/Downloads` are the same directory spelled two ways. Always `true` when
+    /// normalization is disabled.
+    private func isInsideDownloads(_ candidate: URL) -> Bool {
+        guard let downloads = downloadsDirectory else { return true }
+        let downloadsPath = Self.canonicalPath(downloads)
+        guard Self.canonicalPath(candidate) != downloadsPath else { return false }
+        return Self.canonicalPath(candidate.deletingLastPathComponent()) == downloadsPath
+    }
+
+    /// A path with symlinks resolved, `..` collapsed and any trailing separator
+    /// dropped, so two spellings of one location compare equal.
+    private static func canonicalPath(_ url: URL) -> String {
+        let path = url.resolvingSymlinksInPath().standardizedFileURL.path(percentEncoded: false)
+        guard path.count > 1, path.hasSuffix("/") else { return path }
+        return String(path.dropLast())
     }
 
     func installMacOS(
@@ -207,21 +221,19 @@ final class VMLifecycleCoordinator {
                     // config.json) can never be written and has no picker to
                     // re-point it, so the invariant is enforced at use time.
                     let downloadDestination = normalizedDownloadDestination(
-                        for: persistedDestination,
-                        fallbackFilename: context.remoteURL?.lastPathComponent)
+                        for: persistedDestination, remoteURL: context.remoteURL)
                     if downloadDestination != persistedDestination {
                         Self.logger.notice(
-                            "installMacOS: persisted download destination is outside Downloads; using the default destination instead"
+                            "installMacOS: persisted download destination is outside Downloads; using the derived destination instead"
                         )
                     }
 
-                    // Honor "Download & Replace" intent ONCE: trash the existing
-                    // IPSW plus any in-progress download bundle beside it, then
-                    // clear the flag so a retry after a partial-install failure
-                    // reuses the freshly-downloaded file. Trash failure is a hard
-                    // error — the skip-existing fast path inside
-                    // `downloadRestoreImage` would otherwise silently reuse the
-                    // stale file.
+                    // Honor "Download & Replace" intent ONCE: the download
+                    // trashes the existing IPSW and any bundle beside it while
+                    // holding its per-destination claim — trashing from out here
+                    // could delete bytes another VM is streaming into the same
+                    // bundle. The flag clears before the download so a retry
+                    // after a partial-install failure reuses what it fetched.
                     if context.requestedFreshDownload {
                         // `downloadDestinationPath` survives through `config.json`
                         // on disk, so a stray edit could otherwise have us
@@ -236,24 +248,8 @@ final class VMLifecycleCoordinator {
                         }
 
                         Self.logger.notice(
-                            "installMacOS: honoring requestedFreshDownload for '\(instance.name, privacy: .public)' — trashing existing IPSW + bundle"
+                            "installMacOS: honoring requestedFreshDownload for '\(instance.name, privacy: .public)' — the existing IPSW + bundle are trashed before the download starts"
                         )
-                        if fileSystem.fileExists(atPath: downloadDestination.path(percentEncoded: false)) {
-                            do {
-                                try fileSystem.trashItem(at: downloadDestination)
-                            } catch {
-                                Self.logger.error(
-                                    "Failed to trash existing IPSW at '\(downloadDestination.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                                )
-                                throw IPSWError.freshDownloadCleanupFailed(
-                                    path: downloadDestination.path(percentEncoded: false),
-                                    underlying: error
-                                )
-                            }
-                        }
-                        // Recoverable on purpose: the stale partial goes to the
-                        // Trash so the user can restore it.
-                        ipswService.discardResumeData(at: downloadDestination, permanently: false)
                         instance.performConfigurationMutation {
                             $0.installContext?.requestedFreshDownload = false
                         }
@@ -280,7 +276,8 @@ final class VMLifecycleCoordinator {
 
                     try await ipswService.downloadRestoreImage(
                         from: remoteURL,
-                        to: downloadDestination
+                        to: downloadDestination,
+                        discardsExistingDownload: context.requestedFreshDownload
                     ) { progress in
                         instance.installState?.currentPhase = .downloading(progress)
                     }

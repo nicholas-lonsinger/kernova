@@ -90,6 +90,32 @@ struct IPSWSelectionContentViewControllerTests {
         #expect(findButton(titled: "Download & Replace", in: vc.view) != nil)
     }
 
+    @Test("Leaving the step mid-check adopts nothing")
+    func cancelledInspectionCommitsNothing() async throws {
+        let path = makeTempIPSW()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let inspector = SuspendingMockLocalRestoreImageInspector()
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.ipswSource = .downloadLatest
+        vm.ipswDownloadPath = path
+
+        let vc = IPSWSelectionContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+        findButton(titled: "Use Existing File", in: vc.view)?.performClick(nil)
+        let inFlight = try #require(vc.adoptTaskForTesting)
+        try await inspector.waitUntilInspecting()
+
+        // Navigating back off the step cancels the inspection under way.
+        vc.viewWillDisappear()
+        inspector.release()
+        await inFlight.value
+
+        // Adopting here would leave the radios and the model disagreeing.
+        #expect(vm.ipswSource == .downloadLatest)
+        #expect(vm.ipswPath == nil)
+    }
+
     private func findLabelContaining(_ text: String, in view: NSView) -> NSTextField? {
         if let field = view as? NSTextField, field.stringValue.contains(text) { return field }
         for subview in view.subviews {

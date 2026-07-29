@@ -21,11 +21,8 @@ struct RestoreImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
     var id: String { build }
 
     /// Apple's own filename for the image, e.g. `UniversalMac_15.6.1_24G90_Restore.ipsw`.
-    ///
-    /// The download destination is per-build precisely because of this: a fixed
-    /// filename would let a previously-downloaded image satisfy a different pick.
     var suggestedFilename: String {
-        url.lastPathComponent
+        RestoreImageFilename.destination(for: url)
     }
 
     /// ``lastModified`` parsed for display, or `nil` if Apple's header did not parse.
@@ -38,29 +35,15 @@ struct RestoreImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
     /// A component that is not a number yields `nil` — the entry is then
     /// unusable for host comparison and the service drops it.
     var versionComponents: [Int]? {
-        let parsed = version.split(separator: ".").map { Int($0) }
-        guard !parsed.isEmpty, !parsed.contains(nil) else { return nil }
-        var components = parsed.compactMap { $0 }
-        while components.count < 3 { components.append(0) }
-        return Array(components.prefix(3))
+        MacOSVersion(version)?.components
     }
 
     /// Whether this guest can run on the given host.
     ///
-    /// Virtualization refuses a guest newer than the host, and the framework's
-    /// own answer is only available after the image is downloaded — it comes
-    /// from `VZMacOSRestoreImage.loadFileURL`, which takes a local file.
+    /// An unparseable version answers `false`: the catalog service drops such
+    /// entries at decode time, so no pickable entry reaches this.
     func isSupported(onHost host: OperatingSystemVersion) -> Bool {
-        guard let components = versionComponents else { return false }
-        let hostComponents = [host.majorVersion, host.minorVersion, host.patchVersion]
-        for (guestPart, hostPart) in zip(components, hostComponents) where guestPart != hostPart {
-            return guestPart < hostPart
-        }
-        return true
-    }
-
-    var isSupportedOnHost: Bool {
-        isSupported(onHost: ProcessInfo.processInfo.operatingSystemVersion)
+        MacOSVersion(version)?.isSupported(onHost: host) ?? false
     }
 
     /// Newest first, comparing version components numerically so 26.10 sorts

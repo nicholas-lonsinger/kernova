@@ -6,6 +6,8 @@ final class MockIPSWService: IPSWProviding, @unchecked Sendable {
     var fetchCallCount = 0
     var downloadCallCount = 0
     var lastDownloadRemoteURL: URL?
+    var lastDownloadDestinationURL: URL?
+    var lastDownloadDiscardsExisting: Bool?
     var discardResumeDataCallCount = 0
     var lastDiscardResumeDataURL: URL?
     var lastDiscardResumeDataPermanently: Bool?
@@ -30,10 +32,13 @@ final class MockIPSWService: IPSWProviding, @unchecked Sendable {
     func downloadRestoreImage(
         from remoteURL: URL,
         to destinationURL: URL,
+        discardsExistingDownload: Bool,
         progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
     ) async throws {
         downloadCallCount += 1
         lastDownloadRemoteURL = remoteURL
+        lastDownloadDestinationURL = destinationURL
+        lastDownloadDiscardsExisting = discardsExistingDownload
         if let error = downloadError { throw error }
     }
 

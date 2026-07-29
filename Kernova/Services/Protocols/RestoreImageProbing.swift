@@ -5,6 +5,7 @@ enum RestoreImageProbeError: LocalizedError, Equatable {
     case insecureURL
     case unreachable(statusCode: Int)
     case unknownSize
+    case rangeRequestsUnsupported
     case notAVirtualMachineImage
     case unreadableStructure
     case transportFailed(description: String)
@@ -17,6 +18,11 @@ enum RestoreImageProbeError: LocalizedError, Equatable {
             "Nothing is hosted at that URL (HTTP \(statusCode)). Check the link and try again."
         case .unknownSize:
             "That server didn't report the file's size, so the image can't be checked before downloading."
+        case .rangeRequestsUnsupported:
+            """
+            That server only sends whole files, so the image can't be checked before downloading. \
+            Download it and add it with Choose Local File.
+            """
         case .notAVirtualMachineImage:
             "This image can't run as a virtual machine. It has no VM hardware model."
         case .unreadableStructure:

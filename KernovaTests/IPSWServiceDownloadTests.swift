@@ -908,9 +908,145 @@ struct IPSWServiceDownloadTests {
             #expect(samples[i] >= samples[i - 1])
         }
     }
+
+    @Test("Concurrent downloads to one destination issue a single request")
+    func concurrentDownloadsToSameDestinationIssueOneRequest() async throws {
+        // Two VMs pinned to the same build share a destination and its bundle.
+        // Whichever call claims the destination does the transfer; the other
+        // waits and then skips over the finished image, so exactly one GET goes
+        // out however the two interleave — and only one writer ever touches the
+        // bundle's truncate / append / move sequence.
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+
+        let payload = Data(repeating: 0xAB, count: 2 * 1024 * 1024)
+        let requests = RequestCounter()
+        StubURLProtocol.handler = { request in
+            requests.increment()
+            return .fullResponse(
+                url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let service = Self.makeServiceWithStub()
+        let first = Task {
+            try await service.downloadRestoreImage(
+                from: Self.remoteURL, to: destination, progressHandler: { _ in })
+        }
+        let second = Task {
+            try await service.downloadRestoreImage(
+                from: Self.remoteURL, to: destination, progressHandler: { _ in })
+        }
+        try await first.value
+        try await second.value
+
+        #expect(requests.value == 1)
+        let written = try Data(contentsOf: destination)
+        #expect(written == payload)
+    }
+
+    @Test("Download & Replace trashes the existing image first and issues a fresh GET")
+    func discardExistingDownloadTrashesThenDownloads() async throws {
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+
+        let payload = Data(repeating: 0xCD, count: 4096)
+        StubURLProtocol.handler = { request in
+            #expect(request.value(forHTTPHeaderField: "Range") == nil)
+            return .fullResponse(url: request.url ?? Self.remoteURL, body: payload, etag: "\"v2\"")
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        // `fileExistsResult` defaults to true, so the discard sees an image at
+        // the destination; the recording mock leaves the real path absent, so
+        // the skip-existing fast path (a real-FileManager check) stays out of
+        // the way and the GET below is the replacement download.
+        let fileSystem = MockFileSystem()
+        let service = Self.makeServiceWithStub(fileSystem: fileSystem)
+        try await service.downloadRestoreImage(
+            from: Self.remoteURL,
+            to: destination,
+            discardsExistingDownload: true,
+            progressHandler: { _ in }
+        )
+
+        #expect(fileSystem.trashedURLs.first == destination)
+        let written = try Data(contentsOf: destination)
+        #expect(written == payload)
+    }
+
+    @Test("Download & Replace surfaces a trash failure and never contacts the server")
+    func discardExistingDownloadCleanupFailureThrows() async throws {
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+
+        let requests = RequestCounter()
+        StubURLProtocol.handler = { request in
+            requests.increment()
+            return .fullResponse(url: request.url ?? Self.remoteURL, body: Data(), etag: "\"v1\"")
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let fileSystem = MockFileSystem()
+        fileSystem.trashError = CocoaError(.fileWriteNoPermission)
+        let service = Self.makeServiceWithStub(fileSystem: fileSystem)
+
+        do {
+            try await service.downloadRestoreImage(
+                from: Self.remoteURL,
+                to: destination,
+                discardsExistingDownload: true,
+                progressHandler: { _ in }
+            )
+            Issue.record("Expected downloadRestoreImage to throw when the image can't be trashed")
+        } catch IPSWError.freshDownloadCleanupFailed {
+            // Expected
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(requests.value == 0)
+    }
+
+    @Test("A logged URL keeps scheme, host and path but drops credentials")
+    func loggableURLDropsQueryAndUserInfo() {
+        // A custom restore-image URL can be pre-signed: the signature rides in
+        // the query, and it must not reach the unified log.
+        let signed = Self.mustParseURL(
+            "https://user:secret@cdn.example.com/builds/RestoreImage.ipsw?X-Amz-Signature=abc123&Expires=99#part"
+        )
+        #expect(
+            IPSWService.loggableURL(signed)
+                == "https://cdn.example.com/builds/RestoreImage.ipsw"
+        )
+
+        let plain = Self.mustParseURL("https://updates.example.com/2026/UniversalMac.ipsw")
+        #expect(IPSWService.loggableURL(plain) == plain.absoluteString)
+    }
 }
 
 // MARK: - Helpers
+
+/// Counts stub requests from URLSession's own queue, where the handler runs.
+final class RequestCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    func increment() {
+        lock.lock()
+        count += 1
+        lock.unlock()
+    }
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+}
 
 /// Records progress samples on the MainActor so we can read them back after
 /// the download completes.
