@@ -769,6 +769,90 @@ struct VMCreationViewModelTests {
     func downloadsImageCoversBothDownloadSources() {
         #expect(IPSWSource.downloadLatest.downloadsImage)
         #expect(IPSWSource.catalogVersion.downloadsImage)
+        #expect(IPSWSource.customURL.downloadsImage)
         #expect(!IPSWSource.localFile.downloadsImage)
+    }
+
+    // MARK: - Custom URL Source
+
+    @Test("A checked URL moves the destination to that image's filename")
+    func pastedImageUsesPerImageDestination() {
+        let vm = VMCreationViewModel()
+        let image = makeProbedImage()
+        vm.selectPastedImage(image)
+
+        #expect(vm.ipswSource == .customURL)
+        #expect(vm.pastedImage == image)
+        #expect(
+            vm.ipswDownloadPath
+                == VMCreationViewModel.downloadPath(
+                    forFilename: "UniversalMac_15.6.1_24G90_Restore.ipsw"))
+        #expect(vm.ipswDownloadPath != VMCreationViewModel.defaultIPSWDownloadPath)
+    }
+
+    @Test("An off-convention URL still lands on a real filename")
+    func pastedImageWithoutIPSWNameFallsBack() {
+        let vm = VMCreationViewModel()
+        vm.selectPastedImage(
+            makeProbedImage(urlString: "https://example.com/d/", version: nil, build: nil))
+
+        #expect(vm.ipswDownloadPath == VMCreationViewModel.defaultIPSWDownloadPath)
+    }
+
+    @Test("The URL source cannot advance until a URL is checked")
+    func customURLSourceRequiresACheckedImage() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .bootConfig
+        vm.ipswSource = .customURL
+
+        #expect(!vm.canAdvance)
+        #expect(vm.validationMessage == "Add a restore image URL to continue.")
+
+        vm.selectPastedImage(makeProbedImage())
+        #expect(vm.canAdvance)
+        #expect(vm.validationMessage == nil)
+    }
+
+    @Test("The URL source shares the overwrite warning")
+    func customURLSourceSharesDownloadWarnings() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .bootConfig
+        vm.selectPastedImage(makeProbedImage())
+        vm.ipswDownloadPath = "/usr/bin/true"  // exists on disk
+        #expect(vm.shouldShowOverwriteWarning)
+        #expect(!vm.canAdvance)
+
+        vm.confirmOverwrite()
+        #expect(!vm.shouldShowOverwriteWarning)
+        #expect(vm.canAdvance)
+    }
+
+    @Test("A URL install context pins the checked URL, version, and build")
+    func customURLInstallContextPinsTheImage() {
+        let vm = VMCreationViewModel()
+        let image = makeProbedImage()
+        vm.selectPastedImage(image)
+
+        let context = vm.buildInstallContext()
+
+        #expect(context.source == .customURL)
+        #expect(context.remoteURL == image.url)
+        #expect(context.version == "15.6.1")
+        #expect(context.build == "24G90")
+        #expect(context.downloadDestinationPath == vm.ipswDownloadPath)
+    }
+
+    @Test("Switching between pinned sources clears the other one's pick")
+    func switchingPinnedSourcesClearsTheOther() {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(makeCatalogEntry())
+        vm.selectPastedImage(makeProbedImage())
+        #expect(vm.selectedCatalogEntry != nil)
+        #expect(vm.pastedImage != nil)
+
+        // Download Latest is the one source that owns neither pick.
+        vm.selectDownloadLatest()
+        #expect(vm.selectedCatalogEntry == nil)
+        #expect(vm.pastedImage == nil)
     }
 }

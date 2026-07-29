@@ -9,7 +9,25 @@ struct MacOSInstallContext: Codable, Sendable, Equatable {
     enum Source: String, Codable, Sendable, Equatable {
         case downloadLatest
         case catalogVersion
+        case customURL
         case localFile
+
+        /// Whether the install downloads the image named by ``remoteURL``
+        /// rather than resolving one at Start.
+        var usesPinnedURL: Bool {
+            switch self {
+            case .catalogVersion, .customURL: true
+            case .downloadLatest, .localFile: false
+            }
+        }
+
+        /// Whether the install fetches the image over the network.
+        var downloadsImage: Bool {
+            switch self {
+            case .downloadLatest, .catalogVersion, .customURL: true
+            case .localFile: false
+            }
+        }
     }
 
     var source: Source
@@ -21,10 +39,11 @@ struct MacOSInstallContext: Codable, Sendable, Equatable {
     /// download state and enables resume across app restarts.
     var downloadDestinationPath: String?
 
-    /// The exact image to download (for `.catalogVersion`).
+    /// The exact image to download (for the sources where ``Source/usesPinnedURL``).
     ///
-    /// Pinned at wizard time from the bundled catalog, so a Start weeks later
-    /// fetches the version the user chose rather than whatever is newest.
+    /// Pinned at wizard time — from the bundled catalog, or from a URL the user
+    /// supplied and Kernova checked — so a Start weeks later fetches the image
+    /// the user chose rather than whatever is newest.
     var remoteURL: URL?
 
     /// Marketing version and build of the pinned image, for display while the

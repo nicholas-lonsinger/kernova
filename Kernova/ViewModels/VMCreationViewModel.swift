@@ -23,13 +23,14 @@ enum VMCreationStep: String, CaseIterable, Sendable {
 enum IPSWSource: Sendable {
     case downloadLatest
     case catalogVersion
+    case customURL
     case localFile
 
     /// Whether this source obtains the image over the network, and so shares
     /// the download destination, overwrite warning, and resume affordance.
     var downloadsImage: Bool {
         switch self {
-        case .downloadLatest, .catalogVersion: true
+        case .downloadLatest, .catalogVersion, .customURL: true
         case .localFile: false
         }
     }
@@ -47,8 +48,15 @@ final class VMCreationViewModel {
     /// touch it.
     let catalogService: any RestoreImageCatalogProviding
 
-    init(catalogService: any RestoreImageCatalogProviding = RestoreImageCatalogService()) {
+    /// Backs the "Paste an IPSW URL…" sheet's pre-download check.
+    let probeService: any RestoreImageProbing
+
+    init(
+        catalogService: any RestoreImageCatalogProviding = RestoreImageCatalogService(),
+        probeService: any RestoreImageProbing = RestoreImageProbeService()
+    ) {
         self.catalogService = catalogService
+        self.probeService = probeService
     }
 
     // MARK: - Wizard State
@@ -67,6 +75,9 @@ final class VMCreationViewModel {
     /// The catalog image chosen for `.catalogVersion`, set through
     /// ``selectCatalogEntry(_:)`` so the download destination moves with it.
     private(set) var selectedCatalogEntry: RestoreImageCatalogEntry?
+    /// The checked image accepted for `.customURL`, set through
+    /// ``selectPastedImage(_:)`` on the same terms.
+    private(set) var pastedImage: ProbedRestoreImage?
     /// Always inside Downloads — there is no custom-destination picker.
     ///
     /// The filename is Apple's for a catalog pick, `RestoreImage.ipsw` otherwise.
@@ -122,6 +133,9 @@ final class VMCreationViewModel {
                 case .catalogVersion:
                     if selectedCatalogEntry == nil { return "Choose a macOS version to continue." }
                     if shouldShowOverwriteWarning { return "Resolve the file conflict above to continue." }
+                case .customURL:
+                    if pastedImage == nil { return "Add a restore image URL to continue." }
+                    if shouldShowOverwriteWarning { return "Resolve the file conflict above to continue." }
                 case .localFile:
                     if ipswPath == nil { return "Select a restore image file." }
                 }
@@ -168,6 +182,7 @@ final class VMCreationViewModel {
             switch ipswSource {
             case .downloadLatest: !shouldShowOverwriteWarning
             case .catalogVersion: selectedCatalogEntry != nil && !shouldShowOverwriteWarning
+            case .customURL: pastedImage != nil && !shouldShowOverwriteWarning
             case .localFile: ipswPath != nil
             }
         case .linux:
@@ -248,11 +263,20 @@ final class VMCreationViewModel {
         ipswDownloadPath = Self.downloadPath(forFilename: entry.suggestedFilename)
     }
 
+    /// Commits a checked URL, on the same per-image destination terms as a
+    /// catalog pick.
+    func selectPastedImage(_ image: ProbedRestoreImage) {
+        ipswSource = .customURL
+        pastedImage = image
+        ipswDownloadPath = Self.downloadPath(forFilename: image.suggestedFilename)
+    }
+
     /// Commits the "Download Latest" source, returning the destination to the
     /// fixed filename that source has always resolved to at install time.
     func selectDownloadLatest() {
         ipswSource = .downloadLatest
         selectedCatalogEntry = nil
+        pastedImage = nil
         ipswDownloadPath = Self.defaultIPSWDownloadPath
     }
 
@@ -311,6 +335,24 @@ final class VMCreationViewModel {
                 remoteURL: entry.url,
                 version: entry.version,
                 build: entry.build
+            )
+        case .customURL:
+            guard let image = pastedImage else {
+                Self.logger.fault("URL source selected with no checked image")
+                assertionFailure("URL source selected with no checked image")
+                return MacOSInstallContext(
+                    source: .downloadLatest,
+                    downloadDestinationPath: Self.defaultIPSWDownloadPath
+                )
+            }
+            return MacOSInstallContext(
+                source: .customURL,
+                downloadDestinationPath: ipswDownloadPath,
+                requestedFreshDownload: confirmedOverwritePath != nil
+                    && confirmedOverwritePath == ipswDownloadPath,
+                remoteURL: image.url,
+                version: image.version,
+                build: image.build
             )
         case .localFile:
             return MacOSInstallContext(

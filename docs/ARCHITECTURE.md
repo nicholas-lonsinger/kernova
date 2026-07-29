@@ -88,6 +88,12 @@ substitute mocks. Services split by concurrency: those that touch
 - `RestoreImageCatalogService` — decodes the bundled snapshot of selectable macOS restore images,
   `Kernova/Resources/RestoreImageCatalog.json`, backing the wizard's "Choose a Version…" source. It
   reaches no network; only the image the user picks is fetched, by `IPSWService`.
+- `RestoreImageProbeService` (a `final class`, for `URLSession` lifetime) — establishes that a
+  user-supplied URL serves an installable restore image, and how large it is, before any download.
+  An IPSW is a zip whose central directory names `kernelcache.release.vma2` exactly when the image
+  carries the virtual-machine hardware model, so ranged reads of the directory settle it in about
+  150 KB. `Tools/regen-restore-image-catalog.swift` applies the same check to every catalog
+  candidate, which is what puts a pasted URL on the same footing as a catalog row.
 
 `ConfigurationBuilder` translates a `VMConfiguration` into a `VZVirtualMachineConfiguration` — the
 single VZ-facing translation point, covering boot loader, CPU, memory, storage, network, display,
@@ -174,7 +180,8 @@ calls `applyLiveRemovableMediaChange(for:target:)`.
   flows such as a macOS install. It serializes lifecycle operations per VM; `stop` and `forceStop`
   deliberately bypass that serialization so a hung operation can always be cancelled.
 - `VMCreationViewModel` — a pure `@Observable` state machine for the creation wizard, with no
-  UI-framework dependency. Injects `RestoreImageCatalogProviding` for the version picker.
+  UI-framework dependency. Injects `RestoreImageCatalogProviding` for the version picker and
+  `RestoreImageProbing` for the paste-a-URL sheet.
 - `VMDirectoryWatcher` — a `DispatchSource` on the VMs directory that triggers reconciliation in
   `VMLibraryViewModel` when the library changes on disk.
 

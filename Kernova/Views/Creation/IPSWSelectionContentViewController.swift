@@ -49,6 +49,12 @@ final class IPSWSelectionContentViewController: NSViewController {
             title: "Choose a Version…",
             description: "Browse every macOS release Apple still hosts, including older versions."
         )
+        let urlOption = makeSourceRadio(
+            for: .customURL,
+            symbol: "link",
+            title: "Paste an IPSW URL…",
+            description: "Install from a restore image at a URL you supply."
+        )
         let localOption = makeSourceRadio(
             for: .localFile,
             symbol: "folder",
@@ -56,7 +62,7 @@ final class IPSWSelectionContentViewController: NSViewController {
             description: "Select an IPSW file already on your Mac."
         )
 
-        let options = NSStackView(views: [downloadOption, catalogOption, localOption])
+        let options = NSStackView(views: [downloadOption, catalogOption, urlOption, localOption])
         options.orientation = .vertical
         options.alignment = .leading
         options.spacing = Spacing.large
@@ -113,6 +119,9 @@ final class IPSWSelectionContentViewController: NSViewController {
             // Same deferred-commit rule as Choose Local File below.
             updateRadioSelection()
             selectCatalogVersion()
+        case .customURL:
+            updateRadioSelection()
+            selectPastedURL()
         case .localFile:
             // Selection only commits when the user actually picks a file. Re-sync
             // the radios to the (still-current) model so the just-clicked radio
@@ -151,24 +160,42 @@ final class IPSWSelectionContentViewController: NSViewController {
             addDownloadBanners(version: nil)
         case .catalogVersion:
             guard let entry = creationVM.selectedCatalogEntry else { return }
-            let change = makeLinkButton(
-                "Change…", target: self, action: #selector(changeCatalogVersion))
-            conditionalContainer.addArrangedSubview(
-                makeWizardBadge(
-                    symbolName: "shippingbox.fill",
-                    text:
-                        "macOS \(entry.version)  ·  Build \(entry.build)  ·  \(DataFormatters.formatBytes(entry.sizeBytes))",
-                    trailingButton: change
-                ))
-            conditionalContainer.addArrangedSubview(
-                makeWizardPathBadge(path: creationVM.ipswDownloadPath))
+            addPinnedImageBadge(
+                summary:
+                    "macOS \(entry.version)  ·  Build \(entry.build)  ·  \(DataFormatters.formatBytes(entry.sizeBytes))",
+                changeAction: #selector(changeCatalogVersion)
+            )
             addDownloadBanners(version: entry.version)
+        case .customURL:
+            guard let image = creationVM.pastedImage else { return }
+            addPinnedImageBadge(
+                summary:
+                    "\(image.versionSummary)  ·  \(DataFormatters.formatBytes(image.sizeBytes))",
+                changeAction: #selector(changePastedURL)
+            )
+            addDownloadBanners(version: image.version)
         case .localFile:
             guard let path = creationVM.ipswPath else { return }
             let change = makeLinkButton(
                 "Change…", target: self, action: #selector(changeLocalFile))
             conditionalContainer.addArrangedSubview(makeWizardPathBadge(path: path, changeButton: change))
         }
+    }
+
+    /// Adds the one badge a pinned-image source shows: what was chosen, and
+    /// where it will land.
+    ///
+    /// One two-line badge rather than two badges — with four sources listed,
+    /// two badges no longer fit the fixed-size sheet without scrolling.
+    private func addPinnedImageBadge(summary: String, changeAction: Selector) {
+        let change = makeLinkButton("Change…", target: self, action: changeAction)
+        conditionalContainer.addArrangedSubview(
+            makeWizardBadge(
+                symbolName: "shippingbox.fill",
+                text: summary,
+                secondaryText: wizardAbbreviateWithTilde(creationVM.ipswDownloadPath),
+                trailingButton: change
+            ))
     }
 
     /// Adds the overwrite or resume banner for whichever download source is
@@ -218,6 +245,10 @@ final class IPSWSelectionContentViewController: NSViewController {
         selectCatalogVersion()
     }
 
+    @objc private func changePastedURL() {
+        selectPastedURL()
+    }
+
     @objc private func useExistingTapped() {
         creationVM.useExistingDownloadFile()
         refresh()
@@ -258,6 +289,38 @@ final class IPSWSelectionContentViewController: NSViewController {
         )
         sheet.delegate = self
         catalogSheetPresenter.show(content: sheet, in: window)
+    }
+
+    /// Opens the nested URL sheet, seeded with the current pick.
+    private func selectPastedURL() {
+        guard let window = view.window, !catalogSheetPresenter.isShown else { return }
+        let sheet = RestoreImageURLSheetContentViewController(
+            probeService: creationVM.probeService,
+            initialURL: creationVM.pastedImage?.url.absoluteString
+        )
+        sheet.delegate = self
+        catalogSheetPresenter.show(content: sheet, in: window)
+    }
+}
+
+// MARK: - RestoreImageURLSheetContentViewControllerDelegate
+
+extension IPSWSelectionContentViewController:
+    RestoreImageURLSheetContentViewControllerDelegate
+{
+    func restoreImageURLSheet(
+        _ vc: RestoreImageURLSheetContentViewController,
+        didChoose image: ProbedRestoreImage
+    ) {
+        catalogSheetPresenter.close()
+        creationVM.selectPastedImage(image)
+        refresh()
+    }
+
+    func restoreImageURLSheetDidCancel(
+        _ vc: RestoreImageURLSheetContentViewController
+    ) {
+        catalogSheetPresenter.close()
     }
 }
 

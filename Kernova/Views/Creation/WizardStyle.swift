@@ -123,12 +123,17 @@ func makeWizardPathBadge(path: String, changeButton: NSButton? = nil) -> NSView 
     )
 }
 
-/// Builds a wizard badge: a symbol, one line of caption text, and an optional
-/// trailing button, in a subtle rounded container.
+/// Builds a wizard badge: a symbol, one or two lines of caption text, and an
+/// optional trailing button, in a subtle rounded container.
+///
+/// The two-line form exists so a download source states its image and its
+/// destination in one badge. As two separate badges they cost more height than
+/// the fixed-size wizard sheet has once there are four sources to list.
 @MainActor
 func makeWizardBadge(
     symbolName: String,
     text: String,
+    secondaryText: String? = nil,
     lineBreakMode: NSLineBreakMode = .byTruncatingTail,
     trailingButton: NSButton? = nil
 ) -> NSView {
@@ -143,9 +148,28 @@ func makeWizardBadge(
     label.isSelectable = false
     label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-    let row = NSStackView(views: [icon, label] + (trailingButton.map { [$0] } ?? []))
+    let textContent: NSView
+    if let secondaryText {
+        let secondary = NSTextField(labelWithString: secondaryText)
+        secondary.font = .preferredFont(forTextStyle: .caption2)
+        secondary.textColor = .tertiaryLabelColor
+        secondary.lineBreakMode = .byTruncatingMiddle
+        secondary.maximumNumberOfLines = 1
+        secondary.isSelectable = false
+        secondary.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let column = NSStackView(views: [label, secondary])
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = Spacing.hairline
+        textContent = column
+    } else {
+        textContent = label
+    }
+
+    let row = NSStackView(views: [icon, textContent] + (trailingButton.map { [$0] } ?? []))
     row.orientation = .horizontal
-    row.alignment = .firstBaseline
+    row.alignment = secondaryText == nil ? .firstBaseline : .centerY
     row.spacing = Spacing.small
 
     return makeGroupedFormBox(

@@ -199,7 +199,7 @@ final class VMLifecycleCoordinator {
                 defer { localIPSWScope?.release() }
 
                 switch context.source {
-                case .downloadLatest, .catalogVersion:
+                case .downloadLatest, .catalogVersion, .customURL:
                     guard let persistedDestination = context.downloadDestinationURL else {
                         throw IPSWError.noDownloadURL
                     }
@@ -265,11 +265,11 @@ final class VMLifecycleCoordinator {
                     )
                     instance.status = .installing
 
-                    // A catalog pick names its image at wizard time, so the
-                    // install downloads that build however long it sits
-                    // unstarted. Only "Download Latest" resolves here.
+                    // A catalog pick or a checked URL names its image at wizard
+                    // time, so the install downloads that build however long it
+                    // sits unstarted. Only "Download Latest" resolves here.
                     let remoteURL: URL
-                    if context.source == .catalogVersion {
+                    if context.source.usesPinnedURL {
                         guard let pinnedURL = context.remoteURL else {
                             throw IPSWError.noDownloadURL
                         }

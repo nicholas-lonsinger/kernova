@@ -120,6 +120,40 @@ struct MacOSInstallContextTests {
         #expect(decoded.build == "24G90")
     }
 
+    @Test("A custom-URL context round-trips its pinned image")
+    func customURLContextRoundTrips() throws {
+        let url = try #require(URL(string: "https://mirror.example.com/R.ipsw"))
+        let original = MacOSInstallContext(
+            source: .customURL,
+            downloadDestinationPath: "/Users/me/Downloads/R.ipsw",
+            remoteURL: url,
+            version: "15.6.1",
+            build: "24G90"
+        )
+        let decoded = try JSONDecoder().decode(
+            MacOSInstallContext.self, from: try JSONEncoder().encode(original))
+
+        #expect(decoded == original)
+        #expect(decoded.source == .customURL)
+        #expect(decoded.remoteURL == url)
+    }
+
+    @Test("Only the pinned sources skip resolving the latest image")
+    func usesPinnedURLCoversPinnedSourcesOnly() {
+        #expect(MacOSInstallContext.Source.catalogVersion.usesPinnedURL)
+        #expect(MacOSInstallContext.Source.customURL.usesPinnedURL)
+        #expect(!MacOSInstallContext.Source.downloadLatest.usesPinnedURL)
+        #expect(!MacOSInstallContext.Source.localFile.usesPinnedURL)
+    }
+
+    @Test("Only the network sources own a download destination")
+    func downloadsImageCoversNetworkSourcesOnly() {
+        #expect(MacOSInstallContext.Source.downloadLatest.downloadsImage)
+        #expect(MacOSInstallContext.Source.catalogVersion.downloadsImage)
+        #expect(MacOSInstallContext.Source.customURL.downloadsImage)
+        #expect(!MacOSInstallContext.Source.localFile.downloadsImage)
+    }
+
     @Test("A context written without the pinning fields still decodes")
     func decodeWithoutPinningFields() throws {
         let json = """

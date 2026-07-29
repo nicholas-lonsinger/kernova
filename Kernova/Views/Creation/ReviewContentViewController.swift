@@ -79,6 +79,7 @@ final class ReviewContentViewController: NSViewController {
             switch creationVM.ipswSource {
             case .downloadLatest: sourceLabel = "Download Latest"
             case .catalogVersion: sourceLabel = "Chosen Version"
+            case .customURL: sourceLabel = "From URL"
             case .localFile: sourceLabel = "Local File"
             }
             var rows = [valueRow("Restore Image", sourceLabel)]
@@ -86,6 +87,11 @@ final class ReviewContentViewController: NSViewController {
                 rows.append(valueRow("macOS Version", "\(entry.version) (\(entry.build))"))
                 rows.append(
                     valueRow("Download Size", DataFormatters.formatBytes(entry.sizeBytes)))
+            }
+            if creationVM.ipswSource == .customURL, let image = creationVM.pastedImage {
+                rows.append(valueRow("macOS Version", image.versionSummary))
+                rows.append(
+                    valueRow("Download Size", DataFormatters.formatBytes(image.sizeBytes)))
             }
             if creationVM.ipswSource == .localFile, let path = creationVM.ipswPath {
                 rows.append(valueRow("File", URL(fileURLWithPath: path).lastPathComponent))
