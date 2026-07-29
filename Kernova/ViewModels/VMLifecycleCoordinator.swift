@@ -271,7 +271,7 @@ final class VMLifecycleCoordinator {
                         }
                         remoteURL = pinnedURL
                     } else {
-                        remoteURL = try await ipswService.fetchLatestRestoreImageURL()
+                        remoteURL = try await ipswService.fetchLatestRestoreImage().url
                     }
 
                     try await ipswService.downloadRestoreImage(

@@ -45,7 +45,7 @@ final class RestoreImageProbeService: RestoreImageProbing {
             throw RestoreImageProbeError.insecureURL
         }
 
-        let sizeBytes = try await totalSize(of: url)
+        let sizeBytes = try await size(of: url)
         guard sizeBytes > 0, let totalBytes = Int64(exactly: sizeBytes) else {
             throw RestoreImageProbeError.unknownSize
         }
@@ -76,7 +76,7 @@ final class RestoreImageProbeService: RestoreImageProbing {
     /// serves the ranged `GET`s the rest of the probe is built from, so a
     /// non-2xx `HEAD` is not fatal: the one-byte ranged `GET`'s `Content-Range`
     /// settles the size, and its status settles whether the URL is live at all.
-    private func totalSize(of url: URL) async throws -> UInt64 {
+    func size(of url: URL) async throws -> UInt64 {
         var head = URLRequest(url: url)
         head.httpMethod = "HEAD"
         if let response = try await responseWithoutBody(for: head),

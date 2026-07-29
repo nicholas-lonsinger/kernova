@@ -38,4 +38,11 @@ protocol RestoreImageProbing: Sendable {
     /// Establishes that `url` serves an image that can install into a VM, and
     /// how large it is, without downloading it.
     func probe(_ url: URL) async throws -> ProbedRestoreImage
+
+    /// How large the file at `url` is, without downloading it or reading its
+    /// structure.
+    ///
+    /// The size half of ``probe(_:)``, on its own, for a URL whose contents are
+    /// already trusted — an image Virtualization itself named.
+    func size(of url: URL) async throws -> UInt64
 }

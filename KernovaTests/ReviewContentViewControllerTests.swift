@@ -40,6 +40,23 @@ struct ReviewContentViewControllerTests {
             findLabel(withText: wizardAbbreviateWithTilde(vm.ipswDownloadPath), in: vc.view) != nil)
     }
 
+    @Test("macOS + download names the looked-up version, build and size")
+    func macOSDownloadShowsLookedUpImage() async {
+        let probeService = MockRestoreImageProbeService()
+        probeService.sizeResult = 19_772_077_142
+        let vm = VMCreationViewModel(probeService: probeService, ipswService: MockIPSWService())
+        await vm.loadLatestImageDetails()?.value
+
+        let vc = ReviewContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        #expect(findLabel(withText: "Download Latest", in: vc.view) != nil)
+        #expect(findLabel(withText: "26.5.2 (25F84)", in: vc.view) != nil)
+        #expect(
+            findLabel(
+                withText: DataFormatters.formatBytes(19_772_077_142), in: vc.view) != nil)
+    }
+
     @Test("macOS + local file shows the file basename")
     func macOSLocalFileShowsFile() {
         let vm = VMCreationViewModel()

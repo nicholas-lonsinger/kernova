@@ -28,10 +28,14 @@ final class IPSWService: Sendable {
 
     // MARK: - Protocol Methods
 
-    func fetchLatestRestoreImageURL() async throws -> URL {
+    func fetchLatestRestoreImage() async throws -> LatestRestoreImage {
         Self.logger.info("Fetching latest supported macOS restore image...")
         let restoreImage = try await VZMacOSRestoreImage.latestSupported
-        return restoreImage.url
+        return LatestRestoreImage(
+            url: restoreImage.url,
+            version: MacOSVersion.displayString(restoreImage.operatingSystemVersion),
+            build: restoreImage.buildVersion
+        )
     }
 
     /// Downloads a macOS restore image from a remote URL to the specified destination.

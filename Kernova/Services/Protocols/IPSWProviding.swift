@@ -2,7 +2,8 @@ import Foundation
 
 /// Abstraction for IPSW (macOS restore image) fetching and downloading.
 protocol IPSWProviding: Sendable {
-    func fetchLatestRestoreImageURL() async throws -> URL
+    /// The newest restore image Apple offers that this host can install.
+    func fetchLatestRestoreImage() async throws -> LatestRestoreImage
 
     /// Downloads the image at `remoteURL` to `destinationURL`, resuming a
     /// partial download already beside it.

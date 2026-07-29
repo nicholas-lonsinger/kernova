@@ -6,17 +6,28 @@ import Foundation
 final class MockRestoreImageProbeService: RestoreImageProbing, @unchecked Sendable {
     var probeCallCount = 0
     var lastProbedURL: URL?
+    var sizeCallCount = 0
+    var lastSizedURL: URL?
 
     /// Thrown instead of returning, per the per-method `<method>Error` convention.
     var probeError: (any Error)?
+    var sizeError: (any Error)?
     /// Returned on success; defaults to a well-formed Apple image.
     var probeResult: ProbedRestoreImage = makeProbedImage()
+    var sizeResult: UInt64 = 19_772_077_142
 
     func probe(_ url: URL) async throws -> ProbedRestoreImage {
         probeCallCount += 1
         lastProbedURL = url
         if let error = probeError { throw error }
         return probeResult
+    }
+
+    func size(of url: URL) async throws -> UInt64 {
+        sizeCallCount += 1
+        lastSizedURL = url
+        if let error = sizeError { throw error }
+        return sizeResult
     }
 }
 

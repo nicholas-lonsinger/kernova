@@ -79,6 +79,16 @@ final class ReviewContentViewController: NSViewController {
             switch creationVM.ipswSelection {
             case .downloadLatest:
                 rows.append(valueRow("Restore Image", "Download Latest"))
+                // Only once the lookup has answered — this source names no
+                // particular image on its own.
+                if let latest = creationVM.latestImage {
+                    rows.append(
+                        valueRow("macOS Version", "\(latest.version) (\(latest.build))"))
+                    if let sizeBytes = creationVM.latestImageSizeBytes {
+                        rows.append(
+                            valueRow("Download Size", DataFormatters.formatBytes(sizeBytes)))
+                    }
+                }
             case .catalogVersion(let entry):
                 rows.append(valueRow("Restore Image", "Chosen Version"))
                 rows.append(valueRow("macOS Version", "\(entry.version) (\(entry.build))"))

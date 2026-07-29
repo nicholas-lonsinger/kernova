@@ -19,6 +19,60 @@ struct IPSWSelectionContentViewControllerTests {
             findLabel(withText: wizardAbbreviateWithTilde(vm.ipswDownloadPath), in: vc.view) != nil)
     }
 
+    @Test("Download Latest names the image it will fetch, the way a pinned pick does")
+    func downloadLatestShowsLookedUpImage() async {
+        let probeService = MockRestoreImageProbeService()
+        probeService.sizeResult = 19_772_077_142
+        let vm = VMCreationViewModel(probeService: probeService, ipswService: MockIPSWService())
+
+        let vc = IPSWSelectionContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+        // Mounting the step is what asks; the badge upgrades when it answers.
+        vc.viewDidAppear()
+        await vc.latestImageTaskForTesting?.value
+
+        #expect(
+            findLabelContaining(
+                "macOS 26.5.2  ·  Build 25F84  ·  \(DataFormatters.formatBytes(19_772_077_142))",
+                in: vc.view) != nil)
+        // The destination stays on the badge's second line.
+        #expect(
+            findLabel(withText: wizardAbbreviateWithTilde(vm.ipswDownloadPath), in: vc.view) != nil)
+        // Nothing about "latest" is the user's to change.
+        #expect(findButton(titled: "Change…", in: vc.view) == nil)
+    }
+
+    @Test("A size the server won't report leaves the version and build on the badge")
+    func downloadLatestShowsImageWithoutItsSize() async {
+        let probeService = MockRestoreImageProbeService()
+        probeService.sizeError = RestoreImageProbeError.unknownSize
+        let vm = VMCreationViewModel(probeService: probeService, ipswService: MockIPSWService())
+
+        let vc = IPSWSelectionContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        await vc.latestImageTaskForTesting?.value
+
+        #expect(findLabelContaining("macOS 26.5.2  ·  Build 25F84", in: vc.view) != nil)
+    }
+
+    @Test("A failed lookup leaves the destination-only badge the step always had")
+    func downloadLatestFallsBackToThePathBadge() async {
+        let ipswService = MockIPSWService()
+        ipswService.fetchError = URLError(.notConnectedToInternet)
+        let vm = VMCreationViewModel(
+            probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+
+        let vc = IPSWSelectionContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        await vc.latestImageTaskForTesting?.value
+
+        #expect(
+            findLabel(withText: wizardAbbreviateWithTilde(vm.ipswDownloadPath), in: vc.view) != nil)
+        #expect(findLabelContaining("Build", in: vc.view) == nil)
+    }
+
     @Test("Overwrite warning shows when a file exists; Use Existing switches to local file")
     func overwriteUseExisting() async {
         let path = makeTempIPSW()

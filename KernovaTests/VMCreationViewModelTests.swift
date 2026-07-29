@@ -1013,6 +1013,84 @@ struct VMCreationViewModelTests {
         // The seed survives so the version picker re-opens on the old pick.
         #expect(vm.lastCatalogPick == entry)
     }
+
+    // MARK: - Latest Image Lookup
+
+    @Test("The lookup names the version, build and size Download Latest will fetch")
+    func latestImageLookupPopulatesDetails() async {
+        let ipswService = MockIPSWService()
+        let probeService = MockRestoreImageProbeService()
+        probeService.sizeResult = 19_772_077_142
+        let vm = VMCreationViewModel(probeService: probeService, ipswService: ipswService)
+
+        await vm.loadLatestImageDetails()?.value
+
+        #expect(vm.latestImage?.version == "26.5.2")
+        #expect(vm.latestImage?.build == "25F84")
+        #expect(vm.latestImageSizeBytes == 19_772_077_142)
+        // The size is read for the image the lookup named, not for the wizard's
+        // own destination.
+        #expect(probeService.lastSizedURL == ipswService.fetchResult.url)
+    }
+
+    @Test("A second lookup joins the first instead of re-fetching")
+    func latestImageLookupRunsOnce() async {
+        let ipswService = MockIPSWService()
+        let vm = VMCreationViewModel(
+            probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+
+        let first = vm.loadLatestImageDetails()
+        #expect(vm.loadLatestImageDetails() == first)
+        await first?.value
+
+        // Nothing left to look up, so a later call starts nothing at all.
+        #expect(vm.loadLatestImageDetails() == nil)
+        #expect(ipswService.fetchCallCount == 1)
+    }
+
+    @Test("A failed lookup leaves the details unset, and the next call retries")
+    func latestImageLookupFailureRetries() async {
+        let ipswService = MockIPSWService()
+        ipswService.fetchError = URLError(.notConnectedToInternet)
+        let vm = VMCreationViewModel(
+            probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+
+        await vm.loadLatestImageDetails()?.value
+        #expect(vm.latestImage == nil)
+        #expect(vm.latestImageSizeBytes == nil)
+
+        // Back online, the wizard asks again — a failure must not latch.
+        ipswService.fetchError = nil
+        await vm.loadLatestImageDetails()?.value
+        #expect(vm.latestImage?.build == "25F84")
+        #expect(ipswService.fetchCallCount == 2)
+    }
+
+    @Test("A size that can't be read still leaves the version and build to show")
+    func latestImageLookupSurvivesAnUnknownSize() async {
+        let probeService = MockRestoreImageProbeService()
+        probeService.sizeError = RestoreImageProbeError.unknownSize
+        let vm = VMCreationViewModel(probeService: probeService, ipswService: MockIPSWService())
+
+        await vm.loadLatestImageDetails()?.value
+
+        #expect(vm.latestImage?.version == "26.5.2")
+        #expect(vm.latestImageSizeBytes == nil)
+    }
+
+    @Test("The looked-up image pins nothing: any usable file at the destination is adopted")
+    func latestImageLookupPinsNoBuild() async {
+        let vm = VMCreationViewModel(
+            probeService: MockRestoreImageProbeService(), ipswService: MockIPSWService())
+
+        await vm.loadLatestImageDetails()?.value
+
+        // Naming a build here would make a file of a different build a
+        // mismatch, at a destination this source shares with every other
+        // Download Latest.
+        #expect(vm.latestImage != nil)
+        #expect(vm.pinnedBuild == nil)
+    }
 }
 
 /// Inspector stand-in that stays inside `inspect` until the test releases it,

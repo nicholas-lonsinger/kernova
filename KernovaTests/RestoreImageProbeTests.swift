@@ -168,6 +168,32 @@ struct RestoreImageFilenameTests {
     }
 }
 
+@Suite("MacOSVersion Tests")
+struct MacOSVersionTests {
+    @Test("A version reads the way Apple names the release")
+    func displayStringDropsAZeroPatch() {
+        #expect(
+            MacOSVersion.displayString(
+                OperatingSystemVersion(majorVersion: 26, minorVersion: 5, patchVersion: 2))
+                == "26.5.2")
+        #expect(
+            MacOSVersion.displayString(
+                OperatingSystemVersion(majorVersion: 26, minorVersion: 6, patchVersion: 0))
+                == "26.6")
+        #expect(
+            MacOSVersion.displayString(
+                OperatingSystemVersion(majorVersion: 12, minorVersion: 0, patchVersion: 1))
+                == "12.0.1")
+    }
+
+    @Test("What it renders is what the catalog's own version strings parse as")
+    func displayStringRoundTripsThroughTheParser() {
+        let rendered = MacOSVersion.displayString(
+            OperatingSystemVersion(majorVersion: 26, minorVersion: 5, patchVersion: 2))
+        #expect(MacOSVersion(rendered)?.components == [26, 5, 2])
+    }
+}
+
 /// Stub for the probe's requests.
 ///
 /// Deliberately its own class rather than `StubURLProtocol`: that one's handler
@@ -434,6 +460,16 @@ struct RestoreImageProbeServiceTests {
         #expect(image.version == "15.6.1")
         #expect(image.build == "24G90")
         #expect(image.url == imageURL)
+    }
+
+    @Test("The size alone is read without touching the image's structure")
+    func sizeReadsOnlyTheLength() async throws {
+        // No zip structure at all: a size read must not depend on one, which is
+        // what lets it serve an image Virtualization already vouched for.
+        serve(total: 19_772_077_142, body: Data())
+        defer { ProbeStubURLProtocol.reset() }
+
+        #expect(try await makeService().size(of: imageURL) == 19_772_077_142)
     }
 
     @Test("An image with no VM hardware model is refused")
