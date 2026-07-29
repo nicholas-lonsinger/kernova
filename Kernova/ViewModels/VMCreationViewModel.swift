@@ -36,6 +36,28 @@ enum IPSWSource: Sendable {
     }
 }
 
+/// The chosen source together with what that source needs to install, so a
+/// source cannot be current without its pick.
+///
+/// Set only through ``VMCreationViewModel``'s `select` methods. `Equatable` but
+/// not `Hashable` — the payloads are not — so keys go on ``IPSWSource``.
+enum IPSWSelection: Sendable, Equatable {
+    case downloadLatest
+    case catalogVersion(RestoreImageCatalogEntry)
+    case customURL(ProbedRestoreImage)
+    case localFile(path: String, bookmark: Data?)
+
+    /// Which radio this selection lights, independent of what it carries.
+    var source: IPSWSource {
+        switch self {
+        case .downloadLatest: .downloadLatest
+        case .catalogVersion: .catalogVersion
+        case .customURL: .customURL
+        case .localFile: .localFile
+        }
+    }
+}
+
 /// State machine for the VM creation wizard.
 @MainActor
 @Observable
@@ -75,14 +97,16 @@ final class VMCreationViewModel {
     // MARK: - Step 2: Boot Config
 
     var selectedBootMode: VMBootMode = .efi
-    var ipswSource: IPSWSource = .downloadLatest
-    var ipswPath: String?
-    /// The catalog image chosen for `.catalogVersion`, set through
-    /// ``selectCatalogEntry(_:)`` so the download destination moves with it.
-    private(set) var selectedCatalogEntry: RestoreImageCatalogEntry?
-    /// The checked image accepted for `.customURL`, set through
-    /// ``selectPastedImage(_:)`` on the same terms.
-    private(set) var pastedImage: ProbedRestoreImage?
+    private(set) var ipswSelection: IPSWSelection = .downloadLatest
+
+    /// Which source is current, for the radios and the source labels.
+    var ipswSource: IPSWSource { ipswSelection.source }
+
+    /// The last catalog pick, kept after the source moves off it so the version
+    /// picker re-opens on it.
+    private(set) var lastCatalogPick: RestoreImageCatalogEntry?
+    /// The last checked URL, on the same terms.
+    private(set) var lastPastedImage: ProbedRestoreImage?
     /// Always inside Downloads — there is no custom-destination picker.
     ///
     /// A pinned pick names the file through ``RestoreImageFilename``;
@@ -101,10 +125,7 @@ final class VMCreationViewModel {
     var kernelCommandLine: String?
 
     /// Security bookmarks paired with the panel-picked paths above; each is set
-    /// alongside its path at pick time. `nil` for paths adopted without a panel
-    /// (e.g. "Use Existing File", whose Downloads location the entitlement
-    /// already covers).
-    var ipswBookmark: Data?
+    /// alongside its path at pick time.
     var isoBookmark: Data?
     var kernelBookmark: Data?
     var initrdBookmark: Data?
@@ -133,18 +154,9 @@ final class VMCreationViewModel {
         case .bootConfig:
             switch selectedOS {
             case .macOS:
-                switch ipswSource {
-                case .downloadLatest:
-                    if shouldShowOverwriteWarning { return "Resolve the file conflict above to continue." }
-                case .catalogVersion:
-                    if selectedCatalogEntry == nil { return "Choose a macOS version to continue." }
-                    if shouldShowOverwriteWarning { return "Resolve the file conflict above to continue." }
-                case .customURL:
-                    if pastedImage == nil { return "Add a restore image URL to continue." }
-                    if shouldShowOverwriteWarning { return "Resolve the file conflict above to continue." }
-                case .localFile:
-                    if ipswPath == nil { return "Select a restore image file." }
-                }
+                // Reached only when `bootConfigValid` said no, and the conflict
+                // is the one thing that makes it say no for macOS.
+                return "Resolve the file conflict above to continue."
             case .linux:
                 switch selectedBootMode {
                 case .efi: return "Select an ISO image to continue."
@@ -152,7 +164,6 @@ final class VMCreationViewModel {
                 case .macOS: return "Invalid boot configuration."
                 }
             }
-            return nil
         case .resources:
             return "Enter a name for your virtual machine."
         }
@@ -185,12 +196,9 @@ final class VMCreationViewModel {
     private var bootConfigValid: Bool {
         switch selectedOS {
         case .macOS:
-            switch ipswSource {
-            case .downloadLatest: !shouldShowOverwriteWarning
-            case .catalogVersion: selectedCatalogEntry != nil && !shouldShowOverwriteWarning
-            case .customURL: pastedImage != nil && !shouldShowOverwriteWarning
-            case .localFile: ipswPath != nil
-            }
+            // A pinned pick is inseparable from its source, so the only macOS
+            // blocker left is the download-destination conflict.
+            !shouldShowOverwriteWarning
         case .linux:
             switch selectedBootMode {
             case .efi: isoPath != nil
@@ -268,26 +276,35 @@ final class VMCreationViewModel {
     /// satisfy the download step, installing something other than what the
     /// wizard shows.
     func selectCatalogEntry(_ entry: RestoreImageCatalogEntry) {
-        ipswSource = .catalogVersion
-        selectedCatalogEntry = entry
+        ipswSelection = .catalogVersion(entry)
+        lastCatalogPick = entry
         ipswDownloadPath = Self.downloadPath(forFilename: entry.suggestedFilename)
     }
 
     /// Commits a checked URL, on the same per-image destination terms as a
     /// catalog pick.
     func selectPastedImage(_ image: ProbedRestoreImage) {
-        ipswSource = .customURL
-        pastedImage = image
+        ipswSelection = .customURL(image)
+        lastPastedImage = image
         ipswDownloadPath = Self.downloadPath(forFilename: image.suggestedFilename)
     }
 
     /// Commits the "Download Latest" source, returning the destination to the
     /// fixed filename that source has always resolved to at install time.
+    ///
+    /// The one operation that drops both sheet seeds: choosing to install
+    /// whatever is newest retracts the earlier "install *this* build" answers.
     func selectDownloadLatest() {
-        ipswSource = .downloadLatest
-        selectedCatalogEntry = nil
-        pastedImage = nil
+        ipswSelection = .downloadLatest
+        lastCatalogPick = nil
+        lastPastedImage = nil
         ipswDownloadPath = Self.defaultIPSWDownloadPath
+    }
+
+    /// Commits a panel-picked file together with the grant minted for it, which
+    /// is `nil` when the bookmark could not be created.
+    func selectLocalFile(path: String, bookmark: Data?) {
+        ipswSelection = .localFile(path: path, bookmark: bookmark)
     }
 
     // MARK: - Apply Defaults
@@ -318,59 +335,44 @@ final class VMCreationViewModel {
     /// The install pipeline reads from the VM's bundle, not the wizard, on every
     /// Start until the install completes and the context is cleared.
     func buildInstallContext() -> MacOSInstallContext {
-        switch ipswSource {
+        switch ipswSelection {
         case .downloadLatest:
-            // The `!= nil` guard prevents the meaningless `nil == nil` match (no
-            // path AND no confirmation) from setting the flag.
-            return MacOSInstallContext(
+            MacOSInstallContext(
                 source: .downloadLatest,
                 downloadDestinationPath: ipswDownloadPath,
-                requestedFreshDownload: confirmedOverwritePath != nil
-                    && confirmedOverwritePath == ipswDownloadPath
+                requestedFreshDownload: requestedFreshDownload
             )
-        case .catalogVersion:
-            guard let entry = selectedCatalogEntry else {
-                Self.logger.fault("Catalog source selected with no chosen entry")
-                assertionFailure("Catalog source selected with no chosen entry")
-                return MacOSInstallContext(
-                    source: .downloadLatest,
-                    downloadDestinationPath: Self.defaultIPSWDownloadPath
-                )
-            }
-            return MacOSInstallContext(
+        case .catalogVersion(let entry):
+            MacOSInstallContext(
                 source: .catalogVersion,
                 downloadDestinationPath: ipswDownloadPath,
-                requestedFreshDownload: confirmedOverwritePath != nil
-                    && confirmedOverwritePath == ipswDownloadPath,
+                requestedFreshDownload: requestedFreshDownload,
                 remoteURL: entry.url,
                 version: entry.version,
                 build: entry.build
             )
-        case .customURL:
-            guard let image = pastedImage else {
-                Self.logger.fault("URL source selected with no checked image")
-                assertionFailure("URL source selected with no checked image")
-                return MacOSInstallContext(
-                    source: .downloadLatest,
-                    downloadDestinationPath: Self.defaultIPSWDownloadPath
-                )
-            }
-            return MacOSInstallContext(
+        case .customURL(let image):
+            MacOSInstallContext(
                 source: .customURL,
                 downloadDestinationPath: ipswDownloadPath,
-                requestedFreshDownload: confirmedOverwritePath != nil
-                    && confirmedOverwritePath == ipswDownloadPath,
+                requestedFreshDownload: requestedFreshDownload,
                 remoteURL: image.url,
                 version: image.version,
                 build: image.build
             )
-        case .localFile:
-            return MacOSInstallContext(
+        case .localFile(let path, let bookmark):
+            MacOSInstallContext(
                 source: .localFile,
-                localIPSWPath: ipswPath,
-                localIPSWBookmark: ipswBookmark
+                localIPSWPath: path,
+                localIPSWBookmark: bookmark
             )
         }
+    }
+
+    /// Whether the user confirmed overwriting the destination the wizard is
+    /// currently pointing at.
+    private var requestedFreshDownload: Bool {
+        confirmedOverwritePath == ipswDownloadPath
     }
 
     // MARK: - Resume Detection
@@ -394,21 +396,21 @@ final class VMCreationViewModel {
         confirmedOverwritePath = ipswDownloadPath
     }
 
+    /// Adopts the file already sitting at the download destination.
+    ///
+    /// No bookmark: the file was adopted without a panel, so there is no grant
+    /// to capture — and none is needed, the Downloads location being
+    /// entitlement-covered.
     func useExistingDownloadFile() {
-        ipswSource = .localFile
-        ipswPath = ipswDownloadPath
-        // Adopted without a panel: no grant to bookmark, and none needed — the
-        // Downloads location is entitlement-covered. Clearing also drops any
-        // bookmark left over from an earlier local-file pick.
-        ipswBookmark = nil
+        ipswSelection = .localFile(path: ipswDownloadPath, bookmark: nil)
     }
 
     /// The build the wizard is currently promising, or `nil` when the source
     /// names no particular image.
     var pinnedBuild: String? {
-        switch ipswSource {
-        case .catalogVersion: selectedCatalogEntry?.build
-        case .customURL: pastedImage?.build
+        switch ipswSelection {
+        case .catalogVersion(let entry): entry.build
+        case .customURL(let image): image.build
         case .downloadLatest, .localFile: nil
         }
     }

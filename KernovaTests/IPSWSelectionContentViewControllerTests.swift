@@ -26,7 +26,6 @@ struct IPSWSelectionContentViewControllerTests {
 
         let inspector = MockLocalRestoreImageInspector()
         let vm = VMCreationViewModel(localImageInspector: inspector)
-        vm.ipswSource = .downloadLatest
         vm.ipswDownloadPath = path
         #expect(vm.shouldShowOverwriteWarning == true)
 
@@ -37,8 +36,7 @@ struct IPSWSelectionContentViewControllerTests {
         findButton(titled: "Use Existing File", in: vc.view)?.performClick(nil)
         await vc.adoptTaskForTesting?.value
 
-        #expect(vm.ipswSource == .localFile)
-        #expect(vm.ipswPath == path)
+        #expect(vm.ipswSelection == .localFile(path: path, bookmark: nil))
     }
 
     @Test("A file of a different build is named, and not adopted until confirmed")
@@ -50,7 +48,8 @@ struct IPSWSelectionContentViewControllerTests {
         inspector.inspectResult = InspectedRestoreImage(
             version: "14.2", build: "23C64", isSupportedOnThisHost: true)
         let vm = VMCreationViewModel(localImageInspector: inspector)
-        vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
+        let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
+        vm.selectCatalogEntry(entry)
         vm.ipswDownloadPath = path
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
@@ -58,14 +57,12 @@ struct IPSWSelectionContentViewControllerTests {
         findButton(titled: "Use Existing File", in: vc.view)?.performClick(nil)
         await vc.adoptTaskForTesting?.value
 
-        #expect(vm.ipswSource == .catalogVersion)
-        #expect(vm.ipswPath == nil)
+        #expect(vm.ipswSelection == .catalogVersion(entry))
         #expect(findLabelContaining("macOS 14.2 (23C64)", in: vc.view) != nil)
 
         // The user can still override, which is what "Use It Anyway" is for.
         findButton(titled: "Use It Anyway", in: vc.view)?.performClick(nil)
-        #expect(vm.ipswSource == .localFile)
-        #expect(vm.ipswPath == path)
+        #expect(vm.ipswSelection == .localFile(path: path, bookmark: nil))
     }
 
     @Test("An unreadable file offers only a re-download")
@@ -76,7 +73,6 @@ struct IPSWSelectionContentViewControllerTests {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectError = LocalRestoreImageError.unreadable
         let vm = VMCreationViewModel(localImageInspector: inspector)
-        vm.ipswSource = .downloadLatest
         vm.ipswDownloadPath = path
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
@@ -97,7 +93,6 @@ struct IPSWSelectionContentViewControllerTests {
 
         let inspector = SuspendingMockLocalRestoreImageInspector()
         let vm = VMCreationViewModel(localImageInspector: inspector)
-        vm.ipswSource = .downloadLatest
         vm.ipswDownloadPath = path
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
@@ -112,8 +107,7 @@ struct IPSWSelectionContentViewControllerTests {
         await inFlight.value
 
         // Adopting here would leave the radios and the model disagreeing.
-        #expect(vm.ipswSource == .downloadLatest)
-        #expect(vm.ipswPath == nil)
+        #expect(vm.ipswSelection == .downloadLatest)
     }
 
     private func findLabelContaining(_ text: String, in view: NSView) -> NSTextField? {
@@ -130,7 +124,6 @@ struct IPSWSelectionContentViewControllerTests {
         defer { try? FileManager.default.removeItem(atPath: path) }
 
         let vm = VMCreationViewModel()
-        vm.ipswSource = .downloadLatest
         vm.ipswDownloadPath = path
         #expect(vm.shouldShowOverwriteWarning == true)
 

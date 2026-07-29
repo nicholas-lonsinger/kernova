@@ -84,17 +84,11 @@ struct VMCreationViewModelTests {
         // macOS with downloadLatest is valid (the destination is always the
         // Downloads default; only an unresolved overwrite conflict blocks)
         vm.selectedOS = .macOS
-        vm.ipswSource = .downloadLatest
         vm.ipswDownloadPath = "/nonexistent/RestoreImage.ipsw"
         #expect(vm.canAdvance == true)
 
-        // macOS with localFile but no path is invalid
-        vm.ipswSource = .localFile
-        vm.ipswPath = nil
-        #expect(vm.canAdvance == false)
-
-        // macOS with localFile and path is valid
-        vm.ipswPath = "/path/to/restore.ipsw"
+        // A local file carries its path, so it is valid the moment it is picked
+        vm.selectLocalFile(path: "/path/to/restore.ipsw", bookmark: nil)
         #expect(vm.canAdvance == true)
     }
 
@@ -109,7 +103,6 @@ struct VMCreationViewModelTests {
         let vm = VMCreationViewModel()
         vm.currentStep = .bootConfig
         vm.selectedOS = .macOS
-        vm.ipswSource = .downloadLatest
         // Use a non-existent path so the overwrite warning doesn't trigger
         vm.ipswDownloadPath = "/nonexistent/path/RestoreImage.ipsw"
         #expect(vm.canAdvance == true)
@@ -411,7 +404,7 @@ struct VMCreationViewModelTests {
     @Test("shouldShowOverwriteWarning is false when source is localFile")
     func overwriteWarningFalseForLocalFile() {
         let vm = VMCreationViewModel()
-        vm.ipswSource = .localFile
+        vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
         vm.ipswDownloadPath = "/usr/bin/true"  // exists on disk
 
         #expect(vm.shouldShowOverwriteWarning == false)
@@ -420,7 +413,6 @@ struct VMCreationViewModelTests {
     @Test("shouldShowOverwriteWarning is false when file does not exist at path")
     func overwriteWarningFalseWhenFileDoesNotExist() {
         let vm = VMCreationViewModel()
-        vm.ipswSource = .downloadLatest
         vm.ipswDownloadPath = "/nonexistent/path/RestoreImage.ipsw"
 
         #expect(vm.shouldShowOverwriteWarning == false)
@@ -429,7 +421,6 @@ struct VMCreationViewModelTests {
     @Test("shouldShowOverwriteWarning is true when download source and file exists")
     func overwriteWarningTrueWhenDownloadAndFileExists() {
         let vm = VMCreationViewModel()
-        vm.ipswSource = .downloadLatest
         vm.ipswDownloadPath = "/usr/bin/true"  // exists on disk
 
         #expect(vm.shouldShowOverwriteWarning == true)
@@ -438,7 +429,6 @@ struct VMCreationViewModelTests {
     @Test("confirmOverwrite suppresses warning for current path")
     func confirmOverwriteSuppressesWarning() {
         let vm = VMCreationViewModel()
-        vm.ipswSource = .downloadLatest
         vm.ipswDownloadPath = "/usr/bin/true"
         #expect(vm.shouldShowOverwriteWarning == true)
 
@@ -449,7 +439,6 @@ struct VMCreationViewModelTests {
     @Test("changing path after confirmOverwrite resets warning")
     func changingPathResetsConfirmation() {
         let vm = VMCreationViewModel()
-        vm.ipswSource = .downloadLatest
         vm.ipswDownloadPath = "/usr/bin/true"
         vm.confirmOverwrite()
         #expect(vm.shouldShowOverwriteWarning == false)
@@ -462,13 +451,11 @@ struct VMCreationViewModelTests {
     @Test("useExistingDownloadFile switches source to localFile and copies path")
     func useExistingDownloadFileSwitchesSource() {
         let vm = VMCreationViewModel()
-        vm.ipswSource = .downloadLatest
         vm.ipswDownloadPath = "/usr/bin/true"
 
         vm.useExistingDownloadFile()
 
-        #expect(vm.ipswSource == .localFile)
-        #expect(vm.ipswPath == "/usr/bin/true")
+        #expect(vm.ipswSelection == .localFile(path: "/usr/bin/true", bookmark: nil))
     }
 
     @Test("canAdvance is false when overwrite warning is unresolved")
@@ -476,7 +463,6 @@ struct VMCreationViewModelTests {
         let vm = VMCreationViewModel()
         vm.currentStep = .bootConfig
         vm.selectedOS = .macOS
-        vm.ipswSource = .downloadLatest
         vm.ipswDownloadPath = "/usr/bin/true"  // exists on disk → triggers warning
 
         #expect(vm.shouldShowOverwriteWarning == true)
@@ -488,7 +474,6 @@ struct VMCreationViewModelTests {
         let vm = VMCreationViewModel()
         vm.currentStep = .bootConfig
         vm.selectedOS = .macOS
-        vm.ipswSource = .downloadLatest
         vm.ipswDownloadPath = "/usr/bin/true"  // exists on disk → triggers warning
         #expect(vm.canAdvance == false)
 
@@ -546,23 +531,11 @@ struct VMCreationViewModelTests {
         #expect(vm.validationMessage == "Select a kernel image to continue.")
     }
 
-    @Test("validationMessage returns IPSW hint for macOS localFile with no ipswPath")
-    func validationMessageMacOSLocalFileNoIPSW() {
-        let vm = VMCreationViewModel()
-        vm.currentStep = .bootConfig
-        vm.selectedOS = .macOS
-        vm.ipswSource = .localFile
-        vm.ipswPath = nil
-
-        #expect(vm.validationMessage == "Select a restore image file.")
-    }
-
     @Test("validationMessage returns conflict hint when overwrite warning is showing")
     func validationMessageOverwriteConflict() {
         let vm = VMCreationViewModel()
         vm.currentStep = .bootConfig
         vm.selectedOS = .macOS
-        vm.ipswSource = .downloadLatest
         vm.ipswDownloadPath = "/usr/bin/true"  // exists on disk → triggers warning
 
         #expect(vm.shouldShowOverwriteWarning == true)
@@ -586,7 +559,6 @@ struct VMCreationViewModelTests {
     @Test("buildInstallContext snapshots downloadLatest with chosen path")
     func buildInstallContextDownloadLatest() {
         let vm = VMCreationViewModel()
-        vm.ipswSource = .downloadLatest
         vm.ipswDownloadPath = "/Users/me/Downloads/RestoreImage.ipsw"
 
         let context = vm.buildInstallContext()
@@ -599,8 +571,7 @@ struct VMCreationViewModelTests {
     @Test("buildInstallContext snapshots localFile with chosen path")
     func buildInstallContextLocalFile() {
         let vm = VMCreationViewModel()
-        vm.ipswSource = .localFile
-        vm.ipswPath = "/tmp/macOS-26.ipsw"
+        vm.selectLocalFile(path: "/tmp/macOS-26.ipsw", bookmark: nil)
 
         let context = vm.buildInstallContext()
 
@@ -610,10 +581,36 @@ struct VMCreationViewModelTests {
         #expect(!context.requestedFreshDownload)
     }
 
+    @Test("buildInstallContext carries a local pick's bookmark")
+    func buildInstallContextCarriesLocalBookmark() {
+        let vm = VMCreationViewModel()
+        let bookmark = Data([0x01, 0x02, 0x03])
+        vm.selectLocalFile(path: "/tmp/macOS-26.ipsw", bookmark: bookmark)
+
+        let context = vm.buildInstallContext()
+
+        #expect(context.localIPSWPath == "/tmp/macOS-26.ipsw")
+        #expect(context.localIPSWBookmark == bookmark)
+    }
+
+    @Test("each selection maps to its persisted install-context source")
+    func installContextSourceCoversEverySelection() {
+        let vm = VMCreationViewModel()
+        #expect(vm.buildInstallContext().source == .downloadLatest)
+
+        vm.selectCatalogEntry(makeCatalogEntry())
+        #expect(vm.buildInstallContext().source == .catalogVersion)
+
+        vm.selectPastedImage(makeProbedImage())
+        #expect(vm.buildInstallContext().source == .customURL)
+
+        vm.selectLocalFile(path: "/tmp/macOS-26.ipsw", bookmark: nil)
+        #expect(vm.buildInstallContext().source == .localFile)
+    }
+
     @Test("buildInstallContext defaults requestedFreshDownload to false")
     func buildInstallContextDefaultsFreshFalse() {
         let vm = VMCreationViewModel()
-        vm.ipswSource = .downloadLatest
         vm.ipswDownloadPath = "/Users/me/Downloads/RestoreImage.ipsw"
 
         let context = vm.buildInstallContext()
@@ -624,7 +621,6 @@ struct VMCreationViewModelTests {
     @Test("buildInstallContext sets requestedFreshDownload when overwrite confirmed")
     func buildInstallContextSetsFreshOnConfirmedOverwrite() {
         let vm = VMCreationViewModel()
-        vm.ipswSource = .downloadLatest
         vm.ipswDownloadPath = "/Users/me/Downloads/RestoreImage.ipsw"
         vm.confirmOverwrite()
 
@@ -639,7 +635,6 @@ struct VMCreationViewModelTests {
         // then picks a different destination, the confirmation no longer
         // applies and the wizard should treat the new path as not-yet-confirmed.
         let vm = VMCreationViewModel()
-        vm.ipswSource = .downloadLatest
         vm.ipswDownloadPath = "/Users/me/Downloads/A.ipsw"
         vm.confirmOverwrite()
         vm.ipswDownloadPath = "/Users/me/Downloads/B.ipsw"
@@ -665,8 +660,7 @@ struct VMCreationViewModelTests {
         let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
         vm.selectCatalogEntry(entry)
 
-        #expect(vm.ipswSource == .catalogVersion)
-        #expect(vm.selectedCatalogEntry == entry)
+        #expect(vm.ipswSelection == .catalogVersion(entry))
         #expect(
             vm.ipswDownloadPath
                 == VMCreationViewModel.downloadPath(
@@ -708,23 +702,8 @@ struct VMCreationViewModelTests {
         vm.selectCatalogEntry(makeCatalogEntry())
         vm.selectDownloadLatest()
 
-        #expect(vm.ipswSource == .downloadLatest)
-        #expect(vm.selectedCatalogEntry == nil)
+        #expect(vm.ipswSelection == .downloadLatest)
         #expect(vm.ipswDownloadPath == VMCreationViewModel.defaultIPSWDownloadPath)
-    }
-
-    @Test("The catalog source cannot advance until a version is chosen")
-    func catalogSourceRequiresAPick() {
-        let vm = VMCreationViewModel()
-        vm.currentStep = .bootConfig
-        vm.ipswSource = .catalogVersion
-
-        #expect(!vm.canAdvance)
-        #expect(vm.validationMessage == "Choose a macOS version to continue.")
-
-        vm.selectCatalogEntry(makeCatalogEntry())
-        #expect(vm.canAdvance)
-        #expect(vm.validationMessage == nil)
     }
 
     @Test("The overwrite warning and resume check cover the catalog source")
@@ -773,8 +752,18 @@ struct VMCreationViewModelTests {
         let destination = vm.ipswDownloadPath
         vm.useExistingDownloadFile()
 
+        #expect(vm.ipswSelection == .localFile(path: destination, bookmark: nil))
+    }
+
+    @Test("Use Existing File keeps the pick that named the file, for the sheet")
+    func useExistingKeepsTheSeed() {
+        let vm = VMCreationViewModel()
+        let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
+        vm.selectCatalogEntry(entry)
+        vm.useExistingDownloadFile()
+
         #expect(vm.ipswSource == .localFile)
-        #expect(vm.ipswPath == destination)
+        #expect(vm.lastCatalogPick == entry)
     }
 
     @Test("Only download sources own the destination")
@@ -793,8 +782,7 @@ struct VMCreationViewModelTests {
         let image = makeProbedImage()
         vm.selectPastedImage(image)
 
-        #expect(vm.ipswSource == .customURL)
-        #expect(vm.pastedImage == image)
+        #expect(vm.ipswSelection == .customURL(image))
         #expect(
             vm.ipswDownloadPath
                 == VMCreationViewModel.downloadPath(
@@ -841,20 +829,6 @@ struct VMCreationViewModelTests {
         #expect(parentPath(of: vm.ipswDownloadPath) == downloadsPath)
     }
 
-    @Test("The URL source cannot advance until a URL is checked")
-    func customURLSourceRequiresACheckedImage() {
-        let vm = VMCreationViewModel()
-        vm.currentStep = .bootConfig
-        vm.ipswSource = .customURL
-
-        #expect(!vm.canAdvance)
-        #expect(vm.validationMessage == "Add a restore image URL to continue.")
-
-        vm.selectPastedImage(makeProbedImage())
-        #expect(vm.canAdvance)
-        #expect(vm.validationMessage == nil)
-    }
-
     @Test("The URL source shares the overwrite warning")
     func customURLSourceSharesDownloadWarnings() {
         let vm = VMCreationViewModel()
@@ -898,8 +872,7 @@ struct VMCreationViewModelTests {
         let verdict = await vm.adoptExistingDownloadFile()
 
         #expect(verdict == .adopted(inspector.inspectResult))
-        #expect(vm.ipswSource == .localFile)
-        #expect(vm.ipswPath == destination)
+        #expect(vm.ipswSelection == .localFile(path: destination, bookmark: nil))
         #expect(inspector.lastInspectedURL?.path(percentEncoded: false) == destination)
     }
 
@@ -909,14 +882,14 @@ struct VMCreationViewModelTests {
         inspector.inspectResult = InspectedRestoreImage(
             version: "14.2", build: "23C64", isSupportedOnThisHost: true)
         let vm = VMCreationViewModel(localImageInspector: inspector)
-        vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
+        let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
+        vm.selectCatalogEntry(entry)
 
         let verdict = await vm.adoptExistingDownloadFile()
 
         #expect(verdict == .mismatch(expected: "24G90", found: inspector.inspectResult))
         // The wrong-image install this exists to prevent.
-        #expect(vm.ipswSource == .catalogVersion)
-        #expect(vm.ipswPath == nil)
+        #expect(vm.ipswSelection == .catalogVersion(entry))
     }
 
     @Test("An unreadable file is refused with a reason")
@@ -984,7 +957,8 @@ struct VMCreationViewModelTests {
         let inspector = SuspendingMockLocalRestoreImageInspector()
         let vm = VMCreationViewModel(localImageInspector: inspector)
         // The build matches, so only the cancellation keeps this from adopting.
-        vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
+        let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
+        vm.selectCatalogEntry(entry)
 
         let adopt = Task { await vm.adoptExistingDownloadFile() }
         try await inspector.waitUntilInspecting()
@@ -992,8 +966,7 @@ struct VMCreationViewModelTests {
         inspector.release()
 
         #expect(await adopt.value == .cancelled)
-        #expect(vm.ipswSource == .catalogVersion)
-        #expect(vm.ipswPath == nil)
+        #expect(vm.ipswSelection == .catalogVersion(entry))
     }
 
     @Test("pinnedBuild names the build each source is promising")
@@ -1016,13 +989,29 @@ struct VMCreationViewModelTests {
         let vm = VMCreationViewModel()
         vm.selectCatalogEntry(makeCatalogEntry())
         vm.selectPastedImage(makeProbedImage())
-        #expect(vm.selectedCatalogEntry != nil)
-        #expect(vm.pastedImage != nil)
+        #expect(vm.lastCatalogPick != nil)
+        #expect(vm.lastPastedImage != nil)
 
         // Download Latest is the one source that owns neither pick.
         vm.selectDownloadLatest()
-        #expect(vm.selectedCatalogEntry == nil)
-        #expect(vm.pastedImage == nil)
+        #expect(vm.lastCatalogPick == nil)
+        #expect(vm.lastPastedImage == nil)
+    }
+
+    @Test("A pinned payload leaves with its source, while the sheet seed stays")
+    func switchingSourcesDropsThePayloadButKeepsTheSeed() {
+        let vm = VMCreationViewModel()
+        let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
+        let image = makeProbedImage(build: "25G72")
+        vm.selectCatalogEntry(entry)
+        vm.selectPastedImage(image)
+
+        // Only the live source carries a payload, so no reader can reach the
+        // catalog entry while the URL source is current.
+        #expect(vm.ipswSelection == .customURL(image))
+        #expect(vm.pinnedBuild == "25G72")
+        // The seed survives so the version picker re-opens on the old pick.
+        #expect(vm.lastCatalogPick == entry)
     }
 }
 

@@ -75,25 +75,22 @@ final class ReviewContentViewController: NSViewController {
             rows: [valueRow("Networking", creationVM.networkEnabled ? "Enabled" : "Disabled")], to: form)
 
         if creationVM.selectedOS == .macOS {
-            let sourceLabel: String
-            switch creationVM.ipswSource {
-            case .downloadLatest: sourceLabel = "Download Latest"
-            case .catalogVersion: sourceLabel = "Chosen Version"
-            case .customURL: sourceLabel = "From URL"
-            case .localFile: sourceLabel = "Local File"
-            }
-            var rows = [valueRow("Restore Image", sourceLabel)]
-            if creationVM.ipswSource == .catalogVersion, let entry = creationVM.selectedCatalogEntry {
+            var rows: [NSView] = []
+            switch creationVM.ipswSelection {
+            case .downloadLatest:
+                rows.append(valueRow("Restore Image", "Download Latest"))
+            case .catalogVersion(let entry):
+                rows.append(valueRow("Restore Image", "Chosen Version"))
                 rows.append(valueRow("macOS Version", "\(entry.version) (\(entry.build))"))
                 rows.append(
                     valueRow("Download Size", DataFormatters.formatBytes(entry.sizeBytes)))
-            }
-            if creationVM.ipswSource == .customURL, let image = creationVM.pastedImage {
+            case .customURL(let image):
+                rows.append(valueRow("Restore Image", "From URL"))
                 rows.append(valueRow("macOS Version", image.versionSummary))
                 rows.append(
                     valueRow("Download Size", DataFormatters.formatBytes(image.sizeBytes)))
-            }
-            if creationVM.ipswSource == .localFile, let path = creationVM.ipswPath {
+            case .localFile(let path, _):
+                rows.append(valueRow("Restore Image", "Local File"))
                 rows.append(valueRow("File", URL(fileURLWithPath: path).lastPathComponent))
             }
             if creationVM.ipswSource.downloadsImage {

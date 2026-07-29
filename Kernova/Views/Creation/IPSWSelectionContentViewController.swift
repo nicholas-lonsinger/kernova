@@ -170,7 +170,7 @@ final class IPSWSelectionContentViewController: NSViewController {
             view.removeFromSuperview()
         }
 
-        switch creationVM.ipswSource {
+        switch creationVM.ipswSelection {
         case .downloadLatest:
             // No "Change…" affordance: the destination is always the Downloads
             // folder, the one location the sandbox's downloads entitlement covers
@@ -178,24 +178,21 @@ final class IPSWSelectionContentViewController: NSViewController {
             conditionalContainer.addArrangedSubview(
                 makeWizardPathBadge(path: creationVM.ipswDownloadPath))
             addDownloadBanners(version: nil)
-        case .catalogVersion:
-            guard let entry = creationVM.selectedCatalogEntry else { return }
+        case .catalogVersion(let entry):
             addPinnedImageBadge(
                 summary:
                     "macOS \(entry.version)  ·  Build \(entry.build)  ·  \(DataFormatters.formatBytes(entry.sizeBytes))",
                 changeAction: #selector(changeCatalogVersion)
             )
             addDownloadBanners(version: entry.version)
-        case .customURL:
-            guard let image = creationVM.pastedImage else { return }
+        case .customURL(let image):
             addPinnedImageBadge(
                 summary:
                     "\(image.versionSummary)  ·  \(DataFormatters.formatBytes(image.sizeBytes))",
                 changeAction: #selector(changePastedURL)
             )
             addDownloadBanners(version: image.version)
-        case .localFile:
-            guard let path = creationVM.ipswPath else { return }
+        case .localFile(let path, _):
             let change = makeLinkButton(
                 "Change…", target: self, action: #selector(changeLocalFile))
             conditionalContainer.addArrangedSubview(makeWizardPathBadge(path: path, changeButton: change))
@@ -371,9 +368,7 @@ final class IPSWSelectionContentViewController: NSViewController {
         panel.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
             let (path, bookmark) = SecurityScopedBookmark.capture(url)
-            self.creationVM.ipswSource = .localFile
-            self.creationVM.ipswPath = path
-            self.creationVM.ipswBookmark = bookmark
+            self.creationVM.selectLocalFile(path: path, bookmark: bookmark)
             self.refresh()
         }
     }
@@ -383,7 +378,7 @@ final class IPSWSelectionContentViewController: NSViewController {
         guard let window = view.window, !catalogSheetPresenter.isShown else { return }
         let sheet = RestoreImageCatalogSheetContentViewController(
             entries: creationVM.catalogService.entries,
-            selectedBuild: creationVM.selectedCatalogEntry?.build,
+            selectedBuild: creationVM.lastCatalogPick?.build,
             generatedAt: creationVM.catalogService.generatedAt
         )
         sheet.delegate = self
@@ -395,7 +390,7 @@ final class IPSWSelectionContentViewController: NSViewController {
         guard let window = view.window, !catalogSheetPresenter.isShown else { return }
         let sheet = RestoreImageURLSheetContentViewController(
             probeService: creationVM.probeService,
-            initialURL: creationVM.pastedImage?.url.absoluteString
+            initialURL: creationVM.lastPastedImage?.url.absoluteString
         )
         sheet.delegate = self
         catalogSheetPresenter.show(content: sheet, in: window)

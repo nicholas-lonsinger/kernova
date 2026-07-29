@@ -1620,7 +1620,6 @@ struct VMLibraryViewModelTests {
         wizard.selectedOS = .macOS
         wizard.selectedBootMode = .macOS
         wizard.vmName = "Overwrite VM"
-        wizard.ipswSource = .downloadLatest
         wizard.ipswDownloadPath = destination.path(percentEncoded: false)
         wizard.confirmOverwrite()
 
@@ -1648,7 +1647,6 @@ struct VMLibraryViewModelTests {
         wizard.selectedOS = .macOS
         wizard.selectedBootMode = .macOS
         wizard.vmName = "No-overwrite VM"
-        wizard.ipswSource = .downloadLatest
         wizard.ipswDownloadPath = destination.path(percentEncoded: false)
 
         await viewModel.createVM(from: wizard)
