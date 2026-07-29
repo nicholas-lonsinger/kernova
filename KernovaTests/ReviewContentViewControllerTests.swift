@@ -43,8 +43,7 @@ struct ReviewContentViewControllerTests {
     @Test("macOS + local file shows the file basename")
     func macOSLocalFileShowsFile() {
         let vm = VMCreationViewModel()
-        vm.ipswSource = .localFile
-        vm.ipswPath = "/tmp/Restore.ipsw"
+        vm.selectLocalFile(path: "/tmp/Restore.ipsw", bookmark: nil)
         let vc = ReviewContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
