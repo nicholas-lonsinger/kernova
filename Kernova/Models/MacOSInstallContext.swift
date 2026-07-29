@@ -8,16 +8,48 @@ import Foundation
 struct MacOSInstallContext: Codable, Sendable, Equatable {
     enum Source: String, Codable, Sendable, Equatable {
         case downloadLatest
+        case catalogVersion
+        case customURL
         case localFile
+
+        /// Whether the install downloads the image named by ``remoteURL``
+        /// rather than resolving one at Start.
+        var usesPinnedURL: Bool {
+            switch self {
+            case .catalogVersion, .customURL: true
+            case .downloadLatest, .localFile: false
+            }
+        }
+
+        /// Whether the install fetches the image over the network.
+        var downloadsImage: Bool {
+            switch self {
+            case .downloadLatest, .catalogVersion, .customURL: true
+            case .localFile: false
+            }
+        }
     }
 
     var source: Source
 
-    /// Where to write the downloaded IPSW (for `.downloadLatest`).
+    /// Where to write the downloaded IPSW (for `.downloadLatest` and
+    /// `.catalogVersion`).
     ///
     /// A sibling `.kernovadownload` bundle at this location holds in-progress
     /// download state and enables resume across app restarts.
     var downloadDestinationPath: String?
+
+    /// The exact image to download (for the sources where ``Source/usesPinnedURL``).
+    ///
+    /// Pinned at wizard time — from the bundled catalog, or from a URL the user
+    /// supplied and Kernova checked — so a Start weeks later fetches the image
+    /// the user chose rather than whatever is newest.
+    var remoteURL: URL?
+
+    /// Marketing version and build of the pinned image, for display while the
+    /// install runs.
+    var version: String?
+    var build: String?
 
     /// Path to an existing IPSW file on disk (for `.localFile`).
     var localIPSWPath: String?
@@ -51,13 +83,19 @@ struct MacOSInstallContext: Codable, Sendable, Equatable {
         downloadDestinationPath: String? = nil,
         localIPSWPath: String? = nil,
         localIPSWBookmark: Data? = nil,
-        requestedFreshDownload: Bool = false
+        requestedFreshDownload: Bool = false,
+        remoteURL: URL? = nil,
+        version: String? = nil,
+        build: String? = nil
     ) {
         self.source = source
         self.downloadDestinationPath = downloadDestinationPath
         self.localIPSWPath = localIPSWPath
         self.localIPSWBookmark = localIPSWBookmark
         self.requestedFreshDownload = requestedFreshDownload
+        self.remoteURL = remoteURL
+        self.version = version
+        self.build = build
     }
 
     // Custom decoder so a context missing these keys decodes with
@@ -68,6 +106,9 @@ struct MacOSInstallContext: Codable, Sendable, Equatable {
         case localIPSWPath
         case localIPSWBookmark
         case requestedFreshDownload
+        case remoteURL
+        case version
+        case build
     }
 
     init(from decoder: any Decoder) throws {
@@ -79,5 +120,8 @@ struct MacOSInstallContext: Codable, Sendable, Equatable {
         self.localIPSWBookmark = try c.decodeIfPresent(Data.self, forKey: .localIPSWBookmark)
         self.requestedFreshDownload =
             try c.decodeIfPresent(Bool.self, forKey: .requestedFreshDownload) ?? false
+        self.remoteURL = try c.decodeIfPresent(URL.self, forKey: .remoteURL)
+        self.version = try c.decodeIfPresent(String.self, forKey: .version)
+        self.build = try c.decodeIfPresent(String.self, forKey: .build)
     }
 }

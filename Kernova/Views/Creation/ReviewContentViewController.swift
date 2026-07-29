@@ -75,15 +75,28 @@ final class ReviewContentViewController: NSViewController {
             rows: [valueRow("Networking", creationVM.networkEnabled ? "Enabled" : "Disabled")], to: form)
 
         if creationVM.selectedOS == .macOS {
-            var rows = [
-                valueRow(
-                    "IPSW Source",
-                    creationVM.ipswSource == .downloadLatest ? "Download Latest" : "Local File")
-            ]
+            let sourceLabel: String
+            switch creationVM.ipswSource {
+            case .downloadLatest: sourceLabel = "Download Latest"
+            case .catalogVersion: sourceLabel = "Chosen Version"
+            case .customURL: sourceLabel = "From URL"
+            case .localFile: sourceLabel = "Local File"
+            }
+            var rows = [valueRow("Restore Image", sourceLabel)]
+            if creationVM.ipswSource == .catalogVersion, let entry = creationVM.selectedCatalogEntry {
+                rows.append(valueRow("macOS Version", "\(entry.version) (\(entry.build))"))
+                rows.append(
+                    valueRow("Download Size", DataFormatters.formatBytes(entry.sizeBytes)))
+            }
+            if creationVM.ipswSource == .customURL, let image = creationVM.pastedImage {
+                rows.append(valueRow("macOS Version", image.versionSummary))
+                rows.append(
+                    valueRow("Download Size", DataFormatters.formatBytes(image.sizeBytes)))
+            }
             if creationVM.ipswSource == .localFile, let path = creationVM.ipswPath {
                 rows.append(valueRow("File", URL(fileURLWithPath: path).lastPathComponent))
             }
-            if creationVM.ipswSource == .downloadLatest {
+            if creationVM.ipswSource.downloadsImage {
                 rows.append(
                     valueRow("Save to", wizardAbbreviateWithTilde(creationVM.ipswDownloadPath)))
             }

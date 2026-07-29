@@ -92,6 +92,12 @@ final class InitialBootBannerView: NSView {
                 return "An interrupted download will resume when you click Start."
             }
             return "Click Start to download the latest macOS and install."
+        case .catalogVersion, .customURL:
+            let version = context.version.map { "macOS \($0)" } ?? "the chosen restore image"
+            if instance.hasResumableInstallDownload {
+                return "An interrupted download of \(version) will resume when you click Start."
+            }
+            return "Click Start to download \(version) and install."
         case .localFile:
             let name = context.localIPSWURL?.lastPathComponent ?? "the selected IPSW"
             return "Click Start to install from \(name)."

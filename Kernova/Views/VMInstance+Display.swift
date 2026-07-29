@@ -72,15 +72,15 @@ extension VMInstance {
         isColdPaused ? "Discard Saved State" : "Stop"
     }
 
-    /// `true` when this VM has a `.downloadLatest` install context, a
-    /// `.kernovadownload` bundle still holding partial bytes at the chosen path,
-    /// and no completed IPSW yet at the same path.
+    /// `true` when this VM's install fetches its image, a `.kernovadownload`
+    /// bundle still holds partial bytes at the chosen path, and no completed IPSW
+    /// sits at that path yet.
     ///
     /// The bytes check (`isResumable` rather than `exists`) keeps a husk left by a
     /// failed disposal from labelling a from-scratch download as a resume.
     var hasResumableInstallDownload: Bool {
         guard let context = configuration.installContext,
-            context.source == .downloadLatest,
+            context.source.downloadsImage,
             let destinationURL = context.downloadDestinationURL
         else { return false }
         let bundle = IPSWBundle(url: IPSWService.resumeBundleURL(for: destinationURL))

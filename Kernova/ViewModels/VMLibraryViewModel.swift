@@ -109,8 +109,7 @@ final class VMLibraryViewModel {
             virtualizationService: virtualizationService,
             installService: installService,
             ipswService: ipswService,
-            usbDeviceService: usbDeviceService,
-            fileSystem: fileSystem
+            usbDeviceService: usbDeviceService
         )
 
         loadVMs()
@@ -756,13 +755,14 @@ final class VMLibraryViewModel {
 
     /// Trashes any in-progress IPSW download bundle for a VM that's being deleted.
     ///
-    /// The `.kernovadownload` bundle holding the partial bytes and resume metadata
-    /// is discarded unconditionally (not gated on the "delete externals" toggle),
-    /// using the same disposition as the VM itself. The completed IPSW at
-    /// `downloadDestinationPath` lives at a user-known path and is left alone.
+    /// Every install source that fetches its image writes the same
+    /// `.kernovadownload` sidecar, so all of them are covered; the "delete
+    /// externals" toggle does not gate it, and the disposition matches the VM's
+    /// own. The completed IPSW at `downloadDestinationPath` lives at a user-known
+    /// path and is left alone.
     private func cleanupInstallResumeData(for instance: VMInstance, permanently: Bool) {
         guard let context = instance.configuration.installContext,
-            context.source == .downloadLatest,
+            context.source.downloadsImage,
             let destinationURL = context.downloadDestinationURL
         else { return }
         lifecycle.ipswService.discardResumeData(at: destinationURL, permanently: permanently)

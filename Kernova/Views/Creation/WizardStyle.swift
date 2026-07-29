@@ -115,20 +115,61 @@ func makeWizardRadioOption(radio: NSButton, iconSymbol: String, description desc
 /// optional trailing "Change…" button, in a subtle rounded container.
 @MainActor
 func makeWizardPathBadge(path: String, changeButton: NSButton? = nil) -> NSView {
-    let icon = NSImageView(image: .systemSymbol("doc.fill", accessibilityDescription: ""))
+    makeWizardBadge(
+        symbolName: "doc.fill",
+        text: wizardAbbreviateWithTilde(path),
+        lineBreakMode: .byTruncatingMiddle,
+        trailingButton: changeButton
+    )
+}
+
+/// Builds a wizard badge: a symbol, one or two lines of caption text, and an
+/// optional trailing button, in a subtle rounded container.
+///
+/// The two-line form exists so a download source states its image and its
+/// destination in one badge. As two separate badges they cost more height than
+/// the fixed-size wizard sheet has once there are four sources to list.
+@MainActor
+func makeWizardBadge(
+    symbolName: String,
+    text: String,
+    secondaryText: String? = nil,
+    lineBreakMode: NSLineBreakMode = .byTruncatingTail,
+    trailingButton: NSButton? = nil
+) -> NSView {
+    let icon = NSImageView(image: .systemSymbol(symbolName, accessibilityDescription: ""))
     icon.contentTintColor = .secondaryLabelColor
     icon.setContentHuggingPriority(.required, for: .horizontal)
 
-    let pathLabel = NSTextField(labelWithString: wizardAbbreviateWithTilde(path))
-    pathLabel.font = .preferredFont(forTextStyle: .caption1)
-    pathLabel.lineBreakMode = .byTruncatingMiddle
-    pathLabel.maximumNumberOfLines = 1
-    pathLabel.isSelectable = false
-    pathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    let label = NSTextField(labelWithString: text)
+    label.font = .preferredFont(forTextStyle: .caption1)
+    label.lineBreakMode = lineBreakMode
+    label.maximumNumberOfLines = 1
+    label.isSelectable = false
+    label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-    let row = NSStackView(views: [icon, pathLabel] + (changeButton.map { [$0] } ?? []))
+    let textContent: NSView
+    if let secondaryText {
+        let secondary = NSTextField(labelWithString: secondaryText)
+        secondary.font = .preferredFont(forTextStyle: .caption2)
+        secondary.textColor = .tertiaryLabelColor
+        secondary.lineBreakMode = .byTruncatingMiddle
+        secondary.maximumNumberOfLines = 1
+        secondary.isSelectable = false
+        secondary.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let column = NSStackView(views: [label, secondary])
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = Spacing.hairline
+        textContent = column
+    } else {
+        textContent = label
+    }
+
+    let row = NSStackView(views: [icon, textContent] + (trailingButton.map { [$0] } ?? []))
     row.orientation = .horizontal
-    row.alignment = .firstBaseline
+    row.alignment = secondaryText == nil ? .firstBaseline : .centerY
     row.spacing = Spacing.small
 
     return makeGroupedFormBox(

@@ -83,8 +83,18 @@ substitute mocks. Services split by concurrency: those that touch
   `~/Library/Application Support/Kernova/VMs/`. Deletion has two dispositions, `deleteVMBundle`
   (Trash) and `permanentlyDeleteVMBundle` (the user-confirmed bypass).
 - `DiskImageService` — creates ASIF disk images by decompressing bundled templates in-process.
-- `IPSWService` (a `final class`, for `URLSession` lifetime) — fetches Apple's restore-image catalog
-  and streams IPSW downloads into a resumable `.kernovadownload` bundle.
+- `IPSWService` (a `final class`, for `URLSession` lifetime) — resolves the latest supported restore
+  image through VZ and streams IPSW downloads into a resumable `.kernovadownload` bundle.
+- `RestoreImageCatalogService` — decodes the bundled snapshot of selectable macOS restore images,
+  `Kernova/Resources/RestoreImageCatalog.json`, backing the wizard's "Choose a Version…" source. It
+  reaches no network; only the image the user picks is fetched, by `IPSWService`.
+- `LocalRestoreImageInspector` — reads a restore image already on disk through `VZMacOSRestoreImage`,
+  which loads from a file URL, so the version, build and supported-configuration verdict are the
+  framework's own. Consulted before the wizard adopts a file it did not download itself.
+- `RestoreImageProbeService` (a `final class`, for `URLSession` lifetime) — establishes that a
+  user-supplied URL serves an installable restore image, and how large it is, before any download.
+  `Tools/regen-restore-image-catalog.swift` applies the same installability check to every catalog
+  candidate, which is what puts a pasted URL on the same footing as a catalog row.
 
 `ConfigurationBuilder` translates a `VMConfiguration` into a `VZVirtualMachineConfiguration` — the
 single VZ-facing translation point, covering boot loader, CPU, memory, storage, network, display,
@@ -167,11 +177,12 @@ calls `applyLiveRemovableMediaChange(for:target:)`.
   `await`** — that is what reserves the destination atomically on the MainActor, so overlapping
   imports and clones cannot claim the same bundle URL.
 - `VMLifecycleCoordinator` — `@MainActor`; owns `VirtualizationService`, `MacOSInstallService`,
-  `IPSWService`, `USBDeviceService` and the `FileSystemOperating` seam, and orchestrates multi-step
-  flows such as a macOS install. It serializes lifecycle operations per VM; `stop` and `forceStop`
-  deliberately bypass that serialization so a hung operation can always be cancelled.
+  `IPSWService` and `USBDeviceService`, and orchestrates multi-step flows such as a macOS install.
+  It serializes lifecycle operations per VM; `stop` and `forceStop` deliberately bypass that
+  serialization so a hung operation can always be cancelled.
 - `VMCreationViewModel` — a pure `@Observable` state machine for the creation wizard, with no
-  UI-framework dependency.
+  UI-framework dependency. Injects `RestoreImageCatalogProviding` for the version picker and
+  `RestoreImageProbing` for the paste-a-URL sheet.
 - `VMDirectoryWatcher` — a `DispatchSource` on the VMs directory that triggers reconciliation in
   `VMLibraryViewModel` when the library changes on disk.
 
@@ -228,7 +239,7 @@ AppDelegate
     │                 ├── VMStorageService
     │                 ├── DiskImageService
     │                 ├── VMDirectoryWatcher, SystemSleepWatcher
-    │                 └── FileSystemOperating (trash/remove seam; shared with the coordinator)
+    │                 └── FileSystemOperating (trash/remove seam; also held by IPSWService)
     ├── creates → VMLifecycleCoordinator
     │                 ├── VirtualizationService
     │                 ├── MacOSInstallService

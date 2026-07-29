@@ -1,10 +1,22 @@
 import Testing
 import Foundation
+import KernovaTestSupport
 @testable import Kernova
 
 @Suite("VMCreationViewModel Tests")
 @MainActor
 struct VMCreationViewModelTests {
+    /// The standardized directory a path sits in.
+    private func parentPath(of path: String) -> String {
+        URL(fileURLWithPath: path).standardizedFileURL.deletingLastPathComponent()
+            .path(percentEncoded: false)
+    }
+
+    /// The Downloads directory every download destination must stay inside.
+    private var downloadsPath: String {
+        parentPath(of: VMCreationViewModel.defaultIPSWDownloadPath)
+    }
+
     // MARK: - Navigation
 
     @Test("goNext advances through all steps in order")
@@ -643,5 +655,402 @@ struct VMCreationViewModelTests {
     func startAfterCreateDefaultsTrue() {
         let vm = VMCreationViewModel()
         #expect(vm.startAfterCreate == true)
+    }
+
+    // MARK: - Catalog Version Source
+
+    @Test("Choosing a catalog version moves the destination to Apple's filename")
+    func catalogPickUsesPerBuildDestination() {
+        let vm = VMCreationViewModel()
+        let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
+        vm.selectCatalogEntry(entry)
+
+        #expect(vm.ipswSource == .catalogVersion)
+        #expect(vm.selectedCatalogEntry == entry)
+        #expect(
+            vm.ipswDownloadPath
+                == VMCreationViewModel.downloadPath(
+                    forFilename: "UniversalMac_15.6.1_24G90_Restore.ipsw"))
+        #expect(vm.ipswDownloadPath != VMCreationViewModel.defaultIPSWDownloadPath)
+    }
+
+    @Test("Two different picks never resolve to the same destination")
+    func distinctPicksGetDistinctDestinations() {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
+        let first = vm.ipswDownloadPath
+        vm.selectCatalogEntry(makeCatalogEntry(version: "26.6", build: "25G72"))
+
+        #expect(first != vm.ipswDownloadPath)
+    }
+
+    @Test("Two spins of one version get distinct destinations")
+    func sameVersionDifferentBuildsGetDistinctDestinations() {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(
+            makeCatalogEntry(
+                version: "15.4", build: "24E246",
+                urlString:
+                    "https://updates.cdn-apple.com/a/UniversalMac_15.4_24E246_Restore.ipsw"))
+        let first = vm.ipswDownloadPath
+        vm.selectCatalogEntry(
+            makeCatalogEntry(
+                version: "15.4", build: "24E248",
+                urlString:
+                    "https://updates.cdn-apple.com/b/UniversalMac_15.4_24E248_Restore.ipsw"))
+
+        #expect(first != vm.ipswDownloadPath)
+    }
+
+    @Test("Returning to Download Latest restores the fixed destination")
+    func downloadLatestRestoresDefaultDestination() {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(makeCatalogEntry())
+        vm.selectDownloadLatest()
+
+        #expect(vm.ipswSource == .downloadLatest)
+        #expect(vm.selectedCatalogEntry == nil)
+        #expect(vm.ipswDownloadPath == VMCreationViewModel.defaultIPSWDownloadPath)
+    }
+
+    @Test("The catalog source cannot advance until a version is chosen")
+    func catalogSourceRequiresAPick() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .bootConfig
+        vm.ipswSource = .catalogVersion
+
+        #expect(!vm.canAdvance)
+        #expect(vm.validationMessage == "Choose a macOS version to continue.")
+
+        vm.selectCatalogEntry(makeCatalogEntry())
+        #expect(vm.canAdvance)
+        #expect(vm.validationMessage == nil)
+    }
+
+    @Test("The overwrite warning and resume check cover the catalog source")
+    func catalogSourceSharesDownloadWarnings() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .bootConfig
+        vm.selectCatalogEntry(makeCatalogEntry())
+        vm.ipswDownloadPath = "/usr/bin/true"  // exists on disk
+        #expect(vm.shouldShowOverwriteWarning)
+        #expect(!vm.canAdvance)
+
+        vm.confirmOverwrite()
+        #expect(!vm.shouldShowOverwriteWarning)
+        #expect(vm.canAdvance)
+    }
+
+    @Test("A catalog install context pins the URL, version, and build")
+    func catalogInstallContextPinsTheImage() {
+        let vm = VMCreationViewModel()
+        let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
+        vm.selectCatalogEntry(entry)
+
+        let context = vm.buildInstallContext()
+
+        #expect(context.source == .catalogVersion)
+        #expect(context.remoteURL == entry.url)
+        #expect(context.version == "15.6.1")
+        #expect(context.build == "24G90")
+        #expect(context.downloadDestinationPath == vm.ipswDownloadPath)
+        #expect(!context.requestedFreshDownload)
+    }
+
+    @Test("Download & Replace carries into the catalog install context")
+    func catalogInstallContextCarriesFreshDownload() {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(makeCatalogEntry())
+        vm.confirmOverwrite()
+
+        #expect(vm.buildInstallContext().requestedFreshDownload)
+    }
+
+    @Test("Use Existing File adopts the per-build download as a local file")
+    func useExistingAdoptsPerBuildPath() {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
+        let destination = vm.ipswDownloadPath
+        vm.useExistingDownloadFile()
+
+        #expect(vm.ipswSource == .localFile)
+        #expect(vm.ipswPath == destination)
+    }
+
+    @Test("Only download sources own the destination")
+    func downloadsImageCoversBothDownloadSources() {
+        #expect(IPSWSource.downloadLatest.downloadsImage)
+        #expect(IPSWSource.catalogVersion.downloadsImage)
+        #expect(IPSWSource.customURL.downloadsImage)
+        #expect(!IPSWSource.localFile.downloadsImage)
+    }
+
+    // MARK: - Custom URL Source
+
+    @Test("A checked URL moves the destination to that image's filename")
+    func pastedImageUsesPerImageDestination() {
+        let vm = VMCreationViewModel()
+        let image = makeProbedImage()
+        vm.selectPastedImage(image)
+
+        #expect(vm.ipswSource == .customURL)
+        #expect(vm.pastedImage == image)
+        #expect(
+            vm.ipswDownloadPath
+                == VMCreationViewModel.downloadPath(
+                    forFilename: "UniversalMac_15.6.1_24G90_Restore.ipsw"))
+        #expect(vm.ipswDownloadPath != VMCreationViewModel.defaultIPSWDownloadPath)
+    }
+
+    @Test("An off-convention URL lands on its own filename, not the shared default")
+    func pastedImageWithoutIPSWNameGetsItsOwnDestination() {
+        let vm = VMCreationViewModel()
+        vm.selectPastedImage(
+            makeProbedImage(urlString: "https://example.com/d/", version: nil, build: nil))
+
+        #expect(vm.ipswDownloadPath.hasSuffix(".ipsw"))
+        // Sharing "Download Latest"'s destination would let its image satisfy
+        // this URL's download — a different macOS than the one pinned.
+        #expect(vm.ipswDownloadPath != VMCreationViewModel.defaultIPSWDownloadPath)
+        #expect(parentPath(of: vm.ipswDownloadPath) == downloadsPath)
+    }
+
+    @Test("Two off-convention URLs sharing a basename get different destinations")
+    func pastedImagesWithOneBasenameGetDistinctDestinations() {
+        let vm = VMCreationViewModel()
+        vm.selectPastedImage(
+            makeProbedImage(
+                urlString: "https://a.example.com/restore.ipsw", version: nil, build: nil))
+        let first = vm.ipswDownloadPath
+        vm.selectPastedImage(
+            makeProbedImage(
+                urlString: "https://b.example.com/restore.ipsw", version: nil, build: nil))
+
+        #expect(first != vm.ipswDownloadPath)
+    }
+
+    @Test("A URL whose filename walks out of Downloads cannot move the destination")
+    func pastedImageWithTraversalStaysInDownloads() {
+        let vm = VMCreationViewModel()
+        // Decodes to `a/../../evil.ipsw`, which appended verbatim would
+        // standardize to a path two directories above Downloads.
+        vm.selectPastedImage(
+            makeProbedImage(
+                urlString: "https://host/a%2F..%2F..%2Fevil.ipsw", version: nil, build: nil))
+
+        #expect(parentPath(of: vm.ipswDownloadPath) == downloadsPath)
+    }
+
+    @Test("The URL source cannot advance until a URL is checked")
+    func customURLSourceRequiresACheckedImage() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .bootConfig
+        vm.ipswSource = .customURL
+
+        #expect(!vm.canAdvance)
+        #expect(vm.validationMessage == "Add a restore image URL to continue.")
+
+        vm.selectPastedImage(makeProbedImage())
+        #expect(vm.canAdvance)
+        #expect(vm.validationMessage == nil)
+    }
+
+    @Test("The URL source shares the overwrite warning")
+    func customURLSourceSharesDownloadWarnings() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .bootConfig
+        vm.selectPastedImage(makeProbedImage())
+        vm.ipswDownloadPath = "/usr/bin/true"  // exists on disk
+        #expect(vm.shouldShowOverwriteWarning)
+        #expect(!vm.canAdvance)
+
+        vm.confirmOverwrite()
+        #expect(!vm.shouldShowOverwriteWarning)
+        #expect(vm.canAdvance)
+    }
+
+    @Test("A URL install context pins the checked URL, version, and build")
+    func customURLInstallContextPinsTheImage() {
+        let vm = VMCreationViewModel()
+        let image = makeProbedImage()
+        vm.selectPastedImage(image)
+
+        let context = vm.buildInstallContext()
+
+        #expect(context.source == .customURL)
+        #expect(context.remoteURL == image.url)
+        #expect(context.version == "15.6.1")
+        #expect(context.build == "24G90")
+        #expect(context.downloadDestinationPath == vm.ipswDownloadPath)
+    }
+
+    // MARK: - Adopting an Existing File
+
+    @Test("An existing file matching the pinned build is adopted")
+    func adoptsMatchingExistingFile() async {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "15.6.1", build: "24G90", isSupportedOnThisHost: true)
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
+        let destination = vm.ipswDownloadPath
+
+        let verdict = await vm.adoptExistingDownloadFile()
+
+        #expect(verdict == .adopted(inspector.inspectResult))
+        #expect(vm.ipswSource == .localFile)
+        #expect(vm.ipswPath == destination)
+        #expect(inspector.lastInspectedURL?.path(percentEncoded: false) == destination)
+    }
+
+    @Test("An existing file of a different build is reported, not adopted")
+    func refusesMismatchedExistingFile() async {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "14.2", build: "23C64", isSupportedOnThisHost: true)
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
+
+        let verdict = await vm.adoptExistingDownloadFile()
+
+        #expect(verdict == .mismatch(expected: "24G90", found: inspector.inspectResult))
+        // The wrong-image install this exists to prevent.
+        #expect(vm.ipswSource == .catalogVersion)
+        #expect(vm.ipswPath == nil)
+    }
+
+    @Test("An unreadable file is refused with a reason")
+    func refusesUnreadableExistingFile() async {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectError = LocalRestoreImageError.unreadable
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.selectCatalogEntry(makeCatalogEntry())
+
+        let verdict = await vm.adoptExistingDownloadFile()
+
+        #expect(
+            verdict
+                == .unusable(
+                    message: LocalRestoreImageError.unreadable.errorDescription ?? ""))
+        #expect(vm.ipswSource == .catalogVersion)
+    }
+
+    @Test("An image the host can't run is refused even when the build matches")
+    func refusesUnsupportedExistingFile() async {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "15.6.1", build: "24G90", isSupportedOnThisHost: false)
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
+
+        let verdict = await vm.adoptExistingDownloadFile()
+
+        #expect(
+            verdict
+                == .unusable(
+                    message: LocalRestoreImageError.unsupported.errorDescription ?? ""))
+        #expect(vm.ipswSource == .catalogVersion)
+    }
+
+    @Test("Download Latest pins no build, so any usable image is adopted")
+    func downloadLatestAdoptsAnyUsableImage() async {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "14.2", build: "23C64", isSupportedOnThisHost: true)
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.selectDownloadLatest()
+
+        #expect(vm.pinnedBuild == nil)
+        let verdict = await vm.adoptExistingDownloadFile()
+
+        #expect(verdict == .adopted(inspector.inspectResult))
+        #expect(vm.ipswSource == .localFile)
+    }
+
+    @Test("A URL pick with no parsed build pins nothing to compare against")
+    func customURLWithoutBuildPinsNothing() async {
+        let inspector = MockLocalRestoreImageInspector()
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.selectPastedImage(
+            makeProbedImage(
+                urlString: "https://example.com/image.ipsw", version: nil, build: nil))
+
+        #expect(vm.pinnedBuild == nil)
+        #expect(await vm.adoptExistingDownloadFile() == .adopted(inspector.inspectResult))
+    }
+
+    @Test("An inspection cancelled mid-flight adopts nothing")
+    func cancelledInspectionAdoptsNothing() async throws {
+        let inspector = SuspendingMockLocalRestoreImageInspector()
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        // The build matches, so only the cancellation keeps this from adopting.
+        vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
+
+        let adopt = Task { await vm.adoptExistingDownloadFile() }
+        try await inspector.waitUntilInspecting()
+        adopt.cancel()
+        inspector.release()
+
+        #expect(await adopt.value == .cancelled)
+        #expect(vm.ipswSource == .catalogVersion)
+        #expect(vm.ipswPath == nil)
+    }
+
+    @Test("pinnedBuild names the build each source is promising")
+    func pinnedBuildTracksTheSource() {
+        let vm = VMCreationViewModel()
+        #expect(vm.pinnedBuild == nil)
+
+        vm.selectCatalogEntry(makeCatalogEntry(build: "24G90"))
+        #expect(vm.pinnedBuild == "24G90")
+
+        vm.selectPastedImage(makeProbedImage(build: "25G72"))
+        #expect(vm.pinnedBuild == "25G72")
+
+        vm.selectDownloadLatest()
+        #expect(vm.pinnedBuild == nil)
+    }
+
+    @Test("Switching between pinned sources keeps both picks; Download Latest clears them")
+    func downloadLatestClearsBothPinnedPicks() {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(makeCatalogEntry())
+        vm.selectPastedImage(makeProbedImage())
+        #expect(vm.selectedCatalogEntry != nil)
+        #expect(vm.pastedImage != nil)
+
+        // Download Latest is the one source that owns neither pick.
+        vm.selectDownloadLatest()
+        #expect(vm.selectedCatalogEntry == nil)
+        #expect(vm.pastedImage == nil)
+    }
+}
+
+/// Inspector stand-in that stays inside `inspect` until the test releases it,
+/// the way a multi-gigabyte image keeps the real one busy for seconds.
+final class SuspendingMockLocalRestoreImageInspector: LocalRestoreImageInspecting, @unchecked Sendable {
+    private let inspectResult = InspectedRestoreImage(
+        version: "15.6.1", build: "24G90", isSupportedOnThisHost: true)
+    private let gate = AsyncGate()
+    private let lock = NSLock()
+    private var isInspecting = false
+    private var isReleased = false
+
+    func inspect(_ url: URL) async throws -> InspectedRestoreImage {
+        lock.withLock { self.isInspecting = true }
+        gate.notify()
+        try? await gate.wait(until: { self.lock.withLock { self.isReleased } })
+        return inspectResult
+    }
+
+    /// Suspends until `inspect` is in flight.
+    func waitUntilInspecting() async throws {
+        try await gate.wait(until: { self.lock.withLock { self.isInspecting } })
+    }
+
+    /// Lets the in-flight inspection finish.
+    func release() {
+        lock.withLock { self.isReleased = true }
+        gate.notify()
     }
 }

@@ -22,7 +22,18 @@ enum VMCreationStep: String, CaseIterable, Sendable {
 /// IPSW source selection for macOS VM creation.
 enum IPSWSource: Sendable {
     case downloadLatest
+    case catalogVersion
+    case customURL
     case localFile
+
+    /// Whether this source obtains the image over the network, and so shares
+    /// the download destination, overwrite warning, and resume affordance.
+    var downloadsImage: Bool {
+        switch self {
+        case .downloadLatest, .catalogVersion, .customURL: true
+        case .localFile: false
+        }
+    }
 }
 
 /// State machine for the VM creation wizard.
@@ -30,6 +41,28 @@ enum IPSWSource: Sendable {
 @Observable
 final class VMCreationViewModel {
     private static let logger = Logger(subsystem: "app.kernova", category: "VMCreationViewModel")
+
+    /// Backs the "Choose a Version…" picker.
+    ///
+    /// Read only while that source is selected; the other two sources never
+    /// touch it.
+    let catalogService: any RestoreImageCatalogProviding
+
+    /// Backs the "Paste an IPSW URL…" sheet's pre-download check.
+    let probeService: any RestoreImageProbing
+
+    /// Reads an IPSW already on disk before the wizard adopts it.
+    let localImageInspector: any LocalRestoreImageInspecting
+
+    init(
+        catalogService: any RestoreImageCatalogProviding = RestoreImageCatalogService(),
+        probeService: any RestoreImageProbing = RestoreImageProbeService(),
+        localImageInspector: any LocalRestoreImageInspecting = LocalRestoreImageInspector()
+    ) {
+        self.catalogService = catalogService
+        self.probeService = probeService
+        self.localImageInspector = localImageInspector
+    }
 
     // MARK: - Wizard State
 
@@ -44,7 +77,16 @@ final class VMCreationViewModel {
     var selectedBootMode: VMBootMode = .efi
     var ipswSource: IPSWSource = .downloadLatest
     var ipswPath: String?
-    /// Always the Downloads default — there is no custom-destination picker.
+    /// The catalog image chosen for `.catalogVersion`, set through
+    /// ``selectCatalogEntry(_:)`` so the download destination moves with it.
+    private(set) var selectedCatalogEntry: RestoreImageCatalogEntry?
+    /// The checked image accepted for `.customURL`, set through
+    /// ``selectPastedImage(_:)`` on the same terms.
+    private(set) var pastedImage: ProbedRestoreImage?
+    /// Always inside Downloads — there is no custom-destination picker.
+    ///
+    /// A pinned pick names the file through ``RestoreImageFilename``;
+    /// "Download Latest" keeps the fixed default.
     var ipswDownloadPath: String = VMCreationViewModel.defaultIPSWDownloadPath {
         didSet {
             if ipswDownloadPath != confirmedOverwritePath {
@@ -94,6 +136,12 @@ final class VMCreationViewModel {
                 switch ipswSource {
                 case .downloadLatest:
                     if shouldShowOverwriteWarning { return "Resolve the file conflict above to continue." }
+                case .catalogVersion:
+                    if selectedCatalogEntry == nil { return "Choose a macOS version to continue." }
+                    if shouldShowOverwriteWarning { return "Resolve the file conflict above to continue." }
+                case .customURL:
+                    if pastedImage == nil { return "Add a restore image URL to continue." }
+                    if shouldShowOverwriteWarning { return "Resolve the file conflict above to continue." }
                 case .localFile:
                     if ipswPath == nil { return "Select a restore image file." }
                 }
@@ -139,6 +187,8 @@ final class VMCreationViewModel {
         case .macOS:
             switch ipswSource {
             case .downloadLatest: !shouldShowOverwriteWarning
+            case .catalogVersion: selectedCatalogEntry != nil && !shouldShowOverwriteWarning
+            case .customURL: pastedImage != nil && !shouldShowOverwriteWarning
             case .localFile: ipswPath != nil
             }
         case .linux:
@@ -179,10 +229,20 @@ final class VMCreationViewModel {
     // MARK: - Defaults
 
     static var defaultIPSWDownloadPath: String {
-        // Ask the system for the Downloads location rather than assuming a
-        // home-relative layout: under the sandbox this resolves through the
-        // container's `Downloads` symlink, which the downloads.read-write
-        // entitlement covers — no save panel or bookmark needed.
+        downloadPath(forFilename: RestoreImageFilename.fallback)
+    }
+
+    /// The Downloads path for a given IPSW filename.
+    ///
+    /// Asks the system for the Downloads location rather than assuming a
+    /// home-relative layout: under the sandbox this resolves through the
+    /// container's `Downloads` symlink, which the downloads.read-write
+    /// entitlement covers — no save panel or bookmark needed.
+    ///
+    /// `filename` must be one path component: callers derive it through
+    /// ``RestoreImageFilename``, which is what keeps a URL-supplied name from
+    /// walking out of Downloads.
+    static func downloadPath(forFilename filename: String) -> String {
         guard
             let downloads = FileManager.default.urls(
                 for: .downloadsDirectory, in: .userDomainMask
@@ -191,10 +251,43 @@ final class VMCreationViewModel {
             logger.fault("No Downloads directory in userDomainMask")
             assertionFailure("FileManager returned no Downloads directory")
             return FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Downloads/RestoreImage.ipsw")
+                .appendingPathComponent("Downloads")
+                .appendingPathComponent(filename)
                 .path(percentEncoded: false)
         }
-        return downloads.appendingPathComponent("RestoreImage.ipsw").path(percentEncoded: false)
+        return downloads.appendingPathComponent(filename).path(percentEncoded: false)
+    }
+
+    // MARK: - Source Selection
+
+    /// Commits a catalog pick, moving the download destination to Apple's own
+    /// filename for that build.
+    ///
+    /// Per-build destinations are what keep a pick honest: a single fixed
+    /// filename would let an already-downloaded image of a *different* version
+    /// satisfy the download step, installing something other than what the
+    /// wizard shows.
+    func selectCatalogEntry(_ entry: RestoreImageCatalogEntry) {
+        ipswSource = .catalogVersion
+        selectedCatalogEntry = entry
+        ipswDownloadPath = Self.downloadPath(forFilename: entry.suggestedFilename)
+    }
+
+    /// Commits a checked URL, on the same per-image destination terms as a
+    /// catalog pick.
+    func selectPastedImage(_ image: ProbedRestoreImage) {
+        ipswSource = .customURL
+        pastedImage = image
+        ipswDownloadPath = Self.downloadPath(forFilename: image.suggestedFilename)
+    }
+
+    /// Commits the "Download Latest" source, returning the destination to the
+    /// fixed filename that source has always resolved to at install time.
+    func selectDownloadLatest() {
+        ipswSource = .downloadLatest
+        selectedCatalogEntry = nil
+        pastedImage = nil
+        ipswDownloadPath = Self.defaultIPSWDownloadPath
     }
 
     // MARK: - Apply Defaults
@@ -212,7 +305,7 @@ final class VMCreationViewModel {
     }
 
     var shouldShowOverwriteWarning: Bool {
-        ipswSource == .downloadLatest
+        ipswSource.downloadsImage
             && ipswDownloadPathFileExists
             && confirmedOverwritePath != ipswDownloadPath
     }
@@ -235,6 +328,42 @@ final class VMCreationViewModel {
                 requestedFreshDownload: confirmedOverwritePath != nil
                     && confirmedOverwritePath == ipswDownloadPath
             )
+        case .catalogVersion:
+            guard let entry = selectedCatalogEntry else {
+                Self.logger.fault("Catalog source selected with no chosen entry")
+                assertionFailure("Catalog source selected with no chosen entry")
+                return MacOSInstallContext(
+                    source: .downloadLatest,
+                    downloadDestinationPath: Self.defaultIPSWDownloadPath
+                )
+            }
+            return MacOSInstallContext(
+                source: .catalogVersion,
+                downloadDestinationPath: ipswDownloadPath,
+                requestedFreshDownload: confirmedOverwritePath != nil
+                    && confirmedOverwritePath == ipswDownloadPath,
+                remoteURL: entry.url,
+                version: entry.version,
+                build: entry.build
+            )
+        case .customURL:
+            guard let image = pastedImage else {
+                Self.logger.fault("URL source selected with no checked image")
+                assertionFailure("URL source selected with no checked image")
+                return MacOSInstallContext(
+                    source: .downloadLatest,
+                    downloadDestinationPath: Self.defaultIPSWDownloadPath
+                )
+            }
+            return MacOSInstallContext(
+                source: .customURL,
+                downloadDestinationPath: ipswDownloadPath,
+                requestedFreshDownload: confirmedOverwritePath != nil
+                    && confirmedOverwritePath == ipswDownloadPath,
+                remoteURL: image.url,
+                version: image.version,
+                build: image.build
+            )
         case .localFile:
             return MacOSInstallContext(
                 source: .localFile,
@@ -254,7 +383,7 @@ final class VMCreationViewModel {
     /// The bytes check (`isResumable` rather than `exists`) keeps a husk left by
     /// a failed disposal from offering a resume with nothing behind it.
     var hasResumableDownload: Bool {
-        guard ipswSource == .downloadLatest,
+        guard ipswSource.downloadsImage,
             !ipswDownloadPathFileExists
         else { return false }
         let bundleURL = IPSWService.resumeBundleURL(for: URL(fileURLWithPath: ipswDownloadPath))
@@ -272,6 +401,69 @@ final class VMCreationViewModel {
         // Downloads location is entitlement-covered. Clearing also drops any
         // bookmark left over from an earlier local-file pick.
         ipswBookmark = nil
+    }
+
+    /// The build the wizard is currently promising, or `nil` when the source
+    /// names no particular image.
+    var pinnedBuild: String? {
+        switch ipswSource {
+        case .catalogVersion: selectedCatalogEntry?.build
+        case .customURL: pastedImage?.build
+        case .downloadLatest, .localFile: nil
+        }
+    }
+
+    /// What inspecting the file at the download destination established.
+    enum ExistingFileVerdict: Equatable {
+        /// Adopted. Carries what the file turned out to be.
+        case adopted(InspectedRestoreImage)
+        /// A different build than the one the wizard is showing; **not** adopted,
+        /// so the user decides.
+        case mismatch(expected: String, found: InspectedRestoreImage)
+        /// Not adoptable at all; the message is user-facing.
+        case unusable(message: String)
+        /// The caller cancelled while the inspection ran; nothing was changed,
+        /// and the verdict describes a destination the wizard may have left.
+        case cancelled
+    }
+
+    /// Checks the file sitting at the download destination, and adopts it only
+    /// if it is the image the wizard is promising.
+    ///
+    /// Without this, "Use Existing File" takes whatever is at the path. A file
+    /// that is a *valid but different* macOS installs silently — the same
+    /// wrong-image failure the per-build destination fixes for downloads, which
+    /// a stale or hand-placed file reintroduces.
+    ///
+    /// Reading a multi-gigabyte image takes seconds, in which the user can pick
+    /// another source or leave the step: a cancelled call returns
+    /// ``ExistingFileVerdict/cancelled`` having changed nothing.
+    func adoptExistingDownloadFile() async -> ExistingFileVerdict {
+        let url = URL(fileURLWithPath: ipswDownloadPath)
+        let inspected: InspectedRestoreImage
+        do {
+            inspected = try await localImageInspector.inspect(url)
+        } catch {
+            if Task.isCancelled { return .cancelled }
+            let message =
+                (error as? LocalRestoreImageError)?.errorDescription
+                ?? LocalRestoreImageError.unreadable.errorDescription
+            return .unusable(message: message ?? "That file isn't a usable restore image.")
+        }
+        if Task.isCancelled { return .cancelled }
+
+        guard inspected.isSupportedOnThisHost else {
+            return .unusable(
+                message: LocalRestoreImageError.unsupported.errorDescription
+                    ?? "That restore image can't install on this Mac.")
+        }
+
+        if let pinnedBuild, pinnedBuild != inspected.build {
+            return .mismatch(expected: pinnedBuild, found: inspected)
+        }
+
+        useExistingDownloadFile()
+        return .adopted(inspected)
     }
 
     // MARK: - Build Configuration

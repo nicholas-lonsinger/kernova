@@ -391,15 +391,16 @@ struct VMInstanceTests {
         #expect(instance.startAction.label == "Install")
     }
 
-    /// Builds a stopped VM with a `.downloadLatest` install context whose download
-    /// destination has a sibling `.kernovadownload` bundle seeded on disk.
+    /// Builds a stopped VM with an install context whose download destination has
+    /// a sibling `.kernovadownload` bundle seeded on disk.
     ///
     /// `partialBytes` is what the bundle's `data` file holds: pass `nil` for the
     /// husk a finalize leaves when its disposal fails (directory and metadata
     /// present, `data` already moved to the destination). Returns the temp
     /// directory so the caller can clean it up.
     private func makeInstanceWithSeededDownloadBundle(
-        partialBytes: Data?
+        partialBytes: Data?,
+        source: MacOSInstallContext.Source = .downloadLatest
     ) throws -> (instance: VMInstance, temp: URL) {
         let temp = FileManager.default.temporaryDirectory
             .appendingPathComponent("VMInstanceTests-\(UUID().uuidString)", isDirectory: true)
@@ -427,7 +428,7 @@ struct VMInstanceTests {
 
         let instance = makeInstance(status: .stopped)
         instance.configuration.installContext = MacOSInstallContext(
-            source: .downloadLatest,
+            source: source,
             downloadDestinationPath: destination.path(percentEncoded: false)
         )
         return (instance, temp)
@@ -446,16 +447,38 @@ struct VMInstanceTests {
         #expect(instance.startAction.label == "Install")
     }
 
-    @Test("startAction is .resumeInstall when the bundle still holds partial bytes")
-    func startActionResumeInstallWithPartialBytes() throws {
+    @Test(
+        "startAction is .resumeInstall when the bundle still holds partial bytes",
+        arguments: [
+            MacOSInstallContext.Source.downloadLatest, .catalogVersion, .customURL,
+        ]
+    )
+    func startActionResumeInstallWithPartialBytes(source: MacOSInstallContext.Source) throws {
+        // Every downloading source writes the same sidecar and resumes through
+        // the same path, so all three offer "Resume Install".
         let (instance, temp) = try makeInstanceWithSeededDownloadBundle(
-            partialBytes: Data(repeating: 0x11, count: 1024)
+            partialBytes: Data(repeating: 0x11, count: 1024),
+            source: source
         )
         defer { try? FileManager.default.removeItem(at: temp) }
 
         #expect(instance.hasResumableInstallDownload == true)
         #expect(instance.startAction == .resumeInstall)
         #expect(instance.startAction.label == "Resume Install")
+    }
+
+    @Test("startAction is .install for a local-file install beside a partial bundle")
+    func startActionInstallForLocalFileSource() throws {
+        // A local-file install never downloads, so a bundle left at the same
+        // path by an earlier attempt says nothing about what Start will do.
+        let (instance, temp) = try makeInstanceWithSeededDownloadBundle(
+            partialBytes: Data(repeating: 0x11, count: 1024),
+            source: .localFile
+        )
+        defer { try? FileManager.default.removeItem(at: temp) }
+
+        #expect(instance.hasResumableInstallDownload == false)
+        #expect(instance.startAction == .install)
     }
 
     @Test("StartAction labels match what each variant performs")
