@@ -20,8 +20,10 @@
 //   apple-indexed   an Apple image URL recovered from an archive's crawl index,
 //                   covering releases that were never current when a snapshot
 //                   happened to be taken
+//   apple-unlisted  an Apple image URL written into this script, for a release
+//                   the feed named under another Mac model only (step 3b)
 //
-// All three are Apple's own URLs. No third-party catalog is consulted, so
+// All four are Apple's own URLs. No third-party catalog is consulted, so
 // nothing here carries an attribution obligation. No build ships on an
 // archive's say-so either: every candidate URL is re-verified against Apple's
 // live CDN below, and only what Apple serves today is written out. The archive
@@ -108,6 +110,19 @@ func buildIsNewer(_ a: String, _ b: String) -> Bool {
 func isSeed(_ build: String) -> Bool {
     guard let parsed = parseBuild(build) else { return false }
     return parsed.series == 5 && !parsed.revision.isEmpty
+}
+
+/// Splits `UniversalMac_<version>_<build>_Restore.ipsw` into its two parts.
+///
+/// A URL is all steps 3 and 3b have — neither reads a feed entry stating the
+/// version and build, so both take them from the file name Apple assigns.
+func parseImageName(_ url: URL) -> (version: String, build: String)? {
+    let parts = url.lastPathComponent
+        .replacingOccurrences(of: "UniversalMac_", with: "")
+        .replacingOccurrences(of: "_Restore.ipsw", with: "")
+        .split(separator: "_")
+    guard parts.count == 2 else { return nil }
+    return (String(parts[0]), String(parts[1]))
 }
 
 let repoRoot = URL(
@@ -420,12 +435,7 @@ if let data = await get(indexURL),
         guard let raw = row.first, let url = URL(string: raw),
             url.host == "updates.cdn-apple.com"
         else { continue }
-        let name = url.lastPathComponent
-        let parts = name.replacingOccurrences(of: "UniversalMac_", with: "")
-            .replacingOccurrences(of: "_Restore.ipsw", with: "")
-            .split(separator: "_")
-        guard parts.count == 2 else { continue }
-        let version = String(parts[0]), build = String(parts[1])
+        guard let (version, build) = parseImageName(url) else { continue }
         // No version filter here — whether an image can run as a guest is
         // settled by reading its hardware models during verification, not by
         // guessing from the version number.
@@ -437,6 +447,39 @@ if let data = await get(indexURL),
     }
 }
 log("  \(indexed) additional build(s) from the index, \(pool.count) distinct total")
+
+// MARK: - 3b. Apple images this device was never listed for
+//
+// The feed publishes one image per device, and a release cut for a single Mac
+// model is listed under that model alone. The universal image it names still
+// carries the virtual-machine boot chain, so it installs as a guest, but no
+// step above can find it: nothing under this device's key ever named it, and
+// no crawl reached its URL.
+//
+// An entry here supplies a URL to ask Apple about, nothing more. Step 4 puts it
+// through the same HEAD and hardware-model check as every other candidate, so
+// one that Apple has withdrawn drops out on its own.
+
+let unlistedURLs = [
+    // macOS 26.3.2 shipped for the MacBook Neo (Mac17,5) on 2026-03-08 and was
+    // superseded by 26.4 on 2026-03-20. The archive's newest feed snapshot
+    // before that window is 2026-02-19 and its next is 2026-03-28.
+    "https://updates.cdn-apple.com/2026WinterFCS/fullrestores/047-94879"
+        + "/40A2B65E-4E49-4EAA-8BEC-62A305007488/UniversalMac_26.3.2_25D2140_Restore.ipsw"
+]
+
+var unlisted = 0
+for raw in unlistedURLs {
+    let url = requireURL(raw)
+    guard let (version, build) = parseImageName(url) else {
+        fail("unlisted URL does not name a restore image: \(raw)")
+    }
+    guard pool[build] == nil else { continue }
+    pool[build] = Candidate(
+        version: version, build: build, url: url, source: "apple-unlisted", snapshot: nil)
+    unlisted += 1
+}
+log("Adding \(unlisted) unlisted build(s), \(pool.count) distinct total")
 
 // MARK: - 4. Verify each release line against Apple
 
@@ -607,7 +650,7 @@ try json.write(to: outputURL, options: .atomic)
 
 log("")
 log("Wrote \(outputURL.path)")
-for source in ["apple-live", "apple-archived", "apple-indexed"] {
+for source in ["apple-live", "apple-archived", "apple-indexed", "apple-unlisted"] {
     let count = images.filter { $0.source == source }.count
     log("  \(source.padding(toLength: 22, withPad: " ", startingAt: 0))\(count)")
 }

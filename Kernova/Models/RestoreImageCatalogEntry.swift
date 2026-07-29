@@ -14,8 +14,7 @@ struct RestoreImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
     var sizeBytes: UInt64
     /// The `Last-Modified` Apple's CDN reports for ``url``, in RFC 1123 form.
     var lastModified: String
-    /// Which pass of the generator found this image (`apple-live`,
-    /// `apple-archived`, `apple-indexed`).
+    /// Which pass of `Tools/regen-restore-image-catalog.swift` found this image.
     var source: String
 
     var id: String { build }
