@@ -93,6 +93,13 @@ func isNewer(_ a: BuildNumber, _ b: BuildNumber) -> Bool {
     return a.revision > b.revision
 }
 
+/// Orders two build strings, newest first: by parsed parts when both parse,
+/// as plain strings when either does not.
+func buildIsNewer(_ a: String, _ b: String) -> Bool {
+    guard let lhs = parseBuild(a), let rhs = parseBuild(b) else { return a > b }
+    return isNewer(lhs, rhs)
+}
+
 /// Whether a build is a seed, such as `26A5388g`.
 ///
 /// The URL is no help here. Apple served the *shipping* build of macOS 13.3
@@ -226,8 +233,7 @@ func isDescending(_ a: Candidate, _ b: Candidate) -> Bool {
         let r = i < rhs.count ? rhs[i] : 0
         if l != r { return l > r }
     }
-    if let lhs = parseBuild(a.build), let rhs = parseBuild(b.build) { return isNewer(lhs, rhs) }
-    return a.build > b.build
+    return buildIsNewer(a.build, b.build)
 }
 
 let session: URLSession = {
@@ -432,7 +438,35 @@ if let data = await get(indexURL),
 }
 log("  \(indexed) additional build(s) from the index, \(pool.count) distinct total")
 
-// MARK: - 4. Verify every candidate against Apple
+// MARK: - 4. Verify each release line against Apple
+
+// The index in step 3 hands back every image URL a crawler ever saw, so one
+// macOS version can arrive as several builds Apple replaced within days of
+// each other. Nothing in a picker distinguishes them, so only one build of a
+// line ships — except where the counter's series marks a hardware spin, which
+// Apple ships alongside the mainline build rather than after it. Each line is
+// probed newest build first and stops at the first that verifies: everything
+// older is superseded without a request, and every request not sent is one
+// fewer chance for a throttle to end the run.
+
+/// Which builds are candidates to replace each other: one macOS version, one
+/// release train, one counter series.
+func releaseLine(version: String, build: String) -> String {
+    guard let parsed = parseBuild(build) else { return "\(version)/\(build)" }
+    return "\(version)/\(parsed.major)\(parsed.train)/\(parsed.series)"
+}
+
+var lineIndex: [String: Int] = [:]
+var releaseLines: [[Candidate]] = []
+for candidate in pool.values.sorted(by: isDescending) {
+    let line = releaseLine(version: candidate.version, build: candidate.build)
+    if let index = lineIndex[line] {
+        releaseLines[index].append(candidate)
+    } else {
+        lineIndex[line] = releaseLines.count
+        releaseLines.append([candidate])
+    }
+}
 
 log("Verifying each image against Apple's CDN…")
 var images: [Image] = []
@@ -440,103 +474,76 @@ var images: [Image] = []
 var declined: [(String, String)] = []
 /// Apple did not answer, so this run has nothing to say about the build.
 var unanswered: [(String, String)] = []
+/// Older than a verified build of the same line, so never asked about.
+var superseded: [(String, String)] = []
+var supersededBuilds: Set<String> = []
 
-for candidate in pool.values.sorted(by: isDescending) {
-    let label = "\(candidate.version) (\(candidate.build))"
-    guard candidate.url.scheme == "https",
-        let host = candidate.url.host, allowedHosts.contains(host)
-    else {
-        declined.append((label, "not an Apple HTTPS URL"))
-        continue
-    }
-    var request = URLRequest(url: candidate.url)
-    request.httpMethod = "HEAD"
-    guard let (_, response) = try? await session.data(for: request),
-        let http = response as? HTTPURLResponse
-    else {
-        unanswered.append((label, "no response"))
-        continue
-    }
-    guard http.statusCode == 200 else {
-        // A 404 or 403 is Apple saying the image is gone. A 5xx or a throttle
-        // is Apple saying nothing.
-        let reason = "HTTP \(http.statusCode)"
-        if (400..<500).contains(http.statusCode) && http.statusCode != 429 {
-            declined.append((label, reason))
-        } else {
-            unanswered.append((label, reason))
+for line in releaseLines {
+    var shipped: Image?
+    for candidate in line {
+        let label = "\(candidate.version) (\(candidate.build))"
+        if let shipped {
+            superseded.append((label, "replaced by \(shipped.build)"))
+            supersededBuilds.insert(candidate.build)
+            continue
         }
-        continue
-    }
-    let size = http.expectedContentLength
-    guard size > 0 else {
-        unanswered.append((label, "no content length"))
-        continue
-    }
-    switch await supportsVirtualMachine(candidate.url, totalBytes: size) {
-    case .some(true):
-        break
-    case .some(false):
-        declined.append((label, "no virtual-machine hardware model"))
-        continue
-    case nil:
-        unanswered.append((label, "could not read hardware models"))
-        continue
-    }
-    images.append(
-        Image(
+        guard candidate.url.scheme == "https",
+            let host = candidate.url.host, allowedHosts.contains(host)
+        else {
+            declined.append((label, "not an Apple HTTPS URL"))
+            continue
+        }
+        var request = URLRequest(url: candidate.url)
+        request.httpMethod = "HEAD"
+        guard let (_, response) = try? await session.data(for: request),
+            let http = response as? HTTPURLResponse
+        else {
+            unanswered.append((label, "no response"))
+            continue
+        }
+        guard http.statusCode == 200 else {
+            // A 404 or 403 is Apple saying the image is gone. A 5xx or a
+            // throttle is Apple saying nothing.
+            let reason = "HTTP \(http.statusCode)"
+            if (400..<500).contains(http.statusCode) && http.statusCode != 429 {
+                declined.append((label, reason))
+            } else {
+                unanswered.append((label, reason))
+            }
+            continue
+        }
+        let size = http.expectedContentLength
+        guard size > 0 else {
+            unanswered.append((label, "no content length"))
+            continue
+        }
+        switch await supportsVirtualMachine(candidate.url, totalBytes: size) {
+        case .some(true):
+            break
+        case .some(false):
+            declined.append((label, "no virtual-machine hardware model"))
+            continue
+        case nil:
+            unanswered.append((label, "could not read hardware models"))
+            continue
+        }
+        shipped = Image(
             version: candidate.version, build: candidate.build, url: candidate.url,
             sizeBytes: size,
             lastModified: http.value(forHTTPHeaderField: "Last-Modified"),
-            source: candidate.source, snapshot: candidate.snapshot))
-}
-
-// MARK: - 5. Drop builds a later one replaced
-
-// The index in step 3 hands back every image URL a crawler ever saw, so one
-// macOS version can arrive as several builds Apple replaced within days of
-// each other. Nothing in a picker distinguishes them, so only the newest of a
-// line ships — except where the counter's series marks a hardware spin, which
-// Apple ships alongside the mainline build rather than after it.
-
-/// Which images are candidates to replace each other: one macOS version, one
-/// release train, one counter series.
-func releaseLine(of image: Image) -> String {
-    guard let build = parseBuild(image.build) else { return "\(image.version)/\(image.build)" }
-    return "\(image.version)/\(build.major)\(build.train)/\(build.series)"
-}
-
-func replaces(_ a: Image, _ b: Image) -> Bool {
-    guard let lhs = parseBuild(a.build), let rhs = parseBuild(b.build) else {
-        return a.build > b.build
+            source: candidate.source, snapshot: candidate.snapshot)
     }
-    return isNewer(lhs, rhs)
+    if let shipped { images.append(shipped) }
 }
 
-var newestPerLine: [String: Image] = [:]
-var lines: [String] = []
-var superseded: [(String, String)] = []
-for image in images {
-    let line = releaseLine(of: image)
-    guard let held = newestPerLine[line] else {
-        newestPerLine[line] = image
-        lines.append(line)
-        continue
-    }
-    let (winner, loser) = replaces(image, held) ? (image, held) : (held, image)
-    newestPerLine[line] = winner
-    superseded.append(("\(loser.version) (\(loser.build))", "replaced by \(winner.build)"))
-}
-images = lines.compactMap { newestPerLine[$0] }
-
-// MARK: - 6. Refuse to publish a run that lost images
+// MARK: - 5. Refuse to publish a run that lost images
 
 // An unreachable Apple leaves candidates unverified rather than erroring, so a
 // run that lost its network and a macOS release Apple withdrew look alike from
 // here: both just produce a shorter catalog. A build Apple never answered for
-// therefore stops the run, and verifying fewer images than the published file
-// holds needs KERNOVA_CATALOG_ALLOW_SHRINK=1. Images do get withdrawn — never
-// silently.
+// therefore stops the run, and dropping a published build that no newer build
+// superseded needs KERNOVA_CATALOG_ALLOW_SHRINK=1. Images do get withdrawn —
+// never silently.
 
 let allowShrink = ProcessInfo.processInfo.environment["KERNOVA_CATALOG_ALLOW_SHRINK"] == "1"
 
@@ -548,20 +555,29 @@ guard unanswered.isEmpty else {
 }
 guard !images.isEmpty else { fail("no image verified against Apple — nothing to write") }
 
-var previousCount = 0
-if let existing = try? Data(contentsOf: outputURL),
-    let decoded = try? JSONSerialization.jsonObject(with: existing),
-    let object = decoded as? [String: Any], let rows = object["images"] as? [Any]
-{
-    previousCount = rows.count
+var previousBuilds: Set<String> = []
+if FileManager.default.fileExists(atPath: outputURL.path(percentEncoded: false)) {
+    guard let existing = try? Data(contentsOf: outputURL),
+        let decoded = try? JSONSerialization.jsonObject(with: existing),
+        let object = decoded as? [String: Any],
+        let rows = object["images"] as? [[String: Any]],
+        rows.allSatisfy({ $0["build"] is String })
+    else {
+        fail(
+            "the published \(outputURL.lastPathComponent) exists but does not parse as a "
+                + "catalog — refusing to replace a file this run cannot compare against")
+    }
+    previousBuilds = Set(rows.compactMap { $0["build"] as? String })
 }
-guard images.count >= previousCount || allowShrink else {
+let lost = previousBuilds.subtracting(images.map(\.build)).subtracting(supersededBuilds)
+guard lost.isEmpty || allowShrink else {
     fail(
-        "verified \(images.count) image(s) against the \(previousCount) already published — rerun "
-            + "with KERNOVA_CATALOG_ALLOW_SHRINK=1 if Apple really did withdraw \(previousCount - images.count)")
+        "published build(s) \(lost.sorted().joined(separator: ", ")) neither verified nor were "
+            + "superseded — rerun with KERNOVA_CATALOG_ALLOW_SHRINK=1 if Apple really did "
+            + "withdraw them")
 }
 
-// MARK: - 7. Emit
+// MARK: - 6. Emit
 
 let stamp = ISO8601DateFormatter().string(from: Date()).prefix(10)
 let payload: [String: Any] = [
@@ -587,7 +603,7 @@ try FileManager.default.createDirectory(
     at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 try json.write(to: outputURL, options: .atomic)
 
-// MARK: - 8. Report
+// MARK: - 7. Report
 
 log("")
 log("Wrote \(outputURL.path)")
