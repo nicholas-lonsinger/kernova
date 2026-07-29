@@ -16,6 +16,8 @@ final class IPSWSelectionContentViewController: NSViewController {
 
     /// Rebuilt by ``rebuildConditional()`` whenever the source/path/warning state changes.
     private let conditionalContainer = NSStackView()
+    /// Hosts the nested version picker.
+    private let catalogSheetPresenter = SheetPresenter()
     /// Shows the "more content below" cue while this step's content overflows the
     /// sheet; a hint only.
     private var scrollMoreIndicator: ScrollMoreIndicator?
@@ -41,14 +43,20 @@ final class IPSWSelectionContentViewController: NSViewController {
             title: "Download Latest",
             description: "Download the latest compatible macOS restore image from Apple."
         )
+        let catalogOption = makeSourceRadio(
+            for: .catalogVersion,
+            symbol: "list.bullet",
+            title: "Choose a Version…",
+            description: "Browse every macOS release Apple still hosts, including older versions."
+        )
         let localOption = makeSourceRadio(
             for: .localFile,
             symbol: "folder",
-            title: "Choose Local File",
+            title: "Choose Local File…",
             description: "Select an IPSW file already on your Mac."
         )
 
-        let options = NSStackView(views: [downloadOption, localOption])
+        let options = NSStackView(views: [downloadOption, catalogOption, localOption])
         options.orientation = .vertical
         options.alignment = .leading
         options.spacing = Spacing.large
@@ -77,6 +85,13 @@ final class IPSWSelectionContentViewController: NSViewController {
         refresh()
     }
 
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        // The step is swapped out on navigation; a picker left attached to a
+        // window that is going away would wedge the presenter as shown.
+        catalogSheetPresenter.reset()
+    }
+
     // MARK: - Source radios
 
     private func makeSourceRadio(
@@ -92,8 +107,12 @@ final class IPSWSelectionContentViewController: NSViewController {
         guard let source = radios.first(where: { $0.value === sender })?.key else { return }
         switch source {
         case .downloadLatest:
-            creationVM.ipswSource = .downloadLatest
+            creationVM.selectDownloadLatest()
             refresh()
+        case .catalogVersion:
+            // Same deferred-commit rule as Choose Local File below.
+            updateRadioSelection()
+            selectCatalogVersion()
         case .localFile:
             // Selection only commits when the user actually picks a file. Re-sync
             // the radios to the (still-current) model so the just-clicked radio
@@ -124,39 +143,61 @@ final class IPSWSelectionContentViewController: NSViewController {
 
         switch creationVM.ipswSource {
         case .downloadLatest:
-            let path = creationVM.ipswDownloadPath
             // No "Change…" affordance: the destination is always the Downloads
             // folder, the one location the sandbox's downloads entitlement covers
             // without per-pick grants.
-            conditionalContainer.addArrangedSubview(makeWizardPathBadge(path: path))
-
-            if creationVM.shouldShowOverwriteWarning {
-                let useExisting = NSButton(
-                    title: "Use Existing File", target: self, action: #selector(useExistingTapped))
-                let replace = NSButton(
-                    title: "Download & Replace", target: self, action: #selector(confirmOverwriteTapped))
-                addFullWidthBanner(
-                    makeGroupedFormBanner(
-                        symbolName: "exclamationmark.triangle.fill",
-                        tint: .systemYellow,
-                        message:
-                            "A file already exists at this location. It will be replaced when downloading.",
-                        trailingButtons: [useExisting, replace]
-                    ))
-            } else if creationVM.hasResumableDownload {
-                addFullWidthBanner(
-                    makeGroupedFormBanner(
-                        symbolName: "arrow.clockwise.circle.fill",
-                        tint: .systemBlue,
-                        message:
-                            "A previous download was interrupted at this location. It will resume when the install starts."
-                    ))
-            }
+            conditionalContainer.addArrangedSubview(
+                makeWizardPathBadge(path: creationVM.ipswDownloadPath))
+            addDownloadBanners(version: nil)
+        case .catalogVersion:
+            guard let entry = creationVM.selectedCatalogEntry else { return }
+            let change = makeLinkButton(
+                "Change…", target: self, action: #selector(changeCatalogVersion))
+            conditionalContainer.addArrangedSubview(
+                makeWizardBadge(
+                    symbolName: "shippingbox.fill",
+                    text:
+                        "macOS \(entry.version)  ·  Build \(entry.build)  ·  \(DataFormatters.formatBytes(entry.sizeBytes))",
+                    trailingButton: change
+                ))
+            conditionalContainer.addArrangedSubview(
+                makeWizardPathBadge(path: creationVM.ipswDownloadPath))
+            addDownloadBanners(version: entry.version)
         case .localFile:
             guard let path = creationVM.ipswPath else { return }
             let change = makeLinkButton(
                 "Change…", target: self, action: #selector(changeLocalFile))
             conditionalContainer.addArrangedSubview(makeWizardPathBadge(path: path, changeButton: change))
+        }
+    }
+
+    /// Adds the overwrite or resume banner for whichever download source is
+    /// selected, naming `version` when the pick is a specific one.
+    private func addDownloadBanners(version: String?) {
+        let subject = version.map { "macOS \($0)" }
+        if creationVM.shouldShowOverwriteWarning {
+            let useExisting = NSButton(
+                title: "Use Existing File", target: self, action: #selector(useExistingTapped))
+            let replace = NSButton(
+                title: "Download & Replace", target: self, action: #selector(confirmOverwriteTapped))
+            addFullWidthBanner(
+                makeGroupedFormBanner(
+                    symbolName: "exclamationmark.triangle.fill",
+                    tint: .systemYellow,
+                    message: subject.map { "\($0) is already downloaded. It will be replaced when downloading." }
+                        ?? "A file already exists at this location. It will be replaced when downloading.",
+                    trailingButtons: [useExisting, replace]
+                ))
+        } else if creationVM.hasResumableDownload {
+            addFullWidthBanner(
+                makeGroupedFormBanner(
+                    symbolName: "arrow.clockwise.circle.fill",
+                    tint: .systemBlue,
+                    message: subject.map {
+                        "A previous download of \($0) was interrupted. It will resume when the install starts."
+                    }
+                        ?? "A previous download was interrupted at this location. It will resume when the install starts."
+                ))
         }
     }
 
@@ -171,6 +212,10 @@ final class IPSWSelectionContentViewController: NSViewController {
 
     @objc private func changeLocalFile() {
         selectIPSWFile()
+    }
+
+    @objc private func changeCatalogVersion() {
+        selectCatalogVersion()
     }
 
     @objc private func useExistingTapped() {
@@ -201,5 +246,40 @@ final class IPSWSelectionContentViewController: NSViewController {
             self.creationVM.ipswBookmark = bookmark
             self.refresh()
         }
+    }
+
+    /// Opens the nested version picker, preselecting the current pick.
+    private func selectCatalogVersion() {
+        guard let window = view.window, !catalogSheetPresenter.isShown else { return }
+        let sheet = RestoreImageCatalogSheetContentViewController(
+            entries: creationVM.catalogService.entries,
+            selectedBuild: creationVM.selectedCatalogEntry?.build,
+            generatedAt: creationVM.catalogService.generatedAt
+        )
+        sheet.delegate = self
+        catalogSheetPresenter.show(content: sheet, in: window)
+    }
+}
+
+// MARK: - RestoreImageCatalogSheetContentViewControllerDelegate
+
+extension IPSWSelectionContentViewController:
+    RestoreImageCatalogSheetContentViewControllerDelegate
+{
+    func restoreImageCatalogSheet(
+        _ vc: RestoreImageCatalogSheetContentViewController,
+        didChoose entry: RestoreImageCatalogEntry
+    ) {
+        catalogSheetPresenter.close()
+        creationVM.selectCatalogEntry(entry)
+        refresh()
+    }
+
+    func restoreImageCatalogSheetDidCancel(
+        _ vc: RestoreImageCatalogSheetContentViewController
+    ) {
+        // The model was never touched, so the radios already show the source
+        // that was selected before the picker opened.
+        catalogSheetPresenter.close()
     }
 }

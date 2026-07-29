@@ -644,4 +644,131 @@ struct VMCreationViewModelTests {
         let vm = VMCreationViewModel()
         #expect(vm.startAfterCreate == true)
     }
+
+    // MARK: - Catalog Version Source
+
+    @Test("Choosing a catalog version moves the destination to Apple's filename")
+    func catalogPickUsesPerBuildDestination() {
+        let vm = VMCreationViewModel()
+        let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
+        vm.selectCatalogEntry(entry)
+
+        #expect(vm.ipswSource == .catalogVersion)
+        #expect(vm.selectedCatalogEntry == entry)
+        #expect(
+            vm.ipswDownloadPath
+                == VMCreationViewModel.downloadPath(
+                    forFilename: "UniversalMac_15.6.1_24G90_Restore.ipsw"))
+        #expect(vm.ipswDownloadPath != VMCreationViewModel.defaultIPSWDownloadPath)
+    }
+
+    @Test("Two different picks never resolve to the same destination")
+    func distinctPicksGetDistinctDestinations() {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
+        let first = vm.ipswDownloadPath
+        vm.selectCatalogEntry(makeCatalogEntry(version: "26.6", build: "25G72"))
+
+        #expect(first != vm.ipswDownloadPath)
+    }
+
+    @Test("Two spins of one version get distinct destinations")
+    func sameVersionDifferentBuildsGetDistinctDestinations() {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(
+            makeCatalogEntry(
+                version: "15.4", build: "24E246",
+                urlString:
+                    "https://updates.cdn-apple.com/a/UniversalMac_15.4_24E246_Restore.ipsw"))
+        let first = vm.ipswDownloadPath
+        vm.selectCatalogEntry(
+            makeCatalogEntry(
+                version: "15.4", build: "24E248",
+                urlString:
+                    "https://updates.cdn-apple.com/b/UniversalMac_15.4_24E248_Restore.ipsw"))
+
+        #expect(first != vm.ipswDownloadPath)
+    }
+
+    @Test("Returning to Download Latest restores the fixed destination")
+    func downloadLatestRestoresDefaultDestination() {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(makeCatalogEntry())
+        vm.selectDownloadLatest()
+
+        #expect(vm.ipswSource == .downloadLatest)
+        #expect(vm.selectedCatalogEntry == nil)
+        #expect(vm.ipswDownloadPath == VMCreationViewModel.defaultIPSWDownloadPath)
+    }
+
+    @Test("The catalog source cannot advance until a version is chosen")
+    func catalogSourceRequiresAPick() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .bootConfig
+        vm.ipswSource = .catalogVersion
+
+        #expect(!vm.canAdvance)
+        #expect(vm.validationMessage == "Choose a macOS version to continue.")
+
+        vm.selectCatalogEntry(makeCatalogEntry())
+        #expect(vm.canAdvance)
+        #expect(vm.validationMessage == nil)
+    }
+
+    @Test("The overwrite warning and resume check cover the catalog source")
+    func catalogSourceSharesDownloadWarnings() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .bootConfig
+        vm.selectCatalogEntry(makeCatalogEntry())
+        vm.ipswDownloadPath = "/usr/bin/true"  // exists on disk
+        #expect(vm.shouldShowOverwriteWarning)
+        #expect(!vm.canAdvance)
+
+        vm.confirmOverwrite()
+        #expect(!vm.shouldShowOverwriteWarning)
+        #expect(vm.canAdvance)
+    }
+
+    @Test("A catalog install context pins the URL, version, and build")
+    func catalogInstallContextPinsTheImage() {
+        let vm = VMCreationViewModel()
+        let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
+        vm.selectCatalogEntry(entry)
+
+        let context = vm.buildInstallContext()
+
+        #expect(context.source == .catalogVersion)
+        #expect(context.remoteURL == entry.url)
+        #expect(context.version == "15.6.1")
+        #expect(context.build == "24G90")
+        #expect(context.downloadDestinationPath == vm.ipswDownloadPath)
+        #expect(!context.requestedFreshDownload)
+    }
+
+    @Test("Download & Replace carries into the catalog install context")
+    func catalogInstallContextCarriesFreshDownload() {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(makeCatalogEntry())
+        vm.confirmOverwrite()
+
+        #expect(vm.buildInstallContext().requestedFreshDownload)
+    }
+
+    @Test("Use Existing File adopts the per-build download as a local file")
+    func useExistingAdoptsPerBuildPath() {
+        let vm = VMCreationViewModel()
+        vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
+        let destination = vm.ipswDownloadPath
+        vm.useExistingDownloadFile()
+
+        #expect(vm.ipswSource == .localFile)
+        #expect(vm.ipswPath == destination)
+    }
+
+    @Test("Only download sources own the destination")
+    func downloadsImageCoversBothDownloadSources() {
+        #expect(IPSWSource.downloadLatest.downloadsImage)
+        #expect(IPSWSource.catalogVersion.downloadsImage)
+        #expect(!IPSWSource.localFile.downloadsImage)
+    }
 }

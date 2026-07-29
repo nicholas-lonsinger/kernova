@@ -153,19 +153,30 @@ final class VMLifecycleCoordinator {
     // MARK: - macOS Installation
 
     /// The effective IPSW download destination for a persisted path: the path
-    /// itself when it lives in `downloadsDirectory`, the wizard default otherwise.
+    /// itself when it lives in `downloadsDirectory`, otherwise `fallbackFilename`
+    /// inside Downloads (the wizard default when none is given).
     ///
     /// Downloads is the only destination the app supports — the sandbox
     /// entitlement covers it, resume sidecar included, with no per-pick grant.
     /// Comparison is symlink-resolved because the sandbox container's `Downloads`
     /// and the real `~/Downloads` are the same directory spelled two ways.
-    func normalizedDownloadDestination(for persisted: URL) -> URL {
+    ///
+    /// A catalog install passes its pinned image's filename, because the shared
+    /// default name would let a stale download of another version stand in for
+    /// the chosen one.
+    func normalizedDownloadDestination(
+        for persisted: URL, fallbackFilename: String? = nil
+    ) -> URL {
         guard let downloads = downloadsDirectory else { return persisted }
         let persistedParent = persisted.deletingLastPathComponent()
             .resolvingSymlinksInPath().standardizedFileURL
         let downloadsResolved = downloads.resolvingSymlinksInPath().standardizedFileURL
         guard persistedParent.path != downloadsResolved.path else { return persisted }
-        return URL(fileURLWithPath: VMCreationViewModel.defaultIPSWDownloadPath)
+        guard let fallbackFilename else {
+            return URL(fileURLWithPath: VMCreationViewModel.defaultIPSWDownloadPath)
+        }
+        return URL(
+            fileURLWithPath: VMCreationViewModel.downloadPath(forFilename: fallbackFilename))
     }
 
     func installMacOS(
@@ -188,7 +199,7 @@ final class VMLifecycleCoordinator {
                 defer { localIPSWScope?.release() }
 
                 switch context.source {
-                case .downloadLatest:
+                case .downloadLatest, .catalogVersion:
                     guard let persistedDestination = context.downloadDestinationURL else {
                         throw IPSWError.noDownloadURL
                     }
@@ -196,7 +207,8 @@ final class VMLifecycleCoordinator {
                     // config.json) can never be written and has no picker to
                     // re-point it, so the invariant is enforced at use time.
                     let downloadDestination = normalizedDownloadDestination(
-                        for: persistedDestination)
+                        for: persistedDestination,
+                        fallbackFilename: context.remoteURL?.lastPathComponent)
                     if downloadDestination != persistedDestination {
                         Self.logger.notice(
                             "installMacOS: persisted download destination is outside Downloads; using the default destination instead"
@@ -253,7 +265,19 @@ final class VMLifecycleCoordinator {
                     )
                     instance.status = .installing
 
-                    let remoteURL = try await ipswService.fetchLatestRestoreImageURL()
+                    // A catalog pick names its image at wizard time, so the
+                    // install downloads that build however long it sits
+                    // unstarted. Only "Download Latest" resolves here.
+                    let remoteURL: URL
+                    if context.source == .catalogVersion {
+                        guard let pinnedURL = context.remoteURL else {
+                            throw IPSWError.noDownloadURL
+                        }
+                        remoteURL = pinnedURL
+                    } else {
+                        remoteURL = try await ipswService.fetchLatestRestoreImageURL()
+                    }
+
                     try await ipswService.downloadRestoreImage(
                         from: remoteURL,
                         to: downloadDestination

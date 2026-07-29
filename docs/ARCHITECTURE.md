@@ -83,8 +83,11 @@ substitute mocks. Services split by concurrency: those that touch
   `~/Library/Application Support/Kernova/VMs/`. Deletion has two dispositions, `deleteVMBundle`
   (Trash) and `permanentlyDeleteVMBundle` (the user-confirmed bypass).
 - `DiskImageService` — creates ASIF disk images by decompressing bundled templates in-process.
-- `IPSWService` (a `final class`, for `URLSession` lifetime) — fetches Apple's restore-image catalog
-  and streams IPSW downloads into a resumable `.kernovadownload` bundle.
+- `IPSWService` (a `final class`, for `URLSession` lifetime) — resolves the latest supported restore
+  image through VZ and streams IPSW downloads into a resumable `.kernovadownload` bundle.
+- `RestoreImageCatalogService` — decodes the bundled snapshot of selectable macOS restore images,
+  `Kernova/Resources/RestoreImageCatalog.json`, backing the wizard's "Choose a Version…" source. It
+  reaches no network; only the image the user picks is fetched, by `IPSWService`.
 
 `ConfigurationBuilder` translates a `VMConfiguration` into a `VZVirtualMachineConfiguration` — the
 single VZ-facing translation point, covering boot loader, CPU, memory, storage, network, display,
@@ -171,7 +174,7 @@ calls `applyLiveRemovableMediaChange(for:target:)`.
   flows such as a macOS install. It serializes lifecycle operations per VM; `stop` and `forceStop`
   deliberately bypass that serialization so a hung operation can always be cancelled.
 - `VMCreationViewModel` — a pure `@Observable` state machine for the creation wizard, with no
-  UI-framework dependency.
+  UI-framework dependency. Injects `RestoreImageCatalogProviding` for the version picker.
 - `VMDirectoryWatcher` — a `DispatchSource` on the VMs directory that triggers reconciliation in
   `VMLibraryViewModel` when the library changes on disk.
 

@@ -403,6 +403,60 @@ struct VMLifecycleCoordinatorTests {
         #expect(installService.installCallCount == 1)
     }
 
+    @Test("installMacOS with a catalog context downloads the pinned URL, never the latest")
+    func installMacOSCatalogUsesPinnedURL() async throws {
+        let (coordinator, _, installService, ipswService, _) = makeCoordinator()
+        let instance = makeInstance()
+        let pinned = try #require(
+            URL(string: "https://updates.cdn-apple.com/x/UniversalMac_15.6.1_24G90_Restore.ipsw"))
+        let context = MacOSInstallContext(
+            source: .catalogVersion,
+            downloadDestinationPath: FileManager.default.temporaryDirectory
+                .appendingPathComponent("UniversalMac_15.6.1_24G90_Restore.ipsw")
+                .path(percentEncoded: false),
+            remoteURL: pinned,
+            version: "15.6.1",
+            build: "24G90"
+        )
+
+        try await coordinator.installMacOS(on: instance, context: context)
+
+        #expect(ipswService.fetchCallCount == 0)
+        #expect(ipswService.downloadCallCount == 1)
+        #expect(ipswService.lastDownloadRemoteURL == pinned)
+        #expect(installService.installCallCount == 1)
+    }
+
+    @Test("installMacOS rejects a catalog context with no pinned URL")
+    func installMacOSCatalogWithoutURLThrows() async {
+        let (coordinator, _, _, ipswService, _) = makeCoordinator()
+        let instance = makeInstance()
+        let context = MacOSInstallContext(
+            source: .catalogVersion,
+            downloadDestinationPath: FileManager.default.temporaryDirectory
+                .appendingPathComponent("test-restore.ipsw").path(percentEncoded: false)
+        )
+
+        await #expect(throws: IPSWError.self) {
+            try await coordinator.installMacOS(on: instance, context: context)
+        }
+        // Never silently falls back to resolving the latest image.
+        #expect(ipswService.fetchCallCount == 0)
+    }
+
+    @Test("A catalog destination outside Downloads falls back to the pinned filename")
+    func normalizedDestinationKeepsPinnedFilename() throws {
+        let (coordinator, _, _, _, _) = makeCoordinator()
+        let elsewhere = URL(fileURLWithPath: "/Users/Shared/UniversalMac_15.6.1_24G90_Restore.ipsw")
+
+        let normalized = coordinator.normalizedDownloadDestination(
+            for: elsewhere, fallbackFilename: "UniversalMac_15.6.1_24G90_Restore.ipsw")
+
+        #expect(normalized.lastPathComponent == "UniversalMac_15.6.1_24G90_Restore.ipsw")
+        #expect(
+            normalized.path(percentEncoded: false) != VMCreationViewModel.defaultIPSWDownloadPath)
+    }
+
     @Test("installMacOS sets status to error on service failure")
     func installMacOSError() async {
         let (coordinator, _, installService, _, _) = makeCoordinator()

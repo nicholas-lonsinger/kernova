@@ -96,4 +96,45 @@ struct MacOSInstallContextTests {
         )
         #expect(a != b)
     }
+
+    // MARK: - Catalog Version Source
+
+    @Test("A catalog context round-trips its pinned image")
+    func catalogContextRoundTrips() throws {
+        let url = try #require(
+            URL(string: "https://updates.cdn-apple.com/x/UniversalMac_15.6.1_24G90_Restore.ipsw"))
+        let original = MacOSInstallContext(
+            source: .catalogVersion,
+            downloadDestinationPath: "/Users/me/Downloads/UniversalMac_15.6.1_24G90_Restore.ipsw",
+            remoteURL: url,
+            version: "15.6.1",
+            build: "24G90"
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(MacOSInstallContext.self, from: data)
+
+        #expect(decoded == original)
+        #expect(decoded.source == .catalogVersion)
+        #expect(decoded.remoteURL == url)
+        #expect(decoded.version == "15.6.1")
+        #expect(decoded.build == "24G90")
+    }
+
+    @Test("A context written without the pinning fields still decodes")
+    func decodeWithoutPinningFields() throws {
+        let json = """
+            {
+                "source": "downloadLatest",
+                "downloadDestinationPath": "/Users/me/Downloads/RestoreImage.ipsw",
+                "requestedFreshDownload": true
+            }
+            """
+        let ctx = try JSONDecoder().decode(MacOSInstallContext.self, from: Data(json.utf8))
+
+        #expect(ctx.source == .downloadLatest)
+        #expect(ctx.remoteURL == nil)
+        #expect(ctx.version == nil)
+        #expect(ctx.build == nil)
+        #expect(ctx.requestedFreshDownload)
+    }
 }

@@ -115,18 +115,35 @@ func makeWizardRadioOption(radio: NSButton, iconSymbol: String, description desc
 /// optional trailing "Change…" button, in a subtle rounded container.
 @MainActor
 func makeWizardPathBadge(path: String, changeButton: NSButton? = nil) -> NSView {
-    let icon = NSImageView(image: .systemSymbol("doc.fill", accessibilityDescription: ""))
+    makeWizardBadge(
+        symbolName: "doc.fill",
+        text: wizardAbbreviateWithTilde(path),
+        lineBreakMode: .byTruncatingMiddle,
+        trailingButton: changeButton
+    )
+}
+
+/// Builds a wizard badge: a symbol, one line of caption text, and an optional
+/// trailing button, in a subtle rounded container.
+@MainActor
+func makeWizardBadge(
+    symbolName: String,
+    text: String,
+    lineBreakMode: NSLineBreakMode = .byTruncatingTail,
+    trailingButton: NSButton? = nil
+) -> NSView {
+    let icon = NSImageView(image: .systemSymbol(symbolName, accessibilityDescription: ""))
     icon.contentTintColor = .secondaryLabelColor
     icon.setContentHuggingPriority(.required, for: .horizontal)
 
-    let pathLabel = NSTextField(labelWithString: wizardAbbreviateWithTilde(path))
-    pathLabel.font = .preferredFont(forTextStyle: .caption1)
-    pathLabel.lineBreakMode = .byTruncatingMiddle
-    pathLabel.maximumNumberOfLines = 1
-    pathLabel.isSelectable = false
-    pathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    let label = NSTextField(labelWithString: text)
+    label.font = .preferredFont(forTextStyle: .caption1)
+    label.lineBreakMode = lineBreakMode
+    label.maximumNumberOfLines = 1
+    label.isSelectable = false
+    label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-    let row = NSStackView(views: [icon, pathLabel] + (changeButton.map { [$0] } ?? []))
+    let row = NSStackView(views: [icon, label] + (trailingButton.map { [$0] } ?? []))
     row.orientation = .horizontal
     row.alignment = .firstBaseline
     row.spacing = Spacing.small

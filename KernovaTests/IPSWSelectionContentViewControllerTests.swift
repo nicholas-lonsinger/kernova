@@ -13,7 +13,8 @@ struct IPSWSelectionContentViewControllerTests {
         vc.loadViewIfNeeded()
 
         #expect(radio(titled: "Download Latest", in: vc.view)?.state == .on)
-        #expect(radio(titled: "Choose Local File", in: vc.view)?.state == .off)
+        #expect(radio(titled: "Choose a Version…", in: vc.view)?.state == .off)
+        #expect(radio(titled: "Choose Local File…", in: vc.view)?.state == .off)
         #expect(
             findLabel(withText: wizardAbbreviateWithTilde(vm.ipswDownloadPath), in: vc.view) != nil)
     }

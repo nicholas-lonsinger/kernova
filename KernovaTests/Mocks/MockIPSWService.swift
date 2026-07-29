@@ -5,6 +5,7 @@ import Foundation
 final class MockIPSWService: IPSWProviding, @unchecked Sendable {
     var fetchCallCount = 0
     var downloadCallCount = 0
+    var lastDownloadRemoteURL: URL?
     var discardResumeDataCallCount = 0
     var lastDiscardResumeDataURL: URL?
     var lastDiscardResumeDataPermanently: Bool?
@@ -32,6 +33,7 @@ final class MockIPSWService: IPSWProviding, @unchecked Sendable {
         progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
     ) async throws {
         downloadCallCount += 1
+        lastDownloadRemoteURL = remoteURL
         if let error = downloadError { throw error }
     }
 
