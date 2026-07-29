@@ -1049,6 +1049,59 @@ struct ConfigurationBuilderTests {
         }
     }
 
+    // MARK: - Input Devices
+
+    @Test("macOS guests get both the Mac and USB pointing/keyboard devices")
+    func macOSInputDevicesIncludeUSBFallbacks() {
+        // Called directly rather than through `assemble`: the rest of
+        // `configureMacOSBoot` needs a real `VZMacHardwareModel`, which only a
+        // restore image can mint.
+        let vz = VZVirtualMachineConfiguration()
+        let config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
+        ConfigurationBuilder().configureMacOSDevicesForTesting(vz, config: config)
+
+        #expect(vz.pointingDevices.count == 2)
+        #expect(vz.pointingDevices.first is VZMacTrackpadConfiguration)
+        #expect(vz.pointingDevices.last is VZUSBScreenCoordinatePointingDeviceConfiguration)
+
+        #expect(vz.keyboards.count == 2)
+        #expect(vz.keyboards.first is VZMacKeyboardConfiguration)
+        #expect(vz.keyboards.last is VZUSBKeyboardConfiguration)
+    }
+
+    @Test("macOS display device carries the configured size and pixel density")
+    func macOSDisplayMatchesConfiguration() throws {
+        let vz = VZVirtualMachineConfiguration()
+        var config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
+        config.displayWidth = 2560
+        config.displayHeight = 1600
+        config.displayPPI = 220
+        ConfigurationBuilder().configureMacOSDevicesForTesting(vz, config: config)
+
+        let graphics = try #require(vz.graphicsDevices.first as? VZMacGraphicsDeviceConfiguration)
+        let display = try #require(graphics.displays.first)
+        #expect(display.widthInPixels == 2560)
+        #expect(display.heightInPixels == 1600)
+        #expect(display.pixelsPerInch == 220)
+    }
+
+    @Test("EFI guests get only the USB pointing/keyboard devices")
+    func efiInputDevicesAreUSBOnly() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let result = try ConfigurationBuilder().assemble(
+            from: makeLinuxConfig(), bundleURL: bundleURL, validate: false)
+        let vz = result.configuration
+
+        // The Mac devices are Mac-platform only, so a generic-platform guest
+        // must never see them.
+        #expect(vz.pointingDevices.count == 1)
+        #expect(vz.pointingDevices.first is VZUSBScreenCoordinatePointingDeviceConfiguration)
+        #expect(vz.keyboards.count == 1)
+        #expect(vz.keyboards.first is VZUSBKeyboardConfiguration)
+    }
+
     // MARK: - Path-Traversal Containment
 
     @Test("Internal storage disk path with .. escape is rejected as storageDiskNotFound")

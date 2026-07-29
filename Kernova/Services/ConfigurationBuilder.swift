@@ -132,6 +132,16 @@ struct ConfigurationBuilder: Sendable {
         vzConfig.platform = platform
         vzConfig.bootLoader = VZMacOSBootLoader()
 
+        configureMacOSDevices(vzConfig, config: config)
+    }
+
+    /// Attaches the display, pointing, and keyboard devices for a macOS guest.
+    ///
+    /// Both input arrays pair the Mac device with its USB equivalent: a guest running
+    /// macOS 13.0 or later binds `VZMacTrackpadConfiguration`/`VZMacKeyboardConfiguration`
+    /// and ignores the USB devices, while an earlier guest recognizes only the USB ones
+    /// (`VZMacTrackpadConfiguration.h`, `VZMacKeyboardConfiguration.h`).
+    private func configureMacOSDevices(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) {
         let graphics = VZMacGraphicsDeviceConfiguration()
         graphics.displays = [
             VZMacGraphicsDisplayConfiguration(
@@ -142,9 +152,22 @@ struct ConfigurationBuilder: Sendable {
         ]
         vzConfig.graphicsDevices = [graphics]
 
-        vzConfig.pointingDevices = [VZMacTrackpadConfiguration()]
-        vzConfig.keyboards = [VZMacKeyboardConfiguration()]
+        vzConfig.pointingDevices = [
+            VZMacTrackpadConfiguration(),
+            VZUSBScreenCoordinatePointingDeviceConfiguration(),
+        ]
+        vzConfig.keyboards = [
+            VZMacKeyboardConfiguration(),
+            VZUSBKeyboardConfiguration(),
+        ]
     }
+
+    #if DEBUG
+    /// Test-only access to `configureMacOSDevices`.
+    func configureMacOSDevicesForTesting(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) {
+        configureMacOSDevices(vzConfig, config: config)
+    }
+    #endif
 
     // MARK: - EFI Boot
 
