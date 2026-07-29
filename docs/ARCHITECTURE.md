@@ -88,6 +88,9 @@ substitute mocks. Services split by concurrency: those that touch
 - `RestoreImageCatalogService` — decodes the bundled snapshot of selectable macOS restore images,
   `Kernova/Resources/RestoreImageCatalog.json`, backing the wizard's "Choose a Version…" source. It
   reaches no network; only the image the user picks is fetched, by `IPSWService`.
+- `LocalRestoreImageInspector` — reads a restore image already on disk through `VZMacOSRestoreImage`,
+  which loads from a file URL, so the version, build and supported-configuration verdict are the
+  framework's own. Consulted before the wizard adopts a file it did not download itself.
 - `RestoreImageProbeService` (a `final class`, for `URLSession` lifetime) — establishes that a
   user-supplied URL serves an installable restore image, and how large it is, before any download.
   An IPSW is a zip whose central directory names `kernelcache.release.vma2` exactly when the image

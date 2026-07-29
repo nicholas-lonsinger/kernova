@@ -18,6 +18,22 @@ final class IPSWSelectionContentViewController: NSViewController {
     private let conditionalContainer = NSStackView()
     /// Hosts the nested version picker.
     private let catalogSheetPresenter = SheetPresenter()
+
+    /// What the last "Use Existing File" attempt turned up, replacing the
+    /// overwrite banner while it is set.
+    private enum ExistingFileNotice: Equatable {
+        case checking
+        case mismatch(expected: String, found: InspectedRestoreImage)
+        case unusable(message: String)
+    }
+    private var existingFileNotice: ExistingFileNotice?
+    /// In-flight inspection, so a second click can't race the first.
+    private var adoptTask: Task<Void, Never>?
+
+    #if DEBUG
+    /// Awaited by tests instead of polling for the verdict to land.
+    var adoptTaskForTesting: Task<Void, Never>? { adoptTask }
+    #endif
     /// Shows the "more content below" cue while this step's content overflows the
     /// sheet; a hint only.
     private var scrollMoreIndicator: ScrollMoreIndicator?
@@ -96,6 +112,8 @@ final class IPSWSelectionContentViewController: NSViewController {
         // The step is swapped out on navigation; a picker left attached to a
         // window that is going away would wedge the presenter as shown.
         catalogSheetPresenter.reset()
+        adoptTask?.cancel()
+        adoptTask = nil
     }
 
     // MARK: - Source radios
@@ -111,6 +129,8 @@ final class IPSWSelectionContentViewController: NSViewController {
 
     @objc private func sourceRadioClicked(_ sender: NSButton) {
         guard let source = radios.first(where: { $0.value === sender })?.key else { return }
+        // The verdict described the previous source's destination.
+        clearExistingFileNotice()
         switch source {
         case .downloadLatest:
             creationVM.selectDownloadLatest()
@@ -202,6 +222,12 @@ final class IPSWSelectionContentViewController: NSViewController {
     /// selected, naming `version` when the pick is a specific one.
     private func addDownloadBanners(version: String?) {
         let subject = version.map { "macOS \($0)" }
+        // A verdict on the existing file supersedes the plain overwrite
+        // warning — it says something more specific about the same file.
+        if let notice = existingFileNotice {
+            addExistingFileNotice(notice)
+            return
+        }
         if creationVM.shouldShowOverwriteWarning {
             let useExisting = NSButton(
                 title: "Use Existing File", target: self, action: #selector(useExistingTapped))
@@ -228,6 +254,42 @@ final class IPSWSelectionContentViewController: NSViewController {
         }
     }
 
+    /// Renders the outcome of checking the file already at the destination.
+    private func addExistingFileNotice(_ notice: ExistingFileNotice) {
+        switch notice {
+        case .checking:
+            addFullWidthBanner(
+                makeGroupedFormBanner(
+                    symbolName: "magnifyingglass.circle.fill",
+                    tint: .systemBlue,
+                    message: "Checking the file already at this location…"
+                ))
+        case .mismatch(let expected, let found):
+            let anyway = NSButton(
+                title: "Use It Anyway", target: self, action: #selector(useExistingAnywayTapped))
+            let replace = NSButton(
+                title: "Download & Replace", target: self, action: #selector(confirmOverwriteTapped))
+            addFullWidthBanner(
+                makeGroupedFormBanner(
+                    symbolName: "exclamationmark.triangle.fill",
+                    tint: .systemYellow,
+                    message:
+                        "The file already here is \(found.summary), not build \(expected). Using it installs \(found.summary).",
+                    trailingButtons: [anyway, replace]
+                ))
+        case .unusable(let message):
+            let replace = NSButton(
+                title: "Download & Replace", target: self, action: #selector(confirmOverwriteTapped))
+            addFullWidthBanner(
+                makeGroupedFormBanner(
+                    symbolName: "exclamationmark.triangle.fill",
+                    tint: .systemYellow,
+                    message: message,
+                    trailingButtons: [replace]
+                ))
+        }
+    }
+
     /// Adds a banner to the conditional container, pinned to the full step width
     /// so it lines up with the source options (the path badge stays content-sized).
     private func addFullWidthBanner(_ banner: NSView) {
@@ -249,14 +311,48 @@ final class IPSWSelectionContentViewController: NSViewController {
         selectPastedURL()
     }
 
+    /// Checks the existing file before adopting it, so a stale or hand-placed
+    /// IPSW can't stand in for the version the wizard is showing.
     @objc private func useExistingTapped() {
+        guard adoptTask == nil else { return }
+        existingFileNotice = .checking
+        rebuildConditional()
+        adoptTask = Task { [weak self] in
+            guard let self else { return }
+            let verdict = await self.creationVM.adoptExistingDownloadFile()
+            guard !Task.isCancelled else { return }
+            self.adoptTask = nil
+            switch verdict {
+            case .adopted:
+                self.existingFileNotice = nil
+            case .mismatch(let expected, let found):
+                self.existingFileNotice = .mismatch(expected: expected, found: found)
+            case .unusable(let message):
+                self.existingFileNotice = .unusable(message: message)
+            }
+            self.refresh()
+        }
+    }
+
+    /// Adopts the file the mismatch banner described, on the user's say-so.
+    @objc private func useExistingAnywayTapped() {
         creationVM.useExistingDownloadFile()
+        existingFileNotice = nil
         refresh()
     }
 
     @objc private func confirmOverwriteTapped() {
+        clearExistingFileNotice()
         creationVM.confirmOverwrite()
         refresh()
+    }
+
+    /// Drops any verdict about the existing file, and any inspection still
+    /// running to produce one.
+    private func clearExistingFileNotice() {
+        adoptTask?.cancel()
+        adoptTask = nil
+        existingFileNotice = nil
     }
 
     // MARK: - Panels
@@ -313,6 +409,7 @@ extension IPSWSelectionContentViewController:
         didChoose image: ProbedRestoreImage
     ) {
         catalogSheetPresenter.close()
+        clearExistingFileNotice()
         creationVM.selectPastedImage(image)
         refresh()
     }
@@ -334,6 +431,7 @@ extension IPSWSelectionContentViewController:
         didChoose entry: RestoreImageCatalogEntry
     ) {
         catalogSheetPresenter.close()
+        clearExistingFileNotice()
         creationVM.selectCatalogEntry(entry)
         refresh()
     }

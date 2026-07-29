@@ -51,12 +51,17 @@ final class VMCreationViewModel {
     /// Backs the "Paste an IPSW URL…" sheet's pre-download check.
     let probeService: any RestoreImageProbing
 
+    /// Reads an IPSW already on disk before the wizard adopts it.
+    let localImageInspector: any LocalRestoreImageInspecting
+
     init(
         catalogService: any RestoreImageCatalogProviding = RestoreImageCatalogService(),
-        probeService: any RestoreImageProbing = RestoreImageProbeService()
+        probeService: any RestoreImageProbing = RestoreImageProbeService(),
+        localImageInspector: any LocalRestoreImageInspecting = LocalRestoreImageInspector()
     ) {
         self.catalogService = catalogService
         self.probeService = probeService
+        self.localImageInspector = localImageInspector
     }
 
     // MARK: - Wizard State
@@ -391,6 +396,60 @@ final class VMCreationViewModel {
         // Downloads location is entitlement-covered. Clearing also drops any
         // bookmark left over from an earlier local-file pick.
         ipswBookmark = nil
+    }
+
+    /// The build the wizard is currently promising, or `nil` when the source
+    /// names no particular image.
+    var pinnedBuild: String? {
+        switch ipswSource {
+        case .catalogVersion: selectedCatalogEntry?.build
+        case .customURL: pastedImage?.build
+        case .downloadLatest, .localFile: nil
+        }
+    }
+
+    /// What inspecting the file at the download destination established.
+    enum ExistingFileVerdict: Equatable {
+        /// Adopted. Carries what the file turned out to be.
+        case adopted(InspectedRestoreImage)
+        /// A different build than the one the wizard is showing; **not** adopted,
+        /// so the user decides.
+        case mismatch(expected: String, found: InspectedRestoreImage)
+        /// Not adoptable at all; the message is user-facing.
+        case unusable(message: String)
+    }
+
+    /// Checks the file sitting at the download destination, and adopts it only
+    /// if it is the image the wizard is promising.
+    ///
+    /// Without this, "Use Existing File" takes whatever is at the path. A file
+    /// that is a *valid but different* macOS installs silently — the same
+    /// wrong-image failure the per-build destination fixes for downloads, which
+    /// a stale or hand-placed file reintroduces.
+    func adoptExistingDownloadFile() async -> ExistingFileVerdict {
+        let url = URL(fileURLWithPath: ipswDownloadPath)
+        let inspected: InspectedRestoreImage
+        do {
+            inspected = try await localImageInspector.inspect(url)
+        } catch {
+            let message =
+                (error as? LocalRestoreImageError)?.errorDescription
+                ?? LocalRestoreImageError.unreadable.errorDescription
+            return .unusable(message: message ?? "That file isn't a usable restore image.")
+        }
+
+        guard inspected.isSupportedOnThisHost else {
+            return .unusable(
+                message: LocalRestoreImageError.unsupported.errorDescription
+                    ?? "That restore image can't install on this Mac.")
+        }
+
+        if let pinnedBuild, pinnedBuild != inspected.build {
+            return .mismatch(expected: pinnedBuild, found: inspected)
+        }
+
+        useExistingDownloadFile()
+        return .adopted(inspected)
     }
 
     // MARK: - Build Configuration

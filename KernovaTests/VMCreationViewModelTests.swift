@@ -842,6 +842,116 @@ struct VMCreationViewModelTests {
         #expect(context.downloadDestinationPath == vm.ipswDownloadPath)
     }
 
+    // MARK: - Adopting an Existing File
+
+    @Test("An existing file matching the pinned build is adopted")
+    func adoptsMatchingExistingFile() async {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "15.6.1", build: "24G90", isSupportedOnThisHost: true)
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
+        let destination = vm.ipswDownloadPath
+
+        let verdict = await vm.adoptExistingDownloadFile()
+
+        #expect(verdict == .adopted(inspector.inspectResult))
+        #expect(vm.ipswSource == .localFile)
+        #expect(vm.ipswPath == destination)
+        #expect(inspector.lastInspectedURL?.path(percentEncoded: false) == destination)
+    }
+
+    @Test("An existing file of a different build is reported, not adopted")
+    func refusesMismatchedExistingFile() async {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "14.2", build: "23C64", isSupportedOnThisHost: true)
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
+
+        let verdict = await vm.adoptExistingDownloadFile()
+
+        #expect(verdict == .mismatch(expected: "24G90", found: inspector.inspectResult))
+        // The wrong-image install this exists to prevent.
+        #expect(vm.ipswSource == .catalogVersion)
+        #expect(vm.ipswPath == nil)
+    }
+
+    @Test("An unreadable file is refused with a reason")
+    func refusesUnreadableExistingFile() async {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectError = LocalRestoreImageError.unreadable
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.selectCatalogEntry(makeCatalogEntry())
+
+        let verdict = await vm.adoptExistingDownloadFile()
+
+        #expect(
+            verdict
+                == .unusable(
+                    message: LocalRestoreImageError.unreadable.errorDescription ?? ""))
+        #expect(vm.ipswSource == .catalogVersion)
+    }
+
+    @Test("An image the host can't run is refused even when the build matches")
+    func refusesUnsupportedExistingFile() async {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "15.6.1", build: "24G90", isSupportedOnThisHost: false)
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
+
+        let verdict = await vm.adoptExistingDownloadFile()
+
+        #expect(
+            verdict
+                == .unusable(
+                    message: LocalRestoreImageError.unsupported.errorDescription ?? ""))
+        #expect(vm.ipswSource == .catalogVersion)
+    }
+
+    @Test("Download Latest pins no build, so any usable image is adopted")
+    func downloadLatestAdoptsAnyUsableImage() async {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "14.2", build: "23C64", isSupportedOnThisHost: true)
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.selectDownloadLatest()
+
+        #expect(vm.pinnedBuild == nil)
+        let verdict = await vm.adoptExistingDownloadFile()
+
+        #expect(verdict == .adopted(inspector.inspectResult))
+        #expect(vm.ipswSource == .localFile)
+    }
+
+    @Test("A URL pick with no parsed build pins nothing to compare against")
+    func customURLWithoutBuildPinsNothing() async {
+        let inspector = MockLocalRestoreImageInspector()
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.selectPastedImage(
+            makeProbedImage(
+                urlString: "https://example.com/image.ipsw", version: nil, build: nil))
+
+        #expect(vm.pinnedBuild == nil)
+        #expect(await vm.adoptExistingDownloadFile() == .adopted(inspector.inspectResult))
+    }
+
+    @Test("pinnedBuild names the build each source is promising")
+    func pinnedBuildTracksTheSource() {
+        let vm = VMCreationViewModel()
+        #expect(vm.pinnedBuild == nil)
+
+        vm.selectCatalogEntry(makeCatalogEntry(build: "24G90"))
+        #expect(vm.pinnedBuild == "24G90")
+
+        vm.selectPastedImage(makeProbedImage(build: "25G72"))
+        #expect(vm.pinnedBuild == "25G72")
+
+        vm.selectDownloadLatest()
+        #expect(vm.pinnedBuild == nil)
+    }
+
     @Test("Switching between pinned sources clears the other one's pick")
     func switchingPinnedSourcesClearsTheOther() {
         let vm = VMCreationViewModel()
