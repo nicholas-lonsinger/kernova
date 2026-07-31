@@ -1287,17 +1287,10 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Running-VM Limit Explanation
 
-    /// The plain-start shape of the cap: VZ reports the code at the top level.
-    private func makeLimitExceededError() -> NSError {
-        NSError(
-            domain: VZError.errorDomain,
-            code: VZError.Code.virtualMachineLimitExceeded.rawValue)
-    }
-
     @Test("start explains the running-VM limit and leaves the VM stopped")
     func startExplainsRunningVMLimit() async {
         let virtService = MockVirtualizationService()
-        virtService.startError = makeLimitExceededError()
+        virtService.startError = makeVMLimitExceededError()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = makeInstance(name: "Ubuntu")
         viewModel.instances.append(instance)
@@ -1314,11 +1307,7 @@ struct VMLibraryViewModelTests {
     @Test("An install that hits the running-VM limit explains it and stays in .initialBoot")
     func installExplainsRunningVMLimit() async {
         let installService = MockMacOSInstallService()
-        // The install path's shape: the cap arrives under `.installationFailed`.
-        installService.installError = NSError(
-            domain: VZError.errorDomain,
-            code: VZError.Code.installationFailed.rawValue,
-            userInfo: [NSUnderlyingErrorKey: makeLimitExceededError()])
+        installService.installError = makeInstallVMLimitExceededError()
         let storage = MockVMStorageService()
         let viewModel = VMLibraryViewModel(
             storageService: storage,
@@ -1361,7 +1350,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         virtService.startError = ConfigurationBuilderError.removableMediaAttachFailed(
             id: item.id, path: item.path, label: item.label,
-            underlying: makeLimitExceededError())
+            underlying: makeVMLimitExceededError())
 
         await viewModel.start(instance)
 

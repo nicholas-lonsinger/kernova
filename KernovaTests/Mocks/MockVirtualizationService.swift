@@ -32,11 +32,8 @@ final class MockVirtualizationService: VirtualizationProviding {
         lastStartBootIntoRecovery = bootIntoRecovery
         if let error = startError {
             instance.tearDownSession()
-            // Mirrors the real service's post-failure state, classifier included,
-            // so callers see the status and message a live failure would leave.
-            let isTransient = VirtualizationService.isTransientStartError(error)
-            instance.status = isTransient ? .stopped : .error
-            instance.errorMessage = isTransient ? nil : error.localizedDescription
+            VirtualizationService.applyStartFailure(
+                error, to: instance, transientRestingStatus: .stopped)
             throw error
         }
         instance.status = .running
