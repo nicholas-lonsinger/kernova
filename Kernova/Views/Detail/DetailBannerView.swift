@@ -1,33 +1,31 @@
 import AppKit
 
-/// Banner shown above the settings pane for a macOS VM that hasn't completed
-/// its initial boot yet.
+/// Tinted banner stacked above the settings form, naming the VM's state and
+/// what the user does next.
 ///
-/// Adapts its subtitle to the persisted install context so the user knows what
-/// Start will do (download + install vs. install from local IPSW vs. resume an
-/// interrupted download).
+/// `tint` colors both the icon and — at 10% alpha — the background.
 @MainActor
-final class InitialBootBannerView: NSView {
-    init(instance: VMInstance) {
+final class DetailBannerView: NSView {
+    init(tint: NSColor, symbolName: String, title: String, subtitle: String) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        build(subtitle: Self.subtitle(for: instance))
+        build(tint: tint, symbolName: symbolName, title: title, subtitle: subtitle)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
-        fatalError("InitialBootBannerView does not support NSCoder")
+        fatalError("DetailBannerView does not support NSCoder")
     }
 
-    private func build(subtitle subtitleText: String) {
-        // Orange tint background + bottom hairline, drawn by NSBoxes so they
-        // adapt to light/dark automatically.
+    private func build(tint: NSColor, symbolName: String, title titleText: String, subtitle subtitleText: String) {
+        // Tint background + bottom hairline, drawn by NSBoxes so they adapt to
+        // light/dark automatically.
         let background = NSBox()
         background.boxType = .custom
         background.titlePosition = .noTitle
         background.borderWidth = 0
         background.cornerRadius = 0
-        background.fillColor = .systemOrange.withAlphaComponent(0.1)
+        background.fillColor = tint.withAlphaComponent(0.1)
         addFullSizeSubview(background)
 
         let separator = NSBox()
@@ -36,12 +34,12 @@ final class InitialBootBannerView: NSView {
         separator.fillColor = .separatorColor
         separator.translatesAutoresizingMaskIntoConstraints = false
 
-        let icon = NSImageView(image: .systemSymbol("sparkles", accessibilityDescription: ""))
+        let icon = NSImageView(image: .systemSymbol(symbolName, accessibilityDescription: ""))
         icon.symbolConfiguration = NSImage.SymbolConfiguration(textStyle: .title2)
-        icon.contentTintColor = .systemOrange
+        icon.contentTintColor = tint
         icon.setContentHuggingPriority(.required, for: .horizontal)
 
-        let title = NSTextField(labelWithString: "Initial Boot")
+        let title = NSTextField(labelWithString: titleText)
         title.font = .preferredFont(forTextStyle: .headline)
         title.isSelectable = false
 
@@ -80,9 +78,32 @@ final class InitialBootBannerView: NSView {
             separator.heightAnchor.constraint(equalToConstant: 1),
         ])
     }
+}
 
-    /// Install-context-aware subtitle.
-    private static func subtitle(for instance: VMInstance) -> String {
+// MARK: - Banners
+
+extension DetailBannerView {
+    /// Banner for a macOS VM that hasn't completed its initial boot, its
+    /// subtitle naming what Start will do for the persisted install context.
+    static func initialBoot(instance: VMInstance) -> DetailBannerView {
+        DetailBannerView(
+            tint: StatusColor.warning,
+            symbolName: "sparkles",
+            title: "Initial Boot",
+            subtitle: initialBootSubtitle(for: instance))
+    }
+
+    /// Banner for a VM whose last operation failed, carrying the message
+    /// captured at the failure.
+    static func error(message: String?) -> DetailBannerView {
+        DetailBannerView(
+            tint: StatusColor.error,
+            symbolName: "exclamationmark.triangle.fill",
+            title: "Error",
+            subtitle: message ?? "The last operation failed.")
+    }
+
+    private static func initialBootSubtitle(for instance: VMInstance) -> String {
         guard let context = instance.configuration.installContext else {
             return "Click Start to install macOS."
         }

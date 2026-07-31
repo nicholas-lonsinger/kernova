@@ -11,6 +11,8 @@ import Foundation
 @MainActor
 final class MockVMLibraryPresenting: VMLibraryPresenting {
     private(set) var errors: [String] = []
+    /// Parallel to `errors`: the alert title each message was presented under.
+    private(set) var errorTitles: [String] = []
     private(set) var startFailedAttachments: [StartFailedAttachment] = []
     private(set) var startFailedAttachmentInstances: [VMInstance] = []
     private(set) var deleteSheetInstances: [VMInstance] = []
@@ -25,7 +27,10 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     private(set) var installerMountedPurposes: [GuestAgentInstallerPurpose] = []
     private(set) var creationWizardCount = 0
 
-    func presentError(_ message: String) { errors.append(message) }
+    func presentError(_ message: String, title: String) {
+        errors.append(message)
+        errorTitles.append(title)
+    }
     func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance) {
         startFailedAttachments.append(failure)
         startFailedAttachmentInstances.append(instance)
@@ -48,6 +53,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
 
     var showError: Bool { !errors.isEmpty }
     var errorMessage: String? { errors.last }
+    var errorTitle: String? { errorTitles.last }
     var showDeleteSheet: Bool { !deleteSheetInstances.isEmpty }
     var instanceToDelete: VMInstance? { deleteSheetInstances.last }
     /// Whether the most recent delete-sheet request asked for immediate delete.
@@ -68,6 +74,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     /// Clears all recorded requests (mirrors resetting the former flags).
     func reset() {
         errors.removeAll()
+        errorTitles.removeAll()
         startFailedAttachments.removeAll()
         startFailedAttachmentInstances.removeAll()
         deleteSheetInstances.removeAll()

@@ -48,15 +48,11 @@ final class VirtualizationService {
             }
         } catch {
             let nsError = error as NSError
-            let underlying =
-                (nsError.userInfo[NSUnderlyingErrorKey] as? NSError)
-                .map { "\($0.domain) \($0.code)" } ?? "none"
             Self.logger.error(
-                "Failed to start VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(underlying, privacy: .public)]"
+                "Failed to start VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(Self.underlyingChainDescription(nsError), privacy: .public)]"
             )
             instance.tearDownSession()
-            instance.status = Self.isTransientStartError(error) ? .stopped : .error
-            instance.errorMessage = error.localizedDescription
+            Self.applyStartFailure(error, to: instance, transientRestingStatus: .stopped)
             throw error
         }
     }
@@ -306,11 +302,16 @@ final class VirtualizationService {
 
     // MARK: - Error Classification
 
+    /// How far an `NSUnderlyingErrorKey` walk follows the chain — framework
+    /// `userInfo` can nest arbitrarily deep, or cyclically.
+    private static let maxUnderlyingErrorDepth = 4
+
     /// Returns `true` when the error is a transient environmental condition (e.g. too many
     /// concurrent VMs) rather than a problem with the VM itself.
     ///
-    /// Transient errors leave the VM in `.stopped` so the indicator stays grey;
-    /// permanent errors set `.error` (red).
+    /// Transient leaves a plain start in `.stopped` and an install in
+    /// `.initialBoot`, with no stored message; permanent sets `.error` (red)
+    /// and keeps the message for the banner and tooltip.
     static func isTransientStartError(_ error: Error) -> Bool {
         // Checked ahead of the builder-error rule below: contention on a disk image
         // surfaces *as* a builder error and is still transient — the lock holder is
@@ -319,15 +320,61 @@ final class VirtualizationService {
 
         if error is ConfigurationBuilderError { return false }
 
-        let nsError = error as NSError
-        guard nsError.domain == VZError.errorDomain else { return false }
+        if isVirtualMachineLimitExceeded(error) { return true }
 
-        switch VZError.Code(rawValue: nsError.code) {
-        case .virtualMachineLimitExceeded, .operationCancelled:
-            return true
-        default:
-            return false
+        // Top level only, unlike the limit code: a cancel nested under a failure
+        // describes a teardown step, not the failure that has to be classified.
+        let nsError = error as NSError
+        return nsError.domain == VZError.errorDomain
+            && VZError.Code(rawValue: nsError.code) == .operationCancelled
+    }
+
+    /// Returns `true` when `error`, or anything within
+    /// ``maxUnderlyingErrorDepth`` of its `NSUnderlyingErrorKey` chain, is
+    /// `VZError.Code.virtualMachineLimitExceeded`.
+    ///
+    /// `VZMacOSInstaller.install()` surfaces the cap as `.installationFailed`
+    /// carrying the real code underneath, so the top level alone identifies it
+    /// on the plain-start path only.
+    static func isVirtualMachineLimitExceeded(_ error: Error) -> Bool {
+        underlyingErrorChain(error as NSError).contains {
+            $0.domain == VZError.errorDomain
+                && VZError.Code(rawValue: $0.code) == .virtualMachineLimitExceeded
         }
+    }
+
+    /// `domain code` for each error *under* `error`, bounded by
+    /// ``maxUnderlyingErrorDepth``; `"none"` when nothing is nested.
+    static func underlyingChainDescription(_ error: NSError) -> String {
+        let nested = underlyingErrorChain(error).dropFirst()
+        guard !nested.isEmpty else { return "none" }
+        return nested.map { "\($0.domain) \($0.code)" }.joined(separator: " → ")
+    }
+
+    /// `error` followed by up to ``maxUnderlyingErrorDepth`` of its
+    /// `NSUnderlyingErrorKey` ancestors.
+    private static func underlyingErrorChain(_ error: NSError) -> [NSError] {
+        var chain: [NSError] = []
+        var current: NSError? = error
+        while let nsError = current, chain.count <= maxUnderlyingErrorDepth {
+            chain.append(nsError)
+            current = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return chain
+    }
+
+    /// Records a failed start or install on `instance`: a transient failure
+    /// rests at `transientRestingStatus` carrying no message, a permanent one
+    /// lands in `.error` carrying the description the banner and tooltip show.
+    ///
+    /// `transientRestingStatus` is where the VM was before the attempt —
+    /// `.stopped` for a plain start, `.initialBoot` for a pending install.
+    static func applyStartFailure(
+        _ error: Error, to instance: VMInstance, transientRestingStatus: VMStatus
+    ) {
+        let isTransient = isTransientStartError(error)
+        instance.status = isTransient ? transientRestingStatus : .error
+        instance.errorMessage = isTransient ? nil : error.localizedDescription
     }
 
     // MARK: - Private Helpers

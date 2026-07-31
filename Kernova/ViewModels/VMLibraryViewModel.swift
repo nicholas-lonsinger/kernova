@@ -34,14 +34,14 @@ final class VMLibraryViewModel {
     /// in `init`) are buffered and flushed when one is set.
     @ObservationIgnored weak var presenter: (any VMLibraryPresenting)? {
         didSet {
-            guard presenter != nil, !bufferedErrorMessages.isEmpty else { return }
-            let buffered = bufferedErrorMessages
-            bufferedErrorMessages.removeAll()
-            buffered.forEach { presenter?.presentError($0) }
+            guard presenter != nil, !bufferedErrors.isEmpty else { return }
+            let buffered = bufferedErrors
+            bufferedErrors.removeAll()
+            buffered.forEach { presenter?.presentError($0.message, title: $0.title) }
         }
     }
 
-    @ObservationIgnored private var bufferedErrorMessages: [String] = []
+    @ObservationIgnored private var bufferedErrors: [(title: String, message: String)] = []
 
     /// VMs with an in-flight removable-media reconciliation Task.
     ///
@@ -239,9 +239,10 @@ final class VMLibraryViewModel {
     /// Drives the install pipeline for an `.initialBoot` (or `.error` with
     /// `installContext`) VM and, on success, chains an auto-boot.
     ///
-    /// Non-cancel errors leave the VM in `.error` so the user sees the message;
-    /// cancel returns it to `.initialBoot` for a retry that resumes the download
-    /// from the `.resumedata` sidecar if present.
+    /// A permanent failure leaves the VM in `.error` so the banner keeps the
+    /// message on screen; cancel and transient failures (the running-VM cap)
+    /// return it to `.initialBoot` for a retry that resumes the download from
+    /// the `.resumedata` sidecar if present.
     private func installAndAutoBoot(_ instance: VMInstance) {
         guard let context = instance.configuration.installContext else {
             assertionFailure("installAndAutoBoot called without installContext")
@@ -280,10 +281,9 @@ final class VMLibraryViewModel {
                     Self.logger.notice(
                         "Install cancelled for '\(instance.name, privacy: .public)' — pipeline surfaced \(error.localizedDescription, privacy: .public)"
                     )
+                } else if let explained = self.explainedFailure(for: error, on: instance) {
+                    self.surfaceError(explained.message, title: explained.title)
                 } else {
-                    Self.logger.error(
-                        "Install failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                    )
                     self.presentError(error)
                 }
             }
@@ -321,6 +321,8 @@ final class VMLibraryViewModel {
                 "Failed to start '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             if let presenter, let failure = startFailedAttachment(from: error, on: instance) {
                 presenter.presentStartFailedAttachment(failure, for: instance)
+            } else if let explained = explainedFailure(for: error, on: instance) {
+                surfaceError(explained.message, title: explained.title)
             } else {
                 presentError(error)
             }
@@ -366,6 +368,29 @@ final class VMLibraryViewModel {
         default:
             return nil
         }
+    }
+
+    /// Maps a start or install failure to alert copy naming the cause and the
+    /// remedy, or `nil` when the raw error description is the right surface.
+    private func explainedFailure(
+        for error: Error, on instance: VMInstance
+    ) -> (title: String, message: String)? {
+        guard VirtualizationService.isVirtualMachineLimitExceeded(error) else { return nil }
+        let verb: String
+        switch instance.startAction {
+        case .start: verb = "Start"
+        case .install, .resumeInstall: verb = "Install"
+        }
+        let message: String
+        switch instance.configuration.guestOS {
+        case .macOS:
+            message =
+                "macOS allows at most two macOS virtual machines to run at once. Stop another macOS VM, then click \(instance.startAction.label) to try again."
+        case .linux:
+            message =
+                "The limit on running virtual machines has been reached. Stop another virtual machine, then click Start to try again."
+        }
+        return (title: "Couldn't \(verb) “\(instance.name)”", message: message)
     }
 
     /// Confirmed action of the start-failed alert: detach the failing
@@ -2121,11 +2146,11 @@ final class VMLibraryViewModel {
 
     /// Routes an error message to the presenter, buffering it if none is
     /// attached yet (e.g. during the initial `loadVMs()` in `init`).
-    private func surfaceError(_ message: String) {
+    private func surfaceError(_ message: String, title: String = "Error") {
         if let presenter {
-            presenter.presentError(message)
+            presenter.presentError(message, title: title)
         } else {
-            bufferedErrorMessages.append(message)
+            bufferedErrors.append((title: title, message: message))
         }
     }
 }

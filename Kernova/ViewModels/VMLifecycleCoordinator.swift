@@ -335,8 +335,12 @@ final class VMLifecycleCoordinator {
                 // Normalize to CancellationError for consistent caller-side handling.
                 throw CancellationError()
             } catch {
-                instance.status = .error
-                instance.errorMessage = error.localizedDescription
+                let nsError = error as NSError
+                Self.logger.error(
+                    "Install failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(VirtualizationService.underlyingChainDescription(nsError), privacy: .public)]"
+                )
+                VirtualizationService.applyStartFailure(
+                    error, to: instance, transientRestingStatus: .initialBoot)
                 throw error
             }
         }

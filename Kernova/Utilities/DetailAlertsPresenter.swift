@@ -112,8 +112,8 @@ final class DetailAlertsPresenter: NSObject {
 
     // MARK: - Imperative presentation
 
-    func presentError(_ message: String) {
-        enqueue { $0.present($0.errorConfig(message)) }
+    func presentError(_ message: String, title: String) {
+        enqueue { $0.present($0.errorConfig(message, title: title)) }
     }
 
     func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance) {
@@ -331,9 +331,9 @@ final class DetailAlertsPresenter: NSObject {
             ])
     }
 
-    private func errorConfig(_ message: String) -> AlertConfiguration {
+    private func errorConfig(_ message: String, title: String) -> AlertConfiguration {
         AlertConfiguration(
-            title: "Error", message: message, buttons: [AlertButton("OK", role: .cancel)])
+            title: title, message: message, buttons: [AlertButton("OK", role: .cancel)])
     }
 
     private func startFailedAttachmentConfig(

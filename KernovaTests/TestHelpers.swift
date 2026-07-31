@@ -5,6 +5,7 @@ import Observation
 import KernovaKit
 import KernovaTestSupport
 import Testing
+import Virtualization
 
 @testable import Kernova
 
@@ -27,6 +28,35 @@ import Testing
 /// inspect the raw `UserDefaults` store directly.
 func makeEphemeralPreferences(suiteName: String) -> AppPreferences {
     AppPreferences(defaults: makeEphemeralDefaults(suiteName: suiteName))
+}
+
+// MARK: - VZ error fixtures
+
+/// The plain-start shape of the running-VM cap: VZ reports the code at the top
+/// level.
+func makeVMLimitExceededError() -> NSError {
+    NSError(
+        domain: VZError.errorDomain,
+        code: VZError.Code.virtualMachineLimitExceeded.rawValue)
+}
+
+/// The install shape of the same cap: `VZMacOSInstaller.install()` reports it as
+/// `.installationFailed` with the real code underneath, so only a chain walk
+/// classifies it.
+func makeInstallVMLimitExceededError() -> NSError {
+    makeVZErrorChain(depth: 1, around: makeVMLimitExceededError())
+}
+
+/// `error` wrapped in `depth` nested `.installationFailed` errors.
+func makeVZErrorChain(depth: Int, around error: NSError) -> NSError {
+    var wrapped = error
+    for _ in 0..<depth {
+        wrapped = NSError(
+            domain: VZError.errorDomain,
+            code: VZError.Code.installationFailed.rawValue,
+            userInfo: [NSUnderlyingErrorKey: wrapped])
+    }
+    return wrapped
 }
 
 // MARK: - Socket / channel factories

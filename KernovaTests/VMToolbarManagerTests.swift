@@ -421,6 +421,20 @@ struct VMToolbarManagerTests {
         #expect(lifecycle?.subitems[2].isEnabled == true)  // stop
     }
 
+    @Test("Play enabled after a failure (error)")
+    func playEnabledWhenError() {
+        let instance = makeInstance(status: .error)
+        let manager = makeManager(instance: instance)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+
+        manager.updateToolbarItems(in: toolbar)
+
+        let lifecycle = toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" } as? NSToolbarItemGroup
+        #expect(lifecycle?.subitems[0].isEnabled == true)  // play (retry)
+        #expect(lifecycle?.subitems[1].isEnabled == false)  // pause
+        #expect(lifecycle?.subitems[2].isEnabled == false)  // stop
+    }
+
     @Test("All lifecycle items disabled during transitioning states")
     func lifecycleDisabledDuringTransition() {
         let instance = makeInstance(status: .starting)

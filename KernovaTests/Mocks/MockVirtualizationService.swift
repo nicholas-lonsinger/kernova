@@ -19,8 +19,6 @@ final class MockVirtualizationService: VirtualizationProviding {
     // MARK: - Error Injection & Recovery
 
     var startError: (any Error)?
-    /// Status to set on start failure (defaults to `.error`; set to `.stopped` to simulate transient errors).
-    var startErrorRecoveryStatus: VMStatus = .error
     var stopError: (any Error)?
     var forceStopError: (any Error)?
     var pauseError: (any Error)?
@@ -34,8 +32,8 @@ final class MockVirtualizationService: VirtualizationProviding {
         lastStartBootIntoRecovery = bootIntoRecovery
         if let error = startError {
             instance.tearDownSession()
-            instance.status = startErrorRecoveryStatus
-            instance.errorMessage = error.localizedDescription
+            VirtualizationService.applyStartFailure(
+                error, to: instance, transientRestingStatus: .stopped)
             throw error
         }
         instance.status = .running

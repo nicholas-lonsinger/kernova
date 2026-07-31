@@ -473,6 +473,26 @@ struct VMLifecycleCoordinatorTests {
         }
     }
 
+    @Test("installMacOS returns the VM to .initialBoot on a transient failure")
+    func installMacOSTransientFailureReturnsToInitialBoot() async {
+        let (coordinator, _, installService, _, _) = makeCoordinator()
+        installService.installError = makeInstallVMLimitExceededError()
+        let instance = makeInstance()
+        instance.errorMessage = "stale message from an earlier failure"
+        let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
+        instance.configuration.installContext = context
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+
+        await #expect(throws: (any Error).self) {
+            try await coordinator.installMacOS(on: instance, context: context)
+        }
+
+        #expect(instance.status == .initialBoot)
+        #expect(instance.errorMessage == nil)
+        // Retrying is the remedy, so the intent that drives the retry survives.
+        #expect(instance.configuration.installContext == context)
+    }
+
     @Test("installMacOS clears installContext on successful completion")
     func installMacOSClearsInstallContextOnSuccess() async throws {
         let (coordinator, _, _, _, _) = makeCoordinator()

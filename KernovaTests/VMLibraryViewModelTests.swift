@@ -42,11 +42,11 @@ struct VMLibraryViewModelTests {
         return (vm, storageService, diskImageService, virtualizationService, usbDeviceService)
     }
 
-    private func makeInstance(name: String = "Test VM") -> VMInstance {
+    private func makeInstance(name: String = "Test VM", guestOS: VMGuestOS = .linux) -> VMInstance {
         let config = VMConfiguration(
             name: name,
-            guestOS: .linux,
-            bootMode: .efi
+            guestOS: guestOS,
+            bootMode: guestOS == .macOS ? .macOS : .efi
         )
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
@@ -1115,6 +1115,8 @@ struct VMLibraryViewModelTests {
 
         #expect(presenter.showError == true)
         #expect(presenter.errorMessage != nil)
+        // A failure with no explanation of its own keeps the generic title.
+        #expect(presenter.errorTitle == "Error")
     }
 
     @Test("start offers removal when a removable media attach fails")
@@ -1281,6 +1283,81 @@ struct VMLibraryViewModelTests {
         // An offer whose action could only no-op is worse than the plain error.
         #expect(presenter.startFailedAttachments.isEmpty)
         #expect(presenter.showError == true)
+    }
+
+    // MARK: - Running-VM Limit Explanation
+
+    @Test("start explains the running-VM limit and leaves the VM stopped")
+    func startExplainsRunningVMLimit() async {
+        let virtService = MockVirtualizationService()
+        virtService.startError = makeVMLimitExceededError()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance(name: "Ubuntu")
+        viewModel.instances.append(instance)
+
+        await viewModel.start(instance)
+
+        #expect(presenter.errorTitle == "Couldn't Start “Ubuntu”")
+        #expect(presenter.errorMessage?.contains("Stop another virtual machine") == true)
+        // Transient: nothing red, and no message left behind for the banner.
+        #expect(instance.status == .stopped)
+        #expect(instance.errorMessage == nil)
+    }
+
+    @Test("An install that hits the running-VM limit explains it and stays in .initialBoot")
+    func installExplainsRunningVMLimit() async {
+        let installService = MockMacOSInstallService()
+        installService.installError = makeInstallVMLimitExceededError()
+        let storage = MockVMStorageService()
+        let viewModel = VMLibraryViewModel(
+            storageService: storage,
+            diskImageService: MockDiskImageService(),
+            virtualizationService: MockVirtualizationService(),
+            installService: installService,
+            ipswService: MockIPSWService(),
+            usbDeviceService: MockUSBDeviceService(),
+            fileSystem: fileSystem,
+            preferences: preferences
+        )
+        viewModel.presenter = presenter
+        let instance = makeInstance(name: "Sequoia", guestOS: .macOS)
+        instance.configuration.installContext = MacOSInstallContext(
+            source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+        instance.status = .initialBoot
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        await viewModel.start(instance)
+        await instance.installTask?.value
+
+        #expect(presenter.errorTitle == "Couldn't Install “Sequoia”")
+        #expect(presenter.errorMessage?.contains("at most two macOS virtual machines") == true)
+        // The verb names the button actually on screen for this VM.
+        #expect(presenter.errorMessage?.contains("click Install to try again") == true)
+        #expect(instance.status == .initialBoot)
+        #expect(instance.errorMessage == nil)
+        #expect(instance.installState == nil)
+    }
+
+    @Test("An attachment failure wrapping the limit code still offers removal")
+    func attachmentFailureWinsOverLimitExplanation() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
+        instance.configuration.removableMedia = [item]
+        viewModel.instances.append(instance)
+        virtService.startError = ConfigurationBuilderError.removableMediaAttachFailed(
+            id: item.id, path: item.path, label: item.label,
+            underlying: makeVMLimitExceededError())
+
+        await viewModel.start(instance)
+
+        // The removal offer is the more actionable surface, and a builder error
+        // is permanent regardless of what it wraps.
+        #expect(presenter.startFailedAttachments.count == 1)
+        #expect(presenter.errors.isEmpty)
     }
 
     @Test("forceStop presents error on service failure")

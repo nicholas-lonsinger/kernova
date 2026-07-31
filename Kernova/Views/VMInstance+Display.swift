@@ -29,6 +29,7 @@ extension VMInstance {
     var statusToolTip: String? {
         if let state = preparingState { return state.displayLabel }
         if status == .initialBoot { return "Click Start to install macOS" }
+        if status == .error { return errorMessage }
         guard status == .paused else { return nil }
         return isColdPaused
             ? "VM state is saved to disk"
