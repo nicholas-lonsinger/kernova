@@ -599,8 +599,8 @@ final class VMInstance {
                         clipboardSharingEnabled: self.configuration.clipboardSharingEnabled
                     )
                 },
-                onAgentVersionObserved: { [weak self] reportedVersion in
-                    self?.recordObservedAgentVersion(reportedVersion)
+                onAgentInfoObserved: { [weak self] info in
+                    self?.recordObservedAgentInfo(info)
                 }
             )
             self.vsockControlService = service
@@ -717,9 +717,16 @@ final class VMInstance {
                 self.agentExpectedButMissing = true
                 // A previously-installed agent disappearing outranks the nudge
                 // the user silenced — reset the dismissal so a future
-                // `.waiting` surfaces normally.
-                if self.configuration.agentInstallNudgeDismissed {
-                    self.performConfigurationMutation { $0.agentInstallNudgeDismissed = false }
+                // `.waiting` surfaces normally. The reported guest OS version
+                // goes with it: the agent that vouched for it is gone, and
+                // "Unknown" beats a stale value.
+                if self.configuration.agentInstallNudgeDismissed
+                    || self.configuration.lastSeenGuestOSVersion != nil
+                {
+                    self.performConfigurationMutation {
+                        $0.agentInstallNudgeDismissed = false
+                        $0.lastSeenGuestOSVersion = nil
+                    }
                 }
             }
             self.agentPostStartTask = nil
@@ -742,23 +749,31 @@ final class VMInstance {
     var agentPostStartTaskForTesting: Task<Void, Never>? { agentPostStartTask }
     #endif
 
-    /// Reacts to a fresh, non-empty `agent_version` reported by the guest.
+    /// Reacts to a `Hello` whose `agent_version` is non-empty.
     ///
-    /// Empty strings are filtered upstream by `VsockControlService`: persisting
-    /// "" would silence both the install nudge and the watchdog.
-    func recordObservedAgentVersion(_ reportedVersion: String) {
+    /// Empty agent versions are filtered upstream by `VsockControlService`:
+    /// persisting "" would silence both the install nudge and the watchdog. The
+    /// OS version has no such filter — a `nil` overwrites a stored value, so a
+    /// guest that stops vouching for its version reads Unknown, not stale.
+    func recordObservedAgentInfo(_ info: ObservedAgentInfo) {
         // Any Hello proves the agent is alive, so clear the watchdog state
-        // before the version-changed guard below.
+        // before the changed guards below.
         cancelAgentPostStartWatchdog()
         agentExpectedButMissing = false
         // Skip the no-op write: a `config.json` rewrite on every Hello would
         // re-fire `VMDirectoryWatcher` reconcile.
-        guard configuration.lastSeenAgentVersion != reportedVersion else { return }
-        performConfigurationMutation { $0.lastSeenAgentVersion = reportedVersion }
-        // After the version-changed guard: a same-version reconnect (e.g. while
+        let agentVersionChanged = configuration.lastSeenAgentVersion != info.agentVersion
+        if agentVersionChanged || configuration.lastSeenGuestOSVersion != info.osVersion {
+            performConfigurationMutation {
+                $0.lastSeenAgentVersion = info.agentVersion
+                $0.lastSeenGuestOSVersion = info.osVersion
+            }
+        }
+        // Only on an agent-version change: a same-version reconnect (e.g. while
         // the disk is mounted to run uninstall.command) must not yank the
         // installer disk out from under the user.
-        if AgentStatus.isObservedVersionCurrent(reportedVersion, bundled: KernovaMacOSAgentInfo.bundledVersion) {
+        guard agentVersionChanged else { return }
+        if AgentStatus.isObservedVersionCurrent(info.agentVersion, bundled: KernovaMacOSAgentInfo.bundledVersion) {
             onAgentBecameCurrent?()
         }
     }

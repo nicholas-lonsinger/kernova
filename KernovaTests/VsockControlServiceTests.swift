@@ -19,7 +19,9 @@ struct VsockControlServiceTests {
     ///
     /// Tests use
     /// this to drive the `agentStatus` numeric-comparison matrix.
-    private func makeGuestHello(agentVersion: String, streamingCapable: Bool = true) -> Frame {
+    private func makeGuestHello(
+        agentVersion: String, osVersion: String = "26.0", streamingCapable: Bool = true
+    ) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.hello = Kernova_V1_Hello.with {
@@ -30,7 +32,7 @@ struct VsockControlServiceTests {
                 : [KernovaCapability.controlV1, KernovaCapability.controlHeartbeatV1]
             $0.agentInfo = Kernova_V1_AgentInfo.with {
                 $0.os = "macOS"
-                $0.osVersion = "26.0"
+                $0.osVersion = osVersion
                 $0.agentVersion = agentVersion
             }
         }
@@ -100,7 +102,7 @@ struct VsockControlServiceTests {
         unresponsiveAfter: Duration? = nil,
         terminateAfter: Duration? = nil,
         policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil,
-        onAgentVersionObserved: (@MainActor (String) -> Void)? = nil
+        onAgentInfoObserved: (@MainActor (ObservedAgentInfo) -> Void)? = nil
     ) -> VsockControlService {
         VsockControlService(
             channel: channel,
@@ -110,7 +112,7 @@ struct VsockControlServiceTests {
             unresponsiveAfter: unresponsiveAfter ?? Self.watchdogDisabledUnresponsive,
             terminateAfter: terminateAfter ?? Self.watchdogDisabledTerminate,
             policyProvider: policyProvider,
-            onAgentVersionObserved: onAgentVersionObserved
+            onAgentInfoObserved: onAgentInfoObserved
         )
     }
 
@@ -591,10 +593,10 @@ struct VsockControlServiceTests {
         }
     }
 
-    // MARK: - onAgentVersionObserved
+    // MARK: - onAgentInfoObserved
 
-    @Test("onAgentVersionObserved fires once when the guest reports a non-empty version")
-    func onAgentVersionObservedFires() async throws {
+    @Test("onAgentInfoObserved fires once when the guest reports a non-empty version")
+    func onAgentInfoObservedFires() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -603,7 +605,7 @@ struct VsockControlServiceTests {
         let observed = ObservedRecorder()
         let service = makeService(
             channel: host,
-            onAgentVersionObserved: { observed.append($0) }
+            onAgentInfoObserved: { observed.append($0) }
         )
         service.start()
         defer { service.stop() }
@@ -615,11 +617,11 @@ struct VsockControlServiceTests {
         // The Hello handler runs synchronously after the inbound frame is
         // dispatched on the main actor, so by the time isConnected flips the
         // observer has already been invoked.
-        #expect(observed.values == ["0.9.2"])
+        #expect(observed.values == [ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "26.0")])
     }
 
-    @Test("onAgentVersionObserved is skipped when the guest reports an empty version")
-    func onAgentVersionObservedSkippedForEmpty() async throws {
+    @Test("onAgentInfoObserved is skipped when the guest reports an empty version")
+    func onAgentInfoObservedSkippedForEmpty() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -628,7 +630,7 @@ struct VsockControlServiceTests {
         let observed = ObservedRecorder()
         let service = makeService(
             channel: host,
-            onAgentVersionObserved: { observed.append($0) }
+            onAgentInfoObserved: { observed.append($0) }
         )
         service.start()
         defer { service.stop() }
@@ -644,8 +646,8 @@ struct VsockControlServiceTests {
         #expect(observed.values.isEmpty)
     }
 
-    @Test("onAgentVersionObserved fires once per Hello (dedup is the caller's job)")
-    func onAgentVersionObservedFiresPerHello() async throws {
+    @Test("onAgentInfoObserved fires once per Hello (dedup is the caller's job)")
+    func onAgentInfoObservedFiresPerHello() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -654,7 +656,7 @@ struct VsockControlServiceTests {
         let observed = ObservedRecorder()
         let service = makeService(
             channel: host,
-            onAgentVersionObserved: { observed.append($0) }
+            onAgentInfoObserved: { observed.append($0) }
         )
         service.start()
         defer { service.stop() }
@@ -668,7 +670,51 @@ struct VsockControlServiceTests {
         // writes is `VMInstance`'s responsibility (it compares against the
         // persisted value before invoking onUpdateConfiguration).
         try await observed.changed.wait { observed.values.count == 2 }
-        #expect(observed.values == ["0.9.2", "0.9.2"])
+        #expect(observed.values.map(\.agentVersion) == ["0.9.2", "0.9.2"])
+    }
+
+    @Test("guestOSVersion is captured from Hello and cleared on stop")
+    func guestOSVersionCaptured() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = makeService(channel: host)
+        service.start()
+
+        _ = try await nextFrame(from: guest)  // host hello
+        try guest.send(makeGuestHello(agentVersion: "0.9.2", osVersion: "Version 26.0 (Build 25A123)"))
+        try await waitForChange { service.isConnected }
+
+        #expect(service.guestOSVersion == "Version 26.0 (Build 25A123)")
+        service.stop()
+        #expect(service.guestOSVersion == nil)
+    }
+
+    @Test("An empty os_version is normalized to nil in state and callback payload")
+    func guestOSVersionEmptyNormalizedToNil() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let observed = ObservedRecorder()
+        let service = makeService(
+            channel: host,
+            onAgentInfoObserved: { observed.append($0) }
+        )
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)
+        try guest.send(makeGuestHello(agentVersion: "0.9.2", osVersion: ""))
+        try await waitForChange { service.isConnected }
+
+        // The callback still fires (the agent version is meaningful) but must
+        // carry nil, not "" — the host persists the payload verbatim.
+        #expect(service.guestOSVersion == nil)
+        #expect(observed.values == [ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil)])
     }
 
     @Test("sendPolicyUpdate emits a PolicyUpdate frame with the supplied snapshot")
@@ -771,18 +817,18 @@ struct VsockControlServiceTests {
     }
 }
 
-/// MainActor-isolated recorder for the `onAgentVersionObserved` closure.
+/// MainActor-isolated recorder for the `onAgentInfoObserved` closure.
 ///
 /// Reference type so the observer's closure capture and the test's read site
 /// see the same buffer without `inout` shenanigans.
 @MainActor
 private final class ObservedRecorder {
-    private(set) var values: [String] = []
+    private(set) var values: [ObservedAgentInfo] = []
 
     /// Fires on every `append`; await it instead of polling `values.count`.
     let changed = AsyncGate()
 
-    func append(_ value: String) {
+    func append(_ value: ObservedAgentInfo) {
         values.append(value)
         changed.notify()
     }

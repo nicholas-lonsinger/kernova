@@ -701,6 +701,7 @@ struct VMInstanceTests {
     /// across tests.
     private func makeMacOSInstanceWithAgentInstalled(
         lastSeen: String = "0.9.2",
+        lastSeenGuestOSVersion: String? = nil,
         installState: MacOSInstallState? = nil
     ) -> VMInstance {
         var config = VMConfiguration(
@@ -709,6 +710,7 @@ struct VMInstanceTests {
             bootMode: .macOS
         )
         config.lastSeenAgentVersion = lastSeen
+        config.lastSeenGuestOSVersion = lastSeenGuestOSVersion
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
         let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .running)
@@ -841,6 +843,28 @@ struct VMInstanceTests {
         #expect(persistCallCount == 1)
     }
 
+    @Test("Watchdog firing clears the stored guest OS version in the same persist")
+    func watchdogClearsGuestOSVersion() async throws {
+        // The agent that vouched for the OS version never reconnected, so the
+        // value is unverifiable — Unknown must overwrite it rather than let a
+        // stale version linger (the guest may have been wiped or upgraded).
+        let instance = makeMacOSInstanceWithAgentInstalled(
+            lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
+
+        var persistCallCount = 0
+        instance.onUpdateConfiguration = { mutate in
+            mutate(&instance.configuration)
+            persistCallCount += 1
+        }
+
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+
+        await instance.agentPostStartTaskForTesting?.value
+        #expect(instance.agentExpectedButMissing == true)
+        #expect(instance.configuration.lastSeenGuestOSVersion == nil)
+        #expect(persistCallCount == 1)
+    }
+
     @Test("Watchdog firing leaves an undismissed nudge alone (no spurious persist)")
     func watchdogDoesNotPersistWhenDismissalAlreadyClear() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
@@ -888,9 +912,9 @@ struct VMInstanceTests {
         #expect(instance.agentStatus == .waiting)
     }
 
-    // MARK: - recordObservedAgentVersion
+    // MARK: - recordObservedAgentInfo
 
-    @Test("recordObservedAgentVersion persists when the version changes")
+    @Test("recordObservedAgentInfo persists when the version changes")
     func recordObservedPersistsOnChange() {
         let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: "0.9.0")
         var savedConfig: VMConfiguration?
@@ -899,16 +923,17 @@ struct VMInstanceTests {
             savedConfig = instance.configuration
         }
 
-        instance.recordObservedAgentVersion("0.9.2")
+        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2"))
 
         #expect(instance.configuration.lastSeenAgentVersion == "0.9.2")
         #expect(savedConfig?.lastSeenAgentVersion == "0.9.2")
     }
 
-    @Test("recordObservedAgentVersion populates lastSeenAgentVersion for fresh VMs")
+    @Test("recordObservedAgentInfo populates both last-seen fields for fresh VMs")
     func recordObservedSetsFromNil() {
         // Simulates the very first time an agent connects to a fresh VM —
-        // the persisted field starts nil and the observer must seed it.
+        // the persisted fields start nil and the observer must seed them,
+        // in a single write.
         let config = VMConfiguration(name: "Fresh", guestOS: .macOS, bootMode: .macOS)
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
@@ -919,31 +944,68 @@ struct VMInstanceTests {
             saveCount += 1
         }
 
-        instance.recordObservedAgentVersion("0.9.0")
+        instance.recordObservedAgentInfo(
+            ObservedAgentInfo(agentVersion: "0.9.0", osVersion: "Version 26.0 (Build 25A123)"))
 
         #expect(instance.configuration.lastSeenAgentVersion == "0.9.0")
+        #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
         #expect(saveCount == 1)
     }
 
-    @Test("recordObservedAgentVersion does not persist when the version is unchanged")
+    @Test("recordObservedAgentInfo does not persist when both fields are unchanged")
     func recordObservedSkipsRedundantWrites() {
-        let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: "0.9.2")
+        let instance = makeMacOSInstanceWithAgentInstalled(
+            lastSeen: "0.9.2", lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
         var saveCount = 0
         instance.onUpdateConfiguration = { mutate in
             mutate(&instance.configuration)
             saveCount += 1
         }
 
-        instance.recordObservedAgentVersion("0.9.2")
-        instance.recordObservedAgentVersion("0.9.2")
+        let info = ObservedAgentInfo(
+            agentVersion: "0.9.2", osVersion: "Version 26.0 (Build 25A123)")
+        instance.recordObservedAgentInfo(info)
+        instance.recordObservedAgentInfo(info)
 
-        // Two same-version Hellos must not produce a single disk write.
+        // Two identical Hellos must not produce a single disk write.
         // Storage churn would re-fire VMDirectoryWatcher reconcile on every
         // heartbeat-driven reconnect.
         #expect(saveCount == 0)
     }
 
-    @Test("recordObservedAgentVersion fires onAgentBecameCurrent for a current version")
+    @Test("recordObservedAgentInfo persists an OS-version change on a same-agent-version reconnect")
+    func recordObservedPersistsOSVersionChangeAlone() {
+        // The guest took a macOS update; the agent survived it at the same
+        // version. The new OS version must still land on disk.
+        let instance = makeMacOSInstanceWithAgentInstalled(
+            lastSeen: "0.9.2", lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
+        var saveCount = 0
+        instance.onUpdateConfiguration = { mutate in
+            mutate(&instance.configuration)
+            saveCount += 1
+        }
+
+        instance.recordObservedAgentInfo(
+            ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "Version 26.1 (Build 25B456)"))
+
+        #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.1 (Build 25B456)")
+        #expect(saveCount == 1)
+    }
+
+    @Test("recordObservedAgentInfo overwrites a stored OS version with nil when the agent reports none")
+    func recordObservedNilOSVersionOverwrites() {
+        // An agent that stops vouching for an OS version must clear the stored
+        // one — Unknown beats stale.
+        let instance = makeMacOSInstanceWithAgentInstalled(
+            lastSeen: "0.9.2", lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+
+        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil))
+
+        #expect(instance.configuration.lastSeenGuestOSVersion == nil)
+    }
+
+    @Test("recordObservedAgentInfo fires onAgentBecameCurrent for a current version")
     func recordObservedFiresBecameCurrentOnCurrentVersion() throws {
         let bundled = try #require(KernovaMacOSAgentInfo.bundledVersion)
         // lastSeen must differ from the reported version so the persist guard
@@ -953,12 +1015,12 @@ struct VMInstanceTests {
         var fired = 0
         instance.onAgentBecameCurrent = { fired += 1 }
 
-        instance.recordObservedAgentVersion(bundled)
+        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: bundled))
 
         #expect(fired == 1)
     }
 
-    @Test("recordObservedAgentVersion does not fire onAgentBecameCurrent for an outdated version")
+    @Test("recordObservedAgentInfo does not fire onAgentBecameCurrent for an outdated version")
     func recordObservedSkipsBecameCurrentOnOutdated() throws {
         let bundled = try #require(KernovaMacOSAgentInfo.bundledVersion)
         // Only meaningful when the bundled version is strictly newer than the
@@ -969,34 +1031,37 @@ struct VMInstanceTests {
         var fired = 0
         instance.onAgentBecameCurrent = { fired += 1 }
 
-        instance.recordObservedAgentVersion("0.0.1")
+        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.0.1"))
 
         #expect(fired == 0)
     }
 
-    @Test("recordObservedAgentVersion does not fire onAgentBecameCurrent on an unchanged-version reconnect")
+    @Test("recordObservedAgentInfo does not fire onAgentBecameCurrent on an unchanged-version reconnect")
     func recordObservedSkipsBecameCurrentWhenUnchanged() throws {
         let bundled = try #require(KernovaMacOSAgentInfo.bundledVersion)
-        // Same version as last seen → the persist guard short-circuits, so a
-        // disk mounted to run uninstall.command is never yanked out by a
-        // same-version reconnect.
+        // Same version as last seen → the became-current guard short-circuits,
+        // so a disk mounted to run uninstall.command is never yanked out by a
+        // same-version reconnect — even when an OS-version change makes the
+        // write itself go through.
         let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: bundled)
         instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
         var fired = 0
         instance.onAgentBecameCurrent = { fired += 1 }
 
-        instance.recordObservedAgentVersion(bundled)
+        instance.recordObservedAgentInfo(
+            ObservedAgentInfo(agentVersion: bundled, osVersion: "Version 26.0 (Build 25A123)"))
 
         #expect(fired == 0)
+        #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
     }
 
-    @Test("recordObservedAgentVersion cancels the watchdog and clears expected-missing")
+    @Test("recordObservedAgentInfo cancels the watchdog and clears expected-missing")
     func recordObservedClearsWatchdogState() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
         instance.agentExpectedButMissing = true
         instance.startAgentPostStartWatchdog(grace: .seconds(10))
 
-        instance.recordObservedAgentVersion("0.9.2")
+        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2"))
 
         #expect(instance.agentExpectedButMissing == false)
         // Re-arming after the cancel must succeed (proves the prior task
@@ -1004,5 +1069,30 @@ struct VMInstanceTests {
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
         await instance.agentPostStartTaskForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
+    }
+
+    // MARK: - guestOSVersionDisplay
+
+    @Test("guestOSVersionDisplay strips the operatingSystemVersionString lead-in")
+    func guestOSVersionDisplayStripsLeadIn() {
+        let instance = makeMacOSInstanceWithAgentInstalled(
+            lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
+        #expect(instance.guestOSVersionDisplay == "26.0 (Build 25A123)")
+    }
+
+    @Test("guestOSVersionDisplay passes other shapes through untouched")
+    func guestOSVersionDisplayPassthrough() {
+        let instance = makeMacOSInstanceWithAgentInstalled(lastSeenGuestOSVersion: "26.0")
+        #expect(instance.guestOSVersionDisplay == "26.0")
+    }
+
+    @Test("guestOSVersionDisplay reads Unknown for nil and empty values")
+    func guestOSVersionDisplayUnknown() {
+        #expect(makeMacOSInstanceWithAgentInstalled().guestOSVersionDisplay == "Unknown")
+        // "" can only come from a hand-edited config.json (the service and
+        // recorder both normalize it to nil) but must not render as blank.
+        #expect(
+            makeMacOSInstanceWithAgentInstalled(lastSeenGuestOSVersion: "").guestOSVersionDisplay
+                == "Unknown")
     }
 }

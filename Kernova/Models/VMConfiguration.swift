@@ -92,6 +92,13 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// for stopped VMs and arms the post-start watchdog.
     var lastSeenAgentVersion: String?
 
+    /// The most recent guest-reported OS version observed on this VM's control
+    /// channel (`Hello.agent_info.os_version`), or `nil` when no agent has
+    /// vouched for one — a fresh VM, an agent that reported no version, or the
+    /// post-start watchdog concluding a previously-seen agent is gone, which
+    /// deliberately clears a now-unverifiable value.
+    var lastSeenGuestOSVersion: String?
+
     /// When `true`, the user has explicitly dismissed the sidebar "install
     /// guest agent" nudge for this VM.
     ///
@@ -183,6 +190,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         audioOutputEnabled: Bool = true,
         agentLogForwardingEnabled: Bool = false,
         lastSeenAgentVersion: String? = nil,
+        lastSeenGuestOSVersion: String? = nil,
         agentInstallNudgeDismissed: Bool = false,
         hardwareModelData: Data? = nil,
         machineIdentifierData: Data? = nil,
@@ -219,6 +227,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.audioOutputEnabled = audioOutputEnabled
         self.agentLogForwardingEnabled = agentLogForwardingEnabled
         self.lastSeenAgentVersion = lastSeenAgentVersion
+        self.lastSeenGuestOSVersion = lastSeenGuestOSVersion
         self.agentInstallNudgeDismissed = agentInstallNudgeDismissed
         self.hardwareModelData = hardwareModelData
         self.machineIdentifierData = machineIdentifierData
@@ -267,6 +276,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.audioOutputEnabled = try c.decodeIfPresent(Bool.self, forKey: .audioOutputEnabled) ?? true
         self.agentLogForwardingEnabled = try c.decodeIfPresent(Bool.self, forKey: .agentLogForwardingEnabled) ?? false
         self.lastSeenAgentVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenAgentVersion)
+        self.lastSeenGuestOSVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenGuestOSVersion)
         self.agentInstallNudgeDismissed = try c.decodeIfPresent(Bool.self, forKey: .agentInstallNudgeDismissed) ?? false
         self.hardwareModelData = try c.decodeIfPresent(Data.self, forKey: .hardwareModelData)
         self.machineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .machineIdentifierData)
