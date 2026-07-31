@@ -74,7 +74,7 @@ final class VMSettingsViewController: NSViewController {
     // General
     private var nameButton = NSButton()
     private let nameField = NSTextField()
-    /// Value label of the macOS Version row; `nil` for Linux guests, which have
+    /// Value label of the OS Version row; `nil` for Linux guests, which have
     /// no agent to report one.
     private var guestOSVersionValueLabel: NSTextField?
     private var nameDisplayRow = NSView()
@@ -560,7 +560,7 @@ extension VMSettingsViewController {
         if instance.configuration.guestOS == .macOS {
             let versionLabel = makeGroupedFormValueLabel(instance.guestOSVersionDisplay)
             guestOSVersionValueLabel = versionLabel
-            rows.append(makeGroupedFormCardRow("macOS Version", control: versionLabel))
+            rows.append(makeGroupedFormCardRow("OS Version", control: versionLabel))
         } else {
             guestOSVersionValueLabel = nil
         }
