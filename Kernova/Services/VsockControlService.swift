@@ -10,9 +10,12 @@ struct AgentPolicySnapshot: Equatable, Sendable {
 
 /// Guest-reported identity from one `Hello.agent_info`, with an empty
 /// `os_version` normalized to `nil`.
+///
+/// No default on `osVersion`: a `nil` overwrites the persisted value, so every
+/// construction site must say it means "clear", not omit it and mean "keep".
 struct ObservedAgentInfo: Equatable, Sendable {
     var agentVersion: String
-    var osVersion: String? = nil
+    var osVersion: String?
 }
 
 /// Drives the always-on control channel between the host and the macOS guest
@@ -34,10 +37,6 @@ final class VsockControlService {
     /// The guest-reported `Hello.agent_info.agent_version`, `nil` until that
     /// `Hello` arrives and again after `stop()`.
     private(set) var agentVersion: String?
-
-    /// The guest-reported `Hello.agent_info.os_version`, `nil` until a `Hello`
-    /// carrying one arrives and again after `stop()`.
-    private(set) var guestOSVersion: String?
 
     /// `true` when the inbound liveness watchdog has fired but the channel has not yet been torn down.
     private(set) var isUnresponsive: Bool = false
@@ -197,7 +196,6 @@ final class VsockControlService {
         channel.close()
         isConnected = false
         agentVersion = nil
-        guestOSVersion = nil
         isUnresponsive = false
         lastInboundFrame = nil
         guestSupportsClipboardStreamingStorage = false
@@ -354,7 +352,6 @@ final class VsockControlService {
             let reportedVersion = hello.agentInfo.agentVersion
             agentVersion = reportedVersion.isEmpty ? nil : reportedVersion
             let reportedOSVersion = hello.agentInfo.osVersion
-            guestOSVersion = reportedOSVersion.isEmpty ? nil : reportedOSVersion
             guestSupportsClipboardStreamingStorage = hello.capabilities.contains(
                 KernovaCapability.clipboardStreamV1)
             guestSupportsClipboardDirTreeStorage = hello.capabilities.contains(
@@ -368,7 +365,9 @@ final class VsockControlService {
             // — skip those so the host doesn't persist a meaningless value.
             if !reportedVersion.isEmpty {
                 onAgentInfoObserved?(
-                    ObservedAgentInfo(agentVersion: reportedVersion, osVersion: guestOSVersion))
+                    ObservedAgentInfo(
+                        agentVersion: reportedVersion,
+                        osVersion: reportedOSVersion.isEmpty ? nil : reportedOSVersion))
             }
             // Push the current policy to the freshly connected guest so it
             // doesn't run on assumed defaults.

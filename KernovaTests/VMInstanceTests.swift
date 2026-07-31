@@ -790,6 +790,21 @@ struct VMInstanceTests {
         #expect(instance.agentExpectedButMissing == false)
     }
 
+    @Test("Watchdog is a no-op after a recovery boot")
+    func watchdogNoopAfterRecoveryBoot() async throws {
+        // Recovery never runs the agent, so its silence proves nothing — the
+        // "didn't reconnect" badge would be false and clearing the stored guest
+        // OS version would erase a value that is not in doubt.
+        let instance = makeMacOSInstanceWithAgentInstalled(
+            lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
+
+        instance.startAgentPostStartWatchdog(
+            afterRecoveryBoot: true, grace: Self.testWatchdogGrace)
+        try await Task.sleep(for: Self.testWatchdogGrace * 3)
+        #expect(instance.agentExpectedButMissing == false)
+        #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
+    }
+
     @Test("Watchdog is a no-op while macOS install is in progress")
     func watchdogNoopDuringMacOSInstall() async throws {
         // No agent exists during install; no point arming the watchdog.
@@ -923,7 +938,7 @@ struct VMInstanceTests {
             savedConfig = instance.configuration
         }
 
-        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2"))
+        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil))
 
         #expect(instance.configuration.lastSeenAgentVersion == "0.9.2")
         #expect(savedConfig?.lastSeenAgentVersion == "0.9.2")
@@ -1015,7 +1030,7 @@ struct VMInstanceTests {
         var fired = 0
         instance.onAgentBecameCurrent = { fired += 1 }
 
-        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: bundled))
+        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: bundled, osVersion: nil))
 
         #expect(fired == 1)
     }
@@ -1031,7 +1046,7 @@ struct VMInstanceTests {
         var fired = 0
         instance.onAgentBecameCurrent = { fired += 1 }
 
-        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.0.1"))
+        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.0.1", osVersion: nil))
 
         #expect(fired == 0)
     }
@@ -1061,7 +1076,7 @@ struct VMInstanceTests {
         instance.agentExpectedButMissing = true
         instance.startAgentPostStartWatchdog(grace: .seconds(10))
 
-        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2"))
+        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil))
 
         #expect(instance.agentExpectedButMissing == false)
         // Re-arming after the cancel must succeed (proves the prior task

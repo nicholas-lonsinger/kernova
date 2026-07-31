@@ -39,8 +39,9 @@ final class VirtualizationService {
             instance.status = .running
             // The watchdog flips `agentExpectedButMissing` when a VM that has seen
             // the agent before gets no Hello within the grace period. No-op for
-            // fresh VMs (no `lastSeenAgentVersion`) and for Linux.
-            instance.startAgentPostStartWatchdog()
+            // fresh VMs (no `lastSeenAgentVersion`), for Linux, and for recovery
+            // boots, which never run the agent.
+            instance.startAgentPostStartWatchdog(afterRecoveryBoot: bootIntoRecovery)
             if bootIntoRecovery {
                 Self.logger.notice("Started VM '\(instance.name, privacy: .public)' in recovery mode")
             } else {

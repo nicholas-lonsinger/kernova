@@ -673,26 +673,33 @@ struct VsockControlServiceTests {
         #expect(observed.values.map(\.agentVersion) == ["0.9.2", "0.9.2"])
     }
 
-    @Test("guestOSVersion is captured from Hello and cleared on stop")
-    func guestOSVersionCaptured() async throws {
+    @Test("The callback payload carries the reported os_version verbatim")
+    func guestOSVersionCarriedVerbatim() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
         defer { guest.close() }
 
-        let service = makeService(channel: host)
+        let observed = ObservedRecorder()
+        let service = makeService(
+            channel: host,
+            onAgentInfoObserved: { observed.append($0) }
+        )
         service.start()
+        defer { service.stop() }
 
         _ = try await nextFrame(from: guest)  // host hello
         try guest.send(makeGuestHello(agentVersion: "0.9.2", osVersion: "Version 26.0 (Build 25A123)"))
         try await waitForChange { service.isConnected }
 
-        #expect(service.guestOSVersion == "Version 26.0 (Build 25A123)")
-        service.stop()
-        #expect(service.guestOSVersion == nil)
+        #expect(
+            observed.values == [
+                ObservedAgentInfo(
+                    agentVersion: "0.9.2", osVersion: "Version 26.0 (Build 25A123)")
+            ])
     }
 
-    @Test("An empty os_version is normalized to nil in state and callback payload")
+    @Test("An empty os_version is normalized to nil in the callback payload")
     func guestOSVersionEmptyNormalizedToNil() async throws {
         let (guest, host) = try makePair()
         guest.start()
@@ -713,7 +720,6 @@ struct VsockControlServiceTests {
 
         // The callback still fires (the agent version is meaningful) but must
         // carry nil, not "" — the host persists the payload verbatim.
-        #expect(service.guestOSVersion == nil)
         #expect(observed.values == [ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil)])
     }
 

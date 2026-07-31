@@ -690,11 +690,16 @@ final class VMInstance {
     /// Starts a one-shot timer that flips `agentExpectedButMissing = true` if
     /// the guest agent doesn't say Hello within `grace`.
     ///
-    /// A no-op unless the guest is macOS, an agent has been seen before on this
-    /// VM, no install is in progress, and no watchdog is already armed.
-    /// Cancelled by any inbound Hello and by `tearDownSession`.
-    func startAgentPostStartWatchdog(grace: Duration = VMInstance.defaultAgentPostStartGrace) {
+    /// A no-op unless the guest is macOS, the boot wasn't into Recovery (which
+    /// never runs the agent, so silence there is evidence of nothing), an agent
+    /// has been seen before on this VM, no install is in progress, and no
+    /// watchdog is already armed. Cancelled by any inbound Hello and by
+    /// `tearDownSession`.
+    func startAgentPostStartWatchdog(
+        afterRecoveryBoot: Bool = false, grace: Duration = VMInstance.defaultAgentPostStartGrace
+    ) {
         guard configuration.guestOS == .macOS else { return }
+        guard !afterRecoveryBoot else { return }
         guard configuration.lastSeenAgentVersion != nil else { return }
         guard installState == nil else { return }
         guard agentPostStartTask == nil else { return }
