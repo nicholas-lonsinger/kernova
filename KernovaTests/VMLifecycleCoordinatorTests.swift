@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Virtualization
 @testable import Kernova
 
 @Suite("VMLifecycleCoordinator Tests")
@@ -471,6 +472,35 @@ struct VMLifecycleCoordinatorTests {
             #expect(instance.status == .error)
             #expect(instance.errorMessage != nil)
         }
+    }
+
+    @Test("installMacOS returns the VM to .initialBoot on a transient failure")
+    func installMacOSTransientFailureReturnsToInitialBoot() async {
+        let (coordinator, _, installService, _, _) = makeCoordinator()
+        // The install path's shape for the running-VM cap: the real code arrives
+        // under `.installationFailed`, so only a chain walk classifies it.
+        installService.installError = NSError(
+            domain: VZError.errorDomain,
+            code: VZError.Code.installationFailed.rawValue,
+            userInfo: [
+                NSUnderlyingErrorKey: NSError(
+                    domain: VZError.errorDomain,
+                    code: VZError.Code.virtualMachineLimitExceeded.rawValue)
+            ])
+        let instance = makeInstance()
+        instance.errorMessage = "stale message from an earlier failure"
+        let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
+        instance.configuration.installContext = context
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+
+        await #expect(throws: (any Error).self) {
+            try await coordinator.installMacOS(on: instance, context: context)
+        }
+
+        #expect(instance.status == .initialBoot)
+        #expect(instance.errorMessage == nil)
+        // Retrying is the remedy, so the intent that drives the retry survives.
+        #expect(instance.configuration.installContext == context)
     }
 
     @Test("installMacOS clears installContext on successful completion")

@@ -36,8 +36,8 @@ struct StartFailedAttachment: Equatable, Sendable {
 /// sheets, and the creation wizard.
 @MainActor
 protocol VMLibraryPresenting: AnyObject {
-    /// Show a generic error alert with `message`.
-    func presentError(_ message: String)
+    /// Show an error alert headed `title` with `message`.
+    func presentError(_ message: String, title: String)
     /// Show the start-failed alert for an attachment that couldn't be opened,
     /// offering to remove it from the configuration and start again.
     func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance)

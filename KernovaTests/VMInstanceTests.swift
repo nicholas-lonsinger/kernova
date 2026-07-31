@@ -373,6 +373,13 @@ struct VMInstanceTests {
         }
     }
 
+    @Test("statusToolTip carries the stored message in the error state")
+    func statusToolTipError() {
+        let instance = makeInstance(status: .error)
+        instance.errorMessage = "The virtual machine failed to start."
+        #expect(instance.statusToolTip == "The virtual machine failed to start.")
+    }
+
     // MARK: - Lifecycle Action Labels
 
     @Test("startAction is .start without a pending install context")

@@ -11,6 +11,7 @@ struct DetailRouteTests {
             let route = DetailRoute.resolve(
                 preparingLabel: "Cloning…",
                 status: status,
+                errorMessage: nil,
                 hasInstallState: true,
                 detailPaneMode: .display
             )
@@ -20,17 +21,30 @@ struct DetailRouteTests {
 
     // MARK: - Editable settings
 
-    @Test("Stopped and error route to editable settings")
-    func stoppedAndErrorAreEditableSettings() {
-        for status in [VMStatus.stopped, .error] {
-            let route = DetailRoute.resolve(
-                preparingLabel: nil,
-                status: status,
-                hasInstallState: false,
-                detailPaneMode: .display
-            )
-            #expect(route == .settings(isReadOnly: false))
-        }
+    @Test("Stopped routes to editable settings")
+    func stoppedIsEditableSettings() {
+        let route = DetailRoute.resolve(
+            preparingLabel: nil,
+            status: .stopped,
+            errorMessage: nil,
+            hasInstallState: false,
+            detailPaneMode: .display
+        )
+        #expect(route == .settings(isReadOnly: false))
+    }
+
+    @Test("Error routes to the error banner carrying the stored message")
+    func errorRoutesToErrorBanner() {
+        let route = DetailRoute.resolve(
+            preparingLabel: nil,
+            status: .error,
+            errorMessage: "Boot failed.",
+            hasInstallState: false,
+            detailPaneMode: .display
+        )
+        #expect(route == .error(message: "Boot failed."))
+        // A second failure with different text must not compare equal to the first.
+        #expect(route != .error(message: nil))
     }
 
     @Test("Initial boot routes to .initialBoot")
@@ -38,6 +52,7 @@ struct DetailRouteTests {
         let route = DetailRoute.resolve(
             preparingLabel: nil,
             status: .initialBoot,
+            errorMessage: nil,
             hasInstallState: false,
             detailPaneMode: .display
         )
@@ -51,6 +66,7 @@ struct DetailRouteTests {
         let route = DetailRoute.resolve(
             preparingLabel: nil,
             status: .installing,
+            errorMessage: nil,
             hasInstallState: true,
             detailPaneMode: .display
         )
@@ -62,6 +78,7 @@ struct DetailRouteTests {
         let route = DetailRoute.resolve(
             preparingLabel: nil,
             status: .installing,
+            errorMessage: nil,
             hasInstallState: false,
             detailPaneMode: .display
         )
@@ -76,6 +93,7 @@ struct DetailRouteTests {
             let display = DetailRoute.resolve(
                 preparingLabel: nil,
                 status: status,
+                errorMessage: nil,
                 hasInstallState: false,
                 detailPaneMode: .display
             )
@@ -84,6 +102,7 @@ struct DetailRouteTests {
             let settings = DetailRoute.resolve(
                 preparingLabel: nil,
                 status: status,
+                errorMessage: nil,
                 hasInstallState: false,
                 detailPaneMode: .settings
             )
@@ -99,6 +118,7 @@ struct DetailRouteTests {
             let route = DetailRoute.resolve(
                 preparingLabel: nil,
                 status: .starting,
+                errorMessage: nil,
                 hasInstallState: false,
                 detailPaneMode: paneMode
             )

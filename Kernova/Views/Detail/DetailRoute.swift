@@ -11,6 +11,12 @@ enum DetailRoute: Equatable {
     /// VM exists but hasn't completed its initial boot; show the initial-boot
     /// banner stacked above the (editable) settings form.
     case initialBoot
+    /// The VM's last operation failed permanently; show the error banner
+    /// carrying `message` above the (editable) settings form.
+    ///
+    /// The message is part of the route so a second failure with different text
+    /// re-renders rather than comparing equal to the first.
+    case error(message: String?)
     /// A macOS install is running; show the install-progress UI.
     case install
     /// A transient status (starting, suspending, restoring, …) with no editable
@@ -26,6 +32,7 @@ enum DetailRoute: Equatable {
     static func resolve(
         preparingLabel: String?,
         status: VMStatus,
+        errorMessage: String?,
         hasInstallState: Bool,
         detailPaneMode: DetailPaneMode
     ) -> DetailRoute {
@@ -33,8 +40,10 @@ enum DetailRoute: Equatable {
             return .preparing(label: preparingLabel)
         }
         switch status {
-        case .stopped, .error:
+        case .stopped:
             return .settings(isReadOnly: false)
+        case .error:
+            return .error(message: errorMessage)
         case .initialBoot:
             return .initialBoot
         case .installing:

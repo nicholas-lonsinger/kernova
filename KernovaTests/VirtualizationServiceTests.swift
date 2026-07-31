@@ -133,10 +133,96 @@ struct VirtualizationServiceTests {
 
     // MARK: - Transient Start Error Classification
 
+    private func makeLimitExceededError() -> NSError {
+        NSError(
+            domain: VZError.errorDomain,
+            code: VZError.Code.virtualMachineLimitExceeded.rawValue)
+    }
+
+    /// Mirrors the install path's shape: `VZMacOSInstaller.install()` reports the
+    /// running-VM cap as `.installationFailed` with the real code underneath.
+    private func makeInstallLimitExceededError() -> NSError {
+        makeChain(depth: 1, around: makeLimitExceededError())
+    }
+
+    /// `error` wrapped in `depth` nested `.installationFailed` errors.
+    private func makeChain(depth: Int, around error: NSError) -> NSError {
+        var wrapped = error
+        for _ in 0..<depth {
+            wrapped = NSError(
+                domain: VZError.errorDomain,
+                code: VZError.Code.installationFailed.rawValue,
+                userInfo: [NSUnderlyingErrorKey: wrapped])
+        }
+        return wrapped
+    }
+
     @Test("VM limit exceeded error is transient")
     func vmLimitExceededIsTransient() {
-        let error = NSError(domain: VZError.errorDomain, code: VZError.Code.virtualMachineLimitExceeded.rawValue)
+        let error = makeLimitExceededError()
+        #expect(VirtualizationService.isVirtualMachineLimitExceeded(error))
         #expect(VirtualizationService.isTransientStartError(error))
+    }
+
+    @Test("VM limit exceeded under an installation failure is transient")
+    func nestedVMLimitExceededIsTransient() {
+        let error = makeInstallLimitExceededError()
+        #expect(VirtualizationService.isVirtualMachineLimitExceeded(error))
+        #expect(VirtualizationService.isTransientStartError(error))
+    }
+
+    @Test("VM limit exceeded is found anywhere within the bounded chain")
+    func deeplyNestedVMLimitExceededIsFound() {
+        for depth in 2...4 {
+            let error = makeChain(depth: depth, around: makeLimitExceededError())
+            #expect(VirtualizationService.isVirtualMachineLimitExceeded(error))
+            #expect(VirtualizationService.isTransientStartError(error))
+        }
+    }
+
+    @Test("VM limit exceeded past the chain bound is not recognized")
+    func vmLimitExceededBeyondBoundIsPermanent() {
+        let error = makeChain(depth: 5, around: makeLimitExceededError())
+        #expect(!VirtualizationService.isVirtualMachineLimitExceeded(error))
+        #expect(!VirtualizationService.isTransientStartError(error))
+    }
+
+    @Test("An installation failure carrying no underlying error is permanent")
+    func installationFailedAloneIsPermanent() {
+        let error = NSError(
+            domain: VZError.errorDomain, code: VZError.Code.installationFailed.rawValue)
+        #expect(!VirtualizationService.isVirtualMachineLimitExceeded(error))
+        #expect(!VirtualizationService.isTransientStartError(error))
+    }
+
+    @Test("A builder error wrapping the VM limit stays permanent")
+    func builderErrorWrappingLimitIsPermanent() {
+        let wrapped = ConfigurationBuilderError.storageDiskAttachFailed(
+            id: UUID(), path: "/tmp/Disk.asif", label: "Main Disk",
+            underlying: makeLimitExceededError())
+        #expect(!VirtualizationService.isTransientStartError(wrapped))
+    }
+
+    @Test("A nested operation cancelled is not transient")
+    func nestedOperationCancelledIsPermanent() {
+        let error = makeChain(
+            depth: 1,
+            around: NSError(
+                domain: VZError.errorDomain, code: VZError.Code.operationCancelled.rawValue))
+        #expect(!VirtualizationService.isTransientStartError(error))
+    }
+
+    @Test("The underlying chain description names every link, bounded")
+    func underlyingChainDescriptionNamesEveryLink() {
+        #expect(
+            VirtualizationService.underlyingChainDescription(makeInstallLimitExceededError())
+                == "\(VZError.errorDomain) \(VZError.Code.virtualMachineLimitExceeded.rawValue)")
+        #expect(
+            VirtualizationService.underlyingChainDescription(makeLimitExceededError()) == "none")
+        let deep = makeChain(depth: 6, around: makeLimitExceededError())
+        #expect(
+            VirtualizationService.underlyingChainDescription(deep)
+                .components(separatedBy: " → ").count == 4)
     }
 
     @Test("operation cancelled error is transient")
