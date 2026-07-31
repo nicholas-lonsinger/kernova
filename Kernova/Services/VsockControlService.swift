@@ -8,6 +8,16 @@ struct AgentPolicySnapshot: Equatable, Sendable {
     var clipboardSharingEnabled: Bool
 }
 
+/// Guest-reported identity from one `Hello.agent_info`, with an empty
+/// `os_version` normalized to `nil`.
+///
+/// No default on `osVersion`: a `nil` overwrites the persisted value, so every
+/// construction site must say it means "clear", not omit it and mean "keep".
+struct ObservedAgentInfo: Equatable, Sendable {
+    var agentVersion: String
+    var osVersion: String?
+}
+
 /// Drives the always-on control channel between the host and the macOS guest
 /// agent.
 ///
@@ -61,7 +71,7 @@ final class VsockControlService {
     /// Notified each time the guest reports a non-empty `agentVersion` in its `Hello`.
     ///
     /// Fire-and-forget — this service does not care whether the host persists the value.
-    private let onAgentVersionObserved: (@MainActor (String) -> Void)?
+    private let onAgentInfoObserved: (@MainActor (ObservedAgentInfo) -> Void)?
 
     private var consumeTask: Task<Void, Never>?
     private var outboundHeartbeatTask: Task<Void, Never>?
@@ -110,7 +120,7 @@ final class VsockControlService {
         unresponsiveAfter: Duration = .seconds(15),
         terminateAfter: Duration = .seconds(30),
         policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil,
-        onAgentVersionObserved: (@MainActor (String) -> Void)? = nil
+        onAgentInfoObserved: (@MainActor (ObservedAgentInfo) -> Void)? = nil
     ) {
         // The two-stage watchdog requires `unresponsiveAfter < terminateAfter`:
         // reversed, `terminateAfter` fires first and `.unresponsive` is never
@@ -129,7 +139,7 @@ final class VsockControlService {
         // transition fires promptly, capped at the heartbeat interval.
         self.livenessTickInterval = min(heartbeatInterval, unresponsiveAfter / 3)
         self.policyProvider = policyProvider
-        self.onAgentVersionObserved = onAgentVersionObserved
+        self.onAgentInfoObserved = onAgentInfoObserved
     }
 
     // MARK: - Lifecycle
@@ -341,6 +351,7 @@ final class VsockControlService {
             isUnresponsive = false
             let reportedVersion = hello.agentInfo.agentVersion
             agentVersion = reportedVersion.isEmpty ? nil : reportedVersion
+            let reportedOSVersion = hello.agentInfo.osVersion
             guestSupportsClipboardStreamingStorage = hello.capabilities.contains(
                 KernovaCapability.clipboardStreamV1)
             guestSupportsClipboardDirTreeStorage = hello.capabilities.contains(
@@ -350,10 +361,13 @@ final class VsockControlService {
             Self.logger.notice(
                 "Guest agent connected for '\(self.label, privacy: .public)' (service=\(hello.serviceVersion, privacy: .public), agent=\(reportedVersion, privacy: .public), caps=\(KernovaCapability.logDescription(of: hello.capabilities), privacy: .public))"
             )
-            // An empty string means the agent didn't populate the field — skip
-            // those so the host doesn't persist a meaningless value.
+            // An empty agent version means the agent didn't populate the field
+            // — skip those so the host doesn't persist a meaningless value.
             if !reportedVersion.isEmpty {
-                onAgentVersionObserved?(reportedVersion)
+                onAgentInfoObserved?(
+                    ObservedAgentInfo(
+                        agentVersion: reportedVersion,
+                        osVersion: reportedOSVersion.isEmpty ? nil : reportedOSVersion))
             }
             // Push the current policy to the freshly connected guest so it
             // doesn't run on assumed defaults.

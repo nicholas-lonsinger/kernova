@@ -25,6 +25,20 @@ extension VMInstance {
         }
     }
 
+    /// The guest-reported OS version for display, or "Unknown" when no agent
+    /// has vouched for one.
+    ///
+    /// Strips the constant "Version " lead-in of the agent's
+    /// `operatingSystemVersionString` ("Version 26.0 (Build 25A123)" →
+    /// "26.0 (Build 25A123)"); any other shape passes through untouched.
+    var guestOSVersionDisplay: String {
+        guard let reported = configuration.lastSeenGuestOSVersion, !reported.isEmpty else {
+            return "Unknown"
+        }
+        let leadIn = "Version "
+        return reported.hasPrefix(leadIn) ? String(reported.dropFirst(leadIn.count)) : reported
+    }
+
     /// Tooltip explaining the VM state variant, or `nil` for standard states.
     var statusToolTip: String? {
         if let state = preparingState { return state.displayLabel }

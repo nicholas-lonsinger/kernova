@@ -74,6 +74,9 @@ final class VMSettingsViewController: NSViewController {
     // General
     private var nameButton = NSButton()
     private let nameField = NSTextField()
+    /// Value label of the macOS Version row; `nil` for Linux guests, which have
+    /// no agent to report one.
+    private var guestOSVersionValueLabel: NSTextField?
     private var nameDisplayRow = NSView()
     private var nameEditRow = NSView()
     private var nameRowIsEditing = false
@@ -549,18 +552,27 @@ extension VMSettingsViewController {
         nameDisplayRow.widthAnchor.constraint(equalTo: nameRow.widthAnchor).isActive = true
         nameEditRow.widthAnchor.constraint(equalTo: nameRow.widthAnchor).isActive = true
 
-        let card = makeGroupedFormCard(rows: [
+        var rows: [NSView] = [
             nameRow,
             makeGroupedFormCardRow(
                 "Type", control: makeGroupedFormValueLabel(instance.configuration.guestOS.displayName)),
+        ]
+        if instance.configuration.guestOS == .macOS {
+            let versionLabel = makeGroupedFormValueLabel(instance.guestOSVersionDisplay)
+            guestOSVersionValueLabel = versionLabel
+            rows.append(makeGroupedFormCardRow("macOS Version", control: versionLabel))
+        } else {
+            guestOSVersionValueLabel = nil
+        }
+        rows += [
             makeGroupedFormCardRow(
                 "Boot Mode", control: makeGroupedFormValueLabel(instance.configuration.bootMode.displayName)),
             makeGroupedFormCardRow(
                 "Created",
                 control: makeGroupedFormValueLabel(
                     instance.configuration.createdAt.formatted(date: .abbreviated, time: .shortened))),
-        ])
-        return makeSection([makeHeader("General"), card])
+        ]
+        return makeSection([makeHeader("General"), makeGroupedFormCard(rows: rows)])
     }
 
     // MARK: Resources
@@ -1063,6 +1075,7 @@ extension VMSettingsViewController {
     private func refreshGeneral() {
         nameButton.title = instance.name
         nameButton.isEnabled = instance.status.canRename
+        guestOSVersionValueLabel?.stringValue = instance.guestOSVersionDisplay
         let renaming = isRenaming
         if renaming != nameRowIsEditing {
             if renaming {

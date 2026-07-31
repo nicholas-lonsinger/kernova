@@ -892,6 +892,50 @@ struct VMConfigurationTests {
         #expect(config.lastSeenAgentVersion == nil)
     }
 
+    // MARK: - lastSeenGuestOSVersion Tests
+
+    @Test("Default lastSeenGuestOSVersion is nil")
+    func defaultLastSeenGuestOSVersion() {
+        let config = VMConfiguration(
+            name: "Test VM",
+            guestOS: .macOS,
+            bootMode: .macOS
+        )
+        #expect(config.lastSeenGuestOSVersion == nil)
+    }
+
+    @Test("Configuration round-trips lastSeenGuestOSVersion")
+    func lastSeenGuestOSVersionRoundTrip() throws {
+        let config = VMConfiguration(
+            name: "Persisted VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)"
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
+    }
+
+    @Test("Missing lastSeenGuestOSVersion decodes as nil (existing-VM migration)")
+    func missingLastSeenGuestOSVersionDecodesNil() throws {
+        // Older configs predate the field — they must still decode, with the
+        // optional defaulting to nil so the VM reads "Unknown" until an agent
+        // reports.
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+
+        #expect(config.lastSeenGuestOSVersion == nil)
+    }
+
     // MARK: - agentInstallNudgeDismissed Tests
 
     @Test("Default agentInstallNudgeDismissed is false")
