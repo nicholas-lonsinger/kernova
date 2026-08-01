@@ -1062,6 +1062,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         viewModel.cloneVM(instance)
     }
 
+    @objc func cloneVMAlternate(_ sender: Any?) {
+        guard let instance = activeInstance else { return }
+        viewModel.cloneVMWithOppositeMachineIdentity(instance)
+    }
+
     @objc func deleteVM(_ sender: Any?) {
         guard let instance = activeInstance else { return }
         viewModel.confirmDelete(instance)
@@ -1411,7 +1416,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return activeInstance?.canSave ?? false
         case #selector(renameVM(_:)):
             return activeInstance?.status.canRename ?? false
-        case #selector(cloneVM(_:)):
+        case #selector(cloneVM(_:)), #selector(cloneVMAlternate(_:)):
+            if menuItem.action == #selector(cloneVMAlternate(_:)) {
+                menuItem.title =
+                    preferences.cloneGeneratesNewMachineID
+                    ? "Clone (Keep Machine ID)" : "Clone (New Machine ID)"
+            }
             guard let instance = activeInstance else { return false }
             return instance.status.canEditSettings && !viewModel.hasPreparing
         case #selector(deleteVM(_:)), #selector(deleteImmediatelyVM(_:)):
@@ -1618,6 +1628,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // Finder's single-item Rename), not a dialog.
         vmMenu.addItem(withTitle: "Rename", action: #selector(renameVM(_:)), keyEquivalent: "")
         vmMenu.addItem(withTitle: "Clone", action: #selector(cloneVM(_:)), keyEquivalent: "d")
+        // ⌥-alternate performing the opposite of the clone machine-ID setting.
+        // Title is a placeholder — `validateMenuItem(_:)` retitles per the
+        // setting on every menu open. The ⌥⌘D key equivalent is eclipsed by the
+        // system's Dock-hiding hotkey; the item still swaps in on ⌥-hold and
+        // fires from the pointer, which is its intended use.
+        let cloneAlternateItem = vmMenu.addItem(
+            withTitle: "Clone (Keep Machine ID)", action: #selector(cloneVMAlternate(_:)), keyEquivalent: "d")
+        cloneAlternateItem.keyEquivalentModifierMask = [.command, .option]
+        cloneAlternateItem.isAlternate = true
         vmMenu.addItem(withTitle: "Show in Finder", action: #selector(showVMInFinder(_:)), keyEquivalent: "")
         vmMenu.addItem(.separator())
         // "Move to Trash…" gathers input (the delete sheet lets the user pick which

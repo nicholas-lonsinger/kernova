@@ -354,7 +354,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     ///
     /// Platform identity fields (`macAddress`, `machineIdentifierData`,
     /// `genericMachineIdentifierData`) are **not** regenerated here — the caller
-    /// must replace them with fresh VZ framework values after cloning.
+    /// always replaces `macAddress`, and replaces the machine identifiers or
+    /// keeps them per the clone machine-ID preference.
     func clonedForNewInstance(existingNames: [String]) -> VMConfiguration {
         var clone = self
         clone.id = UUID()

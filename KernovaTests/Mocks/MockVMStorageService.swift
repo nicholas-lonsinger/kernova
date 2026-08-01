@@ -37,6 +37,9 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     var createVMBundleCallCount = 0
     var cloneVMBundleCallCount = 0
 
+    /// The `filesToCopy` argument from the most recent `cloneVMBundle` call.
+    var lastCloneFilesToCopy: [String]?
+
     // MARK: - Error Injection
 
     var createVMBundleError: (any Error)?
@@ -99,6 +102,7 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         -> URL
     {
         cloneVMBundleCallCount += 1
+        lastCloneFilesToCopy = filesToCopy
         if let error = cloneVMBundleError { throw error }
         let url = try bundleURL(for: newConfiguration)
         // Mirrors the real service actually creating the bundle directory on disk:

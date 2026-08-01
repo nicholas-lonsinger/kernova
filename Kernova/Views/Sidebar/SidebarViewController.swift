@@ -754,6 +754,20 @@ extension SidebarViewController {
         let clone = item("Clone", #selector(menuClone(_:)), instance)
         clone.isEnabled = status.canEditSettings && !viewModel.hasPreparing
         menu.addItem(clone)
+        // An ⌥-alternate of "Clone" performing the opposite of the clone
+        // machine-ID setting. Mid-menu (Rename precedes), so no anchor item is
+        // needed.
+        let cloneAlternate = item(
+            preferences.cloneGeneratesNewMachineID
+                ? "Clone (Keep Machine ID)" : "Clone (New Machine ID)",
+            #selector(menuCloneAlternate(_:)), instance)
+        cloneAlternate.isEnabled = clone.isEnabled
+        if !preferences.alwaysShowAdvancedOptions {
+            clone.keyEquivalentModifierMask = []
+            cloneAlternate.keyEquivalentModifierMask = [.option]
+            cloneAlternate.isAlternate = true
+        }
+        menu.addItem(cloneAlternate)
 
         menu.addItem(item("Show in Finder", #selector(menuShowInFinder(_:)), instance))
 
@@ -840,6 +854,11 @@ extension SidebarViewController {
     @objc private func menuClone(_ sender: NSMenuItem) {
         guard let instance = sender.representedObject as? VMInstance else { return }
         viewModel.cloneVM(instance)
+    }
+
+    @objc private func menuCloneAlternate(_ sender: NSMenuItem) {
+        guard let instance = sender.representedObject as? VMInstance else { return }
+        viewModel.cloneVMWithOppositeMachineIdentity(instance)
     }
 
     @objc private func menuShowInFinder(_ sender: NSMenuItem) {

@@ -1102,6 +1102,112 @@ struct VMLibraryViewModelTests {
         #expect(instance.status == .paused)
     }
 
+    // MARK: - Duplicate Machine ID Boot Guard
+
+    /// Two VMs carrying the given machine identifiers in whichever identity
+    /// field `guestOS` uses, both appended to `viewModel`.
+    ///
+    /// `other` is the one the tests park in a live status; `starting` is the one
+    /// they try to boot.
+    private func appendMachineIDPair(
+        to viewModel: VMLibraryViewModel,
+        guestOS: VMGuestOS = .macOS,
+        startingID: Data = Data([1, 2, 3]),
+        otherID: Data = Data([1, 2, 3])
+    ) -> (starting: VMInstance, other: VMInstance) {
+        let starting = makeInstance(name: "Starting", guestOS: guestOS)
+        let other = makeInstance(name: "Twin", guestOS: guestOS)
+        for (instance, identifier) in [(starting, startingID), (other, otherID)] {
+            if guestOS == .macOS {
+                instance.configuration.machineIdentifierData = identifier
+            } else {
+                instance.configuration.genericMachineIdentifierData = identifier
+            }
+        }
+        viewModel.instances.append(contentsOf: [starting, other])
+        return (starting, other)
+    }
+
+    @Test("start is refused while another VM with the same machine ID is running")
+    func startBlockedByRunningMachineIDTwin() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMachineIDPair(to: viewModel)
+        other.status = .running
+
+        await viewModel.start(starting)
+
+        #expect(virtService.startCallCount == 0)
+        #expect(presenter.errorTitle == "Duplicate Machine ID")
+        #expect(starting.status == .stopped)
+    }
+
+    @Test("start proceeds past a machine ID twin when the guard preference is off")
+    func startProceedsWhenDuplicateMachineIDGuardDisabled() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMachineIDPair(to: viewModel)
+        other.status = .running
+        preferences.blockDuplicateMachineIDBoot = false
+
+        await viewModel.start(starting)
+
+        #expect(virtService.startCallCount == 1)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("start proceeds when the machine ID twin is stopped")
+    func startProceedsWhenMachineIDTwinIsStopped() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMachineIDPair(to: viewModel)
+        other.status = .stopped
+
+        await viewModel.start(starting)
+
+        #expect(virtService.startCallCount == 1)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("start is refused while the machine ID twin is paused (VZ still holds the identity)")
+    func startBlockedByPausedMachineIDTwin() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMachineIDPair(to: viewModel)
+        other.status = .paused
+
+        await viewModel.start(starting)
+
+        #expect(virtService.startCallCount == 0)
+        #expect(presenter.errorTitle == "Duplicate Machine ID")
+    }
+
+    @Test("start proceeds when the running VM's machine ID differs")
+    func startProceedsWhenMachineIDsDiffer() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMachineIDPair(to: viewModel, otherID: Data([4, 5, 6]))
+        other.status = .running
+
+        await viewModel.start(starting)
+
+        #expect(virtService.startCallCount == 1)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("start is refused while a Linux VM sharing the generic machine ID is running")
+    func startBlockedByRunningGenericMachineIDTwin() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMachineIDPair(to: viewModel, guestOS: .linux)
+        other.status = .running
+
+        await viewModel.start(starting)
+
+        #expect(virtService.startCallCount == 0)
+        #expect(presenter.errorTitle == "Duplicate Machine ID")
+    }
+
     // MARK: - Match-Window Boot Resolution
 
     /// Hands `start` a fixed surface, standing in for the window/screen geometry
@@ -3119,6 +3225,129 @@ struct VMLibraryViewModelTests {
             let resolved = phantom.bundleURL.appendingPathComponent(extra.path)
             #expect(fm.fileExists(atPath: resolved.path(percentEncoded: false)))
         }
+    }
+
+    // MARK: - Clone Machine Identity
+
+    /// The identifier every clone-identity source VM starts out carrying.
+    private static let sourceMachineID = Data([1, 2, 3])
+
+    /// A stopped source VM carrying `sourceMachineID` in whichever identity
+    /// field `guestOS` uses, appended to `viewModel` and registered with
+    /// `storage` so the clone's copy task can run to completion.
+    private func appendCloneSource(
+        to viewModel: VMLibraryViewModel, storage: MockVMStorageService, guestOS: VMGuestOS
+    ) -> VMInstance {
+        let instance = makeInstance(name: "Original", guestOS: guestOS)
+        instance.status = .stopped
+        if guestOS == .macOS {
+            instance.configuration.machineIdentifierData = Self.sourceMachineID
+        } else {
+            instance.configuration.genericMachineIdentifierData = Self.sourceMachineID
+        }
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+        return instance
+    }
+
+    /// The identity field `guestOS` uses, read off the clone `viewModel`
+    /// produced from `source` once its copy task has settled.
+    private func clonedMachineID(
+        of source: VMInstance, in viewModel: VMLibraryViewModel, guestOS: VMGuestOS
+    ) async -> Data? {
+        let clone = viewModel.instances.first { $0.id != source.id }
+        await clone?.preparingState?.task.value
+        return guestOS == .macOS
+            ? clone?.configuration.machineIdentifierData
+            : clone?.configuration.genericMachineIdentifierData
+    }
+
+    @Test("cloneVM gives a macOS clone a fresh machine ID by default")
+    func cloneVMGeneratesNewMachineIDByDefault() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let source = appendCloneSource(to: viewModel, storage: storage, guestOS: .macOS)
+
+        viewModel.cloneVM(source)
+        let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
+
+        #expect(clonedID != nil)
+        #expect(clonedID != Self.sourceMachineID)
+        #expect(storage.lastCloneFilesToCopy?.contains("MachineIdentifier") == false)
+    }
+
+    @Test("cloneVM keeps the source machine ID when the preference is off")
+    func cloneVMKeepsMachineIDWhenPreferenceOff() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        preferences.cloneGeneratesNewMachineID = false
+        let source = appendCloneSource(to: viewModel, storage: storage, guestOS: .macOS)
+
+        viewModel.cloneVM(source)
+        let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
+
+        #expect(clonedID == Self.sourceMachineID)
+        // The identifier file has to travel with the bundle, not just the config.
+        #expect(storage.lastCloneFilesToCopy?.contains("MachineIdentifier") == true)
+    }
+
+    @Test("cloneVM's explicit generateNewMachineID beats the preference")
+    func cloneVMExplicitFlagOverridesPreference() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let source = appendCloneSource(to: viewModel, storage: storage, guestOS: .macOS)
+
+        // Preference left at its `true` default — the argument decides.
+        viewModel.cloneVM(source, generateNewMachineID: false)
+        let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
+
+        #expect(clonedID == Self.sourceMachineID)
+        #expect(storage.lastCloneFilesToCopy?.contains("MachineIdentifier") == true)
+    }
+
+    @Test("cloneVMWithOppositeMachineIdentity keeps the ID under the default preference")
+    func cloneVMWithOppositeMachineIdentityKeepsIDByDefault() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let source = appendCloneSource(to: viewModel, storage: storage, guestOS: .macOS)
+
+        viewModel.cloneVMWithOppositeMachineIdentity(source)
+        let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
+
+        #expect(clonedID == Self.sourceMachineID)
+    }
+
+    @Test("cloneVMWithOppositeMachineIdentity generates a new ID when the preference keeps it")
+    func cloneVMWithOppositeMachineIdentityGeneratesIDWhenPreferenceOff() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        preferences.cloneGeneratesNewMachineID = false
+        let source = appendCloneSource(to: viewModel, storage: storage, guestOS: .macOS)
+
+        viewModel.cloneVMWithOppositeMachineIdentity(source)
+        let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
+
+        #expect(clonedID != nil)
+        #expect(clonedID != Self.sourceMachineID)
+    }
+
+    @Test("cloneVM regenerates an EFI clone's generic machine ID by default")
+    func cloneVMGeneratesNewGenericMachineIDByDefault() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let source = appendCloneSource(to: viewModel, storage: storage, guestOS: .linux)
+
+        viewModel.cloneVM(source)
+        let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .linux)
+
+        #expect(clonedID != nil)
+        #expect(clonedID != Self.sourceMachineID)
+    }
+
+    @Test("cloneVM keeps an EFI clone's generic machine ID when the preference is off")
+    func cloneVMKeepsGenericMachineIDWhenPreferenceOff() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        preferences.cloneGeneratesNewMachineID = false
+        let source = appendCloneSource(to: viewModel, storage: storage, guestOS: .linux)
+
+        viewModel.cloneVM(source)
+        let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .linux)
+
+        #expect(clonedID == Self.sourceMachineID)
     }
 
     // MARK: - Cancel Preparing

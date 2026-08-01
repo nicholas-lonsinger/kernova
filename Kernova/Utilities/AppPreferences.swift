@@ -30,6 +30,11 @@ struct AppPreferences {
         static let quitTerminatesApp = "quitTerminatesApp"
         static let menuBarQuitReminderDismissed = "menuBarQuitReminderDismissed"
         static let mainToolbarNewVMCollapseIndex = "KernovaMainToolbarNewVMCollapseIndex"
+        // Both stored inverted for the same reason as `quitTerminatesApp`: the
+        // unset key reads `false`, which must map to each preference's `true`
+        // default. The key names what it literally holds.
+        static let allowDuplicateMachineIDBoot = "allowDuplicateMachineIDBoot"
+        static let cloneKeepsMachineID = "cloneKeepsMachineID"
     }
 
     /// When `true`, advanced menu actions (e.g. *Start in Recovery Mode*) are
@@ -109,6 +114,25 @@ struct AppPreferences {
     var mainToolbarNewVMCollapseIndex: Int? {
         get { defaults.object(forKey: Keys.mainToolbarNewVMCollapseIndex) as? Int }
         nonmutating set { defaults.set(newValue, forKey: Keys.mainToolbarNewVMCollapseIndex) }
+    }
+
+    /// Whether starting a VM is refused while another VM with the same machine
+    /// identifier is live, defaulting to `true`.
+    ///
+    /// Two VMs sharing a machine identifier must never run at once — the
+    /// framework documents the result as undefined behavior.
+    var blockDuplicateMachineIDBoot: Bool {
+        get { !defaults.bool(forKey: Keys.allowDuplicateMachineIDBoot) }
+        nonmutating set { defaults.set(!newValue, forKey: Keys.allowDuplicateMachineIDBoot) }
+    }
+
+    /// Whether Clone gives the copy a fresh machine identifier, defaulting to `true`.
+    ///
+    /// When `false`, clones keep the source VM's identifier. The Option-held
+    /// Clone menu item performs the opposite of this setting.
+    var cloneGeneratesNewMachineID: Bool {
+        get { !defaults.bool(forKey: Keys.cloneKeepsMachineID) }
+        nonmutating set { defaults.set(!newValue, forKey: Keys.cloneKeepsMachineID) }
     }
 
     /// Re-arms every host-side reminder by clearing its dismissed flag, so each
