@@ -315,19 +315,7 @@ final class VMLibraryViewModel {
             return
         }
 
-        if preferences.blockDuplicateMachineIDBoot,
-            let conflict = liveMachineIDConflict(for: instance)
-        {
-            Self.logger.notice(
-                "Refused to start '\(instance.name, privacy: .public)': shares a machine ID with running VM '\(conflict.name, privacy: .public)'"
-            )
-            surfaceError(
-                "“\(instance.name)” has the same machine ID as “\(conflict.name)”, which is running. "
-                    + "Two virtual machines with the same machine ID must not run at once. "
-                    + "Stop “\(conflict.name)” first, or allow this in Settings → Advanced.",
-                title: "Duplicate Machine ID")
-            return
-        }
+        if refuseIfDuplicateMachineIDConflict(instance) { return }
 
         if instance.configuration.displayPreference != .inline {
             onOpenDisplayWindow?(instance)
@@ -348,24 +336,52 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// The first VM with a live virtual machine sharing a machine identifier
-    /// with the given instance, if any.
+    /// Refuses an operation that would claim a machine identity another VM
+    /// already holds, logging the refusal and surfacing the alert.
     ///
-    /// Live means any state where VZ holds the identity — including paused,
-    /// which `VMStatus.isActive` excludes.
+    /// - Returns: `true` when the caller must abort.
+    private func refuseIfDuplicateMachineIDConflict(_ instance: VMInstance) -> Bool {
+        guard preferences.blockDuplicateMachineIDBoot,
+            let conflict = liveMachineIDConflict(for: instance)
+        else { return false }
+        Self.logger.notice(
+            "Refused to run '\(instance.name, privacy: .public)': shares a machine ID with active VM '\(conflict.name, privacy: .public)'"
+        )
+        surfaceError(
+            "“\(instance.name)” has the same machine ID as “\(conflict.name)”, which is active. "
+                + "Two virtual machines with the same machine ID must not run at once. "
+                + "Stop “\(conflict.name)” first, or allow this in Settings → Advanced.",
+            title: "Duplicate Machine ID")
+        return true
+    }
+
+    /// The first VM holding a live machine identity matching the given
+    /// instance's, if any.
+    ///
+    /// Live means VZ holds the identity: any active status, or paused with the
+    /// virtual machine still in memory. A cold-paused VM has released it, and
+    /// blocking its twin on a saved state that claims nothing would be wrong.
     private func liveMachineIDConflict(for instance: VMInstance) -> VMInstance? {
         instances.first { other in
             other !== instance
-                && (other.status.isActive || other.status == .paused)
-                && Self.sharesMachineIdentifier(instance.configuration, other.configuration)
+                && (other.status.isActive || other.isLivePaused)
+                && Self.sharesMachineIdentifier(instance, other)
         }
     }
 
-    private static func sharesMachineIdentifier(_ a: VMConfiguration, _ b: VMConfiguration) -> Bool {
-        if let lhs = a.machineIdentifierData, let rhs = b.machineIdentifierData, lhs == rhs {
+    /// Whether two VMs would claim the same machine identity.
+    ///
+    /// macOS identifiers compare the *effective* value, which falls back to the
+    /// bundle's identifier file exactly as the boot path does; generic
+    /// identifiers have no such file, so they compare configuration fields.
+    private static func sharesMachineIdentifier(_ a: VMInstance, _ b: VMInstance) -> Bool {
+        if let lhs = a.effectiveMachineIdentifierData, let rhs = b.effectiveMachineIdentifierData,
+            lhs == rhs
+        {
             return true
         }
-        if let lhs = a.genericMachineIdentifierData, let rhs = b.genericMachineIdentifierData,
+        if let lhs = a.configuration.genericMachineIdentifierData,
+            let rhs = b.configuration.genericMachineIdentifierData,
             lhs == rhs
         {
             return true
@@ -595,6 +611,12 @@ final class VMLibraryViewModel {
     }
 
     func resume(_ instance: VMInstance) async {
+        // A cold resume builds a fresh VZVirtualMachine from the save file, so it
+        // claims the machine identity just as a cold boot does. A hot resume's
+        // live object already holds it, and refusing would be refusing a VM its
+        // own identity.
+        if instance.isColdPaused, refuseIfDuplicateMachineIDConflict(instance) { return }
+
         if instance.configuration.displayPreference != .inline {
             onOpenDisplayWindow?(instance)
         }
@@ -1815,11 +1837,24 @@ final class VMLibraryViewModel {
             if clonedConfig.bootMode == .efi || clonedConfig.bootMode == .linuxKernel {
                 clonedConfig.genericMachineIdentifierData = VZGenericMachineIdentifier().dataRepresentation
             }
-        } else if clonedConfig.guestOS == .macOS, clonedConfig.machineIdentifierData == nil {
-            // Older bundles carry the identifier only as a file. The bundle copy
-            // below keeps the clone bootable; lifting the data into the config
-            // additionally lets the duplicate-machine-ID boot guard see it.
-            clonedConfig.machineIdentifierData = try? Data(contentsOf: instance.machineIdentifierURL)
+        } else {
+            // Keep mode mints only what there is no identity to keep: a source
+            // whose identifier lives in the bundle file alone hands it to the
+            // clone through `filesToCopy` below, untouched here.
+            if clonedConfig.guestOS == .macOS, instance.effectiveMachineIdentifierData == nil {
+                clonedConfig.machineIdentifierData = VZMacMachineIdentifier().dataRepresentation
+                Self.logger.notice(
+                    "Clone of '\(instance.name, privacy: .public)' had no machine identifier to keep — generated a new one"
+                )
+            }
+            if clonedConfig.bootMode == .efi || clonedConfig.bootMode == .linuxKernel,
+                clonedConfig.genericMachineIdentifierData == nil
+            {
+                clonedConfig.genericMachineIdentifierData = VZGenericMachineIdentifier().dataRepresentation
+                Self.logger.notice(
+                    "Clone of '\(instance.name, privacy: .public)' had no generic machine identifier to keep — generated a new one"
+                )
+            }
         }
 
         var filesToCopy = ["Disk.asif"]

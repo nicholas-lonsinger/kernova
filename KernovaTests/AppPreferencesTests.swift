@@ -171,6 +171,16 @@ struct AppPreferencesTests {
         }
     }
 
+    @Test("cloneAlternateMenuTitle names the opposite of the clone machine-ID setting")
+    func cloneAlternateMenuTitleFollowsPreference() throws {
+        try withEphemeralPreferences { prefs, _ in
+            #expect(prefs.cloneAlternateMenuTitle == "Clone (Keep Machine ID)")
+
+            prefs.cloneGeneratesNewMachineID = false
+            #expect(prefs.cloneAlternateMenuTitle == "Clone (New Machine ID)")
+        }
+    }
+
     @Test("menuBarQuitReminderDismissed defaults to false")
     func menuBarQuitReminderDismissedDefaultsToFalse() throws {
         try withEphemeralPreferences { prefs, _ in

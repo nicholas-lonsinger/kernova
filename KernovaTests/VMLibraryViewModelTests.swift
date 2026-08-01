@@ -1169,17 +1169,107 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == false)
     }
 
-    @Test("start is refused while the machine ID twin is paused (VZ still holds the identity)")
-    func startBlockedByPausedMachineIDTwin() async {
+    @Test("start is refused while the machine ID twin is live-paused (VZ still holds the identity)")
+    func startBlockedByPausedMachineIDTwin() async throws {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (starting, other) = appendMachineIDPair(to: viewModel)
         other.status = .paused
+        other.virtualMachine = try makeIdleVirtualMachine()
 
         await viewModel.start(starting)
 
         #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate Machine ID")
+    }
+
+    @Test("start proceeds when the machine ID twin is cold-paused (it holds no VZ identity)")
+    func startProceedsWhenMachineIDTwinIsColdPaused() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMachineIDPair(to: viewModel)
+        other.status = .paused
+        #expect(other.isColdPaused)
+
+        await viewModel.start(starting)
+
+        #expect(virtService.startCallCount == 1)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("start is refused when both VMs carry their machine ID only as a bundle file")
+    func startBlockedByFileOnlyMachineIDTwin() async throws {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let starting = makeInstance(name: "Starting", guestOS: .macOS)
+        let other = makeInstance(name: "Twin", guestOS: .macOS)
+        // The identifier lives only on disk, exactly as it does in a bundle
+        // written before the configuration carried the field.
+        for instance in [starting, other] {
+            try FileManager.default.createDirectory(
+                at: instance.bundleURL, withIntermediateDirectories: true)
+            try Data([1, 2, 3]).write(to: instance.machineIdentifierURL)
+        }
+        defer {
+            for instance in [starting, other] {
+                try? FileManager.default.removeItem(at: instance.bundleURL)
+            }
+        }
+        viewModel.instances.append(contentsOf: [starting, other])
+        other.status = .running
+
+        await viewModel.start(starting)
+
+        #expect(starting.configuration.machineIdentifierData == nil)
+        #expect(virtService.startCallCount == 0)
+        #expect(presenter.errorTitle == "Duplicate Machine ID")
+    }
+
+    @Test("a cold resume is refused while a machine ID twin is running")
+    func coldResumeBlockedByRunningMachineIDTwin() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (resuming, other) = appendMachineIDPair(to: viewModel)
+        // Cold-paused: paused with no `virtualMachine`, so the resume would build
+        // a fresh one and claim the identity.
+        resuming.status = .paused
+        other.status = .running
+
+        await viewModel.resume(resuming)
+
+        #expect(virtService.resumeCallCount == 0)
+        #expect(presenter.errorTitle == "Duplicate Machine ID")
+        #expect(resuming.status == .paused)
+    }
+
+    @Test("a cold resume proceeds past a machine ID twin when the guard preference is off")
+    func coldResumeProceedsWhenDuplicateMachineIDGuardDisabled() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (resuming, other) = appendMachineIDPair(to: viewModel)
+        resuming.status = .paused
+        other.status = .running
+        preferences.blockDuplicateMachineIDBoot = false
+
+        await viewModel.resume(resuming)
+
+        #expect(virtService.resumeCallCount == 1)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("a hot resume is never refused — the live VM already holds the identity")
+    func hotResumeIsNotBlockedByMachineIDTwin() async throws {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (resuming, other) = appendMachineIDPair(to: viewModel)
+        resuming.status = .paused
+        resuming.virtualMachine = try makeIdleVirtualMachine()
+        other.status = .running
+
+        await viewModel.resume(resuming)
+
+        #expect(virtService.resumeCallCount == 1)
+        #expect(presenter.showError == false)
     }
 
     @Test("start proceeds when the running VM's machine ID differs")
@@ -3232,18 +3322,22 @@ struct VMLibraryViewModelTests {
     /// The identifier every clone-identity source VM starts out carrying.
     private static let sourceMachineID = Data([1, 2, 3])
 
-    /// A stopped source VM carrying `sourceMachineID` in whichever identity
-    /// field `guestOS` uses, appended to `viewModel` and registered with
-    /// `storage` so the clone's copy task can run to completion.
+    /// A stopped source VM carrying `machineID` in whichever identity field
+    /// `guestOS` uses, appended to `viewModel` and registered with `storage` so
+    /// the clone's copy task can run to completion.
+    ///
+    /// Passing `nil` leaves the identity field empty, and the bundle directory is
+    /// never created, so the source has no identifier file to fall back on either.
     private func appendCloneSource(
-        to viewModel: VMLibraryViewModel, storage: MockVMStorageService, guestOS: VMGuestOS
+        to viewModel: VMLibraryViewModel, storage: MockVMStorageService, guestOS: VMGuestOS,
+        machineID: Data? = sourceMachineID
     ) -> VMInstance {
         let instance = makeInstance(name: "Original", guestOS: guestOS)
         instance.status = .stopped
         if guestOS == .macOS {
-            instance.configuration.machineIdentifierData = Self.sourceMachineID
+            instance.configuration.machineIdentifierData = machineID
         } else {
-            instance.configuration.genericMachineIdentifierData = Self.sourceMachineID
+            instance.configuration.genericMachineIdentifierData = machineID
         }
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
@@ -3348,6 +3442,53 @@ struct VMLibraryViewModelTests {
         let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .linux)
 
         #expect(clonedID == Self.sourceMachineID)
+    }
+
+    @Test("a keep-mode clone of a macOS VM with no identity at all mints one")
+    func cloneVMKeepModeMintsMissingMachineID() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        preferences.cloneGeneratesNewMachineID = false
+        let source = appendCloneSource(
+            to: viewModel, storage: storage, guestOS: .macOS, machineID: nil)
+
+        viewModel.cloneVM(source)
+        let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
+
+        #expect(source.effectiveMachineIdentifierData == nil)
+        #expect(clonedID != nil)
+    }
+
+    @Test("a keep-mode clone of an EFI VM with no generic identity mints one")
+    func cloneVMKeepModeMintsMissingGenericMachineID() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        preferences.cloneGeneratesNewMachineID = false
+        let source = appendCloneSource(
+            to: viewModel, storage: storage, guestOS: .linux, machineID: nil)
+
+        viewModel.cloneVM(source)
+        let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .linux)
+
+        #expect(source.configuration.genericMachineIdentifierData == nil)
+        #expect(clonedID != nil)
+    }
+
+    @Test("a keep-mode clone leaves a file-only macOS identity to the bundle copy")
+    func cloneVMKeepModeLeavesFileOnlyMachineIDToTheCopy() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        preferences.cloneGeneratesNewMachineID = false
+        let source = appendCloneSource(
+            to: viewModel, storage: storage, guestOS: .macOS, machineID: nil)
+        try FileManager.default.createDirectory(
+            at: source.bundleURL, withIntermediateDirectories: true)
+        try Self.sourceMachineID.write(to: source.machineIdentifierURL)
+        defer { try? FileManager.default.removeItem(at: source.bundleURL) }
+
+        viewModel.cloneVM(source)
+        let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
+
+        // Nothing minted into the configuration: the copied file is the identity.
+        #expect(clonedID == nil)
+        #expect(storage.lastCloneFilesToCopy?.contains("MachineIdentifier") == true)
     }
 
     // MARK: - Cancel Preparing

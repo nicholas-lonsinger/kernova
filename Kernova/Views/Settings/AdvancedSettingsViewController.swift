@@ -51,17 +51,17 @@ final class AdvancedSettingsViewController: NSViewController {
         ])
         let blockCaption = makeGroupedFormCaption(
             "Refuses to start a virtual machine while another VM with the same machine ID is "
-                + "running. Two VMs sharing a machine ID must never run at once — doing so is "
-                + "undefined behavior and can corrupt both.")
+                + "active. Apple documents running two VMs with the same machine ID at once as "
+                + "undefined behavior.")
 
         let cloneCard = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow("Clones get a new machine ID", control: cloneNewIDSwitch)
         ])
         let cloneCaption = makeGroupedFormCaption(
             "A new machine ID gives each clone its own identity, so it can run alongside its "
-                + "source. Keeping the same ID preserves the guest's activation state — macOS 12 "
-                + "and earlier guests may not boot after their ID changes. Hold Option (⌥) on "
-                + "Clone to do the opposite of this setting for one clone.")
+                + "source. macOS 12 and earlier guests may not boot after their ID changes — "
+                + "clone those keeping the ID. To do the opposite for one clone, hold Option (⌥) "
+                + "over Clone in the Virtual Machine menu or the VM's context menu.")
 
         let section = NSStackView(views: [
             makeGroupedFormSectionHeader("Advanced Options"),

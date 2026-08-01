@@ -758,9 +758,7 @@ extension SidebarViewController {
         // machine-ID setting. Mid-menu (Rename precedes), so no anchor item is
         // needed.
         let cloneAlternate = item(
-            preferences.cloneGeneratesNewMachineID
-                ? "Clone (Keep Machine ID)" : "Clone (New Machine ID)",
-            #selector(menuCloneAlternate(_:)), instance)
+            preferences.cloneAlternateMenuTitle, #selector(menuCloneAlternate(_:)), instance)
         cloneAlternate.isEnabled = clone.isEnabled
         if !preferences.alwaysShowAdvancedOptions {
             clone.keyEquivalentModifierMask = []

@@ -241,6 +241,27 @@ final class VMInstance {
     var hasSaveFile: Bool { bundleLayout.hasSaveFile }
     var serialLogURL: URL { bundleLayout.serialLogURL }
 
+    // MARK: - Machine Identity
+
+    /// Memoized `MachineIdentifier` file read: the outer optional separates "not
+    /// read yet" from "read, and there is no file".
+    @ObservationIgnored private var machineIdentifierFileData: Data??
+
+    /// The macOS machine identifier this VM boots with — the configuration field
+    /// when set, otherwise the bundle's identifier file.
+    ///
+    /// The fallback mirrors ``ConfigurationBuilder``, which reads the file when
+    /// the configuration carries no identifier, so a bundle holding its identity
+    /// only on disk compares equal to one holding it in the configuration. The
+    /// file is read at most once per instance.
+    var effectiveMachineIdentifierData: Data? {
+        if let fromConfiguration = configuration.machineIdentifierData { return fromConfiguration }
+        if let cached = machineIdentifierFileData { return cached }
+        let fromFile = try? Data(contentsOf: machineIdentifierURL)
+        machineIdentifierFileData = .some(fromFile)
+        return fromFile
+    }
+
     // MARK: - Runtime Removable Media
 
     /// USB mass storage devices currently attached on the XHCI controller.
