@@ -9,7 +9,7 @@ import os
 /// VM Settings pane's "Show install reminder" toggle.
 ///
 /// Three reminders are represented:
-/// - *Menu Bar Quit Reminder* and *Enable File Sharing Reminder* — app-wide,
+/// - *Menu Bar Quit Reminder* and *File Sharing Reminder* — app-wide,
 ///   backed by `AppPreferences`.
 /// - one row per VM for the *guest-agent install nudge* — per-VM, backed by each
 ///   VM's bundle configuration and written through
@@ -72,13 +72,13 @@ final class RemindersSettingsViewController: NSViewController {
         // App-wide reminders: one card, two hairline-separated rows.
         let appCard = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow("Menu Bar Quit Reminder", control: menuBarQuitSwitch),
-            makeGroupedFormCardRow("Enable File Sharing Reminder", control: fileProviderSwitch),
+            makeGroupedFormCardRow("File Sharing Reminder", control: fileProviderSwitch),
         ])
         let appMenuCaption = makeGroupedFormCaption(
             "The Menu Bar Quit Reminder appears when you quit (⌘Q) and Kernova keeps running in the "
                 + "menu bar, reminding you it — and your virtual machines — are still going.")
         let appFileCaption = makeGroupedFormCaption(
-            "The Enable File Sharing Reminder appears when clipboard file sharing needs to be turned "
+            "The File Sharing Reminder appears when clipboard file sharing needs to be turned "
                 + "on for Kernova in System Settings.")
 
         // Per-VM reminders: rebuilt on every appear (VMs may be added or removed).
@@ -135,9 +135,13 @@ final class RemindersSettingsViewController: NSViewController {
         // panes for why the root must not use autoresizing-mask constraints).
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
+        // The hug must stay weaker than every subview's compression resistance:
+        // once the tab controller fixes the window height at the cap, a
+        // stronger hug squeezes the content to fit — collapsing the headers and
+        // captions — instead of letting the pane scroll.
         let hugHeight = scrollView.heightAnchor.constraint(
             equalTo: content.heightAnchor, constant: Spacing.large * 2)
-        hugHeight.priority = .defaultHigh
+        hugHeight.priority = .defaultLow
         NSLayoutConstraint.activate([
             scrollView.widthAnchor.constraint(equalToConstant: SettingsPaneMetrics.width),
             hugHeight,
@@ -155,6 +159,13 @@ final class RemindersSettingsViewController: NSViewController {
         // tab transition sizes the window: NSTabViewController reads the pane's
         // preferredContentSize when switching and does not react to a later
         // change (e.g. from viewDidLayout).
+        //
+        // Lay out at the pane's fixed width before measuring: a wrapping
+        // caption's intrinsic height stays single-line until a layout pass
+        // resolves its wrap width, so an unlaid-out fittingSize under-counts
+        // every caption and the pane comes up short.
+        view.setFrameSize(NSSize(width: SettingsPaneMetrics.width, height: Self.maxPaneHeight))
+        view.layoutSubtreeIfNeeded()
         preferredContentSize = view.fittingSize
         startVMObservation()
     }
