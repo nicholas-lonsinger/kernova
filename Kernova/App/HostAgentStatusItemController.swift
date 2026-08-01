@@ -7,7 +7,8 @@ import os
 /// The always-visible "Kernova is running" affordance and the way to summon the
 /// GUI when the app is headless (`.accessory`, no Dock icon), so it lives for
 /// the whole life of the process. The dropdown is rebuilt from live view-model
-/// state each time it opens.
+/// state each time it opens, and its VM rows are edited in place while it is on
+/// screen so the readout tracks starts, stops, and status transitions live.
 @MainActor
 final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private static let logger = Logger(subsystem: "app.kernova", category: "HostAgentStatusItem")
@@ -15,6 +16,12 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
+    /// The dropdown's VM rows, edited in place while the menu is on screen.
+    private lazy var vmSection = StatusMenuVMSection(
+        menu: menu, rowTarget: self, rowAction: #selector(openVMTapped(_:)))
+    /// Whether the dropdown is currently on screen, which `NSMenu` doesn't
+    /// expose; gates the live row sync.
+    private var isMenuOpen = false
 
     private let viewModel: VMLibraryViewModel
     private let preferences: AppPreferences
@@ -22,7 +29,8 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private let onOpen: (UUID?) -> Void
     private let onQuit: () -> Void
 
-    /// Keeps the tooltip in sync with how many VMs are running headless.
+    /// Keeps the tooltip — and, while the dropdown is open, its VM rows — in
+    /// sync with the running VMs.
     private var runningObservation: ObservationLoop?
     /// Keeps the icon/tooltip in sync with the host File Provider toggle.
     private var fileProviderObservation: ObservationLoop?
@@ -67,9 +75,16 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         runningObservation = observeRecurring(
             track: { [weak self] in
                 guard let self else { return }
-                for instance in self.viewModel.instances { _ = instance.isKeepingAppAlive }
+                for instance in self.viewModel.instances {
+                    _ = instance.isKeepingAppAlive
+                    _ = instance.name
+                }
             },
-            apply: { [weak self] in self?.updateTooltip() }
+            apply: { [weak self] in
+                guard let self else { return }
+                self.updateTooltip()
+                self.syncMenuIfOpen()
+            }
         )
 
         fileProviderObservation = observeRecurring(
@@ -299,22 +314,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             menu.addItem(.separator())
         }
 
-        let running = viewModel.instances.filter(\.isKeepingAppAlive)
-        if running.isEmpty {
-            let none = NSMenuItem(
-                title: "No virtual machines running", action: nil, keyEquivalent: "")
-            none.isEnabled = false
-            menu.addItem(none)
-        } else {
-            for instance in running {
-                let item = NSMenuItem(
-                    title: "\(instance.name) — \(instance.status.displayName)",
-                    action: #selector(openVMTapped(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = instance.instanceID
-                menu.addItem(item)
-            }
-        }
+        vmSection.rebuild(rows: StatusMenuVMSection.rows(for: viewModel.instances))
 
         menu.addItem(.separator())
 
@@ -324,11 +324,20 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        isMenuOpen = true
         pasteProgressPresenter.menuWillOpen()
     }
 
     func menuDidClose(_ menu: NSMenu) {
+        isMenuOpen = false
         pasteProgressPresenter.menuDidClose()
+    }
+
+    /// Re-syncs the dropdown's VM rows if it is on screen; a closed menu is
+    /// rebuilt by `menuNeedsUpdate` when it next opens.
+    private func syncMenuIfOpen() {
+        guard isMenuOpen else { return }
+        vmSection.sync(to: StatusMenuVMSection.rows(for: viewModel.instances))
     }
 
     private func addInfoItem(_ title: String) {
