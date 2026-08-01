@@ -528,25 +528,4 @@ struct DeleteVMSheetContentViewControllerTests {
             confirmedIDChoices.append(ids)
         }
     }
-
-    @MainActor
-    private func collectLabels(in view: NSView) -> [NSTextField] {
-        var out: [NSTextField] = []
-        if let field = view as? NSTextField { out.append(field) }
-        for subview in view.subviews { out.append(contentsOf: collectLabels(in: subview)) }
-        return out
-    }
-
-    @MainActor
-    private func findButton(titled title: String, in view: NSView) -> NSButton? {
-        // Cancel and Move to Trash titles are unique; per-row checkboxes have
-        // empty titles, so a title match is sufficient for the action buttons.
-        if let button = view as? NSButton, button.title == title {
-            return button
-        }
-        for subview in view.subviews {
-            if let match = findButton(titled: title, in: subview) { return match }
-        }
-        return nil
-    }
 }

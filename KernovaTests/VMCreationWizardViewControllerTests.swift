@@ -154,27 +154,3 @@ struct VMCreationWizardViewControllerTests {
         }
     }
 }
-
-// MARK: - Shared view-tree helpers
-
-@MainActor
-func findButton(titled title: String, in view: NSView) -> NSButton? {
-    if let button = view as? NSButton, !(view is NSPopUpButton), button.title == title {
-        return button
-    }
-    for subview in view.subviews {
-        if let button = findButton(titled: title, in: subview) { return button }
-    }
-    return nil
-}
-
-@MainActor
-func findLabel(withText text: String, in view: NSView) -> NSTextField? {
-    if let field = view as? NSTextField, !(view is NSButton), field.stringValue == text {
-        return field
-    }
-    for subview in view.subviews {
-        if let field = findLabel(withText: text, in: subview) { return field }
-    }
-    return nil
-}

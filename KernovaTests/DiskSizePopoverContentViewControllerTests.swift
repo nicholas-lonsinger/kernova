@@ -134,15 +134,4 @@ struct DiskSizePopoverContentViewControllerTests {
         }
         return nil
     }
-
-    @MainActor
-    private func findButton(titled title: String, in view: NSView) -> NSButton? {
-        if let button = view as? NSButton, !(view is NSPopUpButton), button.title == title {
-            return button
-        }
-        for subview in view.subviews {
-            if let button = findButton(titled: title, in: subview) { return button }
-        }
-        return nil
-    }
 }

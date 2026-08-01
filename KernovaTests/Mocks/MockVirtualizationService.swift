@@ -16,6 +16,11 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// The `bootIntoRecovery` argument from the most recent `start` call.
     var lastStartBootIntoRecovery = false
 
+    /// The configuration as it stood when `start` was called, so a caller that
+    /// must persist a change *before* the VZ configuration is built can be
+    /// asserted on ordering, not just on the final value.
+    var configurationAtStart: VMConfiguration?
+
     // MARK: - Error Injection & Recovery
 
     var startError: (any Error)?
@@ -30,6 +35,7 @@ final class MockVirtualizationService: VirtualizationProviding {
     func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async throws {
         startCallCount += 1
         lastStartBootIntoRecovery = bootIntoRecovery
+        configurationAtStart = instance.configuration
         if let error = startError {
             instance.tearDownSession()
             VirtualizationService.applyStartFailure(

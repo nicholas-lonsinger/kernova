@@ -17,6 +17,10 @@ final class VMDisplayBackingView: NSView {
     /// Called when the user taps the resume button on the pause overlay.
     var onResume: (() -> Void)?
 
+    /// Mirrors `machineView.automaticallyReconfiguresDisplay`, so ``apply(automaticallyReconfiguresDisplay:)``
+    /// writes the framework property only when it actually changes.
+    private var automaticallyReconfiguresDisplay = true
+
     private let pauseOverlay: NSVisualEffectView
     private let pauseButton: NSButton
     private let transitionOverlay: NSVisualEffectView
@@ -64,7 +68,28 @@ final class VMDisplayBackingView: NSView {
     ///   - virtualMachine: The VM to display, or `nil` to clear.
     ///   - isPaused: Whether the pause overlay should be visible.
     ///   - transitionText: If non-nil, shows the transition overlay with this label (e.g. "Suspending…").
-    func update(virtualMachine: VZVirtualMachine?, isPaused: Bool, transitionText: String?) {
+    ///   - automaticallyReconfiguresDisplay: Whether the guest display follows the view as it resizes.
+    func update(
+        virtualMachine: VZVirtualMachine?, isPaused: Bool, transitionText: String?,
+        automaticallyReconfiguresDisplay: Bool
+    ) {
+        // Before the attach: VZ reconfigures the guest display as the VM is
+        // assigned, so a stale flag reconfigures a VM the user opted out of.
+        apply(automaticallyReconfiguresDisplay: automaticallyReconfiguresDisplay)
+        show(virtualMachine: virtualMachine, isPaused: isPaused, transitionText: transitionText)
+    }
+
+    /// Clears the displayed VM and its overlays on a view about to be discarded.
+    ///
+    /// Leaves `automaticallyReconfiguresDisplay` where it is: with no VM
+    /// attached there is nothing left for it to reconfigure.
+    func detach() {
+        show(virtualMachine: nil, isPaused: false, transitionText: nil)
+    }
+
+    private func show(
+        virtualMachine: VZVirtualMachine?, isPaused: Bool, transitionText: String?
+    ) {
         if machineView.virtualMachine !== virtualMachine {
             machineView.virtualMachine = virtualMachine
         }
@@ -73,6 +98,16 @@ final class VMDisplayBackingView: NSView {
         if let transitionText {
             transitionLabel.stringValue = transitionText
         }
+    }
+
+    /// Sets whether the guest display follows the view as it resizes, on a view
+    /// that may be hidden or showing no VM.
+    func apply(automaticallyReconfiguresDisplay: Bool) {
+        guard self.automaticallyReconfiguresDisplay != automaticallyReconfiguresDisplay else {
+            return
+        }
+        self.automaticallyReconfiguresDisplay = automaticallyReconfiguresDisplay
+        machineView.automaticallyReconfiguresDisplay = automaticallyReconfiguresDisplay
     }
 
     // MARK: - Overlay Animation

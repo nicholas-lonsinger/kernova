@@ -67,7 +67,8 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         backing.update(
             virtualMachine: instance.virtualMachine,
             isPaused: instance.status == .paused,
-            transitionText: instance.status.transitionLabel
+            transitionText: instance.status.transitionLabel,
+            automaticallyReconfiguresDisplay: instance.configuration.displayAutoResizes
         )
         self.backingView = backing
 
@@ -186,6 +187,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 _ = self.instance.virtualMachine
                 _ = self.instance.displayMode
                 _ = self.instance.configuration.clipboardSharingEnabled
+                _ = self.instance.configuration.displayAutoResizes
             },
             apply: { [weak self] in
                 guard let self else { return }
@@ -197,7 +199,8 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                     self.backingView.update(
                         virtualMachine: self.instance.virtualMachine,
                         isPaused: status == .paused,
-                        transitionText: status.transitionLabel
+                        transitionText: status.transitionLabel,
+                        automaticallyReconfiguresDisplay: self.instance.configuration.displayAutoResizes
                     )
                     self.updateToolbarItems()
                 }

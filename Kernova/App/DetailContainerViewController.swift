@@ -151,11 +151,25 @@ final class DetailContainerViewController: NSViewController {
 
     private func removeBackingView(for id: UUID) {
         guard let backing = backingViews.removeValue(forKey: id) else { return }
-        backing.update(virtualMachine: nil, isPaused: false, transitionText: nil)
+        backing.detach()
         backing.removeFromSuperview()
         if activeBackingViewID == id {
             activeBackingViewID = nil
         }
+    }
+
+    // MARK: - Display Boot Geometry
+
+    /// The area an inline display will fill, or `nil` while the pane has no
+    /// window or has not been laid out yet.
+    ///
+    /// Measures `contentContainer`, which carries the same top-safe-area
+    /// constraints a backing view gets.
+    func displayBootSurface() -> DisplayBootSurface? {
+        guard let window = view.window else { return nil }
+        let size = contentContainer.bounds.size
+        guard size.width > 0, size.height > 0 else { return nil }
+        return DisplayBootSurface(pointSize: size, backingScaleFactor: window.backingScaleFactor)
     }
 
     // MARK: - State Observation
@@ -169,6 +183,7 @@ final class DetailContainerViewController: NSViewController {
                 _ = self.viewModel.selectedInstance?.displayMode
                 _ = self.viewModel.selectedInstance?.detailPaneMode
                 _ = self.viewModel.selectedInstance?.virtualMachine
+                _ = self.viewModel.selectedInstance?.configuration.displayAutoResizes
                 // Track instances with backing views so a stop or a move out of
                 // inline mode is detected, and the array itself for adds/removes.
                 _ = self.viewModel.instances.count
@@ -177,6 +192,7 @@ final class DetailContainerViewController: NSViewController {
                         _ = inst.status
                         _ = inst.virtualMachine
                         _ = inst.displayMode
+                        _ = inst.configuration.displayAutoResizes
                     }
                 }
             },
@@ -188,6 +204,15 @@ final class DetailContainerViewController: NSViewController {
     }
 
     private func updateDisplayState() {
+        // Ahead of the early return below: a hidden backing view stays attached and
+        // constrained, so a VM whose Settings pane is up still reconfigures its
+        // guest on every window resize unless the toggle reaches it here.
+        for (id, backing) in backingViews {
+            guard let instance = viewModel.instances.first(where: { $0.id == id }) else { continue }
+            backing.apply(
+                automaticallyReconfiguresDisplay: instance.configuration.displayAutoResizes)
+        }
+
         // Evict backing views for VMs no longer running inline
         let activeInlineIDs = Set(
             viewModel.instances
@@ -233,7 +258,8 @@ final class DetailContainerViewController: NSViewController {
         backing.update(
             virtualMachine: vm,
             isPaused: instance.status == .paused,
-            transitionText: instance.status.transitionLabel
+            transitionText: instance.status.transitionLabel,
+            automaticallyReconfiguresDisplay: instance.configuration.displayAutoResizes
         )
     }
 }

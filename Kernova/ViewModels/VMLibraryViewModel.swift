@@ -76,6 +76,10 @@ final class VMLibraryViewModel {
     /// allowing the app delegate to pre-create the display window with a spinner.
     @ObservationIgnored var onOpenDisplayWindow: ((VMInstance) -> Void)?
 
+    /// Measures the window or screen a starting VM's display will occupy, for
+    /// `displaySizesToWindow`.
+    @ObservationIgnored weak var displayBootGeometryProvider: (any DisplayBootGeometryProviding)?
+
     // MARK: - Directory Watcher
 
     private var directoryWatcher: VMDirectoryWatcher?
@@ -314,6 +318,7 @@ final class VMLibraryViewModel {
         if instance.configuration.displayPreference != .inline {
             onOpenDisplayWindow?(instance)
         }
+        applyMatchWindowBootResolution(to: instance)
         do {
             try await lifecycle.start(instance, bootIntoRecovery: bootIntoRecovery)
         } catch {
@@ -326,6 +331,36 @@ final class VMLibraryViewModel {
             } else {
                 presentError(error)
             }
+        }
+    }
+
+    /// Resizes a cold-booting VM's display to the surface it is about to appear
+    /// on, persisting the result before the VZ configuration is built.
+    ///
+    /// Left alone when a save file exists: VZ restores only into a configuration
+    /// identical to the saved one, and a mismatch silently discards the save.
+    private func applyMatchWindowBootResolution(to instance: VMInstance) {
+        guard instance.configuration.displaySizesToWindow, !instance.hasSaveFile else { return }
+        guard let surface = displayBootGeometryProvider?.displayBootSurface(for: instance) else {
+            Self.logger.notice(
+                "No measurable display surface for '\(instance.name, privacy: .public)' — booting at the configured resolution"
+            )
+            return
+        }
+        let hiDPI =
+            instance.configuration.guestOS.supportsDisplayDensity
+            && instance.configuration.displayHiDPI
+        let scale = hiDPI ? surface.backingScaleFactor : 1
+        let resolution = DisplayBootSizing.resolution(
+            fittingPoints: surface.pointSize, backingScaleFactor: scale)
+        let previous = instance.configuration
+        if !updateConfiguration(of: instance, mutate: { $0.displayResolution = resolution }) {
+            // Assigned directly rather than through the funnel: disk still holds
+            // `previous`, so re-persisting it is a second chance to fail.
+            instance.configuration = previous
+            Self.logger.warning(
+                "Could not persist the window-fitted resolution for '\(instance.name, privacy: .public)' — booting at the previously saved resolution"
+            )
         }
     }
 
@@ -1105,14 +1140,20 @@ final class VMLibraryViewModel {
 
     // MARK: - Save Configuration
 
-    func saveConfiguration(for instance: VMInstance) {
+    /// Writes `instance.configuration` to its bundle, reporting whether it landed.
+    ///
+    /// A failure is logged and presented; the in-memory value stands.
+    @discardableResult
+    func saveConfiguration(for instance: VMInstance) -> Bool {
         do {
             try storageService.saveConfiguration(instance.configuration, to: instance.bundleURL)
+            return true
         } catch {
             Self.logger.error(
                 "Failed to save configuration for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             presentError(error)
+            return false
         }
     }
 
@@ -1141,17 +1182,23 @@ final class VMLibraryViewModel {
     ///
     /// Applies the mutation, persists the result, and dispatches the live policy /
     /// removable-media reconcile. No-ops when the mutation produces the same value.
+    ///
+    /// - Returns: Whether the new configuration reached disk. A no-op mutation
+    ///   returns `true`; a failed write leaves the new value in memory, so a
+    ///   caller that needs memory and disk to agree rolls back on `false`.
+    @discardableResult
     func updateConfiguration(
         of instance: VMInstance,
         mutate: (inout VMConfiguration) -> Void
-    ) {
+    ) -> Bool {
         let old = instance.configuration
         var new = old
         mutate(&new)
-        guard new != old else { return }
+        guard new != old else { return true }
         instance.configuration = new
-        saveConfiguration(for: instance)
+        let saved = saveConfiguration(for: instance)
         applyLivePolicy(for: instance, old: old, new: new)
+        return saved
     }
 
     /// Pushes a configuration change to a running VM.

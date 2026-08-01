@@ -678,12 +678,13 @@ struct VMInstanceTests {
     @Test("VMConfiguration.hotToggleFields covers all runtime-editable booleans")
     func hotToggleFieldsCovered() {
         let fields = VMConfiguration.hotToggleFields
-        #expect(fields.count == 5)
+        #expect(fields.count == 6)
         #expect(fields.contains(\.agentLogForwardingEnabled))
         #expect(fields.contains(\.clipboardSharingEnabled))
         #expect(fields.contains(\.clipboardPassthroughEnabled))
         #expect(fields.contains(\.serialSocketRelayEnabled))
         #expect(fields.contains(\.agentInstallNudgeDismissed))
+        #expect(fields.contains(\.displayAutoResizes))
     }
 
     // MARK: - Agent Post-Start Watchdog

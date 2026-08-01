@@ -31,6 +31,29 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     var displayWidth: Int
     var displayHeight: Int
     var displayPPI: Int
+
+    /// When `true`, a cold boot rewrites `displayWidth`/`displayHeight`/`displayPPI`
+    /// to fit the window or screen the display is about to appear in.
+    ///
+    /// Ignored when a save file exists — VZ restore requires the saved
+    /// configuration.
+    var displaySizesToWindow: Bool
+
+    /// The user's intent for guest display density: `true` boots Retina-sharp
+    /// (double the pixels at `DisplayBootSizing.hiDPIPixelsPerInch`), `false` at 1×.
+    ///
+    /// `displayWidth`/`displayHeight`/`displayPPI` stay the values VZ receives;
+    /// with `displaySizesToWindow` on they are the previous boot's computed
+    /// artifact and only this flag survives to the next one. Linux guests ignore
+    /// it — a virtio scanout carries no density.
+    var displayHiDPI: Bool
+
+    /// Backs `VZVirtualMachineView.automaticallyReconfiguresDisplay`, letting the
+    /// guest reconfigure its display to follow the window as it is resized.
+    ///
+    /// A macOS guest honors it from macOS 14 on; earlier ones scale instead.
+    var displayAutoResizes: Bool
+
     var displayPreference: VMDisplayPreference
     var lastFullscreenDisplayID: UInt32?
 
@@ -178,6 +201,9 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         displayWidth: Int = 1920,
         displayHeight: Int = 1200,
         displayPPI: Int = 144,
+        displaySizesToWindow: Bool = true,
+        displayHiDPI: Bool = true,
+        displayAutoResizes: Bool = true,
         displayPreference: VMDisplayPreference = .inline,
         lastFullscreenDisplayID: UInt32? = nil,
         networkEnabled: Bool = true,
@@ -215,6 +241,9 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.displayWidth = displayWidth
         self.displayHeight = displayHeight
         self.displayPPI = displayPPI
+        self.displaySizesToWindow = displaySizesToWindow
+        self.displayHiDPI = displayHiDPI
+        self.displayAutoResizes = displayAutoResizes
         self.displayPreference = displayPreference
         self.lastFullscreenDisplayID = lastFullscreenDisplayID
         self.networkEnabled = networkEnabled
@@ -262,6 +291,9 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.displayWidth = try c.decode(Int.self, forKey: .displayWidth)
         self.displayHeight = try c.decode(Int.self, forKey: .displayHeight)
         self.displayPPI = try c.decode(Int.self, forKey: .displayPPI)
+        self.displaySizesToWindow = try c.decodeIfPresent(Bool.self, forKey: .displaySizesToWindow) ?? true
+        self.displayHiDPI = try c.decodeIfPresent(Bool.self, forKey: .displayHiDPI) ?? true
+        self.displayAutoResizes = try c.decodeIfPresent(Bool.self, forKey: .displayAutoResizes) ?? true
         self.displayPreference = try c.decode(VMDisplayPreference.self, forKey: .displayPreference)
         self.lastFullscreenDisplayID = try c.decodeIfPresent(UInt32.self, forKey: .lastFullscreenDisplayID)
         self.networkEnabled = try c.decode(Bool.self, forKey: .networkEnabled)
@@ -386,6 +418,19 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         UInt64(memorySizeInGB) * 1024 * 1024 * 1024
     }
 
+    /// The stored `displayWidth`/`displayHeight`/`displayPPI` trio as one value.
+    var displayResolution: DisplayBootSizing.Resolution {
+        get {
+            DisplayBootSizing.Resolution(
+                width: displayWidth, height: displayHeight, ppi: displayPPI)
+        }
+        set {
+            displayWidth = newValue.width
+            displayHeight = newValue.height
+            displayPPI = newValue.ppi
+        }
+    }
+
     // MARK: - Hot-Toggleable Fields
 
     /// Fields the user may edit while the VM is running.
@@ -399,6 +444,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         \.clipboardPassthroughEnabled,
         \.serialSocketRelayEnabled,
         \.agentInstallNudgeDismissed,
+        \.displayAutoResizes,
     ]
 
     /// Returns `true` if any field that is editable while the VM is running
