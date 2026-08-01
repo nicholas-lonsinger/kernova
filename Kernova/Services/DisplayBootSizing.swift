@@ -18,6 +18,10 @@ struct DisplayBootSizing: Sendable {
     static let minimumWidth = 800
     static let minimumHeight = 600
     /// Largest pixel count in either axis.
+    ///
+    /// Kernova's own cap: VZ validates both display types at 16384/axis —
+    /// measured 2026-08-01, see
+    /// `docs/research/2026-08-01-vz-display-dimension-limits.md`.
     static let maximumDimension = 8192
 
     /// Density reported for a HiDPI ("Retina") guest display.
