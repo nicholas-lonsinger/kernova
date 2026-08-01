@@ -187,7 +187,7 @@ final class VMInstance {
             return AgentStatus.synthesize(
                 upstream: vsockControlService?.agentStatus ?? .waiting,
                 lastSeenAgentVersion: configuration.lastSeenAgentVersion,
-                isInLiveSession: virtualMachine != nil,
+                isInLiveSession: hasLiveVirtualMachine,
                 agentExpectedButMissing: agentExpectedButMissing
             )
         case .linux:
@@ -241,6 +241,27 @@ final class VMInstance {
     var hasSaveFile: Bool { bundleLayout.hasSaveFile }
     var serialLogURL: URL { bundleLayout.serialLogURL }
 
+    // MARK: - Machine Identity
+
+    /// Memoized `MachineIdentifier` file read: the outer optional separates "not
+    /// read yet" from "read, and there is no file".
+    @ObservationIgnored private var machineIdentifierFileData: Data??
+
+    /// The macOS machine identifier this VM boots with — the configuration field
+    /// when set, otherwise the bundle's identifier file.
+    ///
+    /// The fallback mirrors ``ConfigurationBuilder``, which reads the file when
+    /// the configuration carries no identifier, so a bundle holding its identity
+    /// only on disk compares equal to one holding it in the configuration. The
+    /// file is read at most once per instance.
+    var effectiveMachineIdentifierData: Data? {
+        if let fromConfiguration = configuration.machineIdentifierData { return fromConfiguration }
+        if let cached = machineIdentifierFileData { return cached }
+        let fromFile = try? Data(contentsOf: machineIdentifierURL)
+        machineIdentifierFileData = .some(fromFile)
+        return fromFile
+    }
+
     // MARK: - Runtime Removable Media
 
     /// USB mass storage devices currently attached on the XHCI controller.
@@ -249,19 +270,35 @@ final class VMInstance {
     /// running; cleared on stop/teardown.
     var liveRemovableMedia: [USBDeviceInfo] = []
 
+    #if DEBUG
+    /// Test stand-in for `virtualMachine != nil`: constructing a real
+    /// `VZVirtualMachine` requires the virtualization entitlement, which CI
+    /// test hosts lack.
+    var hasLiveVirtualMachineOverrideForTesting: Bool?
+    #endif
+
+    /// Whether a `VZVirtualMachine` for this VM is live in memory — the single
+    /// liveness read every predicate here shares.
+    var hasLiveVirtualMachine: Bool {
+        #if DEBUG
+        if let hasLiveVirtualMachineOverrideForTesting { return hasLiveVirtualMachineOverrideForTesting }
+        #endif
+        return virtualMachine != nil
+    }
+
     var canAttachUSBDevices: Bool {
-        (status == .running || status == .paused) && virtualMachine != nil
+        (status == .running || status == .paused) && hasLiveVirtualMachine
     }
 
     /// `true` when the VM is paused-to-disk but has no live `VZVirtualMachine` in memory.
     var isColdPaused: Bool {
-        status == .paused && virtualMachine == nil
+        status == .paused && !hasLiveVirtualMachine
     }
 
     /// `true` when the VM is paused with its `VZVirtualMachine` still live in
     /// memory — the resumable counterpart of ``isColdPaused``.
     var isLivePaused: Bool {
-        status == .paused && virtualMachine != nil
+        status == .paused && hasLiveVirtualMachine
     }
 
     /// `true` when this VM should keep the app alive: preparing, in an active

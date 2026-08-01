@@ -30,6 +30,23 @@ struct AppPreferences {
         static let quitTerminatesApp = "quitTerminatesApp"
         static let menuBarQuitReminderDismissed = "menuBarQuitReminderDismissed"
         static let mainToolbarNewVMCollapseIndex = "KernovaMainToolbarNewVMCollapseIndex"
+        // Also inverted — see `keepInMenuBarOnQuit`'s RATIONALE.
+        static let allowDuplicateMachineIDBoot = "allowDuplicateMachineIDBoot"
+        static let cloneKeepsMachineID = "cloneKeepsMachineID"
+    }
+
+    // MARK: - Inverted Storage
+
+    /// Reads the inverse of the boolean stored under the given key, so an unset
+    /// key yields a `true` default.
+    private func invertedBool(forKey key: String) -> Bool {
+        !defaults.bool(forKey: key)
+    }
+
+    /// Writes the inverse of `value` under the given key, the counterpart of
+    /// ``invertedBool(forKey:)``.
+    private func setInvertedBool(_ value: Bool, forKey key: String) {
+        defaults.set(!value, forKey: key)
     }
 
     /// When `true`, advanced menu actions (e.g. *Start in Recovery Mode*) are
@@ -83,10 +100,11 @@ struct AppPreferences {
     /// RATIONALE: the value is stored *inverted* under `quitTerminatesApp` so the
     /// file's plain `bool(forKey:)` convention — an unset key reads `false` —
     /// produces this preference's `true` default without registering defaults.
-    /// The key names what it literally holds.
+    /// The key names what it literally holds. Every `true`-defaulting preference
+    /// here works this way, through `invertedBool(forKey:)`.
     var keepInMenuBarOnQuit: Bool {
-        get { !defaults.bool(forKey: Keys.quitTerminatesApp) }
-        nonmutating set { defaults.set(!newValue, forKey: Keys.quitTerminatesApp) }
+        get { invertedBool(forKey: Keys.quitTerminatesApp) }
+        nonmutating set { setInvertedBool(newValue, forKey: Keys.quitTerminatesApp) }
     }
 
     /// Whether the user dismissed the "still running in the menu bar" reminder
@@ -109,6 +127,31 @@ struct AppPreferences {
     var mainToolbarNewVMCollapseIndex: Int? {
         get { defaults.object(forKey: Keys.mainToolbarNewVMCollapseIndex) as? Int }
         nonmutating set { defaults.set(newValue, forKey: Keys.mainToolbarNewVMCollapseIndex) }
+    }
+
+    /// Whether starting a VM is refused while another VM with the same machine
+    /// identifier is live, defaulting to `true`.
+    ///
+    /// Two VMs sharing a machine identifier must never run at once — the
+    /// framework documents the result as undefined behavior.
+    var blockDuplicateMachineIDBoot: Bool {
+        get { invertedBool(forKey: Keys.allowDuplicateMachineIDBoot) }
+        nonmutating set { setInvertedBool(newValue, forKey: Keys.allowDuplicateMachineIDBoot) }
+    }
+
+    /// Whether Clone gives the copy a fresh machine identifier, defaulting to `true`.
+    ///
+    /// When `false`, clones keep the source VM's identifier. The Option-held
+    /// Clone menu item performs the opposite of this setting.
+    var cloneGeneratesNewMachineID: Bool {
+        get { invertedBool(forKey: Keys.cloneKeepsMachineID) }
+        nonmutating set { setInvertedBool(newValue, forKey: Keys.cloneKeepsMachineID) }
+    }
+
+    /// Title of the Option-alternate Clone menu item, which clones with the
+    /// opposite machine-identity behavior to the one this preference selects.
+    var cloneAlternateMenuTitle: String {
+        cloneGeneratesNewMachineID ? "Clone (Keep Machine ID)" : "Clone (New Machine ID)"
     }
 
     /// Re-arms every host-side reminder by clearing its dismissed flag, so each

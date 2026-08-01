@@ -159,6 +159,33 @@ struct VMInstanceTests {
         #expect(instance.isColdPaused == false)
     }
 
+    // MARK: - effectiveMachineIdentifierData
+
+    @Test("effectiveMachineIdentifierData prefers the configuration field")
+    func effectiveMachineIDPrefersConfiguration() {
+        let instance = makeInstance()
+        instance.configuration.machineIdentifierData = Data([1, 2, 3])
+        #expect(instance.effectiveMachineIdentifierData == Data([1, 2, 3]))
+    }
+
+    @Test("effectiveMachineIdentifierData falls back to the bundle's identifier file")
+    func effectiveMachineIDFallsBackToFile() throws {
+        let instance = makeInstance()
+        try FileManager.default.createDirectory(
+            at: instance.bundleURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
+        try Data([4, 5, 6]).write(to: instance.machineIdentifierURL)
+
+        #expect(instance.configuration.machineIdentifierData == nil)
+        #expect(instance.effectiveMachineIdentifierData == Data([4, 5, 6]))
+    }
+
+    @Test("effectiveMachineIdentifierData is nil with neither a configuration field nor a file")
+    func effectiveMachineIDNilWhenAbsent() {
+        let instance = makeInstance()
+        #expect(instance.effectiveMachineIdentifierData == nil)
+    }
+
     // MARK: - isKeepingAppAlive
 
     @Test("isKeepingAppAlive is true when preparing")

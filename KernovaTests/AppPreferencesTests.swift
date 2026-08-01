@@ -125,6 +125,62 @@ struct AppPreferencesTests {
         }
     }
 
+    @Test("blockDuplicateMachineIDBoot defaults to true")
+    func blockDuplicateMachineIDBootDefaultsToTrue() throws {
+        try withEphemeralPreferences { prefs, _ in
+            #expect(prefs.blockDuplicateMachineIDBoot == true)
+        }
+    }
+
+    @Test("blockDuplicateMachineIDBoot round-trips through UserDefaults with inverted storage")
+    func blockDuplicateMachineIDBootRoundTrips() throws {
+        try withEphemeralPreferences { prefs, defaults in
+            // Stored inverted under `allowDuplicateMachineIDBoot`, so the
+            // false-default key yields the desired `true` default (see the
+            // property's doc comment).
+            prefs.blockDuplicateMachineIDBoot = false
+            #expect(prefs.blockDuplicateMachineIDBoot == false)
+            #expect(defaults.bool(forKey: "allowDuplicateMachineIDBoot") == true)
+
+            prefs.blockDuplicateMachineIDBoot = true
+            #expect(prefs.blockDuplicateMachineIDBoot == true)
+            #expect(defaults.bool(forKey: "allowDuplicateMachineIDBoot") == false)
+        }
+    }
+
+    @Test("cloneGeneratesNewMachineID defaults to true")
+    func cloneGeneratesNewMachineIDDefaultsToTrue() throws {
+        try withEphemeralPreferences { prefs, _ in
+            #expect(prefs.cloneGeneratesNewMachineID == true)
+        }
+    }
+
+    @Test("cloneGeneratesNewMachineID round-trips through UserDefaults with inverted storage")
+    func cloneGeneratesNewMachineIDRoundTrips() throws {
+        try withEphemeralPreferences { prefs, defaults in
+            // Stored inverted under `cloneKeepsMachineID`, so the false-default
+            // key yields the desired `true` default (see the property's doc
+            // comment).
+            prefs.cloneGeneratesNewMachineID = false
+            #expect(prefs.cloneGeneratesNewMachineID == false)
+            #expect(defaults.bool(forKey: "cloneKeepsMachineID") == true)
+
+            prefs.cloneGeneratesNewMachineID = true
+            #expect(prefs.cloneGeneratesNewMachineID == true)
+            #expect(defaults.bool(forKey: "cloneKeepsMachineID") == false)
+        }
+    }
+
+    @Test("cloneAlternateMenuTitle names the opposite of the clone machine-ID setting")
+    func cloneAlternateMenuTitleFollowsPreference() throws {
+        try withEphemeralPreferences { prefs, _ in
+            #expect(prefs.cloneAlternateMenuTitle == "Clone (Keep Machine ID)")
+
+            prefs.cloneGeneratesNewMachineID = false
+            #expect(prefs.cloneAlternateMenuTitle == "Clone (New Machine ID)")
+        }
+    }
+
     @Test("menuBarQuitReminderDismissed defaults to false")
     func menuBarQuitReminderDismissedDefaultsToFalse() throws {
         try withEphemeralPreferences { prefs, _ in
