@@ -11,11 +11,19 @@ public enum ClipboardFileProviderSettings {
     ///
     /// These deep links are private and unguaranteed across macOS releases, so a
     /// caller tries them in order and opens the first that works; the exact
-    /// anchor is not load-bearing.
-    public static let enablementDeepLinks: [String] = [
-        "x-apple.systempreferences:com.apple.ExtensionsPreferences?extensionPointIdentifier=com.apple.fileprovider-nonui",
-        "x-apple.systempreferences:com.apple.LoginItems-Settings.extension?ExtensionItems",
-    ]
+    /// anchor is not load-bearing. Below 13 the pane identifiers are System
+    /// Preferences', whose Extensions pane hosts the File Provider toggles.
+    public static var enablementDeepLinks: [String] {
+        if #available(macOS 13.0, *) {
+            return [
+                "x-apple.systempreferences:com.apple.ExtensionsPreferences?extensionPointIdentifier=com.apple.fileprovider-nonui",
+                "x-apple.systempreferences:com.apple.LoginItems-Settings.extension?ExtensionItems",
+            ]
+        }
+        return [
+            "x-apple.systempreferences:com.apple.preferences.extensions"
+        ]
+    }
 
     /// Opens System Settings to the File-Providers enablement pane, trying
     /// `enablementDeepLinks` in order and stopping at the first that opens.

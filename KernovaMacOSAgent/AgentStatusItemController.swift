@@ -224,7 +224,11 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
         options[.version] = buildNumber.isEmpty ? "Debug" : "\(buildNumber) | Debug"
         #endif
-        NSApp.activate()
+        if #available(macOS 14.0, *) {
+            NSApp.activate()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
         NSApp.orderFrontStandardAboutPanel(options: options)
     }
 

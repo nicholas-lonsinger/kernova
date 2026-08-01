@@ -90,12 +90,17 @@ public enum ClipboardFileProviderReminder {
         "Text and images paste normally. File sharing from your Mac is unavailable — reinstall the Kernova guest agent to restore it."
     }
 
-    /// Actionable command opening System Settings to enable the extension —
+    /// Actionable command opening the settings app to enable the extension —
     /// identical wording on both sides.
     ///
-    /// Ellipsis: it navigates to System Settings to gather the user's action.
+    /// Ellipsis: it navigates to the settings app to gather the user's action.
+    /// Named for the app the running OS actually has: System Settings on 13+,
+    /// System Preferences before.
     public static func enableCommandTitle() -> String {
-        "Enable in System Settings…"
+        if #available(macOS 13.0, *) {
+            return "Enable in System Settings…"
+        }
+        return "Enable in System Preferences…"
     }
 
     /// Command silencing the proactive status-item badge — identical wording

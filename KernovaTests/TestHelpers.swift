@@ -85,7 +85,7 @@ func makeRawSocketPair() throws -> (Int32, Int32) {
 ///   peer-disconnect bug.
 @MainActor
 func nextFrame(from channel: VsockChannel) async throws -> Frame {
-    let timeout = testWaitBackstop
+    let timeout: Duration = .seconds(testWaitBackstop)
     let receiver = Task<Frame?, Error> {
         var iterator = channel.incoming.makeAsyncIterator()
         return try await iterator.next()
@@ -158,7 +158,7 @@ func expectEOF(on channel: VsockChannel) async {
 /// keep `waitUntil`.
 @MainActor
 func waitForChange(
-    timeout: Duration = testWaitBackstop,
+    timeout: Duration = .seconds(testWaitBackstop),
     until predicate: @escaping @MainActor () -> Bool
 ) async throws {
     let deadline = ContinuousClock.now.advanced(by: timeout)

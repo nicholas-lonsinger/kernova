@@ -44,8 +44,8 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     /// Test-only; defaults to a wait identical to the Release path below. Lets a
     /// test control when a window "elapses" instead of racing wall-clock
     /// scheduling.
-    var windowWaitForTesting: (@Sendable (DispatchSemaphore, Duration) -> Void) = { semaphore, timeout in
-        _ = semaphore.wait(timeout: .now() + timeout.timeInterval)
+    var windowWaitForTesting: (@Sendable (DispatchSemaphore, TimeInterval) -> Void) = { semaphore, timeout in
+        _ = semaphore.wait(timeout: .now() + timeout)
     }
     #endif
 
@@ -79,7 +79,7 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     /// - Returns: the outcome the matching transfer resolved with.
     public func pull(
         transferID: UInt64,
-        timeout: Duration = ClipboardStreamTuning.lazyPullTimeout,
+        timeout: TimeInterval = ClipboardStreamTuning.lazyPullTimeout,
         send: () -> Void
     ) -> LazyPullOutcome {
         let slot = Slot()
@@ -109,7 +109,7 @@ public final class LazyPullCoordinator: @unchecked Sendable {
             #if DEBUG
             windowWaitForTesting(slot.semaphore, timeout)
             #else
-            _ = slot.semaphore.wait(timeout: .now() + timeout.timeInterval)
+            _ = slot.semaphore.wait(timeout: .now() + timeout)
             #endif
             let outcome: LazyPullOutcome? = lock.withLock {
                 if slot.resolved {

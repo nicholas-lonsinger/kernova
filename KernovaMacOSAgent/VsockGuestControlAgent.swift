@@ -2,6 +2,49 @@ import Foundation
 import KernovaKit
 import os
 
+/// The clock-independent surface of `VsockGuestControlAgent`, for holders that
+/// must run below macOS 13 and so cannot store a concrete clock instantiation.
+protocol VsockGuestControlling: AnyObject, Sendable {
+    /// Begins the connect/serve/reconnect loop (idempotent).
+    func start()
+    /// Stops the loop and tears down any active channel.
+    func stop()
+    /// Thread-safe host-connection state for the menu-bar UI to pull on open.
+    var connectionState: HostConnectionState { get }
+    /// Thread-safe read of the host's bundled agent version; empty when unknown.
+    var hostBundledAgentVersion: String { get }
+    /// Thread-safe read of the negotiated gate for folder placeholder trees.
+    var hostSupportsClipboardDirTree: Bool { get }
+}
+
+/// Builds a control agent on the platform-default clock — `ContinuousClock` on
+/// macOS 13+, `CLOCK_MONOTONIC` below — erased for holders that run on 12.
+func makeVsockGuestControlAgent(
+    onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
+    onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil
+) -> any VsockGuestControlling {
+    if #available(macOS 13.0, *) {
+        let clock = ContinuousEngineClock()
+        return VsockGuestControlAgent(
+            clock: clock,
+            client: VsockGuestClient(port: KernovaVsockPort.control, label: "control", clock: clock),
+            onPolicy: onPolicy,
+            onStateChange: onStateChange
+        )
+    }
+    let clock = MonotonicEngineClock()
+    return VsockGuestControlAgent(
+        clock: clock,
+        client: VsockGuestClient(port: KernovaVsockPort.control, label: "control", clock: clock),
+        onPolicy: onPolicy,
+        onStateChange: onStateChange
+    )
+}
+
+// File-scope stand-in for a `static let`, which a generic type cannot hold.
+private let controlAgentLogger = Logger(
+    subsystem: "app.kernova.macosagent", category: "VsockGuestControlAgent")
+
 /// Guest-side control-channel agent that talks to the host's
 /// `VsockControlService` on `KernovaVsockPort.control`.
 ///
@@ -10,14 +53,15 @@ import os
 /// carries the version handshake, a recurring heartbeat, and a watchdog that
 /// closes the channel once inbound traffic stops for `terminateAfter`, leaving
 /// `VsockGuestClient` to rebuild it.
-final class VsockGuestControlAgent: @unchecked Sendable {
-    private static let logger = Logger(subsystem: "app.kernova.macosagent", category: "VsockGuestControlAgent")
+final class VsockGuestControlAgent<Clock: EngineClock>: VsockGuestControlling, @unchecked Sendable {
+    private static var logger: Logger { controlAgentLogger }
 
-    private let client: VsockGuestClient
-    private let heartbeatInterval: Duration
-    private let unresponsiveAfter: Duration
-    private let terminateAfter: Duration
-    private let livenessTickInterval: Duration
+    private let clock: Clock
+    private let client: any VsockReconnecting
+    private let heartbeatInterval: TimeInterval
+    private let unresponsiveAfter: TimeInterval
+    private let terminateAfter: TimeInterval
+    private let livenessTickInterval: TimeInterval
 
     /// Invoked on every inbound `PolicyUpdate`, with the raw protobuf snapshot.
     private let onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)?
@@ -28,7 +72,7 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     private let onStateChange: (@Sendable (HostConnectionState) -> Void)?
 
     private let lock = NSLock()
-    private var lastInboundFrame: ContinuousClock.Instant?
+    private var lastInboundFrame: Clock.Instant?
     private var unresponsiveLogged: Bool = false
     private var nextHeartbeatNonce: UInt64 = 1
 
@@ -57,24 +101,14 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     /// Thread-safe read of the negotiated gate for folder placeholder trees.
     var hostSupportsClipboardDirTree: Bool { lock.withLock { hostSupportsClipboardDirTreeStorage } }
 
-    /// Production init — connects to the control port with default cadences.
-    convenience init(
-        onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
-        onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil
-    ) {
-        self.init(
-            client: VsockGuestClient(port: KernovaVsockPort.control, label: "control"),
-            onPolicy: onPolicy,
-            onStateChange: onStateChange
-        )
-    }
-
-    /// Designated init; tests inject a socketpair-backed client and small cadences.
+    /// Designated init; production goes through `makeVsockGuestControlAgent`,
+    /// tests inject a socketpair-backed client and small cadences.
     init(
-        client: VsockGuestClient,
-        heartbeatInterval: Duration = .seconds(5),
-        unresponsiveAfter: Duration = .seconds(15),
-        terminateAfter: Duration = .seconds(30),
+        clock: Clock,
+        client: any VsockReconnecting,
+        heartbeatInterval: TimeInterval = 5,
+        unresponsiveAfter: TimeInterval = 15,
+        terminateAfter: TimeInterval = 30,
         onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
         onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil
     ) {
@@ -82,6 +116,7 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             unresponsiveAfter < terminateAfter,
             "VsockGuestControlAgent: unresponsiveAfter (\(unresponsiveAfter)) must be < terminateAfter (\(terminateAfter))"
         )
+        self.clock = clock
         self.client = client
         self.heartbeatInterval = heartbeatInterval
         self.unresponsiveAfter = unresponsiveAfter
@@ -150,10 +185,11 @@ final class VsockGuestControlAgent: @unchecked Sendable {
 
         let heartbeatInterval = self.heartbeatInterval
         let livenessTickInterval = self.livenessTickInterval
+        let clock = self.clock
         let heartbeatTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: heartbeatInterval)
+                    try await clock.sleep(for: heartbeatInterval)
                 } catch {
                     return
                 }
@@ -164,7 +200,7 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         let livenessTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: livenessTickInterval)
+                    try await clock.sleep(for: livenessTickInterval)
                 } catch {
                     return
                 }
@@ -202,7 +238,7 @@ final class VsockGuestControlAgent: @unchecked Sendable {
 
         // Any inbound traffic counts as liveness.
         lock.withLock {
-            lastInboundFrame = ContinuousClock.now
+            lastInboundFrame = clock.now
             unresponsiveLogged = false
         }
         updateConnectionState(.connected)
@@ -297,23 +333,23 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     // MARK: - Liveness
 
     private func checkLiveness(channel: VsockChannel) {
-        let snapshot: (last: ContinuousClock.Instant?, alreadyLogged: Bool) = lock.withLock {
+        let snapshot: (last: Clock.Instant?, alreadyLogged: Bool) = lock.withLock {
             (lastInboundFrame, unresponsiveLogged)
         }
         guard let last = snapshot.last else {
             // Host hasn't sent anything yet — keep waiting.
             return
         }
-        let elapsed = ContinuousClock.now - last
+        let elapsed = clock.seconds(since: last)
         if elapsed > terminateAfter {
             Self.logger.warning(
-                "Host control channel silent for \(elapsed.formatted(.units(allowed: [.seconds])), privacy: .public) — closing"
+                "Host control channel silent for \(Int(elapsed.rounded()), privacy: .public) s — closing"
             )
             channel.close()
         } else if elapsed > unresponsiveAfter {
             if !snapshot.alreadyLogged {
                 Self.logger.warning(
-                    "Host control channel silent for \(elapsed.formatted(.units(allowed: [.seconds])), privacy: .public) — host appears unresponsive"
+                    "Host control channel silent for \(Int(elapsed.rounded()), privacy: .public) s — host appears unresponsive"
                 )
                 lock.withLock { unresponsiveLogged = true }
             }

@@ -7,7 +7,7 @@
 
 Kernova is a pure-AppKit Mac app for creating and running virtual machines directly on Apple Silicon — no third-party hypervisor, no kernel extensions, no licensing. It's for developers, QA engineers, and power users who want fast, disposable macOS and Linux VMs that feel like part of the Mac: a real source list of machines, one-click lifecycle, and deep host integration — shared clipboard, files, audio, and an in-guest agent — all inside the App Sandbox.
 
-Requires macOS 26 (Tahoe) or later on Apple Silicon.
+Requires macOS 26 (Tahoe) or later on Apple Silicon to run the app. macOS guests are supported back to 12.0.1 (Monterey), including the in-guest agent.
 
 <p align="center">
   <picture>

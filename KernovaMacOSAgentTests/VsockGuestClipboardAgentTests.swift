@@ -350,7 +350,8 @@ struct VsockGuestClipboardAgentTests {
         let client = VsockGuestClient(
             port: 49152,
             label: "clipboard-test",
-            retryInterval: .milliseconds(50)
+            clock: MonotonicEngineClock(),
+            retryInterval: 0.05
         ) { _, _ in
             provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
         }
@@ -1272,10 +1273,11 @@ struct VsockGuestClipboardAgentTests {
         // promptly — well under the lazy-pull backstop — rather than hanging.
         let pull = Task { await offCooperativePool { agent.fetchStagedFile(generation: 11, repIndex: 0) } }
         _ = try await awaitRequest(on: hostChannel)
-        let start = ContinuousClock.now
+        let wallClock = MonotonicEngineClock()
+        let start = wallClock.now
         hostChannel.close()
         let outcome = await pull.value
-        #expect(ContinuousClock.now - start < .seconds(5))
+        #expect(wallClock.seconds(since: start) < 5)
         guard case .failure(.pullFailed) = outcome else {
             Issue.record("expected .pullFailed after teardown, got \(outcome)")
             return
@@ -2524,23 +2526,24 @@ struct VsockGuestClipboardAgentTests {
         // and the send-failure handler resolves the pull synchronously via
         // `cancelAwait` + `coordinator.abort`, so `invokeProvider` returns nil on
         // the same thread without ever blocking toward the 120 s backstop.
-        let start = ContinuousClock.now
+        let wallClock = MonotonicEngineClock()
+        let start = wallClock.now
         let provided: Data? = await offCooperativePool {
             DispatchQueue.main.sync {
                 agent.liveChannelForTesting?.close()
                 return pasteboard.invokeProvider(forType: .string)
             }
         }
-        let elapsed = ContinuousClock.now - start
+        let elapsed = wallClock.seconds(since: start)
 
         #expect(provided == nil)
         // Promptly: well under the lazy-pull backstop. A regression that didn't
         // resolve the pull on send failure would block the full timeout.
         #expect(
-            elapsed < .seconds(5),
+            elapsed < 5,
             """
             Send failure must resolve the pull promptly, not block toward the \
-            \(ClipboardStreamTuning.lazyPullTimeout) backstop (took \(elapsed))
+            \(ClipboardStreamTuning.lazyPullTimeout) s backstop (took \(elapsed) s)
             """)
     }
 
@@ -2565,7 +2568,8 @@ struct VsockGuestClipboardAgentTests {
         let client = VsockGuestClient(
             port: 49152,
             label: "clipboard-reconnect-test",
-            retryInterval: .milliseconds(50)
+            clock: MonotonicEngineClock(),
+            retryInterval: 0.05
         ) { _, _ in
             let n = provideCount.increment()
             guard let fd = fdBox.fd(at: n - 1) else {
@@ -2699,7 +2703,8 @@ struct VsockGuestClipboardAgentTests {
         let client = VsockGuestClient(
             port: 49152,
             label: "clipboard-sync-publish-test",
-            retryInterval: .milliseconds(50)
+            clock: MonotonicEngineClock(),
+            retryInterval: 0.05
         ) { _, _ in
             provideCount.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no more fds"))
         }
@@ -2833,7 +2838,7 @@ struct VsockGuestClipboardAgentTests {
         agent.start()
 
         // Without setEnabled(true), no connection should come up.
-        try await Task.sleep(for: .milliseconds(150))
+        try await Task.sleep(nanoseconds: 150_000_000)
         let stillNil = DispatchQueue.main.sync { agent.liveChannelForTesting }
         #expect(stillNil == nil)
 
@@ -3139,7 +3144,7 @@ struct VsockGuestClipboardAgentTests {
     /// agent's reaction (if any) runs on the main queue and would have been
     /// dispatched before this window elapses.
     private func maybeNextFrame(
-        from channel: VsockChannel, window: Duration = .milliseconds(200),
+        from channel: VsockChannel, window: TimeInterval = 0.2,
         skippingAcks: Bool = false
     ) async throws -> Frame? {
         let receiver = Task<Frame?, Never> {
@@ -3150,7 +3155,7 @@ struct VsockGuestClipboardAgentTests {
             }
             return nil
         }
-        try await Task.sleep(for: window)
+        try await MonotonicEngineClock().sleep(for: window)
         receiver.cancel()
         return await receiver.value
     }

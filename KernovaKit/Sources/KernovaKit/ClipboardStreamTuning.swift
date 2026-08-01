@@ -37,7 +37,7 @@ public enum ClipboardStreamTuning {
     /// four chunk-write times, so under degraded I/O sustained per-chunk writes
     /// in the 2.5–10 s range trip the sender's 10 s no-ack deadline and abort a
     /// live transfer.
-    public static let ackLatencyBound: Duration = .seconds(1)
+    public static let ackLatencyBound: TimeInterval = 1
 
     /// Upper bound on how much an inline reassembly buffer pre-reserves: 64 MiB.
     ///
@@ -71,7 +71,7 @@ public enum ClipboardStreamTuning {
     /// an open file descriptor and a partial temp file until channel teardown.
     /// Larger than the sender's 10 s no-ack timeout so a slow-but-live transfer
     /// is never killed.
-    public static let inboundStallTimeout: Duration = .seconds(30)
+    public static let inboundStallTimeout: TimeInterval = 30
 
     /// Backstop on how long a lazy pull blocks the consuming thread *without
     /// progress* before giving up: 120 s of **inactivity**.
@@ -80,7 +80,7 @@ public enum ClipboardStreamTuning {
     /// re-arms it (`LazyPullCoordinator.heartbeat`), so a healthy transfer of any
     /// size never trips it. Made absolute, it silently kills large,
     /// still-progressing transfers that need more than one window to stream.
-    public static let lazyPullTimeout: Duration = .seconds(120)
+    public static let lazyPullTimeout: TimeInterval = 120
 
     /// Sentinel `maxAcceptByteCount` meaning "no explicit ceiling" — the
     /// requester could not measure its free space.
@@ -99,12 +99,4 @@ public enum ClipboardStreamTuning {
     /// fallback — with the File Provider on there is no size limit
     /// (CLIPBOARD.md §1).
     public static let maxDeadlineSafeFileBytes = 256 * 1024 * 1024
-}
-
-extension Duration {
-    /// This duration as fractional seconds, for `DispatchTime`/`Date` math.
-    var timeInterval: TimeInterval {
-        let (s, attos) = components
-        return Double(s) + Double(attos) / 1_000_000_000_000_000_000
-    }
 }

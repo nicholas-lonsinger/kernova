@@ -526,7 +526,7 @@ struct FileProviderDomainHostEnablementTests {
 
         host.setEnabled(true)
 
-        try await collector.gate.wait(timeout: .seconds(20)) { collector.values.contains(.unavailable) }
+        try await collector.gate.wait(timeout: 20) { collector.values.contains(.unavailable) }
         #expect(
             addDomain.callCount == 0,
             "a failed registry read means the state is unknown — it must not blindly add")
@@ -550,7 +550,7 @@ struct FileProviderDomainHostEnablementTests {
         host.setEnabled(true)
 
         // add success → domainRegistered = true → confirm read throws → .unavailable.
-        try await collector.gate.wait(timeout: .seconds(20)) { collector.values.contains(.unavailable) }
+        try await collector.gate.wait(timeout: 20) { collector.values.contains(.unavailable) }
         #expect(
             host.domainRegisteredForTesting,
             "a throwing confirm read must not clear domainRegistered (would wedge publish)")
@@ -559,7 +559,7 @@ struct FileProviderDomainHostEnablementTests {
         // re-probes and reports the true state.
         domainSource.setResult(.success([matchingDomain(identifierString)]))
         center.post(name: .fileProviderDomainDidChange, object: nil)
-        try await collector.gate.wait(timeout: .seconds(20)) { collector.values.contains(.needsEnabling) }
+        try await collector.gate.wait(timeout: 20) { collector.values.contains(.needsEnabling) }
     }
 
     // MARK: - Servicing warm-up + failure handling
@@ -597,7 +597,7 @@ struct FileProviderDomainHostEnablementTests {
 
         host.setEnabled(true)
 
-        try await collector.gate.wait(timeout: .seconds(20)) {
+        try await collector.gate.wait(timeout: 20) {
             collector.values.contains(.unavailable)
         }
         #expect(
@@ -636,7 +636,7 @@ struct FileProviderDomainHostEnablementTests {
 
         host.setEnabled(true)
 
-        try await domainSource.gate.wait(timeout: .seconds(20)) { domainSource.callCount >= 1 }
+        try await domainSource.gate.wait(timeout: 20) { domainSource.callCount >= 1 }
     }
 
     @Test("posting the domain-change notification while enabled re-probes via fetchDomains and applies the result")
@@ -706,7 +706,7 @@ struct FileProviderDomainHostEnablementTests {
 
         host.setEnabled(true)
         // Wait until the add is in flight (held) — we're mid-registration.
-        try await addDomain.addCalledGate.wait(timeout: .seconds(20)) { addDomain.callCount >= 1 }
+        try await addDomain.addCalledGate.wait(timeout: 20) { addDomain.callCount >= 1 }
 
         // Disable while the add is still outstanding.
         host.setEnabled(false)
@@ -743,7 +743,7 @@ struct FileProviderDomainHostEnablementTests {
         await awaitMainQueueTurn()
 
         // Let the (failing) registration land before disabling.
-        try await collector.gate.wait(timeout: .seconds(20)) {
+        try await collector.gate.wait(timeout: 20) {
             collector.values.contains(.unavailable)
         }
 

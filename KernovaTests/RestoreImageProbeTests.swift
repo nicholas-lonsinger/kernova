@@ -265,7 +265,7 @@ final class ProbeStubURLProtocol: URLProtocol, @unchecked Sendable {
         DispatchQueue.global().async { [self] in
             deliver(reply.body.prefix(Self.bodyPrimerBytes), finishing: false)
             let backstop =
-                DispatchTime.now() + .seconds(Int(testWaitBackstop.components.seconds))
+                DispatchTime.now() + .seconds(Int(testWaitBackstop))
             guard cancelled.wait(timeout: backstop) == .timedOut else { return }
             deliver(reply.body.dropFirst(Self.bodyPrimerBytes))
         }

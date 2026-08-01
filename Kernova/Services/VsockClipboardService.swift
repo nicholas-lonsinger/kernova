@@ -55,7 +55,7 @@ final class VsockClipboardService: ClipboardServicing {
 
     /// Backstop for a lazy pull the peer never answers while the channel stays
     /// open.
-    private let lazyPullTimeout: Duration
+    private let lazyPullTimeout: TimeInterval
 
     /// Off-main authority for this VM's clipboard progress, aggregating every
     /// transfer of one operation into the snapshot each surface renders.
@@ -82,7 +82,7 @@ final class VsockClipboardService: ClipboardServicing {
     private let lazyCoordinator = LazyPullCoordinator()
 
     private var sender: ClipboardStreamSender?
-    private var receiver: ClipboardStreamReceiver?
+    private var receiver: (any ClipboardStreamReceiving)?
     private var consumeTask: Task<Void, Never>?
 
     /// Counter for outbound offer generations.
@@ -173,7 +173,7 @@ final class VsockClipboardService: ClipboardServicing {
     init(
         channel: VsockChannel, label: String,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
-        lazyPullTimeout: Duration = ClipboardStreamTuning.lazyPullTimeout,
+        lazyPullTimeout: TimeInterval = ClipboardStreamTuning.lazyPullTimeout,
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
         stagingTempRoot: URL? = nil,
@@ -212,7 +212,7 @@ final class VsockClipboardService: ClipboardServicing {
         fileProvider.serviceDidStart()
 
         let sender = ClipboardStreamSender(channel: channel)
-        let receiver = ClipboardStreamReceiver(
+        let receiver = makeClipboardStreamReceiver(
             channel: channel, staging: staging,
             onTransferTimed: { [label = self.label] metrics in
                 Self.logger.notice(
@@ -389,7 +389,7 @@ final class VsockClipboardService: ClipboardServicing {
         channel: VsockChannel,
         label: String,
         sender: ClipboardStreamSender,
-        receiver: ClipboardStreamReceiver,
+        receiver: any ClipboardStreamReceiving,
         onControlFrame: @Sendable @escaping (Frame) -> Void
     ) async {
         do {
@@ -1154,7 +1154,7 @@ final class VsockClipboardService: ClipboardServicing {
                     // silence. A cancelled sleep (the pull resolved first) must
                     // NOT resume.
                     while true {
-                        do { try await Task.sleep(for: backstop) } catch { return }
+                        do { try await Task.sleep(for: .seconds(backstop)) } catch { return }
                         if pull.consumeProgress() { continue }
                         receiver.cancelAwait(transferID)
                         pull.resume(nil)
@@ -1218,10 +1218,10 @@ final class VsockClipboardService: ClipboardServicing {
         let filename: String
         let generation: UInt64
         let repIndex: Int
-        let receiver: ClipboardStreamReceiver
+        let receiver: any ClipboardStreamReceiving
         let channel: VsockChannel
         let staging: ClipboardFileStaging
-        let timeout: Duration
+        let timeout: TimeInterval
     }
 
     /// Snapshots the state for a synchronous file pull, validating that
@@ -1349,7 +1349,7 @@ final class VsockClipboardService: ClipboardServicing {
     /// pulls: runs on main (listing pull) or off-main (child pull), woken off-main
     /// either way.
     nonisolated private func awaitTreePull(
-        transferID: UInt64, receiver: ClipboardStreamReceiver,
+        transferID: UInt64, receiver: any ClipboardStreamReceiving,
         onProgress: (@Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void)?,
         sendRequest: @escaping () throws -> Void
     ) -> LazyPullOutcome {
@@ -1427,7 +1427,7 @@ final class VsockClipboardService: ClipboardServicing {
         generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
         onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
     ) -> ClipboardContent.Representation? {
-        let context: (receiver: ClipboardStreamReceiver, channel: VsockChannel)? = onMain {
+        let context: (receiver: any ClipboardStreamReceiving, channel: VsockChannel)? = onMain {
             guard let promise = self.inboundPromise, promise.generation == generation,
                 promise.reps.indices.contains(repIndex), let receiver = self.receiver
             else { return nil }

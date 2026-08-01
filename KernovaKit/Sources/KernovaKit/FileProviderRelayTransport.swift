@@ -262,7 +262,14 @@ public final class FileProviderServicingConnector: NSObject,
         connection.exportedInterface = NSXPCInterface(with: FileProviderRelay.self)
         connection.remoteObjectInterface = NSXPCInterface(with: FileProviderControl.self)
         if let extensionRequirement {
-            connection.setCodeSigningRequirement(extensionRequirement)
+            if #available(macOS 13.0, *) {
+                connection.setCodeSigningRequirement(extensionRequirement)
+            } else {
+                // Unreachable in practice: the only pre-13 process is the guest
+                // agent, and `FileProviderConfig.guest()` supplies no requirement.
+                logger.fault("Code-signing requirement configured but unenforceable below macOS 13")
+                assertionFailure("Code-signing requirement configured but unenforceable below macOS 13")
+            }
         }
         connection.invalidationHandler = { [weak self] in self?.handleConnectionDropped(connection) }
         connection.interruptionHandler = { [weak self] in self?.handleConnectionDropped(connection) }

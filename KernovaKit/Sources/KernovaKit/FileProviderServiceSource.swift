@@ -122,7 +122,14 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
         // Non-throwing: arms a framework-enforced check, so an impostor owner's
         // calls invalidate rather than failing here.
         if let requirement = config.ownerCodeSigningRequirement {
-            newConnection.setCodeSigningRequirement(requirement)
+            if #available(macOS 13.0, *) {
+                newConnection.setCodeSigningRequirement(requirement)
+            } else {
+                // Unreachable in practice: the only pre-13 process is the guest
+                // agent, and `FileProviderConfig.guest()` supplies no requirement.
+                logger.fault("Code-signing requirement configured but unenforceable below macOS 13")
+                assertionFailure("Code-signing requirement configured but unenforceable below macOS 13")
+            }
         }
         newConnection.invalidationHandler = { [weak self] in self?.clearConnection(newConnection) }
         newConnection.interruptionHandler = { [weak self] in self?.clearConnection(newConnection) }

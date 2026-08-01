@@ -77,7 +77,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// handshake.
     private static let pasteSourceName = "Mac"
 
-    private let client: VsockGuestClient
+    private let client: any VsockReconnecting
     private let pasteboard: Pasteboard
 
     /// The File Provider host, when one is wired (production only).
@@ -111,7 +111,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     /// Streaming engine for the current connection.
     private var sender: ClipboardStreamSender?
-    private var receiver: ClipboardStreamReceiver?
+    private var receiver: (any ClipboardStreamReceiving)?
 
     #if DEBUG
     /// Test seam.
@@ -233,7 +233,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     convenience init() {
         self.init(
             pasteboard: NSPasteboard.general,
-            client: VsockGuestClient(port: KernovaVsockPort.clipboard, label: "clipboard"),
+            client: makeVsockGuestClient(port: KernovaVsockPort.clipboard, label: "clipboard"),
             stagingTempRoot: FileProviderContainer(config: .guest()).stagingRootURL()
                 ?? FileManager.default.temporaryDirectory
         )
@@ -243,7 +243,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// client, and optionally a `freeSpaceProvider` to simulate a full disk and a
     /// `stagingTempRoot` to isolate the staging directory between parallel tests.
     init(
-        pasteboard: Pasteboard, client: VsockGuestClient,
+        pasteboard: Pasteboard, client: any VsockReconnecting,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         stagingTempRoot: URL = FileManager.default.temporaryDirectory
     ) {
@@ -374,7 +374,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // The engine is created off-main (its callbacks hop to main themselves);
         // only the published references are assigned on the main queue.
         let sender = ClipboardStreamSender(channel: channel)
-        let receiver = ClipboardStreamReceiver(
+        let receiver = makeClipboardStreamReceiver(
             channel: channel, staging: self.staging,
             // The only measured throughput number for the real vsock link, so it
             // logs at `.notice` (persisted) rather than `.debug`.
@@ -1096,7 +1096,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// (woken off-main), like every paste-time pull.
     private func buildPublishFolder(
         repIndex: Int, info: Kernova_V1_ClipboardRepresentationInfo, promise: InboundPromise,
-        channel: VsockChannel, receiver: ClipboardStreamReceiver
+        channel: VsockChannel, receiver: any ClipboardStreamReceiving
     ) -> FileProviderPublishFolder? {
         guard
             let listing = pullTreeListing(
@@ -1180,7 +1180,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// off-main into the coordinator, never hopping to the thread this call
     /// holds.
     private func awaitPull(
-        transferID: UInt64, receiver: ClipboardStreamReceiver,
+        transferID: UInt64, receiver: any ClipboardStreamReceiving,
         onProgress: (@Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void)?,
         sendRequest: @escaping () throws -> Void
     ) -> LazyPullOutcome {
@@ -1225,7 +1225,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// (docs/CLIPBOARD.md §2).
     private func pullRepresentation(
         _ repIndex: Int, promise: InboundPromise, channel: VsockChannel,
-        receiver: ClipboardStreamReceiver, deadlineBound: Bool,
+        receiver: any ClipboardStreamReceiving, deadlineBound: Bool,
         onProgress: (@Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void)? = nil
     ) -> ClipboardContent.Representation? {
         let info = promise.reps[repIndex]
@@ -1351,7 +1351,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// failure so the caller falls back to the archive path.
     private func pullTreeListing(
         repIndex: Int, promise: InboundPromise, channel: VsockChannel,
-        receiver: ClipboardStreamReceiver
+        receiver: any ClipboardStreamReceiving
     ) -> Kernova_V1_ClipboardTreeListing? {
         let transferID = ClipboardTransferID.makeChild(
             generation: promise.generation, repIndex: repIndex, childSeq: 0, hostMinted: false)
@@ -1397,7 +1397,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// Returns the staged `.file` rep, or `nil` on failure.
     private func pullChild(
         generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
-        channel: VsockChannel, receiver: ClipboardStreamReceiver,
+        channel: VsockChannel, receiver: any ClipboardStreamReceiving,
         onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
     ) -> ClipboardContent.Representation? {
         let transferID = ClipboardTransferID.makeChild(
@@ -1634,7 +1634,7 @@ extension VsockGuestClipboardAgent: FileProviderPullProvider {
         struct PullContext {
             let promise: InboundPromise
             let channel: VsockChannel
-            let receiver: ClipboardStreamReceiver
+            let receiver: any ClipboardStreamReceiving
         }
         // Snapshot on main: the request must address the *current* offer and a
         // live connection.
@@ -1669,7 +1669,7 @@ extension VsockGuestClipboardAgent: FileProviderPullProvider {
         dispatchPrecondition(condition: .notOnQueue(.main))
         let transferID = ClipboardTransferID.make(
             generation: generation, repIndex: repIndex, hostMinted: false)
-        let receiver: ClipboardStreamReceiver? = DispatchQueue.main.sync { self.receiver }
+        let receiver: (any ClipboardStreamReceiving)? = DispatchQueue.main.sync { self.receiver }
         Self.logger.notice(
             "Cancelling file clipboard pull \(transferID, privacy: .public) on consumer request")
         receiver?.cancel(transferID: transferID)
@@ -1687,7 +1687,7 @@ extension VsockGuestClipboardAgent: FileProviderPullProvider {
         onProgress: @escaping @Sendable (UInt64, UInt64) -> Void = { _, _ in }
     ) -> Result<String, FileProviderPullError> {
         dispatchPrecondition(condition: .notOnQueue(.main))
-        let context: (channel: VsockChannel, receiver: ClipboardStreamReceiver)? =
+        let context: (channel: VsockChannel, receiver: any ClipboardStreamReceiving)? =
             DispatchQueue.main.sync {
                 guard let promise = inboundPromise, promise.generation == generation,
                     promise.reps.indices.contains(repIndex),
@@ -1715,7 +1715,7 @@ extension VsockGuestClipboardAgent: FileProviderPullProvider {
         dispatchPrecondition(condition: .notOnQueue(.main))
         let transferID = ClipboardTransferID.makeChild(
             generation: generation, repIndex: repIndex, childSeq: childSeq, hostMinted: false)
-        let receiver: ClipboardStreamReceiver? = DispatchQueue.main.sync { self.receiver }
+        let receiver: (any ClipboardStreamReceiving)? = DispatchQueue.main.sync { self.receiver }
         Self.logger.notice(
             "Cancelling child clipboard pull \(transferID, privacy: .public) on consumer request")
         receiver?.cancel(transferID: transferID)

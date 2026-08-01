@@ -10,7 +10,7 @@ struct VsockGuestClientTests {
 
     @Test("start invokes serve closure with a connected channel")
     func startInvokesServeClosure() async throws {
-        let fastRetry: Duration = .milliseconds(50)
+        let fastRetry: TimeInterval = 0.05
         let (localFd, remoteFd) = try makeRawSocketPair()
         let remote = VsockChannel(fileDescriptor: remoteFd)
         remote.start()
@@ -18,7 +18,8 @@ struct VsockGuestClientTests {
 
         let (servedStream, continuation) = AsyncStream<Void>.makeStream()
 
-        let client = VsockGuestClient(
+        let client = makeTestClient(
+            kind: .monotonic,
             port: 12345,
             label: "test",
             retryInterval: fastRetry
@@ -35,7 +36,7 @@ struct VsockGuestClientTests {
 
     @Test("liveChannel is non-nil while serve is running and nil after serve returns")
     func liveChannelLifecycle() async throws {
-        let fastRetry: Duration = .milliseconds(50)
+        let fastRetry: TimeInterval = 0.05
         let (localFd, remoteFd) = try makeRawSocketPair()
         let remote = VsockChannel(fileDescriptor: remoteFd)
         remote.start()
@@ -43,7 +44,8 @@ struct VsockGuestClientTests {
         // Return localFd on first call, transient failure thereafter — prevents
         // reuse of a closed fd if the client retries after the remote closes.
         let callCount = AtomicInt()
-        let client = VsockGuestClient(
+        let client = makeTestClient(
+            kind: .monotonic,
             port: 12345,
             label: "test",
             retryInterval: fastRetry
@@ -76,7 +78,7 @@ struct VsockGuestClientTests {
     /// guard fires and `serve` is never called.
     @Test("stop while reconnecting aborts loop without calling serve")
     func stopMidConnectAbortBeforeServe() async throws {
-        let fastRetry: Duration = .milliseconds(50)
+        let fastRetry: TimeInterval = 0.05
         let serveCallCount = AtomicInt()
         let providerEnteredGate = DispatchSemaphore(value: 0)
         let providerReleaseGate = DispatchSemaphore(value: 0)
@@ -86,7 +88,8 @@ struct VsockGuestClientTests {
         remote.start()
         defer { remote.close() }
 
-        let client = VsockGuestClient(
+        let client = makeTestClient(
+            kind: .monotonic,
             port: 12345,
             label: "test",
             retryInterval: fastRetry
@@ -115,7 +118,7 @@ struct VsockGuestClientTests {
 
         // Await the background work by sleeping; the provider returns .success(localFd)
         // but aborted==true so serve is not invoked.
-        try await Task.sleep(for: .milliseconds(300))
+        try await Task.sleep(nanoseconds: 300_000_000)
 
         #expect(serveCallCount.value == 0)
         #expect(client.liveChannel == nil)
@@ -123,13 +126,14 @@ struct VsockGuestClientTests {
 
     @Test("stop mid-serve tears down the channel and does not re-invoke serve")
     func stopMidServe() async throws {
-        let fastRetry: Duration = .milliseconds(50)
+        let fastRetry: TimeInterval = 0.05
         let (localFd, remoteFd) = try makeRawSocketPair()
         _ = remoteFd  // keep alive; remote end closed when test exits
 
         let callCounter = CallCounter()
 
-        let client = VsockGuestClient(
+        let client = makeTestClient(
+            kind: .monotonic,
             port: 12345,
             label: "test",
             retryInterval: fastRetry
@@ -148,17 +152,18 @@ struct VsockGuestClientTests {
         // Stop while serve is in flight
         client.stop()
 
-        try await Task.sleep(for: .milliseconds(150))
+        try await Task.sleep(nanoseconds: 150_000_000)
         #expect(await callCounter.value == 1)
         #expect(client.liveChannel == nil)
     }
 
     @Test("stop before start is a no-op; subsequent start is also a no-op")
     func stopBeforeStartIsNoOp() async throws {
-        let fastRetry: Duration = .milliseconds(50)
+        let fastRetry: TimeInterval = 0.05
         let provideCounter = AtomicInt()
 
-        let client = VsockGuestClient(
+        let client = makeTestClient(
+            kind: .monotonic,
             port: 12345,
             label: "test",
             retryInterval: fastRetry
@@ -170,14 +175,14 @@ struct VsockGuestClientTests {
         client.stop()
         client.start { _ in }
 
-        try await Task.sleep(for: .milliseconds(100))
+        try await Task.sleep(nanoseconds: 100_000_000)
         #expect(provideCounter.value == 0)
         #expect(client.liveChannel == nil)
     }
 
     @Test("start is idempotent — second call before stop is a no-op")
     func startIsIdempotent() async throws {
-        let fastRetry: Duration = .milliseconds(50)
+        let fastRetry: TimeInterval = 0.05
         let (localFd, remoteFd) = try makeRawSocketPair()
         let remote = VsockChannel(fileDescriptor: remoteFd)
         remote.start()
@@ -185,7 +190,8 @@ struct VsockGuestClientTests {
 
         let provideCounter = AtomicInt()
 
-        let client = VsockGuestClient(
+        let client = makeTestClient(
+            kind: .monotonic,
             port: 12345,
             label: "test",
             retryInterval: fastRetry
@@ -206,13 +212,15 @@ struct VsockGuestClientTests {
         // Second start — no-op
         client.start { _ in }
 
-        try await Task.sleep(for: .milliseconds(100))
+        try await Task.sleep(nanoseconds: 100_000_000)
         #expect(provideCounter.value == 1)
     }
 
-    @Test("socketProvider returning transient failure triggers retry until a real fd arrives")
-    func providerTransientFailureTriggersRetry() async throws {
-        let fastRetry: Duration = .milliseconds(50)
+    @Test(
+        "socketProvider returning transient failure triggers retry until a real fd arrives",
+        arguments: EngineClockKind.allCases)
+    func providerTransientFailureTriggersRetry(kind: EngineClockKind) async throws {
+        let fastRetry: TimeInterval = 0.05
         let targetAttempt = 3
 
         let (localFd, remoteFd) = try makeRawSocketPair()
@@ -223,7 +231,8 @@ struct VsockGuestClientTests {
         let attemptCounter = AtomicInt()
         let (servedStream, continuation) = AsyncStream<Void>.makeStream()
 
-        let client = VsockGuestClient(
+        let client = makeTestClient(
+            kind: kind,
             port: 12345,
             label: "test",
             retryInterval: fastRetry
@@ -246,10 +255,11 @@ struct VsockGuestClientTests {
 
     @Test("permanent socket-provider failure halts the reconnect loop")
     func permanentFailureHaltsLoop() async throws {
-        let fastRetry: Duration = .milliseconds(50)
+        let fastRetry: TimeInterval = 0.05
         let provideCounter = AtomicInt()
 
-        let client = VsockGuestClient(
+        let client = makeTestClient(
+            kind: .monotonic,
             port: 12345,
             label: "test",
             retryInterval: fastRetry
@@ -262,7 +272,7 @@ struct VsockGuestClientTests {
         client.start { _ in }
 
         // Wait several retry intervals — if the loop kept retrying we'd see >1 calls.
-        try await Task.sleep(for: .milliseconds(300))
+        try await Task.sleep(nanoseconds: 300_000_000)
 
         #expect(provideCounter.value == 1)
         #expect(client.liveChannel == nil)
@@ -272,10 +282,11 @@ struct VsockGuestClientTests {
     /// `start` calls are no-ops — the client cannot be restarted.
     @Test("start after permanent termination is a no-op — provider is never called again")
     func startAfterPermanentTerminationIsNoOp() async throws {
-        let fastRetry: Duration = .milliseconds(50)
+        let fastRetry: TimeInterval = 0.05
         let provideCounter = AtomicInt()
 
-        let client = VsockGuestClient(
+        let client = makeTestClient(
+            kind: .monotonic,
             port: 12345,
             label: "test",
             retryInterval: fastRetry
@@ -296,7 +307,7 @@ struct VsockGuestClientTests {
         client.start { _ in }
 
         // Wait another retry window; provider count must remain 1.
-        try await Task.sleep(for: .milliseconds(300))
+        try await Task.sleep(nanoseconds: 300_000_000)
         #expect(provideCounter.value == 1)
         #expect(client.liveChannel == nil)
     }
@@ -308,7 +319,7 @@ struct VsockGuestClientTests {
 struct ClassifySocketErrnoTests {
     @Test("EAFNOSUPPORT classifies as permanent")
     func eafnosupportIsPermanent() {
-        let result = VsockGuestClient.classifySocketErrno(EAFNOSUPPORT, label: "test")
+        let result = classifySocketErrno(EAFNOSUPPORT, label: "test")
         if case .permanent = result {
         } else {
             Issue.record("Expected .permanent for EAFNOSUPPORT, got \(result)")
@@ -317,7 +328,7 @@ struct ClassifySocketErrnoTests {
 
     @Test("EPROTONOSUPPORT classifies as permanent")
     func eprotonosupportIsPermanent() {
-        let result = VsockGuestClient.classifySocketErrno(EPROTONOSUPPORT, label: "test")
+        let result = classifySocketErrno(EPROTONOSUPPORT, label: "test")
         if case .permanent = result {
         } else {
             Issue.record("Expected .permanent for EPROTONOSUPPORT, got \(result)")
@@ -326,7 +337,7 @@ struct ClassifySocketErrnoTests {
 
     @Test("EMFILE (resource exhaustion) classifies as transient")
     func emfileIsTransient() {
-        let result = VsockGuestClient.classifySocketErrno(EMFILE, label: "test")
+        let result = classifySocketErrno(EMFILE, label: "test")
         if case .transient = result {
         } else {
             Issue.record("Expected .transient for EMFILE, got \(result)")
@@ -335,7 +346,7 @@ struct ClassifySocketErrnoTests {
 
     @Test("EACCES (access control) classifies as transient — sandbox may clear")
     func eaccesIsTransient() {
-        let result = VsockGuestClient.classifySocketErrno(EACCES, label: "test")
+        let result = classifySocketErrno(EACCES, label: "test")
         if case .transient = result {
         } else {
             Issue.record("Expected .transient for EACCES, got \(result)")
@@ -344,7 +355,7 @@ struct ClassifySocketErrnoTests {
 
     @Test("errno 0 (unknown/default) classifies as transient")
     func zeroErrnoIsTransient() {
-        let result = VsockGuestClient.classifySocketErrno(0, label: "test")
+        let result = classifySocketErrno(0, label: "test")
         if case .transient = result {
         } else {
             Issue.record("Expected .transient for errno=0, got \(result)")
@@ -353,16 +364,19 @@ struct ClassifySocketErrnoTests {
 
     // MARK: - pause / resume
 
-    @Test("pause() before connect prevents the loop from invoking serve")
-    func pauseBeforeStartSuppressesConnect() async throws {
-        let fastRetry: Duration = .milliseconds(20)
+    @Test(
+        "pause() before connect prevents the loop from invoking serve",
+        arguments: EngineClockKind.allCases)
+    func pauseBeforeStartSuppressesConnect(kind: EngineClockKind) async throws {
+        let fastRetry: TimeInterval = 0.02
         let (localFd, remoteFd) = try makeRawSocketPair()
         let remote = VsockChannel(fileDescriptor: remoteFd)
         remote.start()
         defer { remote.close() }
 
         let calls = AtomicInt()
-        let client = VsockGuestClient(
+        let client = makeTestClient(
+            kind: kind,
             port: 12345,
             label: "test",
             retryInterval: fastRetry
@@ -376,7 +390,7 @@ struct ClassifySocketErrnoTests {
         client.start { _ in }
 
         // Give the loop several retry intervals to attempt a connect.
-        try await Task.sleep(for: .milliseconds(150))
+        try await Task.sleep(nanoseconds: 150_000_000)
         #expect(calls.value == 0, "Paused client should not invoke socketProvider")
     }
 
@@ -395,10 +409,11 @@ struct ClassifySocketErrnoTests {
         let providerSleepMs = 100
         let providerEntered = AtomicInt()
 
-        let client = VsockGuestClient(
+        let client = makeTestClient(
+            kind: .monotonic,
             port: 12345,
             label: "test",
-            retryInterval: .milliseconds(20)
+            retryInterval: 0.02
         ) { _, _ in
             _ = providerEntered.increment()
             // Block the synchronous provider long enough for the test to
@@ -414,7 +429,7 @@ struct ClassifySocketErrnoTests {
         client.start { _ in
             _ = serveCalled.increment()
             // Hold so the test sees the increment if the bug regresses.
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
 
         // Wait for the provider to be entered, then pause while it's mid-sleep.
@@ -424,22 +439,25 @@ struct ClassifySocketErrnoTests {
         client.pause()
 
         // Wait past the provider's sleep so connectAndServe has returned.
-        try await Task.sleep(for: .milliseconds(providerSleepMs + 100))
+        try await Task.sleep(nanoseconds: UInt64(providerSleepMs + 100) * 1_000_000)
         #expect(
             serveCalled.value == 0,
             "serve() must not run when pause() landed during connectAndServe")
     }
 
-    @Test("resume() lets the loop connect after a pre-start pause")
-    func resumeAllowsConnectAfterPause() async throws {
-        let fastRetry: Duration = .milliseconds(20)
+    @Test(
+        "resume() lets the loop connect after a pre-start pause",
+        arguments: EngineClockKind.allCases)
+    func resumeAllowsConnectAfterPause(kind: EngineClockKind) async throws {
+        let fastRetry: TimeInterval = 0.02
         let (localFd, remoteFd) = try makeRawSocketPair()
         let remote = VsockChannel(fileDescriptor: remoteFd)
         remote.start()
         defer { remote.close() }
 
         let calls = AtomicInt()
-        let client = VsockGuestClient(
+        let client = makeTestClient(
+            kind: kind,
             port: 12345,
             label: "test",
             retryInterval: fastRetry
@@ -457,7 +475,7 @@ struct ClassifySocketErrnoTests {
         }
 
         // Sanity: paused, no connect.
-        try await Task.sleep(for: .milliseconds(100))
+        try await Task.sleep(nanoseconds: 100_000_000)
         #expect(calls.value == 0)
 
         // Resume: loop wakes within retryInterval and connects.

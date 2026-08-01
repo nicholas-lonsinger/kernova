@@ -17,7 +17,7 @@ public func makeEphemeralDefaults(suiteName: String) -> UserDefaults {
     }
     defaults.removePersistentDomain(forName: suiteName)
     if let plistURL = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)
-        .first?.appending(path: "Preferences/\(suiteName).plist")
+        .first?.appendingPathComponent("Preferences/\(suiteName).plist")
     {
         try? FileManager.default.removeItem(at: plistURL)
     }
@@ -39,7 +39,7 @@ public func withEphemeralDefaults<T>(
     defer {
         defaults.removePersistentDomain(forName: suiteName)
         if let plistURL = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)
-            .first?.appending(path: "Preferences/\(suiteName).plist")
+            .first?.appendingPathComponent("Preferences/\(suiteName).plist")
         {
             try? FileManager.default.removeItem(at: plistURL)
         }

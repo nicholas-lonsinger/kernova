@@ -1012,7 +1012,8 @@
 				INFOPLIST_FILE = KernovaMacOSAgent/Info.plist;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/AgentBuildNumber.h";
 				INFOPLIST_PREPROCESS = YES;
-				MARKETING_VERSION = 0.52.0;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 0.53.0;
 				EXECUTABLE_NAME = KernovaMacOSAgent;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.macosagent;
 				PRODUCT_MODULE_NAME = KernovaMacOSAgent;
@@ -1038,7 +1039,8 @@
 				INFOPLIST_FILE = KernovaMacOSAgent/Info.plist;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/AgentBuildNumber.h";
 				INFOPLIST_PREPROCESS = YES;
-				MARKETING_VERSION = 0.52.0;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 0.53.0;
 				EXECUTABLE_NAME = KernovaMacOSAgent;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.macosagent;
 				PRODUCT_MODULE_NAME = KernovaMacOSAgent;
@@ -1054,6 +1056,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
 				MARKETING_VERSION = 0.9.1;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.macosagent.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1069,6 +1072,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
 				MARKETING_VERSION = 0.9.1;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.macosagent.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1096,7 +1100,8 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.52.0;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 0.53.0;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.macosagent.fileprovider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1127,7 +1132,8 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.52.0;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 0.53.0;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.macosagent.fileprovider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
