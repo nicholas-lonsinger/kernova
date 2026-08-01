@@ -214,6 +214,10 @@ func makeGroupedFormSectionHeader(_ text: String) -> NSTextField {
     label.font = .preferredFont(forTextStyle: .subheadline)
     label.textColor = .secondaryLabelColor
     label.isSelectable = false
+    // Required so an over-constrained ancestor (e.g. a height-capped pane
+    // hugging its content) breaks its own optional constraint instead of
+    // resolving the conflict by collapsing the text to zero height.
+    label.setContentCompressionResistancePriority(.required, for: .vertical)
     return label
 }
 
@@ -224,6 +228,7 @@ func makeGroupedFormCaption(_ text: String) -> NSTextField {
     label.textColor = .secondaryLabelColor
     label.maximumNumberOfLines = 0
     label.isSelectable = false
+    label.setContentCompressionResistancePriority(.required, for: .vertical)
     return label
 }
 
