@@ -11,6 +11,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private let splitViewController = SnapToFitSplitViewController()
     private let sidebarViewController: SidebarViewController
     private let sidebarItem: NSSplitViewItem
+    /// The detail pane, retained so the display-boot geometry of the inline
+    /// display can be measured.
+    let detailContainer: DetailContainerViewController
     private var windowStateObservation: ObservationLoop?
     private var sidebarCollapseObservation: NSKeyValueObservation?
     /// The toolbar index New VM was programmatically removed from for a
@@ -58,6 +61,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         splitViewController.addSplitViewItem(sidebarItem)
 
         let detailContainer = DetailContainerViewController(viewModel: viewModel)
+        self.detailContainer = detailContainer
         let detailItem = NSSplitViewItem(viewController: detailContainer)
         detailItem.minimumThickness = 400
         splitViewController.addSplitViewItem(detailItem)

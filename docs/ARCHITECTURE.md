@@ -29,6 +29,10 @@ Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/signing/launch mode
   window; window-specific items stay with their own controller.
 - `VMDisplayWindowController`, `ClipboardWindowController` — per VM, created and tracked by
   `AppDelegate`. `SettingsWindowController` is an app-level singleton.
+- `DisplayBootGeometryProviding` — the App→ViewModel seam for on-screen geometry. `AppDelegate`
+  conforms, resolving `displayPreference` to the pop-out window, the target screen, or the inline
+  detail container; `VMLibraryViewModel.start` consults it on a cold boot and writes the computed
+  resolution through `updateConfiguration` before the VZ configuration is built.
 
 Lifecycle commands surface on the menu bar, the sidebar context menu, and the toolbar, and all
 three take their titles from `VMInstance` display helpers (`startAction`, `stopActionMenuTitle`,

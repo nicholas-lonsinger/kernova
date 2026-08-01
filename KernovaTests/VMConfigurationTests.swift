@@ -688,6 +688,87 @@ struct VMConfigurationTests {
         #expect(decoded.displayPreference == .popOut)
     }
 
+    // MARK: - displaySizesToWindow / displayHiDPI / displayAutoResizes Tests
+
+    @Test("Display sizing defaults: match-window on, HiDPI on, auto-resize on")
+    func defaultDisplaySizingFlags() {
+        let config = VMConfiguration(name: "Test VM", guestOS: .macOS, bootMode: .macOS)
+        #expect(config.displaySizesToWindow == true)
+        #expect(config.displayHiDPI == true)
+        #expect(config.displayAutoResizes == true)
+    }
+
+    @Test("Configuration round-trips the display sizing flags")
+    func displaySizingFlagsRoundTrip() throws {
+        let config = VMConfiguration(
+            name: "Sizing VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            displaySizesToWindow: false,
+            displayHiDPI: false,
+            displayAutoResizes: false
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.displaySizesToWindow == false)
+        #expect(decoded.displayHiDPI == false)
+        #expect(decoded.displayAutoResizes == false)
+    }
+
+    @Test("Missing display sizing keys decode to the on defaults")
+    func missingDisplaySizingKeysUseDefaults() throws {
+        // `makeBaseJSON` carries none of the three keys.
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+
+        #expect(config.displaySizesToWindow == true)
+        #expect(config.displayHiDPI == true)
+        #expect(config.displayAutoResizes == true)
+    }
+
+    @Test("hotToggleFields covers displayAutoResizes")
+    func displayAutoResizesIsHotToggleable() {
+        #expect(VMConfiguration.hotToggleFields.contains(\.displayAutoResizes))
+
+        var base = VMConfiguration(name: "Test VM", guestOS: .macOS, bootMode: .macOS)
+        var modified = base
+        modified.displayAutoResizes = false
+        #expect(VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
+
+        // Match-window sizing only applies at boot, so it must not read as live.
+        base.displaySizesToWindow = false
+        modified = base
+        modified.displaySizesToWindow = true
+        #expect(!VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
+
+        // Nor HiDPI: it picks the density the next boot is configured with.
+        base.displayHiDPI = false
+        modified = base
+        modified.displayHiDPI = true
+        #expect(!VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
+    }
+
+    @Test("displayResolution reads and writes the stored trio")
+    func displayResolutionAccessesTheTrio() {
+        var config = VMConfiguration(
+            name: "Test VM", guestOS: .macOS, bootMode: .macOS,
+            displayWidth: 2560, displayHeight: 1600, displayPPI: 220)
+        #expect(config.displayResolution == DisplayBootSizing.Resolution(width: 2560, height: 1600, ppi: 220))
+
+        config.displayResolution = DisplayBootSizing.Resolution(width: 1280, height: 800, ppi: 144)
+        #expect(config.displayWidth == 1280)
+        #expect(config.displayHeight == 800)
+        #expect(config.displayPPI == 144)
+    }
+
     // MARK: - lastFullscreenDisplayID Tests
 
     @Test("Default lastFullscreenDisplayID is nil")
@@ -1053,6 +1134,9 @@ struct VMConfigurationTests {
             displayWidth: 2560,
             displayHeight: 1440,
             displayPPI: 192,
+            displaySizesToWindow: false,
+            displayHiDPI: false,
+            displayAutoResizes: false,
             displayPreference: .popOut,
             lastFullscreenDisplayID: 0xDEAD_BEEF,
             networkEnabled: false,

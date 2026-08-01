@@ -269,6 +269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         viewModel.onOpenDisplayWindow = { [weak self] instance in
             self?.openDisplayWindow(for: instance)
         }
+        viewModel.displayBootGeometryProvider = self
     }
 
     // MARK: - NSApplicationDelegate
@@ -1674,5 +1675,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         mainMenu.addItem(helpMenuItem)
 
         NSApp.mainMenu = mainMenu
+    }
+}
+
+// MARK: - DisplayBootGeometryProviding
+
+extension AppDelegate: DisplayBootGeometryProviding {
+    func displayBootSurface(for instance: VMInstance) -> DisplayBootSurface? {
+        switch instance.configuration.displayPreference {
+        case .popOut:
+            // `start` opens the display window before consulting this, and
+            // `setFrameAutosaveName` restores the saved frame at init, so the
+            // content view already carries the size the guest will fill.
+            guard let window = displayWindows[instance.instanceID]?.window,
+                let content = window.contentView
+            else { return nil }
+            return surface(pointSize: content.bounds.size, scale: window.backingScaleFactor)
+        case .fullscreen:
+            // The screen, never the window: the fullscreen transition is still
+            // in flight, so the window's frame is the pre-transition one.
+            // Fullscreen content sits below the camera housing, so the notch
+            // strip (`safeAreaInsets.top`) is not part of the surface.
+            guard let screen = targetScreen(for: instance) else { return nil }
+            var size = screen.frame.size
+            size.height -= screen.safeAreaInsets.top
+            return surface(pointSize: size, scale: screen.backingScaleFactor)
+        case .inline:
+            return mainWindowController?.detailContainer.displayBootSurface()
+        }
+    }
+
+    private func surface(pointSize: CGSize, scale: CGFloat) -> DisplayBootSurface? {
+        guard pointSize.width > 0, pointSize.height > 0 else { return nil }
+        return DisplayBootSurface(pointSize: pointSize, backingScaleFactor: scale)
     }
 }

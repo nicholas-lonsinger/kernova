@@ -109,6 +109,21 @@ final class VMSettingsViewController: NSViewController {
     private var memoryField = NSTextField()
     private var memoryStepper = NSStepper()
 
+    // Display
+    private var displayMatchWindowSwitch = NSSwitch()
+    private var displayResolutionPopUp = NSPopUpButton()
+    private var displayWidthField = NSTextField()
+    private var displayHeightField = NSTextField()
+    private var displayHiDPISwitch = NSSwitch()
+    private var displayAutoResizeSwitch = NSSwitch()
+    /// Caption naming the resolution the guest will boot at.
+    private var displayResolutionCaption = NSTextField()
+    /// Orange "takes effect on next start" caption, shown only while read-only.
+    private var displayRestartCaption = NSTextField()
+    /// Set while the user has explicitly chosen Custom, so the popup doesn't
+    /// snap back to a preset the current size happens to match.
+    private var displayResolutionIsCustom = false
+
     // Storage Disks
     private var storageListStack = NSStackView()
     private var attachStorageButton = NSButton()
@@ -419,8 +434,11 @@ extension VMSettingsViewController {
         renderedSharedRows = nil
         renderedAudioWarning = nil
 
+        displayResolutionIsCustom = false
+
         addSection(buildGeneralSection())
         addSection(buildResourcesSection())
+        addSection(buildDisplaySection())
         addSection(buildStorageSection())
         addSection(buildRemovableMediaSection())
         addSection(buildSharedDirectoriesSection())
@@ -604,6 +622,124 @@ extension VMSettingsViewController {
                     )
                 ]), card,
         ])
+    }
+
+    // MARK: Display
+
+    /// Base ("looks like") sizes offered by the Resolution popup.
+    private static let displayResolutionPresets: [(width: Int, height: Int)] = [
+        (1280, 800), (1440, 900), (1680, 1050), (1920, 1080), (1920, 1200),
+        (2560, 1440), (2560, 1600),
+    ]
+
+    /// Menu tag packing a preset's dimensions.
+    private static func displayPresetTag(width: Int, height: Int) -> Int {
+        width * 10_000 + height
+    }
+
+    /// Negative so it can't collide with a packed size — nor with the untagged
+    /// separator that precedes it, which `selectItem(withTag: 0)` would find first.
+    private static let displayCustomTag = -1
+
+    private func buildDisplaySection() -> NSView {
+        let isMacOS = instance.configuration.guestOS == .macOS
+        displayMatchWindowSwitch = makeSwitch(action: #selector(displayMatchWindowToggled))
+        displayResolutionPopUp = makeDisplayResolutionPopUp()
+        displayWidthField = makeDisplaySizeField()
+        displayHeightField = makeDisplaySizeField()
+        displayHiDPISwitch = makeSwitch(action: #selector(displayHiDPIToggled))
+        displayAutoResizeSwitch = makeSwitch(action: #selector(displayAutoResizeToggled))
+        persistentLockableControls += [
+            displayMatchWindowSwitch, displayResolutionPopUp, displayWidthField, displayHeightField,
+        ]
+
+        var rows: [NSView] = [
+            // Deliberately outside `persistentLockableControls`: the flag lives on
+            // the display view, so it is legal to flip while the VM runs.
+            makeToggleRowWithInfo(
+                "Automatically resize with window", control: displayAutoResizeSwitch,
+                paragraphs: Self.displayAutoResizeInfo(isMacOS: isMacOS)),
+            makeToggleRowWithInfo(
+                "Size display to fit window at startup", control: displayMatchWindowSwitch,
+                paragraphs: [
+                    .body(
+                        "Each cold start sizes the guest display to the window or screen it opens in, so the picture fills it without scaling."
+                    ),
+                    .body(
+                        "A VM resumed from saved state keeps the resolution it was saved with — VZ restores only into the configuration it was suspended from."
+                    ),
+                ]),
+            makeGroupedFormCardRow("Resolution", control: displayResolutionPopUp),
+            makeGroupedFormCardRow("Width", control: displayWidthField),
+            makeGroupedFormCardRow("Height", control: displayHeightField),
+        ]
+        if isMacOS {
+            persistentLockableControls.append(displayHiDPISwitch)
+            rows.append(
+                makeToggleRowWithInfo(
+                    "HiDPI (Retina)", control: displayHiDPISwitch,
+                    paragraphs: [
+                        .body(
+                            "Doubles the pixel count and raises the reported pixel density, so the guest renders Retina-sharp at the size above."
+                        ),
+                        .body(
+                            "While the display is sized to fit the window, it fills the window at your screen's Retina scale instead of 1×."
+                        ),
+                    ]))
+        }
+        displayResolutionCaption = makeGroupedFormCaption("")
+        let restart = makeGroupedFormCaption("Takes effect on next start.")
+        restart.textColor = .systemOrange
+        restart.isHidden = true
+        displayRestartCaption = restart
+
+        return makeSection([
+            makeHeader("Display", lockable: true),
+            makeGroupedFormCard(rows: rows),
+            displayResolutionCaption,
+            displayRestartCaption,
+        ])
+    }
+
+    /// Info copy for the auto-resize row, whose consequences differ by guest OS.
+    private static func displayAutoResizeInfo(isMacOS: Bool) -> [InfoPopoverParagraph] {
+        if isMacOS {
+            return [
+                .body(
+                    "Lets the guest change its own resolution to match the window as you resize it, instead of scaling the boot resolution. Requires macOS 14 or later in the guest — earlier guests keep the resolution set at startup and scale it to fit."
+                ),
+                .body("Takes effect immediately, including while the VM is running."),
+            ]
+        }
+        return [
+            .body(
+                "Lets the guest change its own resolution to match the window as you resize it. Some guests may reset certain display settings (such as the scaling factor) whenever the resolution changes."
+            ),
+            .body("Takes effect immediately, including while the VM is running."),
+        ]
+    }
+
+    private func makeDisplayResolutionPopUp() -> NSPopUpButton {
+        let popUp = NSPopUpButton()
+        popUp.controlSize = .small
+        for preset in Self.displayResolutionPresets {
+            popUp.addItem(withTitle: "\(preset.width) × \(preset.height)")
+            popUp.lastItem?.tag = Self.displayPresetTag(width: preset.width, height: preset.height)
+        }
+        popUp.menu?.addItem(.separator())
+        popUp.addItem(withTitle: "Custom")
+        popUp.lastItem?.tag = Self.displayCustomTag
+        popUp.target = self
+        popUp.action = #selector(displayResolutionChanged)
+        return popUp
+    }
+
+    private func makeDisplaySizeField() -> NSTextField {
+        let field = NSTextField()
+        field.alignment = .right
+        field.delegate = self
+        field.widthAnchor.constraint(equalToConstant: 64).isActive = true
+        return field
     }
 
     // MARK: Storage Disks
@@ -1059,6 +1195,7 @@ extension VMSettingsViewController {
 
         refreshGeneral()
         refreshResources()
+        refreshDisplay()
         refreshNetwork()
         refreshAudio()
         refreshGuestAgent()
@@ -1168,6 +1305,74 @@ extension VMSettingsViewController {
         memoryStepper.maxValue = Double(os.maxMemoryInGB)
         memoryStepper.integerValue = instance.configuration.memorySizeInGB
         memoryField.integerValue = instance.configuration.memorySizeInGB
+    }
+
+    /// The density the user asked for, which a match-window boot applies to the
+    /// size it computes.
+    ///
+    /// Gated on the guest OS: a virtio scanout carries no density, so a Linux
+    /// guest's flag never reaches VZ and must not rewrite its resolution.
+    private var displayHiDPIIntent: Bool {
+        instance.configuration.guestOS == .macOS && instance.configuration.displayHiDPI
+    }
+
+    /// Whether the stored resolution — what the VM boots at — reads as HiDPI.
+    ///
+    /// The materialized counterpart to `displayHiDPIIntent`; the two diverge
+    /// only in match mode, where the trio is the previous boot's artifact.
+    private var displayResolutionIsHiDPI: Bool {
+        instance.configuration.guestOS == .macOS
+            && DisplayBootSizing.isHiDPI(ppi: instance.configuration.displayPPI)
+    }
+
+    /// The "looks like" size shown in the Width/Height fields — half the stored
+    /// pixel count while the stored resolution is HiDPI.
+    private var displayBaseSize: (width: Int, height: Int) {
+        let config = instance.configuration
+        guard displayResolutionIsHiDPI else { return (config.displayWidth, config.displayHeight) }
+        return (config.displayWidth / 2, config.displayHeight / 2)
+    }
+
+    private func refreshDisplay() {
+        let config = instance.configuration
+        let base = displayBaseSize
+        displayMatchWindowSwitch.state = config.displaySizesToWindow ? .on : .off
+        // Intent, not the stored density: in match mode the two legitimately
+        // differ until the next boot materializes the trio.
+        displayHiDPISwitch.state = displayHiDPIIntent ? .on : .off
+        displayAutoResizeSwitch.state = config.displayAutoResizes ? .on : .off
+        displayWidthField.integerValue = base.width
+        displayHeightField.integerValue = base.height
+
+        let presetTag = Self.displayPresetTag(width: base.width, height: base.height)
+        let matchesPreset =
+            !displayResolutionIsCustom
+            && displayResolutionPopUp.menu?.items.contains { $0.tag == presetTag } == true
+        displayResolutionPopUp.selectItem(withTag: matchesPreset ? presetTag : Self.displayCustomTag)
+
+        // Match mode computes the size at start, so the size controls are inert
+        // (disabled, not hidden). HiDPI stays live — it picks the scale that
+        // computation runs at.
+        let manualEnabled = !isReadOnly && !config.displaySizesToWindow
+        displayResolutionPopUp.isEnabled = manualEnabled
+        displayWidthField.isEnabled = manualEnabled
+        displayHeightField.isEnabled = manualEnabled
+
+        displayResolutionCaption.stringValue = displayResolutionCaptionText()
+        displayRestartCaption.isHidden = !isReadOnly
+    }
+
+    private func displayResolutionCaptionText() -> String {
+        let config = instance.configuration
+        var text = "Boots at \(config.displayWidth) × \(config.displayHeight) pixels"
+        if displayResolutionIsHiDPI {
+            let base = displayBaseSize
+            text += " (looks like \(base.width) × \(base.height))"
+        }
+        if config.displaySizesToWindow {
+            return "\(text), until the next start resizes it to the window."
+        }
+        return "\(text)."
     }
 
     private func refreshNetwork() {
@@ -1540,6 +1745,88 @@ extension VMSettingsViewController {
 
     @objc private func networkToggled() {
         writeConfig { $0.networkEnabled = networkSwitch.state == .on }
+    }
+
+    // MARK: Display
+
+    @objc private func displayMatchWindowToggled() {
+        let sizesToWindow = displayMatchWindowSwitch.state == .on
+        let hiDPI = displayHiDPIIntent
+        writeConfig { config in
+            config.displaySizesToWindow = sizesToWindow
+            // Leaving match mode promotes the trio from the last boot's artifact
+            // to the resolution the VM boots at, so it has to carry the intent
+            // set while nothing was reconciling it.
+            guard !sizesToWindow, hiDPI != DisplayBootSizing.isHiDPI(ppi: config.displayPPI) else {
+                return
+            }
+            config.displayResolution = DisplayBootSizing.rescaled(
+                config.displayResolution, toHiDPI: hiDPI)
+        }
+        // The write flips the manual controls' enablement; refresh in case the
+        // value was already what the model held.
+        refreshDisplay()
+    }
+
+    @objc private func displayResolutionChanged() {
+        let tag = displayResolutionPopUp.selectedTag()
+        guard
+            let preset = Self.displayResolutionPresets.first(where: {
+                Self.displayPresetTag(width: $0.width, height: $0.height) == tag
+            })
+        else {
+            displayResolutionIsCustom = true
+            return
+        }
+        displayResolutionIsCustom = false
+        // Route through the field-edit path so preset and typed sizes share one
+        // clamp-and-write.
+        displayWidthField.integerValue = preset.width
+        displayHeightField.integerValue = preset.height
+        applyDisplaySizeFieldEdit()
+    }
+
+    @objc private func displayHiDPIToggled() {
+        let hiDPI = displayHiDPISwitch.state == .on
+        let sizesToWindow = instance.configuration.displaySizesToWindow
+        writeConfig { config in
+            config.displayHiDPI = hiDPI
+            // In match mode the trio is the last boot's artifact; the next boot
+            // recomputes it at the scale this flag picks.
+            guard !sizesToWindow else { return }
+            config.displayResolution = DisplayBootSizing.rescaled(
+                config.displayResolution, toHiDPI: hiDPI)
+        }
+        // The size fields are derived from the trio this may have rewritten;
+        // reconcile them now rather than on the configuration observation.
+        refreshDisplay()
+    }
+
+    @objc private func displayAutoResizeToggled() {
+        writeConfig { $0.displayAutoResizes = displayAutoResizeSwitch.state == .on }
+    }
+
+    /// Clamps the typed base size, scales it for the current HiDPI state, and
+    /// persists it.
+    private func applyDisplaySizeFieldEdit() {
+        // The fields are only editable in manual mode, where intent and stored
+        // density agree; pairing with the stored one keeps the write the exact
+        // inverse of the `displayBaseSize` that filled them.
+        let hiDPI = displayResolutionIsHiDPI
+        // A HiDPI base is doubled before it reaches VZ, so it clamps to half
+        // the pixel ceiling.
+        let base = DisplayBootSizing.clamped(
+            width: displayWidthField.integerValue, height: displayHeightField.integerValue,
+            ppi: DisplayBootSizing.standardPixelsPerInch,
+            maximum: hiDPI ? DisplayBootSizing.maximumDimension / 2 : DisplayBootSizing.maximumDimension)
+        writeDisplayResolution(hiDPI ? DisplayBootSizing.doubled(base) : base)
+    }
+
+    private func writeDisplayResolution(_ resolution: DisplayBootSizing.Resolution) {
+        writeConfig { $0.displayResolution = resolution }
+        // A clamped-back-to-current edit writes nothing, so the fields and popup
+        // are reconciled here rather than by the configuration observation.
+        refreshDisplay()
     }
 
     @objc private func audioInputToggled() {
@@ -2104,6 +2391,8 @@ extension VMSettingsViewController: NSTextFieldDelegate {
             applyCPUFieldEdit()
         case memoryField:
             applyMemoryFieldEdit()
+        case displayWidthField, displayHeightField:
+            applyDisplaySizeFieldEdit()
         default:
             break
         }

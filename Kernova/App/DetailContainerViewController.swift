@@ -151,11 +151,29 @@ final class DetailContainerViewController: NSViewController {
 
     private func removeBackingView(for id: UUID) {
         guard let backing = backingViews.removeValue(forKey: id) else { return }
-        backing.update(virtualMachine: nil, isPaused: false, transitionText: nil)
+        let autoResizes =
+            viewModel.instances.first { $0.id == id }?.configuration.displayAutoResizes ?? true
+        backing.update(
+            virtualMachine: nil, isPaused: false, transitionText: nil,
+            automaticallyReconfiguresDisplay: autoResizes)
         backing.removeFromSuperview()
         if activeBackingViewID == id {
             activeBackingViewID = nil
         }
+    }
+
+    // MARK: - Display Boot Geometry
+
+    /// The area an inline display will fill, or `nil` while the pane has no
+    /// window or has not been laid out yet.
+    ///
+    /// Measures `contentContainer`, which carries the same top-safe-area
+    /// constraints a backing view gets.
+    func displayBootSurface() -> DisplayBootSurface? {
+        guard let window = view.window else { return nil }
+        let size = contentContainer.bounds.size
+        guard size.width > 0, size.height > 0 else { return nil }
+        return DisplayBootSurface(pointSize: size, backingScaleFactor: window.backingScaleFactor)
     }
 
     // MARK: - State Observation
@@ -169,6 +187,7 @@ final class DetailContainerViewController: NSViewController {
                 _ = self.viewModel.selectedInstance?.displayMode
                 _ = self.viewModel.selectedInstance?.detailPaneMode
                 _ = self.viewModel.selectedInstance?.virtualMachine
+                _ = self.viewModel.selectedInstance?.configuration.displayAutoResizes
                 // Track instances with backing views so a stop or a move out of
                 // inline mode is detected, and the array itself for adds/removes.
                 _ = self.viewModel.instances.count
@@ -177,6 +196,7 @@ final class DetailContainerViewController: NSViewController {
                         _ = inst.status
                         _ = inst.virtualMachine
                         _ = inst.displayMode
+                        _ = inst.configuration.displayAutoResizes
                     }
                 }
             },
@@ -233,7 +253,8 @@ final class DetailContainerViewController: NSViewController {
         backing.update(
             virtualMachine: vm,
             isPaused: instance.status == .paused,
-            transitionText: instance.status.transitionLabel
+            transitionText: instance.status.transitionLabel,
+            automaticallyReconfiguresDisplay: instance.configuration.displayAutoResizes
         )
     }
 }

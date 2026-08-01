@@ -30,7 +30,7 @@ Kernova is a **pure-AppKit** app managing macOS and Linux guests via `Virtualiza
 
 The app **runs under the App Sandbox in every build configuration** and targets the **Mac App Store** — write code that lives within both ([docs/SANDBOX.md](docs/SANDBOX.md)):
 
-- **User-picked files persist their grant as an app-scoped security bookmark** stored next to the raw path (`SecurityScopedBookmark.capture` at the pick site), resolved through the RAII `ScopedAccess`. A dead bookmark falls through to the raw path and re-picking mints a fresh one, so **never add special-case handling for pre-sandbox data** — no decode-time migrations, no `Container Migration.plist`.
+- **User-picked files persist their grant as an app-scoped security bookmark** stored next to the raw path (`SecurityScopedBookmark.capture` at the pick site), resolved through the RAII `ScopedAccess`. A dead bookmark falls through to the raw path and re-picking mints a fresh one — bookmarks never need repair or migration handling.
 - **App-internal state belongs in the container** — `.applicationSupportDirectory`, `FileManager.temporaryDirectory`, and the app group all resolve correctly there. Never build paths off `homeDirectoryForCurrentUser` expecting the *real* home; it is the container home, so ask the system for the folder (e.g. `.downloadsDirectory`).
 - **Prefer in-process Apple framework APIs over shelling out** to command-line tools (`Process` / `NSTask` → `/usr/bin/ditto`, `unzip`, `tar`, …), which a sandboxed app cannot usefully spawn — and over entitlements unavailable to MAS apps.
 
@@ -77,6 +77,10 @@ guard let value = knownGoodAPI("compile-time-constant") else {
 ```
 
 Never force-unwrap (`!`) — it crashes end users — and never return a fallback silently, without `assertionFailure`; that masks bugs during development.
+
+### Persisted Data
+
+Persisted formats are current-only — no migration code. Back-compat shims, decode-time back-fills, schema version flags, old-format fallbacks, and decode defaults that differ from what new instances get are all out. Adding a field to a persisted `Codable` type is `decodeIfPresent ?? default` with one uniform default, and nothing else. Migration code takes the maintainer's explicit sign-off, given only for old-shape data confirmed to exist (shipped in a release, or found on disk).
 
 ### File Operations
 

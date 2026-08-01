@@ -1085,6 +1085,45 @@ struct ConfigurationBuilderTests {
         #expect(display.pixelsPerInch == 220)
     }
 
+    @Test("HiDPI-shaped display values reach VZ unmodified")
+    func macOSDisplayPassesHiDPIValuesThrough() throws {
+        // The settings switch stores the already-doubled pixel count, so the
+        // builder must not scale it again.
+        let vz = VZVirtualMachineConfiguration()
+        var config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
+        let retina = DisplayBootSizing.doubled(
+            DisplayBootSizing.Resolution(
+                width: 1440, height: 900, ppi: DisplayBootSizing.standardPixelsPerInch))
+        config.displayWidth = retina.width
+        config.displayHeight = retina.height
+        config.displayPPI = retina.ppi
+        ConfigurationBuilder().configureMacOSDevicesForTesting(vz, config: config)
+
+        let graphics = try #require(vz.graphicsDevices.first as? VZMacGraphicsDeviceConfiguration)
+        let display = try #require(graphics.displays.first)
+        #expect(display.widthInPixels == 2880)
+        #expect(display.heightInPixels == 1800)
+        #expect(display.pixelsPerInch == DisplayBootSizing.hiDPIPixelsPerInch)
+    }
+
+    @Test("EFI scanout carries the configured display size")
+    func efiScanoutMatchesConfiguration() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        var config = makeLinuxConfig()
+        config.displayWidth = 1680
+        config.displayHeight = 1050
+        let result = try ConfigurationBuilder().assemble(
+            from: config, bundleURL: bundleURL, validate: false)
+
+        let graphics = try #require(
+            result.configuration.graphicsDevices.first as? VZVirtioGraphicsDeviceConfiguration)
+        let scanout = try #require(graphics.scanouts.first)
+        #expect(scanout.widthInPixels == 1680)
+        #expect(scanout.heightInPixels == 1050)
+    }
+
     @Test("EFI guests get only the USB pointing/keyboard devices")
     func efiInputDevicesAreUSBOnly() throws {
         let bundleURL = try makeTempBundle(withDisk: true)

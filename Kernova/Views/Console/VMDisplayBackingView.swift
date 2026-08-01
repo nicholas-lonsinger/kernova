@@ -17,6 +17,10 @@ final class VMDisplayBackingView: NSView {
     /// Called when the user taps the resume button on the pause overlay.
     var onResume: (() -> Void)?
 
+    /// Mirrors `machineView.automaticallyReconfiguresDisplay`, so ``update``
+    /// writes the framework property only when it actually changes.
+    private var automaticallyReconfiguresDisplay = true
+
     private let pauseOverlay: NSVisualEffectView
     private let pauseButton: NSButton
     private let transitionOverlay: NSVisualEffectView
@@ -64,9 +68,17 @@ final class VMDisplayBackingView: NSView {
     ///   - virtualMachine: The VM to display, or `nil` to clear.
     ///   - isPaused: Whether the pause overlay should be visible.
     ///   - transitionText: If non-nil, shows the transition overlay with this label (e.g. "Suspending…").
-    func update(virtualMachine: VZVirtualMachine?, isPaused: Bool, transitionText: String?) {
+    ///   - automaticallyReconfiguresDisplay: Whether the guest display follows the view as it resizes.
+    func update(
+        virtualMachine: VZVirtualMachine?, isPaused: Bool, transitionText: String?,
+        automaticallyReconfiguresDisplay: Bool
+    ) {
         if machineView.virtualMachine !== virtualMachine {
             machineView.virtualMachine = virtualMachine
+        }
+        if self.automaticallyReconfiguresDisplay != automaticallyReconfiguresDisplay {
+            self.automaticallyReconfiguresDisplay = automaticallyReconfiguresDisplay
+            machineView.automaticallyReconfiguresDisplay = automaticallyReconfiguresDisplay
         }
         setOverlay(pauseOverlay, visible: isPaused, flag: &pauseVisible)
         setOverlay(transitionOverlay, visible: transitionText != nil, flag: &transitionVisible)

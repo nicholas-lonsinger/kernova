@@ -1102,6 +1102,143 @@ struct VMLibraryViewModelTests {
         #expect(instance.status == .paused)
     }
 
+    // MARK: - Match-Window Boot Resolution
+
+    /// Hands `start` a fixed surface, standing in for the window/screen geometry
+    /// `AppDelegate` measures.
+    @MainActor
+    private final class FakeDisplayBootGeometryProvider: DisplayBootGeometryProviding {
+        var surface: DisplayBootSurface?
+        private(set) var callCount = 0
+
+        init(surface: DisplayBootSurface?) {
+            self.surface = surface
+        }
+
+        func displayBootSurface(for instance: VMInstance) -> DisplayBootSurface? {
+            callCount += 1
+            return surface
+        }
+    }
+
+    /// A VM whose display is sized to its window at every cold start, at the
+    /// screen's scale — both defaults.
+    private func makeMatchWindowInstance(guestOS: VMGuestOS = .macOS) -> VMInstance {
+        makeInstance(guestOS: guestOS)
+    }
+
+    private static let retinaSurface = DisplayBootSurface(
+        pointSize: CGSize(width: 1400, height: 880), backingScaleFactor: 2)
+
+    @Test("A match-window cold boot persists the computed resolution before starting")
+    func matchWindowWritesResolutionBeforeStart() async {
+        let (viewModel, storage, _, virtService, _) = makeViewModel()
+        let provider = FakeDisplayBootGeometryProvider(surface: Self.retinaSurface)
+        viewModel.displayBootGeometryProvider = provider
+        let instance = makeMatchWindowInstance()
+        viewModel.instances.append(instance)
+
+        await viewModel.start(instance)
+
+        #expect(provider.callCount == 1)
+        // The VZ configuration is built inside `start`, so the values must
+        // already be on the instance when the service is called.
+        #expect(virtService.configurationAtStart?.displayWidth == 2800)
+        #expect(virtService.configurationAtStart?.displayHeight == 1760)
+        #expect(virtService.configurationAtStart?.displayPPI == DisplayBootSizing.hiDPIPixelsPerInch)
+        #expect(instance.configuration.displayWidth == 2800)
+        // Persisted, so a later restore sees the same geometry.
+        #expect(storage.bundles[instance.bundleURL]?.displayWidth == 2800)
+    }
+
+    @Test("A match-window boot with HiDPI off fills the window at 1×")
+    func matchWindowAtStandardDensityWhenHiDPIOff() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let provider = FakeDisplayBootGeometryProvider(surface: Self.retinaSurface)
+        viewModel.displayBootGeometryProvider = provider
+        let instance = makeMatchWindowInstance()
+        instance.configuration.displayHiDPI = false
+        viewModel.instances.append(instance)
+
+        await viewModel.start(instance)
+
+        // Same points as `matchWindowWritesResolutionBeforeStart`, measured at
+        // 1× instead of the surface's 2×.
+        #expect(virtService.configurationAtStart?.displayWidth == 1400)
+        #expect(virtService.configurationAtStart?.displayHeight == 880)
+        #expect(virtService.configurationAtStart?.displayPPI == DisplayBootSizing.standardPixelsPerInch)
+    }
+
+    @Test("A Linux match-window boot ignores the screen scale")
+    func matchWindowIsOneToOneForLinux() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        // Held in a local: the view model's reference is weak.
+        let provider = FakeDisplayBootGeometryProvider(surface: Self.retinaSurface)
+        viewModel.displayBootGeometryProvider = provider
+        let instance = makeMatchWindowInstance(guestOS: .linux)
+        viewModel.instances.append(instance)
+
+        await viewModel.start(instance)
+
+        // A virtio scanout has no density channel, so points map to pixels 1:1.
+        #expect(virtService.configurationAtStart?.displayWidth == 1400)
+        #expect(virtService.configurationAtStart?.displayHeight == 880)
+        #expect(virtService.configurationAtStart?.displayPPI == DisplayBootSizing.standardPixelsPerInch)
+    }
+
+    @Test("A saved-state VM keeps its resolution so the restore stays valid")
+    func matchWindowSkippedWhenSaveFileExists() async throws {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let provider = FakeDisplayBootGeometryProvider(surface: Self.retinaSurface)
+        viewModel.displayBootGeometryProvider = provider
+        let instance = makeMatchWindowInstance()
+        try FileManager.default.createDirectory(
+            at: instance.bundleURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
+        try Data().write(to: instance.saveFileURL)
+        viewModel.instances.append(instance)
+
+        await viewModel.start(instance)
+
+        // The surface is never even measured — the save file settles it.
+        #expect(provider.callCount == 0)
+        #expect(virtService.configurationAtStart?.displayWidth == 1920)
+        #expect(virtService.configurationAtStart?.displayHeight == 1200)
+    }
+
+    @Test("A VM with match-window off boots at its configured resolution")
+    func matchWindowOffLeavesResolutionAlone() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let provider = FakeDisplayBootGeometryProvider(surface: Self.retinaSurface)
+        viewModel.displayBootGeometryProvider = provider
+        let instance = makeInstance()
+        instance.configuration.displaySizesToWindow = false
+        viewModel.instances.append(instance)
+
+        await viewModel.start(instance)
+
+        #expect(provider.callCount == 0)
+        #expect(virtService.configurationAtStart?.displayWidth == 1920)
+        #expect(virtService.configurationAtStart?.displayHeight == 1200)
+    }
+
+    @Test("An unmeasurable surface boots at the configured resolution")
+    func matchWindowWithoutSurfaceStillStarts() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let provider = FakeDisplayBootGeometryProvider(surface: nil)
+        viewModel.displayBootGeometryProvider = provider
+        let instance = makeMatchWindowInstance()
+        viewModel.instances.append(instance)
+
+        await viewModel.start(instance)
+
+        #expect(provider.callCount == 1)
+        #expect(virtService.startCallCount == 1)
+        #expect(instance.status == .running)
+        #expect(instance.configuration.displayWidth == 1920)
+        #expect(instance.configuration.displayHeight == 1200)
+    }
+
     // MARK: - Error Handling
 
     @Test("start presents error on service failure")

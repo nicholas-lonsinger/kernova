@@ -76,6 +76,10 @@ final class VMLibraryViewModel {
     /// allowing the app delegate to pre-create the display window with a spinner.
     @ObservationIgnored var onOpenDisplayWindow: ((VMInstance) -> Void)?
 
+    /// Measures the window or screen a starting VM's display will occupy, for
+    /// `displaySizesToWindow`.
+    @ObservationIgnored weak var displayBootGeometryProvider: (any DisplayBootGeometryProviding)?
+
     // MARK: - Directory Watcher
 
     private var directoryWatcher: VMDirectoryWatcher?
@@ -314,6 +318,7 @@ final class VMLibraryViewModel {
         if instance.configuration.displayPreference != .inline {
             onOpenDisplayWindow?(instance)
         }
+        applyMatchWindowBootResolution(to: instance)
         do {
             try await lifecycle.start(instance, bootIntoRecovery: bootIntoRecovery)
         } catch {
@@ -327,6 +332,28 @@ final class VMLibraryViewModel {
                 presentError(error)
             }
         }
+    }
+
+    /// Resizes a cold-booting VM's display to the surface it is about to appear
+    /// on, persisting the result before the VZ configuration is built.
+    ///
+    /// Left alone when a save file exists: VZ restores only into a configuration
+    /// identical to the saved one, and a mismatch silently discards the save.
+    private func applyMatchWindowBootResolution(to instance: VMInstance) {
+        guard instance.configuration.displaySizesToWindow, !instance.hasSaveFile else { return }
+        guard let surface = displayBootGeometryProvider?.displayBootSurface(for: instance) else {
+            Self.logger.notice(
+                "No measurable display surface for '\(instance.name, privacy: .public)' — booting at the configured resolution"
+            )
+            return
+        }
+        // A virtio scanout carries no pixel density, so a Linux guest renders
+        // 2× pixels at half size with nothing to compensate: measure in points.
+        let hiDPI = instance.configuration.guestOS == .macOS && instance.configuration.displayHiDPI
+        let scale = hiDPI ? surface.backingScaleFactor : 1
+        let resolution = DisplayBootSizing.resolution(
+            fittingPoints: surface.pointSize, backingScaleFactor: scale)
+        updateConfiguration(of: instance) { $0.displayResolution = resolution }
     }
 
     /// The storage disk `id` refers to, resolving the synthesized main disk
