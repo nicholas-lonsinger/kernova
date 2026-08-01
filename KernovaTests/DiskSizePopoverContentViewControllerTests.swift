@@ -19,7 +19,7 @@ struct DiskSizePopoverContentViewControllerTests {
         let vc = make(headline: "X", caption: "Y", sizes: sizes, defaultGB: 50)
         vc.loadViewIfNeeded()
 
-        let popup = findPopUpButton(in: vc.view)
+        let popup = firstSubview(NSPopUpButton.self, in: vc.view)
         guard let popup else {
             Issue.record("Expected an NSPopUpButton in the loaded view")
             return
@@ -82,7 +82,7 @@ struct DiskSizePopoverContentViewControllerTests {
         vc.delegate = delegate
         vc.loadViewIfNeeded()
 
-        let popup = findPopUpButton(in: vc.view)
+        let popup = firstSubview(NSPopUpButton.self, in: vc.view)
         popup?.selectItem(withTag: 100)
 
         guard let createButton = findButton(titled: "Create", in: vc.view) else {
@@ -124,14 +124,5 @@ struct DiskSizePopoverContentViewControllerTests {
         func diskSizePopoverDidCancel(_ vc: DiskSizePopoverContentViewController) {
             cancelCount += 1
         }
-    }
-
-    @MainActor
-    private func findPopUpButton(in view: NSView) -> NSPopUpButton? {
-        if let popup = view as? NSPopUpButton { return popup }
-        for subview in view.subviews {
-            if let popup = findPopUpButton(in: subview) { return popup }
-        }
-        return nil
     }
 }

@@ -12,9 +12,9 @@ struct IPSWSelectionContentViewControllerTests {
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        #expect(radio(titled: "Download Latest", in: vc.view)?.state == .on)
-        #expect(radio(titled: "Choose a Version…", in: vc.view)?.state == .off)
-        #expect(radio(titled: "Choose Local File…", in: vc.view)?.state == .off)
+        #expect(findButton(titled: "Download Latest", in: vc.view)?.state == .on)
+        #expect(findButton(titled: "Choose a Version…", in: vc.view)?.state == .off)
+        #expect(findButton(titled: "Choose Local File…", in: vc.view)?.state == .off)
         #expect(
             findLabel(withText: wizardAbbreviateWithTilde(vm.ipswDownloadPath), in: vc.view) != nil)
     }
@@ -32,8 +32,8 @@ struct IPSWSelectionContentViewControllerTests {
         await vc.latestImageTaskForTesting?.value
 
         #expect(
-            findLabelContaining(
-                "macOS 26.5.2  ·  Build 25F84  ·  \(DataFormatters.formatBytes(19_772_077_142))",
+            findLabel(
+                containing: "macOS 26.5.2  ·  Build 25F84  ·  \(DataFormatters.formatBytes(19_772_077_142))",
                 in: vc.view) != nil)
         // The destination stays on the badge's second line.
         #expect(
@@ -53,7 +53,7 @@ struct IPSWSelectionContentViewControllerTests {
         vc.viewDidAppear()
         await vc.latestImageTaskForTesting?.value
 
-        #expect(findLabelContaining("macOS 26.5.2  ·  Build 25F84", in: vc.view) != nil)
+        #expect(findLabel(containing: "macOS 26.5.2  ·  Build 25F84", in: vc.view) != nil)
     }
 
     @Test("A failed lookup leaves the destination-only badge the step always had")
@@ -70,7 +70,7 @@ struct IPSWSelectionContentViewControllerTests {
 
         #expect(
             findLabel(withText: wizardAbbreviateWithTilde(vm.ipswDownloadPath), in: vc.view) != nil)
-        #expect(findLabelContaining("Build", in: vc.view) == nil)
+        #expect(findLabel(containing: "Build", in: vc.view) == nil)
     }
 
     @Test("Overwrite warning shows when a file exists; Use Existing switches to local file")
@@ -112,7 +112,7 @@ struct IPSWSelectionContentViewControllerTests {
         await vc.adoptTaskForTesting?.value
 
         #expect(vm.ipswSelection == .catalogVersion(entry))
-        #expect(findLabelContaining("macOS 14.2 (23C64)", in: vc.view) != nil)
+        #expect(findLabel(containing: "macOS 14.2 (23C64)", in: vc.view) != nil)
 
         // The user can still override, which is what "Use It Anyway" is for.
         findButton(titled: "Use It Anyway", in: vc.view)?.performClick(nil)
@@ -135,7 +135,7 @@ struct IPSWSelectionContentViewControllerTests {
         await vc.adoptTaskForTesting?.value
 
         #expect(vm.ipswSource == .downloadLatest)
-        #expect(findLabelContaining("isn't a usable restore image", in: vc.view) != nil)
+        #expect(findLabel(containing: "isn't a usable restore image", in: vc.view) != nil)
         #expect(findButton(titled: "Use It Anyway", in: vc.view) == nil)
         #expect(findButton(titled: "Download & Replace", in: vc.view) != nil)
     }
@@ -162,14 +162,6 @@ struct IPSWSelectionContentViewControllerTests {
 
         // Adopting here would leave the radios and the model disagreeing.
         #expect(vm.ipswSelection == .downloadLatest)
-    }
-
-    private func findLabelContaining(_ text: String, in view: NSView) -> NSTextField? {
-        if let field = view as? NSTextField, field.stringValue.contains(text) { return field }
-        for subview in view.subviews {
-            if let found = findLabelContaining(text, in: subview) { return found }
-        }
-        return nil
     }
 
     @Test("Download & Replace confirms the overwrite and dismisses the banner")
@@ -211,12 +203,12 @@ struct IPSWSelectionContentViewControllerTests {
 
         // Clicking another source drops the verdict, so the button that would
         // adopt the file that verdict described has to go with it.
-        radio(titled: "Choose Local File…", in: vc.view)?.performClick(nil)
+        findButton(titled: "Choose Local File…", in: vc.view)?.performClick(nil)
 
         #expect(findButton(titled: "Use It Anyway", in: vc.view) == nil)
         #expect(vm.ipswSelection == .catalogVersion(entry))
-        #expect(radio(titled: "Choose a Version…", in: vc.view)?.state == .on)
-        #expect(radio(titled: "Choose Local File…", in: vc.view)?.state == .off)
+        #expect(findButton(titled: "Choose a Version…", in: vc.view)?.state == .on)
+        #expect(findButton(titled: "Choose Local File…", in: vc.view)?.state == .off)
     }
 
     @Test("Switching install source clears a stale checking banner")
@@ -233,14 +225,14 @@ struct IPSWSelectionContentViewControllerTests {
         findButton(titled: "Use Existing File", in: vc.view)?.performClick(nil)
         let inFlight = try #require(vc.adoptTaskForTesting)
         try await inspector.waitUntilInspecting()
-        #expect(findLabelContaining("Checking the file already", in: vc.view) != nil)
+        #expect(findLabel(containing: "Checking the file already", in: vc.view) != nil)
 
         // The switch cancels the check, so its banner would never resolve on its
         // own — and while it shows it hides the only controls that clear the
         // overwrite warning blocking Next.
-        radio(titled: "Choose a Version…", in: vc.view)?.performClick(nil)
+        findButton(titled: "Choose a Version…", in: vc.view)?.performClick(nil)
 
-        #expect(findLabelContaining("Checking the file already", in: vc.view) == nil)
+        #expect(findLabel(containing: "Checking the file already", in: vc.view) == nil)
         #expect(findButton(titled: "Use Existing File", in: vc.view) != nil)
         #expect(findButton(titled: "Download & Replace", in: vc.view) != nil)
 
@@ -258,14 +250,5 @@ struct IPSWSelectionContentViewControllerTests {
             .path(percentEncoded: false)
         FileManager.default.createFile(atPath: path, contents: Data())
         return path
-    }
-
-    @MainActor
-    private func radio(titled title: String, in view: NSView) -> NSButton? {
-        if let button = view as? NSButton, button.title == title { return button }
-        for subview in view.subviews {
-            if let found = radio(titled: title, in: subview) { return found }
-        }
-        return nil
     }
 }

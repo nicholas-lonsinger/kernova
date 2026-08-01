@@ -144,7 +144,7 @@ struct RestoreImageURLSheetContentViewControllerTests {
         await check(vc)
         #expect(vc.checkedImage != nil)
 
-        let field = try #require(findTextField(in: vc.view))
+        let field = try #require(findEditableField(in: vc.view))
         field.stringValue = "https://example.com/other.ipsw"
         vc.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
 
@@ -161,7 +161,7 @@ struct RestoreImageURLSheetContentViewControllerTests {
         let inFlight = try #require(vc.probeTaskForTesting)
         try await probe.waitUntilProbing()
 
-        let field = try #require(findTextField(in: vc.view))
+        let field = try #require(findEditableField(in: vc.view))
         field.stringValue = "https://example.com/B.ipsw"
         vc.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
         probe.release()
@@ -192,23 +192,6 @@ struct RestoreImageURLSheetContentViewControllerTests {
         func restoreImageURLSheetDidCancel(_ vc: RestoreImageURLSheetContentViewController) {
             cancelCount += 1
         }
-    }
-
-    private func findLabel(containing text: String, in view: NSView) -> NSTextField? {
-        if let field = view as? NSTextField, field.stringValue.contains(text) { return field }
-        for subview in view.subviews {
-            if let found = findLabel(containing: text, in: subview) { return found }
-        }
-        return nil
-    }
-
-    /// The one editable field in the sheet.
-    private func findTextField(in view: NSView) -> NSTextField? {
-        if let field = view as? NSTextField, field.isEditable { return field }
-        for subview in view.subviews {
-            if let found = findTextField(in: subview) { return found }
-        }
-        return nil
     }
 }
 

@@ -12,7 +12,7 @@ struct ResourceConfigContentViewControllerTests {
         let vc = ResourceConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        guard let field = nameField(in: vc.view) else {
+        guard let field = findEditableField(in: vc.view) else {
             Issue.record("Expected a name NSTextField")
             return
         }
@@ -30,7 +30,7 @@ struct ResourceConfigContentViewControllerTests {
         let vc = ResourceConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        let steppers = allSteppers(in: vc.view)
+        let steppers = allSubviews(NSStepper.self, in: vc.view)
         #expect(steppers.count == 2)
         // Linux minimums: CPU 2, memory 2.
         #expect(steppers.contains { $0.minValue == Double(VMGuestOS.linux.minCPUCount) })
@@ -43,7 +43,7 @@ struct ResourceConfigContentViewControllerTests {
         let vc = ResourceConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        guard let popup = diskPopUp(in: vc.view) else {
+        guard let popup = firstSubview(NSPopUpButton.self, in: vc.view) else {
             Issue.record("Expected a disk NSPopUpButton")
             return
         }
@@ -59,7 +59,7 @@ struct ResourceConfigContentViewControllerTests {
         let vc = ResourceConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        guard let popup = diskPopUp(in: vc.view) else {
+        guard let popup = firstSubview(NSPopUpButton.self, in: vc.view) else {
             Issue.record("Expected a disk NSPopUpButton")
             return
         }
@@ -78,7 +78,7 @@ struct ResourceConfigContentViewControllerTests {
         let vc = ResourceConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        let steppers = allSteppers(in: vc.view)
+        let steppers = allSubviews(NSStepper.self, in: vc.view)
         guard let cpuField = editableNumberField(in: vc.view),
             let cpuStepper = steppers.first(where: { $0.minValue == Double(VMGuestOS.macOS.minCPUCount) })
         else {
@@ -118,42 +118,10 @@ struct ResourceConfigContentViewControllerTests {
 
     // MARK: - Helpers
 
-    @MainActor
-    private func allSteppers(in view: NSView) -> [NSStepper] {
-        var result: [NSStepper] = []
-        if let stepper = view as? NSStepper { result.append(stepper) }
-        for subview in view.subviews { result.append(contentsOf: allSteppers(in: subview)) }
-        return result
-    }
-
-    @MainActor
-    private func diskPopUp(in view: NSView) -> NSPopUpButton? {
-        if let popup = view as? NSPopUpButton { return popup }
-        for subview in view.subviews {
-            if let popup = diskPopUp(in: subview) { return popup }
-        }
-        return nil
-    }
-
     /// The CPU/Memory fields are right-aligned; the CPU one is built first, so a
     /// pre-order walk returns it.
     @MainActor
     private func editableNumberField(in view: NSView) -> NSTextField? {
-        if let field = view as? NSTextField, field.isEditable, field.alignment == .right {
-            return field
-        }
-        for subview in view.subviews {
-            if let field = editableNumberField(in: subview) { return field }
-        }
-        return nil
-    }
-
-    @MainActor
-    private func nameField(in view: NSView) -> NSTextField? {
-        if let field = view as? NSTextField, field.isEditable { return field }
-        for subview in view.subviews {
-            if let field = nameField(in: subview) { return field }
-        }
-        return nil
+        firstSubview(NSTextField.self, in: view) { $0.isEditable && $0.alignment == .right }
     }
 }

@@ -14,7 +14,7 @@ struct BootConfigContentViewControllerTests {
         let vc = BootConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        #expect(segmentedControl(in: vc.view)?.selectedSegment == 0)
+        #expect(firstSubview(NSSegmentedControl.self, in: vc.view)?.selectedSegment == 0)
         #expect(findLabel(withText: "ISO Image", in: vc.view) != nil)
         #expect(findLabel(withText: "Kernel", in: vc.view) == nil)
     }
@@ -27,7 +27,7 @@ struct BootConfigContentViewControllerTests {
         let vc = BootConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        guard let segmented = segmentedControl(in: vc.view) else {
+        guard let segmented = firstSubview(NSSegmentedControl.self, in: vc.view) else {
             Issue.record("Expected an NSSegmentedControl")
             return
         }
@@ -47,7 +47,7 @@ struct BootConfigContentViewControllerTests {
         let vc = BootConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        guard let field = editableField(in: vc.view) else {
+        guard let field = findEditableField(in: vc.view) else {
             Issue.record("Expected an editable command-line NSTextField")
             return
         }
@@ -87,25 +87,5 @@ struct BootConfigContentViewControllerTests {
         vc.loadViewIfNeeded()
 
         #expect(vm.kernelCommandLine == "")
-    }
-
-    // MARK: - Helpers
-
-    @MainActor
-    private func segmentedControl(in view: NSView) -> NSSegmentedControl? {
-        if let control = view as? NSSegmentedControl { return control }
-        for subview in view.subviews {
-            if let control = segmentedControl(in: subview) { return control }
-        }
-        return nil
-    }
-
-    @MainActor
-    private func editableField(in view: NSView) -> NSTextField? {
-        if let field = view as? NSTextField, field.isEditable { return field }
-        for subview in view.subviews {
-            if let field = editableField(in: subview) { return field }
-        }
-        return nil
     }
 }
