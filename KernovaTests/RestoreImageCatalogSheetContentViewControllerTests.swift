@@ -53,7 +53,7 @@ struct RestoreImageCatalogSheetContentViewControllerTests {
         let vc = makeSheet(hostVersion: host(15, 6, 1))
         #expect(vc.selectedEntry?.build == "24G90")
 
-        let table = try #require(findTableView(in: vc.view))
+        let table = try #require(firstSubview(NSTableView.self, in: vc.view))
         #expect(vc.tableView(table, shouldSelectRow: 0) == false)
         #expect(vc.tableView(table, shouldSelectRow: 1) == true)
     }
@@ -142,21 +142,5 @@ struct RestoreImageCatalogSheetContentViewControllerTests {
         ) {
             cancelCount += 1
         }
-    }
-
-    private func findTableView(in view: NSView) -> NSTableView? {
-        if let table = view as? NSTableView { return table }
-        for subview in view.subviews {
-            if let found = findTableView(in: subview) { return found }
-        }
-        return nil
-    }
-
-    private func findLabel(containing text: String, in view: NSView) -> NSTextField? {
-        if let field = view as? NSTextField, field.stringValue.contains(text) { return field }
-        for subview in view.subviews {
-            if let found = findLabel(containing: text, in: subview) { return found }
-        }
-        return nil
     }
 }

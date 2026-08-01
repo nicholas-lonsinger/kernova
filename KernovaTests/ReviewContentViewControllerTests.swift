@@ -140,7 +140,7 @@ struct ReviewContentViewControllerTests {
         let vc = ReviewContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        guard let toggle = findSwitch(in: vc.view) else {
+        guard let toggle = firstSubview(NSSwitch.self, in: vc.view) else {
             Issue.record("Expected an NSSwitch")
             return
         }
@@ -148,16 +148,5 @@ struct ReviewContentViewControllerTests {
         toggle.state = .off
         toggle.sendAction(toggle.action, to: toggle.target)
         #expect(vm.startAfterCreate == false)
-    }
-
-    // MARK: - Helpers
-
-    @MainActor
-    private func findSwitch(in view: NSView) -> NSSwitch? {
-        if let toggle = view as? NSSwitch { return toggle }
-        for subview in view.subviews {
-            if let toggle = findSwitch(in: subview) { return toggle }
-        }
-        return nil
     }
 }

@@ -62,14 +62,6 @@ struct SidebarViewControllerTests {
         menu.items.first { $0.title == title }
     }
 
-    private func findOutlineView(in view: NSView) -> NSOutlineView? {
-        if let outline = view as? NSOutlineView { return outline }
-        for subview in view.subviews {
-            if let found = findOutlineView(in: subview) { return found }
-        }
-        return nil
-    }
-
     // MARK: - Status icon color
 
     @Test("statusDisplayNSColor maps each lifecycle state")
@@ -420,7 +412,7 @@ struct SidebarViewControllerTests {
         controller.loadViewIfNeeded()
         controller.view.layoutSubtreeIfNeeded()
 
-        guard let outline = findOutlineView(in: controller.view) else {
+        guard let outline = firstSubview(NSOutlineView.self, in: controller.view) else {
             Issue.record("Expected an NSOutlineView in the sidebar view tree")
             return
         }

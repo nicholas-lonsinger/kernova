@@ -194,21 +194,9 @@ struct RestoreImageURLSheetContentViewControllerTests {
         }
     }
 
-    private func findLabel(containing text: String, in view: NSView) -> NSTextField? {
-        if let field = view as? NSTextField, field.stringValue.contains(text) { return field }
-        for subview in view.subviews {
-            if let found = findLabel(containing: text, in: subview) { return found }
-        }
-        return nil
-    }
-
     /// The one editable field in the sheet.
     private func findTextField(in view: NSView) -> NSTextField? {
-        if let field = view as? NSTextField, field.isEditable { return field }
-        for subview in view.subviews {
-            if let found = findTextField(in: subview) { return found }
-        }
-        return nil
+        firstSubview(NSTextField.self, in: view) { $0.isEditable }
     }
 }
 

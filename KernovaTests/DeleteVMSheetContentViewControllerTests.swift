@@ -408,7 +408,7 @@ struct DeleteVMSheetContentViewControllerTests {
         vc.loadViewIfNeeded()
         vc.view.layoutSubtreeIfNeeded()
 
-        let scrollView = try #require(firstScrollView(in: vc.view))
+        let scrollView = try #require(firstSubview(NSScrollView.self, in: vc.view))
         let documentHeight = try #require(scrollView.documentView).frame.height
         let visibleHeight = scrollView.frame.height
 
@@ -428,7 +428,7 @@ struct DeleteVMSheetContentViewControllerTests {
         vc.loadViewIfNeeded()
         vc.view.layoutSubtreeIfNeeded()
 
-        let scrollView = try #require(firstScrollView(in: vc.view))
+        let scrollView = try #require(firstSubview(NSScrollView.self, in: vc.view))
         let documentHeight = try #require(scrollView.documentView).frame.height
         let visibleHeight = scrollView.frame.height
 
@@ -457,7 +457,7 @@ struct DeleteVMSheetContentViewControllerTests {
         vc.loadViewIfNeeded()
         vc.view.layoutSubtreeIfNeeded()
 
-        let scrollView = try #require(firstScrollView(in: vc.view))
+        let scrollView = try #require(firstSubview(NSScrollView.self, in: vc.view))
         let documentView = try #require(scrollView.documentView)
         let warning = try #require(
             collectLabels(in: vc.view).first { $0.stringValue.hasPrefix("Kept — still used by") })
@@ -473,15 +473,6 @@ struct DeleteVMSheetContentViewControllerTests {
     }
 
     // MARK: - Helpers
-
-    @MainActor
-    private func firstScrollView(in view: NSView) -> NSScrollView? {
-        if let scroll = view as? NSScrollView { return scroll }
-        for subview in view.subviews {
-            if let match = firstScrollView(in: subview) { return match }
-        }
-        return nil
-    }
 
     @MainActor
     private func make(

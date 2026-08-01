@@ -258,6 +258,12 @@ func findLabel(withText text: String, in view: NSView) -> NSTextField? {
     firstSubview(NSTextField.self, in: view) { $0.stringValue == text }
 }
 
+/// The first label whose text contains `text` in the subtree rooted at `view`.
+@MainActor
+func findLabel(containing text: String, in view: NSView) -> NSTextField? {
+    firstSubview(NSTextField.self, in: view) { $0.stringValue.contains(text) }
+}
+
 /// Every text field in the subtree rooted at `view`, in depth-first order.
 @MainActor
 func collectLabels(in view: NSView) -> [NSTextField] {
