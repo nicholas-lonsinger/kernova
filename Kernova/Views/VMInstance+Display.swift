@@ -29,11 +29,8 @@ extension VMInstance {
     /// The guest-reported OS version for display, or "Unknown" when no agent
     /// has vouched for one.
     ///
-    /// `Hello.agent_info.os_version` is peer-supplied: an agent sending the
-    /// documented numeric shape renders verbatim, and one sending a
-    /// human-readable string renders as the version inside it, in any locale
-    /// ("Versión 26.0 (Compilación 25A123)" → "26.0"). A value holding no digits
-    /// passes through untouched.
+    /// What an agent reports is peer-supplied, so it is read through
+    /// `KernovaOSVersion.numericVersion(in:)` rather than shown raw.
     var guestOSVersionDisplay: String {
         guard let reported = configuration.lastSeenGuestOSVersion, !reported.isEmpty else {
             return "Unknown"
