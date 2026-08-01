@@ -94,13 +94,6 @@ struct MacOSVersion: Sendable, Equatable {
     /// Numeric components, zero-padded to three.
     let components: [Int]
 
-    /// `version` rendered the way Apple names a release: a zero patch is left
-    /// off, so `26.6.0` reads as `"26.6"` and matches the catalog's own strings.
-    static func displayString(_ version: OperatingSystemVersion) -> String {
-        let base = "\(version.majorVersion).\(version.minorVersion)"
-        return version.patchVersion == 0 ? base : "\(base).\(version.patchVersion)"
-    }
-
     /// `nil` when `version` is not a dot-separated run of numbers.
     init?(_ version: String) {
         let parsed = version.split(separator: ".").map { Int($0) }

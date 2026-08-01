@@ -141,6 +141,27 @@ struct VsockControlServiceTests {
         #expect(hello.capabilities.contains(KernovaCapability.clipboardStreamV1))
     }
 
+    @Test("Host Hello reports agent_info with a numeric os_version")
+    func hostHelloReportsNumericOSVersion() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = makeService(channel: host)
+        service.start()
+        defer { service.stop() }
+
+        let received = try await nextFrame(from: guest)
+        guard case .hello(let hello) = received.payload else {
+            Issue.record("Expected hello payload, got \(String(describing: received.payload))")
+            return
+        }
+        #expect(hello.agentInfo.os == "macOS")
+        #expect(hello.agentInfo.osVersion == KernovaOSVersion.current)
+        #expect(hello.agentInfo.osVersion.allSatisfy { $0.isNumber || $0 == "." })
+    }
+
     @Test("Guest hello flips isConnected and populates agentVersion")
     func guestHelloPopulatesState() async throws {
         let (guest, host) = try makePair()

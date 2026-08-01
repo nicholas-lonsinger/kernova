@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 
 /// Display-layer properties derived from a VM's status.
 extension VMInstance {
@@ -28,15 +29,16 @@ extension VMInstance {
     /// The guest-reported OS version for display, or "Unknown" when no agent
     /// has vouched for one.
     ///
-    /// Strips the constant "Version " lead-in of the agent's
-    /// `operatingSystemVersionString` ("Version 26.0 (Build 25A123)" →
-    /// "26.0 (Build 25A123)"); any other shape passes through untouched.
+    /// `Hello.agent_info.os_version` is peer-supplied: an agent sending the
+    /// documented numeric shape renders verbatim, and one sending a
+    /// human-readable string renders as the version inside it, in any locale
+    /// ("Versión 26.0 (Compilación 25A123)" → "26.0"). A value holding no digits
+    /// passes through untouched.
     var guestOSVersionDisplay: String {
         guard let reported = configuration.lastSeenGuestOSVersion, !reported.isEmpty else {
             return "Unknown"
         }
-        let leadIn = "Version "
-        return reported.hasPrefix(leadIn) ? String(reported.dropFirst(leadIn.count)) : reported
+        return KernovaOSVersion.numericVersion(in: reported) ?? reported
     }
 
     /// Tooltip explaining the VM state variant, or `nil` for standard states.

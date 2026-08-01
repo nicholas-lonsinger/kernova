@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import Virtualization
 import os
 
@@ -27,7 +28,7 @@ struct LocalRestoreImageInspector: LocalRestoreImageInspecting {
 
         let version = image.operatingSystemVersion
         let inspected = InspectedRestoreImage(
-            version: MacOSVersion.displayString(version),
+            version: KernovaOSVersion.displayString(version),
             build: image.buildVersion,
             isSupportedOnThisHost: image.mostFeaturefulSupportedConfiguration != nil
         )

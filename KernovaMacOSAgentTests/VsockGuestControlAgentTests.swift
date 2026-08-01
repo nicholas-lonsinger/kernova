@@ -112,6 +112,29 @@ struct VsockGuestControlAgentTests {
         #expect(hello.capabilities.contains(KernovaCapability.clipboardStreamV1))
     }
 
+    @Test("Guest Hello reports agent_info with a numeric os_version")
+    func guestHelloReportsNumericOSVersion() async throws {
+        let (agentFd, hostFd) = try makeRawSocketPair()
+        let host = VsockChannel(fileDescriptor: hostFd)
+        host.start()
+        defer { host.close() }
+
+        let agent = makeAgent(agentFd: agentFd)
+        defer { agent.stop() }
+        agent.start()
+
+        let received = try await nextFrame(from: host)
+        guard case .hello(let hello) = received.payload else {
+            throw TestFailure("Expected Hello, got \(String(describing: received.payload))")
+        }
+        #expect(hello.agentInfo.os == "macOS")
+        #expect(hello.agentInfo.osVersion == KernovaOSVersion.current)
+        // The host renders this string as-is, so a localized `Version 26.0
+        // (Build 25A123)` — or its translation in a non-English guest — must
+        // never reach the wire.
+        #expect(hello.agentInfo.osVersion.allSatisfy { $0.isNumber || $0 == "." })
+    }
+
     // MARK: - Heartbeat
 
     @Test("Emits heartbeat frames on the configured cadence")

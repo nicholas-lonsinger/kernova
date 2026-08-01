@@ -217,7 +217,7 @@ final class VsockControlService {
             $0.bundledAgentVersion = bundledAgentVersion ?? ""
             $0.agentInfo = Kernova_V1_AgentInfo.with {
                 $0.os = "macOS"
-                $0.osVersion = ProcessInfo.processInfo.operatingSystemVersionString
+                $0.osVersion = KernovaOSVersion.current
                 $0.agentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "host"
             }
         }
