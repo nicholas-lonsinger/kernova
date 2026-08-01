@@ -147,6 +147,8 @@ final class VMDetailRouterViewController: NSViewController {
             banner.translatesAutoresizingMaskIntoConstraints = false
             contentStack.addArrangedSubview(banner)
             banner.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+            // Buffer below the banner so it doesn't crowd the first section title.
+            contentStack.setCustomSpacing(Spacing.section, after: banner)
             currentBanner = banner
         }
 
