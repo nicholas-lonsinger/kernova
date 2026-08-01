@@ -187,7 +187,7 @@ final class VMInstance {
             return AgentStatus.synthesize(
                 upstream: vsockControlService?.agentStatus ?? .waiting,
                 lastSeenAgentVersion: configuration.lastSeenAgentVersion,
-                isInLiveSession: virtualMachine != nil,
+                isInLiveSession: hasLiveVirtualMachine,
                 agentExpectedButMissing: agentExpectedButMissing
             )
         case .linux:
@@ -270,19 +270,35 @@ final class VMInstance {
     /// running; cleared on stop/teardown.
     var liveRemovableMedia: [USBDeviceInfo] = []
 
+    #if DEBUG
+    /// Test stand-in for `virtualMachine != nil`: constructing a real
+    /// `VZVirtualMachine` requires the virtualization entitlement, which CI
+    /// test hosts lack.
+    var hasLiveVirtualMachineOverrideForTesting: Bool?
+    #endif
+
+    /// Whether a `VZVirtualMachine` for this VM is live in memory — the single
+    /// liveness read every predicate here shares.
+    var hasLiveVirtualMachine: Bool {
+        #if DEBUG
+        if let hasLiveVirtualMachineOverrideForTesting { return hasLiveVirtualMachineOverrideForTesting }
+        #endif
+        return virtualMachine != nil
+    }
+
     var canAttachUSBDevices: Bool {
-        (status == .running || status == .paused) && virtualMachine != nil
+        (status == .running || status == .paused) && hasLiveVirtualMachine
     }
 
     /// `true` when the VM is paused-to-disk but has no live `VZVirtualMachine` in memory.
     var isColdPaused: Bool {
-        status == .paused && virtualMachine == nil
+        status == .paused && !hasLiveVirtualMachine
     }
 
     /// `true` when the VM is paused with its `VZVirtualMachine` still live in
     /// memory — the resumable counterpart of ``isColdPaused``.
     var isLivePaused: Bool {
-        status == .paused && virtualMachine != nil
+        status == .paused && hasLiveVirtualMachine
     }
 
     /// `true` when this VM should keep the app alive: preparing, in an active

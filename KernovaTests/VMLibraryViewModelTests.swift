@@ -1175,7 +1175,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (starting, other) = appendMachineIDPair(to: viewModel)
         other.status = .paused
-        other.virtualMachine = try makeIdleVirtualMachine()
+        other.hasLiveVirtualMachineOverrideForTesting = true
 
         await viewModel.start(starting)
 
@@ -1263,7 +1263,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (resuming, other) = appendMachineIDPair(to: viewModel)
         resuming.status = .paused
-        resuming.virtualMachine = try makeIdleVirtualMachine()
+        resuming.hasLiveVirtualMachineOverrideForTesting = true
         other.status = .running
 
         await viewModel.resume(resuming)

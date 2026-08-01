@@ -59,34 +59,6 @@ func makeVZErrorChain(depth: Int, around error: NSError) -> NSError {
     return wrapped
 }
 
-// MARK: - Live VZVirtualMachine fixture
-
-/// A never-started `VZVirtualMachine`, for tests that need an instance to look
-/// live in memory — `isLivePaused`, `canStop`, and the duplicate-machine-ID
-/// guard all read the object's presence, not its state.
-///
-/// The smallest shape `validate()` accepts: an EFI bootloader over a scratch
-/// variable store, with nothing to boot from. The store file is removed once
-/// the machine holds it, so nothing is left in the temporary directory.
-@MainActor
-func makeIdleVirtualMachine() throws -> VZVirtualMachine {
-    let storeURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent("knv-test-efi-\(UUID().uuidString)")
-    let bootLoader = VZEFIBootLoader()
-    bootLoader.variableStore = try VZEFIVariableStore(creatingVariableStoreAt: storeURL)
-
-    let configuration = VZVirtualMachineConfiguration()
-    configuration.bootLoader = bootLoader
-    configuration.platform = VZGenericPlatformConfiguration()
-    configuration.cpuCount = VZVirtualMachineConfiguration.minimumAllowedCPUCount
-    configuration.memorySize = VZVirtualMachineConfiguration.minimumAllowedMemorySize
-    try configuration.validate()
-
-    let machine = VZVirtualMachine(configuration: configuration)
-    try? FileManager.default.removeItem(at: storeURL)
-    return machine
-}
-
 // MARK: - Socket / channel factories
 
 /// Returns a connected AF_UNIX socketpair as two raw file descriptors.
