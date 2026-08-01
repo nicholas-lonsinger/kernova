@@ -14,7 +14,7 @@ struct DisplayBootSizing: Sendable {
         var ppi: Int
     }
 
-    /// Smallest boot resolution offered, matching the display window's `minSize`.
+    /// Smallest boot resolution offered — guest desktops lay out badly below it.
     static let minimumWidth = 800
     static let minimumHeight = 600
     /// Largest pixel count in either axis.
@@ -45,10 +45,10 @@ struct DisplayBootSizing: Sendable {
     /// `resolution` at twice the pixel count and HiDPI density — the rewrite
     /// that turns a "looks like" size into a Retina one.
     static func doubled(_ resolution: Resolution) -> Resolution {
-        clamped(
-            width: min(resolution.width, maximumDimension) * 2,
-            height: min(resolution.height, maximumDimension) * 2,
-            ppi: hiDPIPixelsPerInch)
+        // Fitted before the doubling, so a corrupt stored size can't overflow it.
+        let base = scaledToFit(
+            width: resolution.width, height: resolution.height, maximum: maximumDimension / 2)
+        return clamped(width: base.width * 2, height: base.height * 2, ppi: hiDPIPixelsPerInch)
     }
 
     /// `resolution` rewritten at the density `hiDPI` asks for, keeping the size
@@ -64,26 +64,40 @@ struct DisplayBootSizing: Sendable {
             ppi: standardPixelsPerInch)
     }
 
-    /// `width`/`height` rounded down to even pixel counts and clamped into the
-    /// supported range.
+    /// `width`/`height` brought into the supported range: an oversized pair is
+    /// scaled down whole so its aspect ratio survives the ceiling, then each axis
+    /// is rounded down to an even pixel count and raised to the minimum.
     ///
     /// `maximum` lowers the ceiling for a base ("looks like") size that will be
     /// doubled for HiDPI.
     static func clamped(
         width: Int, height: Int, ppi: Int, maximum: Int = maximumDimension
     ) -> Resolution {
-        Resolution(
-            width: clamp(width, minimum: minimumWidth, maximum: maximum),
-            height: clamp(height, minimum: minimumHeight, maximum: maximum),
+        let fitted = scaledToFit(width: width, height: height, maximum: maximum)
+        return Resolution(
+            width: clamp(fitted.width, minimum: minimumWidth, maximum: maximum),
+            height: clamp(fitted.height, minimum: minimumHeight, maximum: maximum),
             ppi: ppi)
     }
 
     // MARK: - Private
 
+    /// `width`/`height` scaled by the longer axis' overshoot ratio when either
+    /// exceeds `maximum`, leaving the pair's proportions intact.
+    private static func scaledToFit(width: Int, height: Int, maximum: Int)
+        -> (width: Int, height: Int)
+    {
+        let longest = max(width, height)
+        guard longest > maximum else { return (width, height) }
+        return (width * maximum / longest, height * maximum / longest)
+    }
+
     private static func pixelCount(_ points: CGFloat, scale: CGFloat) -> Int {
         let pixels = (points * scale).rounded(.down)
         guard pixels.isFinite, pixels > 0 else { return 0 }
-        return Int(min(pixels, CGFloat(maximumDimension)))
+        // Bounded only where the conversion would trap: the pixel ceiling is
+        // applied by `clamped`, which needs both axes' true proportions.
+        return Int(min(pixels, CGFloat(Int32.max)))
     }
 
     private static func clamp(_ value: Int, minimum: Int, maximum: Int) -> Int {

@@ -77,4 +77,17 @@ enum VMGuestOS: String, Codable, CaseIterable, Sendable {
         case .linux: 10
         }
     }
+
+    /// Whether the guest's display scanout carries a pixel density, so a HiDPI
+    /// resolution reads as Retina rather than as twice as many pixels.
+    ///
+    /// A virtio scanout has no density channel, so a Linux guest renders 2×
+    /// pixels at half the size with nothing to compensate: its resolution must
+    /// never be rewritten for HiDPI, and it is offered no HiDPI control.
+    var supportsDisplayDensity: Bool {
+        switch self {
+        case .macOS: true
+        case .linux: false
+        }
+    }
 }

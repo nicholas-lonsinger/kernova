@@ -626,23 +626,26 @@ extension VMSettingsViewController {
 
     // MARK: Display
 
-    /// Base ("looks like") sizes offered by the Resolution popup.
-    private static let displayResolutionPresets: [(width: Int, height: Int)] = [
-        (1280, 800), (1440, 900), (1680, 1050), (1920, 1080), (1920, 1200),
-        (2560, 1440), (2560, 1600),
-    ]
-
-    /// Menu tag packing a preset's dimensions.
-    private static func displayPresetTag(width: Int, height: Int) -> Int {
-        width * 10_000 + height
+    /// A base ("looks like") size offered by the Resolution popup, carried by its
+    /// menu item as the item's `representedObject`.
+    private struct DisplayResolutionPreset: Equatable {
+        let width: Int
+        let height: Int
     }
 
-    /// Negative so it can't collide with a packed size — nor with the untagged
-    /// separator that precedes it, which `selectItem(withTag: 0)` would find first.
-    private static let displayCustomTag = -1
+    private static let displayResolutionPresets: [DisplayResolutionPreset] = [
+        .init(width: 1280, height: 800), .init(width: 1440, height: 900),
+        .init(width: 1680, height: 1050), .init(width: 1920, height: 1080),
+        .init(width: 1920, height: 1200), .init(width: 2560, height: 1440),
+        .init(width: 2560, height: 1600),
+    ]
+
+    /// The one item carrying no preset, selected for any size off the list.
+    private static let displayCustomTitle = "Custom"
 
     private func buildDisplaySection() -> NSView {
         let isMacOS = instance.configuration.guestOS == .macOS
+        let supportsDensity = instance.configuration.guestOS.supportsDisplayDensity
         displayMatchWindowSwitch = makeSwitch(action: #selector(displayMatchWindowToggled))
         displayResolutionPopUp = makeDisplayResolutionPopUp()
         displayWidthField = makeDisplaySizeField()
@@ -673,7 +676,7 @@ extension VMSettingsViewController {
             makeGroupedFormCardRow("Width", control: displayWidthField),
             makeGroupedFormCardRow("Height", control: displayHeightField),
         ]
-        if isMacOS {
+        if supportsDensity {
             persistentLockableControls.append(displayHiDPISwitch)
             rows.append(
                 makeToggleRowWithInfo(
@@ -724,11 +727,10 @@ extension VMSettingsViewController {
         popUp.controlSize = .small
         for preset in Self.displayResolutionPresets {
             popUp.addItem(withTitle: "\(preset.width) × \(preset.height)")
-            popUp.lastItem?.tag = Self.displayPresetTag(width: preset.width, height: preset.height)
+            popUp.lastItem?.representedObject = preset
         }
         popUp.menu?.addItem(.separator())
-        popUp.addItem(withTitle: "Custom")
-        popUp.lastItem?.tag = Self.displayCustomTag
+        popUp.addItem(withTitle: Self.displayCustomTitle)
         popUp.target = self
         popUp.action = #selector(displayResolutionChanged)
         return popUp
@@ -1309,11 +1311,9 @@ extension VMSettingsViewController {
 
     /// The density the user asked for, which a match-window boot applies to the
     /// size it computes.
-    ///
-    /// Gated on the guest OS: a virtio scanout carries no density, so a Linux
-    /// guest's flag never reaches VZ and must not rewrite its resolution.
     private var displayHiDPIIntent: Bool {
-        instance.configuration.guestOS == .macOS && instance.configuration.displayHiDPI
+        instance.configuration.guestOS.supportsDisplayDensity
+            && instance.configuration.displayHiDPI
     }
 
     /// Whether the stored resolution — what the VM boots at — reads as HiDPI.
@@ -1321,7 +1321,7 @@ extension VMSettingsViewController {
     /// The materialized counterpart to `displayHiDPIIntent`; the two diverge
     /// only in match mode, where the trio is the previous boot's artifact.
     private var displayResolutionIsHiDPI: Bool {
-        instance.configuration.guestOS == .macOS
+        instance.configuration.guestOS.supportsDisplayDensity
             && DisplayBootSizing.isHiDPI(ppi: instance.configuration.displayPPI)
     }
 
@@ -1341,14 +1341,28 @@ extension VMSettingsViewController {
         // differ until the next boot materializes the trio.
         displayHiDPISwitch.state = displayHiDPIIntent ? .on : .off
         displayAutoResizeSwitch.state = config.displayAutoResizes ? .on : .off
-        displayWidthField.integerValue = base.width
-        displayHeightField.integerValue = base.height
+        // A field with an open editor is mid-edit: any refresh — a status change
+        // started from the toolbar, say — would otherwise discard the keystrokes
+        // typed so far.
+        if displayWidthField.currentEditor() == nil {
+            displayWidthField.integerValue = base.width
+        }
+        if displayHeightField.currentEditor() == nil {
+            displayHeightField.integerValue = base.height
+        }
 
-        let presetTag = Self.displayPresetTag(width: base.width, height: base.height)
-        let matchesPreset =
-            !displayResolutionIsCustom
-            && displayResolutionPopUp.menu?.items.contains { $0.tag == presetTag } == true
-        displayResolutionPopUp.selectItem(withTag: matchesPreset ? presetTag : Self.displayCustomTag)
+        let stored = DisplayResolutionPreset(width: base.width, height: base.height)
+        let presetItem =
+            displayResolutionIsCustom
+            ? nil
+            : displayResolutionPopUp.menu?.items.first {
+                $0.representedObject as? DisplayResolutionPreset == stored
+            }
+        if let presetItem {
+            displayResolutionPopUp.select(presetItem)
+        } else {
+            displayResolutionPopUp.selectItem(withTitle: Self.displayCustomTitle)
+        }
 
         // Match mode computes the size at start, so the size controls are inert
         // (disabled, not hidden). HiDPI stays live — it picks the scale that
@@ -1769,11 +1783,9 @@ extension VMSettingsViewController {
     }
 
     @objc private func displayResolutionChanged() {
-        let tag = displayResolutionPopUp.selectedTag()
         guard
-            let preset = Self.displayResolutionPresets.first(where: {
-                Self.displayPresetTag(width: $0.width, height: $0.height) == tag
-            })
+            let preset = displayResolutionPopUp.selectedItem?.representedObject
+                as? DisplayResolutionPreset
         else {
             displayResolutionIsCustom = true
             return

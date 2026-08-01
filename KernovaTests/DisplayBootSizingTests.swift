@@ -45,13 +45,15 @@ struct DisplayBootSizingTests {
         #expect(resolution.height == DisplayBootSizing.minimumHeight)
     }
 
-    @Test("A surface above the ceiling clamps down to 8192")
+    @Test("A surface above the ceiling scales down whole, keeping its shape")
     func clampsDownToCeiling() {
+        // 6000 × 5000 points at 2× is 12000 × 10000 pixels; × 8192/12000 fits
+        // the ceiling without squaring the 6:5 pair off against it.
         let resolution = DisplayBootSizing.resolution(
             fittingPoints: CGSize(width: 6000, height: 5000), backingScaleFactor: 2)
 
         #expect(resolution.width == DisplayBootSizing.maximumDimension)
-        #expect(resolution.height == DisplayBootSizing.maximumDimension)
+        #expect(resolution.height == 6826)
     }
 
     @Test("A degenerate surface clamps to the floor rather than trapping")
@@ -76,15 +78,23 @@ struct DisplayBootSizingTests {
         #expect(DisplayBootSizing.halved(retina) == base)
     }
 
-    @Test("doubled clamps at the pixel ceiling")
-    func doubledClampsAtCeiling() {
-        let large = DisplayBootSizing.Resolution(
-            width: 5120, height: 4096, ppi: DisplayBootSizing.standardPixelsPerInch)
+    @Test("A double that overflows the ceiling keeps its shape through the round-trip")
+    func doubledPreservesAspectAtCeiling() {
+        let base = DisplayBootSizing.Resolution(
+            width: 6000, height: 5000, ppi: DisplayBootSizing.standardPixelsPerInch)
+        let ratio = Double(base.width) / Double(base.height)
 
-        let doubled = DisplayBootSizing.doubled(large)
+        // 12000 × 10000 scaled by 8192/12000 — not squared off at 8192 × 8192.
+        let retina = DisplayBootSizing.doubled(base)
+        #expect(
+            retina
+                == DisplayBootSizing.Resolution(
+                    width: DisplayBootSizing.maximumDimension, height: 6826,
+                    ppi: DisplayBootSizing.hiDPIPixelsPerInch))
+        #expect(abs(Double(retina.width) / Double(retina.height) - ratio) < 0.001)
 
-        #expect(doubled.width == DisplayBootSizing.maximumDimension)
-        #expect(doubled.height == DisplayBootSizing.maximumDimension)
+        let standard = DisplayBootSizing.halved(retina)
+        #expect(abs(Double(standard.width) / Double(standard.height) - ratio) < 0.001)
     }
 
     @Test("halved clamps at the floor")
@@ -126,7 +136,7 @@ struct DisplayBootSizingTests {
             maximum: DisplayBootSizing.maximumDimension / 2)
 
         #expect(base.width == DisplayBootSizing.maximumDimension / 2)
-        #expect(base.height == DisplayBootSizing.maximumDimension / 2)
+        #expect(base.height == 3412)
         // Doubling it lands exactly on the real ceiling.
         #expect(DisplayBootSizing.doubled(base).width == DisplayBootSizing.maximumDimension)
     }

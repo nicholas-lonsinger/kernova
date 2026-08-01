@@ -93,6 +93,14 @@ struct VMGuestOSTests {
         #expect(os.minDiskSizeInGB <= VMGuestOS.defaultDiskSizeInGB)
     }
 
+    // MARK: - Display Capabilities
+
+    @Test("Only macOS guests carry a display density")
+    func displayDensitySupport() {
+        #expect(VMGuestOS.macOS.supportsDisplayDensity)
+        #expect(!VMGuestOS.linux.supportsDisplayDensity)
+    }
+
     // MARK: - Available Disk Sizes
 
     @Test("macOS available disk sizes start at 75 GB (filtered by minDiskSizeInGB of 64)")

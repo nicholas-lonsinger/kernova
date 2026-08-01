@@ -1222,6 +1222,29 @@ struct VMLibraryViewModelTests {
         #expect(virtService.configurationAtStart?.displayHeight == 1200)
     }
 
+    @Test("A match-window resolution that can't be persisted is rolled back before the boot")
+    func matchWindowRollsBackWhenPersistFails() async {
+        let (viewModel, storage, _, virtService, _) = makeViewModel()
+        let provider = FakeDisplayBootGeometryProvider(surface: Self.retinaSurface)
+        viewModel.displayBootGeometryProvider = provider
+        let instance = makeMatchWindowInstance()
+        let original = instance.configuration.displayResolution
+        viewModel.instances.append(instance)
+        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+
+        await viewModel.start(instance)
+
+        // Booting at a resolution disk never received would invalidate the save
+        // file a later suspend writes, so the whole trio reverts.
+        #expect(instance.configuration.displayResolution == original)
+        #expect(virtService.configurationAtStart?.displayWidth == original.width)
+        #expect(virtService.configurationAtStart?.displayHeight == original.height)
+        #expect(virtService.configurationAtStart?.displayPPI == original.ppi)
+        // The boot is not abandoned over a failed settings write.
+        #expect(virtService.startCallCount == 1)
+        #expect(instance.status == .running)
+    }
+
     @Test("An unmeasurable surface boots at the configured resolution")
     func matchWindowWithoutSurfaceStillStarts() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()

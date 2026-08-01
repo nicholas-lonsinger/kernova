@@ -601,6 +601,31 @@ struct VMSettingsViewControllerTests {
         }
     }
 
+    @Test("A refresh leaves a size field the user is still typing in alone")
+    func refreshKeepsAnInProgressSizeEdit() {
+        let (vc, _) = makeDisplayController(width: 1920, height: 1200)
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        guard let width = sizeField("Width", in: vc.view) else {
+            Issue.record("Expected the width field")
+            return
+        }
+        #expect(window.makeFirstResponder(width))
+        guard let editor = width.currentEditor() else {
+            Issue.record("Expected a field editor on the focused width field")
+            return
+        }
+        editor.string = "1600"
+
+        // Stands in for any observation pass — starting the VM from the toolbar
+        // mutates status, which refreshes the whole pane.
+        vc.viewDidAppear()
+
+        #expect(width.currentEditor()?.string == "1600")
+        // The committed value is untouched: only the editor holds the edit.
+        #expect(sizeField("Height", in: vc.view)?.integerValue == 1200)
+    }
+
     @Test("The restart caption shows only while read-only")
     func restartCaptionOnlyWhileReadOnly() {
         let caption = "Takes effect on next start."
@@ -612,66 +637,37 @@ struct VMSettingsViewControllerTests {
         #expect(!visibleLabel(caption, in: editableVC.view))
     }
 
-    // MARK: - Helpers (recursive view-tree introspection)
-
-    private func allSwitches(in view: NSView) -> [NSSwitch] {
-        var result: [NSSwitch] = []
-        if let toggle = view as? NSSwitch { result.append(toggle) }
-        for subview in view.subviews { result.append(contentsOf: allSwitches(in: subview)) }
-        return result
-    }
+    // MARK: - Helpers (view-tree introspection)
 
     private func firstSwitch(action name: String, in view: NSView) -> NSSwitch? {
-        allSwitches(in: view).first { toggle in
-            toggle.action.map(NSStringFromSelector) == name
-        }
+        firstSubview(NSSwitch.self, in: view) { $0.action.map(NSStringFromSelector) == name }
     }
 
     private func lockIcons(in view: NSView) -> [NSImageView] {
-        var result: [NSImageView] = []
-        if let image = view as? NSImageView, image.toolTip == "Locked while the VM is running" {
-            result.append(image)
-        }
-        for subview in view.subviews { result.append(contentsOf: lockIcons(in: subview)) }
-        return result
+        allSubviews(NSImageView.self, in: view) { $0.toolTip == "Locked while the VM is running" }
     }
 
     private func containsLabel(_ text: String, in view: NSView) -> Bool {
-        if let field = view as? NSTextField, field.stringValue == text { return true }
-        return view.subviews.contains { containsLabel(text, in: $0) }
+        findLabel(withText: text, in: view) != nil
     }
 
     /// Like ``containsLabel(_:in:)``, but only counts a label that is actually
     /// shown (no hidden label or hidden ancestor).
     private func visibleLabel(_ text: String, in view: NSView) -> Bool {
-        guard !view.isHidden else { return false }
-        if let field = view as? NSTextField, field.stringValue == text { return true }
-        return view.subviews.contains { visibleLabel(text, in: $0) }
+        firstSubview(NSTextField.self, in: view) {
+            $0.stringValue == text && isVisible($0, within: view)
+        } != nil
     }
 
     private func firstPopUp(in view: NSView) -> NSPopUpButton? {
-        if let popUp = view as? NSPopUpButton { return popUp }
-        for subview in view.subviews {
-            if let found = firstPopUp(in: subview) { return found }
-        }
-        return nil
+        firstSubview(NSPopUpButton.self, in: view)
     }
 
     /// The editable field in the grouped-form card row titled `label`.
     private func sizeField(_ label: String, in view: NSView) -> NSTextField? {
-        guard let row = cardRow(titled: label, in: view) else { return nil }
-        return row.arrangedSubviews.compactMap { $0 as? NSTextField }.first { $0.isEditable }
-    }
-
-    private func cardRow(titled label: String, in view: NSView) -> NSStackView? {
-        if let stack = view as? NSStackView,
-            stack.arrangedSubviews.contains(where: { ($0 as? NSTextField)?.stringValue == label })
-        {
-            return stack
+        let row = firstSubview(NSStackView.self, in: view) { stack in
+            stack.arrangedSubviews.contains { ($0 as? NSTextField)?.stringValue == label }
         }
-        for subview in view.subviews {
-            if let found = cardRow(titled: label, in: subview) { return found }
-        }
-        return nil
+        return row?.arrangedSubviews.compactMap { $0 as? NSTextField }.first { $0.isEditable }
     }
 }

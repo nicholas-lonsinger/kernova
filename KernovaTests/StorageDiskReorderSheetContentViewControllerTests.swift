@@ -12,7 +12,7 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         vc.loadViewIfNeeded()
         let labels = collectLabels(in: vc.view).map(\.stringValue)
         #expect(labels.contains("Boot Order"))
-        #expect(findFirst(InfoButtonView.self, in: vc.view) != nil)
+        #expect(firstSubview(InfoButtonView.self, in: vc.view) != nil)
     }
 
     @Test("table renders one row per disk")
@@ -20,7 +20,7 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         let disks = [disk("Main"), disk("Secondary"), disk("Installer")]
         let vc = make(disks: disks)
         vc.loadViewIfNeeded()
-        guard let table = findFirst(NSTableView.self, in: vc.view) else {
+        guard let table = firstSubview(NSTableView.self, in: vc.view) else {
             Issue.record("Expected an NSTableView")
             return
         }
@@ -92,7 +92,7 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         let delegate = MockDelegate()
         vc.delegate = delegate
         vc.loadViewIfNeeded()
-        guard let table = findFirst(NSTableView.self, in: vc.view) else {
+        guard let table = firstSubview(NSTableView.self, in: vc.view) else {
             Issue.record("Expected an NSTableView")
             return
         }
@@ -128,7 +128,7 @@ struct StorageDiskReorderSheetContentViewControllerTests {
     func validateDropOperation() {
         let vc = make(disks: [disk("A"), disk("B")])
         vc.loadViewIfNeeded()
-        guard let table = findFirst(NSTableView.self, in: vc.view) else {
+        guard let table = firstSubview(NSTableView.self, in: vc.view) else {
             Issue.record("Expected an NSTableView")
             return
         }
@@ -216,32 +216,6 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         ) {
             dismissCount += 1
         }
-    }
-
-    @MainActor
-    private func collectLabels(in view: NSView) -> [NSTextField] {
-        var out: [NSTextField] = []
-        if let field = view as? NSTextField { out.append(field) }
-        for subview in view.subviews { out.append(contentsOf: collectLabels(in: subview)) }
-        return out
-    }
-
-    @MainActor
-    private func findButton(titled title: String, in view: NSView) -> NSButton? {
-        if let button = view as? NSButton, button.title == title { return button }
-        for subview in view.subviews {
-            if let match = findButton(titled: title, in: subview) { return match }
-        }
-        return nil
-    }
-
-    @MainActor
-    private func findFirst<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
-        if let match = view as? T { return match }
-        for subview in view.subviews {
-            if let match = findFirst(type, in: subview) { return match }
-        }
-        return nil
     }
 }
 

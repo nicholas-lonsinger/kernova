@@ -131,41 +131,27 @@ struct AgentStatusPopoverContentViewControllerTests {
     private func titleLabel(in view: NSView) -> NSTextField? {
         // Title is the first NSTextField in document order, and the only
         // one rendered with the `.headline` font.
-        findFirst(in: view) {
-            ($0 as? NSTextField)?.font == .preferredFont(forTextStyle: .headline)
-        } as? NSTextField
+        firstSubview(NSTextField.self, in: view) {
+            $0.font == .preferredFont(forTextStyle: .headline)
+        }
     }
 
     @MainActor
     private func bodyLabel(in view: NSView) -> NSTextField? {
         // Body label uses `.callout` font.
-        findFirst(in: view) {
-            ($0 as? NSTextField)?.font == .preferredFont(forTextStyle: .callout)
-        } as? NSTextField
+        firstSubview(NSTextField.self, in: view) {
+            $0.font == .preferredFont(forTextStyle: .callout)
+        }
     }
 
     @MainActor
     private func actionButton(in view: NSView) -> NSButton? {
         // Action button has Return as its key equivalent.
-        findFirst(in: view) {
-            ($0 as? NSButton)?.keyEquivalent == "\r"
-        } as? NSButton
+        firstSubview(NSButton.self, in: view) { $0.keyEquivalent == "\r" }
     }
 
     @MainActor
     private func dismissButton(in view: NSView) -> NSButton? {
-        // Dismiss button is the one with this specific title.
-        findFirst(in: view) {
-            ($0 as? NSButton)?.title == "Don't show again"
-        } as? NSButton
-    }
-
-    @MainActor
-    private func findFirst(in view: NSView, where predicate: (NSView) -> Bool) -> NSView? {
-        if predicate(view) { return view }
-        for subview in view.subviews {
-            if let match = findFirst(in: subview, where: predicate) { return match }
-        }
-        return nil
+        findButton(titled: "Don't show again", in: view)
     }
 }

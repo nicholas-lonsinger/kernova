@@ -28,7 +28,7 @@ struct MicrophonePermissionPopoverContentViewControllerTests {
         let vc = MicrophonePermissionPopoverContentViewController()
         vc.loadViewIfNeeded()
 
-        let hasSeparator = findFirst(in: vc.view) { ($0 as? NSBox)?.boxType == .separator }
+        let hasSeparator = firstSubview(NSBox.self, in: vc.view) { $0.boxType == .separator }
         #expect(hasSeparator != nil)
     }
 
@@ -72,23 +72,6 @@ struct MicrophonePermissionPopoverContentViewControllerTests {
     }
 
     // MARK: - Helpers
-
-    @MainActor
-    private func collectLabels(in view: NSView) -> [NSTextField] {
-        var out: [NSTextField] = []
-        if let field = view as? NSTextField { out.append(field) }
-        for subview in view.subviews { out.append(contentsOf: collectLabels(in: subview)) }
-        return out
-    }
-
-    @MainActor
-    private func findFirst(in view: NSView, where predicate: (NSView) -> Bool) -> NSView? {
-        if predicate(view) { return view }
-        for subview in view.subviews {
-            if let match = findFirst(in: subview, where: predicate) { return match }
-        }
-        return nil
-    }
 
     /// Counts the number of distinct `.font`-attribute runs in `attributed`.
     private func countFontRuns(in attributed: NSAttributedString) -> Int {

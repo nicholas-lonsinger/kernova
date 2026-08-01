@@ -151,11 +151,7 @@ final class DetailContainerViewController: NSViewController {
 
     private func removeBackingView(for id: UUID) {
         guard let backing = backingViews.removeValue(forKey: id) else { return }
-        let autoResizes =
-            viewModel.instances.first { $0.id == id }?.configuration.displayAutoResizes ?? true
-        backing.update(
-            virtualMachine: nil, isPaused: false, transitionText: nil,
-            automaticallyReconfiguresDisplay: autoResizes)
+        backing.detach()
         backing.removeFromSuperview()
         if activeBackingViewID == id {
             activeBackingViewID = nil
@@ -208,6 +204,15 @@ final class DetailContainerViewController: NSViewController {
     }
 
     private func updateDisplayState() {
+        // Ahead of the early return below: a hidden backing view stays attached and
+        // constrained, so a VM whose Settings pane is up still reconfigures its
+        // guest on every window resize unless the toggle reaches it here.
+        for (id, backing) in backingViews {
+            guard let instance = viewModel.instances.first(where: { $0.id == id }) else { continue }
+            backing.apply(
+                automaticallyReconfiguresDisplay: instance.configuration.displayAutoResizes)
+        }
+
         // Evict backing views for VMs no longer running inline
         let activeInlineIDs = Set(
             viewModel.instances
