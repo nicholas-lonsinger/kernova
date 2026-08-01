@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import Virtualization
 import os
 
@@ -33,7 +34,7 @@ final class IPSWService: Sendable {
         let restoreImage = try await VZMacOSRestoreImage.latestSupported
         return LatestRestoreImage(
             url: restoreImage.url,
-            version: MacOSVersion.displayString(restoreImage.operatingSystemVersion),
+            version: KernovaOSVersion.displayString(restoreImage.operatingSystemVersion),
             build: restoreImage.buildVersion
         )
     }

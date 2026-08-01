@@ -1089,17 +1089,34 @@ struct VMInstanceTests {
 
     // MARK: - guestOSVersionDisplay
 
-    @Test("guestOSVersionDisplay strips the operatingSystemVersionString lead-in")
-    func guestOSVersionDisplayStripsLeadIn() {
+    @Test("guestOSVersionDisplay reduces an operatingSystemVersionString report to its version")
+    func guestOSVersionDisplayReducesDisplayStringReport() {
         let instance = makeMacOSInstanceWithAgentInstalled(
             lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
-        #expect(instance.guestOSVersionDisplay == "26.0 (Build 25A123)")
+        #expect(instance.guestOSVersionDisplay == "26.0")
     }
 
-    @Test("guestOSVersionDisplay passes other shapes through untouched")
-    func guestOSVersionDisplayPassthrough() {
-        let instance = makeMacOSInstanceWithAgentInstalled(lastSeenGuestOSVersion: "26.0")
+    @Test("guestOSVersionDisplay reduces a guest-localized report the same way")
+    func guestOSVersionDisplayReducesLocalizedReport() {
+        let instance = makeMacOSInstanceWithAgentInstalled(
+            lastSeenGuestOSVersion: "Versión 26.0 (Compilación 25A123)")
         #expect(instance.guestOSVersionDisplay == "26.0")
+    }
+
+    @Test("guestOSVersionDisplay passes the numeric shape through untouched")
+    func guestOSVersionDisplayPassthrough() {
+        #expect(
+            makeMacOSInstanceWithAgentInstalled(lastSeenGuestOSVersion: "26.0")
+                .guestOSVersionDisplay == "26.0")
+        #expect(
+            makeMacOSInstanceWithAgentInstalled(lastSeenGuestOSVersion: "26.0.1")
+                .guestOSVersionDisplay == "26.0.1")
+    }
+
+    @Test("guestOSVersionDisplay passes a report holding no digits through untouched")
+    func guestOSVersionDisplayNoDigitsPassthrough() {
+        let instance = makeMacOSInstanceWithAgentInstalled(lastSeenGuestOSVersion: "macOS")
+        #expect(instance.guestOSVersionDisplay == "macOS")
     }
 
     @Test("guestOSVersionDisplay reads Unknown for nil and empty values")

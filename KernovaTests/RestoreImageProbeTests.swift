@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import KernovaTestSupport
 import Testing
 
@@ -170,25 +171,9 @@ struct RestoreImageFilenameTests {
 
 @Suite("MacOSVersion Tests")
 struct MacOSVersionTests {
-    @Test("A version reads the way Apple names the release")
-    func displayStringDropsAZeroPatch() {
-        #expect(
-            MacOSVersion.displayString(
-                OperatingSystemVersion(majorVersion: 26, minorVersion: 5, patchVersion: 2))
-                == "26.5.2")
-        #expect(
-            MacOSVersion.displayString(
-                OperatingSystemVersion(majorVersion: 26, minorVersion: 6, patchVersion: 0))
-                == "26.6")
-        #expect(
-            MacOSVersion.displayString(
-                OperatingSystemVersion(majorVersion: 12, minorVersion: 0, patchVersion: 1))
-                == "12.0.1")
-    }
-
-    @Test("What it renders is what the catalog's own version strings parse as")
+    @Test("What KernovaOSVersion renders is what the catalog's own version strings parse as")
     func displayStringRoundTripsThroughTheParser() {
-        let rendered = MacOSVersion.displayString(
+        let rendered = KernovaOSVersion.displayString(
             OperatingSystemVersion(majorVersion: 26, minorVersion: 5, patchVersion: 2))
         #expect(MacOSVersion(rendered)?.components == [26, 5, 2])
     }
