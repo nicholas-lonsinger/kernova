@@ -129,9 +129,9 @@ struct VsockGuestControlAgentTests {
         }
         #expect(hello.agentInfo.os == "macOS")
         #expect(hello.agentInfo.osVersion == KernovaOSVersion.current)
-        // The host renders this string as-is, so a localized `Version 26.0
-        // (Build 25A123)` — or its translation in a non-English guest — must
-        // never reach the wire.
+        // The numeric shape is the documented wire contract, so a localized
+        // `Version 26.0 (Build 25A123)` — or its translation in a non-English
+        // guest — must never reach the wire.
         #expect(hello.agentInfo.osVersion.allSatisfy { $0.isNumber || $0 == "." })
     }
 
