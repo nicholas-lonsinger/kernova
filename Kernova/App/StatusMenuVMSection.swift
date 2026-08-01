@@ -35,7 +35,7 @@ final class StatusMenuVMSection {
     static func rows(for instances: [VMInstance]) -> [StatusMenuVMRow] {
         instances.filter(\.isKeepingAppAlive).map {
             StatusMenuVMRow(
-                instanceID: $0.instanceID, title: "\($0.name) — \($0.status.displayName)")
+                instanceID: $0.instanceID, title: "\($0.name) — \($0.statusDisplayName)")
         }
     }
 
@@ -113,8 +113,14 @@ final class StatusMenuVMSection {
     }
 
     private static func makePlaceholderItem() -> NSMenuItem {
-        let item = NSMenuItem(
-            title: "No virtual machines running", action: nil, keyEquivalent: "")
+        .statusMenuInfo(title: "No virtual machines running")
+    }
+}
+
+extension NSMenuItem {
+    /// A disabled informational row for the status-item dropdown.
+    static func statusMenuInfo(title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
         return item
     }

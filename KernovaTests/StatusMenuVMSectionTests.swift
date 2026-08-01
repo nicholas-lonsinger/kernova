@@ -61,6 +61,19 @@ struct StatusMenuVMSectionTests {
             ])
     }
 
+    @Test("A preparing phantom's row shows its operation, not raw status")
+    func rowModelPreparing() {
+        let phantom = makeInstance(name: "Clone", status: .stopped)
+        phantom.preparingState = VMInstance.PreparingState(operation: .cloning, task: Task {})
+
+        let rows = StatusMenuVMSection.rows(for: [phantom])
+
+        #expect(
+            rows == [
+                StatusMenuVMRow(instanceID: phantom.instanceID, title: "Clone — Cloning\u{2026}")
+            ])
+    }
+
     // MARK: - Rebuild
 
     @Test("Rebuild with no rows appends the disabled placeholder")

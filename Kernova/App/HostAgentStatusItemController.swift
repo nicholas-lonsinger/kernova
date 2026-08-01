@@ -75,10 +75,10 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         runningObservation = observeRecurring(
             track: { [weak self] in
                 guard let self else { return }
-                for instance in self.viewModel.instances {
-                    _ = instance.isKeepingAppAlive
-                    _ = instance.name
-                }
+                // Evaluating the row model registers every property the rows
+                // (and the tooltip's running count) render, so the tracked set
+                // can't drift from the rendered set.
+                _ = StatusMenuVMSection.rows(for: self.viewModel.instances)
             },
             apply: { [weak self] in
                 guard let self else { return }
@@ -341,9 +341,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     }
 
     private func addInfoItem(_ title: String) {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        item.isEnabled = false
-        menu.addItem(item)
+        menu.addItem(.statusMenuInfo(title: title))
     }
 
     // MARK: - Actions
