@@ -264,6 +264,12 @@ func findLabel(containing text: String, in view: NSView) -> NSTextField? {
     firstSubview(NSTextField.self, in: view) { $0.stringValue.contains(text) }
 }
 
+/// The first editable text field in the subtree rooted at `view`.
+@MainActor
+func findEditableField(in view: NSView) -> NSTextField? {
+    firstSubview(NSTextField.self, in: view) { $0.isEditable }
+}
+
 /// Every text field in the subtree rooted at `view`, in depth-first order.
 @MainActor
 func collectLabels(in view: NSView) -> [NSTextField] {

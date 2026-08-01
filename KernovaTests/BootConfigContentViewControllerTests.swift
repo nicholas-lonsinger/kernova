@@ -47,7 +47,7 @@ struct BootConfigContentViewControllerTests {
         let vc = BootConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        guard let field = firstSubview(NSTextField.self, in: vc.view, where: { $0.isEditable }) else {
+        guard let field = findEditableField(in: vc.view) else {
             Issue.record("Expected an editable command-line NSTextField")
             return
         }
