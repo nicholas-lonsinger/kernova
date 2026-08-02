@@ -69,6 +69,74 @@ private let socketTimeoutSeconds: Int = 30
 // stays under the 5 s retryInterval.
 private let connectTimeoutSeconds: Int = 3
 
+/// Carries the result of a blocking `connect(2)` back to a waiter that may have
+/// already given up, and settles which side owns the socket when the deadline and
+/// the syscall land together.
+///
+/// Exactly one of `finish` and `abandon` sees the other as unfinished, so the fd
+/// has exactly one owner and is never closed while the call is still in flight.
+final class BlockingConnectHandoff: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: Int32?
+    private var abandoned = false
+
+    /// Records the syscall's `errno` (`0` on success).
+    ///
+    /// - Returns: `true` while the waiter is still there — it takes the socket;
+    ///   `false` once the waiter has abandoned the attempt, leaving the caller
+    ///   holding the socket.
+    func finish(errno: Int32) -> Bool {
+        lock.withLock {
+            recorded = errno
+            return !abandoned
+        }
+    }
+
+    /// Gives up on a syscall that has outrun its deadline.
+    ///
+    /// - Returns: `true` when it had not finished — the worker now owns the
+    ///   socket; `false` when it beat the deadline, leaving `outcome` readable.
+    func abandon() -> Bool {
+        lock.withLock {
+            guard recorded == nil else { return false }
+            abandoned = true
+            return true
+        }
+    }
+
+    /// The recorded `errno`, or `nil` while the syscall is still in flight.
+    var outcome: Int32? { lock.withLock { recorded } }
+}
+
+/// Admits one in-flight blocking `connect(2)` per client label.
+///
+/// An abandoned connect stays parked in the kernel while the reconnect loop keeps
+/// retrying on its own schedule; without this gate a host that never accepts
+/// would strand one thread per retry for the life of the process. A label's slot
+/// frees the moment its syscall returns, so recovery needs no separate sweep.
+final class BlockingConnectGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var inFlight: Set<String> = []
+
+    /// Claims the slot for `label`, refusing it while an earlier connect is parked.
+    ///
+    /// - Returns: `true` when the slot was free and is now held.
+    func claim(_ label: String) -> Bool {
+        lock.withLock { inFlight.insert(label).inserted }
+    }
+
+    func release(_ label: String) {
+        lock.withLock { _ = inFlight.remove(label) }
+    }
+
+    /// Whether `label` currently holds the slot — for tests.
+    func isClaimed(_ label: String) -> Bool {
+        lock.withLock { inFlight.contains(label) }
+    }
+}
+
+private let blockingConnectGate = BlockingConnectGate()
+
 /// Maintains a long-lived `socket(AF_VSOCK, SOCK_STREAM)` connection to the host
 /// on one vsock port, reconnecting on disconnect or connect failure.
 ///
@@ -250,12 +318,11 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
 
     /// Opens a raw `AF_VSOCK / SOCK_STREAM` socket and connects it to the host.
     ///
-    /// macOS 13+ connects non-blocking-plus-poll, so `connect(2)` cannot block
-    /// the reconnect loop past `connectTimeoutSeconds`. Monterey connects
-    /// blocking: its virtio-vsock driver never completes a non-blocking connect
-    /// (docs/research/2026-08-02-macos12-vsock-nonblocking-connect.md), and
-    /// blocking is safe there because vsock is local-only — the hypervisor
-    /// answers accept or refusal promptly, with no remote peer to wait out.
+    /// Both paths bound the connect at `connectTimeoutSeconds`, by different
+    /// means: macOS 13+ uses the non-blocking-plus-poll idiom, while Monterey —
+    /// whose virtio-vsock driver never completes a non-blocking connect
+    /// (docs/research/2026-08-02-macos12-vsock-nonblocking-connect.md) — runs a
+    /// blocking `connect(2)` on a throwaway thread it can walk away from.
     private static func openVsockToHost(
         port: UInt32, label: String, clock: Clock
     ) -> Result<Int32, VsockProviderError> {
@@ -280,23 +347,93 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
                 return .failure(.transient("connect() to '\(label)' port \(port) did not complete"))
             }
         } else {
-            let rc = withUnsafePointer(to: &addr) { ptr -> Int32 in
-                ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
-                    connect(fd, sa, socklen_t(MemoryLayout<sockaddr_vm>.size))
-                }
-            }
-            guard rc == 0 else {
-                let err = errno
+            switch connectBlocking(fd: fd, addr: addr, label: label, port: port) {
+            case .connected:
+                break
+            case .failed(let err):
                 close(fd)
                 logger.warning(
                     "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed: errno=\(err, privacy: .public)"
                 )
                 return .failure(.transient("connect() to '\(label)' port \(port) failed: errno=\(err)"))
+            case .abandoned:
+                // The worker owns `fd` and closes it when the kernel returns.
+                return .failure(
+                    .transient("connect() to '\(label)' port \(port) outran \(connectTimeoutSeconds)s"))
+            case .busy:
+                close(fd)
+                return .failure(
+                    .transient("connect() to '\(label)' port \(port) is still parked from an earlier attempt"))
             }
         }
 
         applySocketTimeouts(fd: fd, label: label)
         return .success(fd)
+    }
+
+    /// What a bounded blocking `connect(2)` did.
+    private enum BlockingConnectOutcome {
+        case connected
+        case failed(errno: Int32)
+        /// The deadline passed with the syscall still in the kernel. The worker
+        /// thread owns `fd` and closes it when the call returns — the caller
+        /// must not.
+        case abandoned
+        /// An earlier attempt on this label is still parked; no socket was used.
+        case busy
+    }
+
+    /// Connects `fd` with a blocking `connect(2)`, bounded at
+    /// `connectTimeoutSeconds` by running the call on a thread the caller can
+    /// walk away from.
+    ///
+    /// Darwin bounds `connect(2)` with no socket option — `SO_SNDTIMEO` covers
+    /// only `send` — and a vsock connect does park indefinitely when the host
+    /// stops accepting
+    /// (docs/research/2026-08-02-macos12-vsock-blocking-connect-parks.md), which
+    /// on the loop's own thread strands the client for the life of the process.
+    /// Abandoning a thread rather than closing its socket keeps fd ownership
+    /// unambiguous: nothing is closed while a syscall still holds it.
+    private static func connectBlocking(
+        fd: Int32, addr: sockaddr_vm, label: String, port: UInt32
+    ) -> BlockingConnectOutcome {
+        guard blockingConnectGate.claim(label) else { return .busy }
+
+        let handoff = BlockingConnectHandoff()
+        let ready = DispatchSemaphore(value: 0)
+        let worker = Thread {
+            var addrCopy = addr
+            let rc = withUnsafePointer(to: &addrCopy) { ptr -> Int32 in
+                ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                    connect(fd, sa, socklen_t(MemoryLayout<sockaddr_vm>.size))
+                }
+            }
+            let recorded = rc == 0 ? 0 : errno
+            let waiterPresent = handoff.finish(errno: recorded)
+            blockingConnectGate.release(label)
+            if waiterPresent {
+                ready.signal()
+            } else {
+                close(fd)
+            }
+        }
+        worker.name = "app.kernova.macosagent.vsock-connect"
+        worker.start()
+
+        if ready.wait(timeout: .now() + .seconds(connectTimeoutSeconds)) == .success,
+            let err = handoff.outcome
+        {
+            return err == 0 ? .connected : .failed(errno: err)
+        }
+        if handoff.abandon() {
+            logger.warning(
+                "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) still blocked after \(connectTimeoutSeconds, privacy: .public)s — abandoning it"
+            )
+            return .abandoned
+        }
+        // The syscall landed between the deadline expiring and the abandon.
+        guard let err = handoff.outcome else { return .abandoned }
+        return err == 0 ? .connected : .failed(errno: err)
     }
 
     /// Connects `fd` in non-blocking mode with the connect-plus-poll idiom.

@@ -485,6 +485,89 @@ struct ClassifySocketErrnoTests {
     }
 }
 
+@Suite("Bounded blocking connect: socket ownership and the one-per-label gate")
+struct BlockingConnectTests {
+    @Test("A syscall that beats the deadline hands the socket to the waiter")
+    func syscallBeatsDeadline() {
+        let handoff = BlockingConnectHandoff()
+
+        #expect(handoff.finish(errno: 0))
+        #expect(handoff.abandon() == false)
+        #expect(handoff.outcome == 0)
+    }
+
+    @Test("A syscall that outruns the deadline keeps the socket")
+    func syscallOutrunsDeadline() {
+        let handoff = BlockingConnectHandoff()
+
+        #expect(handoff.abandon())
+        #expect(handoff.outcome == nil)
+        #expect(handoff.finish(errno: ECONNREFUSED) == false)
+        #expect(handoff.outcome == ECONNREFUSED)
+    }
+
+    @Test("A failing syscall reports its errno to a waiter still present")
+    func failingSyscallReportsErrno() {
+        let handoff = BlockingConnectHandoff()
+
+        #expect(handoff.finish(errno: ECONNREFUSED))
+        #expect(handoff.outcome == ECONNREFUSED)
+    }
+
+    @Test("Only one connect per label is admitted until its slot is released")
+    func gateAdmitsOnePerLabel() {
+        let gate = BlockingConnectGate()
+
+        #expect(gate.claim("control"))
+        #expect(gate.isClaimed("control"))
+        #expect(gate.claim("control") == false)
+
+        gate.release("control")
+        #expect(gate.isClaimed("control") == false)
+        #expect(gate.claim("control"))
+    }
+
+    @Test("Labels hold their slots independently")
+    func gateSeparatesLabels() {
+        let gate = BlockingConnectGate()
+
+        #expect(gate.claim("control"))
+        #expect(gate.claim("clipboard"))
+        #expect(gate.claim("control") == false)
+
+        gate.release("control")
+        #expect(gate.claim("clipboard") == false)
+        #expect(gate.isClaimed("clipboard"))
+    }
+
+    @Test("Releasing a label that never claimed one is inert")
+    func gateReleaseIsIdempotent() {
+        let gate = BlockingConnectGate()
+
+        gate.release("control")
+        #expect(gate.claim("control"))
+        gate.release("control")
+        gate.release("control")
+        #expect(gate.claim("control"))
+    }
+
+    @Test("Concurrent claims on one label admit exactly one winner")
+    func gateAdmitsExactlyOneUnderContention() async {
+        let gate = BlockingConnectGate()
+        let winners = CallCounter()
+
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<32 {
+                group.addTask {
+                    if gate.claim("control") { await winners.increment() }
+                }
+            }
+        }
+
+        #expect(await winners.value == 1)
+    }
+}
+
 // MARK: - Concurrency helpers
 
 /// Actor-isolated counter for tracking cross-task call counts.
