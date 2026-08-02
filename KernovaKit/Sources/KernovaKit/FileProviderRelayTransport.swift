@@ -31,11 +31,14 @@ public protocol FileProviderRelayTransport: AnyObject, Sendable {
 /// and keeps the control connection warm — reconnecting on the Darwin doorbell or
 /// an XPC invalidation.
 ///
-/// The service is addressed by ITEM IDENTIFIER — on the guest side too, which shares
-/// this connector. The path-based `FileManager.getFileProviderServicesForItem(at:)`
-/// needs `~/Library/CloudStorage` access the sandboxed host app lacks (Cocoa 257),
-/// and reaching through our own dataless root risks reentrant materialization. Only
-/// the second constraint binds the unsandboxed guest agent.
+/// On macOS 13+ the service is addressed by ITEM IDENTIFIER — on the guest side
+/// too, which shares this connector. The path-based
+/// `FileManager.getFileProviderServicesForItem(at:)` needs `~/Library/CloudStorage`
+/// access the sandboxed host app lacks (Cocoa 257), and reaching through our own
+/// dataless root risks reentrant materialization. Below 13 — only the unsandboxed
+/// guest agent, which neither constraint binds when the lookup stops at the root —
+/// the identifier-addressed selector does not exist, so the connector resolves the
+/// root's user-visible URL and addresses that one dirent, never a descendant.
 ///
 /// `@unchecked Sendable`: all mutable state is guarded by `lock`; the immutable
 /// addressing/logging values are set once in `init`.
@@ -113,14 +116,7 @@ public final class FileProviderServicingConnector: NSObject,
                 completion(nil)
                 return
             }
-            manager.getService(named: serviceName, for: .rootContainer) { service, error in
-                guard let service else {
-                    logger.error(
-                        "getService(named: \(serviceName.rawValue, privacy: .public)) failed: \(error?.localizedDescription ?? "no service offered", privacy: .public)"
-                    )
-                    completion(nil)
-                    return
-                }
+            let openConnection: @Sendable (NSFileProviderService) -> Void = { service in
                 service.getFileProviderConnection { connection, error in
                     guard let connection else {
                         logger.error(
@@ -130,6 +126,43 @@ public final class FileProviderServicingConnector: NSObject,
                         return
                     }
                     completion(connection)
+                }
+            }
+            if #available(macOS 13.0, *) {
+                manager.getService(named: serviceName, for: .rootContainer) { service, error in
+                    guard let service else {
+                        logger.error(
+                            "getService(named: \(serviceName.rawValue, privacy: .public)) failed: \(error?.localizedDescription ?? "no service offered", privacy: .public)"
+                        )
+                        completion(nil)
+                        return
+                    }
+                    openConnection(service)
+                }
+            } else {
+                // The 13+ branch above compiles ungated at the 12 floor, but its
+                // selector ships in macOS 13 and Monterey aborts on it
+                // (docs/research/2026-08-02-macos12-fileprovider-getservice.md), so
+                // Monterey takes the URL-addressed lookup against the root dirent.
+                manager.getUserVisibleURL(for: .rootContainer) { url, error in
+                    guard let url else {
+                        logger.error(
+                            "getUserVisibleURL(for: .rootContainer) failed: \(error?.localizedDescription ?? "nil URL", privacy: .public)"
+                        )
+                        completion(nil)
+                        return
+                    }
+                    FileManager.default.getFileProviderServicesForItem(at: url) {
+                        services, error in
+                        guard let service = services?[serviceName] else {
+                            logger.error(
+                                "getFileProviderServicesForItem(at:) offered no '\(serviceName.rawValue, privacy: .public)': \(error?.localizedDescription ?? "no error", privacy: .public)"
+                            )
+                            completion(nil)
+                            return
+                        }
+                        openConnection(service)
+                    }
                 }
             }
         }
