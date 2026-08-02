@@ -248,13 +248,14 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
 
     // MARK: - Socket helpers (static — no instance state read)
 
-    /// Opens a raw `AF_VSOCK / SOCK_STREAM` socket and connects to the host with
-    /// the non-blocking-connect-plus-poll idiom, so `connect(2)` cannot block the
-    /// reconnect loop past `connectTimeoutSeconds`.
+    /// Opens a raw `AF_VSOCK / SOCK_STREAM` socket and connects it to the host.
     ///
-    /// Darwin's `SO_RCVTIMEO`/`SO_SNDTIMEO` bound only `recv`/`send`, never
-    /// `connect(2)`. Non-blocking mode covers the connect phase only; blocking
-    /// mode is restored afterwards so those socket-level timeouts still apply.
+    /// macOS 13+ connects non-blocking-plus-poll, so `connect(2)` cannot block
+    /// the reconnect loop past `connectTimeoutSeconds`. Monterey connects
+    /// blocking: its virtio-vsock driver never completes a non-blocking connect
+    /// (docs/research/2026-08-02-macos12-vsock-nonblocking-connect.md), and
+    /// blocking is safe there because vsock is local-only — the hypervisor
+    /// answers accept or refusal promptly, with no remote peer to wait out.
     private static func openVsockToHost(
         port: UInt32, label: String, clock: Clock
     ) -> Result<Int32, VsockProviderError> {
@@ -262,21 +263,6 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
         guard fd >= 0 else {
             let err = errno
             return .failure(classifySocketErrno(err, label: label))
-        }
-
-        let originalFlags = fcntl(fd, F_GETFL, 0)
-        guard originalFlags >= 0 else {
-            let err = errno
-            close(fd)
-            logger.error("fcntl(F_GETFL) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
-            return .failure(.transient("fcntl(F_GETFL) failed for '\(label)': errno=\(err)"))
-        }
-        guard fcntl(fd, F_SETFL, originalFlags | O_NONBLOCK) >= 0 else {
-            let err = errno
-            close(fd)
-            logger.error(
-                "fcntl(F_SETFL, O_NONBLOCK) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
-            return .failure(.transient("fcntl(F_SETFL, O_NONBLOCK) failed for '\(label)': errno=\(err)"))
         }
 
         var addr = sockaddr_vm()
@@ -287,7 +273,58 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
         addr.svm_port = port
         addr.svm_cid = UInt32(VMADDR_CID_HOST)
 
-        let rc = withUnsafePointer(to: &addr) { ptr -> Int32 in
+        if #available(macOS 13.0, *) {
+            guard connectNonBlocking(fd: fd, addr: addr, label: label, port: port, clock: clock)
+            else {
+                close(fd)
+                return .failure(.transient("connect() to '\(label)' port \(port) did not complete"))
+            }
+        } else {
+            let rc = withUnsafePointer(to: &addr) { ptr -> Int32 in
+                ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                    connect(fd, sa, socklen_t(MemoryLayout<sockaddr_vm>.size))
+                }
+            }
+            guard rc == 0 else {
+                let err = errno
+                close(fd)
+                logger.warning(
+                    "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed: errno=\(err, privacy: .public)"
+                )
+                return .failure(.transient("connect() to '\(label)' port \(port) failed: errno=\(err)"))
+            }
+        }
+
+        applySocketTimeouts(fd: fd, label: label)
+        return .success(fd)
+    }
+
+    /// Connects `fd` in non-blocking mode with the connect-plus-poll idiom.
+    ///
+    /// Darwin's `SO_RCVTIMEO`/`SO_SNDTIMEO` bound only `recv`/`send`, never
+    /// `connect(2)`. Non-blocking mode covers the connect phase only; blocking
+    /// mode is restored afterwards so those socket-level timeouts still apply.
+    /// The caller owns `fd` on both paths and must `close()` it on a `false`
+    /// return.
+    @available(macOS 13.0, *)
+    private static func connectNonBlocking(
+        fd: Int32, addr: sockaddr_vm, label: String, port: UInt32, clock: Clock
+    ) -> Bool {
+        let originalFlags = fcntl(fd, F_GETFL, 0)
+        guard originalFlags >= 0 else {
+            let err = errno
+            logger.error("fcntl(F_GETFL) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
+            return false
+        }
+        guard fcntl(fd, F_SETFL, originalFlags | O_NONBLOCK) >= 0 else {
+            let err = errno
+            logger.error(
+                "fcntl(F_SETFL, O_NONBLOCK) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
+            return false
+        }
+
+        var addrCopy = addr
+        let rc = withUnsafePointer(to: &addrCopy) { ptr -> Int32 in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
                 connect(fd, sa, socklen_t(MemoryLayout<sockaddr_vm>.size))
             }
@@ -296,28 +333,23 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
         if rc != 0 {
             let connectErr = errno
             guard connectErr == EINPROGRESS else {
-                close(fd)
                 logger.warning(
                     "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed: errno=\(connectErr, privacy: .public)"
                 )
-                return .failure(.transient("connect() to '\(label)' port \(port) failed: errno=\(connectErr)"))
+                return false
             }
             guard awaitConnectCompletion(fd: fd, label: label, port: port, clock: clock) else {
-                close(fd)
-                return .failure(.transient("connect() to '\(label)' port \(port) did not complete"))
+                return false
             }
         }
 
         guard fcntl(fd, F_SETFL, originalFlags) >= 0 else {
             let err = errno
-            close(fd)
             logger.error(
                 "fcntl(F_SETFL) restore failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
-            return .failure(.transient("fcntl(F_SETFL) restore failed for '\(label)': errno=\(err)"))
+            return false
         }
-
-        applySocketTimeouts(fd: fd, label: label)
-        return .success(fd)
+        return true
     }
 
     /// Waits up to `connectTimeoutSeconds` for an in-flight non-blocking connect
@@ -325,6 +357,7 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
     ///
     /// The caller owns `fd` on both paths and must `close()` it on a `false`
     /// return — this helper never takes ownership.
+    @available(macOS 13.0, *)
     private static func awaitConnectCompletion(
         fd: Int32, label: String, port: UInt32, clock: Clock
     ) -> Bool {
