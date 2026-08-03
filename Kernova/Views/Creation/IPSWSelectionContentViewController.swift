@@ -1,5 +1,6 @@
 import AppKit
 import UniformTypeIdentifiers
+import os
 
 /// Step 2 of the creation wizard for macOS guests: choose where the IPSW restore
 /// image comes from, show which image that is and where it lands, and surface
@@ -10,6 +11,9 @@ import UniformTypeIdentifiers
 /// shell observes the model separately to keep its Next button in sync.
 @MainActor
 final class IPSWSelectionContentViewController: NSViewController {
+    private static let logger = Logger(
+        subsystem: "app.kernova", category: "IPSWSelectionContentViewController")
+
     private let creationVM: VMCreationViewModel
 
     private var radios: [IPSWSource: NSButton] = [:]
@@ -27,6 +31,9 @@ final class IPSWSelectionContentViewController: NSViewController {
         case unusable(message: String)
     }
     private var existingFileNotice: ExistingFileNotice?
+    /// The destination ``existingFileNotice`` describes, set with it; a notice
+    /// whose path the latest-image lookup has moved away from is stale.
+    private var existingFileNoticePath: String?
     /// In-flight inspection, so a second click can't race the first.
     private var adoptTask: Task<Void, Never>?
     /// Redraws the badge once the model's latest-image lookup lands.
@@ -221,11 +228,10 @@ final class IPSWSelectionContentViewController: NSViewController {
                 conditionalContainer.addArrangedSubview(
                     makeWizardPathBadge(path: creationVM.ipswDownloadPath))
             }
-            // `version: nil` even once the lookup lands: this source pins no
-            // build and shares one destination filename, so the file already
-            // sitting there may be any image, and naming the version the badge
-            // shows would describe that file wrongly.
-            addDownloadBanners(version: nil)
+            // The subject follows the lookup: until it lands the destination is
+            // the shared fallback filename, whose occupant may be any image;
+            // once it lands, the destination is per-build like a pinned pick's.
+            addDownloadBanners(version: creationVM.latestImage?.version)
         case .catalogVersion(let entry):
             addPinnedImageBadge(
                 parts: [
@@ -273,10 +279,15 @@ final class IPSWSelectionContentViewController: NSViewController {
     private func addDownloadBanners(version: String?) {
         let subject = version.map { "macOS \($0)" }
         // A verdict on the existing file supersedes the plain overwrite
-        // warning — it says something more specific about the same file.
+        // warning — it says something more specific about the same file. One
+        // for a destination the lookup has since moved away from describes a
+        // file that no longer matters, so it drops instead of rendering.
         if let notice = existingFileNotice {
-            addExistingFileNotice(notice)
-            return
+            if existingFileNoticePath == creationVM.ipswDownloadPath {
+                addExistingFileNotice(notice)
+                return
+            }
+            clearExistingFileNotice()
         }
         if creationVM.shouldShowOverwriteWarning {
             let useExisting = NSButton(
@@ -365,11 +376,13 @@ final class IPSWSelectionContentViewController: NSViewController {
     /// IPSW can't stand in for the version the wizard is showing.
     @objc private func useExistingTapped() {
         guard adoptTask == nil else { return }
+        let path = creationVM.ipswDownloadPath
         existingFileNotice = .checking
+        existingFileNoticePath = path
         rebuildConditional()
         adoptTask = Task { [weak self] in
             guard let self else { return }
-            let verdict = await self.creationVM.adoptExistingDownloadFile()
+            let verdict = await self.creationVM.adoptExistingDownloadFile(at: path)
             switch verdict {
             case .cancelled:
                 // The canceller dropped this task and the notice already, and a
@@ -389,8 +402,13 @@ final class IPSWSelectionContentViewController: NSViewController {
 
     /// Adopts the file the mismatch banner described, on the user's say-so.
     @objc private func useExistingAnywayTapped() {
-        creationVM.useExistingDownloadFile()
-        existingFileNotice = nil
+        guard let path = existingFileNoticePath else {
+            Self.logger.fault("Use It Anyway tapped with no notice path")
+            assertionFailure("A mismatch banner is showing, so its path must be set")
+            return
+        }
+        creationVM.useExistingDownloadFile(at: path)
+        clearExistingFileNotice()
         refresh()
     }
 
@@ -406,6 +424,7 @@ final class IPSWSelectionContentViewController: NSViewController {
         adoptTask?.cancel()
         adoptTask = nil
         existingFileNotice = nil
+        existingFileNoticePath = nil
     }
 
     // MARK: - Panels

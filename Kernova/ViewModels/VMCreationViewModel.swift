@@ -111,7 +111,8 @@ final class VMCreationViewModel {
     /// What "Download Latest" will fetch, once ``loadLatestImageDetails()`` has
     /// answered; `nil` until then, and after a lookup that failed.
     ///
-    /// Display only, on the terms ``LatestRestoreImage`` states.
+    /// A preview on the terms ``LatestRestoreImage`` states, read for display
+    /// and to name the download destination.
     private(set) var latestImage: LatestRestoreImage?
 
     /// How large ``latestImage`` is, when the server reported a size.
@@ -131,8 +132,9 @@ final class VMCreationViewModel {
     private(set) var lastPastedImage: ProbedRestoreImage?
     /// Always inside Downloads — there is no custom-destination picker.
     ///
-    /// A pinned pick names the file through ``RestoreImageFilename``;
-    /// "Download Latest" keeps the fixed default.
+    /// Every download source names the file through ``RestoreImageFilename``;
+    /// "Download Latest" starts on the fixed fallback and adopts the looked-up
+    /// image's name once ``loadLatestImageDetails()`` answers.
     var ipswDownloadPath: String = VMCreationViewModel.defaultIPSWDownloadPath {
         didSet {
             if ipswDownloadPath != confirmedOverwritePath {
@@ -311,8 +313,8 @@ final class VMCreationViewModel {
         ipswDownloadPath = Self.downloadPath(forFilename: image.suggestedFilename)
     }
 
-    /// Commits the "Download Latest" source, returning the destination to the
-    /// fixed filename that source has always resolved to at install time.
+    /// Commits the "Download Latest" source, naming the destination for the
+    /// image the lookup found — or the fixed fallback while none has answered.
     ///
     /// The one operation that drops both sheet seeds: choosing to install
     /// whatever is newest retracts the earlier "install *this* build" answers.
@@ -320,7 +322,8 @@ final class VMCreationViewModel {
         ipswSelection = .downloadLatest
         lastCatalogPick = nil
         lastPastedImage = nil
-        ipswDownloadPath = Self.defaultIPSWDownloadPath
+        ipswDownloadPath = Self.downloadPath(
+            forFilename: latestImage?.suggestedFilename ?? RestoreImageFilename.fallback)
     }
 
     /// Commits a panel-picked file together with the grant minted for it, which
@@ -332,7 +335,8 @@ final class VMCreationViewModel {
     // MARK: - Latest Image Lookup
 
     /// Looks up what "Download Latest" would fetch, so the wizard can name the
-    /// version, build and size that source otherwise leaves unsaid.
+    /// version, build, size and destination filename that source otherwise
+    /// leaves unsaid.
     ///
     /// Idempotent: calls while a lookup runs join it, calls after one succeeded
     /// do nothing, and one that failed retries on the next call — a wizard the
@@ -365,6 +369,12 @@ final class VMCreationViewModel {
             guard let self else { return }
             self.latestImage = image
             self.latestImageSizeBytes = sizeBytes
+            // Only while the source is still current — a pick made while the
+            // lookup ran named its own destination.
+            if self.ipswSelection == .downloadLatest {
+                self.ipswDownloadPath = Self.downloadPath(
+                    forFilename: image.suggestedFilename)
+            }
         }
         latestImageTask = task
         return task
@@ -459,22 +469,28 @@ final class VMCreationViewModel {
         confirmedOverwritePath = ipswDownloadPath
     }
 
-    /// Adopts the file already sitting at the download destination.
+    /// Adopts the file at `path`, which the caller inspected or the user
+    /// explicitly accepted.
+    ///
+    /// The caller supplies the path it showed the user rather than this reading
+    /// ``ipswDownloadPath``, which the latest-image lookup can move while a
+    /// decision is pending.
     ///
     /// No bookmark: the file was adopted without a panel, so there is no grant
     /// to capture — and none is needed, the Downloads location being
     /// entitlement-covered.
-    func useExistingDownloadFile() {
-        ipswSelection = .localFile(path: ipswDownloadPath, bookmark: nil)
+    func useExistingDownloadFile(at path: String) {
+        ipswSelection = .localFile(path: path, bookmark: nil)
     }
 
-    /// The build the wizard is currently promising, or `nil` when the source
-    /// names no particular image.
-    var pinnedBuild: String? {
+    /// The build the wizard is currently promising — a pinned pick's, or the
+    /// looked-up latest one — or `nil` while no particular image is named.
+    var expectedBuild: String? {
         switch ipswSelection {
         case .catalogVersion(let entry): entry.build
         case .customURL(let image): image.build
-        case .downloadLatest, .localFile: nil
+        case .downloadLatest: latestImage?.build
+        case .localFile: nil
         }
     }
 
@@ -492,8 +508,9 @@ final class VMCreationViewModel {
         case cancelled
     }
 
-    /// Checks the file sitting at the download destination, and adopts it only
-    /// if it is the image the wizard is promising.
+    /// Checks the file at `path` — the caller's snapshot of the destination it
+    /// showed the user — and adopts it only if it is the image the wizard is
+    /// promising.
     ///
     /// Without this, "Use Existing File" takes whatever is at the path. A file
     /// that is a *valid but different* macOS installs silently — the same
@@ -501,10 +518,15 @@ final class VMCreationViewModel {
     /// a stale or hand-placed file reintroduces.
     ///
     /// Reading a multi-gigabyte image takes seconds, in which the user can pick
-    /// another source or leave the step: a cancelled call returns
-    /// ``ExistingFileVerdict/cancelled`` having changed nothing.
-    func adoptExistingDownloadFile() async -> ExistingFileVerdict {
-        let url = URL(fileURLWithPath: ipswDownloadPath)
+    /// another source or leave the step — a cancelled call returns
+    /// ``ExistingFileVerdict/cancelled`` having changed nothing — and the
+    /// latest-image lookup can move ``ipswDownloadPath`` and ``expectedBuild``:
+    /// both the verdict and any adoption describe the file the user was asked
+    /// about, so the path comes in as the caller's snapshot and the build is
+    /// snapshotted before the inspection.
+    func adoptExistingDownloadFile(at path: String) async -> ExistingFileVerdict {
+        let expectedBuild = expectedBuild
+        let url = URL(fileURLWithPath: path)
         let inspected: InspectedRestoreImage
         do {
             inspected = try await localImageInspector.inspect(url)
@@ -523,11 +545,11 @@ final class VMCreationViewModel {
                     ?? "That restore image can't install on this Mac.")
         }
 
-        if let pinnedBuild, pinnedBuild != inspected.build {
-            return .mismatch(expected: pinnedBuild, found: inspected)
+        if let expectedBuild, expectedBuild != inspected.build {
+            return .mismatch(expected: expectedBuild, found: inspected)
         }
 
-        useExistingDownloadFile()
+        useExistingDownloadFile(at: path)
         return .adopted(inspected)
     }
 

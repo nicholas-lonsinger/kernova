@@ -172,6 +172,20 @@ final class VMLifecycleCoordinator {
         return downloads.appendingPathComponent(filename)
     }
 
+    /// The destination a "Download Latest" install writes to, named by the URL
+    /// the install just resolved.
+    ///
+    /// The persisted path is only the wizard's preview of that answer: the
+    /// newest build can move between wizard and Start, and only a name derived
+    /// from the URL actually fetched keeps ``RestoreImageFilename``'s per-build
+    /// identity honest for the file the bytes land in. Falls back to the
+    /// persisted path when normalization is disabled.
+    func latestDownloadDestination(persisted: URL, resolvedURL: URL) -> URL {
+        guard let downloads = downloadsDirectory else { return persisted }
+        return downloads.appendingPathComponent(
+            RestoreImageFilename.destination(for: resolvedURL))
+    }
+
     /// Whether `candidate` names a file sitting directly in the Downloads
     /// directory, which the directory itself does not.
     ///
@@ -217,15 +231,66 @@ final class VMLifecycleCoordinator {
                     guard let persistedDestination = context.downloadDestinationURL else {
                         throw IPSWError.noDownloadURL
                     }
-                    // A persisted destination outside Downloads (a hand-edited
-                    // config.json) can never be written and has no picker to
-                    // re-point it, so the invariant is enforced at use time.
-                    let downloadDestination = normalizedDownloadDestination(
-                        for: persistedDestination, remoteURL: context.remoteURL)
-                    if downloadDestination != persistedDestination {
-                        Self.logger.notice(
-                            "installMacOS: persisted download destination is outside Downloads; using the derived destination instead"
-                        )
+
+                    instance.installState = MacOSInstallState(
+                        hasDownloadStep: true,
+                        currentPhase: .downloading(.zero)
+                    )
+                    instance.status = .installing
+
+                    // Local because a moved latest destination lapses it below.
+                    var requestedFreshDownload = context.requestedFreshDownload
+
+                    // A catalog pick or a checked URL names its image and its
+                    // destination at wizard time, so the install downloads that
+                    // build however long it sits unstarted. Only "Download
+                    // Latest" resolves here, and its destination follows the
+                    // answer.
+                    let remoteURL: URL
+                    let downloadDestination: URL
+                    if context.source.usesPinnedURL {
+                        guard let pinnedURL = context.remoteURL else {
+                            throw IPSWError.noDownloadURL
+                        }
+                        remoteURL = pinnedURL
+                        // A persisted destination outside Downloads (a hand-edited
+                        // config.json) can never be written and has no picker to
+                        // re-point it, so the invariant is enforced at use time.
+                        downloadDestination = normalizedDownloadDestination(
+                            for: persistedDestination, remoteURL: remoteURL)
+                        if downloadDestination != persistedDestination {
+                            Self.logger.notice(
+                                "installMacOS: persisted download destination is outside Downloads; using the derived destination instead"
+                            )
+                        }
+                    } else {
+                        remoteURL = try await ipswService.fetchLatestRestoreImage().url
+                        downloadDestination = latestDownloadDestination(
+                            persisted: persistedDestination, resolvedURL: remoteURL)
+                        if downloadDestination != persistedDestination {
+                            Self.logger.notice(
+                                "installMacOS: resolved latest image names the download '\(downloadDestination.lastPathComponent, privacy: .public)'"
+                            )
+                            // "Download & Replace" was confirmed against the
+                            // wizard's destination; a destination that moved
+                            // names a file the user never saw, so the intent
+                            // lapses rather than retargets.
+                            requestedFreshDownload = false
+                            // A moved destination also means the fetch changed
+                            // builds, so the old path's partial download can
+                            // never be resumed — discard its sidecar before the
+                            // only pointer to it moves.
+                            ipswService.discardResumeData(
+                                at: persistedDestination, permanently: false)
+                            // Keep the persisted path on the file the download
+                            // actually writes, so resume across relaunches and
+                            // delete-time cleanup stay keyed to it.
+                            instance.performConfigurationMutation {
+                                $0.installContext?.downloadDestinationPath =
+                                    downloadDestination.path(percentEncoded: false)
+                                $0.installContext?.requestedFreshDownload = false
+                            }
+                        }
                     }
 
                     // Honor "Download & Replace" intent ONCE: the download
@@ -234,7 +299,7 @@ final class VMLifecycleCoordinator {
                     // could delete bytes another VM is streaming into the same
                     // bundle. The flag clears before the download so a retry
                     // after a partial-install failure reuses what it fetched.
-                    if context.requestedFreshDownload {
+                    if requestedFreshDownload {
                         // `downloadDestinationPath` survives through `config.json`
                         // on disk, so a stray edit could otherwise have us
                         // trashing an arbitrary file.
@@ -255,29 +320,10 @@ final class VMLifecycleCoordinator {
                         }
                     }
 
-                    instance.installState = MacOSInstallState(
-                        hasDownloadStep: true,
-                        currentPhase: .downloading(.zero)
-                    )
-                    instance.status = .installing
-
-                    // A catalog pick or a checked URL names its image at wizard
-                    // time, so the install downloads that build however long it
-                    // sits unstarted. Only "Download Latest" resolves here.
-                    let remoteURL: URL
-                    if context.source.usesPinnedURL {
-                        guard let pinnedURL = context.remoteURL else {
-                            throw IPSWError.noDownloadURL
-                        }
-                        remoteURL = pinnedURL
-                    } else {
-                        remoteURL = try await ipswService.fetchLatestRestoreImage().url
-                    }
-
                     try await ipswService.downloadRestoreImage(
                         from: remoteURL,
                         to: downloadDestination,
-                        discardsExistingDownload: context.requestedFreshDownload
+                        discardsExistingDownload: requestedFreshDownload
                     ) { progress in
                         instance.installState?.currentPhase = .downloading(progress)
                     }
