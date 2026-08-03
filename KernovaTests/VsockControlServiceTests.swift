@@ -102,7 +102,9 @@ struct VsockControlServiceTests {
         unresponsiveAfter: Duration? = nil,
         terminateAfter: Duration? = nil,
         policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil,
-        onAgentInfoObserved: (@MainActor (ObservedAgentInfo) -> Void)? = nil
+        onAgentInfoObserved: (@MainActor (ObservedAgentInfo) -> Void)? = nil,
+        isGuestSuspended: (@MainActor () -> Bool)? = nil,
+        onChannelLost: (@MainActor () -> Void)? = nil
     ) -> VsockControlService {
         VsockControlService(
             channel: channel,
@@ -112,7 +114,9 @@ struct VsockControlServiceTests {
             unresponsiveAfter: unresponsiveAfter ?? Self.watchdogDisabledUnresponsive,
             terminateAfter: terminateAfter ?? Self.watchdogDisabledTerminate,
             policyProvider: policyProvider,
-            onAgentInfoObserved: onAgentInfoObserved
+            onAgentInfoObserved: onAgentInfoObserved,
+            isGuestSuspended: isGuestSuspended,
+            onChannelLost: onChannelLost
         )
     }
 
@@ -591,6 +595,231 @@ struct VsockControlServiceTests {
         #expect(service.lifecycleTasksForTesting.isEmpty)
     }
 
+    // MARK: - Live-paused guest
+
+    @Test("A suspended guest is never judged silent, however long the pause runs")
+    func suspendedGuestSurvivesTerminateWindow() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // A live-paused VM is frozen by design: the guest cannot answer a
+        // heartbeat, so the pre-#706 behavior — terminate for silence — blamed
+        // the agent for the user's pause.
+        // Short windows are safe here in a way they are not elsewhere in this
+        // suite: the property under test is that the deadline never advances
+        // while suspended, so a stalled runner cannot produce a false failure.
+        let suspension = SuspensionFlag()
+        let service = makeService(
+            channel: host,
+            bundledAgentVersion: "0.9.0",
+            heartbeatInterval: .milliseconds(50),
+            unresponsiveAfter: .milliseconds(100),
+            terminateAfter: .milliseconds(200),
+            isGuestSuspended: { suspension.isSuspended }
+        )
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)  // host hello
+        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
+        try await waitForChange { service.isConnected }
+
+        suspension.isSuspended = true
+
+        // RATIONALE: negative assertion ("prove the watchdog never fired") —
+        // a fixed observation window, per docs/TESTING.md "Async waits in tests".
+        // Four terminate windows with the guest sending nothing at all.
+        try await Task.sleep(for: .milliseconds(800))
+        #expect(service.isConnected)
+        #expect(service.agentStatus == .current(version: "0.9.0"))
+    }
+
+    @Test("Suspension defers the liveness deadline rather than disabling it")
+    func resumedGuestGetsAFreshWindow() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let suspension = SuspensionFlag()
+        let service = makeService(
+            channel: host,
+            bundledAgentVersion: "0.9.0",
+            heartbeatInterval: .milliseconds(50),
+            unresponsiveAfter: .milliseconds(100),
+            terminateAfter: .milliseconds(200),
+            isGuestSuspended: { suspension.isSuspended }
+        )
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)  // host hello
+        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
+        try await waitForChange { service.isConnected }
+
+        // RATIONALE: negative assertion ("prove the watchdog didn't fire during
+        // the pause") — a fixed observation window, per docs/TESTING.md "Async
+        // waits in tests". Three terminate windows, guest sending nothing.
+        suspension.isSuspended = true
+        try await Task.sleep(for: .milliseconds(600))
+        #expect(service.isConnected)
+
+        // Resuming hands the guest a window it can still miss: nothing has been
+        // heard from it, so the deadline starts running again and expires.
+        suspension.isSuspended = false
+        try await waitForChange { !service.isConnected }
+        #expect(service.agentStatus == .waiting)
+    }
+
+    @Test("No heartbeat is written to a suspended guest")
+    func noHeartbeatWhileSuspended() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // `VsockChannel.writeFramed` parks in a blocking `write(2)` once the
+        // peer's receive buffer fills, on the main actor — and a frozen guest
+        // drains nothing. Sending to one is a main-thread hang waiting to
+        // happen, so nothing may go out.
+        //
+        // The collector owns the guest's inbound stream for the whole test:
+        // `nextFrame` would consume from the same single-consumer stream and
+        // race it for frames.
+        let collector = FrameCollector(channel: guest)
+        defer { collector.cancel() }
+
+        let suspension = SuspensionFlag()
+        let service = makeService(
+            channel: host,
+            bundledAgentVersion: "0.9.0",
+            heartbeatInterval: .milliseconds(50),
+            isGuestSuspended: { suspension.isSuspended }
+        )
+        service.start()
+        defer { service.stop() }
+
+        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
+        try await waitForChange { service.isConnected }
+        // Prove the sender is genuinely running before freezing it, so a
+        // silent-for-another-reason service can't pass this test.
+        try await collector.received.wait { collector.count >= 2 }
+
+        // Snapshot the baseline only after a settle window: a heartbeat written
+        // just before the flip flipped is still in flight through the socket and
+        // the collector's task, and counting it against the frozen guest would
+        // be a false failure.
+        suspension.isSuspended = true
+        try await Task.sleep(for: .milliseconds(150))
+        let baseline = collector.count
+
+        // RATIONALE: negative assertion ("prove no frame arrived") — a fixed
+        // observation window, per docs/TESTING.md "Async waits in tests". Spans
+        // many heartbeat intervals.
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(
+            collector.count == baseline,
+            "Expected no outbound frames while the guest was suspended; got \(collector.count - baseline)"
+        )
+    }
+
+    // MARK: - onChannelLost
+
+    @Test("onChannelLost fires when the liveness watchdog terminates a silent channel")
+    func channelLostOnLivenessTerminate() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let lost = ChannelLostRecorder()
+        let service = makeService(
+            channel: host,
+            bundledAgentVersion: "0.9.0",
+            heartbeatInterval: .milliseconds(100),
+            unresponsiveAfter: .milliseconds(200),
+            terminateAfter: .milliseconds(500),
+            onChannelLost: { lost.record() }
+        )
+        lost.sampleAgentVersion = { [weak service] in service?.agentVersion }
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)  // host hello
+        // No wait on `isConnected` in between: with a terminate window this
+        // short the settle can beat the observation, and the callback — not the
+        // connected state — is what this test is about.
+        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
+
+        try await lost.changed.wait { lost.count == 1 }
+        // The callback runs on fully-settled state, which is what lets
+        // `VMInstance` re-arm its agent watchdog on a nil `agentVersion`
+        // instead of no-oping against the stale one.
+        #expect(lost.sampledAgentVersions == [nil])
+    }
+
+    @Test("onChannelLost fires when the peer closes the channel")
+    func channelLostOnPeerClose() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+
+        let lost = ChannelLostRecorder()
+        let service = makeService(
+            channel: host,
+            bundledAgentVersion: "0.9.0",
+            onChannelLost: { lost.record() }
+        )
+        lost.sampleAgentVersion = { [weak service] in service?.agentVersion }
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)  // host hello
+        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
+        try await waitForChange { service.isConnected }
+
+        // The guest agent quits mid-session: EOF unwinds the consume loop.
+        guest.close()
+
+        try await lost.changed.wait { lost.count == 1 }
+        #expect(lost.sampledAgentVersions == [nil])
+    }
+
+    @Test("onChannelLost stays silent for an owner-requested stop()")
+    func channelLostSkippedForOwnerStop() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // Session teardown and the accept path's replace-the-previous-service
+        // both route here. The owner already knows, and telling it the channel
+        // "died" would arm a watchdog against a VM it is shutting down.
+        let lost = ChannelLostRecorder()
+        let service = makeService(
+            channel: host,
+            bundledAgentVersion: "0.9.0",
+            onChannelLost: { lost.record() }
+        )
+        service.start()
+
+        _ = try await nextFrame(from: guest)  // host hello
+        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
+        try await waitForChange { service.isConnected }
+
+        service.stop()
+        #expect(!service.isConnected)
+
+        // RATIONALE: negative assertion ("prove the callback never fired") —
+        // a fixed observation window, per docs/TESTING.md "Async waits in
+        // tests". The consume task also unwinds in here, and its settle must
+        // not fire the callback either: the owner's stop() latched first.
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(lost.count == 0)
+    }
+
     // MARK: - Lifecycle
 
     @Test("stop() is idempotent and resets state")
@@ -924,4 +1153,60 @@ private final class ObservedRecorder {
         values.append(value)
         changed.notify()
     }
+}
+
+/// Stand-in for `VMInstance.isLivePaused`, flipped by the test to freeze and
+/// thaw the guest.
+@MainActor
+private final class SuspensionFlag {
+    var isSuspended = false
+}
+
+/// Counts `onChannelLost` invocations, sampling service state at callback time.
+///
+/// `sampleAgentVersion` is assigned after the service exists, since the thing
+/// worth sampling is the service the recorder is wired into.
+@MainActor
+private final class ChannelLostRecorder {
+    private(set) var count = 0
+    private(set) var sampledAgentVersions: [String?] = []
+
+    var sampleAgentVersion: (@MainActor () -> String?)?
+
+    /// Fires on every `record`; await it instead of polling `count`.
+    let changed = AsyncGate()
+
+    func record() {
+        count += 1
+        sampledAgentVersions.append(sampleAgentVersion.flatMap { $0() })
+        changed.notify()
+    }
+}
+
+/// Records every frame arriving on a channel, for negative assertions about
+/// outbound traffic.
+@MainActor
+private final class FrameCollector {
+    private(set) var count = 0
+    private var consumeTask: Task<Void, Never>?
+
+    /// Fires on every recorded frame; await it instead of polling `count`.
+    let received = AsyncGate()
+
+    init(channel: VsockChannel) {
+        consumeTask = Task { @MainActor [weak self] in
+            do {
+                for try await _ in channel.incoming {
+                    self?.count += 1
+                    self?.received.notify()
+                }
+            } catch {
+                // The stream errored — recording stops, and the count so far
+                // is what the assertion reads.
+            }
+        }
+    }
+
+    func cancel() { consumeTask?.cancel() }
+    deinit { consumeTask?.cancel() }
 }

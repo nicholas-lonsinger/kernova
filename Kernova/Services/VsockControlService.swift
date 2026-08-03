@@ -24,13 +24,24 @@ struct ObservedAgentInfo: Equatable, Sendable {
 /// The listener is installed for every macOS guest with a
 /// `VZVirtioSocketDevice`, independent of any feature toggle, and carries the
 /// bidirectional `Hello` handshake plus a `Heartbeat` stream where extended
-/// peer silence means the peer is hung. One instance manages one channel for
+/// peer silence — while the guest is executing — means the peer is hung. One
+/// instance manages one channel for
 /// one accepted connection and stops itself once that channel dies, whether the
 /// peer closed it or the watchdog did; `stop()` is idempotent and terminal, so
 /// a reconnect is served by a fresh instance.
 @MainActor
 @Observable
 final class VsockControlService {
+    /// Why the service settled, which decides whether the owner hears about it.
+    enum StopReason {
+        /// The channel died underneath us — the peer closed it, or the liveness
+        /// watchdog terminated it for silence.
+        case channelLost
+        /// The owner asked for the teardown: a session teardown, or a fresh
+        /// connection replacing this one.
+        case ownerRequested
+    }
+
     // MARK: - Observable state
 
     /// `true` once the guest agent has sent its `Hello`; reset when the
@@ -75,6 +86,16 @@ final class VsockControlService {
     ///
     /// Fire-and-forget — this service does not care whether the host persists the value.
     private let onAgentInfoObserved: (@MainActor (ObservedAgentInfo) -> Void)?
+
+    /// Reports whether the guest is frozen (the VM is live-paused).
+    ///
+    /// Read at every liveness tick and before every outbound heartbeat, so it
+    /// tracks pause/resume without the owner having to push transitions in.
+    private let isGuestSuspended: (@MainActor () -> Bool)?
+
+    /// Notified once when the channel dies on its own, never on an
+    /// owner-requested `stop()`.
+    private let onChannelLost: (@MainActor () -> Void)?
 
     private var consumeTask: Task<Void, Never>?
     private var outboundHeartbeatTask: Task<Void, Never>?
@@ -138,7 +159,9 @@ final class VsockControlService {
         unresponsiveAfter: Duration = .seconds(15),
         terminateAfter: Duration = .seconds(30),
         policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil,
-        onAgentInfoObserved: (@MainActor (ObservedAgentInfo) -> Void)? = nil
+        onAgentInfoObserved: (@MainActor (ObservedAgentInfo) -> Void)? = nil,
+        isGuestSuspended: (@MainActor () -> Bool)? = nil,
+        onChannelLost: (@MainActor () -> Void)? = nil
     ) {
         // The two-stage watchdog requires `unresponsiveAfter < terminateAfter`:
         // reversed, `terminateAfter` fires first and `.unresponsive` is never
@@ -158,6 +181,8 @@ final class VsockControlService {
         self.livenessTickInterval = min(heartbeatInterval, unresponsiveAfter / 3)
         self.policyProvider = policyProvider
         self.onAgentInfoObserved = onAgentInfoObserved
+        self.isGuestSuspended = isGuestSuspended
+        self.onChannelLost = onChannelLost
     }
 
     // MARK: - Lifecycle
@@ -175,7 +200,7 @@ final class VsockControlService {
             }
             // The channel is gone once `consume` returns; settle so the
             // heartbeat and liveness tasks stop running against a dead socket.
-            self?.stop()
+            self?.stop(reason: .channelLost)
         }
 
         let heartbeatInterval = self.heartbeatInterval
@@ -207,13 +232,24 @@ final class VsockControlService {
         Self.logger.info("Vsock control service started for '\(self.label, privacy: .public)'")
     }
 
-    /// Tears the service down and resets the handshake state.
+    /// Tears the service down at the owner's request and resets the handshake
+    /// state.
+    ///
+    /// The owner is not called back — it already knows. Involuntary channel
+    /// death routes through `stop(reason: .channelLost)` instead.
+    func stop() {
+        stop(reason: .ownerRequested)
+    }
+
+    /// Tears the service down and resets the handshake state, telling the owner
+    /// when the channel died rather than being closed on purpose.
     ///
     /// Safe to call from inside the tasks it cancels: `Task.cancel()` only sets
     /// the cancellation flag, so a caller running inside the liveness or consume
     /// task runs this method to completion and then unwinds at its own next
-    /// cancellation check.
-    func stop() {
+    /// cancellation check. The `hasStopped` latch makes `onChannelLost` fire at
+    /// most once, and never after an owner teardown has already settled.
+    private func stop(reason: StopReason) {
         guard !hasStopped else { return }
         hasStopped = true
         consumeTask?.cancel()
@@ -230,6 +266,11 @@ final class VsockControlService {
         guestSupportsClipboardStreamingStorage = false
         guestSupportsClipboardDirTreeStorage = false
         Self.logger.info("Vsock control service stopped for '\(self.label, privacy: .public)'")
+        // Last, so the owner observes fully-settled state — notably a nil
+        // `agentVersion` — from inside the callback.
+        if case .channelLost = reason {
+            onChannelLost?()
+        }
     }
 
     // MARK: - Outbound
@@ -290,6 +331,11 @@ final class VsockControlService {
     }
 
     private func sendHeartbeat() {
+        // A frozen guest drains nothing, and `VsockChannel.writeFramed` parks in
+        // a blocking `write(2)` once the peer's receive buffer fills — here, on
+        // the main actor. Send nothing while the guest is suspended.
+        guard !(isGuestSuspended?() ?? false) else { return }
+
         let nonce = nextHeartbeatNonce
         nextHeartbeatNonce += 1
 
@@ -318,12 +364,26 @@ final class VsockControlService {
             // `agentStatus` already reports `.waiting`.
             return
         }
+        // A live-paused guest is frozen, not silent: it cannot answer, so
+        // host-side elapsed time says nothing about the agent's health. Hold
+        // the clock at now for as long as it stays frozen, so the deadline the
+        // guest is judged against runs only while it is executing. This is also
+        // what survives host sleep: the VM is auto-paused for it, but
+        // `ContinuousClock` keeps advancing across it.
+        if isGuestSuspended?() ?? false {
+            lastInboundFrame = ContinuousClock.now
+            // Guarded like the branches below: an unconditional write to an
+            // `@Observable` property notifies on every tick, and a pause can
+            // last hours.
+            if isUnresponsive { isUnresponsive = false }
+            return
+        }
         let elapsed = ContinuousClock.now - last
         if elapsed > terminateAfter {
             Self.logger.warning(
                 "Control channel for '\(self.label, privacy: .public)' silent for \(elapsed.formatted(.units(allowed: [.seconds])), privacy: .public) — closing"
             )
-            stop()
+            stop(reason: .channelLost)
         } else if elapsed > unresponsiveAfter {
             if !isUnresponsive {
                 Self.logger.warning(

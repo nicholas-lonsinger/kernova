@@ -53,6 +53,21 @@ struct AgentStatusPopoverContentViewControllerTests {
         }
     }
 
+    @Test("Body copy for a missing agent describes no particular cause")
+    func absentAgentCopyIsCauseAgnostic() {
+        // Both states are reached after a mid-session death as well as after a
+        // boot, so neither may claim a boot happened (#706). The escalation the
+        // `.connecting` copy promises is what the re-armed watchdog delivers.
+        let connecting = AgentStatusPopoverContentViewController.bodyText(
+            for: .connecting(expected: "0.9.2"), vmName: "TestVM")
+        #expect(!connecting.contains("boot"))
+        #expect(connecting.contains("didn't reconnect"))
+
+        let missing = AgentStatusPopoverContentViewController.bodyText(
+            for: .expectedMissing(expected: "0.9.2"), vmName: "TestVM")
+        #expect(!missing.contains("boot"))
+    }
+
     @Test("Don't show again button visibility tracks hasDismissAction")
     func dismissButtonVisibility() {
         let vc = AgentStatusPopoverContentViewController()

@@ -122,9 +122,12 @@ The vsock stack (macOS guests only):
   measurements: [research/2026-07-13-vsock-transport-throughput.md](research/2026-07-13-vsock-transport-throughput.md).
 - `VsockControlService` — `@MainActor` `@Observable` owner of the always-on control channel:
   `Hello`/`Heartbeat` exchange, a liveness watchdog, the observed `agentVersion`, and `PolicyUpdate`
-  pushes carrying an `AgentPolicySnapshot` (built by a closure that reads the current
-  configuration, so a reconnect picks up live toggles). Installed for every macOS guest with a
-  socket device, independent of clipboard sharing.
+  pushes carrying an `AgentPolicySnapshot`. `VMInstance.makeControlService(for:)` builds it with
+  four closures that read the instance lazily, so a reconnect picks up live toggles and a
+  pause/resume needs nothing re-pushed: current policy, observed agent info, whether the guest is
+  frozen (which suspends both the heartbeat and the liveness deadline), and a channel-loss
+  notification that re-arms `VMInstance`'s agent-arrival watchdog. Installed for every macOS guest
+  with a socket device, independent of clipboard sharing.
 - `VsockGuestLogService` — forwards guest `LogRecord` frames into the `app.kernova.guest` subsystem.
 
 The log and clipboard listeners are gated on their configuration toggles and re-evaluated at
