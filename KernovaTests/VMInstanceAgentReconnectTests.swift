@@ -49,7 +49,11 @@ struct VMInstanceAgentReconnectTests {
     }
 
     /// Installs a production-wired control service on `instance` over a socket
-    /// pair, and returns the guest end for the test to drive.
+    /// pair, mirroring what the accept closure in `startVsockServices()` does,
+    /// and returns the guest end for the test to drive.
+    ///
+    /// Every step the accept closure takes, in its order — settle whatever is
+    /// installed, build, install, start, arm.
     private func attachControlService(to instance: VMInstance) throws -> VsockChannel {
         let (guestFd, hostFd) = try makeRawSocketPair()
         let guest = VsockChannel(fileDescriptor: guestFd)
@@ -57,9 +61,11 @@ struct VMInstanceAgentReconnectTests {
         guest.start()
         host.start()
 
+        instance.vsockControlService?.stop()
         let service = instance.makeControlService(for: host)
         instance.vsockControlService = service
         service.start()
+        instance.startAgentPostStartWatchdog()
         return guest
     }
 
@@ -94,6 +100,39 @@ struct VMInstanceAgentReconnectTests {
         #expect(instance.agentStatus == .connecting(expected: version))
     }
 
+    @Test("A replacement channel that never handshakes still escalates")
+    func wedgedReplacementChannelStillEscalates() async throws {
+        // Replacing a live service settles the old one as owner-requested, so
+        // `onChannelLost` stays silent — the accept path's own arm is the only
+        // thing standing between a connect-but-never-Hello agent (a
+        // half-finished update) and a spinner that never resolves.
+        let version = try bundledAgentVersion()
+        let instance = makeInstance(agentVersion: version)
+        let first = try attachControlService(to: instance)
+        defer {
+            instance.cancelAgentPostStartWatchdog()
+            instance.stopVsockServices()
+            first.close()
+        }
+
+        try first.send(makeGuestHello(agentVersion: version))
+        try await waitForChange { instance.vsockControlService?.agentVersion != nil }
+        #expect(instance.agentPostStartTaskForTesting == nil)
+
+        // A second connection arrives while the first is still healthy, then
+        // wedges: open, but never a valid Hello.
+        let second = try attachControlService(to: instance)
+        defer { second.close() }
+        #expect(instance.agentStatus == .connecting(expected: version))
+        #expect(instance.agentPostStartTaskForTesting != nil)
+
+        // Re-arm short to watch that clock actually run out.
+        instance.cancelAgentPostStartWatchdog()
+        instance.startAgentPostStartWatchdog(grace: .milliseconds(200))
+        await instance.agentPostStartTaskForTesting?.value
+        #expect(instance.agentStatus == .expectedMissing(expected: version))
+    }
+
     @Test("An owner teardown of the control service arms nothing")
     func ownerTeardownArmsNothing() async throws {
         let version = try bundledAgentVersion()
@@ -113,11 +152,16 @@ struct VMInstanceAgentReconnectTests {
         #expect(instance.agentPostStartTaskForTesting == nil)
     }
 
-    @Test("A live-paused VM keeps its channel and never escalates")
-    func livePausedVMKeepsItsChannel() async throws {
-        // The trap #706 called out: the liveness watchdog terminates a silent
-        // channel, a paused guest is silent by definition, and the re-arm would
-        // then put a "didn't reconnect" warning on a VM the user merely paused.
+    @Test("Pausing a VM disturbs neither the control channel nor the agent badge")
+    func pausingLeavesTheAgentBadgeAlone() async throws {
+        // Scoped to what a production-cadence service can show in a short
+        // window: pausing tears nothing down synchronously and arms no grace
+        // clock, so the badge a user sees does not flinch when they pause.
+        //
+        // It does NOT cover the deadline being held while frozen — the first
+        // liveness tick is 5 s away at production cadences. That property needs
+        // injected windows and lives in
+        // `VsockControlServiceTests.suspendedGuestSurvivesTerminateWindow`.
         let version = try bundledAgentVersion()
         let instance = makeInstance(agentVersion: version)
         let guest = try attachControlService(to: instance)
@@ -133,11 +177,9 @@ struct VMInstanceAgentReconnectTests {
         instance.status = .paused
         #expect(instance.isLivePaused)
 
-        // RATIONALE: negative assertion ("prove neither the channel teardown
-        // nor the watchdog fired") — a fixed observation window, per
-        // docs/TESTING.md "Async waits in tests". The service runs production
-        // liveness windows, so this only has to outlast a mistaken immediate
-        // teardown, not the 30 s terminate deadline.
+        // RATIONALE: negative assertion ("prove nothing was torn down or
+        // armed") — a fixed observation window, per docs/TESTING.md "Async
+        // waits in tests".
         try await Task.sleep(for: .milliseconds(500))
         #expect(instance.vsockControlService?.isConnected == true)
         #expect(instance.agentPostStartTaskForTesting == nil)

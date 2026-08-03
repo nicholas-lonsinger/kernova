@@ -41,7 +41,7 @@ final class VirtualizationService {
             // the agent before gets no Hello within the grace period. No-op for
             // fresh VMs (no `lastSeenAgentVersion`), for Linux, and for recovery
             // boots, which never run the agent.
-            instance.startAgentPostStartWatchdog(afterRecoveryBoot: bootIntoRecovery)
+            instance.startAgentPostStartWatchdog()
             if bootIntoRecovery {
                 Self.logger.notice("Started VM '\(instance.name, privacy: .public)' in recovery mode")
             } else {
@@ -101,8 +101,10 @@ final class VirtualizationService {
     /// plumbing, and starts the machine — one cold-boot attempt.
     private func coldBoot(_ instance: VMInstance, bootIntoRecovery: Bool) async throws {
         // Per attempt, not once per start: the lock-contention retry loop tears the
-        // session down — releasing these scopes — between attempts.
+        // session down — releasing these scopes — between attempts, and that
+        // teardown resets the Recovery flag this re-sets below.
         instance.openRuntimeFileAccess()
+        instance.bootedIntoRecovery = bootIntoRecovery
         let result = try await buildConfiguration(for: instance)
         instance.serialInputPipe = result.serialInputPipe
         instance.serialOutputPipe = result.serialOutputPipe
@@ -252,18 +254,23 @@ final class VirtualizationService {
                 try await vm.resume()
                 instance.status = .running
                 instance.removeSaveFile()
+                // The guest is executing again, and this is the same session
+                // that was paused — so `bootedIntoRecovery` still governs, and
+                // a channel that died during the pause gets its grace clock
+                // back. A no-op while the agent is connected.
+                instance.startAgentPostStartWatchdog()
             } else if instance.hasSaveFile {
+                // Deliberately arms nothing: a restore resumes whatever guest
+                // state was frozen, which may be a Recovery session that never
+                // runs the agent, and no host-side flag survives the save to
+                // say which. The accept path arms once a control channel
+                // actually shows up.
                 try await restoreOrColdBoot(instance)
                 instance.status = .running
             } else {
                 throw VirtualizationError.noSaveFile
             }
 
-            // Both branches land a guest that is executing again: a hot resume
-            // whose channel died while paused, and a cold restore that has yet
-            // to see its first Hello, each need the grace clock the start path
-            // arms. A no-op while the agent is connected.
-            instance.startAgentPostStartWatchdog()
             Self.logger.notice("Resumed VM '\(instance.name, privacy: .public)'")
         } catch {
             Self.logger.error(

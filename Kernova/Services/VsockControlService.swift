@@ -372,7 +372,10 @@ final class VsockControlService {
         // `ContinuousClock` keeps advancing across it.
         if isGuestSuspended?() ?? false {
             lastInboundFrame = ContinuousClock.now
-            isUnresponsive = false
+            // Guarded like the branches below: an unconditional write to an
+            // `@Observable` property notifies on every tick, and a pause can
+            // last hours.
+            if isUnresponsive { isUnresponsive = false }
             return
         }
         let elapsed = ContinuousClock.now - last

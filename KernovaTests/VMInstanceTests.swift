@@ -838,19 +838,33 @@ struct VMInstanceTests {
         #expect(instance.agentExpectedButMissing == false)
     }
 
-    @Test("Watchdog is a no-op after a recovery boot")
+    @Test("Watchdog is a no-op for the whole of a recovery-booted session")
     func watchdogNoopAfterRecoveryBoot() async throws {
         // Recovery never runs the agent, so its silence proves nothing — the
         // "didn't reconnect" badge would be false and clearing the stored guest
-        // OS version would erase a value that is not in doubt.
+        // OS version would erase a value that is not in doubt. Session state,
+        // not a per-call flag: a pause/resume inside a Recovery session reaches
+        // the same arm site with no idea a Recovery boot happened.
         let instance = makeMacOSInstanceWithAgentInstalled(
             lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
+        instance.bootedIntoRecovery = true
 
-        instance.startAgentPostStartWatchdog(
-            afterRecoveryBoot: true, grace: Self.testWatchdogGrace)
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
         try await Task.sleep(for: Self.testWatchdogGrace * 3)
         #expect(instance.agentExpectedButMissing == false)
         #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
+        #expect(instance.configuration.agentInstallNudgeDismissed == false)
+    }
+
+    @Test("tearDownSession clears the recovery-boot flag")
+    func tearDownSessionClearsRecoveryFlag() {
+        // Per-session, like the rest of the watchdog state: the next boot is
+        // free to be an ordinary one.
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        instance.bootedIntoRecovery = true
+
+        instance.tearDownSession()
+        #expect(!instance.bootedIntoRecovery)
     }
 
     @Test("Watchdog is a no-op while macOS install is in progress")
