@@ -106,4 +106,55 @@ struct VMInstanceVsockAdmissionTests {
         #expect(!instance.admitsFeatureChannel(requiringClipboardStreaming: false))
         #expect(!instance.admitsFeatureChannel(requiringClipboardStreaming: true))
     }
+
+    @Test("A dead control channel withdraws admission, and a reconnect restores it")
+    func settleThenReconnectRestoresAdmission() async throws {
+        let instance = makeInstance()
+        let (firstGuestFd, firstHostFd) = try makeRawSocketPair()
+        let firstGuest = VsockChannel(fileDescriptor: firstGuestFd)
+        let firstHost = VsockChannel(fileDescriptor: firstHostFd)
+        firstGuest.start()
+        firstHost.start()
+        defer { firstGuest.close() }
+
+        let first = VsockControlService(channel: firstHost, label: "admission-test")
+        instance.vsockControlService = first
+        first.start()
+
+        try firstGuest.send(makeGuestHello(streamingCapable: true))
+        try await waitForChange {
+            instance.admitsFeatureChannel(requiringClipboardStreaming: true)
+        }
+
+        // Nobody calls stop() when a guest agent simply disappears — the
+        // service settles itself, and admission drops with it rather than
+        // keeping log and clipboard channels admitted onto a dead channel.
+        firstGuest.close()
+        try await waitForChange {
+            !instance.admitsFeatureChannel(requiringClipboardStreaming: false)
+        }
+        #expect(!instance.admitsFeatureChannel(requiringClipboardStreaming: true))
+
+        // The accept path, as `startVsockServices()` runs it: stop whatever is
+        // installed (a no-op on an already-settled service) and install a fresh
+        // one for the new channel.
+        let (secondGuestFd, secondHostFd) = try makeRawSocketPair()
+        let secondGuest = VsockChannel(fileDescriptor: secondGuestFd)
+        let secondHost = VsockChannel(fileDescriptor: secondHostFd)
+        secondGuest.start()
+        secondHost.start()
+        defer { secondGuest.close() }
+
+        instance.vsockControlService?.stop()
+        let second = VsockControlService(channel: secondHost, label: "admission-test")
+        instance.vsockControlService = second
+        second.start()
+        defer { second.stop() }
+
+        try secondGuest.send(makeGuestHello(streamingCapable: true))
+        try await waitForChange {
+            instance.admitsFeatureChannel(requiringClipboardStreaming: true)
+        }
+        #expect(instance.vsockControlService !== first)
+    }
 }
