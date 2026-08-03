@@ -2,17 +2,6 @@ import Foundation
 
 @testable import Kernova
 
-/// In-memory stand-in for `RestoreImageCatalogProviding`.
-struct MockRestoreImageCatalogService: RestoreImageCatalogProviding {
-    var entries: [RestoreImageCatalogEntry]
-    var generatedAt: String?
-
-    init(entries: [RestoreImageCatalogEntry] = [], generatedAt: String? = "2026-07-28") {
-        self.entries = entries
-        self.generatedAt = generatedAt
-    }
-}
-
 /// Builds a catalog entry, defaulted so a test only names what it cares about.
 func makeCatalogEntry(
     version: String = "15.6.1",

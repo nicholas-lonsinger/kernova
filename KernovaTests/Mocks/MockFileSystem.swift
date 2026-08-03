@@ -8,8 +8,8 @@ import Foundation
 /// exercising delete flows never deposit fixture files in the user's real
 /// Trash (and don't need to create fixture files at all — assertions read
 /// the recorded URLs). Errors are injectable per operation to drive the
-/// missing-file-swallow and failure-alert paths; `fileExistsResult` serves
-/// existence-gated branches like the coordinator's fresh-download cleanup.
+/// missing-file-swallow and failure-alert paths. `fileExists` always reports
+/// true, so existence-gated branches take their present-file path.
 ///
 /// Lock-based because production trashes from `Task.detached`, so calls
 /// arrive off the test's isolation.
@@ -19,7 +19,6 @@ final class MockFileSystem: FileSystemOperating, @unchecked Sendable {
         var removedURLs: [URL] = []
         var trashError: (any Error)?
         var removeError: (any Error)?
-        var fileExistsResult = true
     }
 
     private let lock = NSLock()
@@ -47,15 +46,10 @@ final class MockFileSystem: FileSystemOperating, @unchecked Sendable {
         set { lock.withLock { state.removeError = newValue } }
     }
 
-    var fileExistsResult: Bool {
-        get { lock.withLock { state.fileExistsResult } }
-        set { lock.withLock { state.fileExistsResult = newValue } }
-    }
-
     // MARK: - FileSystemOperating
 
-    func fileExists(atPath path: String) -> Bool {
-        lock.withLock { state.fileExistsResult }
+    func fileExists(atPath _: String) -> Bool {
+        true
     }
 
     func trashItem(at url: URL) throws {

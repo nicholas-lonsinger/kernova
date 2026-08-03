@@ -959,10 +959,10 @@ struct IPSWServiceDownloadTests {
         }
         defer { StubURLProtocol.handler = nil }
 
-        // `fileExistsResult` defaults to true, so the discard sees an image at
-        // the destination; the recording mock leaves the real path absent, so
-        // the skip-existing fast path (a real-FileManager check) stays out of
-        // the way and the GET below is the replacement download.
+        // `MockFileSystem.fileExists` always reports true, so the discard sees
+        // an image at the destination; the recording mock leaves the real path
+        // absent, so the skip-existing fast path (a real-FileManager check)
+        // stays out of the way and the GET below is the replacement download.
         let fileSystem = MockFileSystem()
         let service = Self.makeServiceWithStub(fileSystem: fileSystem)
         try await service.downloadRestoreImage(
