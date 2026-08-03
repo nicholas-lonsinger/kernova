@@ -384,21 +384,62 @@ struct VMLifecycleCoordinatorTests {
         #expect(installService.installCallCount == 1)
     }
 
-    @Test("installMacOS with downloadLatest context calls fetch and download")
+    @Test("installMacOS with downloadLatest context downloads the resolved image, named after it")
     func installMacOSDownload() async throws {
-        let (coordinator, _, installService, ipswService, _) = makeCoordinator()
+        let downloads = FileManager.default.temporaryDirectory
+            .appendingPathComponent("installLatest-\(UUID().uuidString)", isDirectory: true)
+        let (coordinator, _, installService, ipswService, _) = makeCoordinator(
+            downloadsDirectory: downloads)
         let instance = makeInstance()
+        // What the wizard persisted: the fallback name it shows before its own
+        // lookup answers.
+        let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
         let context = MacOSInstallContext(
             source: .downloadLatest,
-            downloadDestinationPath: FileManager.default.temporaryDirectory
-                .appendingPathComponent("test-restore.ipsw").path(percentEncoded: false)
+            downloadDestinationPath: persisted.path(percentEncoded: false)
         )
 
         try await coordinator.installMacOS(on: instance, context: context)
 
+        let expected = downloads.appendingPathComponent(
+            RestoreImageFilename.destination(for: ipswService.fetchResult.url))
         #expect(ipswService.fetchCallCount == 1)
         #expect(ipswService.downloadCallCount == 1)
+        #expect(ipswService.lastDownloadRemoteURL == ipswService.fetchResult.url)
+        #expect(ipswService.lastDownloadDestinationURL == expected)
         #expect(installService.installCallCount == 1)
+        #expect(installService.lastRestoreImageURL == expected)
+    }
+
+    @Test("A latest install re-points the persisted destination at the file it downloads")
+    func installMacOSLatestPersistsTheDerivedDestination() async {
+        // The persisted path is what a resume across relaunches and a delete's
+        // sidecar cleanup are keyed to, so it has to name the file the bytes
+        // land in. Read on the failure path: a successful install clears the
+        // context before anything can inspect it.
+        let downloads = FileManager.default.temporaryDirectory
+            .appendingPathComponent("latestDestination-\(UUID().uuidString)", isDirectory: true)
+        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: downloads)
+        ipswService.downloadError = IPSWError.downloadFailed(URLError(.notConnectedToInternet))
+        let instance = makeInstance()
+        let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
+        let context = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: persisted.path(percentEncoded: false)
+        )
+        instance.configuration.installContext = context
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+
+        await #expect(throws: IPSWError.self) {
+            try await coordinator.installMacOS(on: instance, context: context)
+        }
+
+        let expected = downloads.appendingPathComponent(
+            RestoreImageFilename.destination(for: ipswService.fetchResult.url))
+        #expect(ipswService.lastDownloadDestinationURL == expected)
+        #expect(
+            instance.configuration.installContext?.downloadDestinationPath
+                == expected.path(percentEncoded: false))
     }
 
     @Test("installMacOS with a catalog context downloads the pinned URL, never the latest")
@@ -512,13 +553,18 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS throws CancellationError on cancel and preserves installContext")
     func installMacOSCancelPreservesContext() async {
-        let (coordinator, _, _, ipswService, _) = makeCoordinator()
+        let downloads = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cancelPreservesContext-\(UUID().uuidString)", isDirectory: true)
+        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: downloads)
         ipswService.downloadError = CancellationError()
         let instance = makeInstance()
+        // Already naming the file the resolved image derives, so nothing but the
+        // cancel can touch the context.
         let originalContext = MacOSInstallContext(
             source: .downloadLatest,
-            downloadDestinationPath: FileManager.default.temporaryDirectory
-                .appendingPathComponent("cancel-preserves-context.ipsw").path(percentEncoded: false)
+            downloadDestinationPath: downloads.appendingPathComponent(
+                RestoreImageFilename.destination(for: ipswService.fetchResult.url)
+            ).path(percentEncoded: false)
         )
         instance.configuration.installContext = originalContext
         instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
@@ -540,11 +586,15 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
         let instance = makeInstance()
 
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        // The install writes the file the resolved image names, whatever the
+        // wizard persisted, so that is what the replacement covers.
+        let destination = temp.appendingPathComponent(
+            RestoreImageFilename.destination(for: ipswService.fetchResult.url))
 
         let context = MacOSInstallContext(
             source: .downloadLatest,
-            downloadDestinationPath: destination.path(percentEncoded: false),
+            downloadDestinationPath: temp.appendingPathComponent(RestoreImageFilename.fallback)
+                .path(percentEncoded: false),
             requestedFreshDownload: true
         )
         instance.configuration.installContext = context
@@ -622,20 +672,26 @@ struct VMLifecycleCoordinatorTests {
     }
 
     @Test("installMacOS rejects requestedFreshDownload on a non-IPSW path")
-    func installMacOSFreshDownloadRejectsNonIPSWPath() async {
+    func installMacOSFreshDownloadRejectsNonIPSWPath() async throws {
         // The non-IPSW file sits inside the (injected) Downloads directory —
-        // an out-of-Downloads path would be normalized to the default
-        // destination before this guard is reached.
+        // an out-of-Downloads path would be normalized to the pinned image's
+        // filename before this guard is reached. A pinned source is what keeps
+        // such a path: "Download Latest" always names its destination from the
+        // URL it resolved, which is always an `.ipsw`.
         let temp = FileManager.default.temporaryDirectory
             .appendingPathComponent("rejectNonIPSW-\(UUID().uuidString)", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
         let instance = makeInstance()
         // Path doesn't end in .ipsw — guard must fire before any trash attempt.
         let context = MacOSInstallContext(
-            source: .downloadLatest,
+            source: .catalogVersion,
             downloadDestinationPath: temp.appendingPathComponent("important.doc")
                 .path(percentEncoded: false),
-            requestedFreshDownload: true
+            requestedFreshDownload: true,
+            remoteURL: try #require(
+                URL(
+                    string:
+                        "https://updates.cdn-apple.com/x/UniversalMac_15.6.1_24G90_Restore.ipsw"))
         )
         instance.configuration.installContext = context
         instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
@@ -719,13 +775,18 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS preserves IPSW resume data on non-cancel download failure")
     func installMacOSFailurePreservesResumeData() async {
-        let (coordinator, _, _, ipswService, _) = makeCoordinator()
+        let downloads = FileManager.default.temporaryDirectory
+            .appendingPathComponent("networkFailure-\(UUID().uuidString)", isDirectory: true)
+        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: downloads)
         ipswService.downloadError = IPSWError.downloadFailed(URLError(.notConnectedToInternet))
         let instance = makeInstance()
+        // Already naming the file the resolved image derives, so the retry
+        // context that survives is the one that went in.
         let originalContext = MacOSInstallContext(
             source: .downloadLatest,
-            downloadDestinationPath: FileManager.default.temporaryDirectory
-                .appendingPathComponent("network-fail-restore.ipsw").path(percentEncoded: false)
+            downloadDestinationPath: downloads.appendingPathComponent(
+                RestoreImageFilename.destination(for: ipswService.fetchResult.url)
+            ).path(percentEncoded: false)
         )
         instance.configuration.installContext = originalContext
         instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
@@ -892,6 +953,70 @@ struct VMLifecycleCoordinatorTests {
                 #expect(normalized.pathExtension.lowercased() == "ipsw", "not an IPSW for \(context)")
             }
         }
+    }
+
+    // MARK: - Latest Download Destination
+
+    @Test("latestDownloadDestination names the download after the URL the install resolved")
+    func latestDestinationFollowsTheResolvedURL() throws {
+        let downloads = FileManager.default.temporaryDirectory
+            .appendingPathComponent("latestFollowsURL-\(UUID().uuidString)", isDirectory: true)
+        let (coordinator, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
+        let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
+        let resolved = try #require(
+            URL(
+                string:
+                    "https://updates.cdn-apple.com/fullrestores/UniversalMac_26.5.2_25F84_Restore.ipsw"
+            ))
+
+        let destination = coordinator.latestDownloadDestination(
+            persisted: persisted, resolvedURL: resolved)
+
+        #expect(
+            destination
+                == downloads.appendingPathComponent("UniversalMac_26.5.2_25F84_Restore.ipsw"))
+    }
+
+    @Test("An off-convention latest URL still lands on a name unique to it")
+    func latestDestinationForOffConventionURL() throws {
+        let downloads = FileManager.default.temporaryDirectory
+            .appendingPathComponent("latestOffConvention-\(UUID().uuidString)", isDirectory: true)
+        let (coordinator, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
+        let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
+        let resolved = try #require(URL(string: "https://example.com/restore.ipsw"))
+
+        let destination = coordinator.latestDownloadDestination(
+            persisted: persisted, resolvedURL: resolved)
+
+        #expect(
+            destination
+                == downloads.appendingPathComponent(RestoreImageFilename.unique(for: resolved)))
+        // Sharing the fallback would let an unrelated image already sitting
+        // there satisfy this download.
+        #expect(destination != persisted)
+    }
+
+    @Test("With normalization disabled the persisted destination is what the install writes")
+    func latestDestinationKeepsPersistedWithoutDownloads() throws {
+        // No Downloads directory at all — the one state that leaves a persisted
+        // path unexamined, so the `makeCoordinator` fallback is bypassed here.
+        let coordinator = VMLifecycleCoordinator(
+            virtualizationService: MockVirtualizationService(),
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            usbDeviceService: MockUSBDeviceService(),
+            downloadsDirectory: nil
+        )
+        let persisted = URL(fileURLWithPath: "/Users/Shared/RestoreImage.ipsw")
+        let resolved = try #require(
+            URL(
+                string:
+                    "https://updates.cdn-apple.com/fullrestores/UniversalMac_26.5.2_25F84_Restore.ipsw"
+            ))
+
+        #expect(
+            coordinator.latestDownloadDestination(persisted: persisted, resolvedURL: resolved)
+                == persisted)
     }
 
     /// A path with `..` collapsed and any trailing separator dropped, so a

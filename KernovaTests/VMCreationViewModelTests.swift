@@ -696,13 +696,63 @@ struct VMCreationViewModelTests {
         #expect(first != vm.ipswDownloadPath)
     }
 
-    @Test("Returning to Download Latest restores the fixed destination")
+    @Test("Returning to Download Latest takes the fixed destination until the lookup answers")
     func downloadLatestRestoresDefaultDestination() {
         let vm = VMCreationViewModel()
         vm.selectCatalogEntry(makeCatalogEntry())
         vm.selectDownloadLatest()
 
         #expect(vm.ipswSelection == .downloadLatest)
+        #expect(vm.ipswDownloadPath == VMCreationViewModel.defaultIPSWDownloadPath)
+    }
+
+    @Test("The looked-up image names Download Latest's destination")
+    func downloadLatestUsesTheLookedUpFilename() async {
+        let vm = VMCreationViewModel(
+            probeService: MockRestoreImageProbeService(), ipswService: MockIPSWService())
+
+        await vm.loadLatestImageDetails()?.value
+
+        // The lookup landing on the live source moves the destination itself,
+        // so the wizard names the file it is about to write.
+        let expected = VMCreationViewModel.downloadPath(
+            forFilename: "UniversalMac_26.5.2_25F84_Restore.ipsw")
+        #expect(vm.ipswDownloadPath == expected)
+        #expect(vm.ipswDownloadPath != VMCreationViewModel.defaultIPSWDownloadPath)
+
+        // And a later re-pick names the same file, the answer being in hand.
+        vm.selectCatalogEntry(makeCatalogEntry())
+        vm.selectDownloadLatest()
+        #expect(vm.ipswDownloadPath == expected)
+    }
+
+    @Test("A lookup landing after another source was picked leaves that pick's destination")
+    func lateLookupLeavesAnotherSourcesDestination() async {
+        let vm = VMCreationViewModel(
+            probeService: MockRestoreImageProbeService(), ipswService: MockIPSWService())
+
+        // The pick happens while the lookup is in flight: nothing has awaited,
+        // so the completion runs strictly after it.
+        let lookup = vm.loadLatestImageDetails()
+        vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
+        await lookup?.value
+
+        #expect(vm.latestImage?.build == "25F84")
+        #expect(
+            vm.ipswDownloadPath
+                == VMCreationViewModel.downloadPath(
+                    forFilename: "UniversalMac_15.6.1_24G90_Restore.ipsw"))
+    }
+
+    @Test("A failed lookup leaves the destination on the fixed fallback")
+    func failedLookupKeepsTheFallbackDestination() async {
+        let ipswService = MockIPSWService()
+        ipswService.fetchError = URLError(.notConnectedToInternet)
+        let vm = VMCreationViewModel(
+            probeService: MockRestoreImageProbeService(), ipswService: ipswService)
+
+        await vm.loadLatestImageDetails()?.value
+
         #expect(vm.ipswDownloadPath == VMCreationViewModel.defaultIPSWDownloadPath)
     }
 
@@ -925,7 +975,7 @@ struct VMCreationViewModelTests {
         #expect(vm.ipswSource == .catalogVersion)
     }
 
-    @Test("Download Latest pins no build, so any usable image is adopted")
+    @Test("Download Latest names no build before the lookup answers, so any usable image is adopted")
     func downloadLatestAdoptsAnyUsableImage() async {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
@@ -933,11 +983,48 @@ struct VMCreationViewModelTests {
         let vm = VMCreationViewModel(localImageInspector: inspector)
         vm.selectDownloadLatest()
 
-        #expect(vm.pinnedBuild == nil)
+        #expect(vm.expectedBuild == nil)
         let verdict = await vm.adoptExistingDownloadFile()
 
         #expect(verdict == .adopted(inspector.inspectResult))
         #expect(vm.ipswSource == .localFile)
+    }
+
+    @Test("Once the lookup lands, a file of another build is reported, not adopted")
+    func downloadLatestRefusesAnotherBuildOnceTheLookupLands() async {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "14.2", build: "23C64", isSupportedOnThisHost: true)
+        let vm = VMCreationViewModel(
+            probeService: MockRestoreImageProbeService(),
+            localImageInspector: inspector,
+            ipswService: MockIPSWService())
+        await vm.loadLatestImageDetails()?.value
+
+        let verdict = await vm.adoptExistingDownloadFile()
+
+        // The wrong-image install a per-build destination prevents for the
+        // download, which a hand-placed file at that destination reintroduces.
+        #expect(verdict == .mismatch(expected: "25F84", found: inspector.inspectResult))
+        #expect(vm.ipswSelection == .downloadLatest)
+    }
+
+    @Test("A file of the looked-up build is adopted")
+    func downloadLatestAdoptsTheLookedUpBuild() async {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "26.5.2", build: "25F84", isSupportedOnThisHost: true)
+        let vm = VMCreationViewModel(
+            probeService: MockRestoreImageProbeService(),
+            localImageInspector: inspector,
+            ipswService: MockIPSWService())
+        await vm.loadLatestImageDetails()?.value
+        let destination = vm.ipswDownloadPath
+
+        let verdict = await vm.adoptExistingDownloadFile()
+
+        #expect(verdict == .adopted(inspector.inspectResult))
+        #expect(vm.ipswSelection == .localFile(path: destination, bookmark: nil))
     }
 
     @Test("A URL pick with no parsed build pins nothing to compare against")
@@ -948,7 +1035,7 @@ struct VMCreationViewModelTests {
             makeProbedImage(
                 urlString: "https://example.com/image.ipsw", version: nil, build: nil))
 
-        #expect(vm.pinnedBuild == nil)
+        #expect(vm.expectedBuild == nil)
         #expect(await vm.adoptExistingDownloadFile() == .adopted(inspector.inspectResult))
     }
 
@@ -969,19 +1056,24 @@ struct VMCreationViewModelTests {
         #expect(vm.ipswSelection == .catalogVersion(entry))
     }
 
-    @Test("pinnedBuild names the build each source is promising")
-    func pinnedBuildTracksTheSource() {
-        let vm = VMCreationViewModel()
-        #expect(vm.pinnedBuild == nil)
+    @Test("expectedBuild names the build each source is promising")
+    func expectedBuildTracksTheSource() async {
+        let vm = VMCreationViewModel(
+            probeService: MockRestoreImageProbeService(), ipswService: MockIPSWService())
+        #expect(vm.expectedBuild == nil)
 
         vm.selectCatalogEntry(makeCatalogEntry(build: "24G90"))
-        #expect(vm.pinnedBuild == "24G90")
+        #expect(vm.expectedBuild == "24G90")
 
         vm.selectPastedImage(makeProbedImage(build: "25G72"))
-        #expect(vm.pinnedBuild == "25G72")
+        #expect(vm.expectedBuild == "25G72")
 
+        // "Whatever is newest" names nothing until the lookup says what that is.
         vm.selectDownloadLatest()
-        #expect(vm.pinnedBuild == nil)
+        #expect(vm.expectedBuild == nil)
+
+        await vm.loadLatestImageDetails()?.value
+        #expect(vm.expectedBuild == "25F84")
     }
 
     @Test("Switching between pinned sources keeps both picks; Download Latest clears them")
@@ -1009,7 +1101,7 @@ struct VMCreationViewModelTests {
         // Only the live source carries a payload, so no reader can reach the
         // catalog entry while the URL source is current.
         #expect(vm.ipswSelection == .customURL(image))
-        #expect(vm.pinnedBuild == "25G72")
+        #expect(vm.expectedBuild == "25G72")
         // The seed survives so the version picker re-opens on the old pick.
         #expect(vm.lastCatalogPick == entry)
     }
@@ -1076,20 +1168,6 @@ struct VMCreationViewModelTests {
 
         #expect(vm.latestImage?.version == "26.5.2")
         #expect(vm.latestImageSizeBytes == nil)
-    }
-
-    @Test("The looked-up image pins nothing: any usable file at the destination is adopted")
-    func latestImageLookupPinsNoBuild() async {
-        let vm = VMCreationViewModel(
-            probeService: MockRestoreImageProbeService(), ipswService: MockIPSWService())
-
-        await vm.loadLatestImageDetails()?.value
-
-        // Naming a build here would make a file of a different build a
-        // mismatch, at a destination this source shares with every other
-        // Download Latest.
-        #expect(vm.latestImage != nil)
-        #expect(vm.pinnedBuild == nil)
     }
 }
 

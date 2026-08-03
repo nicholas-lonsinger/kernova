@@ -5,6 +5,7 @@ import Foundation
 @MainActor
 final class MockMacOSInstallService: MacOSInstallProviding {
     var installCallCount = 0
+    var lastRestoreImageURL: URL?
 
     var installError: (any Error)?
 
@@ -14,6 +15,7 @@ final class MockMacOSInstallService: MacOSInstallProviding {
         progressHandler: @MainActor @Sendable @escaping (Double) -> Void
     ) async throws {
         installCallCount += 1
+        lastRestoreImageURL = restoreImageURL
         if let error = installError { throw error }
         // Mirror the real `MacOSInstallService` post-install state: VM
         // released (via `guestDidStop` → `resetToStopped` in production

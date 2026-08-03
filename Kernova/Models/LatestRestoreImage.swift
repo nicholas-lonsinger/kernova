@@ -11,4 +11,9 @@ struct LatestRestoreImage: Sendable, Equatable {
     var version: String
     /// Apple build identifier, e.g. `"25F84"`.
     var build: String
+
+    /// The filename the download lands on, derived from ``url``.
+    var suggestedFilename: String {
+        RestoreImageFilename.destination(for: url)
+    }
 }

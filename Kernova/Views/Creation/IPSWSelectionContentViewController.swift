@@ -221,11 +221,10 @@ final class IPSWSelectionContentViewController: NSViewController {
                 conditionalContainer.addArrangedSubview(
                     makeWizardPathBadge(path: creationVM.ipswDownloadPath))
             }
-            // `version: nil` even once the lookup lands: this source pins no
-            // build and shares one destination filename, so the file already
-            // sitting there may be any image, and naming the version the badge
-            // shows would describe that file wrongly.
-            addDownloadBanners(version: nil)
+            // The subject follows the lookup: until it lands the destination is
+            // the shared fallback filename, whose occupant may be any image;
+            // once it lands, the destination is per-build like a pinned pick's.
+            addDownloadBanners(version: creationVM.latestImage?.version)
         case .catalogVersion(let entry):
             addPinnedImageBadge(
                 parts: [

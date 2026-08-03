@@ -123,6 +123,23 @@ struct ProbedRestoreImageTests {
     }
 }
 
+@Suite("LatestRestoreImage Tests")
+struct LatestRestoreImageTests {
+    @Test("The destination is Apple's filename for the URL the lookup returned")
+    func suggestedFilename() {
+        #expect(
+            makeLatestImage(version: "26.5.2", build: "25F84").suggestedFilename
+                == "UniversalMac_26.5.2_25F84_Restore.ipsw")
+    }
+
+    @Test("An off-convention URL gets a generated name, never the shared fallback")
+    func suggestedFilenameForOffConventionURL() {
+        let image = makeLatestImage(urlString: "https://example.com/restore.ipsw")
+        #expect(image.suggestedFilename.hasSuffix(".ipsw"))
+        #expect(image.suggestedFilename != RestoreImageFilename.fallback)
+    }
+}
+
 @Suite("RestoreImageFilename Tests")
 struct RestoreImageFilenameTests {
     @Test("A plain .ipsw filename passes through")

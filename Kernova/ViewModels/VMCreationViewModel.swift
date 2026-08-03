@@ -111,7 +111,8 @@ final class VMCreationViewModel {
     /// What "Download Latest" will fetch, once ``loadLatestImageDetails()`` has
     /// answered; `nil` until then, and after a lookup that failed.
     ///
-    /// Display only, on the terms ``LatestRestoreImage`` states.
+    /// A preview on the terms ``LatestRestoreImage`` states, read for display
+    /// and to name the download destination.
     private(set) var latestImage: LatestRestoreImage?
 
     /// How large ``latestImage`` is, when the server reported a size.
@@ -131,8 +132,9 @@ final class VMCreationViewModel {
     private(set) var lastPastedImage: ProbedRestoreImage?
     /// Always inside Downloads — there is no custom-destination picker.
     ///
-    /// A pinned pick names the file through ``RestoreImageFilename``;
-    /// "Download Latest" keeps the fixed default.
+    /// Every download source names the file through ``RestoreImageFilename``;
+    /// "Download Latest" starts on the fixed fallback and adopts the looked-up
+    /// image's name once ``loadLatestImageDetails()`` answers.
     var ipswDownloadPath: String = VMCreationViewModel.defaultIPSWDownloadPath {
         didSet {
             if ipswDownloadPath != confirmedOverwritePath {
@@ -311,8 +313,8 @@ final class VMCreationViewModel {
         ipswDownloadPath = Self.downloadPath(forFilename: image.suggestedFilename)
     }
 
-    /// Commits the "Download Latest" source, returning the destination to the
-    /// fixed filename that source has always resolved to at install time.
+    /// Commits the "Download Latest" source, naming the destination for the
+    /// image the lookup found — or the fixed fallback while none has answered.
     ///
     /// The one operation that drops both sheet seeds: choosing to install
     /// whatever is newest retracts the earlier "install *this* build" answers.
@@ -320,7 +322,8 @@ final class VMCreationViewModel {
         ipswSelection = .downloadLatest
         lastCatalogPick = nil
         lastPastedImage = nil
-        ipswDownloadPath = Self.defaultIPSWDownloadPath
+        ipswDownloadPath = Self.downloadPath(
+            forFilename: latestImage?.suggestedFilename ?? RestoreImageFilename.fallback)
     }
 
     /// Commits a panel-picked file together with the grant minted for it, which
@@ -332,7 +335,8 @@ final class VMCreationViewModel {
     // MARK: - Latest Image Lookup
 
     /// Looks up what "Download Latest" would fetch, so the wizard can name the
-    /// version, build and size that source otherwise leaves unsaid.
+    /// version, build, size and destination filename that source otherwise
+    /// leaves unsaid.
     ///
     /// Idempotent: calls while a lookup runs join it, calls after one succeeded
     /// do nothing, and one that failed retries on the next call — a wizard the
@@ -365,6 +369,12 @@ final class VMCreationViewModel {
             guard let self else { return }
             self.latestImage = image
             self.latestImageSizeBytes = sizeBytes
+            // Only while the source is still current — a pick made while the
+            // lookup ran named its own destination.
+            if self.ipswSelection == .downloadLatest {
+                self.ipswDownloadPath = Self.downloadPath(
+                    forFilename: image.suggestedFilename)
+            }
         }
         latestImageTask = task
         return task
@@ -468,13 +478,14 @@ final class VMCreationViewModel {
         ipswSelection = .localFile(path: ipswDownloadPath, bookmark: nil)
     }
 
-    /// The build the wizard is currently promising, or `nil` when the source
-    /// names no particular image.
-    var pinnedBuild: String? {
+    /// The build the wizard is currently promising — a pinned pick's, or the
+    /// looked-up latest one — or `nil` while no particular image is named.
+    var expectedBuild: String? {
         switch ipswSelection {
         case .catalogVersion(let entry): entry.build
         case .customURL(let image): image.build
-        case .downloadLatest, .localFile: nil
+        case .downloadLatest: latestImage?.build
+        case .localFile: nil
         }
     }
 
@@ -523,8 +534,8 @@ final class VMCreationViewModel {
                     ?? "That restore image can't install on this Mac.")
         }
 
-        if let pinnedBuild, pinnedBuild != inspected.build {
-            return .mismatch(expected: pinnedBuild, found: inspected)
+        if let expectedBuild, expectedBuild != inspected.build {
+            return .mismatch(expected: expectedBuild, found: inspected)
         }
 
         useExistingDownloadFile()
