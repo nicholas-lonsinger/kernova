@@ -58,9 +58,10 @@ func makeLatestImage(
     let resolved =
         urlString
         ?? "https://updates.cdn-apple.com/fullrestores/UniversalMac_\(version)_\(build)_Restore.ipsw"
-    return LatestRestoreImage(
-        url: URL(string: resolved) ?? URL(fileURLWithPath: "/"),
-        version: version,
-        build: build
-    )
+    guard let url = URL(string: resolved) else {
+        assertionFailure("makeLatestImage: could not build a URL from '\(resolved)'")
+        return LatestRestoreImage(
+            url: URL(fileURLWithPath: "/"), version: version, build: build)
+    }
+    return LatestRestoreImage(url: url, version: version, build: build)
 }

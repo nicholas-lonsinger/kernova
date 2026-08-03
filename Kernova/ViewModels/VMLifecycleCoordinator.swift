@@ -238,21 +238,21 @@ final class VMLifecycleCoordinator {
                     )
                     instance.status = .installing
 
-                    // A catalog pick or a checked URL names its image at wizard
-                    // time, so the install downloads that build however long it
-                    // sits unstarted. Only "Download Latest" resolves here.
+                    // Local because a moved latest destination lapses it below.
+                    var requestedFreshDownload = context.requestedFreshDownload
+
+                    // A catalog pick or a checked URL names its image and its
+                    // destination at wizard time, so the install downloads that
+                    // build however long it sits unstarted. Only "Download
+                    // Latest" resolves here, and its destination follows the
+                    // answer.
                     let remoteURL: URL
+                    let downloadDestination: URL
                     if context.source.usesPinnedURL {
                         guard let pinnedURL = context.remoteURL else {
                             throw IPSWError.noDownloadURL
                         }
                         remoteURL = pinnedURL
-                    } else {
-                        remoteURL = try await ipswService.fetchLatestRestoreImage().url
-                    }
-
-                    let downloadDestination: URL
-                    if context.source.usesPinnedURL {
                         // A persisted destination outside Downloads (a hand-edited
                         // config.json) can never be written and has no picker to
                         // re-point it, so the invariant is enforced at use time.
@@ -264,18 +264,31 @@ final class VMLifecycleCoordinator {
                             )
                         }
                     } else {
+                        remoteURL = try await ipswService.fetchLatestRestoreImage().url
                         downloadDestination = latestDownloadDestination(
                             persisted: persistedDestination, resolvedURL: remoteURL)
                         if downloadDestination != persistedDestination {
                             Self.logger.notice(
                                 "installMacOS: resolved latest image names the download '\(downloadDestination.lastPathComponent, privacy: .public)'"
                             )
+                            // "Download & Replace" was confirmed against the
+                            // wizard's destination; a destination that moved
+                            // names a file the user never saw, so the intent
+                            // lapses rather than retargets.
+                            requestedFreshDownload = false
+                            // A moved destination also means the fetch changed
+                            // builds, so the old path's partial download can
+                            // never be resumed — discard its sidecar before the
+                            // only pointer to it moves.
+                            ipswService.discardResumeData(
+                                at: persistedDestination, permanently: false)
                             // Keep the persisted path on the file the download
                             // actually writes, so resume across relaunches and
                             // delete-time cleanup stay keyed to it.
                             instance.performConfigurationMutation {
                                 $0.installContext?.downloadDestinationPath =
                                     downloadDestination.path(percentEncoded: false)
+                                $0.installContext?.requestedFreshDownload = false
                             }
                         }
                     }
@@ -286,7 +299,7 @@ final class VMLifecycleCoordinator {
                     // could delete bytes another VM is streaming into the same
                     // bundle. The flag clears before the download so a retry
                     // after a partial-install failure reuses what it fetched.
-                    if context.requestedFreshDownload {
+                    if requestedFreshDownload {
                         // `downloadDestinationPath` survives through `config.json`
                         // on disk, so a stray edit could otherwise have us
                         // trashing an arbitrary file.
@@ -310,7 +323,7 @@ final class VMLifecycleCoordinator {
                     try await ipswService.downloadRestoreImage(
                         from: remoteURL,
                         to: downloadDestination,
-                        discardsExistingDownload: context.requestedFreshDownload
+                        discardsExistingDownload: requestedFreshDownload
                     ) { progress in
                         instance.installState?.currentPhase = .downloading(progress)
                     }

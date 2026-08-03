@@ -440,6 +440,11 @@ struct VMLifecycleCoordinatorTests {
         #expect(
             instance.configuration.installContext?.downloadDestinationPath
                 == expected.path(percentEncoded: false))
+        // The old path's partial belongs to a build this install is no longer
+        // fetching, and moving the only pointer to it would strand it.
+        #expect(ipswService.discardResumeDataCallCount == 1)
+        #expect(ipswService.lastDiscardResumeDataURL == persisted)
+        #expect(ipswService.lastDiscardResumeDataPermanently == false)
     }
 
     @Test("installMacOS with a catalog context downloads the pinned URL, never the latest")
@@ -586,15 +591,14 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
         let instance = makeInstance()
 
-        // The install writes the file the resolved image names, whatever the
-        // wizard persisted, so that is what the replacement covers.
+        // The persisted destination is the one the resolved image derives, so
+        // the file the user confirmed replacing is the file the download writes.
         let destination = temp.appendingPathComponent(
             RestoreImageFilename.destination(for: ipswService.fetchResult.url))
 
         let context = MacOSInstallContext(
             source: .downloadLatest,
-            downloadDestinationPath: temp.appendingPathComponent(RestoreImageFilename.fallback)
-                .path(percentEncoded: false),
+            downloadDestinationPath: destination.path(percentEncoded: false),
             requestedFreshDownload: true
         )
         instance.configuration.installContext = context
@@ -608,6 +612,48 @@ struct VMLifecycleCoordinatorTests {
         #expect(ipswService.discardResumeDataCallCount == 0)
     }
 
+    @Test("A latest destination that moved lapses Download & Replace rather than retargeting it")
+    func installMacOSLatestFreshDownloadLapsesOnAMovedDestination() async {
+        // "Download & Replace" was confirmed in the wizard against the
+        // destination shown there. When the install resolves a newer image, the
+        // file at the derived destination is one the user never saw, so
+        // honoring the flag would trash bytes nobody agreed to lose.
+        // Read on the failure path: a successful install clears the context.
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("freshDownloadMoved-\(UUID().uuidString)", isDirectory: true)
+        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
+        ipswService.downloadError = IPSWError.downloadFailed(URLError(.notConnectedToInternet))
+        let instance = makeInstance()
+
+        let persisted = temp.appendingPathComponent(RestoreImageFilename.fallback)
+        let context = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: persisted.path(percentEncoded: false),
+            requestedFreshDownload: true
+        )
+        instance.configuration.installContext = context
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+
+        await #expect(throws: IPSWError.self) {
+            try await coordinator.installMacOS(on: instance, context: context)
+        }
+
+        let derived = temp.appendingPathComponent(
+            RestoreImageFilename.destination(for: ipswService.fetchResult.url))
+        #expect(ipswService.lastDownloadDestinationURL == derived)
+        #expect(ipswService.lastDownloadDiscardsExisting == false)
+        // The lapse spares the file at the *derived* destination; the sidecar
+        // left at the path being abandoned is still discarded.
+        #expect(ipswService.discardResumeDataCallCount == 1)
+        #expect(ipswService.lastDiscardResumeDataURL == persisted)
+        // The lapse is persisted with the re-pointed path, so the retry Start
+        // that reads this context does not resurrect the confirmation.
+        #expect(
+            instance.configuration.installContext?.downloadDestinationPath
+                == derived.path(percentEncoded: false))
+        #expect(instance.configuration.installContext?.requestedFreshDownload == false)
+    }
+
     @Test("installMacOS clears requestedFreshDownload before the download runs")
     func installMacOSFreshDownloadClearsTheFlagOnce() async {
         // A download that fails leaves the context for the retry Start — with
@@ -619,10 +665,13 @@ struct VMLifecycleCoordinatorTests {
         ipswService.downloadError = IPSWError.downloadFailed(URLError(.notConnectedToInternet))
         let instance = makeInstance()
 
+        // Honored, not lapsed: the persisted destination is already the one the
+        // resolved image derives.
         let context = MacOSInstallContext(
             source: .downloadLatest,
-            downloadDestinationPath: temp.appendingPathComponent("RestoreImage.ipsw")
-                .path(percentEncoded: false),
+            downloadDestinationPath: temp.appendingPathComponent(
+                RestoreImageFilename.destination(for: ipswService.fetchResult.url)
+            ).path(percentEncoded: false),
             requestedFreshDownload: true
         )
         instance.configuration.installContext = context
@@ -641,9 +690,16 @@ struct VMLifecycleCoordinatorTests {
         // The download reports that it could not clear the way for the
         // replacement; the install must fail rather than install the file the
         // user asked to replace.
-        let (coordinator, _, installService, ipswService, _) = makeCoordinator()
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("freshDownloadTrashFails-\(UUID().uuidString)", isDirectory: true)
+        let (coordinator, _, installService, ipswService, _) = makeCoordinator(
+            downloadsDirectory: temp)
+        // The destination the resolved image derives, so the replacement is
+        // actually requested and can fail.
+        let destination = temp.appendingPathComponent(
+            RestoreImageFilename.destination(for: ipswService.fetchResult.url))
         ipswService.downloadError = IPSWError.freshDownloadCleanupFailed(
-            path: "/tmp/cannot-trash.ipsw",
+            path: destination.path(percentEncoded: false),
             underlying: NSError(
                 domain: NSCocoaErrorDomain,
                 code: NSFileWriteNoPermissionError,
@@ -654,7 +710,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeInstance()
         let context = MacOSInstallContext(
             source: .downloadLatest,
-            downloadDestinationPath: "/tmp/cannot-trash.ipsw",
+            downloadDestinationPath: destination.path(percentEncoded: false),
             requestedFreshDownload: true
         )
         instance.configuration.installContext = context
@@ -717,8 +773,9 @@ struct VMLifecycleCoordinatorTests {
 
         let context = MacOSInstallContext(
             source: .downloadLatest,
-            downloadDestinationPath: temp.appendingPathComponent("RestoreImage.ipsw")
-                .path(percentEncoded: false)
+            downloadDestinationPath: temp.appendingPathComponent(
+                RestoreImageFilename.destination(for: ipswService.fetchResult.url)
+            ).path(percentEncoded: false)
         )
         instance.configuration.installContext = context
         instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
@@ -726,20 +783,26 @@ struct VMLifecycleCoordinatorTests {
         try await coordinator.installMacOS(on: instance, context: context)
 
         // Nothing at the destination is disturbed: the download resumes or
-        // skips over whatever is already there.
+        // skips over whatever is already there. The destination did not move
+        // either, so there is no superseded sidecar to discard.
         #expect(ipswService.lastDownloadDiscardsExisting == false)
         #expect(ipswService.discardResumeDataCallCount == 0)
     }
 
     @Test("installMacOS preserves IPSW resume data when download is cancelled")
     func installMacOSCancelPreservesResumeData() async {
-        let (coordinator, _, _, ipswService, _) = makeCoordinator()
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cancelResumeData-\(UUID().uuidString)", isDirectory: true)
+        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
         ipswService.downloadError = CancellationError()
         let instance = makeInstance()
+        // The destination the resolved image derives, so the cancel is the only
+        // thing that could reach the partial sitting there.
         let context = MacOSInstallContext(
             source: .downloadLatest,
-            downloadDestinationPath: FileManager.default.temporaryDirectory
-                .appendingPathComponent("cancel-test-restore.ipsw").path(percentEncoded: false)
+            downloadDestinationPath: temp.appendingPathComponent(
+                RestoreImageFilename.destination(for: ipswService.fetchResult.url)
+            ).path(percentEncoded: false)
         )
 
         await #expect(throws: CancellationError.self) {
@@ -753,7 +816,9 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS preserves IPSW resume data on NSURLErrorCancelled")
     func installMacOSURLCancelPreservesResumeData() async {
-        let (coordinator, _, _, ipswService, _) = makeCoordinator()
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("urlCancelResumeData-\(UUID().uuidString)", isDirectory: true)
+        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
         ipswService.downloadError = NSError(
             domain: NSURLErrorDomain,
             code: NSURLErrorCancelled,
@@ -762,8 +827,9 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeInstance()
         let context = MacOSInstallContext(
             source: .downloadLatest,
-            downloadDestinationPath: FileManager.default.temporaryDirectory
-                .appendingPathComponent("url-cancel-test-restore.ipsw").path(percentEncoded: false)
+            downloadDestinationPath: temp.appendingPathComponent(
+                RestoreImageFilename.destination(for: ipswService.fetchResult.url)
+            ).path(percentEncoded: false)
         )
 
         await #expect(throws: CancellationError.self) {

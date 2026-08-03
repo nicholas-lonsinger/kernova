@@ -453,7 +453,7 @@ struct VMCreationViewModelTests {
         let vm = VMCreationViewModel()
         vm.ipswDownloadPath = "/usr/bin/true"
 
-        vm.useExistingDownloadFile()
+        vm.useExistingDownloadFile(at: vm.ipswDownloadPath)
 
         #expect(vm.ipswSelection == .localFile(path: "/usr/bin/true", bookmark: nil))
     }
@@ -800,7 +800,7 @@ struct VMCreationViewModelTests {
         let vm = VMCreationViewModel()
         vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
         let destination = vm.ipswDownloadPath
-        vm.useExistingDownloadFile()
+        vm.useExistingDownloadFile(at: destination)
 
         #expect(vm.ipswSelection == .localFile(path: destination, bookmark: nil))
     }
@@ -810,7 +810,7 @@ struct VMCreationViewModelTests {
         let vm = VMCreationViewModel()
         let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
         vm.selectCatalogEntry(entry)
-        vm.useExistingDownloadFile()
+        vm.useExistingDownloadFile(at: vm.ipswDownloadPath)
 
         #expect(vm.ipswSource == .localFile)
         #expect(vm.lastCatalogPick == entry)
@@ -919,7 +919,7 @@ struct VMCreationViewModelTests {
         vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
         let destination = vm.ipswDownloadPath
 
-        let verdict = await vm.adoptExistingDownloadFile()
+        let verdict = await vm.adoptExistingDownloadFile(at: destination)
 
         #expect(verdict == .adopted(inspector.inspectResult))
         #expect(vm.ipswSelection == .localFile(path: destination, bookmark: nil))
@@ -935,7 +935,7 @@ struct VMCreationViewModelTests {
         let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
         vm.selectCatalogEntry(entry)
 
-        let verdict = await vm.adoptExistingDownloadFile()
+        let verdict = await vm.adoptExistingDownloadFile(at: vm.ipswDownloadPath)
 
         #expect(verdict == .mismatch(expected: "24G90", found: inspector.inspectResult))
         // The wrong-image install this exists to prevent.
@@ -949,7 +949,7 @@ struct VMCreationViewModelTests {
         let vm = VMCreationViewModel(localImageInspector: inspector)
         vm.selectCatalogEntry(makeCatalogEntry())
 
-        let verdict = await vm.adoptExistingDownloadFile()
+        let verdict = await vm.adoptExistingDownloadFile(at: vm.ipswDownloadPath)
 
         #expect(
             verdict
@@ -966,7 +966,7 @@ struct VMCreationViewModelTests {
         let vm = VMCreationViewModel(localImageInspector: inspector)
         vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
 
-        let verdict = await vm.adoptExistingDownloadFile()
+        let verdict = await vm.adoptExistingDownloadFile(at: vm.ipswDownloadPath)
 
         #expect(
             verdict
@@ -984,7 +984,7 @@ struct VMCreationViewModelTests {
         vm.selectDownloadLatest()
 
         #expect(vm.expectedBuild == nil)
-        let verdict = await vm.adoptExistingDownloadFile()
+        let verdict = await vm.adoptExistingDownloadFile(at: vm.ipswDownloadPath)
 
         #expect(verdict == .adopted(inspector.inspectResult))
         #expect(vm.ipswSource == .localFile)
@@ -1001,7 +1001,7 @@ struct VMCreationViewModelTests {
             ipswService: MockIPSWService())
         await vm.loadLatestImageDetails()?.value
 
-        let verdict = await vm.adoptExistingDownloadFile()
+        let verdict = await vm.adoptExistingDownloadFile(at: vm.ipswDownloadPath)
 
         // The wrong-image install a per-build destination prevents for the
         // download, which a hand-placed file at that destination reintroduces.
@@ -1021,7 +1021,7 @@ struct VMCreationViewModelTests {
         await vm.loadLatestImageDetails()?.value
         let destination = vm.ipswDownloadPath
 
-        let verdict = await vm.adoptExistingDownloadFile()
+        let verdict = await vm.adoptExistingDownloadFile(at: destination)
 
         #expect(verdict == .adopted(inspector.inspectResult))
         #expect(vm.ipswSelection == .localFile(path: destination, bookmark: nil))
@@ -1036,7 +1036,9 @@ struct VMCreationViewModelTests {
                 urlString: "https://example.com/image.ipsw", version: nil, build: nil))
 
         #expect(vm.expectedBuild == nil)
-        #expect(await vm.adoptExistingDownloadFile() == .adopted(inspector.inspectResult))
+        #expect(
+            await vm.adoptExistingDownloadFile(at: vm.ipswDownloadPath)
+                == .adopted(inspector.inspectResult))
     }
 
     @Test("An inspection cancelled mid-flight adopts nothing")
@@ -1047,13 +1049,55 @@ struct VMCreationViewModelTests {
         let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
         vm.selectCatalogEntry(entry)
 
-        let adopt = Task { await vm.adoptExistingDownloadFile() }
+        let destination = vm.ipswDownloadPath
+        let adopt = Task { await vm.adoptExistingDownloadFile(at: destination) }
         try await inspector.waitUntilInspecting()
         adopt.cancel()
         inspector.release()
 
         #expect(await adopt.value == .cancelled)
         #expect(vm.ipswSelection == .catalogVersion(entry))
+    }
+
+    @Test("Adoption inspects and commits the path it was handed, not the live destination")
+    func adoptUsesTheCallersPath() async {
+        let inspector = MockLocalRestoreImageInspector()
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        // The destination as the caller showed it to the user.
+        let snapshot = "/tmp/kernova-snapshot-\(UUID().uuidString).ipsw"
+        #expect(snapshot != vm.ipswDownloadPath)
+
+        let verdict = await vm.adoptExistingDownloadFile(at: snapshot)
+
+        #expect(verdict == .adopted(inspector.inspectResult))
+        #expect(inspector.lastInspectedURL?.path(percentEncoded: false) == snapshot)
+        #expect(vm.ipswSelection == .localFile(path: snapshot, bookmark: nil))
+    }
+
+    @Test("A destination that moves mid-inspection changes neither the file adopted nor the build")
+    func adoptIgnoresADestinationThatMovesMidInspection() async throws {
+        let inspector = SuspendingMockLocalRestoreImageInspector()
+        let vm = VMCreationViewModel(
+            probeService: MockRestoreImageProbeService(),
+            localImageInspector: inspector,
+            ipswService: MockIPSWService())
+        let destination = vm.ipswDownloadPath
+
+        let adopt = Task { await vm.adoptExistingDownloadFile(at: destination) }
+        try await inspector.waitUntilInspecting()
+        // The lookup lands during the seconds the read takes, moving both the
+        // destination and the build "Download Latest" promises.
+        await vm.loadLatestImageDetails()?.value
+        #expect(vm.ipswDownloadPath != destination)
+        #expect(vm.expectedBuild == "25F84")
+        inspector.release()
+
+        // The verdict answers the question that was asked: the file read is the
+        // file adopted, and a build that arrived afterwards is not held against
+        // it — a mismatch here would name a build the user never saw, about a
+        // file at a path nothing inspected.
+        #expect(await adopt.value == .adopted(inspector.inspectResult))
+        #expect(vm.ipswSelection == .localFile(path: destination, bookmark: nil))
     }
 
     @Test("expectedBuild names the build each source is promising")
@@ -1174,7 +1218,7 @@ struct VMCreationViewModelTests {
 /// Inspector stand-in that stays inside `inspect` until the test releases it,
 /// the way a multi-gigabyte image keeps the real one busy for seconds.
 final class SuspendingMockLocalRestoreImageInspector: LocalRestoreImageInspecting, @unchecked Sendable {
-    private let inspectResult = InspectedRestoreImage(
+    let inspectResult = InspectedRestoreImage(
         version: "15.6.1", build: "24G90", isSupportedOnThisHost: true)
     private let gate = AsyncGate()
     private let lock = NSLock()

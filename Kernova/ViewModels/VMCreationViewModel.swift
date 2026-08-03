@@ -469,13 +469,18 @@ final class VMCreationViewModel {
         confirmedOverwritePath = ipswDownloadPath
     }
 
-    /// Adopts the file already sitting at the download destination.
+    /// Adopts the file at `path`, which the caller inspected or the user
+    /// explicitly accepted.
+    ///
+    /// The caller supplies the path it showed the user rather than this reading
+    /// ``ipswDownloadPath``, which the latest-image lookup can move while a
+    /// decision is pending.
     ///
     /// No bookmark: the file was adopted without a panel, so there is no grant
     /// to capture — and none is needed, the Downloads location being
     /// entitlement-covered.
-    func useExistingDownloadFile() {
-        ipswSelection = .localFile(path: ipswDownloadPath, bookmark: nil)
+    func useExistingDownloadFile(at path: String) {
+        ipswSelection = .localFile(path: path, bookmark: nil)
     }
 
     /// The build the wizard is currently promising — a pinned pick's, or the
@@ -503,8 +508,9 @@ final class VMCreationViewModel {
         case cancelled
     }
 
-    /// Checks the file sitting at the download destination, and adopts it only
-    /// if it is the image the wizard is promising.
+    /// Checks the file at `path` — the caller's snapshot of the destination it
+    /// showed the user — and adopts it only if it is the image the wizard is
+    /// promising.
     ///
     /// Without this, "Use Existing File" takes whatever is at the path. A file
     /// that is a *valid but different* macOS installs silently — the same
@@ -512,10 +518,15 @@ final class VMCreationViewModel {
     /// a stale or hand-placed file reintroduces.
     ///
     /// Reading a multi-gigabyte image takes seconds, in which the user can pick
-    /// another source or leave the step: a cancelled call returns
-    /// ``ExistingFileVerdict/cancelled`` having changed nothing.
-    func adoptExistingDownloadFile() async -> ExistingFileVerdict {
-        let url = URL(fileURLWithPath: ipswDownloadPath)
+    /// another source or leave the step — a cancelled call returns
+    /// ``ExistingFileVerdict/cancelled`` having changed nothing — and the
+    /// latest-image lookup can move ``ipswDownloadPath`` and ``expectedBuild``:
+    /// both the verdict and any adoption describe the file the user was asked
+    /// about, so the path comes in as the caller's snapshot and the build is
+    /// snapshotted before the inspection.
+    func adoptExistingDownloadFile(at path: String) async -> ExistingFileVerdict {
+        let expectedBuild = expectedBuild
+        let url = URL(fileURLWithPath: path)
         let inspected: InspectedRestoreImage
         do {
             inspected = try await localImageInspector.inspect(url)
@@ -538,7 +549,7 @@ final class VMCreationViewModel {
             return .mismatch(expected: expectedBuild, found: inspected)
         }
 
-        useExistingDownloadFile()
+        useExistingDownloadFile(at: path)
         return .adopted(inspected)
     }
 
