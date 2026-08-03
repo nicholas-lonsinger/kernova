@@ -23,20 +23,22 @@ enum AgentStatus: Equatable, Sendable {
     case unresponsive(version: String)
 
     /// The host has seen the agent connect on this VM before
-    /// (`VMConfiguration.lastSeenAgentVersion` is set), but the post-start
-    /// grace period elapsed without a fresh `Hello`.
+    /// (`VMConfiguration.lastSeenAgentVersion` is set), but a grace period
+    /// elapsed with no `Hello` — after the VM started or resumed, or after the
+    /// control channel died mid-session.
     ///
     /// Synthesized only at `VMInstance.agentStatus`; `VsockControlService`,
     /// which has no access to persisted state, never returns it.
     case expectedMissing(expected: String)
 
     /// Live session for a VM that has had an agent connect before
-    /// (`VMConfiguration.lastSeenAgentVersion` is set), but no `Hello` has
-    /// arrived yet on this session.
+    /// (`VMConfiguration.lastSeenAgentVersion` is set), with no handshaken
+    /// control channel right now — the agent has yet to arrive, or arrived and
+    /// then went away.
     ///
-    /// Resolves to `.current` once the handshake completes, or to
-    /// `.expectedMissing` if the post-start watchdog fires. Synthesized only at
-    /// `VMInstance.agentStatus`; `VsockControlService` never returns it.
+    /// Resolves to `.current` once a handshake completes, or to
+    /// `.expectedMissing` if the agent-arrival watchdog fires. Synthesized only
+    /// at `VMInstance.agentStatus`; `VsockControlService` never returns it.
     case connecting(expected: String)
 
     var isConnecting: Bool {

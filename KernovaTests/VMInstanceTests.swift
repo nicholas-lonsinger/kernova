@@ -1,6 +1,8 @@
 import Testing
 import Foundation
 import AppKit
+import KernovaKit
+import KernovaTestSupport
 @testable import Kernova
 
 @Suite("VMInstance Tests")
@@ -718,7 +720,9 @@ struct VMInstanceTests {
     //
     // The watchdog flips `agentExpectedButMissing` after a grace period when:
     //   - The guest is macOS,
+    //   - The VM is `.running` (a frozen guest can't answer),
     //   - `lastSeenAgentVersion` is set (so we have a baseline expectation),
+    //   - No agent is connected on the control channel already,
     //   - No `installState` is in progress, and
     //   - No Hello arrives during the grace window.
     // Tests inject a millisecond-scale grace so the suite stays fast.
@@ -744,6 +748,22 @@ struct VMInstanceTests {
         let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .running)
         instance.installState = installState
         return instance
+    }
+
+    /// Guest-side `Hello` for tests that drive a real `VsockControlService`.
+    private func makeGuestHelloFrame(agentVersion: String) -> Frame {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.hello = Kernova_V1_Hello.with {
+            $0.serviceVersion = 1
+            $0.capabilities = KernovaCapability.controlChannelDefaults
+            $0.agentInfo = Kernova_V1_AgentInfo.with {
+                $0.os = "macOS"
+                $0.osVersion = "26.0"
+                $0.agentVersion = agentVersion
+            }
+        }
+        return frame
     }
 
     // Sized past macos-26 GitHub Actions MainActor jitter, which far exceeds
@@ -847,6 +867,50 @@ struct VMInstanceTests {
         #expect(instance.agentExpectedButMissing == false)
     }
 
+    @Test(
+        "Watchdog is a no-op unless the VM is running",
+        arguments: [
+            VMStatus.paused, .saving, .restoring, .stopped,
+        ])
+    func watchdogNoopUnlessRunning(status: VMStatus) async throws {
+        // A live-paused guest is frozen: it cannot say Hello, so a grace clock
+        // running against it would blame the agent for the user's pause. The
+        // control channel settles for silence at the same time, which is what
+        // re-arms the watchdog — hence the guard rather than caller discipline.
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        instance.status = status
+
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        #expect(instance.agentPostStartTaskForTesting == nil)
+        try await Task.sleep(for: Self.testWatchdogGrace * 3)
+        #expect(instance.agentExpectedButMissing == false)
+    }
+
+    @Test("Watchdog is a no-op while the agent is connected")
+    func watchdogNoopWhileAgentConnected() async throws {
+        // Re-arm sites (resume, and the control channel dying) fire without
+        // checking whether an agent is already talking; nothing to wait for
+        // means nothing to arm.
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        let (guestFd, hostFd) = try makeRawSocketPair()
+        let guest = VsockChannel(fileDescriptor: guestFd)
+        let host = VsockChannel(fileDescriptor: hostFd)
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let control = VsockControlService(channel: host, label: "watchdog-test")
+        instance.vsockControlService = control
+        control.start()
+        defer { control.stop() }
+
+        try guest.send(makeGuestHelloFrame(agentVersion: "0.9.2"))
+        try await waitForChange { control.agentVersion != nil }
+
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        #expect(instance.agentPostStartTaskForTesting == nil)
+    }
+
     @Test("startAgentPostStartWatchdog is idempotent when already armed")
     func watchdogIdempotent() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
@@ -923,6 +987,52 @@ struct VMInstanceTests {
         await instance.agentPostStartTaskForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
         #expect(persistCallCount == 0)
+    }
+
+    @Test("A mid-session firing leaves the nudge dismissal and guest OS version alone")
+    func watchdogPreservesPersistedStateAfterAMidSessionDeath() async throws {
+        // The clearing exists for an agent that never showed up: nothing
+        // vouched for the stored OS version, and the install nudge should come
+        // back. After a Hello this session both facts are backed by evidence
+        // the session produced, and `agentInstallNudgeDismissed` is a user
+        // preference nothing restores — a dropped channel is not enough to
+        // reverse it.
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        instance.configuration.agentInstallNudgeDismissed = true
+
+        var persistCallCount = 0
+        instance.onUpdateConfiguration = { mutate in
+            mutate(&instance.configuration)
+            persistCallCount += 1
+        }
+
+        instance.recordObservedAgentInfo(
+            ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "Version 26.0 (Build 25A123)"))
+        #expect(instance.hasSeenAgentThisSession)
+        let persistsAfterHello = persistCallCount
+
+        // The agent goes away mid-session and never comes back.
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        await instance.agentPostStartTaskForTesting?.value
+
+        // The badge still escalates — that is the whole point of #706.
+        #expect(instance.agentExpectedButMissing == true)
+        #expect(instance.agentStatus == .expectedMissing(expected: "0.9.2"))
+        #expect(instance.configuration.agentInstallNudgeDismissed == true)
+        #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
+        #expect(persistCallCount == persistsAfterHello)
+    }
+
+    @Test("tearDownSession clears hasSeenAgentThisSession")
+    func tearDownSessionClearsSeenAgentFlag() {
+        // The flag is per-session: the next boot's no-show must be free to
+        // rewrite persisted agent state again.
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "26.0"))
+        #expect(instance.hasSeenAgentThisSession)
+
+        instance.tearDownSession()
+        #expect(!instance.hasSeenAgentThisSession)
     }
 
     @Test("tearDownSession clears agentExpectedButMissing and cancels the watchdog")

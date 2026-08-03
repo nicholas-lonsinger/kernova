@@ -220,6 +220,10 @@ final class VirtualizationService {
         do {
             try await vm.pause()
             instance.status = .paused
+            // The grace clock only means something while the guest is executing
+            // — a frozen guest cannot say Hello, so letting it run would blame
+            // the agent for the pause.
+            instance.cancelAgentPostStartWatchdog()
             Self.logger.notice("Paused VM '\(instance.name, privacy: .public)'")
         } catch {
             Self.logger.error(
@@ -255,6 +259,11 @@ final class VirtualizationService {
                 throw VirtualizationError.noSaveFile
             }
 
+            // Both branches land a guest that is executing again: a hot resume
+            // whose channel died while paused, and a cold restore that has yet
+            // to see its first Hello, each need the grace clock the start path
+            // arms. A no-op while the agent is connected.
+            instance.startAgentPostStartWatchdog()
             Self.logger.notice("Resumed VM '\(instance.name, privacy: .public)'")
         } catch {
             Self.logger.error(

@@ -205,7 +205,7 @@ final class AgentStatusPopoverContentViewController: NSViewController {
                 "\(vmName) is running guest agent \(installed). Kernova bundles \(bundled). Mounting the installer presents it as a disk inside the VM — open it in Finder and run install.command."
         case .connecting(let expected):
             return
-                "Waiting for guest agent \(expected) on \(vmName) to reconnect after boot. If it doesn't connect within a couple of minutes, you'll see a 'didn't reconnect' indicator with reinstall steps."
+                "Waiting for guest agent \(expected) on \(vmName) to connect. If it doesn't within a couple of minutes, you'll see a 'didn't reconnect' indicator with reinstall steps."
         case .current(let version):
             return "\(vmName) is connected with guest agent \(version)."
         case .unresponsive(let version):
@@ -213,7 +213,7 @@ final class AgentStatusPopoverContentViewController: NSViewController {
                 "\(vmName) (guest agent \(version)) stopped responding to heartbeats. The control connection will reset automatically; if it persists, restart the agent inside the VM."
         case .expectedMissing(let expected):
             return
-                "\(vmName) had guest agent \(expected) installed previously, but it didn't connect after this boot. The agent's LaunchAgent may be unloaded, or it may have been uninstalled inside the VM. Reinstalling presents the installer as a disk — open it in Finder and run install.command."
+                "\(vmName) had guest agent \(expected) installed previously, but it isn't connected now. The agent's LaunchAgent may be unloaded, or it may have been uninstalled inside the VM. Reinstalling presents the installer as a disk — open it in Finder and run install.command."
         }
     }
 

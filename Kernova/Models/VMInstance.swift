@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import os
 import Virtualization
 
@@ -138,14 +139,24 @@ final class VMInstance {
     var vsockControlService: VsockControlService?
 
     /// `true` when this VM has reached `.running`, the host previously saw a
-    /// guest agent connect (`configuration.lastSeenAgentVersion != nil`), and
-    /// the post-start grace period has elapsed without a fresh `Hello`
-    /// arriving over the control channel.
+    /// guest agent connect (`configuration.lastSeenAgentVersion != nil`), and a
+    /// grace period has elapsed without a `Hello` arriving over the control
+    /// channel.
     ///
     /// Reset on `tearDownSession` and on the next successful Hello.
     var agentExpectedButMissing: Bool = false
 
-    /// Backing task for the post-start agent-arrival watchdog, one-shot per VM session.
+    /// `true` once a `Hello` has arrived on this VM session.
+    ///
+    /// Separates a mid-session agent disappearance from an agent that never
+    /// appeared: only the latter is evidence about what is installed in the
+    /// guest, so only the latter may rewrite persisted agent state.
+    ///
+    /// Reset on `tearDownSession`.
+    private(set) var hasSeenAgentThisSession = false
+
+    /// Backing task for the post-start agent-arrival watchdog, re-armed each
+    /// time the control channel is lost.
     private var agentPostStartTask: Task<Void, Never>?
 
     /// Performs a host-side mutation of this instance's configuration and routes
@@ -366,6 +377,7 @@ final class VMInstance {
         stopSerialReading()
         cancelAgentPostStartWatchdog()
         agentExpectedButMissing = false
+        hasSeenAgentThisSession = false
         serialInputPipe = nil
         serialOutputPipe = nil
         liveRemovableMedia = []
@@ -621,25 +633,7 @@ final class VMInstance {
             }
             // Replace any prior service from a previous reconnect.
             self.vsockControlService?.stop()
-            let service = VsockControlService(
-                channel: channel,
-                label: self.name,
-                policyProvider: { [weak self] in
-                    guard let self else {
-                        return AgentPolicySnapshot(
-                            logForwardingEnabled: false,
-                            clipboardSharingEnabled: false
-                        )
-                    }
-                    return AgentPolicySnapshot(
-                        logForwardingEnabled: self.configuration.agentLogForwardingEnabled,
-                        clipboardSharingEnabled: self.configuration.clipboardSharingEnabled
-                    )
-                },
-                onAgentInfoObserved: { [weak self] info in
-                    self?.recordObservedAgentInfo(info)
-                }
-            )
+            let service = self.makeControlService(for: channel)
             self.vsockControlService = service
             service.start()
         }
@@ -672,6 +666,41 @@ final class VMInstance {
     func admitsFeatureChannel(requiringClipboardStreaming: Bool) -> Bool {
         guard let control = vsockControlService, control.isConnected else { return false }
         return !requiringClipboardStreaming || control.guestSupportsClipboardStreaming
+    }
+
+    /// Builds the control service for one accepted channel, wired to this
+    /// instance's policy, agent-info, guest-suspension and channel-loss hooks.
+    ///
+    /// Every hook reads through `self` lazily, so all four track live
+    /// configuration edits and pause/resume without being re-pushed.
+    func makeControlService(for channel: VsockChannel) -> VsockControlService {
+        VsockControlService(
+            channel: channel,
+            label: name,
+            policyProvider: { [weak self] in
+                guard let self else {
+                    return AgentPolicySnapshot(
+                        logForwardingEnabled: false,
+                        clipboardSharingEnabled: false
+                    )
+                }
+                return AgentPolicySnapshot(
+                    logForwardingEnabled: self.configuration.agentLogForwardingEnabled,
+                    clipboardSharingEnabled: self.configuration.clipboardSharingEnabled
+                )
+            },
+            onAgentInfoObserved: { [weak self] info in
+                self?.recordObservedAgentInfo(info)
+            },
+            isGuestSuspended: { [weak self] in self?.isLivePaused ?? false },
+            onChannelLost: { [weak self] in
+                // The agent went away mid-session. Re-arm the same grace clock
+                // the post-start path uses, so a channel that never comes back
+                // escalates to `.expectedMissing` instead of spinning at
+                // `.connecting` for the rest of the session.
+                self?.startAgentPostStartWatchdog()
+            }
+        )
     }
 
     /// Builds the log-channel listener; each accepted channel replaces any prior
@@ -727,17 +756,22 @@ final class VMInstance {
     /// Starts a one-shot timer that flips `agentExpectedButMissing = true` if
     /// the guest agent doesn't say Hello within `grace`.
     ///
-    /// A no-op unless the guest is macOS, the boot wasn't into Recovery (which
-    /// never runs the agent, so silence there is evidence of nothing), an agent
-    /// has been seen before on this VM, no install is in progress, and no
-    /// watchdog is already armed. Cancelled by any inbound Hello and by
-    /// `tearDownSession`.
+    /// Armed after a start or resume, and again whenever the control channel
+    /// dies under us, so a mid-session disappearance escalates the same way a
+    /// no-show after boot does. A no-op unless the guest is macOS, the VM is
+    /// running (a paused guest isn't executing, so its silence proves nothing),
+    /// the boot wasn't into Recovery (which never runs the agent), an agent has
+    /// been seen before on this VM, the agent isn't already connected, no
+    /// install is in progress, and no watchdog is already armed. Cancelled by
+    /// any inbound Hello, by a pause, and by `tearDownSession`.
     func startAgentPostStartWatchdog(
         afterRecoveryBoot: Bool = false, grace: Duration = VMInstance.defaultAgentPostStartGrace
     ) {
         guard configuration.guestOS == .macOS else { return }
         guard !afterRecoveryBoot else { return }
+        guard status == .running else { return }
         guard configuration.lastSeenAgentVersion != nil else { return }
+        guard vsockControlService?.agentVersion == nil else { return }
         guard installState == nil else { return }
         guard agentPostStartTask == nil else { return }
 
@@ -757,13 +791,17 @@ final class VMInstance {
                     "Guest agent expected (last seen \(self.configuration.lastSeenAgentVersion ?? "?", privacy: .public)) but never reconnected for '\(self.name, privacy: .public)' — surfacing reinstall affordance"
                 )
                 self.agentExpectedButMissing = true
-                // A previously-installed agent disappearing outranks the nudge
-                // the user silenced — reset the dismissal so a future
-                // `.waiting` surfaces normally. The reported guest OS version
-                // goes with it: the agent that vouched for it is gone, and
-                // "Unknown" beats a stale value.
-                if self.configuration.agentInstallNudgeDismissed
-                    || self.configuration.lastSeenGuestOSVersion != nil
+                // An agent that never showed up at all outranks the nudge the
+                // user silenced — reset the dismissal so a future `.waiting`
+                // surfaces normally. The reported guest OS version goes with
+                // it: nothing vouched for it this session, and "Unknown" beats
+                // a stale value. Both stay untouched when the agent did say
+                // Hello earlier in this session: it demonstrably exists, and
+                // reversing a preference nothing restores needs better evidence
+                // than one dropped channel.
+                if !self.hasSeenAgentThisSession,
+                    self.configuration.agentInstallNudgeDismissed
+                        || self.configuration.lastSeenGuestOSVersion != nil
                 {
                     self.performConfigurationMutation {
                         $0.agentInstallNudgeDismissed = false
@@ -802,6 +840,7 @@ final class VMInstance {
         // before the changed guards below.
         cancelAgentPostStartWatchdog()
         agentExpectedButMissing = false
+        hasSeenAgentThisSession = true
         // Skip the no-op write: a `config.json` rewrite on every Hello would
         // re-fire `VMDirectoryWatcher` reconcile.
         let agentVersionChanged = configuration.lastSeenAgentVersion != info.agentVersion
