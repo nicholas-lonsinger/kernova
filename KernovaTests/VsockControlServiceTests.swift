@@ -485,8 +485,8 @@ struct VsockControlServiceTests {
         #expect(service.agentStatus == .current(version: "0.9.0"))
     }
 
-    @Test("Silence past terminateAfter closes the host channel")
-    func terminateClosesChannel() async throws {
+    @Test("Silence past terminateAfter settles the service and stops the watchdog")
+    func terminateSettlesTheService() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -506,24 +506,88 @@ struct VsockControlServiceTests {
         service.start()
         defer { service.stop() }
 
+        // Captured now: the teardown clears the handles.
+        let lifecycleTasks = service.lifecycleTasksForTesting
+
         _ = try await nextFrame(from: guest)  // host hello
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
         try await waitForChange { service.isConnected }
 
-        // Wait for a few terminateAfter windows. By then `checkLiveness`
-        // should have fired and called `channel.close()` on the host side.
-        // After teardown, `host.send(...)` raises `VsockChannelError.closed`.
-        // RATIONALE: sanctioned exception-catch poll (docs/TESTING.md "Async
-        // waits in tests") — closure is only detectable by a send raising
-        // `.closed`; the watchdog closes the socket with no signal to await.
-        try await waitUntil {
-            do {
-                try host.send(makeHeartbeat(nonce: 1))
-                return false
-            } catch {
-                return true
-            }
+        // Send nothing further: the watchdog terminates the connection. The
+        // service has to settle rather than re-fire every tick against a frozen
+        // `lastInboundFrame`.
+        try await waitForChange { !service.isConnected }
+
+        // Every periodic task runs to completion — no watchdog tick and no
+        // heartbeat send survives the teardown.
+        for task in lifecycleTasks {
+            await task.value
         }
+        #expect(service.lifecycleTasksForTesting.isEmpty)
+        #expect(service.agentVersion == nil)
+        #expect(service.agentStatus == .waiting)
+        // The channel went with it: the teardown closes before clearing
+        // `isConnected`, so this is ordered, not racy.
+        #expect(throws: VsockChannelError.closed) { try host.send(makeHeartbeat()) }
+    }
+
+    @Test("A channel closed by the peer settles the service")
+    func consumeEndSettlesTheService() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // Watchdog disabled (the makeService default), so only the consume
+        // path can settle this one.
+        let service = makeService(channel: host, bundledAgentVersion: "0.9.0")
+        service.start()
+        defer { service.stop() }
+
+        let lifecycleTasks = service.lifecycleTasksForTesting
+
+        _ = try await nextFrame(from: guest)  // host hello
+        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
+        try await waitForChange { service.isConnected }
+
+        // The guest agent goes away: EOF unwinds the consume loop, and nobody
+        // calls stop() on the host side until the *next* accept.
+        guest.close()
+
+        try await waitForChange { !service.isConnected }
+        for task in lifecycleTasks {
+            await task.value
+        }
+        #expect(service.agentVersion == nil)
+        #expect(service.agentStatus == .waiting)
+
+        // Settle-then-explicit-stop: the owner still tears down normally.
+        service.stop()
+        #expect(!service.isConnected)
+    }
+
+    @Test("A settled service is terminal — start() does not resurrect it")
+    func settledServiceStaysDown() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = makeService(channel: host, bundledAgentVersion: "0.9.0")
+        service.start()
+
+        _ = try await nextFrame(from: guest)  // host hello
+        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
+        try await waitForChange { service.isConnected }
+
+        guest.close()
+        try await waitForChange { !service.isConnected }
+
+        // A reconnect is served by a fresh instance built at accept time, so
+        // restarting this one would only spin tasks against a dead socket.
+        service.start()
+        #expect(!service.isConnected)
+        #expect(service.lifecycleTasksForTesting.isEmpty)
     }
 
     // MARK: - Lifecycle

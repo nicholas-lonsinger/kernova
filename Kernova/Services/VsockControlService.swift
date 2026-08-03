@@ -25,17 +25,20 @@ struct ObservedAgentInfo: Equatable, Sendable {
 /// `VZVirtioSocketDevice`, independent of any feature toggle, and carries the
 /// bidirectional `Hello` handshake plus a `Heartbeat` stream where extended
 /// peer silence means the peer is hung. One instance manages one channel for
-/// one accepted connection; `stop()` is idempotent.
+/// one accepted connection and stops itself once that channel dies, whether the
+/// peer closed it or the watchdog did; `stop()` is idempotent and terminal, so
+/// a reconnect is served by a fresh instance.
 @MainActor
 @Observable
 final class VsockControlService {
     // MARK: - Observable state
 
-    /// `true` once the guest agent has sent its `Hello`; reset on `stop()`.
+    /// `true` once the guest agent has sent its `Hello`; reset when the
+    /// connection settles.
     private(set) var isConnected: Bool = false
 
     /// The guest-reported `Hello.agent_info.agent_version`, `nil` until that
-    /// `Hello` arrives and again after `stop()`.
+    /// `Hello` arrives and again once the connection settles.
     private(set) var agentVersion: String?
 
     /// `true` when the inbound liveness watchdog has fired but the channel has not yet been torn down.
@@ -76,6 +79,21 @@ final class VsockControlService {
     private var consumeTask: Task<Void, Never>?
     private var outboundHeartbeatTask: Task<Void, Never>?
     private var livenessTask: Task<Void, Never>?
+
+    /// Guards the teardown against re-entry: the liveness watchdog, the consume
+    /// task and the owner can each reach `stop()`, and whichever arrives first
+    /// is the one that settles.
+    private var hasStopped = false
+
+    #if DEBUG
+    /// The tasks `start()` spun up, so a test can await their completion instead
+    /// of polling for the watchdog to fall silent.
+    ///
+    /// Read it before the teardown that clears them.
+    var lifecycleTasksForTesting: [Task<Void, Never>] {
+        [consumeTask, outboundHeartbeatTask, livenessTask].compactMap { $0 }
+    }
+    #endif
 
     /// Instant of the most recent inbound frame of any kind — `Hello` and
     /// `Heartbeat` both count as liveness signals.
@@ -145,7 +163,7 @@ final class VsockControlService {
     // MARK: - Lifecycle
 
     func start() {
-        guard consumeTask == nil else { return }
+        guard consumeTask == nil, !hasStopped else { return }
 
         sendHello()
 
@@ -155,6 +173,9 @@ final class VsockControlService {
             await Self.consume(channel: channel, label: label) { @MainActor frame in
                 self?.handle(frame: frame)
             }
+            // The channel is gone once `consume` returns; settle so the
+            // heartbeat and liveness tasks stop running against a dead socket.
+            self?.stop()
         }
 
         let heartbeatInterval = self.heartbeatInterval
@@ -186,7 +207,15 @@ final class VsockControlService {
         Self.logger.info("Vsock control service started for '\(self.label, privacy: .public)'")
     }
 
+    /// Tears the service down and resets the handshake state.
+    ///
+    /// Safe to call from inside the tasks it cancels: `Task.cancel()` only sets
+    /// the cancellation flag, so a caller running inside the liveness or consume
+    /// task runs this method to completion and then unwinds at its own next
+    /// cancellation check.
     func stop() {
+        guard !hasStopped else { return }
+        hasStopped = true
         consumeTask?.cancel()
         consumeTask = nil
         outboundHeartbeatTask?.cancel()
@@ -294,9 +323,7 @@ final class VsockControlService {
             Self.logger.warning(
                 "Control channel for '\(self.label, privacy: .public)' silent for \(elapsed.formatted(.units(allowed: [.seconds])), privacy: .public) — closing"
             )
-            // Tearing the channel down lets the consume task return and the
-            // listener accept a fresh connection.
-            channel.close()
+            stop()
         } else if elapsed > unresponsiveAfter {
             if !isUnresponsive {
                 Self.logger.warning(
@@ -334,6 +361,10 @@ final class VsockControlService {
     }
 
     private func handle(frame: Frame) {
+        // A frame still buffered in `incoming` when the teardown ran would
+        // otherwise flip `isConnected` back on for a channel whose tasks are
+        // already cancelled.
+        guard !hasStopped else { return }
         guard frame.protocolVersion == 1 else {
             Self.logger.warning(
                 "Dropping frame with unsupported protocol version \(frame.protocolVersion, privacy: .public) for '\(self.label, privacy: .public)'"
