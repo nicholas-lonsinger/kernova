@@ -575,6 +575,7 @@ struct VsockControlServiceTests {
 
         let service = makeService(channel: host, bundledAgentVersion: "0.9.0")
         service.start()
+        defer { service.stop() }
 
         _ = try await nextFrame(from: guest)  // host hello
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
