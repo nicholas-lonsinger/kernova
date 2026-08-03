@@ -13,7 +13,7 @@ import Testing
 @MainActor
 struct StatusMenuVMSectionTests {
     private final class RowTarget: NSObject {
-        @objc func rowTapped(_ sender: NSMenuItem) {}
+        @objc func rowTapped(_: NSMenuItem) {}
     }
 
     private func makeInstance(name: String = "Test VM", status: VMStatus = .running) -> VMInstance {
