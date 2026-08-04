@@ -14,10 +14,10 @@ public enum ClipboardProgressMenuAction: Equatable, Sendable {
 /// dropdown on its own.
 ///
 /// This is the only progress surface that interrupts, so it opens at most once
-/// per paste (never for another flow, which the clipboard window is already
-/// showing), only once the transfer has run for `minimumElapsedToOpen` with at
-/// least `minimumRemainingToOpen` still to go, and it closes only a dropdown it
-/// opened itself.
+/// per paste — the one flow where an app the user is watching sits blocked until
+/// the transfer finishes — and never for any other. It waits until the transfer
+/// has run for `minimumElapsedToOpen` with at least `minimumRemainingToOpen`
+/// still to go, and it closes only a dropdown it opened itself.
 public struct ClipboardProgressMenuAutoOpener: Equatable, Sendable {
     /// How long a paste must have been materializing before it may interrupt.
     public static let defaultMinimumElapsedToOpen: TimeInterval = 2

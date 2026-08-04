@@ -8,12 +8,15 @@ import Testing
 @Suite("ClipboardProgressMenuAutoOpener")
 struct ClipboardProgressMenuAutoOpenerTests {
     /// A readout that clears every gate, so each test varies only what it is about.
+    ///
+    /// Outbound, the shape a paste readout has: this side is streaming the bytes
+    /// an app on the peer is blocked on.
     private static func readout(
         elapsed: TimeInterval = 5, secondsRemaining: Double? = 10, bytesTransferred: UInt64 = 100,
         totalBytes: UInt64 = 1_000, isPaste: Bool = true
     ) -> ClipboardProgressSnapshot {
         ClipboardProgressSnapshot(
-            direction: .inbound, peerName: "VM", currentItemName: nil, filesCompleted: 0,
+            direction: .outbound, peerName: "VM", currentItemName: nil, filesCompleted: 0,
             fileCount: 1, bytesTransferred: bytesTransferred, totalBytes: totalBytes,
             bytesPerSecond: 100, secondsRemaining: secondsRemaining, isPasteSession: isPaste,
             elapsedSeconds: elapsed)

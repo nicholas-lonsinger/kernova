@@ -316,6 +316,7 @@ struct ClipboardProgressTrackerTests {
         #expect(snapshot.totalBytes == 4_000)
         #expect(snapshot.bytesTransferred == 500)
         #expect(snapshot.currentItemName == "a.bin")
+        #expect(!snapshot.isPasteSession)
     }
 
     @Test("two sessions reusing the same transfer id keep separate accounting")
@@ -577,6 +578,53 @@ struct ClipboardProgressTrackerTests {
         #expect(snapshot.currentItemName == "big.bin")
         #expect(snapshot.totalBytes == 100_000)
         #expect(snapshot.bytesTransferred == 10_000)
+    }
+
+    // MARK: - Paste sessions
+
+    @Test("a paste session's readout carries the flag through to the auto-opener")
+    func pasteSessionReadoutInterrupts() throws {
+        // The one live producer: the host serving a guest's paste. The flag has to
+        // survive the projection, since the auto-opener sees nothing else.
+        let harness = Harness(revealDelay: 1)
+        let session = harness.tracker.openSession(
+            direction: .outbound, peerName: "VM", isPaste: true,
+            units: [
+                ClipboardProgressTracker.PlannedUnit(id: 0, expectedBytes: 100_000, name: "a.bin")
+            ])
+        harness.tracker.unitBegan(session: session, id: 0)
+        harness.now = 5
+        harness.tracker.unitProgressed(session: session, id: 0, bytesTransferred: 1_000)
+
+        let snapshot = try #require(harness.latest)
+        #expect(snapshot.isPasteSession)
+        #expect(
+            ClipboardProgressFormat.headline(
+                direction: snapshot.direction, peerName: snapshot.peerName,
+                isPaste: snapshot.isPasteSession) == "Pasting into “VM”…")
+
+        var opener = ClipboardProgressMenuAutoOpener()
+        #expect(opener.readoutChanged(snapshot, menuIsOpen: false, canOpen: true) == .open)
+    }
+
+    @Test("a bigger non-paste operation outranking a paste takes the flag off the readout")
+    func nonPasteWinnerSuppressesTheFlag() throws {
+        // The flag belongs to whichever session is projected, not to any live one:
+        // a preview fetch with more left to move owns the readout, and the
+        // auto-opener must not interrupt over a readout that isn't the paste's.
+        let harness = Harness()
+        let paste = harness.tracker.openSession(
+            direction: .outbound, peerName: "VM", isPaste: true)
+        harness.tracker.unitBegan(session: paste, id: 0, expectedBytes: 1_000, name: "small.bin")
+
+        let preview = harness.tracker.openSession(direction: .inbound, peerName: "VM")
+        harness.tracker.unitBegan(session: preview, id: 0, expectedBytes: 500_000, name: "big.bin")
+        harness.now = 2
+        harness.tracker.unitProgressed(session: preview, id: 0, bytesTransferred: 1_000)
+
+        let snapshot = try #require(harness.latest)
+        #expect(snapshot.currentItemName == "big.bin")
+        #expect(!snapshot.isPasteSession)
     }
 
     @Test("closing a session that never revealed emits nothing")

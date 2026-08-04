@@ -445,6 +445,10 @@ struct VsockGuestClipboardAgentTests {
         // The terminal credits the transfer in full, so the last readout before
         // the clear reads as complete rather than stopping short.
         #expect(readout.bytesTransferred == UInt64(contents.count))
+        // Never a paste session, unlike the host's outbound readout: a host pull
+        // serves a preview or a paste on the Mac, and a dropdown inside the VM is
+        // not where a user pasting on the Mac would look.
+        #expect(!readout.isPasteSession)
     }
 
     @Test("a copied image file is offered inline with the image UTI")

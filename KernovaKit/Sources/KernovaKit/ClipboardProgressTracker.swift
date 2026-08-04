@@ -227,8 +227,15 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
     /// Pre-declare every transfer in `units` where the set is known; leave it
     /// empty where the peer drives what gets pulled, and each transfer joins as
     /// `unitBegan` announces it.
+    ///
+    /// `isPaste` marks a session serving a paste the **peer** is performing —
+    /// the one readout allowed to interrupt with an automatic dropdown, because
+    /// the app the user pasted into sits blocked until the bytes land and
+    /// nothing else explains the wait. A paste *this* side performs never sets
+    /// it: that paste parks this process's main thread, so no readout of it can
+    /// repaint before it is over.
     public func openSession(
-        direction: ClipboardProgressSnapshot.Direction, peerName: String,
+        direction: ClipboardProgressSnapshot.Direction, peerName: String, isPaste: Bool = false,
         units: [PlannedUnit] = []
     ) -> SessionToken {
         lock.withLock {
@@ -239,7 +246,7 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
                 table[.adHoc(unit.id)] = UnitState(expected: unit.expectedBytes, name: unit.name)
             }
             sessions[token] = Session(
-                token: token, direction: direction, peerName: peerName, isPaste: false,
+                token: token, direction: direction, peerName: peerName, isPaste: isPaste,
                 startedAt: now(), units: table)
             return token
         }

@@ -9,7 +9,7 @@ import Testing
 struct ClipboardProgressFormatTests {
     /// A snapshot with everything but the fields under test held constant.
     private static func snapshot(
-        direction: ClipboardProgressSnapshot.Direction = .inbound, peerName: String = "VM",
+        direction: ClipboardProgressSnapshot.Direction = .outbound, peerName: String = "VM",
         currentItemName: String? = nil, filesCompleted: Int = 0, fileCount: Int = 1,
         bytesTransferred: UInt64 = 0, totalBytes: UInt64 = 1_000, isPaste: Bool = true
     ) -> ClipboardProgressSnapshot {
@@ -22,20 +22,21 @@ struct ClipboardProgressFormatTests {
 
     @Test("the headline names the peer in quotes and says what is happening")
     func headlineNamesPeer() {
-        // A paste is named as such: it is the one operation the user started
-        // outside Kernova, so the readout has to explain why it appeared.
+        // A paste is named as such: the bytes are leaving for an app on the other
+        // machine that is blocked until they land, which is the whole reason the
+        // readout interrupted.
         #expect(
             ClipboardProgressFormat.headline(
-                direction: .inbound, peerName: "macOS TEST", isPaste: true)
-                == "Pasting from “macOS TEST”…")
-        #expect(
-            ClipboardProgressFormat.headline(
-                direction: .inbound, peerName: "macOS TEST", isPaste: false)
-                == "Receiving from “macOS TEST”…")
+                direction: .outbound, peerName: "macOS TEST", isPaste: true)
+                == "Pasting into “macOS TEST”…")
         #expect(
             ClipboardProgressFormat.headline(
                 direction: .outbound, peerName: "macOS TEST", isPaste: false)
                 == "Sending to “macOS TEST”…")
+        #expect(
+            ClipboardProgressFormat.headline(
+                direction: .inbound, peerName: "macOS TEST", isPaste: false)
+                == "Receiving from “macOS TEST”…")
     }
 
     @Test("the file counter shows the file being worked on, and is absent for a single file")
@@ -104,20 +105,20 @@ struct ClipboardProgressFormatTests {
     func summaryMultipleItems() {
         let snapshot = Self.snapshot(
             currentItemName: "big.mov", filesCompleted: 1, fileCount: 5, bytesTransferred: 500)
-        #expect(ClipboardProgressFormat.summary(snapshot) == "Pasting from “VM”… — 50% — 2 of 5")
+        #expect(ClipboardProgressFormat.summary(snapshot) == "Pasting into “VM”… — 50% — 2 of 5")
     }
 
     @Test("the summary falls back to the file's name for a single-file paste")
     func summarySingleItem() {
         let snapshot = Self.snapshot(currentItemName: "big.mov", bytesTransferred: 250)
-        #expect(ClipboardProgressFormat.summary(snapshot) == "Pasting from “VM”… — 25% — big.mov")
+        #expect(ClipboardProgressFormat.summary(snapshot) == "Pasting into “VM”… — 25% — big.mov")
     }
 
     @Test("the summary carries the direction for a transfer that is not a paste")
     func summaryNonPaste() {
         let snapshot = Self.snapshot(
-            direction: .outbound, currentItemName: "big.mov", bytesTransferred: 250,
+            direction: .inbound, currentItemName: "big.mov", bytesTransferred: 250,
             isPaste: false)
-        #expect(ClipboardProgressFormat.summary(snapshot) == "Sending to “VM”… — 25% — big.mov")
+        #expect(ClipboardProgressFormat.summary(snapshot) == "Receiving from “VM”… — 25% — big.mov")
     }
 }

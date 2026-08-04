@@ -1673,7 +1673,7 @@ struct VsockClipboardServiceTests {
     }
 
     @Test(
-        "the toggle-off Copy-to-Mac pull shows an aggregate readout, cleared at the terminal (#354, #652)"
+        "the paste-time Copy-to-Mac pull shows an aggregate readout, cleared at the terminal (#354, #652)"
     )
     func syncCopyToMacPullShowsProgress() async throws {
         let (guest, host) = try makePair()
@@ -1714,8 +1714,9 @@ struct VsockClipboardServiceTests {
         try await waitForChange { service.transferProgress?.direction == .inbound }
         #expect(service.transferProgress?.totalBytes == UInt64(fileBytes.count))
         #expect(service.transferProgress?.currentItemName == "big.bin")
-        // Not a paste — the user started this from the clipboard window, which is
-        // already showing the readout, so it must never open a dropdown over them.
+        // Never flagged a paste session, though a paste is what fires it: this pull
+        // parks the thread serving the promise — the main thread in production — so
+        // the dropdown it popped would only appear once the paste was already over.
         #expect(service.transferProgress?.isPasteSession == false)
 
         // Releasing End resolves the pull; the terminal clears the readout (§13:
@@ -2647,8 +2648,9 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
+        let label = "test-\(UUID().uuidString)"
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: 0, progressIdleLinger: 0)
+            channel: host, label: label, progressRevealDelay: 0, progressIdleLinger: 0)
         service.start()
         defer { service.stop() }
 
@@ -2684,8 +2686,17 @@ struct VsockClipboardServiceTests {
         // then blocks on credit, so progress shows but the transfer isn't done.
         try sendAck(from: guest, transferID: xid, bytesConsumed: 0, windowBytes: 64 * 1024)
         try await waitForChange { (service.transferProgress?.bytesTransferred ?? 0) > 0 }
-        #expect(service.transferProgress?.direction == .outbound)
-        #expect(service.transferProgress?.totalBytes == UInt64(expected.count))
+        let readout = try #require(service.transferProgress)
+        #expect(readout.direction == .outbound)
+        #expect(readout.totalBytes == UInt64(expected.count))
+        // A guest request is always a paste in the guest — its only originator is
+        // the pasteboard promise callback — so this readout is the one allowed to
+        // open the status-item dropdown, and it says whose paste it is serving.
+        #expect(readout.isPasteSession)
+        #expect(
+            ClipboardProgressFormat.headline(
+                direction: readout.direction, peerName: readout.peerName,
+                isPaste: readout.isPasteSession) == "Pasting into “\(label)”…")
 
         // Open the window fully → the rest streams and the transfer completes.
         try sendAck(from: guest, transferID: xid, bytesConsumed: 0, windowBytes: 2 * 1024 * 1024)

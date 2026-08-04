@@ -302,6 +302,11 @@ final class VsockClipboardService: ClipboardServicing {
     /// The outbound session measuring what this side is streaming for `generation`,
     /// opening one if the guest's request is the first under that generation.
     ///
+    /// Every such session is a paste session: the guest asks for bytes only from
+    /// the pasteboard promise callback of a paste inside it — it has no preview or
+    /// copy surface of its own — so this readout is the only thing explaining why
+    /// the app the user pasted into is waiting.
+    ///
     /// A session the tracker already ended is replaced rather than reused: the
     /// waves can be minutes apart, far longer than the idle linger, and reusing
     /// the ended token drops the second wave's progress entirely.
@@ -315,7 +320,7 @@ final class VsockClipboardService: ClipboardServicing {
         }
         if let stale = outboundSession { progress.closeSession(stale.token, immediately: true) }
         let token = progress.openSession(
-            direction: .outbound, peerName: label)
+            direction: .outbound, peerName: label, isPaste: true)
         outboundSession = (generation: generation, token: token)
         return token
     }
