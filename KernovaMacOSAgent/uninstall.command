@@ -23,38 +23,6 @@ pause() {
 
 trap 'echo ""; echo "ERROR: An unexpected error occurred (line $LINENO)."; pause' ERR
 
-# The File Provider extension executable's bundle-internal path, used as a
-# pgrep/pkill -f pattern. Anchoring on the .appex path matches only the real
-# extension process — not unrelated processes whose arguments merely mention
-# the name.
-FP_EXEC_PATTERN="KernovaMacOSAgentFileProvider\.appex/Contents/MacOS/KernovaMacOSAgentFileProvider"
-
-# Kill the running File Provider extension (if any) and confirm it exited —
-# fileproviderd would keep the already-spawned process serving the domain
-# after the bundle is deleted otherwise (docs/CLIPBOARD.md, Engineering
-# practices). SIGTERM first, SIGKILL after 5s. A no-match is fine; a process
-# that survives SIGKILL only warns — it lingers until the guest is rebooted.
-stop_file_provider() {
-    local waited=0 escalated=0
-    if ! pgrep -f "${FP_EXEC_PATTERN}" >/dev/null 2>&1; then
-        return 0
-    fi
-    pkill -f "${FP_EXEC_PATTERN}" 2>/dev/null || true
-    while pgrep -f "${FP_EXEC_PATTERN}" >/dev/null 2>&1; do
-        if (( waited >= 25 && escalated == 0 )); then
-            pkill -9 -f "${FP_EXEC_PATTERN}" 2>/dev/null || true
-            escalated=1
-        fi
-        if (( waited >= 35 )); then
-            echo "WARNING: The File Provider extension process is still running; it"
-            echo "         may linger until the guest is rebooted."
-            return 0
-        fi
-        sleep 0.2
-        waited=$((waited + 1))
-    done
-}
-
 # Boot out a LaunchAgent label and wait for launchd to actually drop it —
 # bootout returns before teardown completes, and deleting the bundle under a
 # still-draining agent defeats the point of stopping it first. A label that
@@ -105,10 +73,6 @@ if [[ "${choice}" =~ ^[Yy]$ ]]; then
 
     # Stop the agent and wait for launchd to drop the label.
     bootout_and_wait "${LABEL}"
-
-    # Also kill the running File Provider extension so no process lingers from
-    # the deleted bundle.
-    stop_file_provider
 
     # RATIONALE: rm, not trash — the same exception Tools/ghosts.sh's
     # evict_dd_arena takes. A trashed app bundle is still a valid on-disk copy

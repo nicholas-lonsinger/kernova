@@ -70,7 +70,7 @@ A feature branch therefore reads its post-merge number and holds it steady acros
 
 `Tools/set-build-number.sh <app|agent>` owns this logic, and every target's `Set Build Number from Git` build phase calls it. It writes `#define KERNOVA_BUILD_NUMBER N` (app mode) or `#define AGENT_BUILD_NUMBER N` (agent mode) into `DERIVED_FILE_DIR`; the source `Info.plist` references the symbol directly, substituted via `INFOPLIST_PREPROCESS` inside `ProcessInfoPlistFile` so build-graph reordering cannot clobber it.
 
-**App mode** serves the `Kernova` app and the host `KernovaFileProvider`, so the embedded appex always matches its host app's version. **Agent mode** scopes both the count and the squash `+1` to `KernovaGuestAgent/ KernovaMacOSAgent/` — both path spellings, so the count stays monotonic across the directory rename and a branch that doesn't touch agent sources leaves its number unchanged — and serves `KernovaMacOSAgent` plus its embedded `KernovaMacOSAgentFileProvider`.
+**App mode** serves the `Kernova` app. **Agent mode** serves `KernovaMacOSAgent`, and scopes both the count and the squash `+1` to `KernovaGuestAgent/ KernovaMacOSAgent/` — both path spellings, so the count stays monotonic across the directory rename and a branch that doesn't touch agent sources leaves its number unchanged.
 
 ## Guest agent versioning
 
@@ -78,7 +78,7 @@ The guest agent has its **own** `MARKETING_VERSION`, independent of the app's. B
 
 Bump it in the same PR as the behavior change, even mid-PR. The first behavioral change on a branch bumps the **minor**; later revisions on that branch bump the **patch**.
 
-The value is set in **four** places — the Debug and Release configurations of both the `KernovaMacOSAgent` target and its `KernovaMacOSAgentFileProvider` extension — and all four must move together.
+The value is set in **two** places — the Debug and Release configurations of the `KernovaMacOSAgent` target — and both must move together.
 
 Two parallel PRs that both picked the same next version rebase-merge cleanly, since the setting lines are identical; the later one must then manually advance the version again before merging.
 
@@ -94,10 +94,10 @@ The tradeoff is no LLDB session on this scheme: no breakpoints, no variable insp
 
 ## Worktree LaunchServices cleanup
 
-Every worktree build registers its app bundles, and their embedded appexes, with LaunchServices. When the worktree is removed those registrations become ghosts — stale entries that accumulate and have previously hijacked UTI and name resolution.
+Every worktree build registers its app bundles with LaunchServices. When the worktree is removed those registrations become ghosts — stale entries that accumulate and have previously hijacked UTI and name resolution.
 
 Debris of *removed* worktrees self-heals. The post-checkout hook runs `Tools/ghosts.sh --sweep` on every *initial* checkout (`git worktree add` passes the null ref as `$1`; a plain `git switch` never pays the multi-second `lsregister` dump). The sweep unregisters every registered Kernova path that no longer exists on disk — the current `app.kernova.*` identifiers and the legacy `com.kernova.app` one alike — and evicts DerivedData arenas orphaned by removed worktrees, skipping any arena a process is still running from.
 
-**Live** stray copies still need the on-demand tools: `make ghosts` reports; `make clean-ghosts` also unregisters, terminates a blocking on-demand extension, prunes, and evicts (including an arena the sweep skipped). `make ghosts` inventories live `Kernova.app` copies under Trash and `~/Library/Developer/Xcode/DerivedData`, and flags any that outrank the installed `/Applications` copy in the LaunchServices/PluginKit `CFBundleVersion` election — Spotlight indexes neither location, so `mdfind` alone misses them.
+**Live** stray copies still need the on-demand tools: `make ghosts` reports; `make clean-ghosts` also unregisters, prunes, and evicts. `make ghosts` inventories live `Kernova.app` copies under Trash and `~/Library/Developer/Xcode/DerivedData`, and flags any that outrank the installed `/Applications` copy in the LaunchServices `CFBundleVersion` election — Spotlight indexes neither location, so `mdfind` alone misses them.
 
 `-kill` has been removed from current macOS's `lsregister` ("dangerous and no longer useful", per `lsregister -h`), and a plain `lsregister -u <path>` reliably unregisters an entry even once its path is gone (verified empirically 2026-07-08).

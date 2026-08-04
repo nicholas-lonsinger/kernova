@@ -9,8 +9,8 @@
 # hash back to a human label so the tooling can print it inline.
 #
 # Usage: Tools/arena-label.sh [--status] <path>
-#   <path> may be a build arena, anything inside one (a Kernova.app, an .appex),
-#   or a checkout directory itself.
+#   <path> may be a build arena, anything inside one (a Kernova.app), or a
+#   checkout directory itself.
 #
 # Prints exactly one of these and exits 0:
 #   worktree: <name>              a live .claude/worktrees/<name> worktree
@@ -102,9 +102,9 @@ label_for_checkout "$target" && exit 0
 #
 # A plist that exists but carries no WorkspacePath does NOT end the walk. The
 # probe is case-insensitive on a stock APFS volume, so `info.plist` also matches
-# the `Info.plist` of every bundle on the way up — an .appex path passes through
-# its host .app's Contents/ before reaching the arena. Treating that hit as
-# terminal is what silently dropped the label from the PlugInKit lines.
+# the `Info.plist` of every bundle on the way up; treating that hit as terminal
+# drops the label from any path that passes through a bundle's Contents/ before
+# reaching the arena.
 dir=$target
 while [ -n "$dir" ] && [ "$dir" != "/" ]; do
     if [ -f "$dir/info.plist" ]; then

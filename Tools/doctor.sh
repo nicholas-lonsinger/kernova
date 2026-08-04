@@ -191,8 +191,8 @@ fi
 
 section 'Signing'
 
-# Debug's three Manual/profile-less sub-targets (agent, agent File Provider,
-# host File Provider) need DEVELOPMENT_TEAM resolved before they can sign —
+# The agent target signs Manual and profile-less in Debug, so it needs
+# DEVELOPMENT_TEAM resolved before it can sign —
 # `make bootstrap` (Tools/bootstrap-team.sh) derives it from your own signing
 # certificate into the gitignored Config/Local.xcconfig (#476). CI can't catch
 # a broken team here: it builds with CODE_SIGNING_ALLOWED=NO.

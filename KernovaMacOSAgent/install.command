@@ -30,43 +30,9 @@ APP_SRC="${SCRIPT_DIR}/${APP_NAME}"
 APP_DEST="${INSTALL_DIR}/${APP_NAME}"
 EXEC_REL="Contents/MacOS/KernovaMacOSAgent"
 
-# The File Provider extension executable's bundle-internal path, used as a
-# pgrep/pkill -f pattern. Anchoring on the .appex path matches only the real
-# extension process — not unrelated processes whose arguments merely mention
-# the name.
-FP_EXEC_PATTERN="KernovaMacOSAgentFileProvider\.appex/Contents/MacOS/KernovaMacOSAgentFileProvider"
-
 # Legacy (pre-app-bundle) install location, cleaned up on upgrade.
 LEGACY_DIR="${HOME}/Library/Application Support/Kernova"
 LEGACY_BINARY="${LEGACY_DIR}/kernova-agent"
-
-# Kill the running File Provider extension (if any) and confirm it exited —
-# fileproviderd does not replace a running extension when its app bundle is
-# replaced; the already-spawned process (the old binary) keeps serving the
-# domain (docs/CLIPBOARD.md, Engineering practices). SIGTERM first, SIGKILL
-# after 5s. A no-match (fresh install, or the extension never launched) is
-# fine; a process that survives SIGKILL only warns — it keeps serving the old
-# build until the guest is rebooted, but cannot corrupt the install itself.
-stop_file_provider() {
-    local waited=0 escalated=0
-    if ! pgrep -f "${FP_EXEC_PATTERN}" >/dev/null 2>&1; then
-        return 0
-    fi
-    pkill -f "${FP_EXEC_PATTERN}" 2>/dev/null || true
-    while pgrep -f "${FP_EXEC_PATTERN}" >/dev/null 2>&1; do
-        if (( waited >= 25 && escalated == 0 )); then
-            pkill -9 -f "${FP_EXEC_PATTERN}" 2>/dev/null || true
-            escalated=1
-        fi
-        if (( waited >= 35 )); then
-            echo "WARNING: The old File Provider extension is still running; the new"
-            echo "         one may not take over until the guest is rebooted."
-            return 0
-        fi
-        sleep 0.2
-        waited=$((waited + 1))
-    done
-}
 
 # Boot out a LaunchAgent label and wait for launchd to actually drop it —
 # bootout returns before teardown completes, and bootstrapping a label that
@@ -178,8 +144,6 @@ if [[ "${choice}" =~ ^[Yy]$ ]]; then
     # pre-rename install ran under app.kernova.agent and is booted out below),
     # waiting out the drain so the bootstrap below cannot race it.
     bootout_and_wait "${LABEL}"
-
-    stop_file_provider
 
     # Swap the validated bundle into place. Renames, not copies: there is no
     # window with a half-written app, and the old bundle survives (as the

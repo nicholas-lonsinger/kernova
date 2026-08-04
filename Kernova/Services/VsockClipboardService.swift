@@ -169,30 +169,27 @@ final class VsockClipboardService: ClipboardServicing {
 
     /// Creates the service for one accepted channel.
     ///
-    /// `stagingTempRoot` defaults to the host File Provider app-group container so
-    /// the sandboxed extension can read staged bytes, falling back to the system
-    /// temp dir when the container is unavailable (e.g. the CI test host).
+    /// Tests pass `stagingTempRoot` to isolate the staging directory between
+    /// parallel runs.
     init(
         channel: VsockChannel, label: String,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         lazyPullTimeout: Duration = ClipboardStreamTuning.lazyPullTimeout,
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
-        stagingTempRoot: URL? = nil,
+        stagingTempRoot: URL = FileManager.default.temporaryDirectory,
         progressCenter: ClipboardProgressCenter = .shared
     ) {
         self.channel = channel
         self.label = label
         self.lazyPullTimeout = lazyPullTimeout
         self.progressCenter = progressCenter
-        let tempRoot =
-            stagingTempRoot
-            ?? FileProviderContainer(config: .host()).stagingRootURL()
-            ?? FileManager.default.temporaryDirectory
         self.staging = ClipboardFileStaging(
-            label: "host-\(label)", tempRoot: tempRoot, freeSpaceProvider: freeSpaceProvider)
+            label: "host-\(label)", tempRoot: stagingTempRoot,
+            freeSpaceProvider: freeSpaceProvider)
         self.sendStaging = ClipboardFileStaging(
-            label: "host-send-\(label)", tempRoot: tempRoot, freeSpaceProvider: freeSpaceProvider)
+            label: "host-send-\(label)", tempRoot: stagingTempRoot,
+            freeSpaceProvider: freeSpaceProvider)
         // Emissions hop to main on a serial (FIFO) queue, not an unordered
         // `Task { @MainActor }`: two snapshots arriving out of order would make
         // the progress bar jump backwards.

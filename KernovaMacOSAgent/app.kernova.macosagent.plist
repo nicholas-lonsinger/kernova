@@ -16,9 +16,6 @@
 	<array>
 		<string>__INSTALL_DIR__/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent</string>
 	</array>
-	<!-- No MachServices: the agent↔File Provider extension IPC uses the canonical
-	     NSFileProviderServicing anonymous-XPC pattern (#460), not a launchd-vended
-	     Mach service. -->
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>

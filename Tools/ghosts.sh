@@ -4,14 +4,11 @@
 # worktree, a manual `git worktree remove`, dragging the worktree to Trash,
 # etc.).
 #
-# Both KernovaFileProvider (host) and KernovaMacOSAgentFileProvider (guest
-# agent) are ordinary macOS/arm64 .appex bundles — nothing about them is
-# "guest-only" at the bundle level, that's purely a deployment-time decision.
-# So the moment Xcode builds one into a worktree's DerivedData, Launch
-# Services' filesystem scanner discovers and registers it, regardless of
-# where the binary is ultimately meant to run. If the worktree directory is
-# then removed by hand, that registration is never unregistered and lingers
-# pointing at a path that no longer resolves.
+# The moment Xcode builds an app bundle into a worktree's DerivedData, Launch
+# Services' filesystem scanner discovers and registers it — the guest agent
+# included, since nothing about that bundle is "guest-only" at the bundle
+# level. If the worktree directory is then removed by hand, that registration
+# is never unregistered and lingers pointing at a path that no longer resolves.
 #
 # Checks for:
 #   - Launch Services registrations whose `path:` no longer exists on disk,
@@ -29,7 +26,7 @@
 #     for a worktree whose directory is already gone)
 #   - LIVE on-disk Kernova.app copies (Trash, DerivedData) whose
 #     CFBundleVersion outranks the installed /Applications copy — unlike the
-#     dead-path ghosts above, LaunchServices/PluginKit elect these by highest
+#     dead-path ghosts above, Launch Services elects these by highest
 #     CFBundleVersion (= squash-aware git commit count, see docs/BUILD.md "Build
 #     version"), so a ghost build can shadow the real app indefinitely even
 #     though version ordering can never favor the installed copy on its own
@@ -145,8 +142,8 @@ orphaned_dd_arenas() {
     done
 }
 
-# PIDs of processes executing from inside the arena (e.g. a File Provider
-# extension fileproviderd kept alive) — eviction would yank their binaries.
+# PIDs of processes executing from inside the arena — eviction would yank
+# their binaries out from under them.
 # Not pgrep: `pgrep -f` takes a regex, and the arena path must match
 # literally (`grep -F`); a false match only skips an eviction, the safe
 # failure mode.
@@ -165,47 +162,6 @@ arena_in_use() {
 # whitespace would truncate them.
 exe_of_pid() {
     lsof -a -p "$1" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -1
-}
-
-# True when something other than an on-demand app extension is running from
-# the arena. An .appex is an XPC service its host daemon (fileproviderd, pkd)
-# starts on demand and restarts on the next request, so terminating one costs
-# at most an in-flight request. Anything else — the app itself, a test runner —
-# may be mid-VM-session and is the user's to quit, so the arena is left alone.
-arena_has_non_appex() {
-    local pid exe
-    while IFS= read -r pid; do
-        [ -z "$pid" ] && continue
-        exe=$(exe_of_pid "$pid")
-        # An unreadable exe path (the process exited between the ps and the
-        # lsof) can't be classified as safe to kill — treat it as blocking.
-        case "$exe" in
-            *.appex/*) ;;
-            *) return 0 ;;
-        esac
-    done < <(arena_pids "$1")
-    return 1
-}
-
-# Terminate the extension processes running from the arena so it can be
-# evicted. Callers must rule out non-appex processes first. Returns 0 only
-# once the arena is actually free.
-kill_arena_appexes() {
-    local dir=$1 i
-    local pids=()
-    while IFS= read -r i; do
-        [ -z "$i" ] && continue
-        pids+=("$i")
-    done < <(arena_pids "$dir")
-    [ "${#pids[@]}" -eq 0 ] && return 0
-    kill "${pids[@]}" 2>/dev/null
-    # kill only requests termination; wait for the daemons to reap before
-    # calling the arena free, and give up rather than block if one hangs.
-    for i in 1 2 3 4 5 6 7 8 9 10; do
-        arena_in_use "$dir" || return 0
-        sleep 0.2
-    done
-    return 1
 }
 
 # Unregister every bundle inside the arena, then delete the folder outright.
@@ -255,10 +211,6 @@ fi
 
 found_count=0
 fixed_count=0
-# Subset of found_count that `--fix` deliberately does not repair, so the
-# summary can point at the manual step instead of promising `make clean-ghosts`
-# will clear it.
-manual_count=0
 
 # section/pass/warn/value/detail/pretty_path come from Tools/lib/output.sh.
 # These two stay local because they also drive this script's summary counters.
@@ -266,12 +218,10 @@ ghost() { printf '  %s✗%s %s\n' "$c_red" "$c_reset" "$1"; found_count=$((found
 fixed() { printf '    %s→ fixed:%s %s\n' "$c_green" "$c_reset" "$1"; fixed_count=$((fixed_count + 1)); }
 
 # --evict <dir>: remove ONE build arena and exit — the shared implementation
-# behind `make clean`. The in-use guard matches --fix: an on-demand
-# extension is terminated (its daemon restarts it on the next request), while a
-# running app or test runner is the user's to quit, so the arena is left intact
-# and this exits non-zero rather than deleting a binary out from under a live
-# process. A path that isn't there is a no-op, so callers can pass every
-# candidate arena unconditionally.
+# behind `make clean`. The in-use guard matches --fix: a process running from
+# the arena is the user's to quit, so the arena is left intact and this exits
+# non-zero rather than deleting a binary out from under it. A path that isn't
+# there is a no-op, so callers can pass every candidate arena unconditionally.
 if [ "$EVICT" = 1 ]; then
     if [ -z "$EVICT_DIR" ]; then
         printf 'ghosts.sh: --evict requires a directory argument\n' >&2
@@ -288,16 +238,9 @@ if [ "$EVICT" = 1 ]; then
     # Clear the in-use guard before announcing anything, so a refusal never
     # follows a "Removing…" line that turned out to be false.
     if arena_in_use "$EVICT_DIR"; then
-        if arena_has_non_appex "$EVICT_DIR"; then
-            printf 'ghosts.sh: a running app is still executing from inside %s — quit it, then re-run\n' \
-                "$(labeled_path "$EVICT_DIR")" >&2
-            exit 1
-        fi
-        if ! kill_arena_appexes "$EVICT_DIR"; then
-            printf 'ghosts.sh: could not free %s — an extension did not exit\n' \
-                "$(labeled_path "$EVICT_DIR")" >&2
-            exit 1
-        fi
+        printf 'ghosts.sh: a running process is still executing from inside %s — quit it, then re-run\n' \
+            "$(labeled_path "$EVICT_DIR")" >&2
+        exit 1
     fi
     # Size on the way out: on a default-location machine this is the arena the
     # Xcode GUI shares, so discarding it costs a full rebuild — worth seeing as
@@ -341,12 +284,9 @@ else
     done
 
     if [ "$FIX" = 1 ]; then
-        # Best-effort pass: unregistering a bundle cascades to its embedded
-        # plugins, so a later -u call on an already-cascaded child path (e.g.
-        # a .appex under a .app that was just unregistered) reports failure
-        # even though the record is already gone. Don't trust individual exit
-        # codes — attempt all of them, then re-dump once and check what's
-        # actually still registered.
+        # Best-effort pass: an individual `lsregister -u` exit code does not
+        # track whether the record actually went away. Attempt all of them,
+        # then re-dump once and check what is still registered.
         for path in "${live_ghost_paths[@]}"; do
             "$LSREGISTER" -u "$path" >/dev/null 2>&1
         done
@@ -416,10 +356,8 @@ section 'DerivedData build arenas'
 # Unlike the live-copy election check below (which prompts, because a live
 # copy might be wanted), an orphaned arena's source worktree is gone — its
 # build products are unreachable garbage, so --fix evicts without asking.
-# An arena an on-demand extension is running from is unblocked by terminating
-# it (fileproviderd/pkd restart the .appex on the next request); an arena the
-# app itself is running from is skipped with a pointer instead, since quitting
-# a possibly-in-use app is not this script's call.
+# An arena a process is still running from is skipped with a pointer instead,
+# since quitting a possibly-in-use app is not this script's call.
 dd_orphans=()
 while IFS= read -r dir; do
     [ -z "$dir" ] && continue
@@ -437,17 +375,8 @@ else
         dir_label=$(labeled_path "$dir")
         ghost "Orphaned arena: $dir_label — $(du -sh "$dir" 2>/dev/null | cut -f1)"
         if arena_in_use "$dir"; then
-            if arena_has_non_appex "$dir"; then
-                detail 'a running app is still executing from inside — quit it (or reboot), then re-run'
-                continue
-            elif [ "$FIX" != 1 ]; then
-                detail 'an on-demand extension is running from inside — `make clean-ghosts` terminates it'
-                continue
-            elif ! kill_arena_appexes "$dir"; then
-                detail 'the extension(s) running from inside would not exit — reboot, then re-run'
-                continue
-            fi
-            detail 'terminated the on-demand extension(s) running from inside'
+            detail 'a running process is still executing from inside — quit it (or reboot), then re-run'
+            continue
         fi
         if [ "$FIX" = 1 ]; then
             if evict_dd_arena "$dir"; then
@@ -459,13 +388,11 @@ else
     done
 fi
 
-# ---- on-disk Kernova.app copies ----------------------------------------------
+# ---- live on-disk copies & Launch Services election --------------------------
 
-# Enumerated here, ahead of the section that reports them, because the File
-# Provider verdict below turns on whether any Kernova build exists on disk at
-# all: a domain whose extension "was not found" is the expected resting state
-# when nothing is built, and a genuine wedge when a build is sitting right
-# there. Trash and DerivedData are walked explicitly because both escape
+section 'On-disk copies & registration election'
+
+# Trash and DerivedData are walked explicitly because both escape
 # `mdfind` — DerivedData ships a `.metadata_never_index` sentinel and Trash is
 # excluded from Spotlight entirely.
 #
@@ -498,90 +425,9 @@ while IFS= read -r path; do
     [ -e "$path" ] && app_copies+=("$path")
 done < <(kernova_app_copies)
 
-# ---- stale File Provider domains ---------------------------------------------
-
-section 'File Provider domains'
-
-# fileproviderd binds each registered domain to its extension by bundle id and
-# caches the launch path. A rebuild that moves or deletes the extension binary —
-# or a competing copy at a different DerivedData path — can wedge the binding
-# (Copy to Mac then beeps, because the extension can't launch), and a torn-down
-# extension can strand a dead-end domain. macOS 26's fileproviderctl can only
-# `dump`, not remove, so this only REPORTS; clear it with `make fp-reset`, which
-# restarts fileproviderd — the app re-registers a fresh domain on next launch.
-#
-# The dump interleaves every provider on the machine, so read the flags out of
-# Kernova's own `===== / <bundle id> / =====` block: a bare `grep DeadEndBackend`
-# over the whole dump reports iCloud Drive's or Photos' wedged domain as
-# Kernova's. Two flags matter and they mean different things — `extension not
-# found` is fileproviderd saying it cannot locate the extension bundle at all,
-# whereas a dead-end backend with the extension present is a binding that went
-# bad. Escape sequences are stripped first because fileproviderctl colors its
-# output unconditionally, even into a pipe.
-fp_dump=$(fileproviderctl dump 2>/dev/null || true)
-fp_flags=$(printf '%s\n' "$fp_dump" | awk '
-    {
-        line = $0
-        gsub(/\033\[[0-9;]*m/, "", line)
-        if (line ~ /^=+$/ && prev2 ~ /^=+$/ && prev1 ~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/) {
-            kern = (prev1 ~ /^app\.kernova(\.|$)/)
-            if (kern) registered = 1
-        } else if (kern) {
-            if (line ~ /extension not found/) notfound = 1
-            if (line ~ /DeadEndBackend/) deadend = 1
-        }
-        prev2 = prev1
-        prev1 = line
-    }
-    END {
-        if (registered) print "registered"
-        if (notfound) print "notfound"
-        if (deadend) print "deadend"
-    }
-')
-fp_has() { printf '%s\n' "$fp_flags" | grep -qx "$1"; }
-
-if ! printf '%s\n' "$fp_dump" | grep -qiE "app\.kernova|kernova-clipboard"; then
-    pass 'No Kernova File Provider domains registered'
-elif fp_has notfound; then
-    # A domain outlives the build that registered it — that is the system
-    # working as designed, not debris: the registration is what lets the next
-    # launch adopt the domain instead of minting a second one. So this is a
-    # ⚠ note, not a counted ✗ — there is nothing here for `--fix` to repair,
-    # and `make fp-reset` cannot conjure an extension binary that isn't on disk.
-    if [ "${#app_copies[@]}" -eq 0 ]; then
-        warn 'A Kernova File Provider domain is registered with no build on disk to serve it'
-        detail 'fileproviderd reports "extension not found" — expected after `make clean`, a torn-down'
-        detail 'worktree, or on a machine with no Kernova installed. The domain is inert until a build'
-        detail 'exists; building and launching Kernova re-binds it. Nothing to clean up.'
-    else
-        warn "A Kernova File Provider domain has no extension to bind to, though ${#app_copies[@]} build(s) are on disk"
-        detail 'fileproviderd reports "extension not found" — normal if no copy is running or the domain was'
-        detail 'registered by a build since deleted. Launch Kernova to re-bind; if Copy to Mac still beeps'
-        detail 'afterwards, `make fp-reset` clears the stale binding.'
-    fi
-elif fp_has deadend; then
-    ghost 'A Kernova File Provider domain looks wedged (dead-end backend) with its extension present'
-    detail 'Run `make fp-reset`, then relaunch Kernova to re-register a fresh domain.'
-    detail '(`make clean-ghosts` deliberately leaves this alone — restarting fileproviderd briefly'
-    detail 'interrupts every File Provider on the machine, so it stays an opt-in step.)'
-    detail 'A stale "Kernova Clipboard (Mac)" Finder location that survives fp-reset needs a full domain'
-    detail 'removal instead: run any build of Kernova with `--remove-clipboard-domain` (#454, #467, #516).'
-    detail 'This resets the domain'"'"'s System Settings enablement, so use it only when fp-reset didn'"'"'t help.'
-    manual_count=$((manual_count + 1))
-else
-    pass 'Kernova File Provider domain(s) registered, none dead-ended'
-    detail 'If Copy to Mac beeps or hangs, `make fp-reset` clears stale fileproviderd bindings.'
-fi
-
-# ---- live on-disk copies & Launch Services/PluginKit election ----------------
-
-section 'On-disk copies & registration election'
-
-# Unlike the dead-path ghost check above, this reports the LIVE copies
-# enumerated before the File Provider section — the ones that still exist on
-# disk but sit outside /Applications. LaunchServices/PluginKit elect a handler
-# by highest CFBundleVersion (a squash-aware git commit count — see
+# Unlike the dead-path ghost check above, this reports the LIVE copies — the
+# ones that still exist on disk but sit outside /Applications. Launch Services
+# elects a handler by highest CFBundleVersion (a squash-aware git commit count — see
 # docs/BUILD.md "Build version"), so a ghost build with a higher count can shadow
 # the real app indefinitely; version ordering can never fix this on its own,
 # eviction is the only lever (#454).
@@ -589,8 +435,7 @@ bundle_version() {
     plutil -extract CFBundleVersion raw -o - "$1/Contents/Info.plist" 2>/dev/null
 }
 
-# Ad-hoc vs. a real identity — mixed signing across copies breaks the
-# app-group/relay handshake and masquerades as an unrelated bug.
+# Ad-hoc vs. a real identity, so two same-named copies can be told apart.
 signing_summary() {
     local info team
     info=$(codesign -dv --verbose=2 "$1" 2>&1)
@@ -616,9 +461,8 @@ is_numeric() {
 
 # location_of PATH — the directory a bundle is elected from, and the key this
 # section groups by. Xcode nests an arena's products under
-# Build/Products/<config>/, and every bundle produced by one build (the app plus
-# the appexes inside it) shares that prefix, so cutting there collapses a whole
-# arena into a single block. Anything else groups by its containing directory
+# Build/Products/<config>/, and every bundle produced by one build shares that
+# prefix, so cutting there collapses a whole arena into a single block. Anything else groups by its containing directory
 # (/Applications, ~/.Trash).
 location_of() {
     local rest
@@ -764,71 +608,6 @@ else
     fi
 fi
 
-# PlugInKit's election for the two appexes follows the same highest-version
-# rule as the app itself. Report-only — recovering a wedged plugin means
-# evicting the competing app copy above, not a targeted pluginkit repair.
-# A default `pluginkit -m` returns only the election winner. Each match line
-# is "<election-marker> id(version)<TAB>uuid<TAB>registered<TAB>path",
-# followed by a tab-less "(N plug-ins)" count line — keep the version and
-# winning path, drop the UUID/timestamp/count noise. Each winner is filed
-# under the location it is elected from, so an appex appears in the same block
-# as the app bundle that carries it.
-pk_unregistered=()
-pk_dead=()
-pk_registered=0
-for id in app.kernova.fileprovider app.kernova.macosagent.fileprovider; do
-    info=$(pluginkit -m -v -i "$id" 2>/dev/null)
-    # Count the match lines actually parsed rather than testing $info for
-    # emptiness: an unregistered id makes pluginkit print "  (no matches)",
-    # not nothing, so an emptiness test would report every id as registered
-    # and then print the verdict header with no bundles under it.
-    id_matches=0
-    while IFS=$'\t' read -r head _uuid _registered path; do
-        [ -z "$path" ] && continue
-        # pluginkit prints CFBundleShortVersionString — the marketing version —
-        # in its parentheses, but the election it reports on is decided by
-        # CFBundleVersion, which is also what the app lines above show. Read
-        # that key off the elected bundle so both report the same quantity;
-        # comparing marketing versions would be actively misleading here, since
-        # they are bumped by hand and two builds of the guest agent can share
-        # one while their election inputs differ. The marketing version rides
-        # along in parentheses because it is the number bumped per release.
-        short_ver=${head##*\(}
-        short_ver=${short_ver%\)}
-        build_ver=$(bundle_version "$path")
-        if [ -n "$build_ver" ]; then
-            ver="version $build_ver ($short_ver)"
-        else
-            # An election pointing at a deleted bundle leaves no plist to read,
-            # so pluginkit's remembered value is all there is.
-            ver="version unknown ($short_ver per PlugInKit)"
-        fi
-        # The election marker only matters when it says the winner is not
-        # actually in use (man pluginkit); `+`/blank are the normal states.
-        note=''
-        case "$head" in
-            '-'*) note=' (user elected to ignore)' ;;
-            '='*) note=' (superseded by another plug-in)' ;;
-        esac
-        [ -e "$path" ] || { pk_dead+=("$id"); note="$note (path is gone)"; }
-        # Name the carrying bundle rather than repeating the arena: within a
-        # block the only part that varies is which .app the appex sits in.
-        host=${path#*/Build/Products/*/}
-        host=${host%%/Contents/PlugIns/*}
-        case "$host" in
-            *.app) ;;
-            *) host=$(basename "$(dirname "$(dirname "$path")")") ;;
-        esac
-        add_item "$path" "$id" "$ver — in $host$note" ''
-        id_matches=$((id_matches + 1))
-    done <<< "$info"
-    if [ "$id_matches" -eq 0 ]; then
-        pk_unregistered+=("$id")
-    else
-        pk_registered=$((pk_registered + 1))
-    fi
-done
-
 # ---- verdicts, then one block per location ------------------------------------
 
 case "$copies_verdict_kind" in
@@ -842,20 +621,6 @@ esac
 if [ "$copies_verdict_kind" = 'ghost' ]; then
     found_count=$((found_count + ghost_count - 1))
 fi
-
-if [ "${#pk_dead[@]}" -gt 0 ]; then
-    # Not counted as a fixable issue: pluginkit offers no scripted repair —
-    # pkd re-elects on its next discovery pass (e.g. relaunching the intended
-    # copy, or evicting the competing copy above).
-    warn "PlugInKit election(s) point at deleted paths: ${pk_dead[*]}"
-elif [ "$pk_registered" -eq 0 ]; then
-    pass 'No app.kernova.* appexes registered with PlugInKit'
-else
-    pass 'PlugInKit appex elections point at bundles present on disk'
-fi
-for id in ${pk_unregistered[@]+"${pk_unregistered[@]}"}; do
-    detail "$id — not registered with PlugInKit"
-done
 
 for (( li = 0; li < ${#loc_paths[@]}; li++ )); do
     # Column width is per block: one arena's bundle names are similar lengths,
@@ -956,18 +721,13 @@ if [ "$found_count" -eq 0 ]; then
     exit 0
 fi
 
-# Findings are this script's output, not a failure, so the two report-mode arms
-# below exit 0 — `make ghosts` would otherwise stamp "Error 1" over its own
+# Findings are this script's output, not a failure, so the report-mode arm
+# below exits 0 — `make ghosts` would otherwise stamp "Error 1" over its own
 # closing instruction. A non-zero exit is reserved for not doing the requested
 # job: `--fix` repairing less than it found, and the --evict failures above.
 if [ "$FIX" = 1 ]; then
     printf '%d issue(s) found, %d fixed.\n' "$found_count" "$fixed_count"
-    [ "$manual_count" -gt 0 ] && printf '%d need the manual step noted above; --fix does not perform it.\n' "$manual_count"
     [ "$fixed_count" -lt "$found_count" ] && exit 1
-    exit 0
-elif [ "$manual_count" -eq "$found_count" ]; then
-    printf '%s%d issue(s) found.%s Follow the step(s) noted above — %smake clean-ghosts%s does not repair these.\n' \
-        "$c_yellow" "$found_count" "$c_reset" "$c_bold" "$c_reset"
     exit 0
 else
     # `make` first, direct invocation second: this script is normally reached
