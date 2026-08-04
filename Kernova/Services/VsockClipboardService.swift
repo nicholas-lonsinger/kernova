@@ -687,7 +687,6 @@ final class VsockClipboardService: ClipboardServicing {
         inboundPromise = nil
         previewMaterializationStarted = 0
         lastInboundPublishedDigest = nil
-        progress.offerCleared()
     }
 
     /// Drops any `.pendingRemote` placeholder reps — content that can't be

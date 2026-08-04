@@ -10,9 +10,9 @@ extension NSImage {
     /// Returns a copy of this (assumed template) symbol image with a determinate
     /// progress ring drawn around a shrunken copy of the glyph.
     ///
-    /// It carries no timer: the caller redraws it per progress update. Like
-    /// `withAttentionBadge()` it renders through a `drawingHandler` so
-    /// `labelColor` resolves in the menu bar's current appearance, must stay
+    /// It carries no timer: the caller redraws it per progress update. It
+    /// renders through a `drawingHandler` so `labelColor` resolves in the menu
+    /// bar's current appearance, must stay
     /// non-template (a re-tint would flatten the track's alpha into the arc), and
     /// carries `accessibilityDescription` over. The result is always square.
     public func withProgressRing(fraction: Double) -> NSImage {

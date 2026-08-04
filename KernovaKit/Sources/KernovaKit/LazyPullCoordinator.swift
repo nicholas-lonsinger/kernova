@@ -51,11 +51,6 @@ public final class LazyPullCoordinator: @unchecked Sendable {
 
     private let lock = NSLock()
     private var slots: [UInt64: Slot] = [:]
-    /// Transfer ids cancelled before `pull` registered a slot for them.
-    ///
-    /// One-shot: `pull` removes its own id the moment it runs, whether or not it
-    /// was present.
-    private var preCancelled: Set<UInt64> = []
 
     /// Creates an idle coordinator.
     public init() {}
@@ -83,24 +78,20 @@ public final class LazyPullCoordinator: @unchecked Sendable {
         send: () -> Void
     ) -> LazyPullOutcome {
         let slot = Slot()
-        // Consume any pre-cancel mark atomically with registering the slot, so a
-        // `cancelBeforeStart` that raced ahead of this call is honored here and
-        // `send` never runs. A pre-existing slot for the same id is displaced
-        // rather than silently overwritten: the retry is the live registration
-        // going forward, so the displaced pull is woken immediately with
-        // `.superseded` instead of parking to its backstop (CLIPBOARD.md §9).
-        let (alreadyCancelled, displaced): (Bool, Slot?) = lock.withLock {
-            if preCancelled.remove(transferID) != nil { return (true, nil) }
+        // A pre-existing slot for the same id is displaced rather than silently
+        // overwritten: the retry is the live registration going forward, so the
+        // displaced pull is woken immediately with `.superseded` instead of
+        // parking to its backstop (CLIPBOARD.md §9).
+        let displaced: Slot? = lock.withLock {
             let prior = slots[transferID]
             slots[transferID] = slot
-            return (false, prior)
+            return prior
         }
         if let displaced {
             // No-ops if `displaced` already resolved on its own, so its real
             // outcome wins over a spurious supersede.
             resolveSlot(displaced, .superseded)
         }
-        if alreadyCancelled { return .cancelled }
         send()
         while true {
             // The wait blocks one window; the slot's flags — not the wait result —
@@ -169,21 +160,6 @@ public final class LazyPullCoordinator: @unchecked Sendable {
         for slot in pending { resolveSlot(slot, .cancelled) }
     }
 
-    /// Cancels the pull for `transferID` whether or not it has reached `pull`
-    /// yet.
-    ///
-    /// A registered slot resolves immediately with `.cancelled`; otherwise the
-    /// id is marked so the upcoming `pull` resolves on arrival without sending a
-    /// request the consumer already gave up on. Idempotent.
-    public func cancelBeforeStart(_ transferID: UInt64) {
-        let slot: Slot? = lock.withLock {
-            if let existing = slots[transferID] { return existing }
-            preCancelled.insert(transferID)
-            return nil
-        }
-        if let slot { resolveSlot(slot, .cancelled) }
-    }
-
     // MARK: - Private
 
     private func resolve(_ transferID: UInt64, _ outcome: LazyPullOutcome) {
@@ -206,10 +182,5 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     ///
     /// Test-only.
     var pendingSlotCountForTesting: Int { lock.withLock { slots.count } }
-
-    /// Number of pre-cancel marks awaiting a `pull` call to consume them.
-    ///
-    /// Test-only.
-    var preCancelledCountForTesting: Int { lock.withLock { preCancelled.count } }
     #endif
 }

@@ -8,7 +8,7 @@ import Testing
 /// representation rides the pasteboard inline or as a file-only URL.
 @Suite("ClipboardContent.Representation.shouldInlineOnPasteboard")
 struct ClipboardRepresentationPasteboardTests {
-    private let dummyURL = URL(fileURLWithPath: "/tmp/kernova-clipboard-test")
+    private let dummyURL = URL(fileURLWithPath: "/tmp/kernova-rep-test")
 
     @Test("inline (filename-less) content inlines")
     func filenamelessInlines() {
