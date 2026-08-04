@@ -260,7 +260,10 @@ struct VsockGuestClipboardAgentTests {
     /// takes effect on the next loop iteration after the current sleep.
     private func makeAgent(
         pasteboard: FakePasteboard, agentFd: Int32,
-        freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil
+        freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
+        progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
+        progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
+        onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void = { _ in }
     ) -> VsockGuestClipboardAgent {
         let provided = AtomicInt()
         let client = VsockGuestClient(
@@ -273,7 +276,9 @@ struct VsockGuestClipboardAgentTests {
         return VsockGuestClipboardAgent(
             pasteboard: pasteboard, client: client, freeSpaceProvider: freeSpaceProvider,
             stagingTempRoot: FileManager.default.temporaryDirectory.appendingPathComponent(
-                UUID().uuidString, isDirectory: true))
+                UUID().uuidString, isDirectory: true),
+            progressRevealDelay: progressRevealDelay, progressIdleLinger: progressIdleLinger,
+            onProgress: onProgress)
     }
 
     /// Starts the agent, enables it (production agents are default-disabled
@@ -391,6 +396,55 @@ struct VsockGuestClipboardAgentTests {
         #expect(transfer.begin.filename == "notes.bin")
         #expect(transfer.bytes == contents)
         #expect(transfer.end.sha256 == Data(SHA256.hash(data: contents)))
+    }
+
+    @Test("serving a host pull publishes an outbound readout, cleared at the terminal")
+    func outboundPullPublishesProgress() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        // Reveal instantly and linger not at all, so one in-flight transfer both
+        // surfaces and clears inside the test — the emissions the app delegate
+        // hands to `AgentStatusItemController.materializationProgressChanged`.
+        let log = ProgressLog()
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, progressRevealDelay: 0, progressIdleLinger: 0,
+            onProgress: { log.record($0) })
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let contents = Data((0..<(300 * 1024)).map { UInt8(truncatingIfNeeded: $0 &* 7 &+ 3) })
+        let url = try writeTempFile(name: "notes.bin", data: contents)
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        pasteboard.setItem([(type: .fileURL, data: Data(url.absoluteString.utf8))])
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let offerFrame = try await nextFrame(from: hostChannel)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            throw TestFailure("Expected ClipboardOffer, got \(String(describing: offerFrame.payload))")
+        }
+        let info = try #require(offer.repInfo.first)
+
+        let transferID: UInt64 = (offer.generation << 16) | 0
+        try hostChannel.send(
+            makeRequestFrame(
+                generation: offer.generation, transferID: transferID, uti: info.uti))
+        let transfer = try await collectOutboundTransfer(transferID: transferID, from: hostChannel)
+        #expect(transfer.bytes == contents)
+
+        try await log.gate.wait { log.wasCleared }
+        let readout = try #require(log.all.last)
+        #expect(readout.direction == .outbound)
+        #expect(readout.peerName == "Mac")
+        #expect(readout.currentItemName == "notes.bin")
+        #expect(readout.totalBytes == UInt64(contents.count))
+        // The terminal credits the transfer in full, so the last readout before
+        // the clear reads as complete rather than stopping short.
+        #expect(readout.bytesTransferred == UInt64(contents.count))
     }
 
     @Test("a copied image file is offered inline with the image UTI")
@@ -1090,208 +1144,6 @@ struct VsockGuestClipboardAgentTests {
 
         #expect(pasteboard.lastPrepareOptionsForTesting == .currentHostOnly)
         try await expectNoRequest(from: hostChannel)
-    }
-
-    // MARK: - File Provider relay (async, off-main pull)
-
-    @Test("File Provider relay: fetchStagedFile pulls a file rep off-main and stages it")
-    func fileProviderRelayStagesFile() async throws {
-        let pasteboard = FakePasteboard()
-        let (agentFd, remoteFd) = try makeRawSocketPair()
-        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
-        hostChannel.start()
-        defer { hostChannel.close() }
-
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
-        defer { agent.stop() }
-
-        try await startAgentAndWaitForLiveChannel(agent: agent)
-
-        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        let contents = Data("relayed file bytes".utf8)
-        try hostChannel.send(
-            makeOfferFrame(
-                generation: 11,
-                reps: [
-                    RepInfo(
-                        uti: txtUTI, byteCount: UInt64(contents.count), filename: "relay.txt",
-                        isInline: false)
-                ]))
-        // Same registration signal the pasteboard path waits on.
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
-
-        // The relay entry point blocks on the pull and snapshots state via
-        // `DispatchQueue.main.sync`, so it MUST run off the main actor; the host
-        // streams the bytes concurrently.
-        let pull = Task { await offCooperativePool { agent.fetchStagedFile(generation: 11, repIndex: 0) } }
-        try await driveInboundStream(
-            generation: 11, uti: txtUTI, filename: "relay.txt", payload: contents,
-            isInline: false, on: hostChannel)
-
-        let stagedPath = try await pull.value.get()
-        let stagedURL = URL(fileURLWithPath: stagedPath)
-        #expect(stagedURL.lastPathComponent == "relay.txt")
-        #expect(try Data(contentsOf: stagedURL) == contents)
-    }
-
-    @Test("File Provider relay: fetchStagedFile forwards cumulative byte progress via onProgress")
-    func fileProviderRelayForwardsProgress() async throws {
-        let pasteboard = FakePasteboard()
-        let (agentFd, remoteFd) = try makeRawSocketPair()
-        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
-        hostChannel.start()
-        defer { hostChannel.close() }
-
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
-        defer { agent.stop() }
-
-        try await startAgentAndWaitForLiveChannel(agent: agent)
-
-        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        // > one 64 KiB chunk so at least one intermediate progress callback fires
-        // before the final one carrying bytes == total.
-        let contents = Data(repeating: 0xAB, count: 200 * 1024)
-        try hostChannel.send(
-            makeOfferFrame(
-                generation: 11,
-                reps: [
-                    RepInfo(
-                        uti: txtUTI, byteCount: UInt64(contents.count), filename: "relay.txt",
-                        isInline: false)
-                ]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
-
-        let log = RelayProgressLog()
-        let pull = Task {
-            await offCooperativePool {
-                agent.fetchStagedFile(
-                    generation: 11, repIndex: 0, onProgress: { log.record($0, $1) })
-            }
-        }
-        try await driveInboundStream(
-            generation: 11, uti: txtUTI, filename: "relay.txt", payload: contents,
-            isInline: false, on: hostChannel)
-        _ = try await pull.value.get()
-
-        // Progress was surfaced, cumulative (non-decreasing), and reached the total
-        // on the final callback — the byte stream that drives the guest agent's
-        // status-item paste readout (#643).
-        #expect(log.count >= 1)
-        #expect(log.last?.bytes == UInt64(contents.count))
-        #expect(log.last?.total == UInt64(contents.count))
-        let byteSequence = log.all.map(\.bytes)
-        #expect(byteSequence == byteSequence.sorted())
-    }
-
-    @Test("File Provider relay: a stale generation resolves to noCurrentOffer with no request")
-    func fileProviderRelayStaleGeneration() async throws {
-        let pasteboard = FakePasteboard()
-        let (agentFd, remoteFd) = try makeRawSocketPair()
-        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
-        hostChannel.start()
-        defer { hostChannel.close() }
-
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
-        defer { agent.stop() }
-
-        try await startAgentAndWaitForLiveChannel(agent: agent)
-
-        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        try hostChannel.send(
-            makeOfferFrame(
-                generation: 11,
-                reps: [
-                    RepInfo(uti: txtUTI, byteCount: 4, filename: "relay.txt", isInline: false)
-                ]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
-
-        // A generation that isn't the current offer is rejected before any pull,
-        // so no ClipboardRequest goes out.
-        let outcome = await offCooperativePool {
-            agent.fetchStagedFile(generation: 999, repIndex: 0)
-        }
-        guard case .failure(.noCurrentOffer) = outcome else {
-            Issue.record("expected .noCurrentOffer, got \(outcome)")
-            return
-        }
-        try await expectNoRequest(from: hostChannel)
-    }
-
-    @Test("File Provider relay: a host abort mid-pull resolves to .pullFailed")
-    func fileProviderRelayPullFailed() async throws {
-        let pasteboard = FakePasteboard()
-        let (agentFd, remoteFd) = try makeRawSocketPair()
-        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
-        hostChannel.start()
-        defer { hostChannel.close() }
-
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
-        defer { agent.stop() }
-
-        try await startAgentAndWaitForLiveChannel(agent: agent)
-
-        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        try hostChannel.send(
-            makeOfferFrame(
-                generation: 11,
-                reps: [
-                    RepInfo(uti: txtUTI, byteCount: 16, filename: "relay.txt", isInline: false)
-                ]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
-
-        // The host opens the transfer (Begin) then aborts instead of streaming —
-        // the off-main pull wakes with .aborted, so fetchStagedFile reports
-        // .pullFailed (which the relay maps to serverUnreachable).
-        let pull = Task { await offCooperativePool { agent.fetchStagedFile(generation: 11, repIndex: 0) } }
-        let req = try await awaitRequest(on: hostChannel)
-        try hostChannel.send(
-            makeBeginFrame(
-                generation: 11, transferID: req.transferID, uti: txtUTI,
-                totalBytes: 16, filename: "relay.txt", isInline: false))
-        try hostChannel.send(
-            makeAbortFrame(transferID: req.transferID, code: "host.abort", message: "no"))
-        let outcome = await pull.value
-        guard case .failure(.pullFailed) = outcome else {
-            Issue.record("expected .pullFailed, got \(outcome)")
-            return
-        }
-    }
-
-    @Test("File Provider relay: a parked pull is woken by teardown, not the backstop timeout")
-    func fileProviderRelayTeardownWakeup() async throws {
-        let pasteboard = FakePasteboard()
-        let (agentFd, remoteFd) = try makeRawSocketPair()
-        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
-        hostChannel.start()
-        defer { hostChannel.close() }
-
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
-        defer { agent.stop() }
-
-        try await startAgentAndWaitForLiveChannel(agent: agent)
-
-        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        try hostChannel.send(
-            makeOfferFrame(
-                generation: 11,
-                reps: [
-                    RepInfo(uti: txtUTI, byteCount: 16, filename: "relay.txt", isInline: false)
-                ]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
-
-        // Park the pull (request sent, awaiting Begin), then drop the connection.
-        // serve()'s EOF handler fails the coordinator off-main, so the pull wakes
-        // promptly — well under the lazy-pull backstop — rather than hanging.
-        let pull = Task { await offCooperativePool { agent.fetchStagedFile(generation: 11, repIndex: 0) } }
-        _ = try await awaitRequest(on: hostChannel)
-        let start = ContinuousClock.now
-        hostChannel.close()
-        let outcome = await pull.value
-        #expect(ContinuousClock.now - start < .seconds(5))
-        guard case .failure(.pullFailed) = outcome else {
-            Issue.record("expected .pullFailed after teardown, got \(outcome)")
-            return
-        }
     }
 
     @Test("inbound image file: promises both the image UTI and `.fileURL`")
@@ -2672,17 +2524,29 @@ struct VsockGuestClipboardAgentTests {
     }
 }
 
-// MARK: - Relay progress recorder
+// MARK: - Progress recorder
 
-/// Thread-safe recorder for the `fetchStagedFile` `onProgress` callbacks, which
-/// fire off the main queue on the transfer's serial queue.
-final class RelayProgressLog: @unchecked Sendable {
+/// Thread-safe recorder for the agent's progress emissions, which arrive off the
+/// main queue on the tracker's publishing thread.
+final class ProgressLog: @unchecked Sendable {
+    let gate = AsyncGate()
     private let lock = NSLock()
-    private var entries: [(bytes: UInt64, total: UInt64)] = []
-    func record(_ bytes: UInt64, _ total: UInt64) { lock.withLock { entries.append((bytes, total)) } }
-    var all: [(bytes: UInt64, total: UInt64)] { lock.withLock { entries } }
-    var last: (bytes: UInt64, total: UInt64)? { lock.withLock { entries.last } }
-    var count: Int { lock.withLock { entries.count } }
+    private var snapshots: [ClipboardProgressSnapshot] = []
+    private var cleared = false
+
+    func record(_ snapshot: ClipboardProgressSnapshot?) {
+        lock.withLock {
+            if let snapshot {
+                snapshots.append(snapshot)
+            } else {
+                cleared = true
+            }
+        }
+        gate.notify()
+    }
+
+    var all: [ClipboardProgressSnapshot] { lock.withLock { snapshots } }
+    var wasCleared: Bool { lock.withLock { cleared } }
 }
 
 // MARK: - Thread-safe fd array

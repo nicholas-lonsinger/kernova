@@ -11,11 +11,10 @@ import Foundation
 /// `ClipboardStreamAbort` would tear down both.
 ///
 /// `RATIONALE (2026-08-04):` the id is **intentionally** reproducible from
-/// `(generation, repIndex, direction)` alone. Both sides' `cancelStagedPull`
-/// implementations re-derive it rather than remembering what they minted, and a
-/// paste's re-fire of the same rep must land on the same id so the
-/// `LazyPullCoordinator`'s newest-awaiter-wins supersession applies. A reused
-/// id's worst case is one spurious re-abort, never corruption — pinned by
+/// `(generation, repIndex, direction)` alone — a paste's re-fire of the same rep
+/// must land on the same id so the `LazyPullCoordinator`'s newest-awaiter-wins
+/// supersession applies. A reused id's worst case is one spurious re-abort,
+/// never corruption — pinned by
 /// `LazyPullCoordinatorTests.staleAbortCollidesWithReusedAwaiterButTableStaysConsistent`.
 public enum ClipboardTransferID {
     /// High bit marking a transfer the **host** receives (guest→host direction).

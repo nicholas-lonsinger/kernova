@@ -80,17 +80,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     private let client: VsockGuestClient
     private let pasteboard: Pasteboard
 
-    /// The File Provider host, when one is wired (production only).
-    ///
-    /// `nil` in tests and whenever the domain isn't usable. Set once on main at
-    /// app wiring.
-    weak var fileProvider: (any FileProviderPublishing)?
-
     /// Aggregates what this side streams to the host into the status item's
     /// readout.
-    ///
-    /// Replaced once on main at app wiring; the default emits nowhere.
-    var progressTracker = ClipboardProgressTracker { _ in }
+    private let progressTracker: ClipboardProgressTracker
 
     /// The outbound session serving the host's pulls of `pendingOutbound`, with
     /// the generation it measures.
@@ -211,30 +203,37 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     // MARK: - Init
 
-    /// Production init — uses real `NSPasteboard.general` on the clipboard port.
-    ///
-    /// Staging roots in the shared app-group container so the sandboxed File
-    /// Provider extension can read an inbound file rep's staged bytes; the
-    /// system temp dir is a fallback that leaves the File Provider path unused.
-    convenience init() {
+    /// Production init — uses real `NSPasteboard.general` on the clipboard port,
+    /// publishing transfer progress through `onProgress`.
+    convenience init(
+        onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void
+    ) {
         self.init(
             pasteboard: NSPasteboard.general,
             client: VsockGuestClient(port: KernovaVsockPort.clipboard, label: "clipboard"),
             stagingTempRoot: FileProviderContainer(config: .guest()).stagingRootURL()
-                ?? FileManager.default.temporaryDirectory
+                ?? FileManager.default.temporaryDirectory,
+            onProgress: onProgress
         )
     }
 
     /// Designated init; tests inject a fake pasteboard and socketpair-backed
-    /// client, and optionally a `freeSpaceProvider` to simulate a full disk and a
-    /// `stagingTempRoot` to isolate the staging directory between parallel tests.
+    /// client, and optionally a `freeSpaceProvider` to simulate a full disk, a
+    /// `stagingTempRoot` to isolate the staging directory between parallel tests,
+    /// an `onProgress` sink to observe the readout the status item renders, and
+    /// zeroed reveal/linger delays so a test transfer surfaces while in flight.
     init(
         pasteboard: Pasteboard, client: VsockGuestClient,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
-        stagingTempRoot: URL = FileManager.default.temporaryDirectory
+        stagingTempRoot: URL = FileManager.default.temporaryDirectory,
+        progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
+        progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
+        onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void = { _ in }
     ) {
         self.pasteboard = pasteboard
         self.client = client
+        self.progressTracker = ClipboardProgressTracker(
+            revealDelay: progressRevealDelay, idleLinger: progressIdleLinger, emit: onProgress)
         self.staging = ClipboardFileStaging(
             label: "agent", tempRoot: stagingTempRoot, freeSpaceProvider: freeSpaceProvider)
         self.sendStaging = ClipboardFileStaging(
@@ -331,9 +330,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         inboundPromise = nil
         outboundSession = nil
         progressTracker.clearAll()
-        // Drop File Provider items too — with no live channel the agent can't pull
-        // for a `fetchContents`, so a lingering placeholder would only fail.
-        fileProvider?.clearOffer()
         // A stale in-flight estimate walk's completion checks `liveChannel` and
         // drops itself; clear the flag now so the next connection can walk again.
         estimateInFlight = false
@@ -816,9 +812,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             receiver?.cancel(generation: previous.generation)
             lazyCoordinator.failAll()
         }
-        // Retract any File Provider items so a stale placeholder can't linger in
-        // the guest's Finder.
-        fileProvider?.clearOffer()
 
         let items = Self.promisedItems(for: offer.repInfo)
         guard !items.isEmpty else {
@@ -932,7 +925,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// holds.
     private func awaitPull(
         transferID: UInt64, receiver: ClipboardStreamReceiver,
-        onProgress: (@Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void)?,
         sendRequest: @escaping () throws -> Void
     ) -> LazyPullOutcome {
         let coordinator = lazyCoordinator
@@ -942,10 +934,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             onAbort: { abort in coordinator.abort(transferID, abort) },
             // Re-arm the pull's inactivity backstop on every chunk so a large
             // still-streaming transfer is never timed out mid-flight.
-            onProgress: { bytes, total in
-                coordinator.heartbeat(transferID)
-                onProgress?(UInt64(bytes), UInt64(total))
-            })
+            onProgress: { _, _ in coordinator.heartbeat(transferID) })
         return coordinator.pull(transferID: transferID) {
             do {
                 try sendRequest()
@@ -970,8 +959,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// streamed representation lands (or aborts/times out).
     private func pullRepresentation(
         _ repIndex: Int, promise: InboundPromise, channel: VsockChannel,
-        receiver: ClipboardStreamReceiver,
-        onProgress: (@Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void)? = nil
+        receiver: ClipboardStreamReceiver
     ) -> ClipboardContent.Representation? {
         let info = promise.reps[repIndex]
         // The cap applies to the TOTAL of the offer's deadline-bound reps,
@@ -1016,9 +1004,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
         let generation = promise.generation
         let uti = info.uti
-        let outcome = awaitPull(
-            transferID: transferID, receiver: receiver, onProgress: onProgress
-        ) {
+        let outcome = awaitPull(transferID: transferID, receiver: receiver) {
             var request = Frame()
             request.protocolVersion = 1
             request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
@@ -1079,8 +1065,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         return nil
     }
 
-    /// Records the "received from host" menu signal, hopping to the main queue so
-    /// it is also safe to call from the off-main File Provider relay pull.
+    /// Records the "received from host" menu signal on the queue that owns it.
     private func recordReceivedFromHost() {
         DispatchQueue.main.async { [weak self] in
             self?.clipboardActivityStorage = .receivedFromHost
@@ -1231,7 +1216,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         receiver?.cancel(generation: release.generation)
         lazyCoordinator.failAll()
         inboundPromise = nil
-        fileProvider?.clearOffer()
         // Retract the un-pasted promise only if the user hasn't replaced it since
         // we wrote it — otherwise leave whatever they copied in place.
         if pasteboard.changeCount == lastPasteboardChangeCount {
@@ -1240,75 +1224,5 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
         Self.logger.debug(
             "Host released clipboard offer (gen=\(release.generation, privacy: .public))")
-    }
-}
-
-// MARK: - File Provider relay pull
-
-extension VsockGuestClipboardAgent: FileProviderPullProvider {
-    /// Off-main entry point for the File Provider relay: pulls the file rep
-    /// `(generation, repIndex)` and returns the path of its staged file in the
-    /// shared app-group container.
-    ///
-    /// Runs on the relay's XPC queue, NOT main: it snapshots the main-confined
-    /// connection state, then performs the *same* blocking pull as the pasteboard
-    /// path off-main.
-    ///
-    /// Keying the coordinator slot and the receiver's awaiter on the deterministic
-    /// `transferID` assumes a rep is never pulled twice at once: the File Provider
-    /// framework coalesces concurrent `fetchContents` for one constant
-    /// `itemVersion`. A second concurrent read path for a rep — a prefetch, a
-    /// preview fetch, a retry-on-timeout — would need a different key, and would
-    /// race for bytes rather than fail to compile.
-    func fetchStagedFile(
-        generation: UInt64, repIndex: Int,
-        onProgress: @escaping @Sendable (UInt64, UInt64) -> Void = { _, _ in }
-    ) -> Result<String, FileProviderPullError> {
-        // This method does `DispatchQueue.main.sync` below and then blocks on the
-        // pull, so running it on main would deadlock immediately (sync-to-self).
-        dispatchPrecondition(condition: .notOnQueue(.main))
-        struct PullContext {
-            let promise: InboundPromise
-            let channel: VsockChannel
-            let receiver: ClipboardStreamReceiver
-        }
-        // Snapshot on main: the request must address the *current* offer and a
-        // live connection.
-        let context: PullContext? = DispatchQueue.main.sync {
-            guard let promise = inboundPromise, promise.generation == generation,
-                promise.reps.indices.contains(repIndex),
-                let channel = liveChannel, let receiver = receiver
-            else { return nil }
-            return PullContext(promise: promise, channel: channel, receiver: receiver)
-        }
-        guard let context else { return .failure(.noCurrentOffer) }
-
-        // Blocking pull off-main; a delivered file rep carries its staged URL in
-        // the shared container.
-        guard
-            let representation = pullRepresentation(
-                repIndex, promise: context.promise, channel: context.channel,
-                receiver: context.receiver, onProgress: onProgress),
-            let url = representation.fileURL
-        else { return .failure(.pullFailed) }
-        return .success(url.path)
-    }
-
-    /// Aborts an in-flight `fetchStagedFile` for `(generation, repIndex)`.
-    ///
-    /// Off-main only. Addresses the transfer purely by its deterministic
-    /// `transferID`, never re-validating `generation`, so a cancel arriving after
-    /// a newer offer superseded this one still reaches that id's bookkeeping. The
-    /// `lazyCoordinator` pre-cancel covers a cancel that lands before
-    /// `pullRepresentation` has called `coordinator.pull`.
-    func cancelStagedPull(generation: UInt64, repIndex: Int) {
-        dispatchPrecondition(condition: .notOnQueue(.main))
-        let transferID = ClipboardTransferID.make(
-            generation: generation, repIndex: repIndex, hostMinted: false)
-        let receiver: ClipboardStreamReceiver? = DispatchQueue.main.sync { self.receiver }
-        Self.logger.notice(
-            "Cancelling file clipboard pull \(transferID, privacy: .public) on consumer request")
-        receiver?.cancel(transferID: transferID)
-        lazyCoordinator.cancelBeforeStart(transferID)
     }
 }

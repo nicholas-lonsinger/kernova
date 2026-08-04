@@ -52,7 +52,4 @@ struct AgentMenuTextTests {
     func statusSubmenuTitle() {
         #expect(AgentMenuText.statusSubmenu() == "Status")
     }
-
-    // File Provider reminder command titles (#581) are identical on both
-    // sides and tested once in KernovaKitTests/ClipboardFileProviderReminderTests.swift.
 }

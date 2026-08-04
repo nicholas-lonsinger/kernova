@@ -16,12 +16,10 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     private let menu = NSMenu()
 
     private let version: String
-    private let preferences: AgentPreferences
     private let connectionState: () -> HostConnectionState
     private let hostBundledVersion: () -> String
     private let logForwardingEnabled: () -> Bool
     private let clipboardActivity: () -> ClipboardActivity
-    private let fileProviderAvailability: () -> FileProviderAvailability
     private let onQuit: () -> Void
 
     /// Built lazily, since most sessions never reveal a paste readout.
@@ -30,22 +28,18 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
 
     init(
         version: String,
-        preferences: AgentPreferences = .shared,
         connectionState: @escaping () -> HostConnectionState,
         hostBundledVersion: @escaping () -> String,
         logForwardingEnabled: @escaping () -> Bool,
         clipboardActivity: @escaping () -> ClipboardActivity,
-        fileProviderAvailability: @escaping () -> FileProviderAvailability,
         onQuit: @escaping () -> Void
     ) {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.version = version
-        self.preferences = preferences
         self.connectionState = connectionState
         self.hostBundledVersion = hostBundledVersion
         self.logForwardingEnabled = logForwardingEnabled
         self.clipboardActivity = clipboardActivity
-        self.fileProviderAvailability = fileProviderAvailability
         self.onQuit = onQuit
         super.init()
 
@@ -66,36 +60,13 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         setIcon(for: connectionState())
     }
 
-    /// Updates the menu-bar icon, and resets a stale dismissal, for a File
-    /// Provider availability change.
-    ///
-    /// Delivered synchronously on main, so `availability` is trusted directly
-    /// rather than re-read.
-    func fileProviderAvailabilityChanged(_ availability: FileProviderAvailability) {
-        preferences.fileProviderReminderDismissed =
-            ClipboardFileProviderReminder
-            .dismissalAfterAvailabilityChange(
-                availability, dismissed: preferences.fileProviderReminderDismissed)
-        setIcon(for: connectionState())
-    }
-
     // MARK: - Paste progress
 
-    /// Applies the paste readout the domain host just published — a snapshot to
-    /// render, or `nil` to clear it.
+    /// Applies the paste readout the clipboard agent's progress tracker just
+    /// published — a snapshot to render, or `nil` to clear it.
     func materializationProgressChanged(_ snapshot: ClipboardProgressSnapshot?) {
         pasteProgressPresenter.apply(snapshot)
         setIcon(for: connectionState())
-    }
-
-    /// Whether the proactive status-item badge should currently show.
-    ///
-    /// Distinct from the passive menu line, which shows whenever the toggle is
-    /// off regardless of dismissal.
-    private var reminderActive: Bool {
-        ClipboardFileProviderReminder.shouldShowBadge(
-            availability: fileProviderAvailability(),
-            dismissed: preferences.fileProviderReminderDismissed)
     }
 
     private static func symbolName(for state: HostConnectionState) -> String {
@@ -121,21 +92,14 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         }
         image.isTemplate = true
         statusItem.button?.title = ""
-        // A materializing paste outranks the standing enablement badge.
         if let snapshot = pasteProgressPresenter.snapshot {
             statusItem.button?.image = image.withProgressRing(
                 fraction: snapshot.fractionComplete)
             statusItem.button?.toolTip = ClipboardProgressFormat.summary(snapshot)
             return
         }
-        statusItem.button?.image = reminderActive ? image.withAttentionBadge() : image
-        statusItem.button?.toolTip = reminderActive ? badgeSummary() : nil
-    }
-
-    private func badgeSummary() -> String {
-        fileProviderAvailability() == .unavailable
-            ? ClipboardFileProviderReminder.guestUnavailableSummary()
-            : ClipboardFileProviderReminder.guestDegradedSummary()
+        statusItem.button?.image = image
+        statusItem.button?.toolTip = nil
     }
 
     // MARK: - NSMenuDelegate
@@ -147,32 +111,6 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
 
         if case .updateAvailable(let bundled) = updateState() {
             addInfoItem(AgentMenuText.updateAvailableLine(bundled: bundled))
-            menu.addItem(.separator())
-        }
-
-        let availability = fileProviderAvailability()
-        // `.needsEnabling` is the one File-Provider state the user must act on;
-        // this line shows regardless of whether the badge reminder was dismissed.
-        if availability == .needsEnabling {
-            addInfoItem(ClipboardFileProviderReminder.guestDegradedSummary())
-            let enable = NSMenuItem(
-                title: ClipboardFileProviderReminder.enableCommandTitle(),
-                action: #selector(enableFileSharingTapped), keyEquivalent: "")
-            enable.target = self
-            menu.addItem(enable)
-            if ClipboardFileProviderReminder.shouldShowReminder(
-                availability: availability, dismissed: preferences.fileProviderReminderDismissed)
-            {
-                let stop = NSMenuItem(
-                    title: ClipboardFileProviderReminder.stopRemindingCommandTitle(),
-                    action: #selector(stopRemindingTapped), keyEquivalent: "")
-                stop.target = self
-                menu.addItem(stop)
-            }
-            menu.addItem(.separator())
-        } else if availability == .unavailable {
-            // A registration failure has no toggle to flip, so no commands.
-            addInfoItem(ClipboardFileProviderReminder.guestUnavailableSummary())
             menu.addItem(.separator())
         }
 
@@ -244,18 +182,5 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func quitTapped() {
         onQuit()
-    }
-
-    @objc private func enableFileSharingTapped() {
-        if !ClipboardFileProviderSettings.openEnablementSettings() {
-            Self.logger.error("Failed to open File Providers settings deep link")
-        }
-    }
-
-    /// Silences the badge reminder for the current episode; the dropdown line and
-    /// enable command stay.
-    @objc private func stopRemindingTapped() {
-        preferences.fileProviderReminderDismissed = true
-        setIcon(for: connectionState())
     }
 }
