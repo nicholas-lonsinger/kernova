@@ -32,19 +32,6 @@ import Foundation
     /// private serial queue per connection — WWDC 2012 session 241), which is why
     /// `fetchFile` must not block that queue for the whole pull.
     func cancelFetch(generation: UInt64, repIndex: Int)
-
-    /// Pulls one **child** file of a directory rep's placeholder tree: the owner
-    /// opens the confined child at `relativePath` within the source folder,
-    /// stages it, and replies with the staged path (or an `NSError`). `childSeq`
-    /// scopes the transfer distinctly from the rep and its siblings (see
-    /// `ClipboardTransferID`). Same non-blocking contract as `fetchFile`.
-    func fetchChild(
-        generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
-        reply: @escaping @Sendable (_ stagedPath: String?, _ error: NSError?) -> Void)
-
-    /// Best-effort abort of an in-flight `fetchChild` for `(generation, repIndex,
-    /// childSeq)`. One-way and idempotent, exactly like `cancelFetch`.
-    func cancelChildFetch(generation: UInt64, repIndex: Int, childSeq: UInt32)
 }
 
 /// The XPC interface the File Provider extension exports to the container app.

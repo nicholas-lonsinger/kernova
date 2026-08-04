@@ -511,9 +511,11 @@ struct VsockGuestClipboardAgentTests {
         #expect(offer.repInfo.map(\.filename) == ["fresh.txt"])
     }
 
-    // MARK: - Folders (Phase 2)
+    // MARK: - Folders
 
-    @Test("outbound copied folder: archived, offered as a directory rep, streamed as a valid archive")
+    @Test(
+        "outbound copied folder: offered on a stat-walk estimate, archived at request time, streamed as a valid archive"
+    )
     func outboundCopiedFolderOfferAndStream() async throws {
         let pasteboard = FakePasteboard()
         let (agentFd, remoteFd) = try makeRawSocketPair()
@@ -533,7 +535,9 @@ struct VsockGuestClipboardAgentTests {
         pasteboard.setItem([(type: .fileURL, data: Data(folder.absoluteString.utf8))])
         await MainActor.run { agent.checkClipboardChange() }
 
-        // The archive runs off-main; the offer arrives once it lands.
+        // The estimate walk runs off-main; the offer arrives once it lands. Its
+        // `byte_count` is the stat-walk sum of the file sizes (6 + 6) — not an
+        // archive size, because no archive exists at offer time.
         let offer = try await awaitOffer(on: hostChannel)
         #expect(offer.repInfo.count == 1)
         let info = try #require(offer.repInfo.first)
@@ -541,9 +545,10 @@ struct VsockGuestClipboardAgentTests {
         #expect(info.uti == UTType.folder.identifier)
         #expect(info.filename == "Project")
         #expect(!info.isInline)
-        #expect(info.byteCount > 0)
+        #expect(info.byteCount == 12)
 
-        // Pull the rep: the streamed bytes are an `.aar` that extracts to the tree.
+        // Pull the rep: the agent archives at request time and the streamed
+        // bytes are an `.aar` that extracts back to the tree.
         let transferID: UInt64 = (offer.generation << 16) | 0
         try hostChannel.send(
             makeRequestFrame(generation: offer.generation, transferID: transferID, uti: info.uti))
@@ -551,6 +556,10 @@ struct VsockGuestClipboardAgentTests {
             transferID: transferID, from: hostChannel)
         #expect(!transfer.begin.isInline)
         #expect(transfer.begin.filename == "Project")
+        // The Begin carries the archive's wire-exact size, superseding the
+        // offer's estimate.
+        #expect(transfer.begin.totalBytes == UInt64(transfer.bytes.count))
+        #expect(transfer.end.sha256 == Data(SHA256.hash(data: transfer.bytes)))
 
         let aar = try writeTempFile(name: "got.aar", data: transfer.bytes)
         defer { try? FileManager.default.removeItem(at: aar.deletingLastPathComponent()) }
@@ -627,6 +636,61 @@ struct VsockGuestClipboardAgentTests {
         #expect(
             try String(contentsOf: folderURL.appendingPathComponent("d/inner.txt"), encoding: .utf8)
                 == "deep")
+    }
+
+    @Test("inbound directory stream with a digest mismatch delivers nothing — no folder appears")
+    func inboundDirectoryDigestMismatchFails() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // A valid archive whose stream will nonetheless end with a wrong digest.
+        let src = try writeTempFolder(name: "Broken", files: [("f.txt", Data("x".utf8))])
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        let aarDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: aarDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: aarDir) }
+        let aar = aarDir.appendingPathComponent("Broken.aar")
+        try ClipboardDirectoryArchive.archive(directoryAt: src, to: aar)
+        let aarBytes = try Data(contentsOf: aar)
+
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 9,
+                reps: [
+                    RepInfo(
+                        uti: UTType.folder.identifier, byteCount: UInt64(aarBytes.count),
+                        filename: "Broken", isInline: false, isDirectory: true)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.fileURL) }
+
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        let req = try await awaitRequest(on: hostChannel)
+        try hostChannel.send(
+            makeBeginFrame(
+                generation: 9, transferID: req.transferID, uti: UTType.folder.identifier,
+                totalBytes: aarBytes.count, filename: "Broken", isInline: false))
+        try hostChannel.send(
+            makeChunkFrame(transferID: req.transferID, offset: 0, data: aarBytes))
+        // End carries the right byte count but the digest of DIFFERENT bytes —
+        // the receiver must refuse to commit, so the pull serves nothing and no
+        // folder materializes.
+        var endFrame = Frame()
+        endFrame.protocolVersion = 1
+        endFrame.clipboardStreamEnd = Kernova_V1_ClipboardStreamEnd.with {
+            $0.transferID = req.transferID
+            $0.totalBytes = UInt64(aarBytes.count)
+            $0.sha256 = Data(SHA256.hash(data: Data("not the archive".utf8)))
+        }
+        try hostChannel.send(endFrame)
+        #expect(await pull.value == nil)
     }
 
     @Test("an empty/filtered pasteboard sends no offer")

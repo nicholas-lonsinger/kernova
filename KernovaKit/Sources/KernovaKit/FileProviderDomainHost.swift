@@ -34,19 +34,6 @@ public protocol FileProviderPullProvider: AnyObject, Sendable {
     /// Best-effort and idempotent — a cancel for an unknown or already-finished
     /// transfer is a no-op.
     func cancelStagedPull(generation: UInt64, repIndex: Int)
-
-    /// Pulls one child file `(generation, repIndex, childSeq)` at `relativePath`
-    /// within a directory rep, stages it into the shared container, and returns
-    /// the staged path (or why it failed). Same off-main, no-deadline contract
-    /// as `fetchStagedFile`.
-    func fetchStagedChild(
-        generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
-        onProgress: @escaping @Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void
-    ) -> Result<String, FileProviderPullError>
-
-    /// Aborts an in-flight `fetchStagedChild` for `(generation, repIndex,
-    /// childSeq)`. Best-effort and idempotent.
-    func cancelStagedChildPull(generation: UInt64, repIndex: Int, childSeq: UInt32)
 }
 
 /// Why a relay pull failed, mapped to an `NSFileProviderError` by the relay.

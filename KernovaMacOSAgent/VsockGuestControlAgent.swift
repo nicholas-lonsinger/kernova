@@ -49,14 +49,6 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     /// every inbound `PolicyUpdate`, symmetric with the host's own gate.
     private var hostSupportsClipboardStreaming = false
 
-    /// Whether the host advertised the folder placeholder-tree capability.
-    ///
-    /// Guarded by `lock` and reset per connection.
-    private var hostSupportsClipboardDirTreeStorage = false
-
-    /// Thread-safe read of the negotiated gate for folder placeholder trees.
-    var hostSupportsClipboardDirTree: Bool { lock.withLock { hostSupportsClipboardDirTreeStorage } }
-
     /// Production init — connects to the control port with default cadences.
     convenience init(
         onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
@@ -210,10 +202,8 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         switch frame.payload {
         case .hello(let hello):
             let hostStreams = hello.capabilities.contains(KernovaCapability.clipboardStreamV1)
-            let hostDirTree = hello.capabilities.contains(KernovaCapability.clipboardDirTreeV1)
             lock.withLock {
                 hostSupportsClipboardStreaming = hostStreams
-                hostSupportsClipboardDirTreeStorage = hostDirTree
                 hostBundledAgentVersionStorage = hello.bundledAgentVersion
             }
             // `logDescription` bounds the peer-supplied capability strings; these
@@ -243,7 +233,7 @@ final class VsockGuestControlAgent: @unchecked Sendable {
                 "PolicyUpdate received (logForwarding=\(effective.logForwardingEnabled, privacy: .public), clipboard=\(effective.clipboardSharingEnabled, privacy: .public))"
             )
             onPolicy?(effective)
-        case .clipboardOffer, .clipboardRequest, .clipboardTreeFetch, .clipboardRelease,
+        case .clipboardOffer, .clipboardRequest, .clipboardRelease,
             .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck,
             .clipboardStreamAbort, .logRecord, .none:
             Self.logger.warning("Unexpected payload on control channel — wrong port")

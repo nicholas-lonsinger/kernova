@@ -26,7 +26,6 @@ struct ClipboardPassthroughCoordinatorTests {
         var clipboardContent: ClipboardContent = .empty
         var isConnected = true
         var supportsBinaryRepresentations = true
-        var supportsDirectoryTree = false
         var lastTransferIssue: ClipboardTransferIssue?
         private(set) var inboundOfferSeq: UInt64 = 0
 
@@ -170,7 +169,6 @@ struct ClipboardPassthroughCoordinatorTests {
         var clipboardContent: ClipboardContent = .empty
         var isConnected = true
         var supportsBinaryRepresentations = true
-        var supportsDirectoryTree = false
         var lastTransferIssue: ClipboardTransferIssue?
         private(set) var inboundOfferSeq: UInt64 = 0
         /// What the next `materializeForCopy` promises.
@@ -197,11 +195,6 @@ struct ClipboardPassthroughCoordinatorTests {
             onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
         ) -> Result<String, FileProviderPullError> { .failure(.pullFailed) }
         nonisolated func cancelStagedPull(generation: UInt64, repIndex: Int) {}
-        nonisolated func pullStagedChild(
-            generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
-            onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
-        ) -> Result<String, FileProviderPullError> { .failure(.pullFailed) }
-        nonisolated func cancelStagedChildPull(generation: UInt64, repIndex: Int, childSeq: UInt32) {}
         nonisolated func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? {
             recordFire()
             return nil

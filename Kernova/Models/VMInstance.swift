@@ -762,11 +762,6 @@ final class VMInstance {
             }
             self.clipboardService?.stop()
             let service = VsockClipboardService(channel: channel, label: self.name)
-            // Read lazily at offer/paste time so the negotiated capability
-            // tracks reconnects.
-            service.peerSupportsDirTree = { [weak self] in
-                self?.vsockControlService?.guestSupportsClipboardDirTree ?? false
-            }
             self.clipboardService = service
             service.start()
         }

@@ -99,16 +99,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// coordinator, so echo suppression sees a manual "Copy to Mac" too.
     private let publisher: HostClipboardPublisher
 
-    /// Stages dropped/pasted *folders* into archives before they reach the guest.
-    ///
-    /// Shares the launch-swept `"host"` staging root with `HostClipboardPublisher`;
-    /// each generation is its own UUID subdirectory, so the two never collide.
-    private let staging = ClipboardFileStaging(label: HostClipboardPublisher.stagingLabel)
-
-    /// Monotonic generation bumped per folder-resolving intake, so each supersedes
-    /// older staged artifacts within the staging recency window.
-    private var stagingGeneration: UInt64 = 1
-
     /// The host pasteboard "Paste from Mac" reads from — `.general` in production.
     private let readPasteboard: NSPasteboard
 
@@ -756,31 +746,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
     }
 
-    /// Resolves `.pendingFiles` URLs off the main actor — archiving any folder
-    /// into the staging root — and applies the result on the way back.
+    /// Resolves `.pendingFiles` URLs off the main actor and applies the result
+    /// on the way back.
     private func resolveAndApply(pendingFiles urls: [URL], allowsBinary: Bool) {
-        let staging = self.staging
-        let generation = stagingGeneration
-        stagingGeneration += 1
-        // A folder archives eagerly; warn the user it may take a moment.
-        if Self.containsDirectory(urls) {
-            indicatorView.showTransientMessage("Archiving folder…", style: .info)
-        }
         Task { @MainActor [weak self] in
-            guard let self else { return }
-            let dirTree = self.instance.clipboardService?.supportsDirectoryTree ?? false
             let resolved = await ClipboardPasteboardIntake.read(
-                filesAt: urls, allowsBinary: allowsBinary, staging: staging, generation: generation,
-                dirTree: dirTree)
-            _ = self.apply(intake: resolved)
-        }
-    }
-
-    nonisolated private static func containsDirectory(_ urls: [URL]) -> Bool {
-        urls.contains { url in
-            var isDirectory: ObjCBool = false
-            return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
-                && isDirectory.boolValue
+                filesAt: urls, allowsBinary: allowsBinary)
+            _ = self?.apply(intake: resolved)
         }
     }
 
@@ -848,9 +820,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
     }
 
-    /// Receives a promised file into a scratch directory, runs it through
-    /// the shared file intake, and cleans the scratch copy up (the buffer
-    /// keeps the bytes, not the file).
+    /// Receives a promised file into a scratch directory and runs it through
+    /// the shared file intake.
+    ///
+    /// The winning item stays on disk: the buffer's representation is
+    /// disk-backed (a stat'd file, or a folder source rep archived only at
+    /// request time), so it must outlive this receipt. Losing and failed
+    /// receipts clean their scratch up.
     private func receivePromisedFile(_ receiver: NSFilePromiseReceiver) {
         guard let service = instance.clipboardService else { return }
         let allowsBinary = service.supportsBinaryRepresentations
@@ -877,15 +853,20 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             [weak self] url, error in
             Task { @MainActor [weak self] in
                 // Cleanup runs even if the window closed before the promise
-                // resolved. The directory goes only once it has drained —
-                // removeItem on a directory is recursive and must not race
-                // files still being written by a multi-file promise.
+                // resolved — except for the winning item, whose on-disk bytes
+                // back the buffer's representation. The directory goes only
+                // once it has drained — removeItem on a directory is recursive
+                // and must not race files still being written by a multi-file
+                // promise.
+                var keepScratch = false
                 defer {
-                    try? FileManager.default.removeItem(at: url)
-                    if let remaining = try? FileManager.default.contentsOfDirectory(atPath: destination.path),
-                        remaining.isEmpty
-                    {
-                        try? FileManager.default.removeItem(at: destination)
+                    if !keepScratch {
+                        try? FileManager.default.removeItem(at: url)
+                        if let remaining = try? FileManager.default.contentsOfDirectory(atPath: destination.path),
+                            remaining.isEmpty
+                        {
+                            try? FileManager.default.removeItem(at: destination)
+                        }
                     }
                 }
                 guard let self else { return }
@@ -898,16 +879,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 }
                 guard !firstFileGate.taken else { return }
                 firstFileGate.taken = true
-                // The archive-aware overload archives a promised *folder* instead
-                // of rejecting it as unreadable (a directory has no `.fileSize`).
-                let generation = self.stagingGeneration
-                self.stagingGeneration += 1
-                let staging = self.staging
-                let dirTree = self.instance.clipboardService?.supportsDirectoryTree ?? false
                 let resolved = await ClipboardPasteboardIntake.read(
-                    filesAt: [url], allowsBinary: allowsBinary, staging: staging,
-                    generation: generation, dirTree: dirTree)
-                _ = self.apply(intake: resolved)
+                    filesAt: [url], allowsBinary: allowsBinary)
+                keepScratch = self.apply(intake: resolved)
             }
         }
     }

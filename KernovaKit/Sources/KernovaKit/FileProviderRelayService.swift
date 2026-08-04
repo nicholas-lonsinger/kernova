@@ -95,55 +95,6 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
         }
     }
 
-    /// Pulls one child file of a directory rep's placeholder tree through the
-    /// owner and replies with the staged path, mirroring `fetchFile`.
-    public func fetchChild(
-        generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
-        reply: @escaping @Sendable (String?, NSError?) -> Void
-    ) {
-        logger.debug(
-            "Relay fetchChild (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public), seq=\(childSeq, privacy: .public))"
-        )
-        let tracker = progressTracker
-        tracker?.pullBegan(generation: generation, repIndex: repIndex, childSeq: childSeq)
-        pullQueue.async { [pullProvider, logger] in
-            let onProgress: @Sendable (UInt64, UInt64) -> Void = { bytes, _ in
-                tracker?.pullProgressed(
-                    generation: generation, repIndex: repIndex, childSeq: childSeq,
-                    bytesTransferred: bytes)
-            }
-            switch pullProvider.fetchStagedChild(
-                generation: generation, repIndex: repIndex, childSeq: childSeq,
-                relativePath: relativePath, onProgress: onProgress)
-            {
-            case .success(let path):
-                tracker?.pullEnded(
-                    generation: generation, repIndex: repIndex, childSeq: childSeq,
-                    succeeded: true)
-                logger.debug("Relay staged child \(path, privacy: .public)")
-                reply(path, nil)
-            case .failure(let error):
-                tracker?.pullEnded(
-                    generation: generation, repIndex: repIndex, childSeq: childSeq,
-                    succeeded: false)
-                logger.error(
-                    "Relay fetchChild failed: \(String(describing: error), privacy: .public)")
-                reply(nil, Self.nsError(for: error))
-            }
-        }
-    }
-
-    /// Relays a best-effort child-fetch cancel to the owner's pull provider.
-    public func cancelChildFetch(generation: UInt64, repIndex: Int, childSeq: UInt32) {
-        logger.debug(
-            "Relay cancelChildFetch (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public), seq=\(childSeq, privacy: .public))"
-        )
-        pullQueue.async { [pullProvider] in
-            pullProvider.cancelStagedChildPull(
-                generation: generation, repIndex: repIndex, childSeq: childSeq)
-        }
-    }
-
     private static func nsError(for error: FileProviderPullError) -> NSError {
         let code: NSFileProviderError.Code
         switch error {

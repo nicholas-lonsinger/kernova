@@ -112,6 +112,67 @@ struct ClipboardFileStagingTests {
         #expect(!FileManager.default.fileExists(atPath: dir.path))
     }
 
+    @Test("roots nest under one shared parent, one child per label")
+    func rootsNestUnderSharedParent() throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let staging = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
+        let sink = try staging.makeSink(generation: 1, filename: "x.bin")
+        try sink.commit()
+
+        let parent = tempRoot.appendingPathComponent(
+            ClipboardFileStaging.parentDirectoryName, isDirectory: true)
+        let labelRoot = parent.appendingPathComponent("host-vm", isDirectory: true)
+        #expect(FileManager.default.fileExists(atPath: labelRoot.path))
+        #expect(sink.url.path.hasPrefix(labelRoot.path + "/"))
+    }
+
+    @Test("same-generation send and receive roots never share a directory; one sweep leaves the other")
+    func sendAndReceiveRootsAreDisjoint() throws {
+        // The send/receive split: both counters start at 1, so the same
+        // generation number must land in different roots.
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let receive = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
+        let send = ClipboardFileStaging(label: "host-send-vm", tempRoot: tempRoot)
+
+        let received = try receive.makeSink(generation: 1, filename: "in.bin")
+        try received.write(Data("in".utf8))
+        try received.commit()
+        let sent = try send.reserveURL(generation: 1, filename: "out.aar")
+
+        #expect(
+            received.url.deletingLastPathComponent() != sent.deletingLastPathComponent())
+        // A sibling label extending this one is not "inside" this root.
+        #expect(!receive.isInStagingRoot(sent))
+
+        // Sweeping the send root leaves the receive root's file intact.
+        send.sweep()
+        #expect(!FileManager.default.fileExists(atPath: sent.path))
+        #expect(FileManager.default.fileExists(atPath: received.url.path))
+    }
+
+    @Test("reclaimAll removes every label family under the shared parent")
+    func reclaimAllSweepsEveryFamily() throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        // Crash leftovers from every family the host mints.
+        for label in ["host", "host-vm", "host-send-vm"] {
+            let staging = ClipboardFileStaging(label: label, tempRoot: tempRoot)
+            let sink = try staging.makeSink(generation: 1, filename: "orphan.bin")
+            try sink.commit()
+        }
+        let parent = tempRoot.appendingPathComponent(
+            ClipboardFileStaging.parentDirectoryName, isDirectory: true)
+        #expect(FileManager.default.fileExists(atPath: parent.path))
+
+        ClipboardFileStaging.reclaimAll(tempRoot: tempRoot)
+        #expect(!FileManager.default.fileExists(atPath: parent.path))
+    }
+
     @Test("hasCapacity reflects the injected free-space provider")
     func freeSpaceGuard() {
         let tightStaging = makeStaging(freeSpaceProvider: { _ in 10 * 1024 * 1024 })  // 10 MiB

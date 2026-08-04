@@ -103,9 +103,13 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// `maxGenerations`.
     private var generationDirs: [(generation: UInt64, dir: URL)] = []
 
+    /// Directory under `tempRoot` that every staging root nests in, so a launch
+    /// reclaim (`reclaimAll`) sweeps all co-resident label families at once.
+    public static let parentDirectoryName = "KernovaClipboardStaging"
+
     /// - Parameters:
     ///   - label: distinguishes co-resident roots (e.g. `"agent"` vs `"host"`).
-    ///   - tempRoot: parent directory for the staging root.
+    ///   - tempRoot: parent directory for the shared staging parent.
     ///   - freeSpaceProvider: queries available capacity; defaults to
     ///     `volumeAvailableCapacityForImportantUsageKey`.
     public init(
@@ -113,9 +117,21 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         tempRoot: URL = FileManager.default.temporaryDirectory,
         freeSpaceProvider: FreeSpaceProvider? = nil
     ) {
-        root = tempRoot.appendingPathComponent(
-            "KernovaClipboardStaging-\(label)", isDirectory: true)
+        root =
+            tempRoot
+            .appendingPathComponent(Self.parentDirectoryName, isDirectory: true)
+            .appendingPathComponent(label, isDirectory: true)
         self.freeSpaceProvider = freeSpaceProvider ?? Self.defaultFreeSpace
+    }
+
+    /// Removes the shared staging parent under `tempRoot` — every label
+    /// family's root, crash orphans included.
+    ///
+    /// Call once at process launch, before any staging root is used; a live
+    /// instance's `sweep()` still clears only its own root.
+    public static func reclaimAll(tempRoot: URL = FileManager.default.temporaryDirectory) {
+        try? FileManager.default.removeItem(
+            at: tempRoot.appendingPathComponent(parentDirectoryName, isDirectory: true))
     }
 
     /// Available capacity for important writes at the staging root's volume, in
@@ -127,9 +143,12 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// Whether `url` points inside this staging root.
     ///
     /// The outbound pasteboard poll skips these so a file received from the peer
-    /// is never offered back to it.
+    /// is never offered back to it. The prefix is component-bounded so a sibling
+    /// root whose label extends this one (`agent` vs `agent-send`) never matches.
     public func isInStagingRoot(_ url: URL) -> Bool {
-        url.standardizedFileURL.path.hasPrefix(root.standardizedFileURL.path)
+        let rootPath = root.standardizedFileURL.path
+        let path = url.standardizedFileURL.path
+        return path == rootPath || path.hasPrefix(rootPath + "/")
     }
 
     /// Whether `byteCount` bytes (plus `margin`) fit on the staging volume.

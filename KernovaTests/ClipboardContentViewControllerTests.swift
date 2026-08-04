@@ -576,7 +576,6 @@ private final class FakeClipboardService: ClipboardServicing {
 
     var isConnected: Bool = true
     var supportsBinaryRepresentations: Bool = true
-    var supportsDirectoryTree: Bool = false
     var lastTransferIssue: ClipboardTransferIssue?
 
     /// Times the controller *asked* for an announcement, so a test can assert the

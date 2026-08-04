@@ -262,33 +262,6 @@ final class HostClipboardPullRouter: FileProviderPullProvider, @unchecked Sendab
         let source = lock.withLock { dispatchedSources[key] ?? self.source }
         source?.cancelStagedPull(generation: generation, repIndex: repIndex)
     }
-
-    func fetchStagedChild(
-        generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
-        onProgress: @escaping @Sendable (UInt64, UInt64) -> Void = { _, _ in }
-    ) -> Result<String, FileProviderPullError> {
-        // `PullKey` needs no `childSeq`: one directory rep exists per
-        // (generation, repIndex), and its children serialize through the same
-        // publishing service.
-        let key = PullKey(generation: generation, repIndex: repIndex)
-        let source: (any HostClipboardFileRepProviding)? = lock.withLock {
-            guard let current = self.source else { return nil }
-            dispatchedSources[key] = current
-            return current
-        }
-        guard let source else { return .failure(.noCurrentOffer) }
-        defer { lock.withLock { dispatchedSources[key] = nil } }
-        return source.pullStagedChild(
-            generation: generation, repIndex: repIndex, childSeq: childSeq,
-            relativePath: relativePath, onProgress: onProgress)
-    }
-
-    func cancelStagedChildPull(generation: UInt64, repIndex: Int, childSeq: UInt32) {
-        let key = PullKey(generation: generation, repIndex: repIndex)
-        let source = lock.withLock { dispatchedSources[key] ?? self.source }
-        source?.cancelStagedChildPull(
-            generation: generation, repIndex: repIndex, childSeq: childSeq)
-    }
 }
 
 /// Implemented by a clipboard service so the host File Provider coordinator — and
@@ -314,18 +287,6 @@ protocol HostClipboardFileRepProviding: AnyObject, Sendable {
     /// Best-effort and idempotent — a cancel for an unknown or already-finished
     /// transfer is a no-op. Called off-main on the File Provider relay's XPC queue.
     func cancelStagedPull(generation: UInt64, repIndex: Int)
-
-    /// Pulls one child file `(generation, repIndex, childSeq)` at `relativePath`
-    /// within a directory rep's placeholder tree, stages it, and returns the
-    /// staged path. Same off-main, no-deadline contract as `pullStagedFile`.
-    func pullStagedChild(
-        generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
-        onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
-    ) -> Result<String, FileProviderPullError>
-
-    /// Aborts an in-flight `pullStagedChild` for `(generation, repIndex,
-    /// childSeq)`. Best-effort and idempotent.
-    func cancelStagedChildPull(generation: UInt64, repIndex: Int, childSeq: UInt32)
 
     /// Resolves the pasteboard `.fileURL` for a promised rep at paste time, or
     /// `nil` when nothing can be served.

@@ -46,13 +46,6 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     /// landing on this dead source can't hang the full `connectTimeout`.
     private var invalidated = false
 
-    /// What a pending pull addresses: a flat single-file rep, or one child file
-    /// of a directory rep's placeholder tree.
-    private enum PullTarget {
-        case flat
-        case child(childSeq: UInt32, relativePath: String)
-    }
-
     /// A byte-pull waiting for the owner to connect.
     ///
     /// Reference type so the connect-timeout timer and the accept-time drain can
@@ -61,16 +54,14 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     private final class PendingPull: Sendable {
         let generation: UInt64
         let repIndex: Int
-        let target: PullTarget
         let once: OnceCompletion
 
         init(
-            generation: UInt64, repIndex: Int, target: PullTarget,
+            generation: UInt64, repIndex: Int,
             completion: @escaping (Result<String, NSError>) -> Void
         ) {
             self.generation = generation
             self.repIndex = repIndex
-            self.target = target
             self.once = OnceCompletion(completion)
         }
     }
@@ -235,29 +226,15 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
         generation: UInt64, repIndex: Int,
         completion: @escaping (Result<String, NSError>) -> Void
     ) -> FileProviderPullCancellation {
-        enqueue(generation: generation, repIndex: repIndex, target: .flat, completion: completion)
-    }
-
-    /// Pulls one child file of a directory rep's placeholder tree, addressed by
-    /// `(generation, repIndex, childSeq, relativePath)`.
-    ///
-    /// Same non-blocking, one-shot, doorbell-and-timeout semantics as
-    /// `fetchStagedFile`.
-    func fetchStagedChild(
-        generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
-        completion: @escaping (Result<String, NSError>) -> Void
-    ) -> FileProviderPullCancellation {
-        enqueue(
-            generation: generation, repIndex: repIndex,
-            target: .child(childSeq: childSeq, relativePath: relativePath), completion: completion)
+        enqueue(generation: generation, repIndex: repIndex, completion: completion)
     }
 
     private func enqueue(
-        generation: UInt64, repIndex: Int, target: PullTarget,
+        generation: UInt64, repIndex: Int,
         completion: @escaping (Result<String, NSError>) -> Void
     ) -> FileProviderPullCancellation {
         let pull = PendingPull(
-            generation: generation, repIndex: repIndex, target: target, completion: completion)
+            generation: generation, repIndex: repIndex, completion: completion)
         // Holds `pull` strongly but `self` weakly, so a cancel after this source is
         // gone is a harmless no-op.
         let cancellation = FileProviderPullCancellation { [weak self] in
@@ -312,13 +289,7 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
         }
         if wonRace, let dispatchedTo {
             let relay = dispatchedTo.remoteObjectProxy as? FileProviderRelay
-            switch pull.target {
-            case .flat:
-                relay?.cancelFetch(generation: pull.generation, repIndex: pull.repIndex)
-            case .child(let childSeq, _):
-                relay?.cancelChildFetch(
-                    generation: pull.generation, repIndex: pull.repIndex, childSeq: childSeq)
-            }
+            relay?.cancelFetch(generation: pull.generation, repIndex: pull.repIndex)
         }
     }
 
@@ -363,14 +334,7 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
                 once.fire(.failure(error ?? Self.serverUnreachable))
             }
         }
-        switch pull.target {
-        case .flat:
-            proxy.fetchFile(generation: pull.generation, repIndex: pull.repIndex, reply: reply)
-        case .child(let childSeq, let relativePath):
-            proxy.fetchChild(
-                generation: pull.generation, repIndex: pull.repIndex, childSeq: childSeq,
-                relativePath: relativePath, reply: reply)
-        }
+        proxy.fetchFile(generation: pull.generation, repIndex: pull.repIndex, reply: reply)
     }
 
     private static let serverUnreachable = NSError(

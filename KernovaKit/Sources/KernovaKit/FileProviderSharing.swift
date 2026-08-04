@@ -111,12 +111,11 @@ public struct FileProviderManifest: Codable, Sendable, Equatable {
         }
     }
 
-    /// A directory representation published as a placeholder **tree**
-    /// (`clipboard.dirtree.v1`): a folder root plus every descendant node.
+    /// A directory representation published as a placeholder **tree**: a folder
+    /// root plus every descendant node.
     ///
     /// The enumerator serves the root under the domain root and each folder's
-    /// direct children under it; a file node's bytes are pulled by a child
-    /// `ClipboardTreeFetch` on `fetchContents`.
+    /// direct children under it.
     public struct FolderRep: Codable, Sendable, Equatable {
         /// The publishing owner session's salt, shared by the root and every
         /// node's identifier.

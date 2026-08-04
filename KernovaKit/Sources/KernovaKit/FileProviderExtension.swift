@@ -120,23 +120,14 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void
     ) -> Progress {
         logger.debug("fetchContents START (item=\(itemIdentifier.rawValue, privacy: .public))")
-        // Only a byte-bearing regular file is fetched: a flat single-file rep, or
-        // a file node within a directory rep's placeholder tree. A
-        // directory/symlink node is resolved from metadata, never fetched.
+        // Only a byte-bearing flat single-file rep is fetched.
         let manifest = store.readManifest()
-        let target: (returnedItem: NSFileProviderItem, byteCount: UInt64, pull: FetchPull)
+        let target: (returnedItem: NSFileProviderItem, byteCount: UInt64, generation: UInt64, repIndex: Int)
         switch manifest.resolve(itemIdentifier.rawValue) {
         case .flatFile(let item):
             target = (
                 ClipboardFileItem(manifestItem: item), item.byteCount,
-                .flat(generation: item.generation, repIndex: item.repIndex)
-            )
-        case .node(let folder, let node) where node.kind == .file:
-            target = (
-                ClipboardTreeItem(folder: folder, node: node), node.byteCount,
-                .child(
-                    generation: folder.generation, repIndex: folder.repIndex,
-                    childSeq: node.childSeq, relativePath: node.relativePath)
+                item.generation, item.repIndex
             )
         default:
             completionHandler(nil, nil, NSFileProviderError(.noSuchItem))
@@ -184,16 +175,8 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
                 completionHandler(nil, nil, error)
             }
         }
-        let cancellation: FileProviderPullCancellation
-        switch target.pull {
-        case .flat(let generation, let repIndex):
-            cancellation = serviceSource.fetchStagedFile(
-                generation: generation, repIndex: repIndex, completion: completion)
-        case .child(let generation, let repIndex, let childSeq, let relativePath):
-            cancellation = serviceSource.fetchStagedChild(
-                generation: generation, repIndex: repIndex, childSeq: childSeq,
-                relativePath: relativePath, completion: completion)
-        }
+        let cancellation = serviceSource.fetchStagedFile(
+            generation: target.generation, repIndex: target.repIndex, completion: completion)
         // Wire Finder's cancel button to the pull. The completion closure above
         // captures `progress` WEAKLY so this handler — which strongly holds
         // `cancellation` → the pull → that completion — can't form a retain cycle
@@ -201,13 +184,6 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         // completes, so the weak ref is never nil inside the completion.
         progress.cancellationHandler = { cancellation.cancel() }
         return progress
-    }
-
-    /// Which relay pull backs a `fetchContents`: a flat single-file rep, or a
-    /// child file within a directory rep's placeholder tree.
-    private enum FetchPull {
-        case flat(generation: UInt64, repIndex: Int)
-        case child(generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String)
     }
 
     /// Clones the owner-staged file into the domain's temporary directory and hands
@@ -358,7 +334,7 @@ final class ClipboardFileItem: NSObject, NSFileProviderItem, @unchecked Sendable
 }
 
 /// One node of a directory rep's placeholder tree — the folder root, a
-/// subdirectory, a file, or a symlink (`clipboard.dirtree.v1`).
+/// subdirectory, a file, or a symlink.
 ///
 /// `RATIONALE:` every container is served with a plain `.folder` contentType even
 /// when the manifest marks it a package (.app/.rtfd): a package-conforming type

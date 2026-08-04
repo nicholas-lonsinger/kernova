@@ -466,6 +466,100 @@ struct VsockClipboardServiceTests {
         #expect(end.sha256 == Data(SHA256.hash(data: expectedBytes)))
     }
 
+    @Test(
+        "An offered folder is estimate-only until requested, then archived at request time and streamed as a valid archive"
+    )
+    func requestArchivesFolderAtRequestTime() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // A host-side folder in the buffer (paste/drop intake) is a source rep
+        // with a stat-walk estimate — no archive exists yet.
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let folder = parent.appendingPathComponent("Project", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: folder.appendingPathComponent("sub", isDirectory: true),
+            withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        try Data("readme".utf8).write(to: folder.appendingPathComponent("README.md"))
+        try Data("nested".utf8).write(to: folder.appendingPathComponent("sub/n.txt"))
+        service.clipboardContent = ClipboardContent(representations: [
+            ClipboardContent.Representation(
+                directorySourceURL: folder, estimatedByteCount: 12, filename: "Project",
+                uti: "public.folder")
+        ])
+        service.grabIfChanged()
+
+        let offerFrame = try await nextFrame(from: guest)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            Issue.record("Expected clipboardOffer, got \(String(describing: offerFrame.payload))")
+            return
+        }
+        let info = try #require(offer.repInfo.first)
+        #expect(info.isDirectory)
+        #expect(info.byteCount == 12)  // the estimate, not an archive size
+        #expect(info.filename == "Project")
+        let xid = transferID(generation: offer.generation, repIndex: 0)
+
+        let recorder = FrameRecorder(channel: guest)
+        defer { recorder.cancel() }
+
+        // The request triggers the off-main request-time archive, then the
+        // stream of the resulting `.aar`.
+        try guest.send(makeRequest(generation: offer.generation, repIndex: 0, uti: info.uti))
+        try await waitForFrames(recorder) {
+            recorder.first {
+                if case .clipboardStreamBegin = $0.payload { return true }; return false
+            } != nil
+        }
+        let beginFrame = try #require(
+            recorder.first {
+                if case .clipboardStreamBegin = $0.payload { return true }; return false
+            })
+        guard case .clipboardStreamBegin(let begin) = beginFrame.payload else {
+            Issue.record("Expected clipboardStreamBegin")
+            return
+        }
+        #expect(begin.transferID == xid)
+        #expect(!begin.isInline)
+        #expect(begin.filename == "Project")
+
+        try sendAck(from: guest, transferID: xid, bytesConsumed: 0, windowBytes: 512 * 1024)
+        try await waitForFrames(recorder) {
+            recorder.first {
+                if case .clipboardStreamEnd = $0.payload { return true }; return false
+            } != nil
+        }
+        let reassembled = reassemble(recorder.chunks(for: xid))
+        // The Begin carries the archive's wire-exact size, superseding the
+        // offer's estimate.
+        #expect(begin.totalBytes == UInt64(reassembled.count))
+
+        // The streamed bytes are an `.aar` that extracts back to the tree.
+        let aarDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: aarDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: aarDir) }
+        let aar = aarDir.appendingPathComponent("got.aar")
+        try reassembled.write(to: aar)
+        let dest = aarDir.appendingPathComponent("out", isDirectory: true)
+        try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+        try ClipboardDirectoryArchive.extract(archiveAt: aar, to: dest)
+        #expect(
+            try String(contentsOf: dest.appendingPathComponent("README.md"), encoding: .utf8)
+                == "readme")
+        #expect(
+            try String(contentsOf: dest.appendingPathComponent("sub/n.txt"), encoding: .utf8)
+                == "nested")
+    }
+
     @Test("A large outbound payload streams as multiple chunks that reassemble exactly")
     func largeOutboundStreamsMultipleChunks() async throws {
         let (guest, host) = try makePair()

@@ -54,6 +54,26 @@ struct ClipboardDirectoryArchiveTests {
         #expect(perms & 0o111 != 0)
     }
 
+    @Test("estimatedByteCount sums regular-file sizes only")
+    func estimateSumsFiles() throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+        let root = scratch.appendingPathComponent("tree", isDirectory: true)
+        let sub = root.appendingPathComponent("sub", isDirectory: true)
+        try fm.createDirectory(at: sub, withIntermediateDirectories: true)
+        try Data("hello".utf8).write(to: root.appendingPathComponent("a.txt"))
+        try Data("nested".utf8).write(to: sub.appendingPathComponent("b.txt"))
+        try fm.createDirectory(
+            at: root.appendingPathComponent("empty", isDirectory: true),
+            withIntermediateDirectories: true)
+        try fm.createSymbolicLink(
+            atPath: root.appendingPathComponent("link").path, withDestinationPath: "a.txt")
+
+        // a.txt (5) + sub/b.txt (6) = 11; dirs and symlinks contribute 0.
+        #expect(ClipboardDirectoryArchive.estimatedByteCount(at: root) == 11)
+    }
+
     @Test("a symlink is preserved, not followed")
     func symlinkPreserved() throws {
         let fm = FileManager.default

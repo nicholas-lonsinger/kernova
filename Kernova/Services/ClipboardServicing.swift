@@ -26,13 +26,6 @@ protocol ClipboardServicing: AnyObject {
     /// that would silently never send.
     var supportsBinaryRepresentations: Bool { get }
 
-    /// `true` when a copied folder should cross as a File Provider placeholder
-    /// *tree* (walked on demand, no eager archive) rather than being archived at
-    /// intake — the mutually-negotiated `clipboard.dirtree.v1` capability.
-    ///
-    /// `false` for SPICE and until the guest's capability is known.
-    var supportsDirectoryTree: Bool { get }
-
     /// Most recent user-visible transfer problem, or `nil` when healthy.
     ///
     /// Set when an outbound payload exceeds the transport limit or the peer

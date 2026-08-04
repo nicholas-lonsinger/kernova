@@ -52,9 +52,9 @@ struct ClipboardPasteboardIntakeTests {
     /// off the main actor; non-file results pass through unchanged.
     private func resolve(
         _ result: ClipboardIntakeResult, allowsBinary: Bool
-    ) -> ClipboardIntakeResult {
+    ) async -> ClipboardIntakeResult {
         guard case .pendingFiles(let urls) = result else { return result }
-        return ClipboardPasteboardIntake.read(filesAt: urls, allowsBinary: allowsBinary)
+        return await ClipboardPasteboardIntake.read(filesAt: urls, allowsBinary: allowsBinary)
     }
 
     // MARK: - Generic pasteboard reads
@@ -322,12 +322,12 @@ struct ClipboardPasteboardIntakeTests {
     }
 
     @Test("read(filesAt:) builds one ordered filename rep per file")
-    func readFilesAtMultiple() throws {
+    func readFilesAtMultiple() async throws {
         let a = try makeTempFile(name: "one.txt", contents: Data("one".utf8))
         let b = try makeTempFile(name: "two.bin", contents: Data([0, 1, 2]))
 
         guard
-            case .content(let content, let note) = ClipboardPasteboardIntake.read(
+            case .content(let content, let note) = await ClipboardPasteboardIntake.read(
                 filesAt: [a, b], allowsBinary: true)
         else {
             Issue.record("Expected content")
@@ -341,13 +341,13 @@ struct ClipboardPasteboardIntakeTests {
     }
 
     @Test("read(filesAt:) skips an unreadable file with a note, keeping the rest")
-    func readFilesAtSkipsUnreadable() throws {
+    func readFilesAtSkipsUnreadable() async throws {
         let good = try makeTempFile(name: "good.txt", contents: Data("ok".utf8))
         let missing = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-missing.txt")
 
         guard
-            case .content(let content, let note) = ClipboardPasteboardIntake.read(
+            case .content(let content, let note) = await ClipboardPasteboardIntake.read(
                 filesAt: [good, missing], allowsBinary: true)
         else {
             Issue.record("Expected content")
@@ -358,14 +358,14 @@ struct ClipboardPasteboardIntakeTests {
     }
 
     @Test("read(filesAt:) rejects when every file is unreadable")
-    func readFilesAtAllFail() {
+    func readFilesAtAllFail() async {
         let missing1 = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-m1")
         let missing2 = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-m2")
 
         guard
-            case .rejected = ClipboardPasteboardIntake.read(
+            case .rejected = await ClipboardPasteboardIntake.read(
                 filesAt: [missing1, missing2], allowsBinary: true)
         else {
             Issue.record("Expected rejection")
@@ -374,10 +374,10 @@ struct ClipboardPasteboardIntakeTests {
     }
 
     @Test("read(filesAt:) on a text-only transport is rejected")
-    func readFilesAtTextOnlyRejected() throws {
+    func readFilesAtTextOnlyRejected() async throws {
         let a = try makeTempFile(name: "a.txt", contents: Data("a".utf8))
         guard
-            case .rejected(let message) = ClipboardPasteboardIntake.read(
+            case .rejected(let message) = await ClipboardPasteboardIntake.read(
                 filesAt: [a], allowsBinary: false)
         else {
             Issue.record("Expected rejection")
@@ -387,7 +387,7 @@ struct ClipboardPasteboardIntakeTests {
     }
 
     @Test("dragged text file crosses as a disk-backed file representation (name + size)")
-    func textFileIntake() throws {
+    func textFileIntake() async throws {
         // A copied/dragged .txt is "the file": it crosses as a disk-backed
         // representation tagged with the content UTI and name; its bytes stream
         // on demand and are never read at intake.
@@ -400,7 +400,7 @@ struct ClipboardPasteboardIntakeTests {
         pasteboard.writeObjects([item])
 
         guard
-            case .content(let content, _) = resolve(
+            case .content(let content, _) = await resolve(
                 ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: true),
                 allowsBinary: true)
         else {
@@ -415,7 +415,7 @@ struct ClipboardPasteboardIntakeTests {
     }
 
     @Test("dragged image file becomes a disk-backed image representation")
-    func imageFileIntake() throws {
+    func imageFileIntake() async throws {
         let png = try makePNG()
         let url = try makeTempFile(name: "image.png", contents: png)
         let pasteboard = makeScratchPasteboard()
@@ -425,7 +425,7 @@ struct ClipboardPasteboardIntakeTests {
         pasteboard.writeObjects([item])
 
         guard
-            case .content(let content, _) = resolve(
+            case .content(let content, _) = await resolve(
                 ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: true),
                 allowsBinary: true)
         else {
@@ -441,7 +441,7 @@ struct ClipboardPasteboardIntakeTests {
     }
 
     @Test("dragged non-image file crosses as a disk-backed file representation")
-    func nonImageFileCrossesAsFile() throws {
+    func nonImageFileCrossesAsFile() async throws {
         let contents = Data([0x00, 0x01])
         let url = try makeTempFile(name: "blob.bin", contents: contents)
         let pasteboard = makeScratchPasteboard()
@@ -451,7 +451,7 @@ struct ClipboardPasteboardIntakeTests {
         pasteboard.writeObjects([item])
 
         guard
-            case .content(let content, _) = resolve(
+            case .content(let content, _) = await resolve(
                 ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: true),
                 allowsBinary: true)
         else {
@@ -465,12 +465,12 @@ struct ClipboardPasteboardIntakeTests {
     }
 
     @Test("read(filesAt:) resolves a single image file directly — the promise-receipt path")
-    func directFileReadImage() throws {
+    func directFileReadImage() async throws {
         let png = try makePNG()
         let url = try makeTempFile(name: "promised.png", contents: png)
 
         guard
-            case .content(let content, _) = ClipboardPasteboardIntake.read(
+            case .content(let content, _) = await ClipboardPasteboardIntake.read(
                 filesAt: [url], allowsBinary: true)
         else {
             Issue.record("Expected content")
@@ -482,7 +482,7 @@ struct ClipboardPasteboardIntakeTests {
     }
 
     @Test("read(filesAt:) accepts a large file — there is no per-rep size limit")
-    func directFileReadLargeAccepted() throws {
+    func directFileReadLargeAccepted() async throws {
         // A large file becomes a disk-backed rep whose bytes stream on demand.
         // A sparse file keeps the test fast.
         let url = try makeTempFile(name: "huge.bin", contents: Data())
@@ -491,7 +491,7 @@ struct ClipboardPasteboardIntakeTests {
         try handle.close()
 
         guard
-            case .content(let content, _) = ClipboardPasteboardIntake.read(
+            case .content(let content, _) = await ClipboardPasteboardIntake.read(
                 filesAt: [url], allowsBinary: true)
         else {
             Issue.record("Expected content (no size cap)")
@@ -501,7 +501,7 @@ struct ClipboardPasteboardIntakeTests {
     }
 
     @Test("dragged image file on a text-only transport is rejected")
-    func imageFileTextOnlyRejected() throws {
+    func imageFileTextOnlyRejected() async throws {
         let url = try makeTempFile(name: "image.png", contents: try makePNG())
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
@@ -510,7 +510,7 @@ struct ClipboardPasteboardIntakeTests {
         pasteboard.writeObjects([item])
 
         guard
-            case .rejected(let message) = resolve(
+            case .rejected(let message) = await resolve(
                 ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: false),
                 allowsBinary: false)
         else {
@@ -520,14 +520,7 @@ struct ClipboardPasteboardIntakeTests {
         #expect(message == ClipboardPasteboardIntake.textOnlyTransportMessage)
     }
 
-    // MARK: - Folder archiving (Phase 2)
-
-    private func makeStaging() -> ClipboardFileStaging {
-        ClipboardFileStaging(
-            label: "intake-test-\(UUID().uuidString)",
-            tempRoot: FileManager.default.temporaryDirectory.appendingPathComponent(
-                UUID().uuidString, isDirectory: true))
-    }
+    // MARK: - Folders
 
     private func makeTempFolder(name: String, files: [(String, Data)]) throws -> URL {
         let parent = FileManager.default.temporaryDirectory
@@ -540,17 +533,15 @@ struct ClipboardPasteboardIntakeTests {
         return folder
     }
 
-    @Test("a copied folder is archived into one directory representation")
-    func folderArchivedAsDirectoryRep() async throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
+    @Test("a copied folder is a source-directory rep — estimate only, no archive")
+    func folderAsSourceDirectoryRep() async throws {
         let folder = try makeTempFolder(
-            name: "MyFolder", files: [("a.txt", Data("a".utf8)), ("b.txt", Data("bee".utf8))])
+            name: "Tree", files: [("a.txt", Data("a".utf8)), ("b.txt", Data("bee".utf8))])
         defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
 
         guard
             case .content(let content, let note) = await ClipboardPasteboardIntake.read(
-                filesAt: [folder], allowsBinary: true, staging: staging, generation: 1, dirTree: false)
+                filesAt: [folder], allowsBinary: true)
         else {
             Issue.record("Expected content")
             return
@@ -560,37 +551,6 @@ struct ClipboardPasteboardIntakeTests {
         let rep = try #require(content.representations.first)
         #expect(rep.isDirectory)
         #expect(rep.uti == UTType.folder.identifier)
-        #expect(rep.filename == "MyFolder")
-        #expect(rep.byteCount > 0)
-        // The rep points at a real `.aar` that extracts back to the original tree.
-        let archiveURL = try #require(rep.fileURL)
-        let dest = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dest) }
-        try ClipboardDirectoryArchive.extract(archiveAt: archiveURL, to: dest)
-        #expect(
-            try String(contentsOf: dest.appendingPathComponent("b.txt"), encoding: .utf8) == "bee")
-    }
-
-    @Test("with the dir-tree capability, a copied folder is a source-directory rep (no archive)")
-    func folderAsSourceDirectoryRepWithDirTree() async throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
-        let folder = try makeTempFolder(
-            name: "Tree", files: [("a.txt", Data("a".utf8)), ("b.txt", Data("bee".utf8))])
-        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
-
-        guard
-            case .content(let content, _) = await ClipboardPasteboardIntake.read(
-                filesAt: [folder], allowsBinary: true, staging: staging, generation: 1,
-                dirTree: true)
-        else {
-            Issue.record("Expected content")
-            return
-        }
-        let rep = try #require(content.representations.first)
-        #expect(rep.isDirectory)
         #expect(rep.filename == "Tree")
         // A source-directory rep: the URL is the original folder, not a staged
         // `.aar`, and the byte count is a stat-walk estimate (1 + 3 bytes).
@@ -601,15 +561,13 @@ struct ClipboardPasteboardIntakeTests {
 
     @Test("a mixed file + folder selection yields one rep each, in order")
     func mixedFileAndFolder() async throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
         let file = try makeTempFile(name: "plain.txt", contents: Data("hello".utf8))
         let folder = try makeTempFolder(name: "Docs", files: [("inside.txt", Data("x".utf8))])
         defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
 
         guard
             case .content(let content, _) = await ClipboardPasteboardIntake.read(
-                filesAt: [file, folder], allowsBinary: true, staging: staging, generation: 1, dirTree: false)
+                filesAt: [file, folder], allowsBinary: true)
         else {
             Issue.record("Expected content")
             return
@@ -619,17 +577,16 @@ struct ClipboardPasteboardIntakeTests {
         #expect(content.representations[0].filename == "plain.txt")
         #expect(content.representations[1].isDirectory)
         #expect(content.representations[1].filename == "Docs")
+        #expect(content.representations[1].directorySourceURL == folder)
     }
 
-    @Test("folder archiving on a text-only transport is rejected")
+    @Test("a copied folder on a text-only transport is rejected")
     func folderTextOnlyRejected() async throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
         let folder = try makeTempFolder(name: "F", files: [("a", Data("a".utf8))])
         defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
         guard
             case .rejected = await ClipboardPasteboardIntake.read(
-                filesAt: [folder], allowsBinary: false, staging: staging, generation: 1, dirTree: false)
+                filesAt: [folder], allowsBinary: false)
         else {
             Issue.record("Expected rejection")
             return
@@ -639,7 +596,7 @@ struct ClipboardPasteboardIntakeTests {
     // MARK: - Screenshot thumbnail (promised file URL)
 
     @Test("a promised-file-url on disk is resolved as the image — the screenshot thumbnail mechanism")
-    func promisedFileURLImage() throws {
+    func promisedFileURLImage() async throws {
         // The floating screenshot thumbnail is a promise drag: NO concrete
         // public.file-url, NO inline image bytes — only a promised-file-url
         // pointing at the temp file screencaptureui has already written, plus
@@ -656,7 +613,7 @@ struct ClipboardPasteboardIntakeTests {
         pasteboard.writeObjects([item])
 
         guard
-            case .content(let content, _) = resolve(
+            case .content(let content, _) = await resolve(
                 ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: true),
                 allowsBinary: true)
         else {

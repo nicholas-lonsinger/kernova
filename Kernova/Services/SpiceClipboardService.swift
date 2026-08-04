@@ -28,9 +28,6 @@ final class SpiceClipboardService: ClipboardServicing {
 
     var supportsBinaryRepresentations: Bool { false }
 
-    // Linux/SPICE is text-only, so folder placeholder trees never apply.
-    var supportsDirectoryTree: Bool { false }
-
     /// Bumped once per inbound guest clipboard text.
     private(set) var inboundOfferSeq: UInt64 = 0
 

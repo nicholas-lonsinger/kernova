@@ -18,20 +18,10 @@ public enum KernovaCapability {
     /// Required on both sides for clipboard sharing to be enabled.
     public static let clipboardStreamV1 = "clipboard.stream.v1"
 
-    /// The folder placeholder-tree protocol (directory reps paste as a File
-    /// Provider placeholder tree with per-child fetch, `ClipboardTreeFetch`),
-    /// version 1.
-    ///
-    /// A directory rep crosses as a placeholder tree only when **both** sides
-    /// advertise this; otherwise it takes the eager-archive path, which needs no
-    /// capability. Bump the guest agent version whenever this tag's behavior
-    /// changes.
-    public static let clipboardDirTreeV1 = "clipboard.dirtree.v1"
-
     /// The capabilities advertised by both the host control service and the
     /// guest control agent today.
     public static let controlChannelDefaults = [
-        controlV1, controlHeartbeatV1, clipboardStreamV1, clipboardDirTreeV1,
+        controlV1, controlHeartbeatV1, clipboardStreamV1,
     ]
 
     /// Every capability tag this build recognizes — the allowlist for

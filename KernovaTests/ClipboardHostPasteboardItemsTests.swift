@@ -220,12 +220,6 @@ struct ClipboardHostPasteboardItemsTests {
             onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
         ) -> Result<String, FileProviderPullError> { .failure(.pullFailed) }
         func cancelStagedPull(generation: UInt64, repIndex: Int) {}
-        func pullStagedChild(
-            generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
-            onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
-        ) -> Result<String, FileProviderPullError> { .failure(.pullFailed) }
-        func cancelStagedChildPull(generation: UInt64, repIndex: Int, childSeq: UInt32) {}
-
         func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? {
             lock.withLock { fileURLCallsStorage.append((generation, repIndex)) }
             return urlToReturn

@@ -120,6 +120,35 @@ extension ClipboardDirectoryArchive {
     /// UTI for a directory representation (a folder or OS package).
     public static let directoryUTI = "public.folder"
 
+    /// Upper bound on how many entries the estimate walk visits before stopping,
+    /// so a pathological tree (or a symlink cycle — the estimate's enumerator
+    /// follows links) can't spin unbounded.
+    private static let estimateEntryCap = 500_000
+
+    /// A stat-walk size estimate (sum of regular-file sizes) for a source folder.
+    ///
+    /// The directory rep's offer `byte_count`, which the receiver's paste cap
+    /// and free-space preflight gate on. The request-time archive carries its
+    /// exact size in its own `ClipboardStreamBegin`.
+    public static func estimatedByteCount(at root: URL) -> Int {
+        guard
+            let enumerator = FileManager.default.enumerator(
+                at: root, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey], options: [])
+        else { return 0 }
+        var total = 0
+        var count = 0
+        while let url = enumerator.nextObject() as? URL {
+            count += 1
+            if count > estimateEntryCap { break }
+            if let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                values.isRegularFile == true
+            {
+                total &+= values.fileSize ?? 0
+            }
+        }
+        return total
+    }
+
     /// Archives the directory at `directoryURL` into a single `.aar` staged under
     /// `staging`/`generation` and returns a file representation describing it, or
     /// `nil` if the archive has no readable size.

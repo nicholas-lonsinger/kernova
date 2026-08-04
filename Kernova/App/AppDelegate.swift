@@ -277,11 +277,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
 
-        // Reclaim orphaned host-side clipboard staging files from a previous run or
-        // crash. The staged file URL must outlive the clipboard window
-        // (paste-after-close), so staging never sweeps on close — only here, before
-        // any clipboard window opens.
-        ClipboardFileStaging(label: HostClipboardPublisher.stagingLabel).sweep()
+        // Reclaim orphaned clipboard staging files from a previous run or crash —
+        // every label family under the shared parent (`host`, per-VM `host-<vm>`
+        // receive roots, `host-send-<vm>` outbound-archive roots). The staged file
+        // URL must outlive the clipboard window (paste-after-close), so staging
+        // never sweeps on close — only here, before any clipboard use.
+        ClipboardFileStaging.reclaimAll()
 
         // Intercept the Quit Apple Event so `classifyQuit` can inspect its sender.
         NSAppleEventManager.shared().setEventHandler(

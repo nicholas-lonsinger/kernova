@@ -54,20 +54,6 @@ struct FileProviderRelayServiceTests {
             lastCancelCallBox.value = (generation, repIndex)
             cancelled.notify()
         }
-
-        func fetchStagedChild(
-            generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
-            onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
-        ) -> Result<String, FileProviderPullError> {
-            lastFetchCallBox.value = (generation, repIndex)
-            for (bytes, total) in progressEvents { onProgress(bytes, total) }
-            return result
-        }
-
-        func cancelStagedChildPull(generation: UInt64, repIndex: Int, childSeq: UInt32) {
-            lastCancelCallBox.value = (generation, repIndex)
-            cancelled.notify()
-        }
     }
 
     /// Blocks inside `fetchStagedFile` until the test releases it, and records
@@ -105,21 +91,6 @@ struct FileProviderRelayServiceTests {
         }
 
         func cancelStagedPull(generation: UInt64, repIndex: Int) {
-            lastCancelCallBox.value = (generation, repIndex)
-            cancelled.notify()
-        }
-
-        func fetchStagedChild(
-            generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
-            onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
-        ) -> Result<String, FileProviderPullError> {
-            hasEnteredBox.value = true
-            entered.notify()
-            releaseSemaphore.wait()
-            return .success("/staged/child")
-        }
-
-        func cancelStagedChildPull(generation: UInt64, repIndex: Int, childSeq: UInt32) {
             lastCancelCallBox.value = (generation, repIndex)
             cancelled.notify()
         }
@@ -325,55 +296,6 @@ struct FileProviderRelayServiceTests {
         #expect(final.filesCompleted == 0)
         // The bytes that really did cross are kept; only completion is withheld.
         #expect(final.bytesTransferred == 250_000)
-    }
-
-    @Test("fetchChild reports its pull against the folder's own tree node")
-    func fetchChildDrivesMaterializationTracker() async throws {
-        let emissions = Box<[ClipboardProgressSnapshot?]>([])
-        let tracker = ClipboardProgressTracker(
-            revealDelay: 0, idleLinger: 0,
-            schedule: { _, _ in },
-            emit: { emissions.value.append($0) })
-        tracker.offerPublished(
-            FileProviderManifest(
-                generation: 4, items: [],
-                folders: [
-                    FileProviderManifest.FolderRep(
-                        sessionSalt: 1, generation: 4, repIndex: 1, filename: "Photos",
-                        uti: "public.folder",
-                        nodes: [
-                            FileProviderManifest.FolderRep.Node(
-                                childSeq: 5, parentChildSeq: 0, kind: .file, filename: "file.txt",
-                                relativePath: "sub/file.txt", byteCount: 500_000,
-                                uti: "public.data")
-                        ])
-                ]),
-            peerName: "macOS TEST")
-
-        let provider = MockPullProvider(
-            result: .success("/staged/child"),
-            progressEvents: [(200_000, 500_000)])
-        let service = FileProviderRelayService(
-            pullProvider: provider, loggerSubsystem: "app.kernova.test")
-        service.progressTracker = tracker
-        let replied = Box(false)
-        let gate = AsyncGate()
-
-        service.fetchChild(generation: 4, repIndex: 1, childSeq: 5, relativePath: "sub/file.txt") {
-            _, _ in
-            replied.value = true
-            gate.notify()
-        }
-
-        try await gate.wait { replied.value }
-        let snapshots = emissions.value.compactMap { $0 }
-        // A folder's children stream under the folder's name.
-        #expect(snapshots.first?.currentItemName == "Photos")
-        let final = try #require(snapshots.last)
-        #expect(final.bytesTransferred == 500_000)
-        // The folder's single file node is the counter's whole population.
-        #expect(final.fileCount == 1)
-        #expect(final.filesCompleted == 1)
     }
 
     @Test("a relay with no tracker wired pulls normally")

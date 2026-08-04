@@ -139,11 +139,6 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             }
         )
 
-        // Read lazily at offer/paste time so it tracks reconnects.
-        clipboardAgent.peerSupportsDirTree = { [weak controlAgent] in
-            controlAgent?.hostSupportsClipboardDirTree ?? false
-        }
-
         self.vsockConnection = vsockConnection
         self.clipboardAgent = clipboardAgent
         self.controlAgent = controlAgent
