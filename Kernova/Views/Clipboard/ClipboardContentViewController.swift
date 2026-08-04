@@ -30,8 +30,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private let summaryView = ClipboardSummaryView()
     private let concealedPreview = ClipboardConcealedPreviewView()
     private let commandBar = ClipboardCommandBarView()
-    private let enablementBanner = ClipboardEnablementBanner()
-    private lazy var bannerCollapsed = enablementBanner.heightAnchor.constraint(equalToConstant: 0)
     private let passthroughBanner = ClipboardPassthroughBanner()
     private lazy var passthroughBannerCollapsed = passthroughBanner.heightAnchor.constraint(
         equalToConstant: 0)
@@ -218,11 +216,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             container.addSubview(contentView)
         }
 
-        enablementBanner.translatesAutoresizingMaskIntoConstraints = false
-        enablementBanner.isHidden = true
-        enablementBanner.onEnable = { [weak self] in self?.openFileProviderSettings() }
-        container.addSubview(enablementBanner)
-
         passthroughBanner.translatesAutoresizingMaskIntoConstraints = false
         passthroughBanner.isHidden = true
         passthroughBanner.onTurnOff = { [weak self] in self?.disablePassthrough() }
@@ -250,12 +243,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         container.addSubview(statusBar)
 
         var constraints: [NSLayoutConstraint] = [
-            enablementBanner.topAnchor.constraint(equalTo: container.topAnchor),
-            enablementBanner.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            enablementBanner.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            bannerCollapsed,
-
-            passthroughBanner.topAnchor.constraint(equalTo: enablementBanner.bottomAnchor),
+            passthroughBanner.topAnchor.constraint(equalTo: container.topAnchor),
             passthroughBanner.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             passthroughBanner.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             passthroughBannerCollapsed,
@@ -426,7 +414,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 _ = clipService?.lastTransferIssue
                 _ = self.instance.vsockControlService?.agentStatus
                 _ = self.instance.agentStatus
-                _ = HostClipboardFileProvider.shared.availability
                 _ = self.instance.configuration.clipboardPassthroughEnabled
             },
             apply: { [weak self] in
@@ -500,7 +487,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
 
         applyStatus(status, canInstallKernovaAgent: canInstallKernovaAgent)
-        updateEnablementBanner()
         updatePassthroughChrome()
         triggerPreviewMaterialization()
     }
@@ -527,31 +513,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     private func disablePassthrough() {
         viewModel?.updateConfiguration(of: instance) { $0.clipboardPassthroughEnabled = false }
-    }
-
-    /// Reveals the top-of-window banner for the host "Copy to Mac" File Provider
-    /// states that need attention.
-    private func updateEnablementBanner() {
-        let visible: Bool
-        switch HostClipboardFileProvider.shared.availability {
-        case .needsEnabling:
-            enablementBanner.present(.needsEnabling)
-            visible = true
-        case .unavailable:
-            enablementBanner.present(.unavailable)
-            visible = true
-        case .inactive, .ready:
-            visible = false
-        }
-        guard enablementBanner.isHidden == visible else { return }
-        enablementBanner.isHidden = !visible
-        bannerCollapsed.isActive = !visible
-    }
-
-    private func openFileProviderSettings() {
-        if !ClipboardFileProviderSettings.openEnablementSettings() {
-            Self.logger.error("Failed to open File Providers settings deep link")
-        }
     }
 
     /// Pulls the representations the window renders richly, when it is visible.

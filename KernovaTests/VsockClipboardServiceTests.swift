@@ -1017,19 +1017,6 @@ struct VsockClipboardServiceTests {
         }
     }
 
-    /// Thread-safe recorder for the `pullStagedFile` `onProgress` callbacks,
-    /// which fire off the main actor on the transfer's serial queue.
-    private final class RelayProgressLog: @unchecked Sendable {
-        private let lock = NSLock()
-        private var entries: [(bytes: UInt64, total: UInt64)] = []
-        func record(_ bytes: UInt64, _ total: UInt64) {
-            lock.withLock { entries.append((bytes, total)) }
-        }
-        var all: [(bytes: UInt64, total: UInt64)] { lock.withLock { entries } }
-        var last: (bytes: UInt64, total: UInt64)? { lock.withLock { entries.last } }
-        var count: Int { lock.withLock { entries.count } }
-    }
-
     @Test("An offer publishes metadata-only .pendingRemote placeholders and sends no request")
     func offerPublishesPlaceholdersWithoutRequesting() async throws {
         let (guest, host) = try makePair()
@@ -1685,116 +1672,6 @@ struct VsockClipboardServiceTests {
         #expect(responder.requests.isEmpty)
     }
 
-    @Test("a superseding offer retracts this service's coordinator offer; same-offer ops don't")
-    func supersedingOfferClearsCoordinatorOffer() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let coordinator = FakeHostClipboardDomainCoordinator()
-        let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", fileProvider: coordinator)
-        service.start()
-        defer { service.stop() }
-
-        // gen=1: the first offer has nothing to supersede, and building its
-        // metadata placeholder must not clear the coordinator's offer state.
-        try guest.send(
-            makeOffer(
-                generation: 1,
-                reps: [(uti: "public.data", byteCount: 10, filename: "a.bin", isInline: false)]))
-        try await waitForChange { service.clipboardContent.representations.count == 1 }
-        #expect(coordinator.clearCount == 0)
-
-        // Promising the SAME offer (no new generation) must not clear either —
-        // only a genuine new offer retracts.
-        _ = service.materializeForCopy()
-        #expect(coordinator.clearCount == 0)
-
-        // gen=2 supersedes the live gen=1 promise → clearOffer invoked exactly once.
-        try guest.send(
-            makeOffer(
-                generation: 2,
-                reps: [(uti: "public.data", byteCount: 20, filename: "b.bin", isInline: false)]))
-        try await waitForChange { service.clipboardContent.representations.first?.filename == "b.bin" }
-        #expect(coordinator.clearCount == 1)
-    }
-
-    @Test("pullStagedFile for a stale generation returns noCurrentOffer")
-    func pullStagedFileStaleGenerationFails() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
-        service.start()
-        defer { service.stop() }
-
-        try guest.send(
-            makeOffer(
-                generation: 20,
-                reps: [(uti: "public.data", byteCount: 100, filename: "f.bin", isInline: false)]))
-        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
-
-        // A pull for a generation that isn't the current offer resolves to
-        // noCurrentOffer (the relay maps it to .noSuchItem), without a vsock pull.
-        let outcome = await offCooperativePool {
-            service.pullStagedFile(generation: 999, repIndex: 0)
-        }
-        guard case .failure(.noCurrentOffer) = outcome else {
-            Issue.record("Expected noCurrentOffer, got \(outcome)")
-            return
-        }
-    }
-
-    @Test("pullStagedFile forwards cumulative byte progress via onProgress")
-    func pullStagedFileForwardsProgress() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
-        service.start()
-        defer { service.stop() }
-
-        // > one 64 KiB chunk so at least one intermediate progress callback fires
-        // before the final one carrying bytes == total.
-        let fileBytes = Data((0..<(200 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
-        let responder = FakeGuestResponder(guest: guest)
-        defer { responder.cancel() }
-        responder.register(
-            generation: 40, repIndex: 0, uti: "public.data", bytes: fileBytes,
-            filename: "big.bin", isInline: false)
-        responder.start()
-
-        try guest.send(
-            makeOffer(
-                generation: 40,
-                reps: [(uti: "public.data", byteCount: fileBytes.count, filename: "big.bin", isInline: false)]))
-        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
-
-        let log = RelayProgressLog()
-        let outcome = await offCooperativePool {
-            service.pullStagedFile(
-                generation: 40, repIndex: 0, onProgress: { log.record($0, $1) })
-        }
-        guard case .success = outcome else {
-            Issue.record("Expected pullStagedFile to succeed, got \(outcome)")
-            return
-        }
-
-        // The relay forwarded cumulative, non-decreasing progress ending at the
-        // total — the byte stream that drives the in-app bar and paste readout.
-        #expect(log.count >= 1)
-        #expect(log.last?.bytes == UInt64(fileBytes.count))
-        #expect(log.last?.total == UInt64(fileBytes.count))
-        let byteSequence = log.all.map(\.bytes)
-        #expect(byteSequence == byteSequence.sorted())
-    }
-
     @Test(
         "the toggle-off Copy-to-Mac pull shows an aggregate readout, cleared at the terminal (#354, #652)"
     )
@@ -1850,7 +1727,7 @@ struct VsockClipboardServiceTests {
     }
 
     @Test(
-        "A control frame arriving while pullStagedFile blocks main does not stall stream-frame routing (#458)"
+        "A control frame arriving while a paste pull blocks main does not stall stream-frame routing (#458)"
     )
     func controlFrameDuringBlockingPullDoesNotStallRouting() async throws {
         let (guest, host) = try makePair()
@@ -1859,7 +1736,7 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         // RATIONALE: deliberately far BELOW `testWaitBackstop`, not ≥60 s. This
-        // test blocks the real main thread inside `pullStagedFile`, so this
+        // test blocks the real main thread inside `copyToMacFileURL`, so this
         // injected timeout is the ceiling on how long the whole bundle's
         // MainActor can be held hostage if the fast path loses — every
         // concurrently running test's waits freeze for exactly this long. A
@@ -1868,14 +1745,14 @@ struct VsockClipboardServiceTests {
         // blast radius while staying orders of magnitude above the genuine
         // ms-scale delivery (the responder runs on the now-unpoisoned
         // cooperative pool — see `offCooperativePool`). Under a #458
-        // regression the pull resolves `.pullFailed` when this fires, so the
+        // regression the pull resolves to nothing when this fires, so the
         // test fails either way and the value's size never masks it.
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: .seconds(5))
         service.start()
         defer { service.stop() }
 
-        // A single lazy-eligible file rep (non-inline, named) — pullStagedFile's target.
+        // A single lazy-eligible file rep (non-inline, named) — the paste pull's target.
         try guest.send(
             makeOffer(
                 generation: 30,
@@ -1893,7 +1770,7 @@ struct VsockClipboardServiceTests {
         // stream frames that resolve the pull. `.detached` (not plain `Task {}`,
         // which would inherit this MainActor test struct's isolation) so this
         // truly never touches the host's main actor and isn't blocked by the
-        // pullStagedFile call below; it is the guest-side analog of the "peer
+        // copyToMacFileURL call below; it is the guest-side analog of the "peer
         // keeps talking while we're mid-transfer" scenario.
         let responderTask = Task.detached {
             for try await frame in guest.incoming {
@@ -1937,7 +1814,7 @@ struct VsockClipboardServiceTests {
         }
         defer { responderTask.cancel() }
 
-        // The toggle-off paste `provide` callback calls this directly on main — a
+        // The pasteboard `provide` callback calls this directly on main — a
         // real synchronous block of the main thread, exactly like production.
         // Under the old `await onControlFrame` code this would hang until the
         // lazyPullTimeout backstop fired and resolved to `.pullFailed`: the
@@ -1947,12 +1824,11 @@ struct VsockClipboardServiceTests {
         // consume loop dispatches the control frame fire-and-forget and keeps
         // draining — Begin/Chunk/End route immediately regardless of main being
         // blocked — so this resolves promptly.
-        let outcome = service.pullStagedFile(generation: 30, repIndex: 0)
-        guard case .success(let path) = outcome else {
-            Issue.record("Expected pullStagedFile to succeed, got \(outcome)")
+        guard let url = service.copyToMacFileURL(generation: 30, repIndex: 0) else {
+            Issue.record("Expected copyToMacFileURL to serve the rep")
             return
         }
-        #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == payload)
+        #expect(try Data(contentsOf: url) == payload)
 
         // The interleaved control frame wasn't dropped — it's processed
         // fire-and-forget, so it surfaces once main frees up.
@@ -2913,85 +2789,5 @@ extension [CopyToMacItem] {
             default: nil
             }
         }
-    }
-}
-
-/// Records the service's host File Provider coordinator calls and returns canned
-/// URLs, so paste-time routing and the copy-click advisory can be asserted
-/// without a live domain — the host analog of the guest's `FakeFileProviderPublisher`.
-///
-/// `@MainActor` matching the protocol: every call arrives on the main actor (the
-/// service invokes it there, and `copyToMacFileURL`'s thread-hop re-enters main),
-/// so the recorded state needs no lock.
-@MainActor
-final class FakeHostClipboardDomainCoordinator: HostClipboardDomainCoordinating {
-    struct Published: Equatable {
-        let generation: UInt64
-        let repIndex: Int
-        let filename: String
-        let byteCount: UInt64
-        let uti: String
-    }
-
-    var availability: FileProviderAvailability
-    /// The domain root `publishItemsForPaste` builds its returned URLs under.
-    ///
-    /// `nil` models an unusable File Provider (the publish declines, callers fall
-    /// back). Mutable so a test can model the domain becoming usable between two
-    /// paste fires — the paste-time re-check that replaced the #429 re-publish.
-    var rootToReturn: URL?
-
-    private(set) var published: [Published] = []
-    private(set) var publishedFolders: [FileProviderPublishFolder] = []
-    private(set) var publishCallCount = 0
-    /// Source name the most recent publish carried, for the paste readout.
-    private(set) var publishedSourceName: String?
-    private(set) var startCount = 0
-    private(set) var stopCount = 0
-    private(set) var clearCount = 0
-    private(set) var prepareCount = 0
-
-    init(availability: FileProviderAvailability = .inactive, rootToReturn: URL? = nil) {
-        self.availability = availability
-        self.rootToReturn = rootToReturn
-    }
-
-    func serviceDidStart() { startCount += 1 }
-    func serviceDidStop(_ source: any HostClipboardFileRepProviding) { stopCount += 1 }
-    func prepareForCopy() { prepareCount += 1 }
-
-    /// The tracker the most recent publish pointed the shared domain at.
-    private(set) var publishedProgressTracker: ClipboardProgressTracker?
-    /// Every snapshot the service pushed, newest last (`nil` entries are clears).
-    private(set) var progressUpdates: [ClipboardProgressSnapshot?] = []
-
-    func publishItemsForPaste(
-        source: any HostClipboardFileRepProviding, generation: UInt64, sourceName: String,
-        progressTracker: ClipboardProgressTracker?, items: [FileProviderPublishItem],
-        folders: [FileProviderPublishFolder]
-    ) -> [Int: URL]? {
-        publishCallCount += 1
-        publishedSourceName = sourceName
-        publishedProgressTracker = progressTracker
-        published.append(
-            contentsOf: items.map {
-                Published(
-                    generation: generation, repIndex: $0.repIndex, filename: $0.filename,
-                    byteCount: $0.byteCount, uti: $0.uti)
-            })
-        publishedFolders.append(contentsOf: folders)
-        guard let root = rootToReturn else { return nil }
-        var urls: [Int: URL] = [:]
-        for item in items { urls[item.repIndex] = root.appendingPathComponent(item.filename) }
-        for folder in folders { urls[folder.repIndex] = root.appendingPathComponent(folder.filename) }
-        return urls
-    }
-
-    func clearOffer(from source: any HostClipboardFileRepProviding) { clearCount += 1 }
-
-    func progressChanged(
-        from source: any HostClipboardFileRepProviding, _ snapshot: ClipboardProgressSnapshot?
-    ) {
-        progressUpdates.append(snapshot)
     }
 }

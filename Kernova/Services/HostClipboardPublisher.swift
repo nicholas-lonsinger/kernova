@@ -84,7 +84,7 @@ final class HostClipboardPublisher {
         var specs = await Self.hostPasteboardItems(
             for: ClipboardContent(representations: resolvedReps), generation: generation,
             staging: staging)
-        if let repProvider = service as? any HostClipboardFileRepProviding {
+        if let repProvider = service as? any ClipboardPasteboardRepProviding {
             specs += Self.promisedItemSpecs(for: promises, provider: repProvider)
         }
 
@@ -152,7 +152,7 @@ final class HostClipboardPublisher {
     /// off-main; the offer's paste-bound total is size-capped so the pull and
     /// stage complete within the OS paste deadline.
     nonisolated static func promisedItemSpecs(
-        for promises: [CopyToMacPromise], provider: any HostClipboardFileRepProviding
+        for promises: [CopyToMacPromise], provider: any ClipboardPasteboardRepProviding
     ) -> [PasteboardItemSpec] {
         let descriptors = promises.map {
             ClipboardRepresentationDescriptor(

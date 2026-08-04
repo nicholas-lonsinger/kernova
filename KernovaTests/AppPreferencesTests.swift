@@ -84,25 +84,6 @@ struct AppPreferencesTests {
         }
     }
 
-    @Test("fileProviderReminderDismissed defaults to false")
-    func fileProviderReminderDismissedDefaultsToFalse() throws {
-        try withEphemeralPreferences { prefs, _ in
-            #expect(prefs.fileProviderReminderDismissed == false)
-        }
-    }
-
-    @Test("fileProviderReminderDismissed round-trips through UserDefaults")
-    func fileProviderReminderDismissedRoundTrips() throws {
-        try withEphemeralPreferences { prefs, defaults in
-            prefs.fileProviderReminderDismissed = true
-            #expect(prefs.fileProviderReminderDismissed == true)
-            #expect(defaults.bool(forKey: "fileProviderReminderDismissed") == true)
-
-            prefs.fileProviderReminderDismissed = false
-            #expect(prefs.fileProviderReminderDismissed == false)
-        }
-    }
-
     @Test("keepInMenuBarOnQuit defaults to true")
     func keepInMenuBarOnQuitDefaultsToTrue() throws {
         try withEphemeralPreferences { prefs, _ in
@@ -231,16 +212,14 @@ struct AppPreferencesTests {
         }
     }
 
-    @Test("resetHostReminders clears both host reminder flags")
-    func resetHostRemindersClearsBothFlags() throws {
+    @Test("resetHostReminders clears the host reminder flag")
+    func resetHostRemindersClearsTheFlag() throws {
         try withEphemeralPreferences { prefs, _ in
             prefs.menuBarQuitReminderDismissed = true
-            prefs.fileProviderReminderDismissed = true
 
             prefs.resetHostReminders()
 
             #expect(prefs.menuBarQuitReminderDismissed == false)
-            #expect(prefs.fileProviderReminderDismissed == false)
         }
     }
 
@@ -250,7 +229,6 @@ struct AppPreferencesTests {
             prefs.resetHostReminders()
 
             #expect(prefs.menuBarQuitReminderDismissed == false)
-            #expect(prefs.fileProviderReminderDismissed == false)
         }
     }
 }

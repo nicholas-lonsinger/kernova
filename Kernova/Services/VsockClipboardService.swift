@@ -53,7 +53,9 @@ final class VsockClipboardService: ClipboardServicing {
     /// new request-time archive supersedes older temps instead of accumulating.
     private var sendArchiveGeneration: UInt64 = 1
 
-    private let fileProvider: any HostClipboardDomainCoordinating
+    /// App-level aggregate this VM's readout feeds, so the menu-bar status item
+    /// shows one progress readout across every live VM.
+    private let progressCenter: ClipboardProgressCenter
 
     /// Backstop for a lazy pull the peer never answers while the channel stays
     /// open.
@@ -76,8 +78,8 @@ final class VsockClipboardService: ClipboardServicing {
     private var outboundSession: (generation: UInt64, token: ClipboardProgressTracker.SessionToken)?
 
     /// Synchronous-blocking pull machinery for representations served inside a
-    /// pasteboard `provideData` callback (on-main) and the File Provider relay
-    /// (off-main).
+    /// pasteboard `provideData` callback, on whichever thread the pasteboard
+    /// server fires it (usually main).
     ///
     /// A paste-time pull can target a rep the async preview `pull` has in
     /// flight under the same `transfer_id`; that is safe by construction: the
@@ -177,12 +179,12 @@ final class VsockClipboardService: ClipboardServicing {
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
         stagingTempRoot: URL? = nil,
-        fileProvider: any HostClipboardDomainCoordinating = HostClipboardFileProvider.shared
+        progressCenter: ClipboardProgressCenter = .shared
     ) {
         self.channel = channel
         self.label = label
         self.lazyPullTimeout = lazyPullTimeout
-        self.fileProvider = fileProvider
+        self.progressCenter = progressCenter
         let tempRoot =
             stagingTempRoot
             ?? FileProviderContainer(config: .host()).stagingRootURL()
@@ -211,8 +213,6 @@ final class VsockClipboardService: ClipboardServicing {
         staging.sweep()
         sendStaging.sweep()
         isConnected = true
-        // Idempotent across the per-VM services that share the domain.
-        fileProvider.serviceDidStart()
 
         let sender = ClipboardStreamSender(channel: channel)
         let receiver = ClipboardStreamReceiver(
@@ -273,8 +273,6 @@ final class VsockClipboardService: ClipboardServicing {
         isConnected = false
         pendingOutbound = nil
         currentOutboundGeneration.set(0)
-        // Clears this service's File Provider offer before releasing it as the
-        // relay source below.
         dropInboundPromise()
         // Every session, not just the outbound one: a materialization loop parked
         // on a pull this teardown failed would leave its readout up for a gone VM.
@@ -285,22 +283,23 @@ final class VsockClipboardService: ClipboardServicing {
         publishProgress(nil)
         staging.sweep()
         sendStaging.sweep()
-        // Ref-count down the shared domain; the last service tears it down.
-        fileProvider.serviceDidStop(self)
+        // Unconditional, unlike `publishProgress`'s change-guarded push: a stopped
+        // VM's last snapshot would otherwise pin the status item's readout.
+        progressCenter.progressChanged(from: self, nil)
         Self.logger.notice("Vsock clipboard service stopped for '\(self.label, privacy: .public)'")
     }
 
     // MARK: - Transfer progress
 
     /// Publishes the tracker's latest snapshot to this service's own surfaces and
-    /// to the app-level coordinator that drives the menu-bar status item.
+    /// to the app-level center that drives the menu-bar status item.
     private func publishProgress(_ snapshot: ClipboardProgressSnapshot?) {
         // A stopped service shows nothing: emissions reach here through a queue
         // hop, so one dispatched just before teardown can land just after it.
         let next = isConnected ? snapshot : nil
         guard next != transferProgress else { return }
         transferProgress = next
-        fileProvider.progressChanged(from: self, next)
+        progressCenter.progressChanged(from: self, next)
     }
 
     /// The outbound session measuring what this side is streaming for `generation`,
@@ -601,12 +600,9 @@ final class VsockClipboardService: ClipboardServicing {
 
     private func handleOffer(_ offer: Kernova_V1_ClipboardOffer) {
         // A newer offer supersedes the previous one: cancel any in-flight pull so
-        // its partial temp file is deleted and a blocked continuation resumes, and
-        // retract the paste-published placeholder so the superseded offer's dirents
-        // don't linger in "Kernova Clipboard (Mac)".
+        // its partial temp file is deleted and a blocked continuation resumes.
         if let previous = inboundPromise {
             receiver?.cancel(generation: previous.generation)
-            fileProvider.clearOffer(from: self)
         }
 
         guard !offer.repInfo.isEmpty else {
@@ -689,17 +685,12 @@ final class VsockClipboardService: ClipboardServicing {
         lastInboundPublishedDigest = content.digest
     }
 
-    /// Drops the current inbound promise and its per-generation lazy-pull state,
-    /// and retracts this service's host File Provider offer.
+    /// Drops the current inbound promise and its per-generation lazy-pull state.
     private func dropInboundPromise() {
         inboundPromise = nil
         previewMaterializationStarted = 0
         lastInboundPublishedDigest = nil
-        // Directly, not via the shared domain: `clearOffer(from:)` is source-guarded
-        // so a superseded VM's call is a no-op there, leaving this VM's own tracker
-        // holding an offer nothing will ever clear.
         progress.offerCleared()
-        fileProvider.clearOffer(from: self)
     }
 
     /// Drops any `.pendingRemote` placeholder reps — content that can't be
@@ -1026,7 +1017,7 @@ final class VsockClipboardService: ClipboardServicing {
             date: Date())
     }
 
-    // MARK: - Synchronous blocking pull (paste-time provider + File Provider relay)
+    // MARK: - Synchronous blocking pull (paste-time provider)
 
     /// Immutable, `Sendable` snapshot of the state a synchronous file pull needs,
     /// captured on the main actor before the pull blocks its calling thread.
@@ -1198,28 +1189,9 @@ final class VsockClipboardService: ClipboardServicing {
     }
 }
 
-// MARK: - Host File Provider relay pull
+// MARK: - Paste-time representation serving
 
-extension VsockClipboardService: HostClipboardFileRepProviding {
-    /// Synchronously pulls the file rep `(generation, repIndex)` and returns the
-    /// path of its staged file in the host app-group container.
-    ///
-    /// Blocking main is safe: the stream receive runs on `consume`'s own
-    /// cooperative thread, which routes control frames to main fire-and-forget and
-    /// so never parks waiting on this thread.
-    nonisolated func pullStagedFile(
-        generation: UInt64, repIndex: Int,
-        onProgress: @escaping @Sendable (UInt64, UInt64) -> Void = { _, _ in }
-    ) -> Result<String, FileProviderPullError> {
-        let snapshot = onMain { self.lazyPullSnapshot(generation: generation, repIndex: repIndex) }
-        guard let snapshot else { return .failure(.noCurrentOffer) }
-        guard let rep = performBlockingPull(snapshot, onProgress: onProgress), let url = rep.fileURL
-        else {
-            return .failure(.pullFailed)
-        }
-        return .success(url.path)
-    }
-
+extension VsockClipboardService: ClipboardPasteboardRepProviding {
     /// Serves the pasteboard `.fileURL` for a promised rep at paste time: the
     /// materialization cache first, else the deadline-bound blocking pull.
     ///
@@ -1342,24 +1314,6 @@ extension VsockClipboardService: HostClipboardFileRepProviding {
         Thread.isMainThread
             ? MainActor.assumeIsolated { body() }
             : DispatchQueue.main.sync { MainActor.assumeIsolated { body() } }
-    }
-
-    /// Aborts an in-flight `pullStagedFile` for `(generation, repIndex)`.
-    ///
-    /// Addresses the transfer purely by its deterministic `transferID`, never by
-    /// re-validating `generation` against the current offer, so a cancel arriving
-    /// after a newer offer superseded this one still reaches the receiver's
-    /// bookkeeping for that id. Marking the id pre-cancelled on `lazyCoordinator`
-    /// covers a cancel that arrives before `performBlockingPull` has called
-    /// `coordinator.pull` at all, which `receiver.cancel(transferID:)` cannot.
-    nonisolated func cancelStagedPull(generation: UInt64, repIndex: Int) {
-        let transferID = ClipboardTransferID.make(
-            generation: generation, repIndex: repIndex, hostMinted: true)
-        let receiver = onMain { self.receiver }
-        Self.logger.notice(
-            "Cancelling file clipboard pull \(transferID, privacy: .public) on consumer request")
-        receiver?.cancel(transferID: transferID)
-        lazyCoordinator.cancelBeforeStart(transferID)
     }
 }
 

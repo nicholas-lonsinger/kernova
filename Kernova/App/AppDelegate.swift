@@ -227,13 +227,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     // MARK: - Entry Point
 
     static func main() {
-        // Removes the host clipboard File Provider domain so no Finder location
-        // lingers. Must run before any NSApplication setup so it works headless.
-        if CommandLine.arguments.contains("--remove-clipboard-domain") {
-            FileProviderDomainHost.removeAllDomainsBlocking()
-            exit(0)
-        }
-
         let isTestHost = ProcessInfo.processInfo.isRunningXCTests
         let app = NSApplication.shared
 
@@ -294,8 +287,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         if isTestHost {
             // None of the resident-app machinery (status item, activation-policy
-            // switching, File Provider domain) runs in the test host, so CI unit
-            // tests never register login items or FP domains.
+            // switching) runs in the test host, so CI unit tests never register
+            // login items.
             let windowController = MainWindowController(viewModel: viewModel)
             windowController.showWindow(nil)
             mainWindowController = windowController

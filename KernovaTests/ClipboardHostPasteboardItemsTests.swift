@@ -198,7 +198,7 @@ struct ClipboardHostPasteboardItemsTests {
 
     /// Records the paste-time fires `promisedItemSpecs` routes to a clipboard
     /// service, returning canned values — no service, no wire.
-    private final class RecordingRepProvider: HostClipboardFileRepProviding, @unchecked Sendable {
+    private final class RecordingRepProvider: ClipboardPasteboardRepProviding, @unchecked Sendable {
         private let lock = NSLock()
         private var fileURLCallsStorage: [(generation: UInt64, repIndex: Int)] = []
         private var dataCallsStorage: [(generation: UInt64, repIndex: Int, uti: String)] = []
@@ -215,11 +215,6 @@ struct ClipboardHostPasteboardItemsTests {
             lock.withLock { fileURLCallsStorage.count + dataCallsStorage.count }
         }
 
-        func pullStagedFile(
-            generation: UInt64, repIndex: Int,
-            onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
-        ) -> Result<String, FileProviderPullError> { .failure(.pullFailed) }
-        func cancelStagedPull(generation: UInt64, repIndex: Int) {}
         func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? {
             lock.withLock { fileURLCallsStorage.append((generation, repIndex)) }
             return urlToReturn
