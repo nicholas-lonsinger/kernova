@@ -241,8 +241,8 @@ final class VsockClipboardService: ClipboardServicing {
                 channel: channel, label: label, sender: sender, receiver: receiver,
                 onControlFrame: { [weak self] frame in
                     // Fire-and-forget: awaiting the main-actor hop would halt
-                    // stream-frame routing while main is blocked in a toggle-off
-                    // paste's `performBlockingPull`. Serial `DispatchQueue.main`
+                    // stream-frame routing while main is blocked in a paste's
+                    // `performBlockingPull`. Serial `DispatchQueue.main`
                     // preserves control-frame FIFO order; a per-frame Task would not.
                     DispatchQueue.main.async {
                         MainActor.assumeIsolated { self?.handleControlFrame(frame) }

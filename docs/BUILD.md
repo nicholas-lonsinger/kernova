@@ -54,7 +54,7 @@ Only CI keeps the explicit `-derivedDataPath DerivedData/Kernova` — the Makefi
 
 The default-mode folder hash is a pure function of the `.xcodeproj` path — MD5 the path's UTF-8 bytes, split the digest into two big-endian 64-bit halves, render each half as 14 base-26 letters (`a`–`z`) most-significant first — verified against every live arena's recorded `info.plist` `WorkspacePath`. Because it needs only the path *string*, a torn-down worktree's arena stays locatable after the worktree is gone.
 
-`Tools/arena-label.sh` runs that mapping backwards for display: given an arena, or any path inside one down to an `.appex`, it reads the recorded `WorkspacePath` and prints the checkout it belongs to. That is why `make ghosts` and `make doctor` never print a bare `Kernova-<hash>` a reader would have to resolve by hand.
+`Tools/arena-label.sh` runs that mapping backwards for display: given an arena, or any path inside one, it reads the recorded `WorkspacePath` and prints the checkout it belongs to. That is why `make ghosts` and `make doctor` never print a bare `Kernova-<hash>` a reader would have to resolve by hand.
 
 `make clean` removes both the in-worktree `DerivedData/` and the resolved arena, through `Tools/ghosts.sh --evict`. **Never `rm -rf` an arena directly** — eviction unregisters the bundles inside it first, and a bare delete strands Launch Services registrations pointing into the hole, generating the very ghosts `make clean-ghosts` then has to sweep. Eviction also refuses an arena a running app is executing from.
 

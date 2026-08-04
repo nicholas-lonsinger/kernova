@@ -188,7 +188,7 @@ evict_dd_arena() {
 # failed sweep can never fail the checkout that triggered it, skips anything
 # a process is still running from, and skips the fix path's re-dump
 # verification — `make ghosts` still reports anything left behind. Unlike
-# --fix it never terminates the extension blocking an arena: the sweep runs
+# --fix it never terminates a process blocking an arena: the sweep runs
 # unattended from a git hook, and the next worktree creation sweeps again.
 if [ "$SWEEP" = 1 ]; then
     while IFS= read -r path; do

@@ -2223,18 +2223,6 @@ struct VsockGuestClipboardAgentTests {
         try await waitUntil { agent.liveChannelForTesting == nil }
     }
 
-    // MARK: - Lazy inbound drivers (act as the host sender)
-
-    /// Kicks off a lazy paste off the test's main actor.
-    ///
-    /// The agent's `provideData` callback BLOCKS the calling thread until the
-    /// streamed bytes (or a file URL) land, so it must run off the test's main
-    /// actor. Returns a `Task` whose `.value` is the bytes the provider produced
-    /// (the inline bytes for a UTI type, a `file://` URL string for `.fileURL`,
-    /// or `nil` on abort/timeout/disk-full).
-    ///
-    /// The caller streams the response on the host channel concurrently — e.g.
-    /// via `driveInboundStream` — before awaiting `.value`.
     // MARK: - UI activity seam
 
     @Test("outbound offer sets clipboard activity to .offeredToHost")
@@ -2357,6 +2345,18 @@ struct VsockGuestClipboardAgentTests {
         #expect(await MainActor.run { agent.clipboardActivity } == .enabled)
     }
 
+    // MARK: - Lazy inbound drivers (act as the host sender)
+
+    /// Kicks off a lazy paste off the test's main actor.
+    ///
+    /// The agent's `provideData` callback BLOCKS the calling thread until the
+    /// streamed bytes (or a file URL) land, so it must run off the test's main
+    /// actor. Returns a `Task` whose `.value` is the bytes the provider produced
+    /// (the inline bytes for a UTI type, a `file://` URL string for `.fileURL`,
+    /// or `nil` on abort/timeout/disk-full).
+    ///
+    /// The caller streams the response on the host channel concurrently — e.g.
+    /// via `driveInboundStream` — before awaiting `.value`.
     private func lazyPull(
         _ pasteboard: FakePasteboard, forType type: NSPasteboard.PasteboardType,
         itemIndex: Int? = nil

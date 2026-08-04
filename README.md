@@ -51,8 +51,7 @@ Requires macOS 26 (Tahoe) or later on Apple Silicon.
 ### Guest integration
 
 - **Guest agent (macOS guests)** — a lightweight in-guest menu-bar helper, installed from an attachable installer disk, reporting status and version to the host over vsock
-- **Clipboard sync** — bidirectional host↔guest text, rich text, images, and multiple files or entire folders, with no size cap, integrity verification, and live transfer progress in a dedicated clipboard window. Concealed and password content shows a locked placeholder; transient snapshots aren't synced. macOS guests sync over the vsock agent, Linux guests sync text only via spice-vdagent
-- **Lazy file transfer** — File Providers on both sides materialize pasted files on demand rather than up front, in either direction
+- **Clipboard sync** — bidirectional host↔guest text, rich text, images, and multiple files or entire folders. Copying is instant in either direction: only a paste moves bytes, up to 2 GB of files per paste, with integrity verification and live transfer progress in a dedicated clipboard window. Concealed and password content shows a locked placeholder; transient snapshots aren't synced. macOS guests sync over the vsock agent, Linux guests sync text only via spice-vdagent
 - **Log forwarding (macOS guests)** — opt-in per VM and live-toggleable; the guest's `os.Logger` records surface on the host in Console.app under the `app.kernova.guest` subsystem
 
 <p align="center">
@@ -85,7 +84,7 @@ Then open `Kernova.xcodeproj`, select the `Kernova` scheme, and build and run (�
 
 `make doctor` checks that your toolchain, signing team, and hooks match what Kernova needs. `make` with no arguments lists every build, test, format, and lint target.
 
-**Debug signs with *any* team** — no Apple Developer Program membership or developer-portal setup needed, just `make bootstrap`. **Release** additionally requires a paid membership and a distribution identity (Developer ID, or Apple Distribution for the Mac App Store) and fails to sign without one; it matters only when cutting a distributable build. The per-configuration app-group and signing story is in [docs/SANDBOX.md](docs/SANDBOX.md).
+**Debug signs with *any* team** — no Apple Developer Program membership or developer-portal setup needed, just `make bootstrap`. **Release** additionally requires a paid membership and a distribution identity (Developer ID, or Apple Distribution for the Mac App Store) and fails to sign without one; it matters only when cutting a distributable build. The signing story is in [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Testing
 

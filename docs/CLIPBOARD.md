@@ -14,8 +14,8 @@ Structural facts live in [ARCHITECTURE.md](ARCHITECTURE.md); UI philosophy in
 - **The reference target is native macOS.** The yardstick for every decision: *what would this
   copy/paste do if both ends were the same Mac?* Match that on capability; match or beat it on
   resource cost. For the cross-boundary behavior the model is Universal Clipboard between two
-  devices — advertise metadata on copy, transfer the bytes on demand at paste, asynchronously and
-  without a blocking deadline. Never an eager broadcast, never a synchronous blocking pull.
+  devices — advertise metadata on copy, transfer the bytes on demand at paste. Never an eager
+  broadcast.
 
 **"On demand at paste" is not a platform guarantee — it is ours to build.** The guest's
 continuity-pasteboard advertiser (`useractivityd`, via pboard's remote layer) fetches a promised
@@ -57,12 +57,9 @@ prefer a path that does not either. Reach for disk only when the destination is 
 or the payload cannot responsibly stay in RAM — never as a reflexive intermediate copy. Preferred
 mechanisms, in order:
 
-1. **On-demand materialization (File Provider)** for file destinations: return from paste
-   *instantly* with a placeholder, then write the demanded bytes **once, directly to the
-   system-provided destination URL**, off the latency-sensitive thread.
-2. **Direct streaming into the served representation** for inline types, not a disk round-trip.
-3. **Bounded disk/mmap fallback**, only when neither is viable — notably very large *inline* data
-   that would otherwise risk the OS paste deadline.
+1. **Direct streaming into the served representation** for inline types, not a disk round-trip.
+2. **Bounded disk/mmap staging** when the destination is genuinely a file, and as the spill for
+   inline data too large to sit resident in RAM.
 
 **Kernova's own on-disk footprint for a transfer must approach zero beyond the destination file** —
 which the destination write does not violate, since native pays it too. An intermediate that
@@ -74,40 +71,40 @@ stream.
 
 Caveats this does **not** waive:
 
-- The **synchronous pasteboard provider API blocks and has no "still working" signal**, so a large
-  direct-to-RAM pull risks the OS paste deadline. Reserve it for inline content that comfortably
-  fits.
-- **macOS gates every File Provider domain behind an off-by-default System Settings switch**, so
-  every File Provider design needs a deadline-bound toggle-off fallback. Cap it on the **total**
-  of the offer's sync-bound representations, in both directions — the OS clock sees one paste as
-  one operation, not each file — and **refuse an over-total set whole** rather than delivering a
-  piecemeal subset, surfacing the refusal at copy time when the toggle is already known off. That
-  cap is accepted-under-constraint, not a §1 defect, and it vanishes once the File Provider is
-  enabled.
+- The **synchronous pasteboard provider API blocks and has no "still working" signal**: a promised
+  flavor's bytes are pulled inside the consumer's provide callback, against an OS paste deadline
+  nothing can signal into or extend. Reserve direct-to-RAM pulls for inline content that
+  comfortably fits.
+- **That deadline derives the one residual cap §1 admits** — a fixed bound on the **total** of one
+  paste's file representations, identical in both directions. The OS clock sees one paste as one
+  operation, not each file, so an over-cap offer is **refused whole**, at the Copy to Mac click
+  where one is in play, never delivered as a piecemeal subset. It is a permanent constraint of
+  serving pastes through this API, not a defect to dissolve; the figure and its derivation live
+  on `ClipboardStreamTuning.maxDeadlineSafePasteBytes`.
 - **Keep the two directions symmetric.** A capability that makes a payload lazy-eligible one way
   must make it lazy-eligible the other.
 
-### 3. Pay on consume (laziness is the rule)
+### 3. Pay on consume (the governing invariant)
 
-**Never read, hash, copy, archive, or materialize a payload until something actually consumes it.**
-Inbound content is published as a metadata-only placeholder; bytes are pulled only when a
-destination pastes that representation, or for the window's bounded preview pull (§5).
+**Bytes cross the host↔guest boundary only when a destination consumes them — a paste, or the
+window's bounded preview (§5). Every earlier moment — the copy, the offer, a passthrough
+auto-publish, the Copy to Mac click — handles metadata only.** Never read, hash, copy, archive,
+or materialize a payload before that moment.
 
-- **Routing is pay-on-consume too**: which mechanism serves a representation is decided inside the
-  provider closure on the first real paste, in both directions — not at offer time, not when a
-  Copy button is clicked. A placeholder that exists before a paste was built too early.
-- **A published representation is genuinely lazy only if *every* flavor it exposes is cheap to
-  produce at registration time**, not merely when we intend it to be consumed — the OS fetches
-  promised flavors on its own schedule (Scope). A dataless placeholder URL is cheap; a file
-  promise whose fulfillment runs the full pull is not, and will materialize the whole payload with
-  no paste issued. Where a flavor cannot be made cheap, scope the write `.currentHostOnly` (§10)
-  so the advertiser never processes it.
-- **Serializing a directory into an archive is materialization.** Retain the *source* folder and
-  walk it on demand so a folder paste pays for exactly the children the consumer materializes.
-  Only the fallback archives, deferred to **request** time and bounded by the cap (§2).
-- **Do not evict a placeholder after its paste**; removal stays scoped to supersession. A
-  fulfilled provider never re-fires, so removing the dirent dangles the pasteboard's cached URL
-  and breaks second pastes and drag-out.
+- **Routing is pay-on-consume too**: how a representation is served — cached bytes or a fresh
+  pull, resident or staged — is decided inside the provider closure on the first real paste, in
+  both directions; never at offer time, never when a Copy button is clicked.
+- **Registration must be cheap for *every* flavor a publication exposes** — the OS fetches
+  promised flavors on its own schedule (Scope), while a promise's fulfillment runs the full pull.
+  What squares those is the unconditional `.currentHostOnly` scope (§10): the advertiser never
+  processes the write, so no fetch fires without a real paste. A flavor that cannot ride that
+  protection must not be registered.
+- **Serializing a directory into an archive is materialization.** The offer carries the source
+  folder's stat-walk estimate and retains the folder itself; the archive is built only when a
+  paste requests the representation, bounded by the cap (§2).
+- **Do not evict a served artifact after its paste**; removal stays scoped to supersession. A
+  fulfilled provider never re-fires, so deleting the staged file behind a vended `public.file-url`
+  dangles the pasteboard's cached URL and breaks a second paste of the same content.
 
 ### 4. One data plane; gating is a checkpoint, not a fork
 
@@ -138,20 +135,16 @@ Preserve **every** representation the source offered and choose which to hand ov
 the destination asks. Dropping one — losing an inline image when syncing rich text — is a fidelity
 defect; round-trip equality with a native copy/paste is the bar.
 
-- **Directory fidelity rides File Provider item metadata, not the archive.** A placeholder tree
-  carries each node's kind, size, permissions, and mtime — including the root folder's own, without
-  which the pasted folder lands with an epoch date. Symlinks are recorded, never followed; empty
-  directories are enumerable containers; only **user** read/write/execute bits cross.
-- **Serve OS packages (`.app`, `.rtfd`) as plain folder containers.** A package-conforming
-  `contentType` makes the system fetch the container as one atomic file instead of enumerating its
-  children (observed live as Finder error -36, 2026-07-18). The pasted copy still opens as a
-  package, and a bundle's code signature lives in ordinary files a per-child copy preserves.
+- **Directory fidelity rides the archive's field-key set.** A folder crosses as an archive of its
+  tree, and what survives the round trip is exactly what `ClipboardDirectoryArchive`'s key set
+  carries — entry kinds, permissions, ownership, flags, timestamps, link targets, per-entry
+  digests. Changing directory fidelity means changing that key set, never bolting metadata on
+  through a side channel.
 - **Accepted gap: extended attributes cross on *no* paste path** — Finder tags,
-  `com.apple.quarantine`, `kMDItemWhereFroms` — because every path streams content bytes into a
-  freshly created destination file. Keep that uniform; one path carrying them alone would be a
-  worse inconsistency than dropping them everywhere. Carrying them on both paths is not
-  available: `NSFileProviderItem.extendedAttributes` admits only syncable-flagged names under a
-  ~32 KiB per-item budget.
+  `com.apple.quarantine`, `kMDItemWhereFroms`. A plain file streams content bytes into a freshly
+  created destination file, which cannot carry them, and the directory archive deliberately omits
+  them to match. Keep that uniform; one path carrying them alone would be a worse inconsistency
+  than dropping them everywhere.
 - **Do not chase destination-added metadata as a Kernova fidelity bug.** Finder stamps
   `com.apple.FinderInfo` on bundle-named directories it creates during a copy, which
   `codesign --verify --strict` reports as detritus on an otherwise byte-identical bundle (verified
@@ -174,7 +167,10 @@ detector. **It stays.**
 ### 8. Keep the latency-sensitive thread free
 
 The host main actor and the guest run loop are latency-sensitive. **They must never block on work
-that scales with payload size** — hashing, copying, archiving, or disk I/O.
+that scales with payload size** — hashing, copying, archiving, or disk I/O. The one sanctioned
+wait is serving the OS's synchronous promise callback (§2), which parks whichever thread the OS
+delivers it on until the pull resolves: parked is all it may be — the pull's payload-scaled stages
+still run elsewhere, and a failed or superseded transfer wakes it immediately (§9).
 
 - Off-actor is the floor, not the ceiling: payload-proportional stages that gate the *protocol*
   need separating from each other too. A staging write sitting between a chunk's arrival and the
@@ -204,7 +200,7 @@ toggle and (in gated mode) explicit user intent; gating (§4) is that explicit-i
 - **Every clipboard pasteboard write, on either side, is `.currentHostOnly`, unconditionally** —
   neither inbound guest content nor host-originated content may be re-advertised onward, and the
   scoping is also what stops the continuity advertiser fetching promised flavors at offer time
-  (§3). Verified 2026-07-16: a 1.5 GiB toggle-off offer sat 160 s with zero bytes pulled, and a
+  (§3). Verified 2026-07-16: a 1.5 GiB promised offer sat 160 s with zero bytes pulled, and a
   real paste still streamed immediately.
 - **Feature-channel admission is gated on the per-VM control handshake.** A feature listener
   refuses a connection while no control channel with a completed `Hello` exists for that VM, and a
@@ -217,9 +213,7 @@ toggle and (in gated mode) explicit user intent; gating (§4) is that explicit-i
 ### 11. Sandbox-forward by construction
 
 **New clipboard code must be written to be sandbox-safe from the start** — never reworked toward
-it later. Beyond AGENTS.md's sandbox rules: archive with AppleArchive, never `ditto`/`tar`/`zip`,
-and do not bake in assumptions a sandboxed extension could not satisfy — a sandboxed File Provider
-extension cannot open a vsock directly, so relay through the agent.
+it later. Beyond AGENTS.md's sandbox rules: archive with AppleArchive, never `ditto`/`tar`/`zip`.
 
 ### 12. Complexity is an acceptable price for a measurable win
 
@@ -231,16 +225,8 @@ complexity that does not move a real metric is just complexity, and is rejected.
 
 **Surface progress for any non-instant transfer, in both directions.** Terminal states —
 completion, error, abort — must clear the indicator; never leave a stuck bar. Progress UI is
-necessary but not sufficient: a deadline we cannot signal into (§2) is not solved by showing a
-bar, so for unbounded operations **prefer an API with no host-OS deadline**.
-
-**Do not build progress for an OS-owned surface without first proving that surface consumes it.**
-Finder's copy dialog does not: publication was log-proven full-duration in every live run, yet
-every captured frame — all paste shapes, clean host boot included — showed the indeterminate
-"Preparing to copy…" slide, never the byte-count "Copying…" presentation real consumption produces
-(2026-07-22). Its sweep animation parks at the track's left edge each cycle, so a glance mimics a
-determinate fill — classify from continuous capture, never sparse glances. The dialog also
-dismisses itself tens of seconds into a multi-GB pull.
+necessary but not sufficient: the OS paste deadline cannot be signaled into (§2), so a bar never
+substitutes for the cap that keeps a paste inside it.
 
 **Progress is aggregate per operation, never per file.** A session is one user-visible operation —
 a paste, a Copy to Mac, a preview fetch, one side serving a peer's pulls — and its bar climbs
@@ -249,9 +235,8 @@ done, when an indicator may appear, and when it comes down; every surface render
 publishes.
 
 - **Do not key a session by generation.** Inbound and outbound generations are independent counters
-  that both start at 1, and a preview fetch's generation equals the paste manifest's, so any
-  generation-keyed scheme merges unrelated operations. Key on a published manifest's denominators
-  where one exists, otherwise an opaque token.
+  that both start at 1, and a preview fetch's generation equals the paste's exactly, so any
+  generation-keyed scheme merges unrelated operations. Key sessions on an opaque token.
 - **Evaluate the reveal delay on each event, not from a timer**, so an operation finishing inside
   the gate never flashes UI and one stalled before its first byte shows nothing rather than a
   frozen bar. **Linger briefly after the last transfer** so a long paste reads 100 % rather than
@@ -294,9 +279,3 @@ Non-negotiable mechanics for how clipboard changes ship:
   dropped silently. There is **no legacy fallback**, and any behavior change requiring a guest
   reinstall **bumps the guest agent version**. Do not add back-compat decode paths for data that
   does not exist.
-- **A reinstalled guest agent does not replace its running File Provider extension.**
-  `fileproviderd` keeps the already-spawned extension process serving the domain across a
-  reinstall and relaunch. The install and uninstall scripts kill it; when replacing the bundle any
-  other way (Xcode build, manual copy), kill it yourself or reboot the guest before attributing
-  File Provider behavior to the new build (observed 2026-07-18: a fixed extension appeared to
-  still fail until the stale process was killed).
