@@ -26,6 +26,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     private(set) var installerMountedNames: [String] = []
     private(set) var installerMountedPurposes: [GuestAgentInstallerPurpose] = []
     private(set) var creationWizardCount = 0
+    private(set) var focusGuestDisplayInstances: [VMInstance] = []
 
     func presentError(_ message: String, title: String) {
         errors.append(message)
@@ -48,6 +49,9 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
         installerMountedPurposes.append(purpose)
     }
     func presentCreationWizard() { creationWizardCount += 1 }
+    func focusGuestDisplay(for instance: VMInstance) {
+        focusGuestDisplayInstances.append(instance)
+    }
 
     // MARK: - Mirror accessors (read like the former VM flags)
 
@@ -86,5 +90,6 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
         installerMountedNames.removeAll()
         installerMountedPurposes.removeAll()
         creationWizardCount = 0
+        focusGuestDisplayInstances.removeAll()
     }
 }

@@ -307,6 +307,16 @@ final class VMLibraryViewModel {
 
     // MARK: - Lifecycle
 
+    /// Surfaces the display a start/resume lands on: the detached window for
+    /// pop-out/fullscreen VMs, else keyboard focus in the inline guest display.
+    private func surfaceDisplay(for instance: VMInstance) {
+        if instance.configuration.displayPreference != .inline {
+            onOpenDisplayWindow?(instance)
+        } else {
+            presenter?.focusGuestDisplay(for: instance)
+        }
+    }
+
     func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async {
         // Dispatch on installContext, not status, so `.error` retries route through
         // the install pipeline too.
@@ -317,9 +327,7 @@ final class VMLibraryViewModel {
 
         if refuseIfDuplicateMachineIDConflict(instance) { return }
 
-        if instance.configuration.displayPreference != .inline {
-            onOpenDisplayWindow?(instance)
-        }
+        surfaceDisplay(for: instance)
         applyMatchWindowBootResolution(to: instance)
         do {
             try await lifecycle.start(instance, bootIntoRecovery: bootIntoRecovery)
@@ -617,9 +625,7 @@ final class VMLibraryViewModel {
         // own identity.
         if instance.isColdPaused, refuseIfDuplicateMachineIDConflict(instance) { return }
 
-        if instance.configuration.displayPreference != .inline {
-            onOpenDisplayWindow?(instance)
-        }
+        surfaceDisplay(for: instance)
         do {
             try await lifecycle.resume(instance)
         } catch {

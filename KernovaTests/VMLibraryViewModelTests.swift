@@ -1089,6 +1089,56 @@ struct VMLibraryViewModelTests {
         #expect(instance.status == .running)
     }
 
+    @Test("start of an inline-display VM asks the presenter to focus the guest display")
+    func startRequestsInlineGuestFocus() async {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        await viewModel.start(instance)
+
+        #expect(presenter.focusGuestDisplayInstances.count == 1)
+        #expect(presenter.focusGuestDisplayInstances.last === instance)
+    }
+
+    @Test("start of a pop-out VM opens the display window instead of requesting inline focus")
+    func startPopOutSkipsInlineGuestFocus() async {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        instance.configuration.displayPreference = .popOut
+        viewModel.instances.append(instance)
+
+        await viewModel.start(instance)
+
+        #expect(presenter.focusGuestDisplayInstances.isEmpty)
+    }
+
+    @Test("resume of an inline-display VM asks the presenter to focus the guest display")
+    func resumeRequestsInlineGuestFocus() async {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        instance.status = .paused
+        viewModel.instances.append(instance)
+
+        await viewModel.resume(instance)
+
+        #expect(presenter.focusGuestDisplayInstances.count == 1)
+        #expect(presenter.focusGuestDisplayInstances.last === instance)
+    }
+
+    @Test("resume of a pop-out VM opens the display window instead of requesting inline focus")
+    func resumePopOutSkipsInlineGuestFocus() async {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        instance.status = .paused
+        instance.configuration.displayPreference = .popOut
+        viewModel.instances.append(instance)
+
+        await viewModel.resume(instance)
+
+        #expect(presenter.focusGuestDisplayInstances.isEmpty)
+    }
+
     @Test("save delegates to lifecycle coordinator")
     func saveDelegates() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()

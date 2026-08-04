@@ -16,6 +16,14 @@ final class DetailContainerViewController: NSViewController {
     private var activeBackingViewID: UUID?
     private var stateObservation: ObservationLoop?
 
+    /// The VM whose inline guest display should take keyboard focus when it
+    /// appears, set at the moment of a user start, resume, or pop-in.
+    ///
+    /// The request is expired rather than fulfilled as soon as the user is
+    /// looking at or typing in something else, so the display never yanks
+    /// focus later than the action that requested it.
+    private var armedGuestFocusID: UUID?
+
     // MARK: - Detail content layer
 
     private let contentContainer = NSView()
@@ -88,6 +96,7 @@ final class DetailContainerViewController: NSViewController {
         for id in Array(backingViews.keys) {
             removeBackingView(for: id)
         }
+        armedGuestFocusID = nil
     }
 
     // MARK: - Detail content (empty state ⇆ router)
@@ -204,6 +213,13 @@ final class DetailContainerViewController: NSViewController {
     }
 
     private func updateDisplayState() {
+        // A pending focus request survives only while its VM stays selected:
+        // switching VMs mid-boot is user interaction, and fulfilling on a later
+        // re-select would be the late focus steal this exists to prevent.
+        if let armedID = armedGuestFocusID, armedID != viewModel.selectedInstance?.id {
+            armedGuestFocusID = nil
+        }
+
         // Ahead of the early return below: a hidden backing view stays attached and
         // constrained, so a VM whose Settings pane is up still reconfigures its
         // guest on every window resize unless the toggle reaches it here.
@@ -234,6 +250,15 @@ final class DetailContainerViewController: NSViewController {
             instance.status.hasActiveDisplay,
             instance.detailPaneMode == .display
         else {
+            // The armed VM's display is presentable but the user is looking
+            // elsewhere (Settings pane, popped out): the hand-off moment has
+            // passed, so expire the request instead of letting it fire on a
+            // later pane switch.
+            if let selected = viewModel.selectedInstance, armedGuestFocusID == selected.id,
+                selected.virtualMachine != nil, selected.status.hasActiveDisplay
+            {
+                armedGuestFocusID = nil
+            }
             if let currentID = activeBackingViewID, let current = backingViews[currentID] {
                 current.isHidden = true
                 Self.logger.debug("VM display hidden — detail content visible")
@@ -261,6 +286,15 @@ final class DetailContainerViewController: NSViewController {
             transitionText: instance.status.transitionLabel,
             automaticallyReconfiguresDisplay: instance.configuration.displayAutoResizes
         )
+
+        if armedGuestFocusID == instance.id {
+            armedGuestFocusID = nil
+            // A first responder inside a text-editing session means the user
+            // started typing somewhere since the request — leave them be.
+            if let window = view.window, !(window.firstResponder is NSText) {
+                window.makeFirstResponder(backing.machineView)
+            }
+        }
     }
 }
 
@@ -323,6 +357,15 @@ extension DetailContainerViewController: VMLibraryPresenting {
 
     func presentInstallerMounted(vmName: String, purpose: GuestAgentInstallerPurpose) {
         alertsPresenter.presentInstallerMounted(vmName: vmName, purpose: purpose)
+    }
+
+    func focusGuestDisplay(for instance: VMInstance) {
+        guard let window = view.window else { return }
+        if let backing = backingViews[instance.id], !backing.isHidden {
+            window.makeFirstResponder(backing.machineView)
+        } else {
+            armedGuestFocusID = instance.id
+        }
     }
 
     func presentCreationWizard() {

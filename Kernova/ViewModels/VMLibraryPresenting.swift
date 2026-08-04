@@ -58,4 +58,10 @@ protocol VMLibraryPresenting: AnyObject {
     func presentInstallerMounted(vmName: String, purpose: GuestAgentInstallerPurpose)
     /// Present the VM creation wizard sheet.
     func presentCreationWizard()
+    /// Move keyboard focus into `instance`'s inline guest display, called at
+    /// the moment a user action routes the display there (start, resume, pop
+    /// in). If the display is not up yet, the request holds until it appears —
+    /// but expires the instant focus moves anywhere else, so it never steals
+    /// focus later.
+    func focusGuestDisplay(for instance: VMInstance)
 }
