@@ -120,6 +120,27 @@ struct VsockControlServiceTests {
         )
     }
 
+    /// Completes the handshake for a test that arms a sub-second
+    /// `terminateAfter`, latching the Hello instead of observing `isConnected`.
+    ///
+    /// Those tests cannot wait on `isConnected`: it is a transient the watchdog
+    /// reverts. The watchdog measures `ContinuousClock.now - lastInboundFrame`,
+    /// so a MainActor stall longer than the window leaves the next liveness tick
+    /// already past its deadline — and if that tick runs before the waiter's
+    /// continuation, the service settles `isConnected` back to `false` before
+    /// the waiter ever sees it. Nothing changes it again, so the waiter blocks
+    /// to its backstop and fails a service that connected exactly as asked.
+    /// `onAgentInfoObserved` fires inside the same MainActor turn that sets
+    /// `isConnected`, and the recorder only ever counts up, so a stall of any
+    /// length delays this wait rather than losing it.
+    private func connectLatched(
+        guest: VsockChannel, hello: ObservedRecorder, agentVersion: String = "0.9.0"
+    ) async throws {
+        _ = try await nextFrame(from: guest)  // host hello
+        try guest.send(makeGuestHello(agentVersion: agentVersion))
+        try await hello.changed.wait { !hello.values.isEmpty }
+    }
+
     // MARK: - Hello
 
     @Test("Sends host Hello on start with control capabilities")
@@ -499,12 +520,14 @@ struct VsockControlServiceTests {
         // Widen cadences for CI runner jitter (the original 40/80/200 ms
         // pairing was tight enough that on slow runners the watchdog could
         // miss its window before the terminate condition fired).
+        let helloObserved = ObservedRecorder()
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
             heartbeatInterval: .milliseconds(100),
             unresponsiveAfter: .milliseconds(200),
-            terminateAfter: .milliseconds(500)
+            terminateAfter: .milliseconds(500),
+            onAgentInfoObserved: { helloObserved.append($0) }
         )
 
         service.start()
@@ -513,9 +536,7 @@ struct VsockControlServiceTests {
         // Captured now: the teardown clears the handles.
         let lifecycleTasks = service.lifecycleTasksForTesting
 
-        _ = try await nextFrame(from: guest)  // host hello
-        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitForChange { service.isConnected }
+        try await connectLatched(guest: guest, hello: helloObserved)
 
         // Send nothing further: the watchdog terminates the connection. The
         // service has to settle rather than re-fire every tick against a frozen
@@ -607,26 +628,28 @@ struct VsockControlServiceTests {
         // A live-paused VM is frozen by design: the guest cannot answer a
         // heartbeat, so the pre-#706 behavior — terminate for silence — blamed
         // the agent for the user's pause.
-        // Short windows are safe here in a way they are not elsewhere in this
-        // suite: the property under test is that the deadline never advances
-        // while suspended, so a stalled runner cannot produce a false failure.
         let suspension = SuspensionFlag()
+        let helloObserved = ObservedRecorder()
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
             heartbeatInterval: .milliseconds(50),
             unresponsiveAfter: .milliseconds(100),
             terminateAfter: .milliseconds(200),
+            onAgentInfoObserved: { helloObserved.append($0) },
             isGuestSuspended: { suspension.isSuspended }
         )
         service.start()
         defer { service.stop() }
 
-        _ = try await nextFrame(from: guest)  // host hello
-        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitForChange { service.isConnected }
-
+        // Suspended before the Hello, not after it: the watchdog starts judging
+        // the guest the instant `lastInboundFrame` is set, so any gap between
+        // connect and the flip is a window where a stalled runner terminates
+        // the channel for the very pause under test. Armed up front there is no
+        // such window — every tick that can read the clock reads it suspended —
+        // which is what makes these sub-second windows stall-proof.
         suspension.isSuspended = true
+        try await connectLatched(guest: guest, hello: helloObserved)
 
         // RATIONALE: negative assertion ("prove the watchdog never fired") —
         // a fixed observation window, per docs/TESTING.md "Async waits in tests".
@@ -644,25 +667,28 @@ struct VsockControlServiceTests {
         defer { guest.close() }
 
         let suspension = SuspensionFlag()
+        let helloObserved = ObservedRecorder()
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
             heartbeatInterval: .milliseconds(50),
             unresponsiveAfter: .milliseconds(100),
             terminateAfter: .milliseconds(200),
+            onAgentInfoObserved: { helloObserved.append($0) },
             isGuestSuspended: { suspension.isSuspended }
         )
         service.start()
         defer { service.stop() }
 
-        _ = try await nextFrame(from: guest)  // host hello
-        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitForChange { service.isConnected }
+        // Suspended before the Hello — see
+        // `suspendedGuestSurvivesTerminateWindow` for why the flip cannot
+        // trail the connect.
+        suspension.isSuspended = true
+        try await connectLatched(guest: guest, hello: helloObserved)
 
         // RATIONALE: negative assertion ("prove the watchdog didn't fire during
         // the pause") — a fixed observation window, per docs/TESTING.md "Async
         // waits in tests". Three terminate windows, guest sending nothing.
-        suspension.isSuspended = true
         try await Task.sleep(for: .milliseconds(600))
         #expect(service.isConnected)
 
