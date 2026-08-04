@@ -111,6 +111,8 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     override func showWindow(_ sender: Any?) {
         instance.displayMode = enterFullscreen ? .fullscreen : .popOut
         super.showWindow(sender)
+        // Land keyboard focus in the guest, so typing works without a click.
+        window?.makeFirstResponder(backingView.machineView)
         if enterFullscreen {
             window?.toggleFullScreen(nil)
         }

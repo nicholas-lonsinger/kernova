@@ -1169,6 +1169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             // the display slot to the main window.
             viewModel.updateConfiguration(of: instance) { $0.displayPreference = .inline }
             instance.displayMode = .inline
+            viewModel.presenter?.focusGuestDisplay(for: instance)
             return
         }
 
@@ -1206,7 +1207,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private func openDisplayWindow(for instance: VMInstance, enterFullscreen: Bool) {
         let vmID = instance.instanceID
 
-        guard displayWindows[vmID] == nil else { return }
+        // Already open (e.g. resuming a live-paused VM from the library):
+        // surface the existing window so keyboard input lands in the guest.
+        if let existing = displayWindows[vmID] {
+            existing.window?.makeKeyAndOrderFront(nil)
+            return
+        }
         ensureRegularActivationIfAgent()
 
         let controller = VMDisplayWindowController(
@@ -1276,6 +1282,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     } else if !appWasActive {
                         self.showLibraryWindow(bringToFront: false)
                     }
+                    self.viewModel.presenter?.focusGuestDisplay(for: instance)
                     // Reconcile synchronously here, after the restore, rather than
                     // through `scheduleAgentActivationPolicySync()`: the global
                     // `willClose` observer's independent `Task` isn't guaranteed to
