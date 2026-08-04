@@ -82,9 +82,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     /// The File Provider host, when one is wired (production only).
     ///
-    /// `nil` in tests and whenever the domain isn't usable, in which case every
-    /// rep falls back to the synchronous provider path. Set once on main at app
-    /// wiring.
+    /// `nil` in tests and whenever the domain isn't usable. Set once on main at
+    /// app wiring.
     weak var fileProvider: (any FileProviderPublishing)?
 
     /// Aggregates what this side streams to the host into the status item's
@@ -206,12 +205,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         /// index, so a repeated `.fileURL` pull returns the same staged file
         /// instead of re-staging a duplicate.
         var stagedInlineURLs: [Int: URL] = [:]
-        /// File-Provider routing for this offer — rep index → domain URL —
-        /// latched by the first unified provider fire whose publish succeeded.
-        ///
-        /// `nil` while undecided. A failed/unusable publish deliberately does
-        /// NOT latch, so a later provider fire retries the File Provider.
-        var fpRoutedURLs: [Int: URL]?
         /// Whether the over-cap refusal was already surfaced to the host for this
         /// offer, so the N provider fires of one multi-file paste don't send N
         /// duplicate `clipboard.paste.too.large` frames.
@@ -912,8 +905,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             receiver?.cancel(generation: previous.generation)
             lazyCoordinator.failAll()
         }
-        // Drop any File Provider items the superseded offer published so a stale
-        // placeholder can't linger in the guest's Finder.
+        // Retract any File Provider items so a stale placeholder can't linger in
+        // the guest's Finder.
         fileProvider?.clearOffer()
 
         let items = Self.promisedItems(for: offer.repInfo)
@@ -925,19 +918,12 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         let promise = InboundPromise(generation: offer.generation, reps: offer.repInfo)
         inboundPromise = promise
 
-        // Routing is decided at *paste* time, inside each eligible file item's
-        // provider closure — offer time only warms the servicing path so a
-        // paste-time publish doesn't also pay extension-launch latency.
-        if !fileProviderEligibleIndices(in: offer.repInfo).isEmpty {
-            fileProvider?.prepareForOffer()
-        }
-
         guard writePasteboardPromise(promise: promise, items: items) else {
             Self.logger.warning(
                 "Failed to register host clipboard promise (gen=\(offer.generation, privacy: .public))"
             )
-            // The write failed, so the providers were never retained and nothing
-            // was published to the File Provider — there is nothing to retract.
+            // The write failed, so the providers were never retained — there is
+            // nothing to retract.
             inboundPromise = nil
             return
         }
@@ -947,9 +933,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         clipboardActivityStorage = .offeredFromHost
     }
 
-    /// Writes `items` to the pasteboard as lazy providers: each eligible
-    /// plain-file item's `.fileURL` is served by `provideRoutedFileURL`,
-    /// everything else through `provideData`.
+    /// Writes `items` to the pasteboard as lazy providers, every promised type
+    /// served by `provideData`.
     ///
     /// Captures `lastPasteboardChangeCount` after the write regardless of
     /// outcome (echo suppression — a partial write can't leave the poll
@@ -957,26 +942,14 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     @discardableResult
     private func writePasteboardPromise(promise: InboundPromise, items: [PromisedItem]) -> Bool {
         let generation = promise.generation
-        let eligible = Set(fileProviderEligibleIndices(in: promise.reps))
         var newProviders: [LazyClipboardDataProvider] = []
         let writes = items.map {
             item -> (types: [NSPasteboard.PasteboardType], provider: NSPasteboardItemDataProvider) in
-            let provider: LazyClipboardDataProvider
-            if item.count == 1, item[0].type == .fileURL, eligible.contains(item[0].repIndex) {
-                provider = LazyClipboardDataProvider(
-                    provide: { [weak self] type in
-                        guard type == .fileURL else { return nil }
-                        return self?.provideRoutedFileURL(
-                            repIndex: item[0].repIndex, itemTypes: item, generation: generation)
-                    },
-                    onFinished: { [weak self] provider in self?.retainer.release(provider) })
-            } else {
-                provider = LazyClipboardDataProvider(
-                    provide: { [weak self] type in
-                        self?.provideData(type, itemTypes: item, generation: generation)
-                    },
-                    onFinished: { [weak self] provider in self?.retainer.release(provider) })
-            }
+            let provider = LazyClipboardDataProvider(
+                provide: { [weak self] type in
+                    self?.provideData(type, itemTypes: item, generation: generation)
+                },
+                onFinished: { [weak self] provider in self?.retainer.release(provider) })
             newProviders.append(provider)
             return (types: item.map { $0.type }, provider: provider)
         }
@@ -995,138 +968,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // until the pasteboard finishes with it.
         retainer.retain(newProviders)
         return true
-    }
-
-    /// Rep indices eligible for File-Provider routing: named, non-inline plain
-    /// file reps, plus directory reps when the folder placeholder-tree capability
-    /// (`clipboard.dirtree.v1`) is negotiated with the peer.
-    ///
-    /// A directory's estimate `byteCount` may be 0 (an empty folder), so it is
-    /// not gated on a non-zero size.
-    private func fileProviderEligibleIndices(
-        in reps: [Kernova_V1_ClipboardRepresentationInfo]
-    ) -> [Int] {
-        let dirTree = peerSupportsDirTree()
-        return reps.indices.filter { index in
-            let info = reps[index]
-            guard !info.filename.isEmpty else { return false }
-            if info.isDirectory {
-                return dirTree && !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: info.uti)
-            }
-            return !info.isInline && Self.isPromisable(info)
-        }
-    }
-
-    /// Serves a plain-file rep's `public.file-url` with paste-time routing:
-    /// publish the offer's eligible reps through the File Provider when it's
-    /// usable — the returned placeholder URL materializes on read with no
-    /// deadline — else fall back to the deadline-bound synchronous pull.
-    ///
-    /// Runs on whatever thread delivers the pasteboard provider callback (main
-    /// in production); the routing step hops to main because it latches
-    /// main-confined promise state and calls the main-queue-only `publishItems`.
-    private func provideRoutedFileURL(
-        repIndex: Int, itemTypes: PromisedItem, generation: UInt64
-    ) -> Data? {
-        let routedURL: URL? = runOnMainSync {
-            guard let promise = inboundPromise, promise.generation == generation,
-                promise.materialized[repIndex] == nil
-            else { return nil }
-            return ensureFileProviderRouting(promise)[repIndex]
-        }
-        if let routedURL {
-            return Data(routedURL.absoluteString.utf8)
-        }
-        return provideData(.fileURL, itemTypes: itemTypes, generation: generation)
-    }
-
-    /// The offer's File-Provider routing, publishing the eligible reps on first
-    /// use.
-    ///
-    /// Latched on SUCCESS only: a failed/unusable publish returns empty without
-    /// latching, so this fire falls back to the synchronous path and a later fire
-    /// retries the File Provider. Runs on main.
-    private func ensureFileProviderRouting(_ promise: InboundPromise) -> [Int: URL] {
-        dispatchPrecondition(condition: .onQueue(.main))
-        if let latched = promise.fpRoutedURLs { return latched }
-        guard let fileProvider else { return [:] }
-        let eligible = fileProviderEligibleIndices(in: promise.reps)
-        guard !eligible.isEmpty else { return [:] }
-        // Plain files publish as flat placeholders; directory reps publish as
-        // placeholder trees, each first fetching its listing. A folder's listing
-        // is fetched only when the domain is `.ready`, so the toggle-off path
-        // never pays a wasted tree-listing pull (docs/CLIPBOARD.md §3).
-        let treeReady = fileProvider.availability == .ready
-        var items: [FileProviderPublishItem] = []
-        var folders: [FileProviderPublishFolder] = []
-        for index in eligible {
-            let info = promise.reps[index]
-            if info.isDirectory {
-                guard treeReady, let channel = liveChannel, let receiver = receiver,
-                    let folder = buildPublishFolder(
-                        repIndex: index, info: info, promise: promise, channel: channel,
-                        receiver: receiver)
-                else { continue }
-                folders.append(folder)
-            } else {
-                items.append(
-                    FileProviderPublishItem(
-                        repIndex: index, filename: info.filename, byteCount: info.byteCount,
-                        uti: info.uti))
-            }
-        }
-        guard !items.isEmpty || !folders.isEmpty else { return [:] }
-        guard
-            let urls = fileProvider.publishItems(
-                generation: promise.generation, sourceName: Self.pasteSourceName, items: items,
-                folders: folders, waitForPlaceholder: true)
-        else { return [:] }
-        promise.fpRoutedURLs = urls
-        Self.logger.notice(
-            "Routed \(items.count, privacy: .public) file(s) + \(folders.count, privacy: .public) folder(s) through the File Provider at paste (gen=\(promise.generation, privacy: .public))"
-        )
-        return urls
-    }
-
-    /// Fetches a directory rep's tree listing and builds a publishable folder
-    /// tree.
-    ///
-    /// Returns `nil` when the listing can't be fetched, so the caller falls back
-    /// to the archive path. Runs on the main queue; the listing pull blocks
-    /// (woken off-main), like every paste-time pull.
-    private func buildPublishFolder(
-        repIndex: Int, info: Kernova_V1_ClipboardRepresentationInfo, promise: InboundPromise,
-        channel: VsockChannel, receiver: ClipboardStreamReceiver
-    ) -> FileProviderPublishFolder? {
-        guard
-            let listing = pullTreeListing(
-                repIndex: repIndex, promise: promise, channel: channel, receiver: receiver)
-        else { return nil }
-        let isPackage = Self.isPackageUTI(info.uti)
-        let folder = ClipboardDirectoryTree.makeFolderRep(
-            sessionSalt: 0, generation: promise.generation, repIndex: repIndex,
-            filename: info.filename, isPackage: isPackage, estimatedByteCount: info.byteCount,
-            rootMtimeMs: listing.rootMtimeMs, entries: listing.entries)
-        return FileProviderPublishFolder(
-            repIndex: repIndex, filename: info.filename, uti: folder.uti, isPackage: isPackage,
-            byteCount: info.byteCount, mtimeMs: folder.mtimeMs, nodes: folder.nodes)
-    }
-
-    /// Whether an offered directory rep's content UTI names an OS package
-    /// (.app/.rtfd/…), so the pasted folder root opens as a bundle.
-    private static func isPackageUTI(_ uti: String) -> Bool {
-        guard let type = UTType(uti) else { return false }
-        return type.conforms(to: .package) || type.conforms(to: .bundle)
-    }
-
-    /// Runs `body` on the main queue, synchronously from either context.
-    ///
-    /// The direct-call branch is required: a `main.sync` from the main thread
-    /// would deadlock, and the pasteboard server delivers provider callbacks on
-    /// the agent's main thread in production.
-    private func runOnMainSync<T>(_ body: () -> T) -> T {
-        if Thread.isMainThread { return body() }
-        return DispatchQueue.main.sync(execute: body)
     }
 
     /// Streams the bytes for a promised pasteboard type on demand.
@@ -1158,8 +999,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         } else {
             guard
                 let pulled = pullRepresentation(
-                    repIndex, promise: promise, channel: channel, receiver: receiver,
-                    deadlineBound: true)
+                    repIndex, promise: promise, channel: channel, receiver: receiver)
             else { return nil }
             promise.materialized[repIndex] = pulled
             representation = pulled
@@ -1217,46 +1057,30 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     /// Sends one `ClipboardRequest` and blocks the calling thread until the
     /// streamed representation lands (or aborts/times out).
-    ///
-    /// `deadlineBound` gates the deadline-safe size cap: `provideData`'s
-    /// synchronous pasteboard-provider path passes `true` (it blocks the OS paste
-    /// deadline), while the File Provider relay's `fetchStagedFile` passes
-    /// `false` — that path has no deadline and must stay uncapped
-    /// (docs/CLIPBOARD.md §2).
     private func pullRepresentation(
         _ repIndex: Int, promise: InboundPromise, channel: VsockChannel,
-        receiver: ClipboardStreamReceiver, deadlineBound: Bool,
+        receiver: ClipboardStreamReceiver,
         onProgress: (@Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void)? = nil
     ) -> ClipboardContent.Representation? {
         let info = promise.reps[repIndex]
-        // The cap applies to the TOTAL of the offer's sync-bound reps,
+        // The cap applies to the TOTAL of the offer's deadline-bound reps,
         // all-or-nothing: one paste is one deadline-bound operation, so the OS
         // clock sees the sum, not each file. Checked before the disk-space gate:
-        // "enable File Provider" is the more actionable message.
-        if deadlineBound, !info.isInline {
-            let load = Self.syncDeadlineBoundLoad(for: promise)
-            if load.totalBytes > UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) {
+        // an over-cap offer never gets far enough to need the space.
+        if !info.isInline {
+            let totalBytes = Self.syncDeadlineBoundLoad(for: promise)
+            if totalBytes > UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) {
                 Self.logger.warning(
-                    "Sync-bound clipboard reps total \(load.totalBytes, privacy: .public) bytes — over the deadline-safe cap with the File Provider off; refusing the synchronous paste pull"
+                    "Deadline-bound clipboard reps total \(totalBytes, privacy: .public) bytes — over the deadline-safe cap; refusing the paste pull"
                 )
-                // The guest has no UI; tell the host so it shows the failure. A
-                // directories-only refusal the peer can't route as a tree gets a
-                // distinct code — "enable File Provider" would be a lie there.
+                // The guest has no UI; tell the host so it shows the failure.
                 if !promise.tooLargeReported {
                     promise.tooLargeReported = true
-                    if load.allDirectories, !peerSupportsDirTree() {
-                        sendPasteError(
-                            code: "clipboard.paste.folder.too.large",
-                            message:
-                                "Folders this large can't be pasted into the guest yet (\(load.totalBytes) bytes total)",
-                            on: channel)
-                    } else {
-                        sendPasteError(
-                            code: "clipboard.paste.too.large",
-                            message:
-                                "Too large to paste into the guest without File Provider (\(load.totalBytes) bytes total)",
-                            on: channel)
-                    }
+                    sendPasteError(
+                        code: "clipboard.paste.too.large",
+                        message:
+                            "Too large to paste into the guest (\(totalBytes) bytes total)",
+                        on: channel)
                 }
                 return nil
             }
@@ -1342,53 +1166,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             Self.logger.debug("Inbound clipboard pull \(transferID, privacy: .public) superseded by a newer fetch")
         }
         return nil
-    }
-
-    /// Pulls a directory rep's tree listing, blocking until the serialized
-    /// `ClipboardTreeListing` lands, and returns its entries.
-    ///
-    /// Runs on the main queue; the pull is woken off-main. Returns `nil` on any
-    /// failure so the caller falls back to the archive path.
-    private func pullTreeListing(
-        repIndex: Int, promise: InboundPromise, channel: VsockChannel,
-        receiver: ClipboardStreamReceiver
-    ) -> Kernova_V1_ClipboardTreeListing? {
-        let transferID = ClipboardTransferID.makeChild(
-            generation: promise.generation, repIndex: repIndex, childSeq: 0, hostMinted: false)
-        let generation = promise.generation
-        let outcome = awaitPull(transferID: transferID, receiver: receiver, onProgress: nil) {
-            var frame = Frame()
-            frame.protocolVersion = 1
-            frame.clipboardTreeFetch = Kernova_V1_ClipboardTreeFetch.with {
-                $0.generation = generation
-                $0.transferID = transferID
-                $0.repIndex = UInt32(repIndex)
-                $0.relativePath = ""
-                $0.maxAcceptByteCount = ClipboardStreamTuning.unlimitedAcceptByteCount
-            }
-            try channel.send(frame)
-        }
-        switch outcome {
-        case .delivered(let rep):
-            guard let data = rep.inMemoryData,
-                let listing = try? ClipboardDirectoryTree.deserializeListing(data)
-            else {
-                Self.logger.warning(
-                    "Tree listing for rep \(repIndex, privacy: .public) could not be decoded")
-                return nil
-            }
-            return listing
-        case .timedOut:
-            receiver.cancelAwait(transferID)
-            Self.logger.warning("Tree listing pull \(transferID, privacy: .public) timed out")
-            return nil
-        case .aborted(let abort):
-            Self.logger.warning(
-                "Tree listing pull aborted (\(abort.code, privacy: .public))")
-            return nil
-        case .cancelled, .superseded:
-            return nil
-        }
     }
 
     /// Pulls one child file of a directory rep's tree — off-main, for the File
@@ -1539,26 +1316,17 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         info.byteCount != 0 && !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: info.uti)
     }
 
-    /// The offer's sync-bound load — the total byte count of its non-inline,
-    /// promisable, not-File-Provider-routed reps (the payload a synchronous
-    /// paste pulls against the OS deadline), and whether that set is directories
-    /// only, which picks the refusal code.
+    /// The offer's deadline-bound load — the total byte count of its non-inline,
+    /// promisable reps, the payload one paste pulls against the OS deadline.
     ///
-    /// Reads the promise's routing latch, so it is for deadline-bound callers
-    /// only — the provider-callback path, which runs the routing hop before any
-    /// pull.
-    private static func syncDeadlineBoundLoad(
-        for promise: InboundPromise
-    ) -> (totalBytes: UInt64, allDirectories: Bool) {
-        let routed = promise.fpRoutedURLs ?? [:]
+    /// A directory rep contributes the producer's estimate, the same figure the
+    /// wire carries as its `byte_count`.
+    private static func syncDeadlineBoundLoad(for promise: InboundPromise) -> UInt64 {
         var total: UInt64 = 0
-        var allDirectories = true
-        for (index, info) in promise.reps.enumerated() {
-            guard !info.isInline, isPromisable(info), routed[index] == nil else { continue }
+        for info in promise.reps where !info.isInline && isPromisable(info) {
             total &+= info.byteCount
-            if !info.isDirectory { allDirectories = false }
         }
-        return (totalBytes: total, allDirectories: allDirectories)
+        return total
     }
 
     /// The promised pasteboard items for an offer.
@@ -1614,16 +1382,14 @@ extension VsockGuestClipboardAgent: FileProviderPullProvider {
     ///
     /// Runs on the relay's XPC queue, NOT main: it snapshots the main-confined
     /// connection state, then performs the *same* blocking pull as the pasteboard
-    /// path off-main. The File Provider read path has no 60s deadline, so holding
-    /// the XPC thread for a multi-GB transfer is safe.
+    /// path off-main.
     ///
     /// Keying the coordinator slot and the receiver's awaiter on the deterministic
     /// `transferID` assumes a rep is never pulled twice at once: the File Provider
     /// framework coalesces concurrent `fetchContents` for one constant
-    /// `itemVersion`, and a routed rep never also mints a sync pull. A second
-    /// concurrent read path for a rep — a prefetch, a preview fetch, a
-    /// retry-on-timeout — would need a different key, and would race for bytes
-    /// rather than fail to compile.
+    /// `itemVersion`. A second concurrent read path for a rep — a prefetch, a
+    /// preview fetch, a retry-on-timeout — would need a different key, and would
+    /// race for bytes rather than fail to compile.
     func fetchStagedFile(
         generation: UInt64, repIndex: Int,
         onProgress: @escaping @Sendable (UInt64, UInt64) -> Void = { _, _ in }
@@ -1652,7 +1418,7 @@ extension VsockGuestClipboardAgent: FileProviderPullProvider {
         guard
             let representation = pullRepresentation(
                 repIndex, promise: context.promise, channel: context.channel,
-                receiver: context.receiver, deadlineBound: false, onProgress: onProgress),
+                receiver: context.receiver, onProgress: onProgress),
             let url = representation.fileURL
         else { return .failure(.pullFailed) }
         return .success(url.path)

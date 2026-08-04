@@ -661,9 +661,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             case "clipboard.paste.disk.full":
                 return "The guest ran out of disk space receiving the clipboard file"
             case "clipboard.paste.too.large":
-                return "Too large to paste into the guest without File Provider"
-            case "clipboard.paste.folder.too.large":
-                return "Folders this large can't be pasted into the guest yet"
+                return "Too large to paste into the guest — over the 2 GB clipboard transfer limit"
             case "clipboard.paste.timeout":
                 return "The clipboard transfer to the guest timed out"
             default:
