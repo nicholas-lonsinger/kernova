@@ -54,41 +54,38 @@ final class HostClipboardPublisher {
         self.providerRegistry = providerRegistry
     }
 
-    /// Materializes the service's current content and writes it to the host
+    /// Builds the service's "Copy to Mac" items and writes them to the host
     /// pasteboard as lazy promised items, returning the terminal outcome.
     ///
-    /// Inline/preview/directory reps are pulled eagerly; every plain file rep
-    /// rides its own lazy item whose File-Provider-vs-size-capped-sync routing is
-    /// decided at paste time.
+    /// A live guest offer publishes from metadata alone — every promised rep's
+    /// bytes are pulled at paste time through its provide closure — so nothing
+    /// crosses the wire here; resolved (local) reps stage their bytes as before.
     func publish(from service: any ClipboardServicing) async -> HostPublishOutcome {
         let staging = self.staging
         let generation = stagingGeneration
         stagingGeneration += 1
 
-        let copyItems = await service.materializeForCopy()
+        let copyItems = service.materializeForCopy()
         var resolvedReps: [ClipboardContent.Representation] = []
-        var lazyFiles: [(generation: UInt64, repIndex: Int)] = []
+        var promises: [CopyToMacPromise] = []
         var droppedReasons: [CopyToMacDropReason] = []
         for item in copyItems {
             switch item {
             case .resolved(let rep): resolvedReps.append(rep)
-            case .lazyFile(let generation, let repIndex, _, _): lazyFiles.append((generation, repIndex))
+            case .promised(let promise): promises.append(promise)
             case .droppedFile(let reason): droppedReasons.append(reason)
             }
         }
-        guard !resolvedReps.isEmpty || !lazyFiles.isEmpty else {
+        guard !resolvedReps.isEmpty || !promises.isEmpty else {
             return .nothingServed(reasons: droppedReasons)
         }
 
-        // Only `VsockClipboardService` produces `.lazyFile`.
+        // Only `VsockClipboardService` produces `.promised`.
         var specs = await Self.hostPasteboardItems(
             for: ClipboardContent(representations: resolvedReps), generation: generation,
             staging: staging)
-        if let fileProvider = service as? any HostClipboardFileRepProviding {
-            specs += lazyFiles.map {
-                Self.lazyFileSpec(
-                    generation: $0.generation, repIndex: $0.repIndex, fileProvider: fileProvider)
-            }
+        if let repProvider = service as? any HostClipboardFileRepProviding {
+            specs += Self.promisedItemSpecs(for: promises, provider: repProvider)
         }
 
         // An empty `specs` means every resolved payload was dropped (e.g. a lone
@@ -129,7 +126,7 @@ final class HostClipboardPublisher {
         providerRegistry.retain(providers)
         let changeCount = pasteboard.changeCount
         lastWriteChangeCount = changeCount
-        let representationCount = resolvedReps.count + lazyFiles.count
+        let representationCount = resolvedReps.count + promises.count
         Self.logger.info(
             "Published clipboard buffer to host pasteboard (\(representationCount, privacy: .public) reps, \(items.count, privacy: .public) items, \(droppedReasons.count, privacy: .public) dropped)"
         )
@@ -145,21 +142,50 @@ final class HostClipboardPublisher {
         let provide: @Sendable (NSPasteboard.PasteboardType) -> Data?
     }
 
-    /// A pasteboard item for a lazy plain-file rep whose File-Provider-vs-sync
-    /// routing is decided at paste time.
+    /// Builds the per-item provider specs for reps promised by offer coordinates —
+    /// the same grouping the resolved path plans, driven by offer metadata alone.
     ///
-    /// On the sync-fallback path the pull runs synchronously on the main thread
-    /// (the pasteboard server's `provideData` callback), blocking it while the
-    /// stream receiver delivers off-main. The offer's sync-bound total is
-    /// size-capped so the pull and stage complete within the OS paste deadline.
-    nonisolated private static func lazyFileSpec(
-        generation: UInt64, repIndex: Int, fileProvider: any HostClipboardFileRepProviding
-    ) -> PasteboardItemSpec {
-        PasteboardItemSpec(types: [.fileURL]) { type in
-            guard type == .fileURL else { return nil }
-            guard let url = fileProvider.copyToMacFileURL(generation: generation, repIndex: repIndex)
-            else { return nil }
-            return Data(url.absoluteString.utf8)
+    /// Each flavor's bytes are served at paste time: `.fileURL` through
+    /// `copyToMacFileURL`, inline flavors through `copyToMacData`. The pull runs
+    /// synchronously on the thread of the pasteboard server's `provideData`
+    /// callback (usually main), blocking it while the stream receiver delivers
+    /// off-main; the offer's paste-bound total is size-capped so the pull and
+    /// stage complete within the OS paste deadline.
+    nonisolated static func promisedItemSpecs(
+        for promises: [CopyToMacPromise], provider: any HostClipboardFileRepProviding
+    ) -> [PasteboardItemSpec] {
+        let descriptors = promises.map {
+            ClipboardRepresentationDescriptor(
+                uti: $0.uti, filename: $0.filename, isInline: $0.isInline, isPromisable: true)
+        }
+        let plan = ClipboardPasteboardItemPlan.plan(for: descriptors)
+        return plan.items.map { item in
+            var types: [NSPasteboard.PasteboardType] = []
+            var routes: [NSPasteboard.PasteboardType: (promise: CopyToMacPromise, isFileURL: Bool)] =
+                [:]
+            for promisedType in item.types {
+                let promise = promises[promisedType.representationIndex]
+                let type: NSPasteboard.PasteboardType =
+                    promisedType.isFileURL ? .fileURL : .init(promisedType.uti)
+                types.append(type)
+                routes[type] = (promise, promisedType.isFileURL)
+            }
+            // Snapshot to a `let` so the @Sendable closure captures an immutable
+            // map.
+            let itemRoutes = routes
+            return PasteboardItemSpec(types: types) { type in
+                guard let route = itemRoutes[type] else { return nil }
+                if route.isFileURL {
+                    guard
+                        let url = provider.copyToMacFileURL(
+                            generation: route.promise.generation, repIndex: route.promise.repIndex)
+                    else { return nil }
+                    return Data(url.absoluteString.utf8)
+                }
+                return provider.copyToMacData(
+                    generation: route.promise.generation, repIndex: route.promise.repIndex,
+                    uti: route.promise.uti)
+            }
         }
     }
 
@@ -268,8 +294,8 @@ final class HostClipboardPublisher {
                 for: representation, into: staging, generation: generation)
         }
         if let existing = representation.fileURL {
-            // A File Provider placeholder's domain URL is already stable, and a
-            // rare spilled inline file keeps its transient URL.
+            // Already staged to disk (a pulled file rep, or a rare spilled inline
+            // payload) — serve that path.
             return existing
         }
         guard let data = representation.inMemoryData,

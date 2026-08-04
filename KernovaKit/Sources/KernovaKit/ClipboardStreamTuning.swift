@@ -90,15 +90,17 @@ public enum ClipboardStreamTuning {
     /// "send anything".
     public static let unlimitedAcceptByteCount = UInt64.max
 
-    /// Largest guest→host file served via the synchronous paste fallback when the
-    /// host File Provider is disabled: 256 MiB.
+    /// Largest total a paste's file reps may sum to and still be served inside
+    /// the OS pasteboard-promise deadline: 2 GiB.
     ///
-    /// With the File-Providers toggle off there is no `fetchContents` escape
-    /// hatch, so the bytes must be pulled and staged inside Finder's ~60 s paste
-    /// deadline; a larger file is dropped instead. The cap applies *only* to that
-    /// fallback — with the File Provider on there is no size limit
-    /// (CLIPBOARD.md §1).
-    public static let maxDeadlineSafeFileBytes = 256 * 1024 * 1024
+    /// A promised file's bytes pull synchronously inside the consumer's
+    /// `provideData` callback, which Finder abandons after ~60 s (generic apps
+    /// after ~120 s). At the measured 366–415 MiB/s app-stack throughput
+    /// (docs/research/2026-07-13-vsock-transport-throughput.md), 2 GiB streams in
+    /// ~6 s — over 4× margin under the tighter deadline for a folder's
+    /// request-time archive pass, the staging write, and the extract. The cap is
+    /// compared against the offer's non-inline total, all-or-nothing per paste.
+    public static let maxDeadlineSafePasteBytes = 2 * 1024 * 1024 * 1024
 }
 
 extension Duration {

@@ -672,14 +672,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
     }
 
-    /// The message shown when "Copy to Mac" placed nothing on the pasteboard, by
-    /// the most actionable drop reason first.
+    /// The message shown when "Copy to Mac" placed nothing on the pasteboard.
     private static func dropMessage(for reasons: [CopyToMacDropReason]) -> String {
-        guard !reasons.isEmpty else { return "Couldn't fetch the clipboard content to copy" }
-        if reasons.contains(.tooLargeWithoutFileProvider) {
-            return "Too large to copy to your Mac — enable 'File Provider' in System Settings."
+        guard reasons.contains(.overPasteBudget) else {
+            return "Couldn't fetch the clipboard content to copy"
         }
-        return "Couldn't prepare the clipboard file to copy"
+        return "Too large to copy to your Mac — over the 2 GB clipboard transfer limit."
     }
 
     // MARK: - Actions

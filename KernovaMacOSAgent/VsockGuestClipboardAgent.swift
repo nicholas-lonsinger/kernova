@@ -1235,7 +1235,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // "enable File Provider" is the more actionable message.
         if deadlineBound, !info.isInline {
             let load = Self.syncDeadlineBoundLoad(for: promise)
-            if load.totalBytes > UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) {
+            if load.totalBytes > UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) {
                 Self.logger.warning(
                     "Sync-bound clipboard reps total \(load.totalBytes, privacy: .public) bytes — over the deadline-safe cap with the File Provider off; refusing the synchronous paste pull"
                 )

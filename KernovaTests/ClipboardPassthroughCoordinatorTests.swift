@@ -161,6 +161,102 @@ struct ClipboardPassthroughCoordinatorTests {
         }
     }
 
+    /// A promised-offer service: `materializeForCopy` returns metadata-only
+    /// promises, and the paste-time provider surface counts its fires so a test
+    /// can prove the publish itself moved no bytes.
+    @MainActor
+    @Observable
+    final class PromisedPassthroughService: ClipboardServicing, HostClipboardFileRepProviding {
+        var clipboardContent: ClipboardContent = .empty
+        var isConnected = true
+        var supportsBinaryRepresentations = true
+        var supportsDirectoryTree = false
+        var lastTransferIssue: ClipboardTransferIssue?
+        private(set) var inboundOfferSeq: UInt64 = 0
+        /// What the next `materializeForCopy` promises.
+        var promises: [CopyToMacPromise] = []
+
+        func stop() {}
+        func grabIfChanged() {}
+        func clearBuffer() { clipboardContent = .empty }
+        func materializeForCopy() -> [CopyToMacItem] { promises.map { .promised($0) } }
+
+        func simulateInboundOffer(promising promises: [CopyToMacPromise]) {
+            self.promises = promises
+            inboundOfferSeq &+= 1
+        }
+
+        // Paste-time provider surface: every fire is a byte pull, counted here.
+        @ObservationIgnored private let fireLock = NSLock()
+        @ObservationIgnored nonisolated(unsafe) private var fireCountStorage = 0
+        nonisolated var pasteFireCount: Int { fireLock.withLock { fireCountStorage } }
+        nonisolated private func recordFire() { fireLock.withLock { fireCountStorage += 1 } }
+
+        nonisolated func pullStagedFile(
+            generation: UInt64, repIndex: Int,
+            onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
+        ) -> Result<String, FileProviderPullError> { .failure(.pullFailed) }
+        nonisolated func cancelStagedPull(generation: UInt64, repIndex: Int) {}
+        nonisolated func pullStagedChild(
+            generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
+            onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
+        ) -> Result<String, FileProviderPullError> { .failure(.pullFailed) }
+        nonisolated func cancelStagedChildPull(generation: UInt64, repIndex: Int, childSeq: UInt32) {}
+        nonisolated func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? {
+            recordFire()
+            return nil
+        }
+        nonisolated func copyToMacData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
+            recordFire()
+            return Data("promised bytes".utf8)
+        }
+    }
+
+    @Test("A promised inbound offer auto-publishes without moving any bytes")
+    func inboundPromisedOfferPublishesWithoutPulling() async throws {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        defer { pasteboard.releaseGlobally() }
+        let publisher = HostClipboardPublisher(
+            writePasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
+        let config = VMConfiguration(name: "Promised VM", guestOS: .macOS, bootMode: .macOS)
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(config.id.uuidString, isDirectory: true)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+        let service = PromisedPassthroughService()
+        instance.clipboardService = service
+        let coordinator = ClipboardPassthroughCoordinator(
+            instance: instance, publisher: publisher, pasteboard: pasteboard)
+
+        let published = AsyncGate()
+        coordinator.onInboundPublishedForTesting = { published.notify() }
+        coordinator.start()
+        defer { coordinator.stop() }
+
+        let baseline = pasteboard.changeCount
+        service.simulateInboundOffer(promising: [
+            CopyToMacPromise(
+                generation: 4, repIndex: 0, uti: ClipboardContent.utf8TextUTI, filename: "",
+                isInline: true),
+            CopyToMacPromise(
+                generation: 4, repIndex: 1, uti: "public.data", filename: "big.bin",
+                isInline: false),
+        ])
+
+        // The auto-publish lands promised items on the pasteboard…
+        try await published.wait { pasteboard.changeCount > baseline }
+        let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        let types = pasteboard.pasteboardItems?.flatMap(\.types) ?? []
+        #expect(types.contains(textType))
+        #expect(types.contains(.fileURL))
+        // …without a single byte pull: publishing is metadata-only.
+        #expect(service.pasteFireCount == 0)
+
+        // Only a consumer's flavor read fires a pull.
+        #expect(pasteboard.data(forType: textType) == Data("promised bytes".utf8))
+        #expect(service.pasteFireCount == 1)
+    }
+
     @Test("After stop, a new inbound offer is not published")
     func stopHaltsInboundPublish() async throws {
         let h = makeHarness()

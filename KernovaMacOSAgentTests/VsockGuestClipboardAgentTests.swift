@@ -1493,7 +1493,7 @@ struct VsockGuestClipboardAgentTests {
         // pasteboard cache) and the promise stays unfulfilled for a re-fire —
         // the production story: big file + toggle off → refuse with the
         // enable-File-Provider message; user enables; paste again → lazy route.
-        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) + 1
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
         try hostChannel.send(
             makeOfferFrame(
                 generation: 30,
@@ -2181,7 +2181,7 @@ struct VsockGuestClipboardAgentTests {
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
         let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) + 1
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
         try hostChannel.send(
             makeOfferFrame(
                 generation: 21,
@@ -2211,7 +2211,7 @@ struct VsockGuestClipboardAgentTests {
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
-        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) + 1
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
         try hostChannel.send(
             makeOfferFrame(
                 generation: 26,
@@ -2253,7 +2253,7 @@ struct VsockGuestClipboardAgentTests {
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
         let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) + 1
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
         try hostChannel.send(
             makeOfferFrame(
                 generation: 22,
@@ -2287,7 +2287,7 @@ struct VsockGuestClipboardAgentTests {
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
         let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        let atCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes)
+        let atCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes)
         try hostChannel.send(
             makeOfferFrame(
                 generation: 23,
@@ -2322,7 +2322,7 @@ struct VsockGuestClipboardAgentTests {
         // Inline reps (§1: no Kernova-imposed size bound) are exempt from the
         // deadline cap, which only guards non-inline, non-directory file reps —
         // mirroring the host's `isLazyEligibleFile` gate.
-        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) + 1
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
         try hostChannel.send(
             makeOfferFrame(
                 generation: 24,
@@ -2354,7 +2354,7 @@ struct VsockGuestClipboardAgentTests {
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
         let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) + 1
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
         try hostChannel.send(
             makeOfferFrame(
                 generation: 25,
@@ -2395,7 +2395,7 @@ struct VsockGuestClipboardAgentTests {
         // Each file is individually under the cap; together they exceed it. The
         // whole set refuses — no piecemeal partial paste — with exactly one
         // error frame across both fires.
-        let half = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes / 2) + 1
+        let half = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes / 2) + 1
         let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
         try hostChannel.send(
             makeOfferFrame(
@@ -2435,7 +2435,7 @@ struct VsockGuestClipboardAgentTests {
         // A tiny file rides with an at-cap folder: the sync total exceeds the
         // cap, so even the tiny file's pull refuses (all-or-nothing).
         let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        let atCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes)
+        let atCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes)
         try hostChannel.send(
             makeOfferFrame(
                 generation: 28,
@@ -2471,7 +2471,7 @@ struct VsockGuestClipboardAgentTests {
         // the File Provider on its fire, so the folder's deadline-bound pull
         // sees a sync total of just the folder — under the cap — and proceeds.
         let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) + 1
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
         try hostChannel.send(
             makeOfferFrame(
                 generation: 29,

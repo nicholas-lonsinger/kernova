@@ -75,41 +75,54 @@ protocol ClipboardServicing: AnyObject {
     /// Default no-op: transports that deliver content eagerly have nothing to pull.
     func materializeForPreview() async
 
-    /// Prepares the items to write to the host pasteboard for "Copy to Mac".
+    /// Prepares the items to write to the host pasteboard for "Copy to Mac" —
+    /// metadata only, synchronously.
     ///
-    /// Inline, preview, and directory representations are pulled eagerly and
-    /// returned resolved; every lazy-eligible plain file representation becomes a
-    /// `.lazyFile` routed at paste time; files that can't be served are reported
-    /// as `.droppedFile`.
-    func materializeForCopy() async -> [CopyToMacItem]
+    /// Every usable representation of a live guest offer becomes a `.promised`
+    /// item whose bytes are pulled when a paste consumes them; with no live
+    /// offer (local or user-edited content) the buffer's representations return
+    /// `.resolved`. Reps that can never be served are reported as `.droppedFile`.
+    func materializeForCopy() -> [CopyToMacItem]
+}
+
+/// A representation promised on the host pasteboard by its offer coordinates,
+/// carrying the metadata the publisher needs to plan its pasteboard item and
+/// route each flavor's paste-time pull.
+struct CopyToMacPromise: Sendable, Equatable {
+    let generation: UInt64
+    let repIndex: Int
+    let uti: String
+    let filename: String
+    /// Whether the rep inlines onto the pasteboard (the offer's `is_inline`),
+    /// mirroring `shouldInlineOnPasteboard` for a resolved rep.
+    let isInline: Bool
 }
 
 /// One item "Copy to Mac" places on the host pasteboard.
 enum CopyToMacItem: Sendable {
-    /// A representation whose bytes are already resolved — an inline/preview rep
-    /// pulled eagerly, or an extracted directory.
+    /// A representation whose bytes are already local — the buffer's own content
+    /// when no guest promise is live.
     case resolved(ClipboardContent.Representation)
-    /// A plain file rep served lazily at paste time, addressed by its offer
-    /// coordinates so the paste-time provider can request it.
-    case lazyFile(generation: UInt64, repIndex: Int, uti: String, filename: String)
-    /// A file payload that couldn't be served — the `reason` drives the
+    /// A rep promised by its offer coordinates; its bytes cross the wire only
+    /// when a paste consumes them.
+    case promised(CopyToMacPromise)
+    /// A file payload that can't be served — the `reason` drives the
     /// user-facing message.
     case droppedFile(CopyToMacDropReason)
 }
 
 /// Why a "Copy to Mac" file payload couldn't be placed on the host pasteboard.
 enum CopyToMacDropReason: Sendable, Equatable {
-    /// The plain-file set's total is over the deadline-safe size cap while the
-    /// host File Provider is off — enabling it routes the files lazily (no cap,
-    /// no deadline). All-or-nothing: the whole set is refused together.
-    case tooLargeWithoutFileProvider
-    /// An eager pull (a directory or image file) failed.
-    case pullFailed
+    /// The offer's non-inline reps total over
+    /// `ClipboardStreamTuning.maxDeadlineSafePasteBytes`, so no paste could pull
+    /// them inside the OS pasteboard-promise deadline. All-or-nothing: the whole
+    /// set is refused together rather than landing piecemeal.
+    case overPasteBudget
 }
 
 extension ClipboardServicing {
     func materializeForPreview() async {}
-    func materializeForCopy() async -> [CopyToMacItem] {
+    func materializeForCopy() -> [CopyToMacItem] {
         clipboardContent.representations.map { .resolved($0) }
     }
 

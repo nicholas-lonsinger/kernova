@@ -54,6 +54,7 @@ struct HostClipboardPullRouterTests {
 
         // Unused by the router tests, which exercise only the relay pull path.
         func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? { nil }
+        func copyToMacData(generation: UInt64, repIndex: Int, uti: String) -> Data? { nil }
     }
 
     /// A source whose `pullStagedFile` blocks until released, so a test can
@@ -100,6 +101,7 @@ struct HostClipboardPullRouterTests {
 
         // Unused by the router tests, which exercise only the relay pull path.
         func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? { nil }
+        func copyToMacData(generation: UInt64, repIndex: Int, uti: String) -> Data? { nil }
 
         func release() {
             releaseSemaphore.signal()

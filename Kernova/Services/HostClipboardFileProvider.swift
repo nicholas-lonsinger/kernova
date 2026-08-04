@@ -327,13 +327,20 @@ protocol HostClipboardFileRepProviding: AnyObject, Sendable {
     /// childSeq)`. Best-effort and idempotent.
     func cancelStagedChildPull(generation: UInt64, repIndex: Int, childSeq: UInt32)
 
-    /// Resolves the pasteboard `.fileURL` for a lazy plain-file rep at paste time,
-    /// or `nil` when nothing can be served.
+    /// Resolves the pasteboard `.fileURL` for a promised rep at paste time, or
+    /// `nil` when nothing can be served.
     ///
-    /// Tries the File Provider first, publishing every eligible plain-file rep of
-    /// the offer together on the first fire and latching on success, so a failed
-    /// publish retries on the next paste. Otherwise falls back to a deadline-bound
-    /// synchronous pull, gated all-or-nothing by the offer's sync-bound byte total
-    /// and safe to call on the main thread even though it blocks.
+    /// Serves the materialization cache when the rep was already pulled, else
+    /// runs a deadline-bound blocking pull gated all-or-nothing by the offer's
+    /// paste-bound byte total. Safe to call on the main thread even though it
+    /// blocks.
     func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL?
+
+    /// Resolves an inline pasteboard flavor's bytes for a promised rep at paste
+    /// time, or `nil` when nothing can be served.
+    ///
+    /// Serves the materialization cache when the rep was already pulled (a
+    /// preview, or the item's sibling flavor), else runs a blocking pull. Safe to
+    /// call on the main thread even though it blocks.
+    func copyToMacData(generation: UInt64, repIndex: Int, uti: String) -> Data?
 }
