@@ -81,7 +81,7 @@ Then open `Kernova.xcodeproj`, select the `Kernova` scheme, and build and run (�
 
 `make doctor` checks that your toolchain, signing, and hooks match what Kernova needs. `make` with no arguments lists every build, test, format, and lint target.
 
-**Debug needs no signing team or Apple account** — every target signs ad-hoc ("Sign to Run Locally"), so a fresh clone builds and runs as-is. **Release** requires a paid membership, a distribution identity (Developer ID, or Apple Distribution for the Mac App Store), and a gitignored `Config/Local.xcconfig` supplying `DEVELOPMENT_TEAM = <team>`; it matters only when cutting a distributable build. The signing story is in [docs/RELEASING.md](docs/RELEASING.md).
+**Debug needs no signing team or Apple account** — it signs ad-hoc ("Sign to Run Locally") by default, so a fresh clone builds and runs as-is. With a development certificate, point Debug at it through a gitignored `Config/Local.xcconfig` off `Config/Local.xcconfig.example` so macOS privacy grants survive a rebuild ([docs/BUILD.md](docs/BUILD.md#signing-identity)). **Release** requires a paid membership and a distribution identity (Developer ID, or Apple Distribution for the Mac App Store); it matters only when cutting a distributable build ([docs/RELEASING.md](docs/RELEASING.md)).
 
 ## Testing
 
