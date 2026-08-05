@@ -307,6 +307,17 @@ struct ClipboardContentTests {
         #expect(content.totalByteCount == 42)
     }
 
+    @Test("totalByteCount saturates on an absurd sum rather than trapping")
+    func totalByteCountSaturates() {
+        // Placeholder reps carry peer-declared sizes, so the sum is not bounded
+        // by anything local.
+        let content = ClipboardContent(representations: [
+            .init(pendingRemoteUTI: "a", byteCount: .max, filename: "a.bin"),
+            .init(pendingRemoteUTI: "b", byteCount: .max, filename: "b.bin"),
+        ])
+        #expect(content.totalByteCount == .max)
+    }
+
     @Test("makeOffActor yields the same digest and representations as the sync init")
     func makeOffActorMatchesSyncInit() async {
         let reps: [ClipboardContent.Representation] = [

@@ -847,13 +847,29 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             lazyCoordinator.failAll()
         }
 
-        let items = Self.promisedItems(for: offer.repInfo)
+        // Every field of the offer is host-supplied. Bound the rep count and each
+        // declared size once, here at intake, so no deadline, capacity, or
+        // progress arithmetic downstream reasons about a value that can't be
+        // real.
+        let bounded = ClipboardOfferBounds.bounded(offer.repInfo)
+        if let truncatedFrom = bounded.truncatedFrom {
+            Self.logger.warning(
+                "Host clipboard offer (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)) declared \(truncatedFrom, privacy: .public) representations — truncated to \(bounded.reps.count, privacy: .public)"
+            )
+        }
+        if bounded.clampedCount > 0 {
+            Self.logger.warning(
+                "Clamped \(bounded.clampedCount, privacy: .public) implausible declared byte count(s) in the host clipboard offer (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
+            )
+        }
+
+        let items = Self.promisedItems(for: bounded.reps)
         guard !items.isEmpty else {
             inboundPromise = nil
             return
         }
 
-        let promise = InboundPromise(generation: offer.generation, reps: offer.repInfo)
+        let promise = InboundPromise(generation: offer.generation, reps: bounded.reps)
         inboundPromise = promise
 
         guard writePasteboardPromise(promise: promise, items: items) else {
@@ -936,6 +952,12 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             // Already pulled — serving from cache mints no new transfer id.
             representation = cached
         } else {
+            // The deadline cap and the free-space pre-flight both belong to the
+            // `.fileURL` flavor: it is the one whose bytes have to land as a file
+            // inside the OS paste deadline. The same rep's inline flavor — an
+            // image file promises both — carries no size bound (§1).
+            guard type != .fileURL || allowsFileURLPull(repIndex, promise: promise, channel: channel)
+            else { return nil }
             guard
                 let pulled = pullRepresentation(
                     repIndex, promise: promise, channel: channel, receiver: receiver)
@@ -990,38 +1012,38 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
     }
 
-    /// Sends one `ClipboardRequest` and blocks the calling thread until the
-    /// streamed representation lands (or aborts/times out).
-    private func pullRepresentation(
-        _ repIndex: Int, promise: InboundPromise, channel: VsockChannel,
-        receiver: ClipboardStreamReceiver
-    ) -> ClipboardContent.Representation? {
+    /// Whether a `.fileURL` fire may start its pull: the offer's deadline-bound
+    /// total is within the cap, and the rep fits the staging volume.
+    ///
+    /// Both gates surface their refusal before returning `false` — the guest has
+    /// no UI of its own, so the host is told, and the deadline refusal also
+    /// raises the guest's own menu notice.
+    private func allowsFileURLPull(
+        _ repIndex: Int, promise: InboundPromise, channel: VsockChannel
+    ) -> Bool {
         let info = promise.reps[repIndex]
         // The cap applies to the TOTAL of the offer's deadline-bound reps,
         // all-or-nothing: one paste is one deadline-bound operation, so the OS
         // clock sees the sum, not each file. Checked before the disk-space gate:
         // an over-cap offer never gets far enough to need the space.
-        if !info.isInline {
-            let totalBytes = Self.syncDeadlineBoundLoad(for: promise)
-            if totalBytes > UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) {
-                Self.logger.warning(
-                    "Deadline-bound clipboard reps total \(totalBytes, privacy: .public) bytes — over the deadline-safe cap; refusing the paste pull"
-                )
-                // The gesture was made here, so the notice goes up here; the host
-                // is told too, since its window may be the surface in view.
-                if !promise.tooLargeReported {
-                    promise.tooLargeReported = true
-                    recordPasteRefusedTooLarge()
-                    sendPasteError(
-                        code: .pasteTooLarge,
-                        message:
-                            "Too large to paste into the guest (\(totalBytes) bytes total)",
-                        on: channel)
-                }
-                return nil
+        let totalBytes = Self.syncDeadlineBoundLoad(for: promise)
+        if totalBytes > UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) {
+            Self.logger.warning(
+                "Deadline-bound clipboard reps total \(totalBytes, privacy: .public) bytes — over the deadline-safe cap; refusing the paste pull"
+            )
+            // The gesture was made here, so the notice goes up here; the host
+            // is told too, since its window may be the surface in view.
+            if !promise.tooLargeReported {
+                promise.tooLargeReported = true
+                recordPasteRefusedTooLarge()
+                sendPasteError(
+                    code: .pasteTooLarge,
+                    message: "Too large to paste into the guest (\(totalBytes) bytes total)",
+                    on: channel)
             }
+            return false
         }
-        if !info.isInline, !staging.hasCapacity(forByteCount: Int(clamping: info.byteCount)) {
+        if !staging.hasCapacity(forByteCount: Int(clamping: info.byteCount)) {
             Self.logger.warning(
                 "Not enough disk space to receive clipboard rep '\(info.uti, privacy: .public)' (\(info.byteCount, privacy: .public) bytes)"
             )
@@ -1030,8 +1052,21 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 code: .pasteDiskFull,
                 message: "Not enough disk space in the guest to receive \(info.byteCount) bytes",
                 on: channel)
-            return nil
+            return false
         }
+        return true
+    }
+
+    /// Sends one `ClipboardRequest` and blocks the calling thread until the
+    /// streamed representation lands (or aborts/times out).
+    ///
+    /// The `.fileURL` flavor's deadline and free-space gates run in
+    /// `allowsFileURLPull` before this is reached.
+    private func pullRepresentation(
+        _ repIndex: Int, promise: InboundPromise, channel: VsockChannel,
+        receiver: ClipboardStreamReceiver
+    ) -> ClipboardContent.Representation? {
+        let info = promise.reps[repIndex]
         // The guest is the receiver, so it does not set the direction bit.
         let transferID = ClipboardTransferID.make(
             generation: promise.generation, repIndex: repIndex, hostMinted: false)
@@ -1235,15 +1270,26 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         info.byteCount != 0 && !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: info.uti)
     }
 
-    /// The offer's deadline-bound load — the total byte count of its non-inline,
-    /// promisable reps, the payload one paste pulls against the OS deadline.
+    /// Whether a promised item serves this rep as `public.file-url` — the flavor
+    /// whose bytes have to land as a file inside the OS paste deadline.
+    ///
+    /// `ClipboardPasteboardItemPlan` promises `.fileURL` for every promisable rep
+    /// carrying a filename, so an image file — which also promises its image UTI
+    /// inline — is one of them.
+    private static func servesFileURL(_ info: Kernova_V1_ClipboardRepresentationInfo) -> Bool {
+        isPromisable(info) && !info.filename.isEmpty
+    }
+
+    /// The offer's deadline-bound load — the total byte count of the reps served
+    /// as `public.file-url`, the payload one paste pulls against the OS deadline.
     ///
     /// A directory rep contributes the producer's estimate, the same figure the
-    /// wire carries as its `byte_count`.
+    /// wire carries as its `byte_count`. The sum saturates, so an absurd declared
+    /// total fails the cap rather than wrapping under it.
     private static func syncDeadlineBoundLoad(for promise: InboundPromise) -> UInt64 {
         var total: UInt64 = 0
-        for info in promise.reps where !info.isInline && isPromisable(info) {
-            total &+= info.byteCount
+        for info in promise.reps where servesFileURL(info) {
+            total = total.saturatingAdding(info.byteCount)
         }
         return total
     }

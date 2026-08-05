@@ -998,6 +998,30 @@ struct ClipboardStreamTests {
         #expect(harness.collector.representation(1) == nil)
     }
 
+    @Test("a Begin declaring an impossible total is bounded and fails the disk guard")
+    func absurdBeginTotalRejected() async throws {
+        // 100 GiB free: nothing local makes this fail — the declared total does.
+        let harness = try StreamHarness(
+            chunkSize: Self.chunk, windowBytes: Self.window,
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { harness.tearDown() }
+
+        // A sender's `total_bytes` is never cross-checked against the chunks that
+        // follow, so `UInt64.max` has to reach the free-space guard as a size
+        // that fails rather than as arithmetic that kills the process.
+        harness.receiver.handleBegin(
+            .with {
+                $0.generation = 1; $0.transferID = 9; $0.uti = "public.data"
+                $0.totalBytes = .max; $0.isInline = false; $0.filename = "absurd.bin"
+            })
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        let info = try #require(harness.collector.abortInfos.first)
+        #expect(info.code == "disk.full")
+        #expect(info.neededBytes == Int(ClipboardOfferBounds.maxDeclaredByteCount))
+        #expect(harness.collector.representation(9) == nil)
+    }
+
     // MARK: - Liveness & untrusted-input bounds
 
     @Test("a sender whose peer never acks aborts with ack.timeout")

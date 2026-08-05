@@ -43,7 +43,7 @@ enum ClipboardContentDescriber {
             // double-count here. Sum the listed files (not `totalByteCount`) so
             // the header's size always matches its count, never folding in a
             // coexisting inline rep.
-            let totalBytes = files.reduce(0) { $0 + $1.byteCount }
+            let totalBytes = files.reduce(0) { $0.saturatingAdding($1.byteCount) }
             let totalSize = DataFormatters.formatBytes(UInt64(totalBytes))
             return "\(files.count) files · \(totalSize)"
         case .summary(let representations):

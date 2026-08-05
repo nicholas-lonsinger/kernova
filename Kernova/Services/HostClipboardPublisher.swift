@@ -183,7 +183,9 @@ final class HostClipboardPublisher {
     /// synchronously on the thread of the pasteboard server's `provideData`
     /// callback (usually main), blocking it while the stream receiver delivers
     /// off-main; the offer's paste-bound total is size-capped so the pull and
-    /// stage complete within the OS paste deadline.
+    /// stage complete within the OS paste deadline. A promise that withholds
+    /// `.fileURL` (the over-cap refusal) never registers that type, so the paste
+    /// finds no file flavor to fire rather than firing one that serves nothing.
     nonisolated static func promisedItemSpecs(
         for promises: [CopyToMacPromise], provider: any ClipboardPasteboardRepProviding
     ) -> [PasteboardItemSpec] {
@@ -192,17 +194,19 @@ final class HostClipboardPublisher {
                 uti: $0.uti, filename: $0.filename, isInline: $0.isInline, isPromisable: true)
         }
         let plan = ClipboardPasteboardItemPlan.plan(for: descriptors)
-        return plan.items.map { item in
+        return plan.items.compactMap { item -> PasteboardItemSpec? in
             var types: [NSPasteboard.PasteboardType] = []
             var routes: [NSPasteboard.PasteboardType: (promise: CopyToMacPromise, isFileURL: Bool)] =
                 [:]
             for promisedType in item.types {
                 let promise = promises[promisedType.representationIndex]
+                if promisedType.isFileURL && promise.withholdsFileURL { continue }
                 let type: NSPasteboard.PasteboardType =
                     promisedType.isFileURL ? .fileURL : .init(promisedType.uti)
                 types.append(type)
                 routes[type] = (promise, promisedType.isFileURL)
             }
+            guard !types.isEmpty else { return nil }
             // Snapshot to a `let` so the @Sendable closure captures an immutable
             // map.
             let itemRoutes = routes

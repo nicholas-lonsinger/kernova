@@ -165,12 +165,16 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// `volumeAvailableCapacityForImportantUsageKey` **includes purgeable
     /// space**, so it can exceed raw free bytes (WWDC17 "What's New in
     /// Foundation"); the margin keeps a transfer from filling the volume to the
-    /// last byte. An unknown capacity is treated as "fits".
+    /// last byte. An unknown capacity is treated as "fits", and a size whose
+    /// margined total leaves `Int64` as "does not fit" — the caller's `byteCount`
+    /// can come from a peer-declared size.
     public func hasCapacity(
         forByteCount byteCount: Int, margin: Int = ClipboardStreamTuning.freeSpaceMargin
     ) -> Bool {
         guard let available = availableCapacity() else { return true }
-        return Int64(byteCount) + Int64(margin) <= available
+        let (needed, overflow) = Int64(byteCount).addingReportingOverflow(Int64(margin))
+        guard !overflow else { return false }
+        return needed <= available
     }
 
     /// Opens an append-only sink for a streamed file representation, creating

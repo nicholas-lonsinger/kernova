@@ -102,7 +102,12 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             uti: begin.uti,
             filename: begin.filename,
             isInline: begin.isInline,
-            totalBytes: Int(clamping: begin.totalBytes),
+            // The sender's declared total is peer-supplied and never
+            // cross-checked against the chunks that follow: bound it here, the
+            // one place it enters, so the disk pre-flight and the inline reserve
+            // below are handed a size that can be reasoned about.
+            totalBytes: Int(
+                clamping: min(begin.totalBytes, ClipboardOfferBounds.maxDeclaredByteCount)),
             maxResidentInlineBytes: maxResidentInlineBytes
         )
         // Ignore a duplicate transfer_id rather than overwrite an in-flight

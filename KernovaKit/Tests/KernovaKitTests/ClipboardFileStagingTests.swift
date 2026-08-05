@@ -240,6 +240,16 @@ struct ClipboardFileStagingTests {
         #expect(unknownStaging.hasCapacity(forByteCount: Int.max - ClipboardStreamTuning.freeSpaceMargin))
     }
 
+    @Test("a byte count whose margined total leaves Int64 does not fit — and does not trap")
+    func absurdByteCountDoesNotFit() {
+        // The size reaching this guard can be a peer's declared `total_bytes`
+        // clamped into `Int`, so the margin must not be added into an overflow.
+        let staging = makeStaging(freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { staging.sweep() }
+        #expect(!staging.hasCapacity(forByteCount: .max))
+        #expect(!staging.hasCapacity(forByteCount: .max, margin: 1))
+    }
+
     @Test("a crafted filename can't escape the generation directory")
     func sanitizesPathTraversal() throws {
         let staging = makeStaging()

@@ -124,6 +124,24 @@ struct VsockClipboardServiceTests {
         reps: [(uti: String, byteCount: Int, filename: String, isInline: Bool)],
         isConcealed: Bool = false
     ) -> Frame {
+        makeRawOffer(
+            generation: generation,
+            reps: reps.map {
+                (
+                    uti: $0.uti, byteCount: UInt64($0.byteCount), filename: $0.filename,
+                    isInline: $0.isInline
+                )
+            },
+            isConcealed: isConcealed)
+    }
+
+    /// `makeOffer` taking the wire's own `UInt64` byte counts — for the declared
+    /// sizes no real payload could have, where the exact value is the point.
+    private func makeRawOffer(
+        generation: UInt64,
+        reps: [(uti: String, byteCount: UInt64, filename: String, isInline: Bool)],
+        isConcealed: Bool = false
+    ) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.clipboardOffer = Kernova_V1_ClipboardOffer.with {
@@ -132,7 +150,7 @@ struct VsockClipboardServiceTests {
             $0.repInfo = reps.map { rep in
                 Kernova_V1_ClipboardRepresentationInfo.with {
                     $0.uti = rep.uti
-                    $0.byteCount = UInt64(rep.byteCount)
+                    $0.byteCount = rep.byteCount
                     $0.filename = rep.filename
                     $0.isInline = rep.isInline
                 }
@@ -2169,6 +2187,193 @@ struct VsockClipboardServiceTests {
                 == .localRefusal(
                     code: ClipboardErrorCode.copyTooLarge.rawValue,
                     message: ClipboardTransferIssue.overCopyBudgetMessage))
+    }
+
+    @Test("an image file is paste-bound too — an over-cap image set is refused whole")
+    func copyRefusesOverBudgetImageFileSet() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // Two image FILES: `is_inline` is true (they paste as images too), yet
+        // each is served as `public.file-url` as well, so both count against the
+        // paste budget their sum exceeds.
+        let png = UTType.png.identifier
+        let half = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) / 2 + 1
+        try guest.send(
+            makeRawOffer(
+                generation: 71,
+                reps: [
+                    (uti: png, byteCount: half, filename: "a.png", isInline: true),
+                    (uti: png, byteCount: half, filename: "b.png", isInline: true),
+                ]))
+        try await waitForChange { service.clipboardContent.representations.count == 2 }
+
+        let items = service.materializeForCopy()
+        // All-or-nothing across the file set, reported on the surfaces a click
+        // and an automatic passthrough publish each read.
+        #expect(items.droppedReasons == [.overPasteBudget, .overPasteBudget])
+        #expect(
+            service.lastTransferIssue?.kind
+                == .localRefusal(
+                    code: ClipboardErrorCode.copyTooLarge.rawValue,
+                    message: ClipboardTransferIssue.overCopyBudgetMessage))
+        // The cap governs the file flavor, not the inline one (§1): each rep
+        // still promises, with `.fileURL` withheld from the item it plans.
+        #expect(items.promised.map(\.repIndex) == [0, 1])
+        #expect(items.promised.map(\.withholdsFileURL) == [true, true])
+        let specs = HostClipboardPublisher.promisedItemSpecs(for: items.promised, provider: service)
+        let pngType = NSPasteboard.PasteboardType(png)
+        #expect(specs.map(\.types) == [[pngType], [pngType]])
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        let bytes = Data(repeating: 0x89, count: 2048)
+        responder.register(
+            generation: 71, repIndex: 0, uti: png, bytes: bytes, filename: "a.png", isInline: true)
+        responder.start()
+
+        // The paste-time gate refuses a `.fileURL` fire on its own, without a
+        // request; the same rep's inline flavor still serves its bytes.
+        let refused = await offCooperativePool {
+            service.copyToMacFileURL(generation: 71, repIndex: 0)
+        }
+        #expect(refused == nil)
+        #expect(responder.requests.isEmpty)
+        let inline = await offCooperativePool {
+            service.copyToMacData(generation: 71, repIndex: 0, uti: png)
+        }
+        #expect(inline == bytes)
+    }
+
+    @Test("an under-cap image file still pastes through the `.fileURL` path")
+    func underCapImageFilePastesThroughFileURL() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        let png = UTType.png.identifier
+        let bytes = Data((0..<4096).map { UInt8(truncatingIfNeeded: $0) })
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 72, repIndex: 0, uti: png, bytes: bytes, filename: "shot.png",
+            isInline: true)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 72,
+                reps: [(uti: png, byteCount: bytes.count, filename: "shot.png", isInline: true)]))
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
+
+        let items = service.materializeForCopy()
+        #expect(items.droppedReasons.isEmpty)
+        #expect(items.promised.map(\.withholdsFileURL) == [false])
+        let url = await offCooperativePool { service.copyToMacFileURL(generation: 72, repIndex: 0) }
+        #expect(try Data(contentsOf: #require(url)) == bytes)
+    }
+
+    @Test("a declared byte count near UInt64.max is bounded at intake, never wrapped")
+    func absurdDeclaredByteCountBounded() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        try guest.send(
+            makeRawOffer(
+                generation: 73,
+                reps: [
+                    (uti: "public.data", byteCount: .max - 1, filename: "huge.bin", isInline: false)
+                ]))
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
+
+        // The published placeholder carries the clamped size, so nothing
+        // downstream sums, formats, or stages a number that can't be real.
+        #expect(
+            service.clipboardContent.representations[0].byteCount
+                == Int(ClipboardOfferBounds.maxDeclaredByteCount))
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.start()
+
+        let items = service.materializeForCopy()
+        #expect(items.promised.isEmpty)
+        #expect(items.droppedReasons == [.overPasteBudget])
+        #expect(
+            service.lastTransferIssue?.kind
+                == .localRefusal(
+                    code: ClipboardErrorCode.copyTooLarge.rawValue,
+                    message: ClipboardTransferIssue.overCopyBudgetMessage))
+        #expect(service.copyToMacFileURL(generation: 73, repIndex: 0) == nil)
+        #expect(responder.requests.isEmpty)
+    }
+
+    @Test("two reps whose declared sizes sum past UInt64 are refused, not wrapped under the cap")
+    func wrappingRepSumRefused() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // Unbounded, 2^63 + 2^63 wraps to 0 — a total that passes every cap.
+        try guest.send(
+            makeRawOffer(
+                generation: 74,
+                reps: [
+                    (uti: "public.data", byteCount: 1 << 63, filename: "a.bin", isInline: false),
+                    (uti: "public.data", byteCount: 1 << 63, filename: "b.bin", isInline: false),
+                ]))
+        try await waitForChange { service.clipboardContent.representations.count == 2 }
+
+        let items = service.materializeForCopy()
+        #expect(items.promised.isEmpty)
+        #expect(items.droppedReasons == [.overPasteBudget, .overPasteBudget])
+        #expect(service.copyToMacFileURL(generation: 74, repIndex: 0) == nil)
+    }
+
+    @Test("an offer declaring more reps than the transfer-id limit is truncated at intake")
+    func repCountBoundedAtIntake() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // A rep past the 16-bit rep index a transfer id carries could never be
+        // requested, so the offer is bounded to the limit the sender observes.
+        let limit = ClipboardContent.maxOfferableRepresentations
+        try guest.send(
+            makeOffer(
+                generation: 75,
+                reps: (0..<(limit + 3)).map { index in
+                    (uti: "public.data", byteCount: 4, filename: "f\(index).bin", isInline: false)
+                }))
+        try await waitForChange { service.clipboardContent.representations.count == limit }
+        #expect(service.materializeForCopy().count == limit)
     }
 
     @Test(

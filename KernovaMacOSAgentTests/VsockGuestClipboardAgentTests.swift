@@ -1878,9 +1878,9 @@ struct VsockGuestClipboardAgentTests {
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
-        // Inline reps (§1: no Kernova-imposed size bound) are exempt from the
-        // deadline cap, which only guards non-inline, non-directory file reps —
-        // mirroring the host's `isLazyEligibleFile` gate.
+        // An inline-only rep (no filename) is never served as `public.file-url`,
+        // so the deadline cap — which follows that flavor — never applies to it;
+        // §1 leaves inline content unbounded.
         let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
         try hostChannel.send(
             makeOfferFrame(
@@ -1937,6 +1937,89 @@ struct VsockGuestClipboardAgentTests {
         #expect(error.code == "clipboard.paste.too.large")
         // The second fire is deduped — one message per offer, and no request.
         #expect(try await maybeNextFrame(from: hostChannel) == nil)
+    }
+
+    @Test(
+        "deadline cap: an over-cap image FILE has its `.fileURL` refused while its inline flavor serves"
+    )
+    func overCapImageFileRefusesOnlyTheFileFlavor() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // An image file is `is_inline` yet promises `.fileURL` too, so it is
+        // deadline-bound through that flavor — the cap follows the flavor a paste
+        // fires, not the rep.
+        let pngType = NSPasteboard.PasteboardType(UTType.png.identifier)
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 29,
+                reps: [
+                    RepInfo(
+                        uti: UTType.png.identifier, byteCount: overCap, filename: "huge.png",
+                        isInline: true)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.count == 2 }
+
+        // The file flavor refuses without a request, and reports it.
+        #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
+        let frame = try await maybeNextFrame(from: hostChannel)
+        guard case .error(let error)? = frame?.payload else {
+            Issue.record("Expected an Error frame, got \(String(describing: frame?.payload))")
+            return
+        }
+        #expect(error.code == "clipboard.paste.too.large")
+
+        // The same rep's inline flavor carries no size bound (§1): its pull runs.
+        // Abort it rather than stream 2 GiB in-test.
+        let imagePull = lazyPull(pasteboard, forType: pngType)
+        let request = try await awaitRequest(on: hostChannel)
+        try hostChannel.send(
+            makeAbortFrame(
+                transferID: request.transferID, code: "host.abort", message: "test abort"))
+        _ = await imagePull.value
+    }
+
+    @Test("declared sizes summing past UInt64 are bounded at intake, not wrapped under the cap")
+    func wrappingDeclaredSumRefused() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // Unbounded, 2^63 + 2^63 wraps to 0 — a deadline-bound total that passes
+        // every cap.
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 30,
+                reps: [
+                    RepInfo(uti: txtUTI, byteCount: 1 << 63, filename: "a.bin", isInline: false),
+                    RepInfo(uti: txtUTI, byteCount: 1 << 63, filename: "b.bin", isInline: false),
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedItemCountForTesting == 2 }
+
+        #expect(await lazyPull(pasteboard, forType: .fileURL, itemIndex: 0).value == nil)
+        let frame = try await maybeNextFrame(from: hostChannel)
+        guard case .error(let error)? = frame?.payload else {
+            Issue.record("Expected an Error frame, got \(String(describing: frame?.payload))")
+            return
+        }
+        #expect(error.code == "clipboard.paste.too.large")
     }
 
     @Test("deadline cap totals: a directory rep counts toward the sync total")

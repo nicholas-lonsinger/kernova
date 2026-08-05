@@ -99,7 +99,9 @@ public enum ClipboardStreamTuning {
     /// (docs/research/2026-07-13-vsock-transport-throughput.md), 2 GiB streams in
     /// ~6 s — over 4× margin under the tighter deadline for a folder's
     /// request-time archive pass, the staging write, and the extract. The cap is
-    /// compared against the offer's non-inline total, all-or-nothing per paste.
+    /// compared against the total of the offer's reps that serve
+    /// `public.file-url` — every promisable rep carrying a filename, image files
+    /// included — all-or-nothing per paste.
     public static let maxDeadlineSafePasteBytes = 2 * 1024 * 1024 * 1024
 }
 

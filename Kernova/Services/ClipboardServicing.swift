@@ -89,6 +89,22 @@ struct CopyToMacPromise: Sendable, Equatable {
     /// Whether the rep inlines onto the pasteboard (the offer's `is_inline`),
     /// mirroring `shouldInlineOnPasteboard` for a resolved rep.
     let isInline: Bool
+    /// Whether the publisher must leave `public.file-url` off the item it plans
+    /// for this rep — the over-cap refusal for an image file, whose inline
+    /// flavor keeps serving.
+    let withholdsFileURL: Bool
+
+    init(
+        generation: UInt64, repIndex: Int, uti: String, filename: String, isInline: Bool,
+        withholdsFileURL: Bool = false
+    ) {
+        self.generation = generation
+        self.repIndex = repIndex
+        self.uti = uti
+        self.filename = filename
+        self.isInline = isInline
+        self.withholdsFileURL = withholdsFileURL
+    }
 }
 
 /// One item "Copy to Mac" places on the host pasteboard.
@@ -106,7 +122,7 @@ enum CopyToMacItem: Sendable {
 
 /// Why a "Copy to Mac" file payload couldn't be placed on the host pasteboard.
 enum CopyToMacDropReason: Sendable, Equatable {
-    /// The offer's non-inline reps total over
+    /// The offer's `public.file-url`-serving reps total over
     /// `ClipboardStreamTuning.maxDeadlineSafePasteBytes`, so no paste could pull
     /// them inside the OS pasteboard-promise deadline. All-or-nothing: the whole
     /// set is refused together rather than landing piecemeal.

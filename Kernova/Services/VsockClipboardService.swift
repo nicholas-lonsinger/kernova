@@ -690,10 +690,25 @@ final class VsockClipboardService: ClipboardServicing {
             dropInboundPromise()
             return
         }
+        // Every field of the offer is guest-supplied. Bound the rep count and
+        // each declared size once, here at intake, so no budget, capacity, or
+        // progress arithmetic downstream reasons about a value that can't be
+        // real.
+        let bounded = ClipboardOfferBounds.bounded(offer.repInfo)
+        if let truncatedFrom = bounded.truncatedFrom {
+            Self.logger.warning(
+                "Guest clipboard offer for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) declared \(truncatedFrom, privacy: .public) representations — truncated to \(bounded.reps.count, privacy: .public)"
+            )
+        }
+        if bounded.clampedCount > 0 {
+            Self.logger.warning(
+                "Clamped \(bounded.clampedCount, privacy: .public) implausible declared byte count(s) in the guest clipboard offer for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
+            )
+        }
         // Publish metadata-only placeholders immediately so the window shows the
         // chips without waiting.
         let promise = InboundPromise(
-            generation: offer.generation, reps: offer.repInfo, isConcealed: offer.isConcealed)
+            generation: offer.generation, reps: bounded.reps, isConcealed: offer.isConcealed)
         republish(promise)
         // Every offered rep was identity-skipped — nothing usable to promise.
         guard !clipboardContent.isEmpty else {
@@ -708,7 +723,7 @@ final class VsockClipboardService: ClipboardServicing {
         // `materializeForCopy` sees it.
         inboundOfferSeq &+= 1
         Self.logger.notice(
-            "Received guest clipboard offer for '\(self.label, privacy: .public)' (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(offer.repInfo.count, privacy: .public) reps) — metadata only"
+            "Received guest clipboard offer for '\(self.label, privacy: .public)' (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(promise.reps.count, privacy: .public) reps) — metadata only"
         )
     }
 
@@ -790,6 +805,17 @@ final class VsockClipboardService: ClipboardServicing {
         info.byteCount == 0 || ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: info.uti)
     }
 
+    /// Whether a promised item serves this rep as `public.file-url` — the flavor
+    /// whose bytes must pull, stage, and (for a folder) extract inside the OS
+    /// pasteboard-promise deadline.
+    ///
+    /// `ClipboardPasteboardItemPlan` promises `.fileURL` for every promisable rep
+    /// carrying a filename, so an image file — which also promises its image
+    /// UTI inline — is one of them.
+    private static func servesFileURL(_ info: Kernova_V1_ClipboardRepresentationInfo) -> Bool {
+        !shouldSkip(info) && !info.filename.isEmpty
+    }
+
     // MARK: - Lazy materialization (we are the receiver)
 
     /// Opens the progress session covering one materialization loop, or `nil` when
@@ -849,10 +875,11 @@ final class VsockClipboardService: ClipboardServicing {
     ///
     /// Every usable rep of the live offer becomes a `.promised` item addressed by
     /// its offer coordinates; its bytes are pulled when a paste consumes them
-    /// (`copyToMacFileURL` / `copyToMacData`). When the offer's paste-bound
-    /// (non-inline) total exceeds the deadline-safe cap those reps are refused up
-    /// front as `.droppedFile(.overPasteBudget)` — no paste could ever serve them,
-    /// so the click says so instead of leaving a silent paste failure.
+    /// (`copyToMacFileURL` / `copyToMacData`). When the offer's paste-bound total
+    /// exceeds the deadline-safe cap the refusal is per *flavor*: every
+    /// `.fileURL`-serving rep reports a `.droppedFile(.overPasteBudget)` — no
+    /// paste could ever serve it — while an image file's inline flavor, which the
+    /// cap does not govern (docs/CLIPBOARD.md §1), still promises.
     func materializeForCopy() -> [CopyToMacItem] {
         // No active promise, or the user replaced the offered content with their
         // own edit: copy what's actually shown, never a stale placeholder.
@@ -875,32 +902,39 @@ final class VsockClipboardService: ClipboardServicing {
 
         var items: [CopyToMacItem] = []
         for (index, info) in promise.reps.enumerated() where !Self.shouldSkip(info) {
-            if overBudget, !info.isInline {
+            let withholdsFileURL = overBudget && Self.servesFileURL(info)
+            if withholdsFileURL {
+                // Withholding `.fileURL` is refusing the file, whether or not an
+                // inline flavor of the same rep still serves — so the drop is
+                // reported either way and the click names the cap.
                 items.append(.droppedFile(.overPasteBudget))
-                continue
+                // A non-inline rep promises nothing else: the whole item goes.
+                if !info.isInline { continue }
             }
             items.append(
                 .promised(
                     CopyToMacPromise(
                         generation: promise.generation, repIndex: index, uti: info.uti,
-                        filename: info.filename, isInline: info.isInline)))
+                        filename: info.filename, isInline: info.isInline,
+                        withholdsFileURL: withholdsFileURL)))
         }
         return items
     }
 
     // MARK: - Paste-time serving (we are the receiver)
 
-    /// Total byte count of the offer's paste-bound reps — the non-inline file and
-    /// directory reps whose bytes must pull, stage, and (for a folder) extract
-    /// inside the OS pasteboard-promise deadline — against which the deadline-safe
-    /// cap is compared.
+    /// Total byte count of the offer's paste-bound reps — the ones served as
+    /// `public.file-url`, whose bytes must pull, stage, and (for a folder)
+    /// extract inside the OS pasteboard-promise deadline — against which the
+    /// deadline-safe cap is compared.
     ///
     /// A directory rep contributes its stat-walk estimate, the honest measure of
-    /// the extract the deadline also covers.
+    /// the extract the deadline also covers. The sum saturates, so an absurd
+    /// declared total fails the cap rather than wrapping under it.
     private func pasteBoundTotalBytes(for promise: InboundPromise) -> UInt64 {
         var total: UInt64 = 0
-        for info in promise.reps where !Self.shouldSkip(info) && !info.isInline {
-            total &+= info.byteCount
+        for info in promise.reps where Self.servesFileURL(info) {
+            total = total.saturatingAdding(info.byteCount)
         }
         return total
     }
@@ -932,10 +966,7 @@ final class VsockClipboardService: ClipboardServicing {
     private func refusesPasteBoundFire(generation: UInt64) -> Bool {
         guard receiver == nil, let promise = inboundPromise, promise.generation == generation
         else { return false }
-        let fileSet = promise.reps.indices.filter { index in
-            let info = promise.reps[index]
-            return !Self.shouldSkip(info) && !info.filename.isEmpty
-        }
+        let fileSet = promise.reps.indices.filter { Self.servesFileURL(promise.reps[$0]) }
         guard fileSet.contains(where: { promise.materialized[$0] == nil }) else { return false }
         if !promise.partialSetRefusalReported {
             promise.partialSetRefusalReported = true
