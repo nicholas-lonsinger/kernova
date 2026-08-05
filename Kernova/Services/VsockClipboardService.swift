@@ -705,16 +705,25 @@ final class VsockClipboardService: ClipboardServicing {
                 "Clamped \(bounded.clampedCount, privacy: .public) implausible declared byte count(s) in the guest clipboard offer for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
             )
         }
-        // Publish metadata-only placeholders immediately so the window shows the
-        // chips without waiting.
         let promise = InboundPromise(
             generation: offer.generation, reps: bounded.reps, isConcealed: offer.isConcealed)
-        republish(promise)
-        // Every offered rep was identity-skipped — nothing usable to promise.
-        guard !clipboardContent.isEmpty else {
+        let placeholders = rebuiltReps(from: promise)
+        // Every offered rep was filtered — nothing usable to promise. Decided
+        // before publishing, so the window keeps whatever it is showing instead
+        // of being wiped by an empty apply.
+        guard !placeholders.isEmpty else {
+            Self.logger.warning(
+                "Dropped the guest clipboard offer for '\(self.label, privacy: .public)' (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)): none of its \(bounded.reps.count, privacy: .public) representation(s) survived receive-side filtering"
+            )
             dropInboundPromise()
             return
         }
+        // Publish metadata-only placeholders immediately so the window shows the
+        // chips without waiting. Their byte-less reps hash trivially; once a pull
+        // has materialized real bytes, `republishOffActor` hashes off the main
+        // actor instead (§8).
+        apply(
+            ClipboardContent(representations: placeholders, isConcealed: promise.isConcealed))
         inboundPromise = promise
         previewMaterializationStarted = 0
         // A retraction's issue is the new offer's own explainer — keep it.
@@ -727,19 +736,8 @@ final class VsockClipboardService: ClipboardServicing {
         )
     }
 
-    /// Rebuilds `clipboardContent` from the promise: each rep is its materialized
-    /// form when pulled, else a `.pendingRemote` placeholder.
-    ///
-    /// Only for the placeholder-only publish, whose byte-less reps hash trivially.
-    /// Once a pull has materialized real bytes use `republishOffActor` instead, so
-    /// a large inline payload is not hashed on the main actor (§8).
-    private func republish(_ promise: InboundPromise) {
-        apply(
-            ClipboardContent(
-                representations: rebuiltReps(from: promise), isConcealed: promise.isConcealed))
-    }
-
-    /// `republish` with the content digest computed off the owning actor.
+    /// Republishes the promise with the content digest computed off the owning
+    /// actor.
     ///
     /// A pulled rep can be a memory-mapped inline payload of any size, and hashing
     /// it for the content digest is `O(payload)` — it must not stall the main
@@ -798,11 +796,16 @@ final class VsockClipboardService: ClipboardServicing {
             ? content : ClipboardContent(representations: reps)
     }
 
-    /// A representation excluded from the receive side by identity alone: an empty
-    /// payload or a transient-marker / raw file-url UTI (the lazy counterpart of
-    /// `ClipboardSnapshotPolicy.sanitizedForApply`).
+    /// A representation excluded from the receive side without reading a byte: a
+    /// transient-marker / raw file-url UTI, or an empty payload.
+    ///
+    /// A directory rep is exempt from the empty-payload skip: its `byte_count` is
+    /// an estimate of the tree's file bytes (`kernova.proto`), which a tree of
+    /// empty files, bare subdirectories, or nothing at all makes 0 while the
+    /// archive still carries the tree.
     private static func shouldSkip(_ info: Kernova_V1_ClipboardRepresentationInfo) -> Bool {
-        info.byteCount == 0 || ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: info.uti)
+        (info.byteCount == 0 && !info.isDirectory)
+            || ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: info.uti)
     }
 
     /// Whether a promised item serves this rep as `public.file-url` — the flavor

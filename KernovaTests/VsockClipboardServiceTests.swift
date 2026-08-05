@@ -159,6 +159,29 @@ struct VsockClipboardServiceTests {
         return frame
     }
 
+    /// An offer whose reps are all directories — `is_directory` set, each
+    /// declaring the producer's stat-walk estimate (0 for a tree carrying no
+    /// file bytes).
+    private func makeDirectoryOffer(
+        generation: UInt64, reps: [(uti: String, byteCount: UInt64, filename: String)]
+    ) -> Frame {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.clipboardOffer = Kernova_V1_ClipboardOffer.with {
+            $0.generation = generation
+            $0.repInfo = reps.map { rep in
+                Kernova_V1_ClipboardRepresentationInfo.with {
+                    $0.uti = rep.uti
+                    $0.byteCount = rep.byteCount
+                    $0.filename = rep.filename
+                    $0.isInline = false
+                    $0.isDirectory = true
+                }
+            }
+        }
+        return frame
+    }
+
     /// Convenience for the common single inline-text representation.
     private func makeTextOffer(generation: UInt64, text: String) -> Frame {
         makeOffer(
@@ -577,6 +600,109 @@ struct VsockClipboardServiceTests {
         #expect(
             try String(contentsOf: dest.appendingPathComponent("sub/n.txt"), encoding: .utf8)
                 == "nested")
+    }
+
+    @Test(
+        "A folder carrying no file bytes still offers, archives on request, and streams its tree"
+    )
+    func requestArchivesByteFreeFolders() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // Two folders a stat walk sizes at 0: one empty, one holding only a
+        // subdirectory and zero-byte files. Both are ordinary Finder copies.
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let empty = parent.appendingPathComponent("Empty", isDirectory: true)
+        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+        let scaffold = parent.appendingPathComponent("Scaffold", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: scaffold.appendingPathComponent("sub", isDirectory: true),
+            withIntermediateDirectories: true)
+        try Data().write(to: scaffold.appendingPathComponent("sub/.keep"))
+
+        service.clipboardContent = ClipboardContent(representations: [
+            ClipboardContent.Representation(
+                directorySourceURL: empty, estimatedByteCount: 0, filename: "Empty",
+                uti: "public.folder"),
+            ClipboardContent.Representation(
+                directorySourceURL: scaffold, estimatedByteCount: 0, filename: "Scaffold",
+                uti: "public.folder"),
+        ])
+        service.grabIfChanged()
+
+        let offerFrame = try await nextFrame(from: guest)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            Issue.record("Expected clipboardOffer, got \(String(describing: offerFrame.payload))")
+            return
+        }
+        #expect(offer.repInfo.map(\.isDirectory) == [true, true])
+        #expect(offer.repInfo.map(\.byteCount) == [0, 0])
+        #expect(offer.repInfo.map(\.filename) == ["Empty", "Scaffold"])
+
+        let recorder = FrameRecorder(channel: guest)
+        defer { recorder.cancel() }
+
+        // The zero estimate gates nothing: each rep archives at request time and
+        // the streamed `.aar` rebuilds its tree.
+        let emptyOut = try await pullAndExtractArchive(
+            generation: offer.generation, repIndex: 0, uti: offer.repInfo[0].uti, from: guest,
+            recorder: recorder)
+        defer { try? FileManager.default.removeItem(at: emptyOut.deletingLastPathComponent()) }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: emptyOut.path).isEmpty)
+
+        let scaffoldOut = try await pullAndExtractArchive(
+            generation: offer.generation, repIndex: 1, uti: offer.repInfo[1].uti, from: guest,
+            recorder: recorder)
+        defer { try? FileManager.default.removeItem(at: scaffoldOut.deletingLastPathComponent()) }
+        var isDir: ObjCBool = false
+        #expect(
+            FileManager.default.fileExists(
+                atPath: scaffoldOut.appendingPathComponent("sub").path, isDirectory: &isDir)
+                && isDir.boolValue)
+        #expect(
+            FileManager.default.fileExists(
+                atPath: scaffoldOut.appendingPathComponent("sub/.keep").path))
+    }
+
+    /// Requests representation `repIndex` of `generation`, waits out its stream,
+    /// and extracts the reassembled `.aar` into a fresh directory it returns.
+    private func pullAndExtractArchive(
+        generation: UInt64, repIndex: UInt64, uti: String, from guest: VsockChannel,
+        recorder: FrameRecorder
+    ) async throws -> URL {
+        let xid = transferID(generation: generation, repIndex: repIndex)
+        try guest.send(makeRequest(generation: generation, repIndex: repIndex, uti: uti))
+        try await waitForFrames(recorder) {
+            recorder.first {
+                if case .clipboardStreamBegin(let begin) = $0.payload {
+                    return begin.transferID == xid
+                }
+                return false
+            } != nil
+        }
+        try sendAck(from: guest, transferID: xid, bytesConsumed: 0, windowBytes: 512 * 1024)
+        try await waitForFrames(recorder) {
+            recorder.first {
+                if case .clipboardStreamEnd(let end) = $0.payload { return end.transferID == xid }
+                return false
+            } != nil
+        }
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let dest = scratch.appendingPathComponent("out", isDirectory: true)
+        try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+        let aar = scratch.appendingPathComponent("got.aar")
+        try reassemble(recorder.chunks(for: xid)).write(to: aar)
+        try ClipboardDirectoryArchive.extract(archiveAt: aar, to: dest)
+        return dest
     }
 
     @Test("A large outbound payload streams as multiple chunks that reassemble exactly")
@@ -1435,21 +1561,15 @@ struct VsockClipboardServiceTests {
 
         // The offer carries the directory flag; the offer-agnostic stream layer
         // does not, so the service must re-tag the delivered rep from it.
-        var offer = Frame()
-        offer.protocolVersion = 1
-        offer.clipboardOffer = Kernova_V1_ClipboardOffer.with {
-            $0.generation = 11
-            $0.repInfo = [
-                Kernova_V1_ClipboardRepresentationInfo.with {
-                    $0.uti = UTType.folder.identifier
-                    $0.byteCount = UInt64(aarBytes.count)
-                    $0.filename = "MyFolder"
-                    $0.isInline = false
-                    $0.isDirectory = true
-                }
-            ]
-        }
-        try guest.send(offer)
+        try guest.send(
+            makeDirectoryOffer(
+                generation: 11,
+                reps: [
+                    (
+                        uti: UTType.folder.identifier, byteCount: UInt64(aarBytes.count),
+                        filename: "MyFolder"
+                    )
+                ]))
         try await waitForChange { service.clipboardContent.representations.count == 1 }
 
         // The click promises the directory rep like any other — no pull, no
@@ -1470,6 +1590,79 @@ struct VsockClipboardServiceTests {
         #expect(url.lastPathComponent == "MyFolder")
         #expect(
             try String(contentsOf: url.appendingPathComponent("f.txt"), encoding: .utf8) == "x")
+    }
+
+    @Test("a directory rep offered at 0 bytes is promised and pastes as a real tree")
+    func copyPromisesByteFreeDirectoryReps() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // Two trees a stat walk sizes at 0 — an empty folder and one holding only
+        // a subdirectory and a zero-byte file — archived as the guest would serve
+        // them at request time.
+        let src = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: src) }
+        let empty = src.appendingPathComponent("Empty", isDirectory: true)
+        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+        let scaffold = src.appendingPathComponent("Scaffold", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: scaffold.appendingPathComponent("sub", isDirectory: true),
+            withIntermediateDirectories: true)
+        try Data().write(to: scaffold.appendingPathComponent("sub/.keep"))
+        let emptyAAR = src.appendingPathComponent("Empty.aar")
+        let scaffoldAAR = src.appendingPathComponent("Scaffold.aar")
+        try ClipboardDirectoryArchive.archive(directoryAt: empty, to: emptyAAR)
+        try ClipboardDirectoryArchive.archive(directoryAt: scaffold, to: scaffoldAAR)
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 12, repIndex: 0, uti: UTType.folder.identifier,
+            bytes: try Data(contentsOf: emptyAAR), filename: "Empty", isInline: false)
+        responder.register(
+            generation: 12, repIndex: 1, uti: UTType.folder.identifier,
+            bytes: try Data(contentsOf: scaffoldAAR), filename: "Scaffold", isInline: false)
+        responder.start()
+
+        // The estimate is 0 for both, which is what the wire carries — neither rep
+        // may be mistaken for an empty payload and filtered away.
+        try guest.send(
+            makeDirectoryOffer(
+                generation: 12,
+                reps: [
+                    (uti: UTType.folder.identifier, byteCount: 0, filename: "Empty"),
+                    (uti: UTType.folder.identifier, byteCount: 0, filename: "Scaffold"),
+                ]))
+        try await waitForChange { service.clipboardContent.representations.count == 2 }
+        #expect(service.clipboardContent.representations.map(\.isPendingRemote) == [true, true])
+
+        let items = service.materializeForCopy()
+        #expect(items.promised.map(\.repIndex) == [0, 1])
+        #expect(items.promised.map(\.filename) == ["Empty", "Scaffold"])
+        #expect(responder.requests.isEmpty)
+
+        let emptyURL = try #require(
+            await offCooperativePool { service.copyToMacFileURL(generation: 12, repIndex: 0) })
+        var isDir: ObjCBool = false
+        #expect(
+            FileManager.default.fileExists(atPath: emptyURL.path, isDirectory: &isDir)
+                && isDir.boolValue)
+        #expect(emptyURL.lastPathComponent == "Empty")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: emptyURL.path).isEmpty)
+
+        let scaffoldURL = try #require(
+            await offCooperativePool { service.copyToMacFileURL(generation: 12, repIndex: 1) })
+        #expect(scaffoldURL.lastPathComponent == "Scaffold")
+        #expect(
+            FileManager.default.fileExists(
+                atPath: scaffoldURL.appendingPathComponent("sub/.keep").path))
     }
 
     @Test("a paste-time fire serves the preview cache first, else the blocking pull — and caches what it pulls")
@@ -3184,6 +3377,79 @@ struct VsockClipboardServiceTests {
         // Neither smuggled type appears, regardless of position.
         #expect(!reps.contains { $0.uti == "org.nspasteboard.TransientType" })
         #expect(!reps.contains { $0.uti == "public.file-url" })
+    }
+
+    @Test("a zero-byte rep that is not a directory is still filtered from the placeholders")
+    func offerFiltersZeroByteNonDirectoryRep() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // The empty-payload skip still holds for everything but a directory: a
+        // zero-byte file rep carries nothing a paste could serve.
+        try guest.send(
+            makeOffer(
+                generation: 33,
+                reps: [
+                    (uti: "public.png", byteCount: 0, filename: "nothing.png", isInline: false),
+                    (uti: "public.png", byteCount: 1024, filename: "shot.png", isInline: false),
+                ]))
+
+        try await waitForChange {
+            service.clipboardContent.representations.map(\.filename) == ["shot.png"]
+        }
+        #expect(service.clipboardContent.representations.count == 1)
+        #expect(service.materializeForCopy().promised.map(\.repIndex) == [1])
+    }
+
+    @Test("a fully-filtered offer keeps the shown content and holds no promise")
+    func fullyFilteredOfferKeepsShownContent() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.start()
+
+        // The window is showing content the user put there.
+        let shown = ClipboardContent(representations: [
+            .init(uti: ClipboardContent.utf8TextUTI, data: Data("keep me".utf8))
+        ])
+        service.clipboardContent = shown
+
+        // Every rep of the guest's offer is filtered — an identity-skip type and a
+        // zero-byte non-directory rep.
+        try guest.send(
+            makeOffer(
+                generation: 41,
+                reps: [
+                    (uti: "org.nspasteboard.TransientType", byteCount: 4, filename: "", isInline: true),
+                    (uti: "public.png", byteCount: 0, filename: "nothing.png", isInline: false),
+                ]))
+        // Barrier: an error frame after the offer; once it surfaces, handleOffer ran.
+        try guest.sendErrorFrame(
+            code: "clipboard.barrier", message: "offer processed", inReplyTo: "clipboard.offer")
+        try await waitForChange { service.lastTransferIssue != nil }
+
+        // The drop leaves the shown content alone rather than publishing empty.
+        #expect(service.clipboardContent.digest == shown.digest)
+        #expect(service.clipboardContent.representations.map(\.uti) == [ClipboardContent.utf8TextUTI])
+        // No promise is held: Copy-to-Mac resolves what's shown and asks for nothing.
+        let items = service.materializeForCopy()
+        #expect(items.resolvedReps.map(\.uti) == [ClipboardContent.utf8TextUTI])
+        #expect(items.promised.isEmpty)
+        #expect(responder.requests.isEmpty)
     }
 
     // MARK: - Peer errors

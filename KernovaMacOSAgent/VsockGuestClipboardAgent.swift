@@ -865,6 +865,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
         let items = Self.promisedItems(for: bounded.reps)
         guard !items.isEmpty else {
+            Self.logger.warning(
+                "Dropped the host clipboard offer (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)): none of its \(bounded.reps.count, privacy: .public) representation(s) survived receive-side filtering — nothing promised"
+            )
             inboundPromise = nil
             return
         }
@@ -1264,10 +1267,16 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// sanitization gate.
     ///
     /// An identity-skip type (transient marker, raw `public.file-url` smuggle) or
-    /// an empty rep is never surfaced, and a `provideData` pull can only reach a
-    /// rep this gate kept.
+    /// an empty payload is never surfaced, and a `provideData` pull can only
+    /// reach a rep this gate kept.
+    ///
+    /// A directory rep is exempt from the empty-payload skip: its `byte_count` is
+    /// an estimate of the tree's file bytes (`kernova.proto`), which a tree of
+    /// empty files, bare subdirectories, or nothing at all makes 0 while the
+    /// archive still carries the tree.
     private static func isPromisable(_ info: Kernova_V1_ClipboardRepresentationInfo) -> Bool {
-        info.byteCount != 0 && !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: info.uti)
+        (info.byteCount != 0 || info.isDirectory)
+            && !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: info.uti)
     }
 
     /// Whether a promised item serves this rep as `public.file-url` — the flavor
@@ -1298,9 +1307,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     ///
     /// Inline-only reps (no filename) share one item promising each rep's content
     /// UTI; each file rep gets its own item promising `public.file-url` (and its
-    /// image UTI when it's an image file). An identity-skip type or an empty rep
-    /// is never promised. Each promised type carries the offer-rep index that
-    /// backs it.
+    /// image UTI when it's an image file). Only reps `isPromisable` keeps are
+    /// promised. Each promised type carries the offer-rep index that backs it.
     private static func promisedItems(
         for reps: [Kernova_V1_ClipboardRepresentationInfo]
     ) -> [PromisedItem] {

@@ -74,6 +74,35 @@ struct ClipboardDirectoryArchiveTests {
         #expect(ClipboardDirectoryArchive.estimatedByteCount(at: root) == 11)
     }
 
+    @Test("estimatedByteCount is 0 for a tree carrying no file bytes, which still archives")
+    func estimateZeroForByteFreeTrees() throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+
+        let empty = scratch.appendingPathComponent("empty", isDirectory: true)
+        try fm.createDirectory(at: empty, withIntermediateDirectories: true)
+        #expect(ClipboardDirectoryArchive.estimatedByteCount(at: empty) == 0)
+
+        // Only subdirectories and zero-byte files: nothing to sum, yet the tree
+        // is real and its archive carries it.
+        let scaffold = scratch.appendingPathComponent("scaffold", isDirectory: true)
+        try fm.createDirectory(
+            at: scaffold.appendingPathComponent("sub", isDirectory: true),
+            withIntermediateDirectories: true)
+        try Data().write(to: scaffold.appendingPathComponent(".keep"))
+        try Data().write(to: scaffold.appendingPathComponent("sub/.keep"))
+        #expect(ClipboardDirectoryArchive.estimatedByteCount(at: scaffold) == 0)
+
+        let archive = scratch.appendingPathComponent("scaffold.aar")
+        try ClipboardDirectoryArchive.archive(directoryAt: scaffold, to: archive)
+        let dest = scratch.appendingPathComponent("extracted", isDirectory: true)
+        try fm.createDirectory(at: dest, withIntermediateDirectories: true)
+        try ClipboardDirectoryArchive.extract(archiveAt: archive, to: dest)
+        #expect(fm.fileExists(atPath: dest.appendingPathComponent(".keep").path))
+        #expect(fm.fileExists(atPath: dest.appendingPathComponent("sub/.keep").path))
+    }
+
     @Test("a symlink is preserved, not followed")
     func symlinkPreserved() throws {
         let fm = FileManager.default

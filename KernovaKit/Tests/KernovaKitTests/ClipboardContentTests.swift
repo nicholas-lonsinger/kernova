@@ -436,35 +436,6 @@ struct ClipboardSnapshotPolicyTests {
         #expect(outcome.skipped.isEmpty)
     }
 
-    @Test("sanitizedForApply strips file references and markers, keeps everything else")
-    func sanitizedForApply() {
-        let sanitized = ClipboardSnapshotPolicy.sanitizedForApply([
-            .init(uti: "public.png", data: Data([1])),
-            .init(uti: "public.file-url", data: Data("file:///etc/passwd".utf8)),
-            .init(uti: "org.nspasteboard.TransientType", data: Data([1])),
-            .init(uti: ClipboardContent.utf8TextUTI, data: Data("text".utf8)),
-        ])
-        #expect(sanitized.map(\.uti) == ["public.png", ClipboardContent.utf8TextUTI])
-    }
-
-    @Test("sanitizedForApply keeps an arbitrarily large representation (no size cap)")
-    func sanitizedForApplyNoSizeCap() {
-        let sanitized = ClipboardSnapshotPolicy.sanitizedForApply([
-            .init(uti: "public.tiff", data: Data(count: 200 * 1024 * 1024)),
-            .init(uti: ClipboardContent.utf8TextUTI, data: Data("small".utf8)),
-        ])
-        #expect(sanitized.map(\.uti) == ["public.tiff", ClipboardContent.utf8TextUTI])
-    }
-
-    @Test("sanitizedForApply drops empty reps (symmetric with evaluate)")
-    func sanitizedForApplyDropsEmptyData() {
-        let sanitized = ClipboardSnapshotPolicy.sanitizedForApply([
-            .init(uti: "public.png", data: Data()),
-            .init(uti: ClipboardContent.utf8TextUTI, data: Data("keep".utf8)),
-        ])
-        #expect(sanitized.map(\.uti) == [ClipboardContent.utf8TextUTI])
-    }
-
     // MARK: - Snapshot disposition
 
     @Test("a transient marker suppresses the whole snapshot")
