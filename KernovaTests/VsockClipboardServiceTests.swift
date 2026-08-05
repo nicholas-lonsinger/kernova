@@ -2298,6 +2298,57 @@ struct VsockClipboardServiceTests {
                     message: ClipboardTransferIssue.overCopyBudgetMessage))
     }
 
+    @Test("a sibling rep pulling fine does not clear the refusal the file set raised")
+    func overBudgetRefusalSurvivesASuccessfulSiblingPull() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        let noteBytes = Data("note".utf8)
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 14, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: noteBytes,
+            isInline: true)
+        responder.start()
+
+        // The shape that erased the refusal: over-cap files alongside a small
+        // inline text rep the window previews.
+        let half = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) / 2 + 1
+        try guest.send(
+            makeOffer(
+                generation: 14,
+                reps: [
+                    (
+                        uti: ClipboardContent.utf8TextUTI, byteCount: noteBytes.count, filename: "",
+                        isInline: true
+                    ),
+                    (uti: "public.data", byteCount: Int(half), filename: "a.bin", isInline: false),
+                    (uti: "public.data", byteCount: Int(half), filename: "b.bin", isInline: false),
+                ]))
+        try await waitForChange { service.clipboardContent.representations.count == 3 }
+
+        _ = service.materializeForCopy()
+        let refusal = try #require(service.lastTransferIssue)
+        #expect(
+            refusal.kind
+                == .localRefusal(
+                    code: ClipboardErrorCode.copyTooLarge.rawValue,
+                    message: ClipboardTransferIssue.overCopyBudgetMessage))
+
+        // The preview pulls the text rep successfully. That says nothing about
+        // the refused file set, which is still the only thing the user must act
+        // on — so the refusal stays up rather than being cleared before it renders.
+        await service.materializeForPreview()
+        #expect(service.clipboardContent.text == "note")
+        #expect(service.lastTransferIssue == refusal)
+    }
+
     @Test("each promised file rep pastes through its own blocking pull")
     func copyPromisedFilesPasteViaBlockingPull() async throws {
         let (guest, host) = try makePair()

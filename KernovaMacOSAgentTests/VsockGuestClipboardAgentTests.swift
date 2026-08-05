@@ -263,6 +263,7 @@ struct VsockGuestClipboardAgentTests {
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
+        refusalBurstWindow: Duration = VsockGuestClipboardAgent.defaultRefusalBurstWindow,
         onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void = { _ in },
         onClipboardNotice: @escaping @Sendable () -> Void = {}
     ) -> VsockGuestClipboardAgent {
@@ -279,6 +280,7 @@ struct VsockGuestClipboardAgentTests {
             stagingTempRoot: FileManager.default.temporaryDirectory.appendingPathComponent(
                 UUID().uuidString, isDirectory: true),
             progressRevealDelay: progressRevealDelay, progressIdleLinger: progressIdleLinger,
+            refusalBurstWindow: refusalBurstWindow,
             onProgress: onProgress, onClipboardNotice: onClipboardNotice)
     }
 
@@ -1816,8 +1818,10 @@ struct VsockGuestClipboardAgentTests {
         defer { hostChannel.close() }
 
         // Only 1 KiB free, so a 50 MiB file rep fails the pre-flight disk guard.
+        let notices = AtomicInt()
         let agent = makeAgent(
-            pasteboard: pasteboard, agentFd: agentFd, freeSpaceProvider: { _ in 1024 })
+            pasteboard: pasteboard, agentFd: agentFd, freeSpaceProvider: { _ in 1024 },
+            onClipboardNotice: { notices.increment() })
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1836,14 +1840,69 @@ struct VsockGuestClipboardAgentTests {
         let pull = lazyPull(pasteboard, forType: .fileURL)
         #expect(await pull.value == nil)
 
-        // The guest has no UI, so it tells the host — which surfaces it in the
-        // clipboard window — via a `clipboard.*` Error frame (not a request).
+        // The host is told — its clipboard window may be the surface in view —
+        // via a `clipboard.*` Error frame (not a request).
         let frame = try await maybeNextFrame(from: hostChannel)
         guard case .error(let error)? = frame?.payload else {
             Issue.record("Expected an Error frame, got \(String(describing: frame?.payload))")
             return
         }
         #expect(error.code == "clipboard.paste.disk.full")
+
+        // The paste was made in this guest, so the guest's own menu names the
+        // reason too, and the notice reveals it.
+        try await notices.changed.wait { notices.value == 1 }
+        #expect(await MainActor.run { agent.clipboardActivity } == .pasteRefused(.pasteDiskFull))
+    }
+
+    @Test(
+        "a mid-transfer abort reports its mapped failure on the guest's own menu, not only to the host",
+        arguments: [
+            ("disk.full", ClipboardErrorCode.pasteDiskFull),
+            ("stall.timeout", ClipboardErrorCode.pasteTimeout),
+            ("archive.error", ClipboardErrorCode.pasteFailed),
+        ])
+    func abortReportsOnTheGuestMenuToo(
+        abortCode: String, expected: ClipboardErrorCode
+    ) async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let notices = AtomicInt()
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 34,
+                reps: [RepInfo(uti: txtUTI, byteCount: 1024, filename: "notes.txt", isInline: false)]
+            ))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        // A real pull that the host then kills: the failure is the user's paste
+        // failing, so it is answered in the guest as well as on the wire.
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        let request = try await awaitRequest(on: hostChannel)
+        try hostChannel.send(
+            makeAbortFrame(
+                transferID: request.transferID, code: abortCode, message: "test abort"))
+        #expect(await pull.value == nil)
+
+        let frame = try await maybeNextFrame(from: hostChannel)
+        guard case .error(let error)? = frame?.payload else {
+            Issue.record("Expected an Error frame, got \(String(describing: frame?.payload))")
+            return
+        }
+        #expect(error.code == expected.rawValue)
+        try await notices.changed.wait { notices.value == 1 }
+        #expect(await MainActor.run { agent.clipboardActivity } == .pasteRefused(expected))
     }
 
     // MARK: - Deadline-safe size cap (#561)
@@ -1991,7 +2050,7 @@ struct VsockGuestClipboardAgentTests {
         #expect(await lazyPull(pasteboard, forType: .fileURL, itemIndex: 1).value == nil)
 
         try await notices.changed.wait { notices.value == 1 }
-        #expect(await MainActor.run { agent.clipboardActivity } == .pasteRefusedTooLarge)
+        #expect(await MainActor.run { agent.clipboardActivity } == .pasteRefused(.pasteTooLarge))
         #expect(notices.value == 1)
 
         // The next offer is a fresh paste opportunity, so the refusal line goes.
@@ -2001,6 +2060,144 @@ struct VsockGuestClipboardAgentTests {
                 reps: [RepInfo(uti: ClipboardContent.utf8TextUTI, byteCount: 4, isInline: true)]))
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.string] }
         #expect(await MainActor.run { agent.clipboardActivity } == .offeredFromHost)
+    }
+
+    @Test(
+        "deadline cap: a second paste of the same still-live over-cap offer reports again, not silently"
+    )
+    func secondPasteOfTheSameOfferReportsAgain() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        // A burst window short enough that a second paste lands outside it
+        // without the test waiting out the production window.
+        let notices = AtomicInt()
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, refusalBurstWindow: .milliseconds(1),
+            onClipboardNotice: { notices.increment() })
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 33,
+                reps: [
+                    RepInfo(uti: txtUTI, byteCount: overCap, filename: "huge.bin", isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
+        try await notices.changed.wait { notices.value == 1 }
+        let first = try await maybeNextFrame(from: hostChannel)
+        guard case .error(let firstError)? = first?.payload else {
+            Issue.record("Expected an Error frame, got \(String(describing: first?.payload))")
+            return
+        }
+        #expect(firstError.code == "clipboard.paste.too.large")
+
+        // The offer is still live and the user pastes again — a new gesture, owed
+        // its own answer on both surfaces rather than a silent no-op.
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
+        try await notices.changed.wait { notices.value == 2 }
+        let second = try await maybeNextFrame(from: hostChannel)
+        guard case .error(let secondError)? = second?.payload else {
+            Issue.record("Expected an Error frame, got \(String(describing: second?.payload))")
+            return
+        }
+        #expect(secondError.code == "clipboard.paste.too.large")
+    }
+
+    @Test("the refusal line is written before the notice, so the dropdown it opens holds the line")
+    func refusalIsStagedBeforeTheNoticeFires() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        // The notice reads the activity the menu would render at that instant:
+        // the status item rebuilds its dropdown on the click this raises, so a
+        // notice raised ahead of the write would open a menu saying nothing.
+        let seen = AtomicBox<ClipboardActivity>()
+        let agentRef = AtomicBox<VsockGuestClipboardAgent>()
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd,
+            onClipboardNotice: { seen.set(agentRef.value?.clipboardActivity) })
+        agentRef.set(agent)
+        defer {
+            agent.stop()
+            agentRef.set(nil)
+        }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 35,
+                reps: [
+                    RepInfo(uti: txtUTI, byteCount: overCap, filename: "huge.bin", isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
+        try await seen.changed.wait { seen.value != nil }
+        #expect(seen.value == .pasteRefused(.pasteTooLarge))
+    }
+
+    @Test("a refusal recorded for a superseded offer is dropped, not written over the newer one")
+    func staleRefusalDoesNotOverwriteANewerOffer() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let notices = AtomicInt()
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 36,
+                reps: [
+                    RepInfo(uti: txtUTI, byteCount: overCap, filename: "huge.bin", isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+        #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
+        try await notices.changed.wait { notices.value == 1 }
+
+        // A newer offer lands — small, live, and pastable.
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 37,
+                reps: [RepInfo(uti: ClipboardContent.utf8TextUTI, byteCount: 4, isInline: true)]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.string] }
+
+        // The refusal hop runs after `provideData` returns, so gen 36's refusal
+        // can execute once gen 37 is the live offer. Recording it must neither
+        // relabel the new offer as refused nor pop the menu for a live paste.
+        agent.recordPasteFailureForTesting(code: .pasteTooLarge, generation: 36)
+        // Ordered behind the seam's own main-queue hop, so this reads the state
+        // the dropped refusal would have written.
+        let activity = await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume(returning: agent.clipboardActivity) }
+        }
+        #expect(activity == .offeredFromHost)
+        #expect(notices.value == 1)
     }
 
     @Test("deadline cap: a file rep exactly at the cap is not refused — the pull still proceeds")

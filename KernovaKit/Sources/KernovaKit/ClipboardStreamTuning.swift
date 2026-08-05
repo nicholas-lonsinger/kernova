@@ -103,6 +103,32 @@ public enum ClipboardStreamTuning {
     /// `public.file-url` — every promisable rep carrying a filename, image files
     /// included — all-or-nothing per paste.
     public static let maxDeadlineSafePasteBytes = 2 * 1024 * 1024 * 1024
+
+    /// How `maxDeadlineSafePasteBytes` reads in user-facing copy, e.g. "2 GB".
+    ///
+    /// Every surface that names the limit — the host window's messages, the
+    /// Copy-to-Mac refusal, the guest agent's menu line — builds its sentence
+    /// from this, so retuning the cap moves the figure everywhere at once.
+    /// Rendered in binary units, matching how Finder reports the same count.
+    public static let maxDeadlineSafePasteDisplayLimit =
+        binaryDisplaySize(maxDeadlineSafePasteBytes)
+
+    /// Renders a byte count in binary units at one decimal place, trimming a
+    /// whole result to an integer: 2 GiB → "2 GB", 1.5 GiB → "1.5 GB".
+    private static func binaryDisplaySize(_ bytes: Int) -> String {
+        let units = ["bytes", "KB", "MB", "GB", "TB"]
+        var value = Double(bytes)
+        var unitIndex = 0
+        while value >= 1024, unitIndex < units.count - 1 {
+            value /= 1024
+            unitIndex += 1
+        }
+        let rounded = (value * 10).rounded() / 10
+        let number =
+            rounded == rounded.rounded()
+            ? String(Int(rounded)) : String(format: "%.1f", rounded)
+        return "\(number) \(units[unitIndex])"
+    }
 }
 
 extension Duration {

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// Connection state of the always-on control channel to the host.
 enum HostConnectionState: Equatable, Sendable {
@@ -32,9 +33,12 @@ enum ClipboardActivity: Equatable, Sendable {
     case sentToHost
     /// An inbound paste from the host was materialized on the guest pasteboard.
     case receivedFromHost
-    /// A paste of the host's offer was refused here: its files total more than
-    /// the deadline-safe cap, so no bytes were pulled.
-    case pasteRefusedTooLarge
+    /// A paste of the host's offer did not happen, for the reason the associated
+    /// code names.
+    ///
+    /// The gesture was made in this guest, so the reason is reported here as well
+    /// as to the host.
+    case pasteRefused(ClipboardErrorCode)
     /// Host policy turned clipboard sharing off.
     case disabled
 }

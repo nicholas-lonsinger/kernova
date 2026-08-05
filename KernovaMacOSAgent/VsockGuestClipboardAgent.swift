@@ -72,6 +72,15 @@ extension NSPasteboard: Pasteboard {
 final class VsockGuestClipboardAgent: @unchecked Sendable {
     private static let logger = KernovaLogger(subsystem: "app.kernova.macosagent", category: "VsockGuestClipboardAgent")
     private static let pollingInterval: TimeInterval = 0.5
+
+    /// How long a reported paste refusal silences further refusals of the same
+    /// offer.
+    ///
+    /// One paste gesture fires one data provider per promised item, so its
+    /// refusals arrive as a burst and are worth one message; a paste made after
+    /// the window is a second gesture and is owed its own answer.
+    static let defaultRefusalBurstWindow: Duration = .seconds(2)
+
     /// What the paste progress readout calls the machine the bytes come from —
     /// the guest can't learn the host's actual computer name over the control
     /// handshake.
@@ -79,6 +88,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     private let client: VsockGuestClient
     private let pasteboard: Pasteboard
+
+    /// How long one reported refusal silences the rest of its burst.
+    private let refusalBurstWindow: Duration
 
     /// Aggregates what this side streams to the host into the status item's
     /// readout.
@@ -202,10 +214,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         /// index, so a repeated `.fileURL` pull returns the same staged file
         /// instead of re-staging a duplicate.
         var stagedInlineURLs: [Int: URL] = [:]
-        /// Whether the over-cap refusal was already surfaced for this offer, so
-        /// the N provider fires of one multi-file paste raise one notice and send
-        /// one error frame rather than N of each.
-        var tooLargeReported = false
+        /// When this offer's last refusal was reported, opening the burst window
+        /// that keeps the rest of one paste's provider fires quiet.
+        var lastRefusalReportedAt: ContinuousClock.Instant?
 
         init(generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo]) {
             self.generation = generation
@@ -234,19 +245,23 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// client, and optionally a `freeSpaceProvider` to simulate a full disk, a
     /// `stagingTempRoot` to isolate the staging directory between parallel tests,
     /// an `onProgress` sink to observe the readout the status item renders, an
-    /// `onClipboardNotice` sink to observe refusals, and zeroed reveal/linger
-    /// delays so a test transfer surfaces while in flight.
+    /// `onClipboardNotice` sink to observe refusals, a shortened
+    /// `refusalBurstWindow` so a second paste re-reports without a real-time
+    /// wait, and zeroed reveal/linger delays so a test transfer surfaces while in
+    /// flight.
     init(
         pasteboard: Pasteboard, client: VsockGuestClient,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         stagingTempRoot: URL = FileManager.default.temporaryDirectory,
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
+        refusalBurstWindow: Duration = VsockGuestClipboardAgent.defaultRefusalBurstWindow,
         onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void = { _ in },
         onClipboardNotice: @escaping @Sendable () -> Void = {}
     ) {
         self.pasteboard = pasteboard
         self.client = client
+        self.refusalBurstWindow = refusalBurstWindow
         self.onClipboardNotice = onClipboardNotice
         self.progressTracker = ClipboardProgressTracker(
             revealDelay: progressRevealDelay, idleLinger: progressIdleLinger, emit: onProgress)
@@ -1018,9 +1033,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// Whether a `.fileURL` fire may start its pull: the offer's deadline-bound
     /// total is within the cap, and the rep fits the staging volume.
     ///
-    /// Both gates surface their refusal before returning `false` — the guest has
-    /// no UI of its own, so the host is told, and the deadline refusal also
-    /// raises the guest's own menu notice.
+    /// Both gates report their refusal before returning `false`, on the guest's
+    /// own menu and to the host.
     private func allowsFileURLPull(
         _ repIndex: Int, promise: InboundPromise, channel: VsockChannel
     ) -> Bool {
@@ -1034,27 +1048,20 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             Self.logger.warning(
                 "Deadline-bound clipboard reps total \(totalBytes, privacy: .public) bytes — over the deadline-safe cap; refusing the paste pull"
             )
-            // The gesture was made here, so the notice goes up here; the host
-            // is told too, since its window may be the surface in view.
-            if !promise.tooLargeReported {
-                promise.tooLargeReported = true
-                recordPasteRefusedTooLarge()
-                sendPasteError(
-                    code: .pasteTooLarge,
-                    message: "Too large to paste into the guest (\(totalBytes) bytes total)",
-                    on: channel)
-            }
+            reportPasteFailure(
+                code: .pasteTooLarge,
+                message: "Too large to paste into the guest (\(totalBytes) bytes total)",
+                promise: promise, on: channel)
             return false
         }
         if !staging.hasCapacity(forByteCount: Int(clamping: info.byteCount)) {
             Self.logger.warning(
                 "Not enough disk space to receive clipboard rep '\(info.uti, privacy: .public)' (\(info.byteCount, privacy: .public) bytes)"
             )
-            // The guest has no UI; tell the host so it shows the failure.
-            sendPasteError(
+            reportPasteFailure(
                 code: .pasteDiskFull,
                 message: "Not enough disk space in the guest to receive \(info.byteCount) bytes",
-                on: channel)
+                promise: promise, on: channel)
             return false
         }
         return true
@@ -1107,12 +1114,12 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             Self.logger.warning(
                 "Inbound clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) aborted (\(abort.code, privacy: .public))"
             )
-            // Surface a genuine receive failure to the host UI; stay quiet for a
-            // normal supersession/teardown (the user simply copied something new).
+            // Report a genuine receive failure; stay quiet for a normal
+            // supersession/teardown (the user simply copied something new).
             if !Self.benignAbortCodes.contains(abort.code) {
-                sendPasteError(
+                reportPasteFailure(
                     code: Self.pasteErrorCode(forAbortCode: abort.code),
-                    message: abort.message, on: channel)
+                    message: abort.message, promise: promise, on: channel)
             }
         case .timedOut:
             receiver.cancelAwait(transferID)
@@ -1120,13 +1127,14 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 "Inbound clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) timed out"
             )
             // Stop any stream the host is still sending for this abandoned pull,
-            // then surface the failure (the guest has no UI of its own).
+            // then report the failure.
             sendStreamAbort(
                 transferID: transferID, code: "paste.timeout",
                 message: "Receiver gave up waiting for the clipboard transfer", on: channel)
-            sendPasteError(
+            reportPasteFailure(
                 code: .pasteTimeout,
-                message: "The clipboard transfer to the guest timed out", on: channel)
+                message: "The clipboard transfer to the guest timed out", promise: promise,
+                on: channel)
         case .cancelled:
             // `.debug`, not `.warning`: `.cancelled` also covers benign
             // teardown/supersession, which is deliberately silent elsewhere.
@@ -1153,17 +1161,36 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
     }
 
-    /// Records the over-cap paste refusal on the queue that owns the menu state,
-    /// then raises the notice so the surface reveals it.
+    /// Records a paste failure on the queue that owns the menu state, then raises
+    /// the notice so the surface reveals it.
     ///
-    /// The refusal returns out of `provideData` without pulling anything, so
-    /// nothing is holding the main thread by the time the hop runs.
-    private func recordPasteRefusedTooLarge() {
+    /// The activity is written before the notice, so the dropdown the notice pops
+    /// is rebuilt with the line already in it. `generation` is re-checked here
+    /// because the hop runs after `provideData` has returned: an offer that
+    /// landed in the meantime is live and pastable, and must not be overwritten
+    /// with the previous offer's failure.
+    private func recordPasteFailure(code: ClipboardErrorCode, generation: UInt64) {
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.clipboardActivityStorage = .pasteRefusedTooLarge
+            guard let self, self.inboundPromise?.generation == generation else { return }
+            self.clipboardActivityStorage = .pasteRefused(code)
             self.onClipboardNotice()
         }
+    }
+
+    #if DEBUG
+    /// Test seam for the hop's staleness check.
+    func recordPasteFailureForTesting(code: ClipboardErrorCode, generation: UInt64) {
+        recordPasteFailure(code: code, generation: generation)
+    }
+    #endif
+
+    /// Whether a refusal for `promise` may be reported now, opening the burst
+    /// window when it may.
+    private func allowsRefusalReport(for promise: InboundPromise) -> Bool {
+        let now = ContinuousClock.now
+        if let last = promise.lastRefusalReportedAt, now - last < refusalBurstWindow { return false }
+        promise.lastRefusalReportedAt = now
+        return true
     }
 
     /// Abort codes that are a normal supersession/teardown, not a failure worth
@@ -1180,13 +1207,21 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
     }
 
-    /// Sends an `Error` frame so the host surfaces an inbound-paste failure in
-    /// its clipboard window too.
-    private func sendPasteError(
-        code: ClipboardErrorCode, message: String, on channel: VsockChannel
+    /// Reports an inbound-paste failure on both surfaces the gesture is owed: the
+    /// guest's own menu, since the paste was made here, and an `Error` frame so
+    /// the host's clipboard window shows it too.
+    ///
+    /// The single choke point for every paste failure, deduped by the offer's
+    /// refusal-burst window — one paste fires one provider per promised item, so
+    /// its failures are reported once, while a later paste of the same offer is a
+    /// fresh gesture and reports again.
+    private func reportPasteFailure(
+        code: ClipboardErrorCode, message: String, promise: InboundPromise, on channel: VsockChannel
     ) {
+        guard allowsRefusalReport(for: promise) else { return }
         try? channel.sendErrorFrame(
             code: code.rawValue, message: message, inReplyTo: "clipboard.request")
+        recordPasteFailure(code: code, generation: promise.generation)
     }
 
     /// Sends a `ClipboardStreamAbort` for an inbound transfer the receiver is

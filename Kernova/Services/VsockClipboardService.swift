@@ -1146,9 +1146,15 @@ final class VsockClipboardService: ClipboardServicing {
             progress.unitEnded(session: session, id: UInt64(repIndex), succeeded: rep != nil)
         }
         if rep != nil {
-            // A healthy pull clears a stale issue, but a disk-full notice stays
-            // visible — another rep may still have failed to arrive.
-            if case .diskFull = lastTransferIssue?.kind {} else { lastTransferIssue = nil }
+            // A healthy pull clears a stale issue, except the two kinds a
+            // succeeding sibling does not disprove: a disk-full notice (another
+            // rep may still have failed to arrive) and a refusal this side made
+            // (its own surface — an over-cap file set is refused while the same
+            // offer's small inline rep pulls fine).
+            switch lastTransferIssue?.kind {
+            case .diskFull, .localRefusal: break
+            case .peerReportedError, .staleCopyRetracted, .none: lastTransferIssue = nil
+            }
         }
         // `is_directory` rides the ClipboardOffer, not ClipboardStreamBegin, so
         // this offer-aware layer re-tags the delivered rep — the window then

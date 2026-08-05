@@ -75,16 +75,14 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     ///
     /// The refusal ends a gesture the user made in this guest and produces no
     /// other signal — the paste simply yields nothing — so the line is revealed
-    /// rather than left for whenever the menu is next opened.
+    /// rather than left for whenever the menu is next opened. The agent records
+    /// the activity before raising this, so `menuNeedsUpdate` builds the refusal
+    /// line into the dropdown this opens.
     func clipboardNoticeRaised() {
-        // macOS drops status items it can't fit in a crowded menu bar.
-        guard statusItem.isVisible, statusItem.button?.window != nil else { return }
-        // Never defer this with `Task { @MainActor }`: `performClick` parks inside
-        // a nested menu-tracking loop until the dropdown closes, and parking there
-        // from a main-queue block starves every later main-queue update.
-        performOnMainRunLoop { [weak self] in
-            self?.statusItem.button?.performClick(nil)
-        }
+        pasteProgressPresenter.revealDropdown(while: { [weak self] in
+            guard let self, case .pasteRefused = self.clipboardActivity() else { return false }
+            return true
+        })
     }
 
     private static func symbolName(for state: HostConnectionState) -> String {
@@ -135,7 +133,7 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         let activity = clipboardActivity()
         // A refusal is what the auto-open is revealing, so it reads at the top
         // level; every other activity is state the Status submenu holds.
-        if activity == .pasteRefusedTooLarge {
+        if case .pasteRefused = activity {
             addInfoItem(AgentMenuText.clipboardLine(activity))
             menu.addItem(.separator())
         }

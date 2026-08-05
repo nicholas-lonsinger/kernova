@@ -591,7 +591,11 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
             uti: ClipboardContent.utf8TextUTI, data: Data("note".utf8))
         let message = try await copyMessage(
             copyItems: [.resolved(inline), .droppedFile(.overPasteBudget)])
-        #expect(message == "Copied without the files — over the 2 GB clipboard transfer limit")
+        // Built from the cap, not typed: retuning the cap moves this sentence.
+        #expect(
+            message
+                == "Copied without the files — over the \(ClipboardStreamTuning.maxDeadlineSafePasteDisplayLimit) clipboard transfer limit"
+        )
     }
 
     @Test("an all-dropped over-cap copy reports the refusal")
@@ -631,7 +635,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         let expected: [(ClipboardErrorCode, String)] = [
             (
                 .pasteTooLarge,
-                "Too large to paste into the guest — over the 2 GB clipboard transfer limit"
+                "Too large to paste into the guest — over the \(ClipboardStreamTuning.maxDeadlineSafePasteDisplayLimit) clipboard transfer limit"
             ),
             (.pasteDiskFull, "The guest ran out of disk space receiving the clipboard file"),
             (.pasteTimeout, "The clipboard transfer to the guest timed out"),

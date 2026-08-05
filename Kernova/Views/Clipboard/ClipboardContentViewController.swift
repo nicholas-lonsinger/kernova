@@ -615,7 +615,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             case .pasteDiskFull:
                 return "The guest ran out of disk space receiving the clipboard file"
             case .pasteTooLarge:
-                return "Too large to paste into the guest — over the 2 GB clipboard transfer limit"
+                return
+                    "Too large to paste into the guest — over the \(ClipboardStreamTuning.maxDeadlineSafePasteDisplayLimit) clipboard transfer limit"
             case .pasteTimeout:
                 return "The clipboard transfer to the guest timed out"
             case .pasteFailed, .copyTooLarge, .pasteIncompleteSet, .none:
@@ -691,7 +692,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 // Partial success — name the cap, since it is what the user has to
                 // act on to get the files across.
                 indicatorView.showTransientMessage(
-                    "Copied without the files — over the 2 GB clipboard transfer limit",
+                    "Copied without the files — over the \(ClipboardStreamTuning.maxDeadlineSafePasteDisplayLimit) clipboard transfer limit",
                     style: .warning)
             } else {
                 // Partial success — don't claim an unqualified one.

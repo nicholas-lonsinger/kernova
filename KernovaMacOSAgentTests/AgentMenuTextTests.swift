@@ -1,3 +1,4 @@
+import KernovaKit
 import Testing
 
 @Suite("AgentMenuText")
@@ -37,10 +38,32 @@ struct AgentMenuTextTests {
         #expect(AgentMenuText.clipboardLine(.sentToHost) == "Clipboard: sent to host")
         #expect(
             AgentMenuText.clipboardLine(.receivedFromHost) == "Clipboard: received from host")
-        #expect(
-            AgentMenuText.clipboardLine(.pasteRefusedTooLarge)
-                == "Clipboard: too large to paste — over the 2 GB transfer limit")
         #expect(AgentMenuText.clipboardLine(.disabled) == "Clipboard: disabled")
+    }
+
+    @Test("clipboardLine names every paste failure the guest can report, honestly per code")
+    func clipboardRefusalLines() {
+        // The over-cap sentence is built from the cap, not typed: retuning
+        // `maxDeadlineSafePasteBytes` moves the figure here too.
+        #expect(
+            AgentMenuText.clipboardLine(.pasteRefused(.pasteTooLarge))
+                == "Clipboard: too large to paste — over the \(ClipboardStreamTuning.maxDeadlineSafePasteDisplayLimit) transfer limit"
+        )
+        #expect(
+            AgentMenuText.clipboardLine(.pasteRefused(.pasteDiskFull))
+                == "Clipboard: not enough disk space to paste")
+        #expect(
+            AgentMenuText.clipboardLine(.pasteRefused(.pasteTimeout))
+                == "Clipboard: paste timed out")
+        #expect(
+            AgentMenuText.clipboardLine(.pasteRefused(.pasteFailed)) == "Clipboard: paste failed")
+        // Host-only refusals never reach the guest; they read as the generic
+        // failure rather than a sentence about a gesture made elsewhere.
+        #expect(
+            AgentMenuText.clipboardLine(.pasteRefused(.copyTooLarge)) == "Clipboard: paste failed")
+        #expect(
+            AgentMenuText.clipboardLine(.pasteRefused(.pasteIncompleteSet))
+                == "Clipboard: paste failed")
     }
 
     // MARK: - logForwardingLine / statusSubmenu

@@ -85,6 +85,41 @@ public final class ClipboardProgressStatusItemPresenter {
         autoOpener.menuClosed()
     }
 
+    /// Whether an automatic open may click the status-item button right now.
+    ///
+    /// An already-open dropdown blocks it because `performClick` **toggles**: the
+    /// click would dismiss the menu instead of revealing anything, and a menu
+    /// opened before the line was staged does not contain that line anyway.
+    public nonisolated static func allowsAutomaticOpen(
+        isVisible: Bool, isOnScreen: Bool, menuIsOpen: Bool
+    ) -> Bool {
+        isVisible && isOnScreen && !menuIsOpen
+    }
+
+    /// Pops the dropdown open so a line the controller has just staged is seen
+    /// without a click, through the same guarded path the readout's own automatic
+    /// open uses.
+    ///
+    /// The caller writes the state the dropdown renders **before** calling this,
+    /// so `menuNeedsUpdate` builds the line into the menu this opens.
+    /// `stillStaged` is re-checked inside the run-loop turn, where the reason to
+    /// open may already be gone.
+    public func revealDropdown(while stillStaged: @escaping @MainActor () -> Bool) {
+        let visible = statusItem.isVisible
+        let onScreen = isButtonOnScreen
+        guard
+            Self.allowsAutomaticOpen(
+                isVisible: visible, isOnScreen: onScreen, menuIsOpen: menuIsOpen)
+        else {
+            Self.logger.info(
+                "Staged-line reveal skipped — visible=\(visible, privacy: .public), onScreen=\(onScreen, privacy: .public), menuOpen=\(self.menuIsOpen, privacy: .public)"
+            )
+            return
+        }
+        Self.logger.info("Opening the dropdown to reveal a staged line")
+        openDropdown(while: stillStaged)
+    }
+
     // MARK: - Private
 
     /// Adds or removes the readout rows from a dropdown that is already on
@@ -133,28 +168,33 @@ public final class ClipboardProgressStatusItemPresenter {
         case .none:
             break
         case .open:
-            // Host-only: detach the dropdown from the soft-quit reminder so the
-            // click below opens the menu rather than the reminder's dismissal.
-            willAutoOpen?()
-            // Never defer this with `Task { @MainActor }`: `performClick` parks
-            // inside a nested menu-tracking loop until the dropdown closes, and
-            // parking there from a main-queue block starves every later
-            // main-queue update, freezing the ring and readout.
-            performOnMainRunLoop { [weak self] in
-                guard let self else { return }
-                // The paste can end inside that turn (a cancel lands as a pull
-                // failure); opening for a readout that is already gone would
-                // leave a dropdown nothing will close.
-                guard self.snapshot != nil else { return }
-                self.pendingAutoOpen = true
-                self.statusItem.button?.performClick(nil)
-                // Covers a click that opened nothing: a flag left set would
-                // mislabel the *user's* next dropdown as ours and close it under
-                // them. An open already consumed it in `menuWillOpen`.
-                self.pendingAutoOpen = false
-            }
+            // The paste can end inside that turn (a cancel lands as a pull
+            // failure); opening for a readout that is already gone would leave a
+            // dropdown nothing will close.
+            openDropdown(while: { [weak self] in self?.snapshot != nil })
         case .close:
             menu.cancelTracking()
+        }
+    }
+
+    /// Clicks the status-item button on the next run-loop turn, unless
+    /// `stillWanted` reports the reason for opening has passed.
+    private func openDropdown(while stillWanted: @escaping @MainActor () -> Bool) {
+        // Host-only: detach the dropdown from the soft-quit reminder so the click
+        // below opens the menu rather than the reminder's dismissal.
+        willAutoOpen?()
+        // Never defer this with `Task { @MainActor }`: `performClick` parks inside
+        // a nested menu-tracking loop until the dropdown closes, and parking there
+        // from a main-queue block starves every later main-queue update, freezing
+        // the ring and readout.
+        performOnMainRunLoop { [weak self] in
+            guard let self, stillWanted() else { return }
+            self.pendingAutoOpen = true
+            self.statusItem.button?.performClick(nil)
+            // Covers a click that opened nothing: a flag left set would mislabel
+            // the *user's* next dropdown as ours and close it under them. An open
+            // already consumed it in `menuWillOpen`.
+            self.pendingAutoOpen = false
         }
     }
 
