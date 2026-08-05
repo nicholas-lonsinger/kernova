@@ -22,7 +22,7 @@ Two absences are deliberate:
 
 **`com.apple.security.network.server`.** The app never calls `socket()`/`bind()`/`listen()` — `VZVirtioSocketListener`/`VZVirtioSocketConnection` hand it already-connected fds, and the sandbox's network entitlements gate socket *acquisition*, not I/O on granted fds. The serial relay's `AF_UNIX` listener binds inside the app's own temp directory, which file rules already allow. Neither vsock nor the relay needs it.
 
-**Any entitlement unavailable to Mac App Store apps.** The virtualization entitlement is compatible with the sandbox on the store — UTM ships exactly this combination there, macOS guests included.
+**Any entitlement unavailable to Mac App Store apps.** The virtualization entitlement is compatible with the sandbox on the store — UTM ships exactly this combination there, macOS guests included. `com.apple.vm.networking` (bridged networking) is *not* in this category, despite being widely assumed Developer ID-only: Apple grants it on request for App Store distribution too — UTM's store build carries it. It is absent because nothing creates bridged network devices, not for eligibility.
 
 The only executable the app spawns is its own bundled `KernovaRelaunchHelper`, sandboxed with `app-sandbox` + `inherit` and nothing else.
 

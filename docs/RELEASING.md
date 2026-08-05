@@ -7,8 +7,8 @@ is in [SANDBOX.md](SANDBOX.md).
 
 Releasing is **Nicholas-specific** and does not touch CI or the clone-and-run
 story. CI builds Debug with `CODE_SIGNING_ALLOWED=NO`, and the Debug
-configuration remains the profile-less path anyone can build against their own
-team. Everything below concerns the **Release** configuration and the
+configuration signs ad-hoc — anyone can clone and build with no Apple
+account or team. Everything below concerns the **Release** configuration and the
 Developer ID identity (team `8MT4P4GZL2`, bundle id `app.kernova`, Apple
 Silicon only).
 
@@ -69,9 +69,8 @@ set to the profile name above, `ENABLE_HARDENED_RUNTIME = YES`, and
 runtime and a secure timestamp on every binary, and since export re-signing
 can't add either inside the DMG, they have to be baked in at build time.
 
-The outer app and `KernovaRelaunchHelper` keep **Automatic / Apple
-Development** at build time and receive their Developer ID signatures from the
-Organizer export.
+The outer app and `KernovaRelaunchHelper` sign **ad-hoc** at build time and
+receive their Developer ID signatures from the Organizer export.
 
 Xcode injects `com.apple.security.get-task-allow` into *build*-action products
 for debugger attachment — the agent target sets

@@ -73,18 +73,15 @@ After cloning:
 
 ```bash
 make install-hooks   # one-time per clone
-make bootstrap       # derives your signing team
 ```
 
-`install-hooks` points the repo at the checked-in `.githooks/`, which Git does not activate on its own: a pre-push `make lint` matching the required `lint` check on `main` (bypass a single push with `git push --no-verify`), and a post-checkout hook that makes a new git worktree build in Xcode with no manual setup.
-
-`bootstrap` derives your own signing team from your Apple Development (or Developer ID) certificate into a gitignored `Config/Local.xcconfig`, so a Debug build signs as *you* rather than a hardcoded team. `make build` and `make test` run it for you; Xcode's ⌘R does not, so run it by hand before building a fresh clone from the IDE. The hook and bootstrap machinery is documented in [docs/BUILD.md](docs/BUILD.md).
+`install-hooks` points the repo at the checked-in `.githooks/`, which Git does not activate on its own: a pre-push `make lint` matching the required `lint` check on `main` (bypass a single push with `git push --no-verify`), and a post-checkout hook that sets up a new git worktree with no manual step. The hook machinery is documented in [docs/BUILD.md](docs/BUILD.md).
 
 Then open `Kernova.xcodeproj`, select the `Kernova` scheme, and build and run (⌘R). The app requires the `com.apple.security.virtualization` entitlement, already in the project configuration.
 
-`make doctor` checks that your toolchain, signing team, and hooks match what Kernova needs. `make` with no arguments lists every build, test, format, and lint target.
+`make doctor` checks that your toolchain, signing, and hooks match what Kernova needs. `make` with no arguments lists every build, test, format, and lint target.
 
-**Debug signs with *any* team** — no Apple Developer Program membership or developer-portal setup needed, just `make bootstrap`. **Release** additionally requires a paid membership and a distribution identity (Developer ID, or Apple Distribution for the Mac App Store) and fails to sign without one; it matters only when cutting a distributable build. The signing story is in [docs/RELEASING.md](docs/RELEASING.md).
+**Debug needs no signing team or Apple account** — every target signs ad-hoc ("Sign to Run Locally"), so a fresh clone builds and runs as-is. **Release** requires a paid membership, a distribution identity (Developer ID, or Apple Distribution for the Mac App Store), and a gitignored `Config/Local.xcconfig` supplying `DEVELOPMENT_TEAM = <team>`; it matters only when cutting a distributable build. The signing story is in [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Testing
 
