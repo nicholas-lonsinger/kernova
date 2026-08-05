@@ -46,10 +46,6 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     private var controlAgent: VsockGuestControlAgent?
     private var statusItemController: AgentStatusItemController?
 
-    /// Hosts the File Provider XPC relay and clipboard domain, gated on host
-    /// clipboard-sharing policy.
-    private var fileProviderHost: FileProviderDomainHost?
-
     /// Retained so the signal sources stay armed for the process lifetime.
     private var sigintSource: DispatchSourceSignal?
     private var sigtermSource: DispatchSourceSignal?
@@ -65,13 +61,6 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         // handled before any NSApplication / window-server setup.
         if CommandLine.arguments.contains("--version") {
             print("kernova-agent \(version) (\(buildNumber))")
-            exit(0)
-        }
-
-        // Dev/test teardown: removes the guest clipboard domain so no Finder
-        // location lingers after a test.
-        if CommandLine.arguments.contains("--remove-clipboard-domain") {
-            FileProviderDomainHost.removeAllDomainsBlocking()
             exit(0)
         }
 
@@ -99,34 +88,32 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             "Kernova Guest Agent v\(Self.version, privacy: .public) (\(Self.buildNumber, privacy: .public)) started"
         )
 
-        let clipboardAgent = VsockGuestClipboardAgent()
+        // Reclaim clipboard staging roots left by earlier agent processes —
+        // staging roots are per-instance, so a live instance's sweep can never
+        // reach them; only this launch-time reclaim bounds their growth.
+        ClipboardFileStaging.reclaimAll()
 
-        // Wired both ways with the clipboard agent: the host pulls through the
-        // agent on `fetchContents`, the agent publishes inbound reps through the
-        // host. The agent's back-reference is weak.
-        let fileProviderHost = FileProviderDomainHost(
-            config: .guest(), pullProvider: clipboardAgent)
-        clipboardAgent.fileProvider = fileProviderHost
-
-        // One tracker covers both directions, so the readout reads the same
-        // either way. Emissions arrive off-main and hop via `DispatchQueue.main`,
+        // Progress emissions arrive off-main and hop via `DispatchQueue.main`,
         // not a `Task` — two independently scheduled hops carrying immutable
         // snapshots have no ordering guarantee, and the ring would jump backwards.
-        let progressTracker = ClipboardProgressTracker { [weak self] snapshot in
-            DispatchQueue.main.async {
-                self?.statusItemController?.materializationProgressChanged(snapshot)
-            }
-        }
-        fileProviderHost.setProgressTracker(progressTracker)
-        clipboardAgent.progressTracker = progressTracker
+        let clipboardAgent = VsockGuestClipboardAgent(
+            onProgress: { [weak self] snapshot in
+                DispatchQueue.main.async {
+                    self?.statusItemController?.materializationProgressChanged(snapshot)
+                }
+            },
+            onClipboardNotice: { [weak self] in
+                DispatchQueue.main.async {
+                    self?.statusItemController?.clipboardNoticeRaised()
+                }
+            })
 
-        // `onPolicy` gates the log + clipboard + File Provider capabilities;
-        // `onStateChange` drives the status-item icon.
+        // `onPolicy` gates the log + clipboard capabilities; `onStateChange`
+        // drives the status-item icon.
         let controlAgent = VsockGuestControlAgent(
             onPolicy: { [weak self] policy in
                 vsockConnection.setEnabled(policy.logForwardingEnabled)
                 clipboardAgent.setEnabled(policy.clipboardSharingEnabled)
-                fileProviderHost.setEnabled(policy.clipboardSharingEnabled)
                 Task { @MainActor in
                     self?.updateAppNap(clipboardEnabled: policy.clipboardSharingEnabled)
                 }
@@ -139,15 +126,9 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             }
         )
 
-        // Read lazily at offer/paste time so it tracks reconnects.
-        clipboardAgent.peerSupportsDirTree = { [weak controlAgent] in
-            controlAgent?.hostSupportsClipboardDirTree ?? false
-        }
-
         self.vsockConnection = vsockConnection
         self.clipboardAgent = clipboardAgent
         self.controlAgent = controlAgent
-        self.fileProviderHost = fileProviderHost
 
         self.statusItemController = AgentStatusItemController(
             version: Self.version,
@@ -157,17 +138,8 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
                 vsockConnection?.isLogForwardingEnabled ?? false
             },
             clipboardActivity: { [weak clipboardAgent] in clipboardAgent?.clipboardActivity ?? .disabled },
-            fileProviderAvailability: { [weak fileProviderHost] in
-                fileProviderHost?.availability ?? .inactive
-            },
             onQuit: { NSApp.terminate(nil) }
         )
-
-        // Refreshes the status-item reminder badge on availability transitions,
-        // delivered on main.
-        fileProviderHost.setAvailabilityObserver { [weak self] availability in
-            self?.statusItemController?.fileProviderAvailabilityChanged(availability)
-        }
 
         installSignalHandlers(
             vsockConnection: vsockConnection,
@@ -178,8 +150,6 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         vsockConnection.start()
         clipboardAgent.start()
         controlAgent.start()
-        // The File Provider host stands itself up from `onPolicy` above; it must
-        // not be registered unconditionally here.
     }
 
     func applicationWillTerminate(_ notification: Notification) {

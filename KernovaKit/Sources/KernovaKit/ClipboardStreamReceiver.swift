@@ -102,7 +102,12 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             uti: begin.uti,
             filename: begin.filename,
             isInline: begin.isInline,
-            totalBytes: Int(clamping: begin.totalBytes),
+            // The sender's declared total is peer-supplied and never
+            // cross-checked against the chunks that follow: bound it here, the
+            // one place it enters, so the disk pre-flight and the inline reserve
+            // below are handed a size that can be reasoned about.
+            totalBytes: Int(
+                clamping: min(begin.totalBytes, ClipboardOfferBounds.maxDeclaredByteCount)),
             maxResidentInlineBytes: maxResidentInlineBytes
         )
         // Ignore a duplicate transfer_id rather than overwrite an in-flight
@@ -423,22 +428,6 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         let all = lock.withLock { Array(transfers.values) }
         for transfer in all { teardown(transfer) }
         failAwaiters { _ in true }
-    }
-
-    /// Consumer-requested cancel of one lazy pull (e.g. Finder's cancel button,
-    /// relayed through the File Provider extension to the owner).
-    ///
-    /// Unlike `cancel(generation:)`/`cancelAll()`, which tear down silently on
-    /// supersession, this also tells the sender to give up the remaining bytes
-    /// with a `ClipboardStreamAbort` frame. Idempotent: an already-finished or
-    /// unknown `transferID` is a harmless no-op.
-    public func cancel(transferID: UInt64) {
-        sendAbortFrame(transferID, code: "cancelled", message: "Fetch cancelled by consumer")
-        if let transfer = transfer(transferID) {
-            teardown(transfer)
-        } else {
-            failAwaiters { $0 == transferID }
-        }
     }
 
     /// Registers an off-actor delivery handler for a single transfer.

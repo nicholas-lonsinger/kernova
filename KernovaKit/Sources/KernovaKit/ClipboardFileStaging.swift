@@ -23,6 +23,12 @@ public protocol StagingSink: Sendable {
 /// One directory per offer generation; the last `maxGenerations` are retained so
 /// a paste still being copied out by Finder survives, and `sweep()` clears
 /// everything.
+///
+/// Each instance owns a private root (the label plus a per-instance component),
+/// so no instance's `sweep()` can delete files another instance staged — a URL
+/// vended to a pasteboard outlives the session that staged it. Roots left behind
+/// by earlier instances are reclaimed at process launch by `reclaimAll`, and
+/// mid-process by `reclaimSiblingRoots()` once nothing can be serving from them.
 public final class ClipboardFileStaging: @unchecked Sendable {
     /// Queries free capacity (in bytes) for important, user-initiated writes at
     /// the given directory.
@@ -103,9 +109,15 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// `maxGenerations`.
     private var generationDirs: [(generation: UInt64, dir: URL)] = []
 
+    /// Directory under `tempRoot` that every staging root nests in, so a launch
+    /// reclaim (`reclaimAll`) sweeps all co-resident label families at once.
+    public static let parentDirectoryName = "KernovaClipboardStaging"
+
     /// - Parameters:
     ///   - label: distinguishes co-resident roots (e.g. `"agent"` vs `"host"`).
-    ///   - tempRoot: parent directory for the staging root.
+    ///     The root nests a unique per-instance component under the label, so two
+    ///     same-label instances (a VM's next session) never share a root.
+    ///   - tempRoot: parent directory for the shared staging parent.
     ///   - freeSpaceProvider: queries available capacity; defaults to
     ///     `volumeAvailableCapacityForImportantUsageKey`.
     public init(
@@ -113,9 +125,22 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         tempRoot: URL = FileManager.default.temporaryDirectory,
         freeSpaceProvider: FreeSpaceProvider? = nil
     ) {
-        root = tempRoot.appendingPathComponent(
-            "KernovaClipboardStaging-\(label)", isDirectory: true)
+        root =
+            tempRoot
+            .appendingPathComponent(Self.parentDirectoryName, isDirectory: true)
+            .appendingPathComponent(label, isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
         self.freeSpaceProvider = freeSpaceProvider ?? Self.defaultFreeSpace
+    }
+
+    /// Removes the shared staging parent under `tempRoot` — every label
+    /// family's root, crash orphans included.
+    ///
+    /// Call once at process launch, before any staging root is used; a live
+    /// instance's `sweep()` still clears only its own root.
+    public static func reclaimAll(tempRoot: URL = FileManager.default.temporaryDirectory) {
+        try? FileManager.default.removeItem(
+            at: tempRoot.appendingPathComponent(parentDirectoryName, isDirectory: true))
     }
 
     /// Available capacity for important writes at the staging root's volume, in
@@ -129,7 +154,17 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// The outbound pasteboard poll skips these so a file received from the peer
     /// is never offered back to it.
     public func isInStagingRoot(_ url: URL) -> Bool {
-        url.standardizedFileURL.path.hasPrefix(root.standardizedFileURL.path)
+        Self.isURL(url, inside: root)
+    }
+
+    /// Whether `url` is `directory` itself or something under it.
+    ///
+    /// The prefix is component-bounded, so a sibling whose name extends
+    /// `directory`'s (`agent` vs `agent-send`) never matches.
+    public static func isURL(_ url: URL, inside directory: URL) -> Bool {
+        let directoryPath = directory.standardizedFileURL.path
+        let path = url.standardizedFileURL.path
+        return path == directoryPath || path.hasPrefix(directoryPath + "/")
     }
 
     /// Whether `byteCount` bytes (plus `margin`) fit on the staging volume.
@@ -137,12 +172,16 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// `volumeAvailableCapacityForImportantUsageKey` **includes purgeable
     /// space**, so it can exceed raw free bytes (WWDC17 "What's New in
     /// Foundation"); the margin keeps a transfer from filling the volume to the
-    /// last byte. An unknown capacity is treated as "fits".
+    /// last byte. An unknown capacity is treated as "fits", and a size whose
+    /// margined total leaves `Int64` as "does not fit" — the caller's `byteCount`
+    /// can come from a peer-declared size.
     public func hasCapacity(
         forByteCount byteCount: Int, margin: Int = ClipboardStreamTuning.freeSpaceMargin
     ) -> Bool {
         guard let available = availableCapacity() else { return true }
-        return Int64(byteCount) + Int64(margin) <= available
+        let (needed, overflow) = Int64(byteCount).addingReportingOverflow(Int64(margin))
+        guard !overflow else { return false }
+        return needed <= available
     }
 
     /// Opens an append-only sink for a streamed file representation, creating
@@ -183,6 +222,20 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         return url
     }
 
+    /// Reserves a fresh empty directory under the generation directory for a
+    /// caller that materializes files it does not name — a window drop whose
+    /// promised files arrive with the source app's own names.
+    ///
+    /// - Throws: a filesystem error if the directory can't be created.
+    public func reserveScratchDirectory(generation: UInt64) throws -> URL {
+        lock.lock()
+        defer { lock.unlock() }
+        let url = try directory(for: generation)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
     /// Reserves a unique destination URL under the generation directory for the
     /// sender's directory archive before it is offered.
     ///
@@ -200,14 +253,51 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         return url
     }
 
-    /// Removes the entire staging root — crash orphans and all live generations.
+    /// Removes this instance's entire staging root — every live generation at
+    /// once.
     ///
-    /// Call on agent start/stop and capability disable.
+    /// A previous instance's root is out of reach by construction;
+    /// `reclaimSiblingRoots` and `reclaimAll` reclaim those.
     public func sweep() {
         lock.lock()
         defer { lock.unlock() }
         try? FileManager.default.removeItem(at: root)
         generationDirs.removeAll()
+    }
+
+    /// Removes the directory for `generation` and drops it from the retention
+    /// window.
+    ///
+    /// The window bounds how long a generation lives by default; this retires one
+    /// early, once the caller knows nothing can still be serving from it. A
+    /// generation the window already evicted is a no-op.
+    public func discardGeneration(_ generation: UInt64) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let index = generationDirs.firstIndex(where: { $0.generation == generation })
+        else { return }
+        let dir = generationDirs.remove(at: index).dir
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    /// Removes every sibling root under this instance's label — staging left
+    /// behind by the same label's earlier instances — leaving this instance's
+    /// own root untouched.
+    ///
+    /// Call only when nothing can still be serving from those roots: for a
+    /// receive root, once the host pasteboard no longer holds (or has just
+    /// retracted) the write those files backed.
+    public func reclaimSiblingRoots() {
+        lock.lock()
+        defer { lock.unlock() }
+        let labelDir = root.deletingLastPathComponent()
+        guard
+            let siblings = try? FileManager.default.contentsOfDirectory(
+                at: labelDir, includingPropertiesForKeys: nil)
+        else { return }
+        for sibling in siblings where sibling.lastPathComponent != root.lastPathComponent {
+            try? FileManager.default.removeItem(at: sibling)
+        }
     }
 
     // MARK: - Private

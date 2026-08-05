@@ -126,23 +126,6 @@ public enum ClipboardSnapshotPolicy {
         skipReasonBeforeReading(uti: uti) != nil
     }
 
-    /// Returns only the representations that are safe to apply to a pasteboard.
-    ///
-    /// Receive-side enforcement, symmetric with the send-side `evaluate(_:)`:
-    /// compliant peers already filter at snapshot time, so anything caught here
-    /// came from a buggy or malicious peer. Without the identity skips a crafted
-    /// payload could smuggle e.g. a `public.file-url` onto the receiving
-    /// pasteboard behind a visible image representation.
-    public static func sanitizedForApply(
-        _ representations: [ClipboardContent.Representation]
-    ) -> [ClipboardContent.Representation] {
-        representations.filter { representation in
-            if shouldSkipBeforeReading(uti: representation.uti) { return false }
-            if representation.byteCount == 0 { return false }
-            return true
-        }
-    }
-
     /// Applies every rule, in order, over (uti, data) pairs read from one pasteboard item.
     ///
     /// Copied *files* take the disk-backed `.file` path and never pass through

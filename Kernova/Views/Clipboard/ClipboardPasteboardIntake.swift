@@ -154,47 +154,16 @@ enum ClipboardPasteboardIntake {
             || uti == "Apple URL pasteboard type"
     }
 
-    /// Resolves dropped/copied *files* into disk-backed representations, one per
-    /// URL in pasteboard order.
-    ///
-    /// Files only: a folder URL is skipped here, so every gesture that can carry
-    /// a folder uses the `staging`/`generation` overload below instead. A file
-    /// that fails to stat (or is empty) is skipped and noted; if *every* file
-    /// fails the result is `.rejected`.
-    static func read(filesAt urls: [URL], allowsBinary: Bool) -> ClipboardIntakeResult {
-        guard allowsBinary else {
-            return .rejected(message: Self.textOnlyTransportMessage)
-        }
-        var representations: [ClipboardContent.Representation] = []
-        var skipped = 0
-        for url in urls {
-            if let rep = fileRepresentation(at: url) {
-                representations.append(rep)
-            } else {
-                skipped += 1
-            }
-        }
-        guard !representations.isEmpty else {
-            return .rejected(
-                message: urls.count > 1
-                    ? "Couldn't read the dropped files" : "Couldn't read the dropped file")
-        }
-        let note =
-            skipped > 0 ? "Skipped \(skipped) unreadable file\(skipped == 1 ? "" : "s")" : nil
-        return .content(ClipboardContent(representations: representations), note: note)
-    }
-
     /// Resolves copied/dropped files **and folders** into representations, one
     /// per URL in pasteboard order.
     ///
-    /// Runs off the main actor (stat + archive are I/O). A directory — including
-    /// an OS package such as `.app`/`.rtfd` — crosses as one representation: with
-    /// `dirTree` (`clipboard.dirtree.v1` negotiated with the guest) a source rep
-    /// streamed on demand, otherwise packed *eagerly* into a single AppleArchive.
-    /// An item that fails is skipped and noted; if *every* item fails, `.rejected`.
+    /// Runs off the main actor (the stat and the folder estimate walk are I/O).
+    /// A directory — including an OS package such as `.app`/`.rtfd` — becomes a
+    /// `.directory` source representation carrying a stat-walk size estimate; no
+    /// archive is built until a paste requests the rep. An item that fails is
+    /// skipped and noted; if *every* item fails, `.rejected`.
     nonisolated static func read(
-        filesAt urls: [URL], allowsBinary: Bool, staging: ClipboardFileStaging, generation: UInt64,
-        dirTree: Bool
+        filesAt urls: [URL], allowsBinary: Bool
     ) async -> ClipboardIntakeResult {
         guard allowsBinary else {
             return .rejected(message: Self.textOnlyTransportMessage)
@@ -207,15 +176,10 @@ enum ClipboardPasteboardIntake {
                 skipped += 1
                 continue
             }
-            let rep: ClipboardContent.Representation?
-            if isDirectory.boolValue {
-                rep =
-                    dirTree
-                    ? directorySourceRepresentation(at: url)
-                    : directoryRepresentation(at: url, staging: staging, generation: generation)
-            } else {
-                rep = fileRepresentation(at: url)
-            }
+            let rep =
+                isDirectory.boolValue
+                ? directorySourceRepresentation(at: url)
+                : fileRepresentation(at: url)
             if let rep {
                 representations.append(rep)
             } else {
@@ -235,7 +199,7 @@ enum ClipboardPasteboardIntake {
     /// Builds a disk-backed `.file` representation from a single file URL via a
     /// stat (name + size + content UTI), or `nil` when it can't be read or is
     /// empty (a directory has no `.fileSize`, so it returns `nil` here — the
-    /// folder path archives it instead).
+    /// folder path builds a source rep instead).
     nonisolated private static func fileRepresentation(
         at url: URL
     ) -> ClipboardContent.Representation? {
@@ -256,27 +220,10 @@ enum ClipboardPasteboardIntake {
     ) -> ClipboardContent.Representation? {
         let uti =
             (try? url.resourceValues(forKeys: [.contentTypeKey]))?.contentType?.identifier
-            ?? ClipboardDirectoryTree.folderUTI
+            ?? ClipboardDirectoryArchive.directoryUTI
         return ClipboardContent.Representation(
             directorySourceURL: url,
-            estimatedByteCount: ClipboardDirectoryTree.estimatedByteCount(at: url),
+            estimatedByteCount: ClipboardDirectoryArchive.estimatedByteCount(at: url),
             filename: url.lastPathComponent, uti: uti)
-    }
-
-    /// Archives the directory at `url` into a staged directory representation, or
-    /// `nil` if archiving fails (skipped + noted by callers).
-    nonisolated private static func directoryRepresentation(
-        at url: URL, staging: ClipboardFileStaging, generation: UInt64
-    ) -> ClipboardContent.Representation? {
-        let folderName = url.lastPathComponent
-        do {
-            return try ClipboardDirectoryArchive.archivedRepresentation(
-                ofDirectoryAt: url, named: folderName, into: staging, generation: generation)
-        } catch {
-            logger.error(
-                "Failed to archive folder '\(folderName, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            return nil
-        }
     }
 }

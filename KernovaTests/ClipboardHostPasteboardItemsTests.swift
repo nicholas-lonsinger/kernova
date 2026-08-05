@@ -194,6 +194,96 @@ struct ClipboardHostPasteboardItemsTests {
                 == "nested")
     }
 
+    // MARK: - Promised items (metadata-only publish)
+
+    /// Records the paste-time fires `promisedItemSpecs` routes to a clipboard
+    /// service, returning canned values — no service, no wire.
+    private final class RecordingRepProvider: ClipboardPasteboardRepProviding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var fileURLCallsStorage: [(generation: UInt64, repIndex: Int)] = []
+        private var dataCallsStorage: [(generation: UInt64, repIndex: Int, uti: String)] = []
+        var urlToReturn: URL?
+        var dataToReturn: Data?
+
+        var fileURLCalls: [(generation: UInt64, repIndex: Int)] {
+            lock.withLock { fileURLCallsStorage }
+        }
+        var dataCalls: [(generation: UInt64, repIndex: Int, uti: String)] {
+            lock.withLock { dataCallsStorage }
+        }
+        var totalCallCount: Int {
+            lock.withLock { fileURLCallsStorage.count + dataCallsStorage.count }
+        }
+
+        func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? {
+            lock.withLock { fileURLCallsStorage.append((generation, repIndex)) }
+            return urlToReturn
+        }
+
+        func copyToMacData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
+            lock.withLock { dataCallsStorage.append((generation, repIndex, uti)) }
+            return dataToReturn
+        }
+    }
+
+    @Test("promised reps group like resolved ones — inline block, dual-flavor image file, file-only item")
+    func promisedItemsGroupFromMetadata() {
+        let provider = RecordingRepProvider()
+        let promises = [
+            CopyToMacPromise(
+                generation: 3, repIndex: 0, uti: ClipboardContent.utf8TextUTI, filename: "",
+                isInline: true),
+            CopyToMacPromise(
+                generation: 3, repIndex: 1, uti: UTType.png.identifier, filename: "photo.png",
+                isInline: true),
+            CopyToMacPromise(
+                generation: 3, repIndex: 2, uti: "public.data", filename: "blob.bin",
+                isInline: false),
+        ]
+        let specs = HostClipboardPublisher.promisedItemSpecs(for: promises, provider: provider)
+
+        #expect(specs.count == 3)
+        let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        let pngType = NSPasteboard.PasteboardType(UTType.png.identifier)
+        #expect(specs[0].types == [textType])
+        #expect(Set(specs[1].types) == [pngType, .fileURL])
+        #expect(specs[2].types == [.fileURL])
+        // Building the specs is pure planning — no paste-time fire happened.
+        #expect(provider.totalCallCount == 0)
+    }
+
+    @Test("a promised item's provide closure routes .fileURL and inline flavors to the right pulls")
+    func promisedItemClosuresRouteFlavors() throws {
+        let provider = RecordingRepProvider()
+        provider.urlToReturn = URL(fileURLWithPath: "/tmp/served/photo.png")
+        provider.dataToReturn = Data("promised bytes".utf8)
+        let promises = [
+            CopyToMacPromise(
+                generation: 7, repIndex: 0, uti: UTType.png.identifier, filename: "photo.png",
+                isInline: true)
+        ]
+        let specs = HostClipboardPublisher.promisedItemSpecs(for: promises, provider: provider)
+        let spec = try #require(specs.first)
+
+        let pngType = NSPasteboard.PasteboardType(UTType.png.identifier)
+        #expect(spec.provide(pngType) == Data("promised bytes".utf8))
+        #expect(provider.dataCalls.count == 1)
+        #expect(provider.dataCalls.first?.generation == 7)
+        #expect(provider.dataCalls.first?.repIndex == 0)
+        #expect(provider.dataCalls.first?.uti == UTType.png.identifier)
+
+        let urlData = try #require(spec.provide(.fileURL))
+        #expect(
+            URL(string: try #require(String(data: urlData, encoding: .utf8)))
+                == URL(fileURLWithPath: "/tmp/served/photo.png"))
+        #expect(provider.fileURLCalls.count == 1)
+        #expect(provider.fileURLCalls.first?.generation == 7)
+
+        // A type the item never promised serves nothing and fires nothing.
+        #expect(spec.provide(.init("public.rtf")) == nil)
+        #expect(provider.totalCallCount == 2)
+    }
+
     @Test("a directory payload whose archive can't be extracted is dropped (no item)")
     func directoryExtractionFailureDropsItem() async throws {
         let staging = makeStaging()

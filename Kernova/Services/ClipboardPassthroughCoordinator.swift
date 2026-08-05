@@ -46,15 +46,6 @@ final class ClipboardPassthroughCoordinator {
     /// re-observation (or per-rep materialization) doesn't re-publish.
     private var lastInboundOfferSeq: UInt64 = 0
 
-    /// Staging for the poll's folder-archiving intake (a copied *folder* must be
-    /// archived before it can be offered).
-    ///
-    /// Separate from the publisher's host-write staging; both stage under the
-    /// launch-swept `"host"` root without collision, each generation being its own
-    /// UUID subdirectory.
-    private let staging = ClipboardFileStaging(label: HostClipboardPublisher.stagingLabel)
-    private var stagingGeneration: UInt64 = 1
-
     private var isRunning = false
 
     #if DEBUG
@@ -155,20 +146,15 @@ final class ClipboardPassthroughCoordinator {
         }
     }
 
-    /// Resolves copied files/folders off the main actor (a folder archives), then
-    /// offers them to the current service on the way back.
+    /// Resolves copied files/folders off the main actor (the stat and folder
+    /// estimate walk are I/O), then offers them to the current service on the
+    /// way back.
     private func resolveAndForward(_ urls: [URL], allowsBinary: Bool) {
-        let staging = self.staging
-        let generation = stagingGeneration
-        stagingGeneration += 1
         Task { @MainActor [weak self] in
-            guard let self else { return }
-            let dirTree = self.instance?.clipboardService?.supportsDirectoryTree ?? false
             let resolved = await ClipboardPasteboardIntake.read(
-                filesAt: urls, allowsBinary: allowsBinary, staging: staging, generation: generation,
-                dirTree: dirTree)
+                filesAt: urls, allowsBinary: allowsBinary)
             // The live service may have been torn down or replaced during the resolve.
-            guard let service = self.instance?.clipboardService else { return }
+            guard let service = self?.instance?.clipboardService else { return }
             if case .content(let content, _) = resolved {
                 service.clipboardContent = content
                 service.grabIfChanged()

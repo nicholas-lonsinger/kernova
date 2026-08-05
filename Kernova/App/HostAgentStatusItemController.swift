@@ -32,8 +32,6 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// Keeps the tooltip — and, while the dropdown is open, its VM rows — in
     /// sync with the running VMs.
     private var runningObservation: ObservationLoop?
-    /// Keeps the icon/tooltip in sync with the host File Provider toggle.
-    private var fileProviderObservation: ObservationLoop?
     /// Keeps the paste readout in sync with the materializing transfer.
     private var pasteProgressObservation: ObservationLoop?
 
@@ -87,13 +85,8 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             }
         )
 
-        fileProviderObservation = observeRecurring(
-            track: { _ = HostClipboardFileProvider.shared.availability },
-            apply: { [weak self] in self?.fileProviderAvailabilityChanged() }
-        )
-
         pasteProgressObservation = observeRecurring(
-            track: { _ = HostClipboardFileProvider.shared.materializationProgress },
+            track: { _ = ClipboardProgressCenter.shared.materializationProgress },
             apply: { [weak self] in self?.pasteProgressChanged() }
         )
     }
@@ -101,7 +94,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     // MARK: - Paste progress
 
     private func pasteProgressChanged() {
-        pasteProgressPresenter.apply(HostClipboardFileProvider.shared.materializationProgress)
+        pasteProgressPresenter.apply(ClipboardProgressCenter.shared.materializationProgress)
         setIcon()
         updateTooltip()
     }
@@ -190,28 +183,6 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         }
     }
 
-    // MARK: - File Provider reminder
-
-    /// Whether the proactive status-item badge should currently show.
-    ///
-    /// Distinct from the passive menu line below, which shows whenever the
-    /// toggle is off regardless of dismissal.
-    private var reminderActive: Bool {
-        ClipboardFileProviderReminder.shouldShowBadge(
-            availability: HostClipboardFileProvider.shared.availability,
-            dismissed: preferences.fileProviderReminderDismissed)
-    }
-
-    private func fileProviderAvailabilityChanged() {
-        preferences.fileProviderReminderDismissed =
-            ClipboardFileProviderReminder
-            .dismissalAfterAvailabilityChange(
-                HostClipboardFileProvider.shared.availability,
-                dismissed: preferences.fileProviderReminderDismissed)
-        setIcon()
-        updateTooltip()
-    }
-
     // MARK: - Icon / tooltip
 
     private func setIcon() {
@@ -230,20 +201,19 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             return
         }
         image.isTemplate = true
-        // A materializing paste outranks the enablement badge.
         if let snapshot = pasteProgressPresenter.snapshot {
             statusItem.button?.image = image.withProgressRing(
                 fraction: snapshot.fractionComplete)
             return
         }
-        statusItem.button?.image = reminderActive ? image.withAttentionBadge() : image
+        statusItem.button?.image = image
     }
 
     /// Updates the tooltip.
     ///
-    /// A materializing paste and the reminder append further lines rather than
-    /// replacing the running-count line, so headless users never lose the
-    /// at-a-glance view of how many VMs are running.
+    /// A materializing paste appends a further line rather than replacing the
+    /// running-count line, so headless users never lose the at-a-glance view of
+    /// how many VMs are running.
     private func updateTooltip() {
         let count = viewModel.instances.lazy.filter(\.isKeepingAppAlive).count
         var lines: [String]
@@ -255,16 +225,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         if let snapshot = pasteProgressPresenter.snapshot {
             lines.append(ClipboardProgressFormat.summary(snapshot))
         }
-        if reminderActive { lines.append(badgeSummary()) }
         statusItem.button?.toolTip = lines.joined(separator: "\n")
-    }
-
-    /// The badge tooltip's second line, picking the `.unavailable` copy so an
-    /// install/signing problem reads differently from "flip this toggle".
-    private func badgeSummary() -> String {
-        HostClipboardFileProvider.shared.availability == .unavailable
-            ? ClipboardFileProviderReminder.hostUnavailableSummary()
-            : ClipboardFileProviderReminder.hostDegradedSummary()
     }
 
     // MARK: - NSMenuDelegate
@@ -283,36 +244,6 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(open)
 
         menu.addItem(.separator())
-
-        // Passive affordance: shown whenever the toggle is off, independent of
-        // whether the proactive badge reminder was dismissed.
-        let availability = HostClipboardFileProvider.shared.availability
-        if availability == .needsEnabling {
-            addInfoItem(ClipboardFileProviderReminder.hostDegradedSummary())
-
-            let enable = NSMenuItem(
-                title: ClipboardFileProviderReminder.enableCommandTitle(),
-                action: #selector(enableFileSharingTapped), keyEquivalent: "")
-            enable.target = self
-            menu.addItem(enable)
-
-            if ClipboardFileProviderReminder.shouldShowReminder(
-                availability: availability, dismissed: preferences.fileProviderReminderDismissed)
-            {
-                let stop = NSMenuItem(
-                    title: ClipboardFileProviderReminder.stopRemindingCommandTitle(),
-                    action: #selector(stopRemindingTapped), keyEquivalent: "")
-                stop.target = self
-                menu.addItem(stop)
-            }
-
-            menu.addItem(.separator())
-        } else if availability == .unavailable {
-            // Registration/install failure — no user toggle to flip, so no
-            // enable/stop commands.
-            addInfoItem(ClipboardFileProviderReminder.hostUnavailableSummary())
-            menu.addItem(.separator())
-        }
 
         vmSection.rebuild(rows: StatusMenuVMSection.rows(for: viewModel.instances))
 
@@ -340,10 +271,6 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         vmSection.sync(to: StatusMenuVMSection.rows(for: viewModel.instances))
     }
 
-    private func addInfoItem(_ title: String) {
-        menu.addItem(.statusMenuInfo(title: title))
-    }
-
     // MARK: - Actions
 
     @objc private func openTapped() { onOpen(nil) }
@@ -353,16 +280,4 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     }
 
     @objc private func quitTapped() { onQuit() }
-
-    @objc private func enableFileSharingTapped() {
-        if !ClipboardFileProviderSettings.openEnablementSettings() {
-            Self.logger.error("Failed to open File Providers settings deep link")
-        }
-    }
-
-    @objc private func stopRemindingTapped() {
-        preferences.fileProviderReminderDismissed = true
-        setIcon()
-        updateTooltip()
-    }
 }

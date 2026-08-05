@@ -26,17 +26,28 @@ struct ClipboardPassthroughCoordinatorTests {
         var clipboardContent: ClipboardContent = .empty
         var isConnected = true
         var supportsBinaryRepresentations = true
-        var supportsDirectoryTree = false
         var lastTransferIssue: ClipboardTransferIssue?
         private(set) var inboundOfferSeq: UInt64 = 0
 
         /// Every content handed to `grabIfChanged()` by the poll, in order.
         var grabbed: [ClipboardContent] = []
 
+        /// Makes `materializeForCopy` refuse the way `VsockClipboardService` does
+        /// over the deadline-safe cap: every rep dropped, and the transfer issue
+        /// raised in the same step.
+        var refusesOverCopyBudget = false
+
         func stop() {}
         func grabIfChanged() { grabbed.append(clipboardContent) }
         func clearBuffer() { clipboardContent = .empty }
-        // materializeForCopy uses the protocol-extension default (resolved reps).
+
+        func materializeForCopy() -> [CopyToMacItem] {
+            guard refusesOverCopyBudget else {
+                return clipboardContent.representations.map { .resolved($0) }
+            }
+            lastTransferIssue = .overCopyBudget()
+            return [.droppedFile(.overPasteBudget)]
+        }
 
         /// Simulates a new inbound guest offer: publishes `content` and bumps the
         /// inbound sequence the coordinator observes.
@@ -159,6 +170,121 @@ struct ClipboardPassthroughCoordinatorTests {
         try await published.wait {
             h.pasteboard.data(forType: textType) == Data("guest copied this".utf8)
         }
+    }
+
+    @Test("An over-cap inbound offer writes nothing and leaves the refusal on the service")
+    func inboundOverCapOfferPublishesNothing() async throws {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+
+        // What the Mac clipboard holds when the guest copies the over-cap files —
+        // and still holds afterwards, since the publish returns before it clears.
+        writeText("previous host content", to: h.pasteboard)
+        let baseline = h.pasteboard.changeCount
+
+        let published = AsyncGate()
+        h.coordinator.onInboundPublishedForTesting = { published.notify() }
+        h.coordinator.start()
+        defer { h.coordinator.stop() }
+
+        h.service.refusesOverCopyBudget = true
+        h.service.simulateInboundOffer(ClipboardContent(text: "over the cap"))
+
+        try await published.wait { h.service.lastTransferIssue != nil }
+        #expect(h.pasteboard.changeCount == baseline)
+        #expect(h.pasteboard.string(forType: .string) == "previous host content")
+        // No gesture outcome exists on this path — the coordinator discards
+        // everything but the change count — so the issue is the whole report.
+        #expect(
+            h.service.lastTransferIssue?.kind
+                == .localFailure(
+                    code: ClipboardErrorCode.copyTooLarge.rawValue,
+                    message: ClipboardTransferIssue.overCopyBudgetMessage))
+    }
+
+    /// A promised-offer service: `materializeForCopy` returns metadata-only
+    /// promises, and the paste-time provider surface counts its fires so a test
+    /// can prove the publish itself moved no bytes.
+    @MainActor
+    @Observable
+    final class PromisedPassthroughService: ClipboardServicing, ClipboardPasteboardRepProviding {
+        var clipboardContent: ClipboardContent = .empty
+        var isConnected = true
+        var supportsBinaryRepresentations = true
+        var lastTransferIssue: ClipboardTransferIssue?
+        private(set) var inboundOfferSeq: UInt64 = 0
+        /// What the next `materializeForCopy` promises.
+        var promises: [CopyToMacPromise] = []
+
+        func stop() {}
+        func grabIfChanged() {}
+        func clearBuffer() { clipboardContent = .empty }
+        func materializeForCopy() -> [CopyToMacItem] { promises.map { .promised($0) } }
+
+        func simulateInboundOffer(promising promises: [CopyToMacPromise]) {
+            self.promises = promises
+            inboundOfferSeq &+= 1
+        }
+
+        // Paste-time provider surface: every fire is a byte pull, counted here.
+        @ObservationIgnored private let fireLock = NSLock()
+        @ObservationIgnored nonisolated(unsafe) private var fireCountStorage = 0
+        nonisolated var pasteFireCount: Int { fireLock.withLock { fireCountStorage } }
+        nonisolated private func recordFire() { fireLock.withLock { fireCountStorage += 1 } }
+
+        nonisolated func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? {
+            recordFire()
+            return nil
+        }
+        nonisolated func copyToMacData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
+            recordFire()
+            return Data("promised bytes".utf8)
+        }
+    }
+
+    @Test("A promised inbound offer auto-publishes without moving any bytes")
+    func inboundPromisedOfferPublishesWithoutPulling() async throws {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        defer { pasteboard.releaseGlobally() }
+        let publisher = HostClipboardPublisher(
+            writePasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
+        let config = VMConfiguration(name: "Promised VM", guestOS: .macOS, bootMode: .macOS)
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(config.id.uuidString, isDirectory: true)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+        let service = PromisedPassthroughService()
+        instance.clipboardService = service
+        let coordinator = ClipboardPassthroughCoordinator(
+            instance: instance, publisher: publisher, pasteboard: pasteboard)
+
+        let published = AsyncGate()
+        coordinator.onInboundPublishedForTesting = { published.notify() }
+        coordinator.start()
+        defer { coordinator.stop() }
+
+        let baseline = pasteboard.changeCount
+        service.simulateInboundOffer(promising: [
+            CopyToMacPromise(
+                generation: 4, repIndex: 0, uti: ClipboardContent.utf8TextUTI, filename: "",
+                isInline: true),
+            CopyToMacPromise(
+                generation: 4, repIndex: 1, uti: "public.data", filename: "big.bin",
+                isInline: false),
+        ])
+
+        // The auto-publish lands promised items on the pasteboard…
+        try await published.wait { pasteboard.changeCount > baseline }
+        let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        let types = pasteboard.pasteboardItems?.flatMap(\.types) ?? []
+        #expect(types.contains(textType))
+        #expect(types.contains(.fileURL))
+        // …without a single byte pull: publishing is metadata-only.
+        #expect(service.pasteFireCount == 0)
+
+        // Only a consumer's flavor read fires a pull.
+        #expect(pasteboard.data(forType: textType) == Data("promised bytes".utf8))
+        #expect(service.pasteFireCount == 1)
     }
 
     @Test("After stop, a new inbound offer is not published")

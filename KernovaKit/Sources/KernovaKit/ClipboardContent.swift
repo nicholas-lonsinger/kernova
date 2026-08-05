@@ -300,8 +300,10 @@ public struct ClipboardContent: Equatable, Sendable {
 
     /// Sum of all representations' payload sizes in bytes, without loading any
     /// file-backed payload.
+    ///
+    /// Saturates at `Int.max`: a peer-declared size reaches this sum.
     public var totalByteCount: Int {
-        representations.reduce(0) { $0 + $1.byteCount }
+        representations.reduce(0) { $0.saturatingAdding($1.byteCount) }
     }
 
     /// Caps the representation list to `maxOfferableRepresentations`.

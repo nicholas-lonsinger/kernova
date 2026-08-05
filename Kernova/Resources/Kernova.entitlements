@@ -32,29 +32,5 @@
 	<true/>
 	<key>com.apple.security.device.audio-input</key>
 	<true/>
-	<!-- Shared with the embedded host File Provider extension
-	     (KernovaFileProvider) so the sandboxed extension can read the
-	     materialized files the app stages into the group container. Host↔extension
-	     addressing uses NSFileProviderServicing (no Mach service, #460). The
-	     identifier is the per-configuration build setting KERNOVA_APP_GROUP:
-	     • Debug = $(DEVELOPMENT_TEAM).app.kernova — a Team-ID-prefixed group. macOS
-	       grants silent container access to a group whose prefix matches the signing
-	       team (macOS 15 app-group protection, criterion C), so a Debug build needs NO
-	       provisioning profile, no developer-portal registration, and no device
-	       (guest-VM UDID) registration — anyone can clone and run, and the guest agent
-	       never triggers the "access data from other apps" consent prompt.
-	     • Release = group.app.kernova — the canonical iOS-style identifier, registered
-	       on the developer portal and authorized by an embedded provisioning profile
-	       (Automatic signing); Apple's recommended, Mac-App-Store-compatible form.
-	     An app group does not require the App Sandbox, and the group container sits
-	     outside the app's own container — both sandboxed and unsandboxed processes
-	     reach it the same way. The guest agent registers the same identifier —
-	     host and guest never share a machine in production, and the host side uses a
-	     distinct domain id and container subpath so a dev host running both never
-	     collides. -->
-	<key>com.apple.security.application-groups</key>
-	<array>
-		<string>$(KERNOVA_APP_GROUP)</string>
-	</array>
 </dict>
 </plist>

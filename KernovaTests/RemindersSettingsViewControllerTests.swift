@@ -66,10 +66,8 @@ struct RemindersSettingsViewControllerTests {
         }
         for fragment in [
             "Menu Bar Quit Reminder appears",
-            "File Sharing Reminder appears",
             "stop its sidebar reminder",
             "Turns every reminder above back on",
-            "managed separately",
         ] {
             let caption = findLabel(containing: fragment, in: root)
             #expect(caption != nil, "caption '\(fragment)…' missing from the view tree")
@@ -93,6 +91,17 @@ struct RemindersSettingsViewControllerTests {
         let scrollView = try #require(controller.view as? NSScrollView)
         let documentView = try #require(scrollView.documentView)
         #expect(documentView.frame.height > scrollView.frame.height)
+    }
+
+    @Test("The app card carries the lone Menu Bar Quit row")
+    func appCardHasOneRow() throws {
+        let controller = makeLaidOutController(vmCount: 2)
+        defer { controller.viewDidDisappear() }
+
+        #expect(findLabel(withText: "Menu Bar Quit Reminder", in: controller.view) != nil)
+        // One app-wide switch plus one per VM: an extra would mean a second row
+        // crept back into the app card.
+        #expect(allSubviews(NSSwitch.self, in: controller.view).count == 3)
     }
 
     @Test("A short VM list hugs the content with the text laid out")

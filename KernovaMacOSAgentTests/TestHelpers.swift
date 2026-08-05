@@ -115,6 +115,32 @@ final class AtomicInt: @unchecked Sendable {
     }
 }
 
+// MARK: - AtomicBox
+
+/// Lock-protected optional slot for handing a value between a non-async closure
+/// and the test that installed it.
+///
+/// Two uses: back-filling a reference a closure needs but that only exists after
+/// the closure is built (an agent whose own callback reads it), and recording
+/// what a callback saw. `changed` fires on every `set`, so the reader awaits
+/// instead of polling.
+final class AtomicBox<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: Value?
+
+    /// Fires on every `set(_:)`; await it instead of polling `value`.
+    let changed = AsyncGate()
+
+    var value: Value? {
+        lock.withLock { storedValue }
+    }
+
+    func set(_ newValue: Value?) {
+        lock.withLock { storedValue = newValue }
+        changed.notify()
+    }
+}
+
 // MARK: - Streaming frame factories
 
 /// One representation's metadata as it rides in a `ClipboardOffer.repInfo`.

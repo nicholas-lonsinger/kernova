@@ -762,10 +762,15 @@ final class VMInstance {
             }
             self.clipboardService?.stop()
             let service = VsockClipboardService(channel: channel, label: self.name)
-            // Read lazily at offer/paste time so the negotiated capability
-            // tracks reconnects.
-            service.peerSupportsDirTree = { [weak self] in
-                self?.vsockControlService?.guestSupportsClipboardDirTree ?? false
+            let publisher = self.hostClipboardPublisher
+            service.hostPasteboardHoldsOurWrite = { publisher.pasteboardHoldsLastWrite }
+            service.retractStaleHostWrite = { [weak self] in
+                // With passthrough on, the newer offer's automatic re-publish is
+                // what supersedes the stale write; retracting too would only
+                // flash an empty pasteboard and a Copy-to-Mac hint for a button
+                // passthrough hides.
+                guard let self, self.clipboardPassthroughCoordinator == nil else { return false }
+                return publisher.retractPromisedWrite()
             }
             self.clipboardService = service
             service.start()

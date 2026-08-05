@@ -903,80 +903,6 @@ struct ClipboardStreamTests {
         #expect(harness.collector.representation(1) == nil)
     }
 
-    @Test("a child-layout transfer_id round-trips a listing payload and a child file")
-    func childLayoutTransferRoundTrips() async throws {
-        let harness = try roomyHarness()
-        defer { harness.tearDown() }
-
-        // The tree listing rides an inline transfer with childSeq 0.
-        let listingID = ClipboardTransferID.makeChild(
-            generation: 3, repIndex: 0, childSeq: 0, hostMinted: false)
-        let listingBytes = Data((0..<(Self.chunk * 2 + 9)).map { UInt8(($0 &* 13) & 0xFF) })
-        harness.sender.startTransfer(
-            transferID: listingID, generation: 3,
-            representation: ClipboardContent.Representation(
-                uti: "app.kernova.clipboard.tree-listing", data: listingBytes),
-            maxAcceptByteCount: .max, isInline: true, isCurrent: { _ in true })
-
-        // A child file rides a file transfer with childSeq >= 1.
-        let childID = ClipboardTransferID.makeChild(
-            generation: 3, repIndex: 0, childSeq: 1, hostMinted: false)
-        let childBytes = Data((0..<(Self.chunk * 3 + 5)).map { UInt8(($0 &* 7) & 0xFF) })
-        let source = try tempFile(bytes: childBytes)
-        defer { try? FileManager.default.removeItem(at: source) }
-        harness.sender.startTransfer(
-            transferID: childID, generation: 3,
-            representation: ClipboardContent.Representation(
-                uti: "public.data", fileURL: source, byteCount: childBytes.count, filename: "c.bin"),
-            maxAcceptByteCount: .max, isInline: false, isCurrent: { _ in true })
-
-        try await harness.collector.gate.wait {
-            harness.collector.representation(listingID) != nil
-                && harness.collector.representation(childID) != nil
-        }
-        #expect(harness.collector.representation(listingID)?.inMemoryData == listingBytes)
-        let child = try #require(harness.collector.representation(childID))
-        #expect(child.fileURL != nil)
-        #expect(try Data(contentsOf: #require(child.fileURL)) == childBytes)
-        #expect(harness.collector.abortCount == 0)
-    }
-
-    @Test("cancel(generation:) cancels an in-flight child-layout transfer")
-    func cancelGenerationCancelsChildTransfer() async throws {
-        let harness = try roomyHarness()
-        defer { harness.tearDown() }
-        // A large offer generation forces the child layout's own generation field
-        // (not the legacy bit position); cancel must still match it.
-        let generation: UInt64 = 5
-        let childID = ClipboardTransferID.makeChild(
-            generation: generation, repIndex: 0, childSeq: 9, hostMinted: false)
-        harness.receiver.handleBegin(
-            .with {
-                $0.generation = generation
-                $0.transferID = childID
-                $0.uti = "public.data"
-                $0.totalBytes = 1_000_000
-                $0.isInline = false
-                $0.filename = "childpartial.bin"
-            })
-        harness.receiver.handleChunk(
-            .with {
-                $0.transferID = childID; $0.offset = 0; $0.data = Data(count: Self.chunk)
-            })
-        try await pollUntil {
-            materializedFiles(under: harness.stagingTempRoot).contains {
-                $0.lastPathComponent == "childpartial.bin"
-            }
-        }
-        harness.receiver.cancel(generation: generation)
-        try await pollUntil {
-            !materializedFiles(under: harness.stagingTempRoot).contains {
-                $0.lastPathComponent == "childpartial.bin"
-            }
-        }
-        #expect(harness.collector.representation(childID) == nil)
-    }
-
     @Test("an orphan chunk for an unknown transfer is ignored")
     func orphanChunkIgnored() async throws {
         let harness = try roomyHarness()
@@ -1070,6 +996,30 @@ struct ClipboardStreamTests {
         #expect(info.code == "disk.full")
         #expect(info.neededBytes == bytes.count)
         #expect(harness.collector.representation(1) == nil)
+    }
+
+    @Test("a Begin declaring an impossible total is bounded and fails the disk guard")
+    func absurdBeginTotalRejected() async throws {
+        // 100 GiB free: nothing local makes this fail — the declared total does.
+        let harness = try StreamHarness(
+            chunkSize: Self.chunk, windowBytes: Self.window,
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { harness.tearDown() }
+
+        // A sender's `total_bytes` is never cross-checked against the chunks that
+        // follow, so `UInt64.max` has to reach the free-space guard as a size
+        // that fails rather than as arithmetic that kills the process.
+        harness.receiver.handleBegin(
+            .with {
+                $0.generation = 1; $0.transferID = 9; $0.uti = "public.data"
+                $0.totalBytes = .max; $0.isInline = false; $0.filename = "absurd.bin"
+            })
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        let info = try #require(harness.collector.abortInfos.first)
+        #expect(info.code == "disk.full")
+        #expect(info.neededBytes == Int(ClipboardOfferBounds.maxDeclaredByteCount))
+        #expect(harness.collector.representation(9) == nil)
     }
 
     // MARK: - Liveness & untrusted-input bounds
@@ -1287,95 +1237,6 @@ struct ClipboardStreamTests {
         // like a file rep's.
         harness.receiver.cancel(generation: 1)
         try await pollUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
-    }
-
-    // MARK: - Consumer-requested cancel (#464)
-
-    @Test(
-        "cancel(transferID:) aborts the sender's in-flight transfer, deletes the receiver's partial, and wakes its awaiter"
-    )
-    func cancelTransferIDAbortsSenderAndReceiver() async throws {
-        // `suppressAcks: true` deterministically parks the sender: it opens the
-        // file, sends Begin, and then blocks in `awaitCredit` forever waiting for
-        // the go-signal ack the harness never delivers — no race against a fast
-        // in-process transfer completing on its own before this test intervenes
-        // (unlike throttling by payload size alone, which a loopback socketpair
-        // can race through in well under a millisecond).
-        let harness = try StreamHarness(
-            chunkSize: Self.chunk, windowBytes: Self.window, suppressAcks: true,
-            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
-        defer { harness.tearDown() }
-
-        let bytes = Data(repeating: 0xCD, count: Self.chunk * 4)
-        let source = try tempFile(bytes: bytes)
-        defer { try? FileManager.default.removeItem(at: source) }
-        let rep = ClipboardContent.Representation(
-            uti: "public.data", fileURL: source, byteCount: bytes.count, filename: "cancel-me.bin")
-
-        let recorder = SenderProgressRecorder()
-        let transferID: UInt64 = 42
-
-        // Register a per-transfer awaiter — mirrors production usage (every real
-        // caller of `cancel(transferID:)` operates on a transfer a
-        // `LazyPullCoordinator`-backed pull registered via `awaitTransfer` before
-        // sending its request). `cancel(transferID:)`, like `cancel(generation:)`/
-        // `cancelAll()`, notifies only a registered awaiter and stays silent on
-        // the channel-wide `onAbort` (supersession/teardown is never a
-        // user-visible abort on that path) — so this test must not expect
-        // `harness.collector` to observe anything.
-        let abortBox = Box<ClipboardStreamAbortInfo?>(nil)
-        let awaiterGate = AsyncGate()
-        harness.receiver.awaitTransfer(
-            transferID,
-            onComplete: { _ in Issue.record("onComplete should never fire — the transfer is cancelled") },
-            onAbort: { info in
-                abortBox.value = info
-                awaiterGate.notify()
-            })
-
-        harness.sender.startTransfer(
-            transferID: transferID, generation: 1, representation: rep, maxAcceptByteCount: .max,
-            isInline: false, isCurrent: { _ in true },
-            onComplete: { success in recorder.complete(success) })
-
-        // RATIONALE: filesystem-appearance poll (mirrors `cancelDeletesPartial`
-        // above) — proves the receiver's staging sink for this transfer exists
-        // (Begin has landed) before this test intervenes.
-        try await pollUntil {
-            materializedFiles(under: harness.stagingTempRoot).contains {
-                $0.lastPathComponent == "cancel-me.bin"
-            }
-        }
-
-        harness.receiver.cancel(transferID: transferID)
-
-        // The harness's routing task delivers the abort frame to the sender
-        // exactly like a real peer would — proving the sender genuinely stops
-        // (rather than eventually hitting its own no-ack backstop), not just
-        // that the receiver tore down its own local state.
-        try await recorder.gate.wait { recorder.completion != nil }
-        #expect(recorder.completion == false)
-
-        try await awaiterGate.wait { abortBox.value != nil }
-        #expect(abortBox.value?.code == "cancelled")
-        // RATIONALE: filesystem-appearance poll (mirrors `cancelDeletesPartial`
-        // above) — the partial's deletion has no test-owned signal to gate on
-        // (the awaiter's `onAbort`, already awaited above, fires before
-        // `teardown` deletes the file on its own transfer queue).
-        try await pollUntil {
-            !materializedFiles(under: harness.stagingTempRoot).contains {
-                $0.lastPathComponent == "cancel-me.bin"
-            }
-        }
-    }
-
-    @Test("cancel(transferID:) for an unknown transfer is a harmless no-op")
-    func cancelUnknownTransferIDIsNoOp() throws {
-        let harness = try roomyHarness()
-        defer { harness.tearDown() }
-        // No Begin, no awaiter — must not crash or affect anything else.
-        harness.receiver.cancel(transferID: 999_999)
-        #expect(harness.collector.abortCount == 0)
     }
 
     @Test("a chunk past the declared total is rejected with size.overrun")

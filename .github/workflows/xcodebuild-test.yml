@@ -38,11 +38,7 @@ jobs:
 
       # These invocations mirror the Makefile's XCODEBUILD_FLAGS by hand.
       #
-      # CI builds with signing off: the runner has no identity, and the unit tests
-      # use stub bundles rather than resolving the app-group container. DEVELOPMENT_TEAM
-      # is unset here (CI drives xcodebuild directly, never `make`), so
-      # `$(KERNOVA_APP_GROUP)` expands to `.app.kernova` — never validated, because
-      # signing is off.
+      # CI builds with signing off: the runner has no identity.
       - name: Build for testing
         run: |
           set -o pipefail

@@ -4,16 +4,11 @@ import Foundation
 /// of one operation into the single readout all of Kernova's progress surfaces
 /// render.
 ///
-/// A **session** is one user-visible operation, not one stream. A *manifest*
-/// session is a File Provider paste, driven by the relay through
-/// `offerPublished`/`pullBegan`/`pullProgressed`/`pullEnded` and addressed the
-/// only way the relay can address a pull, `(generation, repIndex, childSeq)`; at
-/// most one exists, and publishing a new offer supersedes it. An *ad-hoc*
-/// session is every other flow (a preview fetch, a Copy to Mac, this side
-/// serving a peer's pull), opened for an opaque `SessionToken` and fed per
-/// transfer. Ad-hoc sessions are deliberately **not** keyed by generation:
-/// inbound and outbound generations are independent counters that both start at
-/// 1, and a preview's generation is the paste manifest's exactly, so any
+/// A **session** is one user-visible operation, not one stream — a preview
+/// fetch, a Copy to Mac, this side serving a peer's pull — opened for an opaque
+/// `SessionToken` and fed per transfer. Sessions are deliberately **not** keyed
+/// by generation: inbound and outbound generations are independent counters that
+/// both start at 1, and a preview's generation is the paste's exactly, so any
 /// generation-keyed scheme would merge unrelated operations.
 ///
 /// A session starts at its first transfer, shows nothing until it has been
@@ -22,13 +17,12 @@ import Foundation
 /// last transfer finishes — the dwell that bridges Finder's gap between two
 /// sequentially-pulled files and leaves the finished readout on screen. A
 /// cancelled or partial operation ends the same way, below 100 %, by design. A
-/// new publish, an offer clear, or teardown supersedes a session immediately,
-/// skipping the dwell.
+/// teardown supersedes a session immediately, skipping the dwell.
 ///
 /// `@unchecked Sendable`: every stored property is guarded by `lock`. It must
 /// stay lock-based rather than `@MainActor` — the guest agent drives it from
-/// main-queue-confined (but non-`@MainActor`) callbacks, the host app from the
-/// main actor, and the relay off-main from its XPC queues.
+/// main-queue-confined (but non-`@MainActor`) callbacks and the host app from
+/// the main actor.
 public final class ClipboardProgressTracker: @unchecked Sendable {
     // MARK: - Vocabulary
 
@@ -67,11 +61,8 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
 
     // MARK: - Internal model
 
-    /// Addresses one transfer inside a session.
+    /// Addresses one transfer inside a session, by its caller-chosen id.
     private enum Unit: Hashable {
-        /// A manifest pull, addressed the way the relay addresses it.
-        case pull(repIndex: Int, childSeq: UInt32?)
-        /// An ad-hoc transfer, addressed by its caller-chosen id.
         case adHoc(UInt64)
     }
 
@@ -84,14 +75,6 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
         var observed: UInt64 = 0
         var completed = false
         let name: String?
-    }
-
-    /// The denominators for the currently published offer, derived from the
-    /// manifest the enumerator serves.
-    private struct Offer {
-        let generation: UInt64
-        let peerName: String
-        let units: [Unit: UnitState]
     }
 
     /// One operation's in-flight accounting, a reference type so the lock-held
@@ -177,30 +160,49 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
     /// outside it.
     private enum Publish {
         case none
-        case emit(ClipboardProgressSnapshot?)
+        /// Publish this snapshot — `nil` clears the readout — projected from the
+        /// session the log record names.
+        case emit(ClipboardProgressSnapshot?, session: SessionToken?)
+    }
+
+    /// A record `deliver` writes once `lock` is released.
+    ///
+    /// Every value is captured under the lock, since the `Session` it came from
+    /// is only safe to read there.
+    private enum LogEvent {
+        case revealed(session: UInt64, elapsed: TimeInterval, transferred: UInt64, total: UInt64)
+        case ended(
+            session: UInt64, elapsed: TimeInterval, transferred: UInt64, total: UInt64,
+            revealed: Bool)
     }
 
     /// Everything an event leaves for `deliver` to run once `lock` is released.
     ///
     /// `emit` and `schedule` are injected closures: calling one while holding a
     /// non-recursive lock deadlocks the moment a caller runs the work
-    /// synchronously.
+    /// synchronously. Logging is deferred the same way — an `os_log` call under
+    /// the lock puts every chunk callback of every session behind it.
     private struct Outcome {
         var publish: Publish = .none
         var armIdle: (token: SessionToken, epoch: UInt64)?
+        var logs: [LogEvent] = []
 
-        init(_ publish: Publish, armIdle: (token: SessionToken, epoch: UInt64)? = nil) {
+        init(
+            _ publish: Publish, armIdle: (token: SessionToken, epoch: UInt64)? = nil,
+            logs: [LogEvent] = []
+        ) {
             self.publish = publish
             self.armIdle = armIdle
+            self.logs = logs
         }
     }
+
+    private static let logger = KernovaLogger(
+        subsystem: "app.kernova", category: "ClipboardProgress")
 
     private let lock = NSLock()
     private var sessions: [SessionToken: Session] = [:]
     private var nextToken: UInt64 = 1
-    /// The published offer and the session measured against it, if one has begun.
-    private var offer: Offer?
-    private var manifestToken: SessionToken?
     /// Whether the last emission put something on screen, so a clear is only sent
     /// when there is something to clear.
     private var showing = false
@@ -242,27 +244,39 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
 
     // MARK: - Ad-hoc sessions
 
-    /// Opens a session for an operation the manifest path doesn't cover.
+    /// Opens a session for one user-visible operation.
     ///
     /// Pre-declare every transfer in `units` where the set is known; leave it
     /// empty where the peer drives what gets pulled, and each transfer joins as
     /// `unitBegan` announces it.
+    ///
+    /// `isPaste` marks a session serving a paste the **peer** is performing —
+    /// the one readout allowed to interrupt with an automatic dropdown, because
+    /// the app the user pasted into sits blocked until the bytes land and
+    /// nothing else explains the wait. A paste *this* side performs never sets
+    /// it: that paste parks this process's main thread, so no readout of it can
+    /// repaint before it is over.
     public func openSession(
-        direction: ClipboardProgressSnapshot.Direction, peerName: String,
+        direction: ClipboardProgressSnapshot.Direction, peerName: String, isPaste: Bool = false,
         units: [PlannedUnit] = []
     ) -> SessionToken {
-        lock.withLock {
+        let opened: (token: SessionToken, unitCount: Int, plannedBytes: UInt64) = lock.withLock {
             let token = SessionToken(value: nextToken)
             nextToken &+= 1
             var table: [Unit: UnitState] = [:]
             for unit in units {
                 table[.adHoc(unit.id)] = UnitState(expected: unit.expectedBytes, name: unit.name)
             }
-            sessions[token] = Session(
-                token: token, direction: direction, peerName: peerName, isPaste: false,
+            let session = Session(
+                token: token, direction: direction, peerName: peerName, isPaste: isPaste,
                 startedAt: now(), units: table)
-            return token
+            sessions[token] = session
+            return (token, session.units.count, session.totalBytes)
         }
+        Self.logger.info(
+            "Progress session \(opened.token.value, privacy: .public) opened — \(direction, privacy: .public) '\(peerName, privacy: .public)' isPaste=\(isPaste, privacy: .public), \(opened.unitCount, privacy: .public) unit(s), \(opened.plannedBytes, privacy: .public) bytes"
+        )
+        return opened.token
     }
 
     /// Whether `token` still addresses a live session.
@@ -374,42 +388,11 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
             // to honor and no reason to keep it around.
             guard session.revealed, !immediately else {
                 sessions[token] = nil
-                if manifestToken == token { manifestToken = nil }
-                return Outcome(resolveLocked(admits: session.revealed))
+                return Outcome(
+                    resolveLocked(admits: session.revealed), logs: [endedLocked(session)])
             }
             return Outcome(
                 .none, armIdle: (token: token, epoch: session.idleEpoch))
-        }
-        deliver(outcome)
-    }
-
-    // MARK: - Manifest sessions (File Provider paste)
-
-    /// Adopts the manifest just published as the current paste's denominators.
-    ///
-    /// Any live paste session is superseded — the manifest it was measured
-    /// against is no longer the one the enumerator serves.
-    public func offerPublished(_ manifest: FileProviderManifest, peerName: String) {
-        var units: [Unit: UnitState] = [:]
-        for item in manifest.items {
-            units[.pull(repIndex: item.repIndex, childSeq: nil)] = UnitState(
-                expected: item.byteCount, name: item.filename)
-        }
-        for folder in manifest.folders {
-            for node in folder.nodes where node.kind == .file {
-                // A folder's children stream under the *folder's* name:
-                // concurrent children interleave, and a readout flickering
-                // through sibling filenames reads as noise.
-                units[.pull(repIndex: folder.repIndex, childSeq: node.childSeq)] = UnitState(
-                    expected: node.byteCount, name: folder.filename)
-            }
-        }
-        let outcome: Outcome = lock.withLock {
-            offer = Offer(generation: manifest.generation, peerName: peerName, units: units)
-            guard let token = manifestToken else { return Outcome(.none) }
-            manifestToken = nil
-            guard let session = sessions.removeValue(forKey: token) else { return Outcome(.none) }
-            return Outcome(resolveLocked(admits: session.revealed))
         }
         deliver(outcome)
     }
@@ -423,76 +406,17 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
     public func clearAll() {
         let outcome: Outcome = lock.withLock {
             let wasShowing = showing
+            let logs = sessions.values.map { endedLocked($0) }
             sessions.removeAll()
-            manifestToken = nil
-            offer = nil
             showing = false
-            return Outcome(wasShowing ? .emit(nil) : .none)
+            return Outcome(wasShowing ? .emit(nil, session: nil) : .none, logs: logs)
         }
         deliver(outcome)
-    }
-
-    /// Drops the current offer and any session measured against it — a
-    /// supersession, an offer release, or teardown.
-    public func offerCleared() {
-        let outcome: Outcome = lock.withLock {
-            offer = nil
-            guard let token = manifestToken else { return Outcome(.none) }
-            manifestToken = nil
-            guard let session = sessions.removeValue(forKey: token) else { return Outcome(.none) }
-            return Outcome(resolveLocked(admits: session.revealed))
-        }
-        deliver(outcome)
-    }
-
-    /// Records that a pull started, starting the paste session if this is its
-    /// first.
-    public func pullBegan(generation: UInt64, repIndex: Int, childSeq: UInt32?) {
-        applyManifest(generation: generation, repIndex: repIndex, childSeq: childSeq, creating: true) {
-            session, unit in
-            if !session.activeUnits.contains(unit) { session.activeUnits.append(unit) }
-            session.lastActiveName = session.units[unit]?.name ?? session.lastActiveName
-            session.idleEpoch &+= 1
-            return .running
-        }
-    }
-
-    /// Records a pull's cumulative byte count.
-    ///
-    /// No wire revision here: a manifest's byte counts are what the enumerator
-    /// serves to the OS, so they are authoritative by construction.
-    public func pullProgressed(
-        generation: UInt64, repIndex: Int, childSeq: UInt32?, bytesTransferred: UInt64
-    ) {
-        applyManifest(generation: generation, repIndex: repIndex, childSeq: childSeq, creating: false) {
-            session, unit in
-            guard var state = session.units[unit] else { return .running }
-            state.observed = max(state.observed, min(bytesTransferred, state.expected))
-            session.setUnit(unit, state)
-            return .running
-        }
-    }
-
-    /// Records a pull's terminal, crediting a successful one in full.
-    public func pullEnded(generation: UInt64, repIndex: Int, childSeq: UInt32?, succeeded: Bool) {
-        applyManifest(generation: generation, repIndex: repIndex, childSeq: childSeq, creating: false) {
-            session, unit in
-            session.activeUnits.removeAll { $0 == unit }
-            if succeeded, var state = session.units[unit] {
-                if !state.completed {
-                    state.completed = true
-                    session.completedCount += 1
-                }
-                state.observed = state.expected
-                session.setUnit(unit, state)
-            }
-            return .mayBeIdle
-        }
     }
 
     // MARK: - Event plumbing
 
-    /// Shared ad-hoc event path.
+    /// Shared event path.
     ///
     /// `declaring` is non-nil only for `unitBegan`, the one event allowed to
     /// introduce a transfer. Progress and terminals for an unknown transfer are
@@ -516,40 +440,6 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
         deliver(outcome)
     }
 
-    /// Shared manifest event path: resolves the pull against the current offer,
-    /// then mutates the paste session.
-    ///
-    /// Only `pullBegan` may create the session (`creating`), for the reason
-    /// `applyAdHoc` gives.
-    private func applyManifest(
-        generation: UInt64, repIndex: Int, childSeq: UInt32?, creating: Bool,
-        _ mutate: (Session, Unit) -> Activity
-    ) {
-        let outcome: Outcome = lock.withLock {
-            // A pull for a superseded generation, or for a unit this offer never
-            // published, contributes to no operation we are measuring.
-            guard let offer, offer.generation == generation else { return Outcome(.none) }
-            let unit = Unit.pull(repIndex: repIndex, childSeq: childSeq)
-            guard offer.units[unit] != nil else { return Outcome(.none) }
-
-            let session: Session
-            if let token = manifestToken, let live = sessions[token] {
-                session = live
-            } else {
-                guard creating else { return Outcome(.none) }
-                let token = SessionToken(value: nextToken)
-                nextToken &+= 1
-                session = Session(
-                    token: token, direction: .inbound, peerName: offer.peerName, isPaste: true,
-                    startedAt: now(), units: offer.units)
-                sessions[token] = session
-                manifestToken = token
-            }
-            return mutateLocked(session: session, unit: unit, mutate)
-        }
-        deliver(outcome)
-    }
-
     /// Runs a mutation against a live session and decides what to publish and
     /// whether to arm the idle terminal.
     ///
@@ -558,15 +448,13 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
         session: Session, unit: Unit, _ mutate: (Session, Unit) -> Activity
     ) -> Outcome {
         let activity = mutate(session, unit)
-        guard activity == .mayBeIdle, session.activeUnits.isEmpty else {
-            return Outcome(resolveLocked(trigger: session))
-        }
-        // Nothing in flight is not "finished": Finder walks a multi-file paste
-        // one file at a time, so the gap between two of them looks exactly like
-        // the end. The linger is what tells them apart.
-        return Outcome(
-            resolveLocked(trigger: session),
-            armIdle: (token: session.token, epoch: session.idleEpoch))
+        var outcome = resolveLocked(trigger: session)
+        guard activity == .mayBeIdle, session.activeUnits.isEmpty else { return outcome }
+        // Nothing in flight is not "finished": a multi-file paste is walked one
+        // file at a time, so the gap between two of them looks exactly like the
+        // end. The linger is what tells them apart.
+        outcome.armIdle = (token: session.token, epoch: session.idleEpoch)
+        return outcome
     }
 
     /// Ends a session that has stayed idle for the whole linger.
@@ -576,20 +464,62 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
                 session.activeUnits.isEmpty
             else { return Outcome(.none) }
             sessions[token] = nil
-            if manifestToken == token { manifestToken = nil }
-            return Outcome(resolveLocked(admits: session.revealed))
+            return Outcome(resolveLocked(admits: session.revealed), logs: [endedLocked(session)])
         }
         deliver(outcome)
     }
 
-    /// Runs an event's deferred work — the emission and the idle arming — with
-    /// `lock` released.
+    /// Runs an event's deferred work — the records, the emission and the idle
+    /// arming — with `lock` released.
     private func deliver(_ outcome: Outcome) {
-        if case .emit(let snapshot) = outcome.publish { emit(snapshot) }
+        for event in outcome.logs { Self.log(event) }
+        if case .emit(let snapshot, let session) = outcome.publish {
+            emit(snapshot)
+            Self.logEmission(snapshot, session: session)
+        }
         guard let arm = outcome.armIdle else { return }
         schedule(idleLinger) { [weak self] in
             self?.idleTerminalFired(token: arm.token, epoch: arm.epoch)
         }
+    }
+
+    // MARK: - Records
+
+    /// Captures a session's terminal for `deliver` to log.
+    ///
+    /// Caller holds `lock`.
+    private func endedLocked(_ session: Session) -> LogEvent {
+        .ended(
+            session: session.token.value, elapsed: max(0, now() - session.startedAt),
+            transferred: session.transferredBytes, total: session.totalBytes,
+            revealed: session.revealed)
+    }
+
+    private static func log(_ event: LogEvent) {
+        switch event {
+        case .revealed(let session, let elapsed, let transferred, let total):
+            logger.info(
+                "Progress session \(session, privacy: .public) revealed at \(ClipboardProgressFormat.logSeconds(elapsed), privacy: .public) — \(transferred, privacy: .public)/\(total, privacy: .public) bytes"
+            )
+        case .ended(let session, let elapsed, let transferred, let total, let revealed):
+            logger.info(
+                "Progress session \(session, privacy: .public) ended after \(ClipboardProgressFormat.logSeconds(elapsed), privacy: .public) — \(transferred, privacy: .public)/\(total, privacy: .public) bytes, revealed=\(revealed, privacy: .public)"
+            )
+        }
+    }
+
+    /// Records what just went to the UI — one line per admitted emission, which
+    /// the throttle already bounds to a rate a log can carry.
+    private static func logEmission(
+        _ snapshot: ClipboardProgressSnapshot?, session: SessionToken?
+    ) {
+        guard let snapshot, let session else {
+            logger.debug("Progress readout cleared")
+            return
+        }
+        logger.debug(
+            "Progress readout \(session.value, privacy: .public) — \(snapshot.bytesTransferred, privacy: .public)/\(snapshot.totalBytes, privacy: .public) bytes, \(ClipboardProgressFormat.logSeconds(snapshot.elapsedSeconds), privacy: .public) elapsed, \(ClipboardProgressFormat.logSeconds(snapshot.secondsRemaining), privacy: .public) remaining"
+        )
     }
 
     // MARK: - Reveal, throttle, projection
@@ -602,19 +532,24 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
     /// since a folder can complete thousands of small files faster than a screen
     /// is worth repainting. The final update is never lost: the throttle's
     /// final-chunk rule always admits the update that reaches the total.
-    private func resolveLocked(trigger: Session) -> Publish {
+    private func resolveLocked(trigger: Session) -> Outcome {
         let sampledAt = now()
         let transferred = trigger.transferredBytes
         trigger.rate.record(bytes: transferred, seconds: sampledAt)
 
+        var logs: [LogEvent] = []
         let admits: Bool
         if !trigger.revealed {
-            guard sampledAt - trigger.startedAt >= revealDelay else { return .none }
+            guard sampledAt - trigger.startedAt >= revealDelay else { return Outcome(.none) }
             trigger.revealed = true
             // The reveal bypassed the throttle, so its watermarks must still
             // reflect what just went on screen — otherwise the next update would
             // measure its delta from a byte count already shown.
             trigger.coalescer.markForwarded(bytesTransferred: transferred)
+            logs.append(
+                .revealed(
+                    session: trigger.token.value, elapsed: sampledAt - trigger.startedAt,
+                    transferred: transferred, total: trigger.totalBytes))
             admits = true
         } else {
             admits = trigger.coalescer.shouldForward(
@@ -624,7 +559,7 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
         if let current = trigger.activeUnits.last, let name = trigger.units[current]?.name {
             trigger.lastActiveName = name
         }
-        return resolveLocked(admits: admits)
+        return Outcome(resolveLocked(admits: admits), logs: logs)
     }
 
     /// Resolves what to publish for an event whose admission is already decided.
@@ -635,17 +570,17 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
         let projection = projectionLocked()
         guard projection != nil || showing else { return .none }
         showing = projection != nil
-        return .emit(projection)
+        return .emit(projection?.snapshot, session: projection?.token)
     }
 
     /// The most-significant revealed session — the one with the most bytes
-    /// *remaining* (ties broken by the older session), or `nil` when none is
-    /// revealed.
+    /// *remaining* (ties broken by the older session) — as its snapshot and the
+    /// token naming it, or `nil` when none is revealed.
     ///
     /// Ranking by bytes-remaining, not largest-total, keeps a just-finished
     /// operation lingering at 100 % from masking a freshly-started one. Caller
     /// holds `lock`.
-    private func projectionLocked() -> ClipboardProgressSnapshot? {
+    private func projectionLocked() -> (token: SessionToken, snapshot: ClipboardProgressSnapshot)? {
         func remaining(_ session: Session) -> UInt64 {
             let total = session.totalBytes
             let done = min(session.transferredBytes, total)
@@ -661,7 +596,7 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
         guard let session = winner else { return nil }
         let transferred = session.transferredBytes
         let total = session.totalBytes
-        return ClipboardProgressSnapshot(
+        let snapshot = ClipboardProgressSnapshot(
             direction: session.direction,
             peerName: session.peerName,
             currentItemName: session.lastActiveName,
@@ -673,5 +608,6 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
             secondsRemaining: session.rate.secondsRemaining(bytes: transferred, total: total),
             isPasteSession: session.isPaste,
             elapsedSeconds: max(0, now() - session.startedAt))
+        return (session.token, snapshot)
     }
 }

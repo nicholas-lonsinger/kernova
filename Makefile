@@ -56,7 +56,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks bootstrap doctor ghosts clean-ghosts fp-reset
+.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks bootstrap doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -184,15 +184,3 @@ ghosts: ## Report stale/competing Kernova Launch Services, process, and worktree
 
 clean-ghosts: ## Same as ghosts, but also unregisters/kills/prunes/evicts what it finds
 	@Tools/ghosts.sh --fix
-
-# Restarts the File Provider daemon to clear stale Kernova domain/extension
-# bindings — e.g. after a rebuild leaves fileproviderd pointing at a deleted or
-# moved extension binary (Copy to Mac then beeps because the extension can't
-# launch), or a domain wedged in a dead-end state. Kept separate from
-# clean-ghosts and opt-in because it briefly interrupts ALL File Providers
-# (iCloud Drive reconnects within seconds). macOS 26's fileproviderctl has no
-# domain-remove command; the app self-heals a dead domain on next launch.
-fp-reset: ## Restart fileproviderd to clear stale Kernova File Provider bindings
-	@printf 'Restarting fileproviderd to clear stale Kernova File Provider bindings...\n'
-	@printf '(briefly interrupts all File Providers; iCloud Drive reconnects in a few seconds)\n'
-	@killall fileproviderd 2>/dev/null && printf 'fileproviderd restarted.\n' || printf 'fileproviderd was not running; it will start on demand.\n'

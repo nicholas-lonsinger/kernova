@@ -24,6 +24,11 @@ final class ClipboardIndicatorView: NSTextField {
 
     private static let transientDuration: Duration = .seconds(4)
 
+    /// Horizontal compression resistance: one step above the `.defaultLow` the
+    /// status bar's other label carries, so that label yields its width first.
+    private static let horizontalCompressionResistance = NSLayoutConstraint.Priority(
+        rawValue: NSLayoutConstraint.Priority.defaultLow.rawValue + 1)
+
     /// The persistent indicator text a transient message reverts to.
     private var persistentText = ""
     private var revertTask: Task<Void, Never>?
@@ -38,8 +43,12 @@ final class ClipboardIndicatorView: NSTextField {
         textColor = .secondaryLabelColor
         lineBreakMode = .byTruncatingTail
         alignment = .right
-        // Truncate rather than dictate the window width through Auto Layout.
-        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // Truncate rather than dictate the window width through Auto Layout, but
+        // above the agent-status label it shares the row with: at equal priority
+        // the split is ambiguous, and a message here is transient and complete
+        // where that label is persistent and re-readable.
+        setContentCompressionResistancePriority(
+            Self.horizontalCompressionResistance, for: .horizontal)
     }
 
     required init?(coder: NSCoder) {

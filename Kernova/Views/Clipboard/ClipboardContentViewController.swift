@@ -30,8 +30,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private let summaryView = ClipboardSummaryView()
     private let concealedPreview = ClipboardConcealedPreviewView()
     private let commandBar = ClipboardCommandBarView()
-    private let enablementBanner = ClipboardEnablementBanner()
-    private lazy var bannerCollapsed = enablementBanner.heightAnchor.constraint(equalToConstant: 0)
     private let passthroughBanner = ClipboardPassthroughBanner()
     private lazy var passthroughBannerCollapsed = passthroughBanner.heightAnchor.constraint(
         equalToConstant: 0)
@@ -98,16 +96,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// In production the same per-VM instance is shared with the passthrough
     /// coordinator, so echo suppression sees a manual "Copy to Mac" too.
     private let publisher: HostClipboardPublisher
-
-    /// Stages dropped/pasted *folders* into archives before they reach the guest.
-    ///
-    /// Shares the launch-swept `"host"` staging root with `HostClipboardPublisher`;
-    /// each generation is its own UUID subdirectory, so the two never collide.
-    private let staging = ClipboardFileStaging(label: HostClipboardPublisher.stagingLabel)
-
-    /// Monotonic generation bumped per folder-resolving intake, so each supersedes
-    /// older staged artifacts within the staging recency window.
-    private var stagingGeneration: UInt64 = 1
 
     /// The host pasteboard "Paste from Mac" reads from — `.general` in production.
     private let readPasteboard: NSPasteboard
@@ -228,11 +216,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             container.addSubview(contentView)
         }
 
-        enablementBanner.translatesAutoresizingMaskIntoConstraints = false
-        enablementBanner.isHidden = true
-        enablementBanner.onEnable = { [weak self] in self?.openFileProviderSettings() }
-        container.addSubview(enablementBanner)
-
         passthroughBanner.translatesAutoresizingMaskIntoConstraints = false
         passthroughBanner.isHidden = true
         passthroughBanner.onTurnOff = { [weak self] in self?.disablePassthrough() }
@@ -260,12 +243,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         container.addSubview(statusBar)
 
         var constraints: [NSLayoutConstraint] = [
-            enablementBanner.topAnchor.constraint(equalTo: container.topAnchor),
-            enablementBanner.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            enablementBanner.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            bannerCollapsed,
-
-            passthroughBanner.topAnchor.constraint(equalTo: enablementBanner.bottomAnchor),
+            passthroughBanner.topAnchor.constraint(equalTo: container.topAnchor),
             passthroughBanner.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             passthroughBanner.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             passthroughBannerCollapsed,
@@ -421,6 +399,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     var commandBarLaidOutHeightForTesting: CGFloat { commandBar.frame.height }
 
     var isCopyingToMacForTesting: Bool { isCopyingToMac }
+
+    /// The indicator slot's current text — the persistent content-type line, or a
+    /// transient message while one is up.
+    var indicatorTextForTesting: String { indicatorView.stringValue }
+
+    /// Fires once a "Copy to Mac" publish outcome has been rendered.
+    var onCopyOutcomeForTesting: (@MainActor () -> Void)?
     #endif
 
     // MARK: - Observation
@@ -436,7 +421,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 _ = clipService?.lastTransferIssue
                 _ = self.instance.vsockControlService?.agentStatus
                 _ = self.instance.agentStatus
-                _ = HostClipboardFileProvider.shared.availability
                 _ = self.instance.configuration.clipboardPassthroughEnabled
             },
             apply: { [weak self] in
@@ -510,7 +494,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
 
         applyStatus(status, canInstallKernovaAgent: canInstallKernovaAgent)
-        updateEnablementBanner()
         updatePassthroughChrome()
         triggerPreviewMaterialization()
     }
@@ -537,31 +520,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     private func disablePassthrough() {
         viewModel?.updateConfiguration(of: instance) { $0.clipboardPassthroughEnabled = false }
-    }
-
-    /// Reveals the top-of-window banner for the host "Copy to Mac" File Provider
-    /// states that need attention.
-    private func updateEnablementBanner() {
-        let visible: Bool
-        switch HostClipboardFileProvider.shared.availability {
-        case .needsEnabling:
-            enablementBanner.present(.needsEnabling)
-            visible = true
-        case .unavailable:
-            enablementBanner.present(.unavailable)
-            visible = true
-        case .inactive, .ready:
-            visible = false
-        }
-        guard enablementBanner.isHidden == visible else { return }
-        enablementBanner.isHidden = !visible
-        bannerCollapsed.isActive = !visible
-    }
-
-    private func openFileProviderSettings() {
-        if !ClipboardFileProviderSettings.openEnablementSettings() {
-            Self.logger.error("Failed to open File Providers settings deep link")
-        }
     }
 
     /// Pulls the representations the window renders richly, when it is visible.
@@ -653,33 +611,30 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             return
                 "Not enough disk space to receive the clipboard file (\(DataFormatters.formatBytes(UInt64(needed))) needed)"
         case .peerReportedError(let code, _):
-            switch code {
-            case "clipboard.transfer.too.large":
-                return "The guest rejected the transfer as too large"
-            case "clipboard.format.unavailable":
-                return "The guest couldn't provide the requested format"
-            case "clipboard.paste.disk.full":
+            switch ClipboardErrorCode(rawValue: code) {
+            case .pasteDiskFull:
                 return "The guest ran out of disk space receiving the clipboard file"
-            case "clipboard.paste.too.large":
-                return "Too large to paste into the guest without File Provider"
-            case "clipboard.paste.folder.too.large":
-                return "Folders this large can't be pasted into the guest yet"
-            case "clipboard.paste.timeout":
+            case .pasteTooLarge:
+                return
+                    "Too large to paste into the guest — over the \(ClipboardStreamTuning.maxDeadlineSafePasteDisplayLimit) clipboard transfer limit"
+            case .pasteTimeout:
                 return "The clipboard transfer to the guest timed out"
-            default:
+            case .pasteFailed, .copyTooLarge, .pasteIncompleteSet, .none:
                 return "Clipboard transfer failed on the guest side"
             }
+        case .localFailure(_, let message):
+            return message
+        case .staleCopyRetracted(let message):
+            return message
         }
     }
 
-    /// The message shown when "Copy to Mac" placed nothing on the pasteboard, by
-    /// the most actionable drop reason first.
+    /// The message shown when "Copy to Mac" placed nothing on the pasteboard.
     private static func dropMessage(for reasons: [CopyToMacDropReason]) -> String {
-        guard !reasons.isEmpty else { return "Couldn't fetch the clipboard content to copy" }
-        if reasons.contains(.tooLargeWithoutFileProvider) {
-            return "Too large to copy to your Mac — enable 'File Provider' in System Settings."
+        guard reasons.contains(.overPasteBudget) else {
+            return "Couldn't fetch the clipboard content to copy"
         }
-        return "Couldn't prepare the clipboard file to copy"
+        return ClipboardTransferIssue.overCopyBudgetMessage
     }
 
     // MARK: - Actions
@@ -733,6 +688,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         case .written(_, let droppedReasons, _):
             if droppedReasons.isEmpty {
                 indicatorView.showTransientMessage("Copied to Mac clipboard", style: .info)
+            } else if droppedReasons.contains(.overPasteBudget) {
+                // Partial success — name the cap, since it is what the user has to
+                // act on to get the files across.
+                indicatorView.showTransientMessage(
+                    "Copied without the files — over the \(ClipboardStreamTuning.maxDeadlineSafePasteDisplayLimit) clipboard transfer limit",
+                    style: .warning)
             } else {
                 // Partial success — don't claim an unqualified one.
                 let count = droppedReasons.count
@@ -743,6 +704,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         case .writeFailed:
             indicatorView.showTransientMessage("Couldn't write to the Mac clipboard", style: .error)
         }
+        #if DEBUG
+        onCopyOutcomeForTesting?()
+        #endif
     }
 
     /// Shared intake for the Paste button, responder-chain `paste:`, and drag-and-drop.
@@ -760,31 +724,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
     }
 
-    /// Resolves `.pendingFiles` URLs off the main actor — archiving any folder
-    /// into the staging root — and applies the result on the way back.
+    /// Resolves `.pendingFiles` URLs off the main actor and applies the result
+    /// on the way back.
     private func resolveAndApply(pendingFiles urls: [URL], allowsBinary: Bool) {
-        let staging = self.staging
-        let generation = stagingGeneration
-        stagingGeneration += 1
-        // A folder archives eagerly; warn the user it may take a moment.
-        if Self.containsDirectory(urls) {
-            indicatorView.showTransientMessage("Archiving folder…", style: .info)
-        }
         Task { @MainActor [weak self] in
-            guard let self else { return }
-            let dirTree = self.instance.clipboardService?.supportsDirectoryTree ?? false
             let resolved = await ClipboardPasteboardIntake.read(
-                filesAt: urls, allowsBinary: allowsBinary, staging: staging, generation: generation,
-                dirTree: dirTree)
-            _ = self.apply(intake: resolved)
-        }
-    }
-
-    nonisolated private static func containsDirectory(_ urls: [URL]) -> Bool {
-        urls.contains { url in
-            var isDirectory: ObjCBool = false
-            return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
-                && isDirectory.boolValue
+                filesAt: urls, allowsBinary: allowsBinary)
+            _ = self?.apply(intake: resolved)
         }
     }
 
@@ -852,24 +798,30 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
     }
 
-    /// Receives a promised file into a scratch directory, runs it through
-    /// the shared file intake, and cleans the scratch copy up (the buffer
-    /// keeps the bytes, not the file).
+    /// Receives a promised file into the service's drop staging and runs it
+    /// through the shared file intake.
+    ///
+    /// The winning item stays on disk: the buffer's representation is
+    /// disk-backed (a stat'd file, or a folder source rep archived only at
+    /// request time), so it must outlive this receipt — the service reclaims the
+    /// directory once nothing can read from it. Losing and failed receipts clean
+    /// their own files up.
     private func receivePromisedFile(_ receiver: NSFilePromiseReceiver) {
         guard let service = instance.clipboardService else { return }
         let allowsBinary = service.supportsBinaryRepresentations
+        guard allowsBinary else {
+            // A text-only transport rejects the file whatever it holds, so say so
+            // instead of writing it out first.
+            indicatorView.showTransientMessage(
+                ClipboardPasteboardIntake.textOnlyTransportMessage, style: .warning)
+            return
+        }
 
         indicatorView.showTransientMessage("Receiving dropped file…", style: .info)
 
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("KernovaClipboardDrops-\(UUID().uuidString)", isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
-        } catch {
+        guard let destination = service.reserveDropDestination() else {
             indicatorView.showTransientMessage("Couldn't receive the dropped file", style: .error)
-            Self.logger.error(
-                "Failed to create promise scratch directory: \(error.localizedDescription, privacy: .public)"
-            )
+            Self.logger.error("Failed to reserve a directory for the dropped file promise")
             return
         }
 
@@ -880,18 +832,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         receiver.receivePromisedFiles(atDestination: destination, options: [:], operationQueue: promiseQueue) {
             [weak self] url, error in
             Task { @MainActor [weak self] in
-                // Cleanup runs even if the window closed before the promise
-                // resolved. The directory goes only once it has drained —
-                // removeItem on a directory is recursive and must not race
-                // files still being written by a multi-file promise.
-                defer {
-                    try? FileManager.default.removeItem(at: url)
-                    if let remaining = try? FileManager.default.contentsOfDirectory(atPath: destination.path),
-                        remaining.isEmpty
-                    {
-                        try? FileManager.default.removeItem(at: destination)
-                    }
-                }
+                // Every file but the winner goes now, even if the window closed
+                // before the promise resolved; the winner's on-disk bytes back
+                // the buffer's representation, and the directory holding it is
+                // the service's to reclaim.
+                var keepFile = false
+                defer { if !keepFile { try? FileManager.default.removeItem(at: url) } }
                 guard let self else { return }
                 if let error {
                     self.indicatorView.showTransientMessage("Couldn't receive the dropped file", style: .error)
@@ -902,16 +848,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 }
                 guard !firstFileGate.taken else { return }
                 firstFileGate.taken = true
-                // The archive-aware overload archives a promised *folder* instead
-                // of rejecting it as unreadable (a directory has no `.fileSize`).
-                let generation = self.stagingGeneration
-                self.stagingGeneration += 1
-                let staging = self.staging
-                let dirTree = self.instance.clipboardService?.supportsDirectoryTree ?? false
                 let resolved = await ClipboardPasteboardIntake.read(
-                    filesAt: [url], allowsBinary: allowsBinary, staging: staging,
-                    generation: generation, dirTree: dirTree)
-                _ = self.apply(intake: resolved)
+                    filesAt: [url], allowsBinary: allowsBinary)
+                keepFile = self.apply(intake: resolved)
             }
         }
     }
@@ -1023,6 +962,8 @@ protocol HostWritePasteboard: AnyObject {
     var changeCount: Int { get }
     @discardableResult func prepareForNewContents(with options: NSPasteboard.ContentsOptions) -> Int
     func writeObjects(_ objects: [any NSPasteboardWriting]) -> Bool
+    /// Empties the pasteboard — the publisher's stale-promise retraction.
+    @discardableResult func clearContents() -> Int
 }
 
 extension NSPasteboard: HostWritePasteboard {}

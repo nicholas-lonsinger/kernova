@@ -10,7 +10,7 @@ Kernova manages virtual machines through Apple's Virtualization.framework, with 
 guests. Pure AppKit (no `import SwiftUI` in the app target), macOS 26, Swift 6 strict concurrency,
 no non-Apple dependencies.
 
-Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/signing/launch model in
+Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
 [SANDBOX.md](SANDBOX.md), toolbar construction in [TOOLBAR.md](TOOLBAR.md).
 
 ## Component Map
@@ -149,9 +149,9 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
   request.
 - `HostClipboardPublisher`, `ClipboardPassthroughCoordinator` — host-side publication of inbound
   guest content, and the auto-publish path.
-- `HostClipboardFileProvider` — app-level singleton, not per VM: the Mac has one pasteboard and one
-  File Provider manifest, so the domain is owned once. Backs the host extension under Helper
-  Targets.
+- `ClipboardProgressCenter` — app-level singleton, not per VM: clipboard services are per-VM but
+  the menu-bar status item renders one readout, so each service pushes its snapshot here and the
+  center republishes the most significant.
 - `AgentStatus` — the enum driving install/update/reinstall affordances, sourced from
   `VsockControlService` (macOS) or `SpiceClipboardService` (Linux) and read through
   `VMInstance.agentStatus`.
@@ -280,9 +280,8 @@ AppKit views ──observe──→ VMLibraryViewModel ──delegates──→ 
 ### Shared package (KernovaKit)
 
 `KernovaKit` is the local SwiftPM package shared between the host app and the guest agent — the
-vsock wire protocol, the clipboard domain model and file staging/archive, the File Provider layer,
-and cross-cutting helpers. **New host/guest-identical code belongs here**, not copied into both
-targets.
+vsock wire protocol, the clipboard domain model and file staging/archive, and cross-cutting
+helpers. **New host/guest-identical code belongs here**, not copied into both targets.
 
 The package also vends `KernovaTestSupport`, the single shared copy of the test wait primitives every
 test target imports. It must keep **no dependency on `KernovaKit`** and is **never linked
@@ -339,7 +338,7 @@ kernel resources until relaunch — hence one owner (`RuntimeFileAccess`) and on
   clipboard). It is not embedded as a bundle: a build phase `ditto`-copies it into
   `Contents/Resources/KernovaMacOSAgent.dmg`, so it must already carry its final Developer ID
   signature when the DMG is baked — export-time re-signing cannot reach inside a DMG resource
-  ([SANDBOX.md](SANDBOX.md)); version bumps are in [BUILD.md](BUILD.md).
+  ([RELEASING.md](RELEASING.md)); version bumps are in [BUILD.md](BUILD.md).
 
   The host's `toggleGuestAgentDisk` menu item attaches that DMG to a running VM as USB mass storage;
   the guest user runs its `install.command`, which stages the bundle into `~/Applications` and
@@ -349,27 +348,6 @@ kernel resources until relaunch — hence one owner (`RuntimeFileAccess`) and on
   under a GCD-only main queue. Its executable and Swift module stay `KernovaMacOSAgent` while the
   product is `Kernova Guest Agent`, because the LaunchAgent's `ProgramArguments` path and
   `install.command` need a space-free leaf.
-
-- **KernovaMacOSAgentFileProvider** — an `NSFileProviderReplicatedExtension` in the agent's
-  `Contents/PlugIns/` that makes a host→guest file paste lazy: the agent writes the offer into a
-  manifest in the shared app-group container and puts a dataless domain placeholder URL on the guest
-  pasteboard, and the extension's enumerator reads that manifest. Being sandboxed it cannot open
-  vsock, so `fetchContents` relays the pull back to the agent over the `NSFileProviderServicing`
-  anonymous-XPC connection — the agent is the XPC *client* and exports the relay, the extension calls
-  it back **asynchronously** (blocking there stalls the framework's serialised reconnect), and a
-  Darwin notification is the reconnect doorbell. No bytes cross XPC: the relay carries
-  `(generation, repIndex)` and replies with a staged app-group path.
-
-  macOS keeps a third-party File Provider extension disabled until the user enables it under System
-  Settings, so a registered domain is not yet a usable one — both extensions track availability
-  event-driven off `NSFileProviderDomain.userEnabled`.
-
-- **KernovaFileProvider** — the host-side mirror in the app's `Contents/PlugIns/`, running the same
-  shared `FileProviderExtension` under `.host` config for guest→host "Copy to Mac", with the same
-  inverted wiring and the app as XPC client. Both ends pin their peer with
-  `NSXPCConnection.setCodeSigningRequirement`; the team OU is read from the running executable's own
-  signature (`KernovaCodeSignature.teamIdentifier()`) rather than hardcoded, so the pin is correct
-  for whichever team built the app and matches Apple Development and Developer ID alike.
 
 - **KernovaMacOSAgentTests** — a standalone bundle with no `TEST_HOST`/`BUNDLE_LOADER`. Because
   `KernovaMacOSAgent` is an application target its symbols are not linkable, so this bundle compiles
@@ -384,7 +362,6 @@ kernel resources until relaunch — hence one owner (`RuntimeFileAccess`) and on
 | **Virtualization** | VM lifecycle |
 | **AppKit** | All UI |
 | **Observation** | `@Observable` models and view models |
-| **FileProvider** | Both clipboard File Provider extensions |
 | **ServiceManagement** | `SMAppService.mainApp` — Open at Login |
 | **AppleArchive** | In-process `.aar` archiving for clipboard directory transfers |
 | **UniformTypeIdentifiers** | The `.kernova` bundle's `UTType` |

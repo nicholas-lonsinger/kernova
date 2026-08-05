@@ -4,16 +4,20 @@ import Foundation
 public enum ClipboardProgressFormat {
     /// Headline naming the operation and the machine on the other end.
     ///
+    /// `isPaste` names what outbound bytes are for: an app on the peer is blocked
+    /// on them right now. Inbound reads the same either way — a paste this side
+    /// performs parks the thread that would repaint it, so one never shows a
+    /// readout at all.
+    ///
     /// The trailing ellipsis marks work still under way, matching the system's own
     /// "Copying…" progress titles — not the HIG's gathers-more-input ellipsis,
     /// which applies to commands.
     public static func headline(
         direction: ClipboardProgressSnapshot.Direction, peerName: String, isPaste: Bool
     ) -> String {
-        if isPaste { return "Pasting from “\(peerName)”…" }
         switch direction {
         case .inbound: return "Receiving from “\(peerName)”…"
-        case .outbound: return "Sending to “\(peerName)”…"
+        case .outbound: return isPaste ? "Pasting into “\(peerName)”…" : "Sending to “\(peerName)”…"
         }
     }
 
@@ -101,5 +105,12 @@ public enum ClipboardProgressFormat {
             parts.append(name)
         }
         return parts.joined(separator: " — ")
+    }
+
+    /// Seconds as a log record spells them ("2.00 s"), or `unknown` where there
+    /// is no estimate — never shown to a user, who gets `timeRemaining` instead.
+    static func logSeconds(_ value: TimeInterval?) -> String {
+        guard let value else { return "unknown" }
+        return String(format: "%.2f s", value)
     }
 }

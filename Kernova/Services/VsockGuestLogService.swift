@@ -98,7 +98,7 @@ final class VsockGuestLogService {
             )
             return true
         case .hello, .heartbeat, .policyUpdate, .clipboardOffer, .clipboardRequest,
-            .clipboardTreeFetch, .clipboardRelease, .clipboardStreamBegin, .clipboardChunk,
+            .clipboardRelease, .clipboardStreamBegin, .clipboardChunk,
             .clipboardStreamEnd, .clipboardStreamAck, .clipboardStreamAbort:
             // Hello, Heartbeat, and PolicyUpdate belong on the control channel;
             // clipboard payloads belong on the clipboard channel.

@@ -8,7 +8,7 @@ import Testing
 /// `ClipboardOffer.repInfo` from a representation.
 @Suite("ClipboardContent.Representation.offerRepresentationInfo")
 struct ClipboardRepresentationOfferTests {
-    private let dummyURL = URL(fileURLWithPath: "/tmp/kernova-clipboard-test")
+    private let dummyURL = URL(fileURLWithPath: "/tmp/kernova-rep-test")
 
     @Test("inline (filename-less) content offers isInline with no filename")
     func filenamelessContentOffersInline() {

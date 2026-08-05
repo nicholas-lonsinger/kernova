@@ -13,8 +13,7 @@ You will get an acknowledgement. Kernova is a single-maintainer project with no 
 Kernova runs untrusted guest operating systems and moves data across the host↔guest boundary, so the interesting surface is where guest-controlled bytes reach the host:
 
 - The host app and its `com.apple.security.virtualization` entitlement
-- The clipboard transport — the vsock protocol, its framing and digests, and the staging paths under the app-group container
-- Both File Provider extensions, and the XPC relay between the host app and them
+- The clipboard transport — the vsock protocol, its framing and digests, and the staging paths under the app's container
 - The in-guest agent and its installers
 - Anything that escapes the App Sandbox, reads outside a granted security-scoped bookmark, or lets a guest reach a host path it was not given
 

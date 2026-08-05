@@ -132,17 +132,6 @@ final class VsockControlService {
     /// sharing turned on.
     private var guestSupportsClipboardStreamingStorage = false
 
-    /// Whether the guest agent advertised the folder placeholder-tree capability
-    /// (`clipboard.dirtree.v1`) in its `Hello`.
-    ///
-    /// Set on Hello, reset on stop. Decides whether a directory rep crosses as a
-    /// placeholder tree or the eager-archive fallback.
-    private var guestSupportsClipboardDirTreeStorage = false
-
-    /// Whether the guest advertised `clipboard.dirtree.v1` — the mutually
-    /// negotiated gate for folder placeholder trees.
-    var guestSupportsClipboardDirTree: Bool { guestSupportsClipboardDirTreeStorage }
-
     /// Whether the guest advertised `clipboard.stream.v1` — the capability the
     /// clipboard-channel admission check requires.
     var guestSupportsClipboardStreaming: Bool { guestSupportsClipboardStreamingStorage }
@@ -264,7 +253,6 @@ final class VsockControlService {
         isUnresponsive = false
         lastInboundFrame = nil
         guestSupportsClipboardStreamingStorage = false
-        guestSupportsClipboardDirTreeStorage = false
         Self.logger.info("Vsock control service stopped for '\(self.label, privacy: .public)'")
         // Last, so the owner observes fully-settled state — notably a nil
         // `agentVersion` — from inside the callback.
@@ -445,8 +433,6 @@ final class VsockControlService {
             let reportedOSVersion = hello.agentInfo.osVersion
             guestSupportsClipboardStreamingStorage = hello.capabilities.contains(
                 KernovaCapability.clipboardStreamV1)
-            guestSupportsClipboardDirTreeStorage = hello.capabilities.contains(
-                KernovaCapability.clipboardDirTreeV1)
             // `logDescription` bounds the peer-supplied capability strings so a
             // malicious peer can't write arbitrary content into the host log.
             Self.logger.notice(
@@ -475,7 +461,7 @@ final class VsockControlService {
             Self.logger.warning(
                 "Guest control error for '\(self.label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
-        case .policyUpdate, .clipboardOffer, .clipboardRequest, .clipboardTreeFetch,
+        case .policyUpdate, .clipboardOffer, .clipboardRequest,
             .clipboardRelease, .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd,
             .clipboardStreamAck, .clipboardStreamAbort, .logRecord, .none:
             // PolicyUpdate is host→guest and never arrives here; other payloads

@@ -31,7 +31,7 @@ Kernova is a **pure-AppKit** app managing macOS and Linux guests via `Virtualiza
 The app **runs under the App Sandbox in every build configuration** and targets the **Mac App Store** — write code that lives within both ([docs/SANDBOX.md](docs/SANDBOX.md)):
 
 - **User-picked files persist their grant as an app-scoped security bookmark** stored next to the raw path (`SecurityScopedBookmark.capture` at the pick site), resolved through the RAII `ScopedAccess`. A dead bookmark falls through to the raw path and re-picking mints a fresh one — bookmarks never need repair or migration handling.
-- **App-internal state belongs in the container** — `.applicationSupportDirectory`, `FileManager.temporaryDirectory`, and the app group all resolve correctly there. Never build paths off `homeDirectoryForCurrentUser` expecting the *real* home; it is the container home, so ask the system for the folder (e.g. `.downloadsDirectory`).
+- **App-internal state belongs in the container** — `.applicationSupportDirectory` and `FileManager.temporaryDirectory` both resolve correctly there. Never build paths off `homeDirectoryForCurrentUser` expecting the *real* home; it is the container home, so ask the system for the folder (e.g. `.downloadsDirectory`).
 - **Prefer in-process Apple framework APIs over shelling out** to command-line tools (`Process` / `NSTask` → `/usr/bin/ditto`, `unzip`, `tar`, …), which a sandboxed app cannot usefully spawn — and over entitlements unavailable to MAS apps.
 
 ## Development Guidelines
@@ -54,13 +54,11 @@ Every type that logs declares its own `private static let logger = Logger(subsys
 
 | Subsystem | Who logs there |
 |-----------|----------------|
-| `app.kernova` | The host app and all `KernovaKit` code, including KernovaKit types running *inside* the agent's processes |
-| `app.kernova.fileprovider` | The host clipboard File Provider extension |
+| `app.kernova` | The host app and all `KernovaKit` code, including KernovaKit types running *inside* the agent process |
 | `app.kernova.macosagent` | The guest agent's own components |
-| `app.kernova.macosagent.fileprovider` | The guest agent's File Provider extension |
 | `app.kernova.guest` | Host-side re-logging of forwarded guest records (category = VM name) |
 
-Capture with `subsystem BEGINSWITH "app.kernova"`: an exact `== "app.kernova"` match silently drops the agent's and both extensions' records, and because KernovaKit code inside those processes still matches, the truncated capture *looks* complete.
+Capture with `subsystem BEGINSWITH "app.kernova"`: an exact `== "app.kernova"` match silently drops the agent's records, and because KernovaKit code inside that process still matches, the truncated capture *looks* complete.
 
 Only `.notice` and above persist to disk; `.debug` reaches no store at all and exists only while a client streams (`log stream`, Console.app). Use `.debug` for method entry and intermediate state; `.info` for routine progress; `.notice` for state transitions and irreversible actions (VM started/stopped/saved, bundle created/deleted, launch); `.warning` for recoverable trouble (missing files, fallbacks, degraded operation); `.error` for operations that did not complete; `.fault` for programming errors, paired with `assertionFailure`.
 

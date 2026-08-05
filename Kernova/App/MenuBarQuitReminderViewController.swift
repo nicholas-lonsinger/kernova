@@ -1,5 +1,4 @@
 import AppKit
-import KernovaKit
 
 /// Content for the transient popover the menu-bar status item shows after a soft
 /// quit — a reminder that Kernova is still resident, with a "Stop Reminding Me"
@@ -25,12 +24,8 @@ final class MenuBarQuitReminderViewController: NSViewController {
         let title = makeCalloutHeadline("Kernova is still running in the menu bar.")
         let body = makeCalloutBody(
             "Your virtual machines keep running. Quit Kernova fully from this menu-bar icon.")
-        // The same title the status item's File Provider reminder uses for its
-        // opt-out, so one menu-bar item doesn't word the identical concept two
-        // ways.
         let stopReminding = makeLinkButton(
-            ClipboardFileProviderReminder.stopRemindingCommandTitle(),
-            target: self, action: #selector(stopRemindingTapped))
+            "Stop Reminding Me", target: self, action: #selector(stopRemindingTapped))
 
         let stack = NSStackView(views: [title, body, stopReminding])
         stack.orientation = .vertical

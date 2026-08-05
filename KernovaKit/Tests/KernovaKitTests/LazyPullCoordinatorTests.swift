@@ -375,12 +375,11 @@ struct LazyPullCoordinatorTests {
         "end-to-end: a retried fetch for the same transfer id supersedes the original attempt and streams to completion (#500)"
     )
     func concurrentPullsForSameIDSupersedeCleanly() async throws {
-        // Mirrors the real #500 trigger: `FileProviderRelayService.fetchFile`'s
-        // `.concurrent` pullQueue lets a retry (the extension re-dispatching
-        // `fetchContents` after its owner connection dropped mid-pull) run a
-        // second `awaitTransfer` + `pull` for the identical id while the first
-        // attempt is still parked — exercised here through the real receiver
-        // and sender, not just the coordinator in isolation.
+        // Mirrors the real #500 trigger: a paste re-fired for the same
+        // representation runs a second `awaitTransfer` + `pull` for the
+        // identical id while the first attempt is still parked — exercised here
+        // through the real receiver and sender, not just the coordinator in
+        // isolation.
         let harness = try StreamHarness(
             chunkSize: 4096, windowBytes: 16384,
             freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
@@ -593,37 +592,6 @@ struct LazyPullCoordinatorTests {
         #expect(box.abortInfo?.code == "cancelled")
     }
 
-    @Test("cancel(transferID:) wakes an awaiter whose transfer never produced a Begin (#464)")
-    func cancelTransferIDDrainsAwaiter() async throws {
-        let harness = try StreamHarness(
-            chunkSize: 4096, windowBytes: 16384,
-            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
-        defer { harness.tearDown() }
-
-        let box = RepBox()
-        let gate = AsyncGate()
-        let transferID = ClipboardTransferID.make(generation: 3, repIndex: 1, hostMinted: true)
-        harness.receiver.awaitTransfer(
-            transferID,
-            onComplete: {
-                box.setRep($0)
-                gate.notify()
-            },
-            onAbort: {
-                box.setAbort($0)
-                gate.notify()
-            })
-
-        // A per-transfer cancel — unlike `cancel(generation:)`/`cancelAll()` — is
-        // scoped to one id, so it must still wake an awaiter that has no
-        // `transfers` entry yet (never produced a Begin), same as the
-        // generation/channel-wide paths above.
-        harness.receiver.cancel(transferID: transferID)
-
-        try await gate.wait { box.abortInfo != nil }
-        #expect(box.abortInfo?.code == "cancelled")
-    }
-
     @Test(
         "a straggler abort for attempt #1 lands on attempt #2's awaiter when both share an id, but leaves no orphaned state behind (#499)"
     )
@@ -700,82 +668,5 @@ struct LazyPullCoordinatorTests {
 
         try await thirdGate.wait { thirdBox.representation != nil }
         #expect(thirdBox.representation?.inMemoryData == Data("attempt three".utf8))
-    }
-
-    // MARK: - cancelBeforeStart (#464 review fix)
-
-    @Test(
-        "cancelBeforeStart marks a transferID so pull() resolves .cancelled without ever calling send"
-    )
-    func cancelBeforeStartPreventsSend() async throws {
-        // A consumer cancel that arrives before the owner's `pull` call has
-        // registered a slot — the fetch is dispatched onto a concurrent queue and
-        // hasn't started yet — must still suppress the send, not go out over
-        // vsock regardless.
-        let coordinator = LazyPullCoordinator()
-        let sendCalled = Box(false)
-
-        coordinator.cancelBeforeStart(42)
-        #expect(coordinator.preCancelledCountForTesting == 1)
-
-        let outcome = await runPull(coordinator, transferID: 42, timeout: .seconds(5)) {
-            sendCalled.value = true
-        }
-
-        guard case .cancelled = outcome else {
-            Issue.record("expected .cancelled, got \(outcome)")
-            return
-        }
-        #expect(sendCalled.value == false)
-        // One-shot: the mark is consumed, not left to leak or double-apply to a
-        // later, unrelated pull that reuses the same transferID.
-        #expect(coordinator.preCancelledCountForTesting == 0)
-        #expect(coordinator.pendingSlotCountForTesting == 0)
-    }
-
-    @Test("cancelBeforeStart resolves an already-registered slot immediately with .cancelled")
-    func cancelBeforeStartResolvesParkedPull() async throws {
-        let coordinator = LazyPullCoordinator()
-        let sendRan = Box(false)
-        let gate = AsyncGate()
-
-        let pullTask = Task {
-            await runPull(coordinator, transferID: 7, timeout: .seconds(5)) {
-                sendRan.value = true
-                gate.notify()
-            }
-        }
-
-        // `send` only runs after the slot is registered, so this proves the
-        // pull is genuinely parked before cancelling it.
-        try await gate.wait { sendRan.value }
-        #expect(coordinator.pendingSlotCountForTesting == 1)
-
-        coordinator.cancelBeforeStart(7)
-
-        let outcome = await pullTask.value
-        guard case .cancelled = outcome else {
-            Issue.record("expected .cancelled, got \(outcome)")
-            return
-        }
-        #expect(coordinator.pendingSlotCountForTesting == 0)
-        #expect(coordinator.preCancelledCountForTesting == 0)
-    }
-
-    @Test("cancelBeforeStart for an unrelated transferID does not affect a different in-flight pull")
-    func cancelBeforeStartIsScopedToItsOwnTransferID() async throws {
-        let coordinator = LazyPullCoordinator()
-
-        coordinator.cancelBeforeStart(999)
-
-        let outcome = await runPull(coordinator, transferID: 1, timeout: .seconds(5)) {
-            coordinator.deliver(1, ClipboardContent.Representation(uti: "public.data", data: Data()))
-        }
-
-        guard case .delivered = outcome else {
-            Issue.record("expected the unrelated transfer to deliver normally, got \(outcome)")
-            return
-        }
-        #expect(coordinator.preCancelledCountForTesting == 1)  // still pending for id 999
     }
 }

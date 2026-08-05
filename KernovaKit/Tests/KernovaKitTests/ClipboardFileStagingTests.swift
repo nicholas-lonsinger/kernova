@@ -112,6 +112,115 @@ struct ClipboardFileStagingTests {
         #expect(!FileManager.default.fileExists(atPath: dir.path))
     }
 
+    @Test("roots nest under one shared parent, one child per label")
+    func rootsNestUnderSharedParent() throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let staging = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
+        let sink = try staging.makeSink(generation: 1, filename: "x.bin")
+        try sink.commit()
+
+        let parent = tempRoot.appendingPathComponent(
+            ClipboardFileStaging.parentDirectoryName, isDirectory: true)
+        let labelRoot = parent.appendingPathComponent("host-vm", isDirectory: true)
+        #expect(FileManager.default.fileExists(atPath: labelRoot.path))
+        #expect(sink.url.path.hasPrefix(labelRoot.path + "/"))
+    }
+
+    @Test("same-generation send and receive roots never share a directory; one sweep leaves the other")
+    func sendAndReceiveRootsAreDisjoint() throws {
+        // The send/receive split: both counters start at 1, so the same
+        // generation number must land in different roots.
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let receive = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
+        let send = ClipboardFileStaging(label: "host-send-vm", tempRoot: tempRoot)
+
+        let received = try receive.makeSink(generation: 1, filename: "in.bin")
+        try received.write(Data("in".utf8))
+        try received.commit()
+        let sent = try send.reserveURL(generation: 1, filename: "out.aar")
+
+        #expect(
+            received.url.deletingLastPathComponent() != sent.deletingLastPathComponent())
+        // A sibling label extending this one is not "inside" this root.
+        #expect(!receive.isInStagingRoot(sent))
+
+        // Sweeping the send root leaves the receive root's file intact.
+        send.sweep()
+        #expect(!FileManager.default.fileExists(atPath: sent.path))
+        #expect(FileManager.default.fileExists(atPath: received.url.path))
+    }
+
+    @Test("same-label instances from different sessions own disjoint roots; one's sweep leaves the other's files")
+    func sameLabelInstancesAreDisjoint() throws {
+        // A VM restart mints a fresh staging instance under the same label; its
+        // sweeps must never delete the previous session's files, which can still
+        // back URLs on the pasteboard.
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let previousSession = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
+        let nextSession = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
+
+        let kept = try previousSession.makeSink(generation: 1, filename: "kept.bin")
+        try kept.write(Data("kept".utf8))
+        try kept.commit()
+        let swept = try nextSession.makeSink(generation: 1, filename: "swept.bin")
+        try swept.commit()
+
+        #expect(kept.url.deletingLastPathComponent() != swept.url.deletingLastPathComponent())
+        #expect(!nextSession.isInStagingRoot(kept.url))
+
+        nextSession.sweep()
+        #expect(!FileManager.default.fileExists(atPath: swept.url.path))
+        #expect(FileManager.default.fileExists(atPath: kept.url.path))
+    }
+
+    @Test("reclaimSiblingRoots removes earlier same-label roots, leaving its own and other labels")
+    func reclaimSiblingRootsScopesToLabel() throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let previousSession = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
+        let liveSession = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
+        let otherLabel = ClipboardFileStaging(label: "host-other", tempRoot: tempRoot)
+
+        let orphan = try previousSession.makeSink(generation: 1, filename: "orphan.bin")
+        try orphan.commit()
+        let kept = try liveSession.makeSink(generation: 1, filename: "kept.bin")
+        try kept.commit()
+        let unrelated = try otherLabel.makeSink(generation: 1, filename: "unrelated.bin")
+        try unrelated.commit()
+
+        liveSession.reclaimSiblingRoots()
+
+        #expect(!FileManager.default.fileExists(atPath: orphan.url.path))
+        #expect(FileManager.default.fileExists(atPath: kept.url.path))
+        #expect(FileManager.default.fileExists(atPath: unrelated.url.path))
+    }
+
+    @Test("reclaimAll removes every label family under the shared parent")
+    func reclaimAllSweepsEveryFamily() throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        // Crash leftovers from every family the host mints.
+        for label in ["host", "host-vm", "host-send-vm"] {
+            let staging = ClipboardFileStaging(label: label, tempRoot: tempRoot)
+            let sink = try staging.makeSink(generation: 1, filename: "orphan.bin")
+            try sink.commit()
+        }
+        let parent = tempRoot.appendingPathComponent(
+            ClipboardFileStaging.parentDirectoryName, isDirectory: true)
+        #expect(FileManager.default.fileExists(atPath: parent.path))
+
+        ClipboardFileStaging.reclaimAll(tempRoot: tempRoot)
+        #expect(!FileManager.default.fileExists(atPath: parent.path))
+    }
+
     @Test("hasCapacity reflects the injected free-space provider")
     func freeSpaceGuard() {
         let tightStaging = makeStaging(freeSpaceProvider: { _ in 10 * 1024 * 1024 })  // 10 MiB
@@ -129,6 +238,16 @@ struct ClipboardFileStagingTests {
         defer { unknownStaging.sweep() }
         // Unknown capacity is treated as "fits" — never block on a failed query.
         #expect(unknownStaging.hasCapacity(forByteCount: Int.max - ClipboardStreamTuning.freeSpaceMargin))
+    }
+
+    @Test("a byte count whose margined total leaves Int64 does not fit — and does not trap")
+    func absurdByteCountDoesNotFit() {
+        // The size reaching this guard can be a peer's declared `total_bytes`
+        // clamped into `Int`, so the margin must not be added into an overflow.
+        let staging = makeStaging(freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { staging.sweep() }
+        #expect(!staging.hasCapacity(forByteCount: .max))
+        #expect(!staging.hasCapacity(forByteCount: .max, margin: 1))
     }
 
     @Test("a crafted filename can't escape the generation directory")
@@ -207,6 +326,41 @@ struct ClipboardFileStagingTests {
         let dir = try staging.reserveDirectory(generation: 1, name: "../../escape")
         #expect(dir.lastPathComponent == "escape")
         #expect(dir.deletingLastPathComponent().lastPathComponent != "..")
+    }
+
+    @Test("reserveScratchDirectory hands each caller its own empty directory in the generation")
+    func reserveScratchDirectoryIsolatesCallers() throws {
+        let staging = makeStaging()
+        defer { staging.sweep() }
+
+        let first = try staging.reserveScratchDirectory(generation: 1)
+        let second = try staging.reserveScratchDirectory(generation: 1)
+
+        var isDir: ObjCBool = false
+        #expect(FileManager.default.fileExists(atPath: first.path, isDirectory: &isDir))
+        #expect(isDir.boolValue)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: first.path).isEmpty)
+        // Two drops in one generation must not write into each other's directory.
+        #expect(first != second)
+        #expect(first.deletingLastPathComponent() == second.deletingLastPathComponent())
+    }
+
+    @Test("discardGeneration retires one generation early, leaving the rest of the window")
+    func discardGenerationRetiresEarly() throws {
+        let staging = makeStaging()
+        defer { staging.sweep() }
+
+        let first = try staging.reserveScratchDirectory(generation: 1)
+        let second = try staging.reserveScratchDirectory(generation: 2)
+
+        staging.discardGeneration(1)
+        #expect(!FileManager.default.fileExists(atPath: first.path))
+        #expect(FileManager.default.fileExists(atPath: second.path))
+
+        // Discarding a generation the window already evicted is a no-op, and the
+        // number is not reused by the survivors.
+        staging.discardGeneration(1)
+        #expect(FileManager.default.fileExists(atPath: second.path))
     }
 
     @Test("reserved trees and archives ride the generation window (3 newest survive)")

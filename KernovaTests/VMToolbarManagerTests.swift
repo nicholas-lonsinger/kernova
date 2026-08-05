@@ -189,7 +189,6 @@ struct VMToolbarManagerTests {
         var clipboardContent: ClipboardContent = .empty
         var isConnected = true
         var supportsBinaryRepresentations = true
-        var supportsDirectoryTree = false
         var lastTransferIssue: ClipboardTransferIssue?
         var transferProgress: ClipboardProgressSnapshot?
 

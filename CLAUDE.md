@@ -74,7 +74,7 @@ tool-neutral post-merge steps in AGENTS.md instead.
 `/code-review low` for trivial/mechanical diffs; `medium` (precision-biased —
 "findings a maintainer would act on") as the default for bug fixes; `high`/`xhigh`
 (recall-biased — "err on the side of surfacing", uncertain findings expected by
-design) for features, redesigns, and the clipboard/File-Provider/vsock subsystems
+design) for features, redesigns, and the clipboard and vsock subsystems
 where theoretical races are often real. Findings from recall-biased runs
 especially must clear the severity bar in [docs/REVIEW.md](docs/REVIEW.md) before
 being filed.

@@ -24,7 +24,6 @@ struct AppPreferences {
         // that saved state.
         static let lastSelectedVMID = "lastSelectedVMID"
         static let vmOrder = "vmOrder"
-        static let fileProviderReminderDismissed = "fileProviderReminderDismissed"
         // Deliberately inverted relative to `keepInMenuBarOnQuit` — see that
         // property's RATIONALE.
         static let quitTerminatesApp = "quitTerminatesApp"
@@ -83,16 +82,6 @@ struct AppPreferences {
         nonmutating set { defaults.set(newValue?.map(\.uuidString), forKey: Keys.vmOrder) }
     }
 
-    /// Whether the user dismissed the current "enable File Provider"
-    /// status-item reminder.
-    ///
-    /// Reset back to `false` once availability reaches `.ready`, so a later,
-    /// genuinely new disablement nags again rather than staying silenced forever.
-    var fileProviderReminderDismissed: Bool {
-        get { defaults.bool(forKey: Keys.fileProviderReminderDismissed) }
-        nonmutating set { defaults.set(newValue, forKey: Keys.fileProviderReminderDismissed) }
-    }
-
     /// Whether a GUI-origin quit (⌘Q, the app menu's soft-quit item, the Dock's
     /// Quit) keeps Kernova resident in the menu bar with its VMs running instead
     /// of terminating it, defaulting to `true`.
@@ -109,10 +98,6 @@ struct AppPreferences {
 
     /// Whether the user dismissed the "still running in the menu bar" reminder
     /// popover shown on a soft quit.
-    ///
-    /// Never auto-reset, unlike `fileProviderReminderDismissed`: a soft quit is
-    /// always user-initiated, so there is no "genuinely new" condition to re-arm
-    /// the nag against.
     var menuBarQuitReminderDismissed: Bool {
         get { defaults.bool(forKey: Keys.menuBarQuitReminderDismissed) }
         nonmutating set { defaults.set(newValue, forKey: Keys.menuBarQuitReminderDismissed) }
@@ -158,11 +143,9 @@ struct AppPreferences {
     /// nag shows again the next time its condition is met.
     ///
     /// Covers only the reminders whose dismissed state lives in *this* defaults
-    /// domain. The guest agent's own File Provider reminder is backed by a
-    /// separate domain in a separate process and is left untouched, as are the
-    /// per-VM agent-install nudges in each VM's bundle configuration.
+    /// domain — the per-VM agent-install nudges in each VM's bundle configuration
+    /// are left untouched.
     func resetHostReminders() {
         menuBarQuitReminderDismissed = false
-        fileProviderReminderDismissed = false
     }
 }

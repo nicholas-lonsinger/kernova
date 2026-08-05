@@ -8,17 +8,10 @@ import os
 /// **ON = the reminder is shown** (its dismissed flag is `false`), matching the
 /// VM Settings pane's "Show install reminder" toggle.
 ///
-/// Three reminders are represented:
-/// - *Menu Bar Quit Reminder* and *File Sharing Reminder* — app-wide,
-///   backed by `AppPreferences`.
-/// - one row per VM for the *guest-agent install nudge* — per-VM, backed by each
-///   VM's bundle configuration and written through
-///   `VMLibraryViewModel.setAgentInstallNudgeDismissed(_:for:)`.
-///
-/// The guest agent surfaces its own File Provider reminder *inside* a VM from a
-/// separate defaults domain in a separate process; that dismissal is out of
-/// reach from the host and is called out to the user in a trailing caption
-/// rather than silently ignored.
+/// The app-wide *Menu Bar Quit Reminder* is backed by `AppPreferences`; the
+/// per-VM *guest-agent install nudge* rows are backed by each VM's bundle
+/// configuration and written through
+/// `VMLibraryViewModel.setAgentInstallNudgeDismissed(_:for:)`.
 ///
 /// `viewWillAppear()` rebuilds the per-VM rows from `viewModel.instances` and
 /// refreshes every switch from current state; an `observeRecurring` loop, live
@@ -38,7 +31,6 @@ final class RemindersSettingsViewController: NSViewController {
     private let viewModel: VMLibraryViewModel
 
     private let menuBarQuitSwitch = NSSwitch()
-    private let fileProviderSwitch = NSSwitch()
 
     /// The persistent container in the content stack that holds either the
     /// per-VM card or the empty-state caption, rebuilt on every appear.
@@ -65,21 +57,13 @@ final class RemindersSettingsViewController: NSViewController {
         menuBarQuitSwitch.target = self
         menuBarQuitSwitch.action = #selector(menuBarQuitToggled)
 
-        fileProviderSwitch.controlSize = .small
-        fileProviderSwitch.target = self
-        fileProviderSwitch.action = #selector(fileProviderToggled)
-
-        // App-wide reminders: one card, two hairline-separated rows.
+        // App-wide reminders: one card, one row.
         let appCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Menu Bar Quit Reminder", control: menuBarQuitSwitch),
-            makeGroupedFormCardRow("File Sharing Reminder", control: fileProviderSwitch),
+            makeGroupedFormCardRow("Menu Bar Quit Reminder", control: menuBarQuitSwitch)
         ])
         let appMenuCaption = makeGroupedFormCaption(
             "The Menu Bar Quit Reminder appears when you quit (⌘Q) and Kernova keeps running in the "
                 + "menu bar, reminding you it — and your virtual machines — are still going.")
-        let appFileCaption = makeGroupedFormCaption(
-            "The File Sharing Reminder appears when clipboard file sharing needs to be turned "
-                + "on for Kernova in System Settings.")
 
         // Per-VM reminders: rebuilt on every appear (VMs may be added or removed).
         vmSection.orientation = .vertical
@@ -97,34 +81,27 @@ final class RemindersSettingsViewController: NSViewController {
         let resetCaption = makeGroupedFormCaption(
             "Turns every reminder above back on, including for all virtual machines.")
 
-        let guestGapCaption = makeGroupedFormCaption(
-            "Reminders shown inside a virtual machine by the Kernova guest agent are managed "
-                + "separately, within that virtual machine, and aren't affected here.")
-
         let content = NSStackView(views: [
             makeGroupedFormSectionHeader("App Reminders"),
             appCard,
             appMenuCaption,
-            appFileCaption,
             makeGroupedFormSectionHeader("Virtual Machine Reminders"),
             vmSection,
             vmCaption,
             resetButton,
             resetCaption,
-            guestGapCaption,
         ])
         content.orientation = .vertical
         content.alignment = .leading
         content.spacing = Spacing.small
         // Separate each logical group so they read as distinct blocks, matching
         // the General pane's rhythm.
-        content.setCustomSpacing(Spacing.section, after: appFileCaption)
+        content.setCustomSpacing(Spacing.section, after: appMenuCaption)
         content.setCustomSpacing(Spacing.section, after: vmCaption)
-        content.setCustomSpacing(Spacing.section, after: resetCaption)
 
         // Full-width members (cards and wrapping captions). The reset button is
         // intentionally excluded so it hugs its intrinsic width at the leading edge.
-        for member in [appCard, appMenuCaption, appFileCaption, vmSection, vmCaption, resetCaption, guestGapCaption] {
+        for member in [appCard, appMenuCaption, vmSection, vmCaption, resetCaption] {
             member.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         }
 
@@ -240,7 +217,6 @@ final class RemindersSettingsViewController: NSViewController {
     /// (its dismissed flag is `false`).
     private func refreshSwitches() {
         menuBarQuitSwitch.state = preferences.menuBarQuitReminderDismissed ? .off : .on
-        fileProviderSwitch.state = preferences.fileProviderReminderDismissed ? .off : .on
         for (instance, toggle) in vmSwitches {
             toggle.state = instance.configuration.agentInstallNudgeDismissed ? .off : .on
         }
@@ -248,10 +224,6 @@ final class RemindersSettingsViewController: NSViewController {
 
     @objc private func menuBarQuitToggled() {
         preferences.menuBarQuitReminderDismissed = (menuBarQuitSwitch.state == .off)
-    }
-
-    @objc private func fileProviderToggled() {
-        preferences.fileProviderReminderDismissed = (fileProviderSwitch.state == .off)
     }
 
     @objc private func vmReminderToggled(_ sender: NSSwitch) {

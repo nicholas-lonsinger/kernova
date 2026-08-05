@@ -37,9 +37,9 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
     /// Estimated seconds until the operation finishes, or `nil` when it can't be
     /// estimated (no rate yet, or nothing left to move).
     public let secondsRemaining: Double?
-    /// Whether this is a File Provider paste — a manifest-backed materialization
-    /// the user started with ⌘V on this machine, and the only operation allowed
-    /// to open a status-item dropdown by itself.
+    /// Whether this operation is serving a paste the user started on the machine
+    /// at the other end — the only one allowed to open a status-item dropdown by
+    /// itself.
     public let isPasteSession: Bool
     /// How long this operation has been running.
     public let elapsedSeconds: TimeInterval

@@ -90,15 +90,45 @@ public enum ClipboardStreamTuning {
     /// "send anything".
     public static let unlimitedAcceptByteCount = UInt64.max
 
-    /// Largest guest→host file served via the synchronous paste fallback when the
-    /// host File Provider is disabled: 256 MiB.
+    /// Largest total a paste's file reps may sum to and still be served inside
+    /// the OS pasteboard-promise deadline: 2 GiB.
     ///
-    /// With the File-Providers toggle off there is no `fetchContents` escape
-    /// hatch, so the bytes must be pulled and staged inside Finder's ~60 s paste
-    /// deadline; a larger file is dropped instead. The cap applies *only* to that
-    /// fallback — with the File Provider on there is no size limit
-    /// (CLIPBOARD.md §1).
-    public static let maxDeadlineSafeFileBytes = 256 * 1024 * 1024
+    /// A promised file's bytes pull synchronously inside the consumer's
+    /// `provideData` callback, which Finder abandons after ~60 s (generic apps
+    /// after ~120 s). At the measured 366–415 MiB/s app-stack throughput
+    /// (docs/research/2026-07-13-vsock-transport-throughput.md), 2 GiB streams in
+    /// ~6 s — over 4× margin under the tighter deadline for a folder's
+    /// request-time archive pass, the staging write, and the extract. The cap is
+    /// compared against the total of the offer's reps that serve
+    /// `public.file-url` — every promisable rep carrying a filename, image files
+    /// included — all-or-nothing per paste.
+    public static let maxDeadlineSafePasteBytes = 2 * 1024 * 1024 * 1024
+
+    /// How `maxDeadlineSafePasteBytes` reads in user-facing copy, e.g. "2 GB".
+    ///
+    /// Every surface that names the limit — the host window's messages, the
+    /// Copy-to-Mac refusal, the guest agent's menu line — builds its sentence
+    /// from this, so retuning the cap moves the figure everywhere at once.
+    /// Rendered in binary units, matching how Finder reports the same count.
+    public static let maxDeadlineSafePasteDisplayLimit =
+        binaryDisplaySize(maxDeadlineSafePasteBytes)
+
+    /// Renders a byte count in binary units at one decimal place, trimming a
+    /// whole result to an integer: 2 GiB → "2 GB", 1.5 GiB → "1.5 GB".
+    private static func binaryDisplaySize(_ bytes: Int) -> String {
+        let units = ["bytes", "KB", "MB", "GB", "TB"]
+        var value = Double(bytes)
+        var unitIndex = 0
+        while value >= 1024, unitIndex < units.count - 1 {
+            value /= 1024
+            unitIndex += 1
+        }
+        let rounded = (value * 10).rounded() / 10
+        let number =
+            rounded == rounded.rounded()
+            ? String(Int(rounded)) : String(format: "%.1f", rounded)
+        return "\(number) \(units[unitIndex])"
+    }
 }
 
 extension Duration {
