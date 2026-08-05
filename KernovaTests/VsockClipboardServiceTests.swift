@@ -2833,8 +2833,13 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         let label = "test-\(UUID().uuidString)"
+        // Its own center rather than the process-wide `.shared` default: the
+        // status item renders what lands *here*, so the assertions below cover the
+        // service→center hop the menu bar actually reads.
+        let center = ClipboardProgressCenter()
         let service = VsockClipboardService(
-            channel: host, label: label, progressRevealDelay: 0, progressIdleLinger: 0)
+            channel: host, label: label, progressRevealDelay: 0, progressIdleLinger: 0,
+            progressCenter: center)
         service.start()
         defer { service.stop() }
 
@@ -2882,9 +2887,15 @@ struct VsockClipboardServiceTests {
                 direction: readout.direction, peerName: readout.peerName,
                 isPaste: readout.isPasteSession) == "Pasting into “\(label)”…")
 
+        // The aggregate the status item renders, not just this service's own copy.
+        let aggregate = try #require(center.materializationProgress)
+        #expect(aggregate.isPasteSession)
+        #expect(aggregate.direction == .outbound)
+
         // Open the window fully → the rest streams and the transfer completes.
         try sendAck(from: guest, transferID: xid, bytesConsumed: 0, windowBytes: 2 * 1024 * 1024)
         try await waitForChange { service.transferProgress == nil }
+        try await waitForChange { center.materializationProgress == nil }
     }
 
     @Test("a transfer that finishes before the reveal delay never shows progress")

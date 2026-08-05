@@ -50,8 +50,9 @@ public struct ClipboardProgressMenuAutoOpener: Equatable, Sendable {
     ///
     /// `readout` is the snapshot being shown (`nil` when the readout clears),
     /// `menuIsOpen` whether the dropdown is on screen, and `canOpen` `false` when
-    /// macOS has hidden the status item in a crowded menu bar, where a popped
-    /// dropdown would appear detached from anything.
+    /// the status item itself is not — dropped from a crowded menu bar, or behind
+    /// a full-screen window — where a popped dropdown would appear detached from
+    /// anything.
     public mutating func readoutChanged(
         _ readout: ClipboardProgressSnapshot?, menuIsOpen: Bool, canOpen: Bool
     ) -> ClipboardProgressMenuAction {

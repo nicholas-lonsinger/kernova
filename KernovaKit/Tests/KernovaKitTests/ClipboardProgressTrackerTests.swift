@@ -607,6 +607,63 @@ struct ClipboardProgressTrackerTests {
         #expect(opener.readoutChanged(snapshot, menuIsOpen: false, canOpen: true) == .open)
     }
 
+    @Test("a paste streamed at a real chunk cadence reveals late and interrupts exactly once")
+    func pasteAtChunkCadenceOpensOnce() throws {
+        // The shape a multi-GB paste actually has: ~2 GB reported in chunks at
+        // ~360 MB/s for 5.5 s, rather than the hand-placed pair of samples the
+        // tests above use. Everything the auto-opener weighs — the reveal, the
+        // remaining-time estimate, the one open — has to hold against that.
+        let harness = Harness(revealDelay: 0.3)
+        let total: UInt64 = 1_992_294_400
+        let steps: UInt64 = 55
+        let session = harness.tracker.openSession(
+            direction: .outbound, peerName: "VM", isPaste: true,
+            units: [ClipboardProgressTracker.PlannedUnit(id: 0, expectedBytes: total)])
+        harness.tracker.unitBegan(session: session, id: 0)
+
+        var opener = ClipboardProgressMenuAutoOpener()
+        var opened: [ClipboardProgressSnapshot] = []
+        var delivered = 0
+        func feedNewEmissionsToTheOpener() {
+            let emissions = harness.emissions
+            while delivered < emissions.count {
+                let snapshot = emissions[delivered]
+                delivered += 1
+                guard opener.readoutChanged(snapshot, menuIsOpen: false, canOpen: true) == .open,
+                    let snapshot
+                else { continue }
+                opened.append(snapshot)
+            }
+        }
+
+        for step in 1...steps {
+            harness.now = Double(step) / 10
+            harness.tracker.unitProgressed(
+                session: session, id: 0, bytesTransferred: total * step / steps, totalBytes: total)
+            feedNewEmissionsToTheOpener()
+        }
+        harness.tracker.unitEnded(session: session, id: 0, succeeded: true)
+        harness.fireScheduledWork()
+        feedNewEmissionsToTheOpener()
+
+        let readouts = harness.emissions.compactMap { $0 }
+        // Nothing goes on screen inside the reveal delay, and the first thing that
+        // does is the first chunk past it.
+        #expect(readouts.allSatisfy { $0.elapsedSeconds >= 0.3 })
+        let first = try #require(readouts.first)
+        #expect(first.elapsedSeconds < 0.4)
+
+        // The readout the interrupt gate weighs: two seconds in, with bytes still
+        // outstanding and more than the dropdown's own lifetime left to run.
+        let interrupting = try #require(readouts.first { $0.elapsedSeconds >= 2 })
+        #expect(interrupting.bytesTransferred < interrupting.totalBytes)
+        let remaining = try #require(interrupting.secondsRemaining)
+        #expect(remaining >= 2)
+
+        #expect(opened == [interrupting])
+        #expect(harness.lastEmissionClears)
+    }
+
     @Test("a bigger non-paste operation outranking a paste takes the flag off the readout")
     func nonPasteWinnerSuppressesTheFlag() throws {
         // The flag belongs to whichever session is projected, not to any live one:

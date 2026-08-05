@@ -8,6 +8,9 @@ import AppKit
 /// icon ring and tooltip.
 @MainActor
 public final class ClipboardProgressStatusItemPresenter {
+    private static let logger = KernovaLogger(
+        subsystem: "app.kernova", category: "ClipboardProgressStatusItem")
+
     private let statusItem: NSStatusItem
     private let menu: NSMenu
     /// Run just before the presenter pops the dropdown open by itself.
@@ -107,12 +110,26 @@ public final class ClipboardProgressStatusItemPresenter {
         }
     }
 
+    /// Whether the item's button is on a screen right now.
+    ///
+    /// The button's window outlives macOS dropping the item from a crowded menu
+    /// bar and a full-screen window covering the menu bar, so its existence
+    /// proves nothing: only a visible window landing on a display does. Paired
+    /// with `NSStatusItem.isVisible`, which reports the app's own preference
+    /// rather than anything about the screen.
+    private var isButtonOnScreen: Bool {
+        guard let window = statusItem.button?.window, window.isVisible else { return false }
+        return NSScreen.screens.contains { $0.frame.intersects(window.frame) }
+    }
+
     /// Runs the auto-opener's decision for the current readout.
     private func applyAutoOpen(_ readout: ClipboardProgressSnapshot?) {
-        // macOS drops status items it can't fit in a crowded menu bar.
-        let canOpen = statusItem.isVisible && statusItem.button?.window != nil
-        switch autoOpener.readoutChanged(readout, menuIsOpen: menuIsOpen, canOpen: canOpen)
-        {
+        let visible = statusItem.isVisible
+        let onScreen = isButtonOnScreen
+        let canOpen = visible && onScreen
+        let action = autoOpener.readoutChanged(readout, menuIsOpen: menuIsOpen, canOpen: canOpen)
+        log(action, readout: readout, visible: visible, onScreen: onScreen)
+        switch action {
         case .none:
             break
         case .open:
@@ -138,6 +155,32 @@ public final class ClipboardProgressStatusItemPresenter {
             }
         case .close:
             menu.cancelTracking()
+        }
+    }
+
+    /// Records the decision with the inputs that made it — one line per delivered
+    /// readout, a rate the tracker's throttle already bounds.
+    private func log(
+        _ action: ClipboardProgressMenuAction, readout: ClipboardProgressSnapshot?, visible: Bool,
+        onScreen: Bool
+    ) {
+        guard let readout else {
+            Self.logger.info(
+                "Readout cleared — dropdown \(action == .close ? "closed" : "left alone", privacy: .public)"
+            )
+            return
+        }
+        let record: KernovaLogMessage = """
+            Auto-open \(action, privacy: .public) — isPaste=\(readout.isPasteSession, privacy: .public), \
+            elapsed=\(ClipboardProgressFormat.logSeconds(readout.elapsedSeconds), privacy: .public), \
+            remaining=\(ClipboardProgressFormat.logSeconds(readout.secondsRemaining), privacy: .public), \
+            \(readout.bytesTransferred, privacy: .public)/\(readout.totalBytes, privacy: .public) bytes, \
+            menuOpen=\(menuIsOpen, privacy: .public), canOpen=\(visible && onScreen, privacy: .public) \
+            (visible=\(visible, privacy: .public), onScreen=\(onScreen, privacy: .public))
+            """
+        switch action {
+        case .none: Self.logger.debug(record)
+        case .open, .close: Self.logger.info(record)
         }
     }
 }

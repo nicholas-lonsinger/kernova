@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import Observation
+import os
 
 /// App-level aggregate of every live clipboard service's transfer readout.
 ///
@@ -13,6 +14,9 @@ import Observation
 final class ClipboardProgressCenter {
     /// The process-wide center every clipboard service publishes to by default.
     static let shared = ClipboardProgressCenter()
+
+    private static let logger = Logger(
+        subsystem: "app.kernova", category: "ClipboardProgressCenter")
 
     /// The clipboard operation currently worth showing across every live VM, or
     /// `nil` when none is.
@@ -38,6 +42,14 @@ final class ClipboardProgressCenter {
             progressBySource.removeValue(forKey: key)
         }
         materializationProgress = Self.mostSignificant(of: progressBySource)
+        let sources = progressBySource.count
+        guard let readout = materializationProgress else {
+            Self.logger.debug("Aggregate readout cleared (\(sources, privacy: .public) source(s))")
+            return
+        }
+        Self.logger.debug(
+            "Aggregate readout ← '\(readout.peerName, privacy: .public)' \(readout.bytesTransferred, privacy: .public)/\(readout.totalBytes, privacy: .public) bytes (\(sources, privacy: .public) source(s))"
+        )
     }
 
     /// The snapshot with the most bytes left to move, or `nil` when none is live.

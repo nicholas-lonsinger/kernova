@@ -160,23 +160,45 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
     /// outside it.
     private enum Publish {
         case none
-        case emit(ClipboardProgressSnapshot?)
+        /// Publish this snapshot — `nil` clears the readout — projected from the
+        /// session the log record names.
+        case emit(ClipboardProgressSnapshot?, session: SessionToken?)
+    }
+
+    /// A record `deliver` writes once `lock` is released.
+    ///
+    /// Every value is captured under the lock, since the `Session` it came from
+    /// is only safe to read there.
+    private enum LogEvent {
+        case revealed(session: UInt64, elapsed: TimeInterval, transferred: UInt64, total: UInt64)
+        case ended(
+            session: UInt64, elapsed: TimeInterval, transferred: UInt64, total: UInt64,
+            revealed: Bool)
     }
 
     /// Everything an event leaves for `deliver` to run once `lock` is released.
     ///
     /// `emit` and `schedule` are injected closures: calling one while holding a
     /// non-recursive lock deadlocks the moment a caller runs the work
-    /// synchronously.
+    /// synchronously. Logging is deferred the same way — an `os_log` call under
+    /// the lock puts every chunk callback of every session behind it.
     private struct Outcome {
         var publish: Publish = .none
         var armIdle: (token: SessionToken, epoch: UInt64)?
+        var logs: [LogEvent] = []
 
-        init(_ publish: Publish, armIdle: (token: SessionToken, epoch: UInt64)? = nil) {
+        init(
+            _ publish: Publish, armIdle: (token: SessionToken, epoch: UInt64)? = nil,
+            logs: [LogEvent] = []
+        ) {
             self.publish = publish
             self.armIdle = armIdle
+            self.logs = logs
         }
     }
+
+    private static let logger = KernovaLogger(
+        subsystem: "app.kernova", category: "ClipboardProgress")
 
     private let lock = NSLock()
     private var sessions: [SessionToken: Session] = [:]
@@ -238,18 +260,23 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
         direction: ClipboardProgressSnapshot.Direction, peerName: String, isPaste: Bool = false,
         units: [PlannedUnit] = []
     ) -> SessionToken {
-        lock.withLock {
+        let opened: (token: SessionToken, unitCount: Int, plannedBytes: UInt64) = lock.withLock {
             let token = SessionToken(value: nextToken)
             nextToken &+= 1
             var table: [Unit: UnitState] = [:]
             for unit in units {
                 table[.adHoc(unit.id)] = UnitState(expected: unit.expectedBytes, name: unit.name)
             }
-            sessions[token] = Session(
+            let session = Session(
                 token: token, direction: direction, peerName: peerName, isPaste: isPaste,
                 startedAt: now(), units: table)
-            return token
+            sessions[token] = session
+            return (token, session.units.count, session.totalBytes)
         }
+        Self.logger.info(
+            "Progress session \(opened.token.value, privacy: .public) opened — \(direction, privacy: .public) '\(peerName, privacy: .public)' isPaste=\(isPaste, privacy: .public), \(opened.unitCount, privacy: .public) unit(s), \(opened.plannedBytes, privacy: .public) bytes"
+        )
+        return opened.token
     }
 
     /// Whether `token` still addresses a live session.
@@ -361,7 +388,8 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
             // to honor and no reason to keep it around.
             guard session.revealed, !immediately else {
                 sessions[token] = nil
-                return Outcome(resolveLocked(admits: session.revealed))
+                return Outcome(
+                    resolveLocked(admits: session.revealed), logs: [endedLocked(session)])
             }
             return Outcome(
                 .none, armIdle: (token: token, epoch: session.idleEpoch))
@@ -378,9 +406,10 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
     public func clearAll() {
         let outcome: Outcome = lock.withLock {
             let wasShowing = showing
+            let logs = sessions.values.map { endedLocked($0) }
             sessions.removeAll()
             showing = false
-            return Outcome(wasShowing ? .emit(nil) : .none)
+            return Outcome(wasShowing ? .emit(nil, session: nil) : .none, logs: logs)
         }
         deliver(outcome)
     }
@@ -419,15 +448,13 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
         session: Session, unit: Unit, _ mutate: (Session, Unit) -> Activity
     ) -> Outcome {
         let activity = mutate(session, unit)
-        guard activity == .mayBeIdle, session.activeUnits.isEmpty else {
-            return Outcome(resolveLocked(trigger: session))
-        }
+        var outcome = resolveLocked(trigger: session)
+        guard activity == .mayBeIdle, session.activeUnits.isEmpty else { return outcome }
         // Nothing in flight is not "finished": a multi-file paste is walked one
         // file at a time, so the gap between two of them looks exactly like the
         // end. The linger is what tells them apart.
-        return Outcome(
-            resolveLocked(trigger: session),
-            armIdle: (token: session.token, epoch: session.idleEpoch))
+        outcome.armIdle = (token: session.token, epoch: session.idleEpoch)
+        return outcome
     }
 
     /// Ends a session that has stayed idle for the whole linger.
@@ -437,19 +464,62 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
                 session.activeUnits.isEmpty
             else { return Outcome(.none) }
             sessions[token] = nil
-            return Outcome(resolveLocked(admits: session.revealed))
+            return Outcome(resolveLocked(admits: session.revealed), logs: [endedLocked(session)])
         }
         deliver(outcome)
     }
 
-    /// Runs an event's deferred work — the emission and the idle arming — with
-    /// `lock` released.
+    /// Runs an event's deferred work — the records, the emission and the idle
+    /// arming — with `lock` released.
     private func deliver(_ outcome: Outcome) {
-        if case .emit(let snapshot) = outcome.publish { emit(snapshot) }
+        for event in outcome.logs { Self.log(event) }
+        if case .emit(let snapshot, let session) = outcome.publish {
+            emit(snapshot)
+            Self.logEmission(snapshot, session: session)
+        }
         guard let arm = outcome.armIdle else { return }
         schedule(idleLinger) { [weak self] in
             self?.idleTerminalFired(token: arm.token, epoch: arm.epoch)
         }
+    }
+
+    // MARK: - Records
+
+    /// Captures a session's terminal for `deliver` to log.
+    ///
+    /// Caller holds `lock`.
+    private func endedLocked(_ session: Session) -> LogEvent {
+        .ended(
+            session: session.token.value, elapsed: max(0, now() - session.startedAt),
+            transferred: session.transferredBytes, total: session.totalBytes,
+            revealed: session.revealed)
+    }
+
+    private static func log(_ event: LogEvent) {
+        switch event {
+        case .revealed(let session, let elapsed, let transferred, let total):
+            logger.info(
+                "Progress session \(session, privacy: .public) revealed at \(ClipboardProgressFormat.logSeconds(elapsed), privacy: .public) — \(transferred, privacy: .public)/\(total, privacy: .public) bytes"
+            )
+        case .ended(let session, let elapsed, let transferred, let total, let revealed):
+            logger.info(
+                "Progress session \(session, privacy: .public) ended after \(ClipboardProgressFormat.logSeconds(elapsed), privacy: .public) — \(transferred, privacy: .public)/\(total, privacy: .public) bytes, revealed=\(revealed, privacy: .public)"
+            )
+        }
+    }
+
+    /// Records what just went to the UI — one line per admitted emission, which
+    /// the throttle already bounds to a rate a log can carry.
+    private static func logEmission(
+        _ snapshot: ClipboardProgressSnapshot?, session: SessionToken?
+    ) {
+        guard let snapshot, let session else {
+            logger.debug("Progress readout cleared")
+            return
+        }
+        logger.debug(
+            "Progress readout \(session.value, privacy: .public) — \(snapshot.bytesTransferred, privacy: .public)/\(snapshot.totalBytes, privacy: .public) bytes, \(ClipboardProgressFormat.logSeconds(snapshot.elapsedSeconds), privacy: .public) elapsed, \(ClipboardProgressFormat.logSeconds(snapshot.secondsRemaining), privacy: .public) remaining"
+        )
     }
 
     // MARK: - Reveal, throttle, projection
@@ -462,19 +532,24 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
     /// since a folder can complete thousands of small files faster than a screen
     /// is worth repainting. The final update is never lost: the throttle's
     /// final-chunk rule always admits the update that reaches the total.
-    private func resolveLocked(trigger: Session) -> Publish {
+    private func resolveLocked(trigger: Session) -> Outcome {
         let sampledAt = now()
         let transferred = trigger.transferredBytes
         trigger.rate.record(bytes: transferred, seconds: sampledAt)
 
+        var logs: [LogEvent] = []
         let admits: Bool
         if !trigger.revealed {
-            guard sampledAt - trigger.startedAt >= revealDelay else { return .none }
+            guard sampledAt - trigger.startedAt >= revealDelay else { return Outcome(.none) }
             trigger.revealed = true
             // The reveal bypassed the throttle, so its watermarks must still
             // reflect what just went on screen — otherwise the next update would
             // measure its delta from a byte count already shown.
             trigger.coalescer.markForwarded(bytesTransferred: transferred)
+            logs.append(
+                .revealed(
+                    session: trigger.token.value, elapsed: sampledAt - trigger.startedAt,
+                    transferred: transferred, total: trigger.totalBytes))
             admits = true
         } else {
             admits = trigger.coalescer.shouldForward(
@@ -484,7 +559,7 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
         if let current = trigger.activeUnits.last, let name = trigger.units[current]?.name {
             trigger.lastActiveName = name
         }
-        return resolveLocked(admits: admits)
+        return Outcome(resolveLocked(admits: admits), logs: logs)
     }
 
     /// Resolves what to publish for an event whose admission is already decided.
@@ -495,17 +570,17 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
         let projection = projectionLocked()
         guard projection != nil || showing else { return .none }
         showing = projection != nil
-        return .emit(projection)
+        return .emit(projection?.snapshot, session: projection?.token)
     }
 
     /// The most-significant revealed session — the one with the most bytes
-    /// *remaining* (ties broken by the older session), or `nil` when none is
-    /// revealed.
+    /// *remaining* (ties broken by the older session) — as its snapshot and the
+    /// token naming it, or `nil` when none is revealed.
     ///
     /// Ranking by bytes-remaining, not largest-total, keeps a just-finished
     /// operation lingering at 100 % from masking a freshly-started one. Caller
     /// holds `lock`.
-    private func projectionLocked() -> ClipboardProgressSnapshot? {
+    private func projectionLocked() -> (token: SessionToken, snapshot: ClipboardProgressSnapshot)? {
         func remaining(_ session: Session) -> UInt64 {
             let total = session.totalBytes
             let done = min(session.transferredBytes, total)
@@ -521,7 +596,7 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
         guard let session = winner else { return nil }
         let transferred = session.transferredBytes
         let total = session.totalBytes
-        return ClipboardProgressSnapshot(
+        let snapshot = ClipboardProgressSnapshot(
             direction: session.direction,
             peerName: session.peerName,
             currentItemName: session.lastActiveName,
@@ -533,5 +608,6 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
             secondsRemaining: session.rate.secondsRemaining(bytes: transferred, total: total),
             isPasteSession: session.isPaste,
             elapsedSeconds: max(0, now() - session.startedAt))
+        return (session.token, snapshot)
     }
 }

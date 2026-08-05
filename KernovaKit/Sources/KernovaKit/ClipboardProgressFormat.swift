@@ -106,4 +106,11 @@ public enum ClipboardProgressFormat {
         }
         return parts.joined(separator: " — ")
     }
+
+    /// Seconds as a log record spells them ("2.00 s"), or `unknown` where there
+    /// is no estimate — never shown to a user, who gets `timeRemaining` instead.
+    static func logSeconds(_ value: TimeInterval?) -> String {
+        guard let value else { return "unknown" }
+        return String(format: "%.2f s", value)
+    }
 }
