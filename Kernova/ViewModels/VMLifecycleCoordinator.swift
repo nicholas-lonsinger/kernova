@@ -307,7 +307,7 @@ final class VMLifecycleCoordinator {
                             Self.logger.error(
                                 "installMacOS: refusing to honor requestedFreshDownload for non-IPSW destination '\(downloadDestination.path(percentEncoded: false), privacy: .public)'"
                             )
-                            throw IPSWError.invalidDownloadDestination(
+                            throw DownloadError.invalidDownloadDestination(
                                 path: downloadDestination.path(percentEncoded: false)
                             )
                         }

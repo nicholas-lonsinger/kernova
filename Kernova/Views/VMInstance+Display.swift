@@ -97,7 +97,7 @@ extension VMInstance {
             context.source.downloadsImage,
             let destinationURL = context.downloadDestinationURL
         else { return false }
-        let bundle = IPSWBundle(url: IPSWService.resumeBundleURL(for: destinationURL))
+        let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destinationURL))
         return bundle.isResumable
             && !FileManager.default.fileExists(atPath: destinationURL.path(percentEncoded: false))
     }

@@ -87,8 +87,11 @@ substitute mocks. Services split by concurrency: those that touch
   `~/Library/Application Support/Kernova/VMs/`. Deletion has two dispositions, `deleteVMBundle`
   (Trash) and `permanentlyDeleteVMBundle` (the user-confirmed bypass).
 - `DiskImageService` — creates ASIF disk images by decompressing bundled templates in-process.
-- `IPSWService` (a `final class`, for `URLSession` lifetime) — resolves the latest supported restore
-  image through VZ and streams IPSW downloads into a resumable `.kernovadownload` bundle.
+- `DownloadService` (a `final class`, for `URLSession` lifetime) — streams a remote file into a
+  resumable `.kernovadownload` bundle beside its destination, serialized per destination path by a
+  static claim table so two callers can never write one bundle.
+- `IPSWService` — resolves the latest supported restore image through VZ, and hands restore-image
+  transfers to the `DownloadService` it owns.
 - `RestoreImageCatalogService` — decodes the bundled snapshot of selectable macOS restore images,
   `Kernova/Resources/RestoreImageCatalog.json`, backing the wizard's "Choose a Version…" source. It
   reaches no network; only the image the user picks is fetched, by `IPSWService`.
@@ -248,7 +251,7 @@ AppDelegate
     │                 ├── VMStorageService
     │                 ├── DiskImageService
     │                 ├── VMDirectoryWatcher, SystemSleepWatcher
-    │                 └── FileSystemOperating (trash/remove seam; also held by IPSWService)
+    │                 └── FileSystemOperating (trash/remove seam; also held by DownloadService)
     ├── creates → VMLifecycleCoordinator
     │                 ├── VirtualizationService
     │                 ├── MacOSInstallService

@@ -420,7 +420,7 @@ struct VMLifecycleCoordinatorTests {
         let downloads = FileManager.default.temporaryDirectory
             .appendingPathComponent("latestDestination-\(UUID().uuidString)", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: downloads)
-        ipswService.downloadError = IPSWError.downloadFailed(URLError(.notConnectedToInternet))
+        ipswService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
         let instance = makeInstance()
         let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
         let context = MacOSInstallContext(
@@ -430,7 +430,7 @@ struct VMLifecycleCoordinatorTests {
         instance.configuration.installContext = context
         instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
 
-        await #expect(throws: IPSWError.self) {
+        await #expect(throws: DownloadError.self) {
             try await coordinator.installMacOS(on: instance, context: context)
         }
 
@@ -506,7 +506,7 @@ struct VMLifecycleCoordinatorTests {
     @Test("installMacOS sets status to error on service failure")
     func installMacOSError() async {
         let (coordinator, _, installService, _, _) = makeCoordinator()
-        installService.installError = IPSWError.downloadFailed(URLError(.badServerResponse))
+        installService.installError = DownloadError.downloadFailed(URLError(.badServerResponse))
         let instance = makeInstance()
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
 
@@ -622,7 +622,7 @@ struct VMLifecycleCoordinatorTests {
         let temp = FileManager.default.temporaryDirectory
             .appendingPathComponent("freshDownloadMoved-\(UUID().uuidString)", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
-        ipswService.downloadError = IPSWError.downloadFailed(URLError(.notConnectedToInternet))
+        ipswService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
         let instance = makeInstance()
 
         let persisted = temp.appendingPathComponent(RestoreImageFilename.fallback)
@@ -634,7 +634,7 @@ struct VMLifecycleCoordinatorTests {
         instance.configuration.installContext = context
         instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
 
-        await #expect(throws: IPSWError.self) {
+        await #expect(throws: DownloadError.self) {
             try await coordinator.installMacOS(on: instance, context: context)
         }
 
@@ -662,7 +662,7 @@ struct VMLifecycleCoordinatorTests {
         let temp = FileManager.default.temporaryDirectory
             .appendingPathComponent("freshDownloadOnce-\(UUID().uuidString)", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
-        ipswService.downloadError = IPSWError.downloadFailed(URLError(.notConnectedToInternet))
+        ipswService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
         let instance = makeInstance()
 
         // Honored, not lapsed: the persisted destination is already the one the
@@ -677,7 +677,7 @@ struct VMLifecycleCoordinatorTests {
         instance.configuration.installContext = context
         instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
 
-        await #expect(throws: IPSWError.self) {
+        await #expect(throws: DownloadError.self) {
             try await coordinator.installMacOS(on: instance, context: context)
         }
 
@@ -698,7 +698,7 @@ struct VMLifecycleCoordinatorTests {
         // actually requested and can fail.
         let destination = temp.appendingPathComponent(
             RestoreImageFilename.destination(for: ipswService.fetchResult.url))
-        ipswService.downloadError = IPSWError.freshDownloadCleanupFailed(
+        ipswService.downloadError = DownloadError.freshDownloadCleanupFailed(
             path: destination.path(percentEncoded: false),
             underlying: NSError(
                 domain: NSCocoaErrorDomain,
@@ -719,7 +719,7 @@ struct VMLifecycleCoordinatorTests {
         do {
             try await coordinator.installMacOS(on: instance, context: context)
             Issue.record("Expected freshDownloadCleanupFailed")
-        } catch IPSWError.freshDownloadCleanupFailed {
+        } catch DownloadError.freshDownloadCleanupFailed {
             #expect(instance.status == .error)
             #expect(installService.installCallCount == 0, "Install must not run on a failed download")
         } catch {
@@ -755,7 +755,7 @@ struct VMLifecycleCoordinatorTests {
         do {
             try await coordinator.installMacOS(on: instance, context: context)
             Issue.record("Expected invalidDownloadDestination")
-        } catch IPSWError.invalidDownloadDestination {
+        } catch DownloadError.invalidDownloadDestination {
             #expect(instance.status == .error)
             #expect(ipswService.discardResumeDataCallCount == 0)
             #expect(ipswService.downloadCallCount == 0)
@@ -844,7 +844,7 @@ struct VMLifecycleCoordinatorTests {
         let downloads = FileManager.default.temporaryDirectory
             .appendingPathComponent("networkFailure-\(UUID().uuidString)", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: downloads)
-        ipswService.downloadError = IPSWError.downloadFailed(URLError(.notConnectedToInternet))
+        ipswService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
         let instance = makeInstance()
         // Already naming the file the resolved image derives, so the retry
         // context that survives is the one that went in.

@@ -3,21 +3,21 @@ import Testing
 
 @testable import Kernova
 
-@Suite("IPSWBundle Tests")
-struct IPSWBundleTests {
+@Suite("DownloadBundle Tests")
+struct DownloadBundleTests {
     /// Creates a unique temp directory for a single test and returns it.
     ///
     /// The caller is responsible for removing it (typically via `defer`).
     private static func makeTempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("IPSWBundleTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("DownloadBundleTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 
     private static let defaultMetadataURL: URL = {
         guard let url = URL(string: "https://example.com/RestoreImage.ipsw") else {
-            assertionFailure("IPSWBundleTests: failed to construct default metadata URL")
+            assertionFailure("DownloadBundleTests: failed to construct default metadata URL")
             return URL(filePath: "/")
         }
         return url
@@ -27,8 +27,8 @@ struct IPSWBundleTests {
         url: URL = defaultMetadataURL,
         etag: String? = "\"abc123\"",
         lastModified: String? = "Mon, 01 Jan 2026 00:00:00 GMT"
-    ) -> IPSWDownloadMetadata {
-        IPSWDownloadMetadata(
+    ) -> DownloadBundleMetadata {
+        DownloadBundleMetadata(
             originalURL: url,
             etag: etag,
             lastModified: lastModified,
@@ -39,7 +39,7 @@ struct IPSWBundleTests {
     @Test("resumeBundleURL swaps .ipsw for .kernovadownload")
     func resumeBundleURLSwapsExtension() {
         let destination = URL(fileURLWithPath: "/tmp/Foo/RestoreImage.ipsw")
-        let bundle = IPSWService.resumeBundleURL(for: destination)
+        let bundle = DownloadService.resumeBundleURL(for: destination)
         #expect(bundle.lastPathComponent == "RestoreImage.kernovadownload")
         #expect(bundle.deletingLastPathComponent().path == "/tmp/Foo")
     }
@@ -49,7 +49,7 @@ struct IPSWBundleTests {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let bundleURL = temp.appendingPathComponent("RestoreImage.kernovadownload")
-        let bundle = IPSWBundle(url: bundleURL)
+        let bundle = DownloadBundle(url: bundleURL)
         let metadata = Self.makeMetadata()
 
         try bundle.prepareForFreshDownload(with: metadata)
@@ -67,7 +67,7 @@ struct IPSWBundleTests {
     func partialByteCountTracksFileSize() throws {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
-        let bundle = IPSWBundle(url: temp.appendingPathComponent("R.kernovadownload"))
+        let bundle = DownloadBundle(url: temp.appendingPathComponent("R.kernovadownload"))
         try bundle.prepareForFreshDownload(with: Self.makeMetadata())
 
         let handle = try FileHandle(forWritingTo: bundle.dataURL)
@@ -86,7 +86,7 @@ struct IPSWBundleTests {
     func truncateDataZeroesFile() throws {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
-        let bundle = IPSWBundle(url: temp.appendingPathComponent("R.kernovadownload"))
+        let bundle = DownloadBundle(url: temp.appendingPathComponent("R.kernovadownload"))
         try bundle.prepareForFreshDownload(with: Self.makeMetadata())
 
         let handle = try FileHandle(forWritingTo: bundle.dataURL)
@@ -102,7 +102,7 @@ struct IPSWBundleTests {
     func loadMetadataThrowsOnGarbage() throws {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
-        let bundle = IPSWBundle(url: temp.appendingPathComponent("R.kernovadownload"))
+        let bundle = DownloadBundle(url: temp.appendingPathComponent("R.kernovadownload"))
         try bundle.prepareForFreshDownload(with: Self.makeMetadata())
 
         try Data("not a plist".utf8).write(to: bundle.infoPlistURL, options: .atomic)
@@ -115,7 +115,7 @@ struct IPSWBundleTests {
     func finalizeMovesDataToDestination() throws {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
-        let bundle = IPSWBundle(url: temp.appendingPathComponent("R.kernovadownload"))
+        let bundle = DownloadBundle(url: temp.appendingPathComponent("R.kernovadownload"))
         try bundle.prepareForFreshDownload(with: Self.makeMetadata())
 
         let payload = Data(repeating: 0x42, count: 8192)
@@ -130,7 +130,7 @@ struct IPSWBundleTests {
         let movedData = try Data(contentsOf: destination)
         #expect(movedData == payload)
         // Disposal is the caller's separate, non-fatal step
-        // (`IPSWService.discardResumeData`), so finalize leaves the spent
+        // (`DownloadService.discardResumeData`), so finalize leaves the spent
         // bundle behind — data-less, and therefore not resumable.
         #expect(bundle.exists)
         #expect(!bundle.isResumable)
@@ -140,7 +140,7 @@ struct IPSWBundleTests {
     func finalizeReplacesExistingDestination() throws {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
-        let bundle = IPSWBundle(url: temp.appendingPathComponent("R.kernovadownload"))
+        let bundle = DownloadBundle(url: temp.appendingPathComponent("R.kernovadownload"))
         try bundle.prepareForFreshDownload(with: Self.makeMetadata())
 
         let fresh = Data(repeating: 0xBE, count: 2048)
@@ -161,7 +161,7 @@ struct IPSWBundleTests {
     func isResumableRequiresDataFile() throws {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
-        let bundle = IPSWBundle(url: temp.appendingPathComponent("R.kernovadownload"))
+        let bundle = DownloadBundle(url: temp.appendingPathComponent("R.kernovadownload"))
 
         // Absent bundle.
         #expect(!bundle.exists)
@@ -182,7 +182,7 @@ struct IPSWBundleTests {
 
     @Test("Content-Range parses canonical bytes header")
     func contentRangeParsesCanonical() {
-        let result = IPSWService.parseContentRange("bytes 0-499/1234")
+        let result = DownloadService.parseContentRange("bytes 0-499/1234")
         #expect(result?.start == 0)
         #expect(result?.end == 499)
         #expect(result?.total == 1234)
@@ -190,22 +190,22 @@ struct IPSWBundleTests {
 
     @Test("Content-Range returns nil for unparseable input")
     func contentRangeRejectsGarbage() {
-        #expect(IPSWService.parseContentRange("garbage") == nil)
-        #expect(IPSWService.parseContentRange("bytes */1234") == nil)
+        #expect(DownloadService.parseContentRange("garbage") == nil)
+        #expect(DownloadService.parseContentRange("bytes */1234") == nil)
     }
 
     @Test("Content-Range rejects malformed range/total combinations")
     func contentRangeRejectsMalformed() {
         // Empty start (would slice incorrectly if not validated)
-        #expect(IPSWService.parseContentRange("bytes -100-499/1234") == nil)
+        #expect(DownloadService.parseContentRange("bytes -100-499/1234") == nil)
         // Three components in the range portion — extra dash
-        #expect(IPSWService.parseContentRange("bytes 100--499/1234") == nil)
+        #expect(DownloadService.parseContentRange("bytes 100--499/1234") == nil)
         // Non-numeric total
-        #expect(IPSWService.parseContentRange("bytes 0-499/foo") == nil)
+        #expect(DownloadService.parseContentRange("bytes 0-499/foo") == nil)
         // Trailing garbage after total
-        #expect(IPSWService.parseContentRange("bytes 0-499/1234; extra") == nil)
+        #expect(DownloadService.parseContentRange("bytes 0-499/1234; extra") == nil)
         // Missing dash in the start-end portion
-        #expect(IPSWService.parseContentRange("bytes 0/1234") == nil)
+        #expect(DownloadService.parseContentRange("bytes 0/1234") == nil)
     }
 
     @Test("Content-Range accepts header without the `bytes ` unit prefix")
@@ -213,7 +213,7 @@ struct IPSWBundleTests {
         // Permissive on the unit token — the parseable shape `start-end/total`
         // is what callers actually rely on. Documenting the current behavior
         // so it doesn't drift silently.
-        let result = IPSWService.parseContentRange("0-499/1234")
+        let result = DownloadService.parseContentRange("0-499/1234")
         #expect(result?.start == 0)
         #expect(result?.end == 499)
         #expect(result?.total == 1234)
@@ -224,12 +224,12 @@ struct IPSWBundleTests {
         // Real-world proxies occasionally insert spaces around `-` or `/`.
         // The canonical form is still `bytes 0-499/1234`; accepting the
         // spaced variant is defensive parsing.
-        let spaced = IPSWService.parseContentRange("bytes 0 - 499 / 1234")
+        let spaced = DownloadService.parseContentRange("bytes 0 - 499 / 1234")
         #expect(spaced?.start == 0)
         #expect(spaced?.end == 499)
         #expect(spaced?.total == 1234)
 
-        let leading = IPSWService.parseContentRange("  bytes 100-200/300  ")
+        let leading = DownloadService.parseContentRange("  bytes 100-200/300  ")
         #expect(leading?.start == 100)
         #expect(leading?.end == 200)
         #expect(leading?.total == 300)
@@ -240,15 +240,15 @@ struct IPSWBundleTests {
         // The previous `Int64()` parser would have happily returned -5,
         // which the caller would then compare against `partialByteCount`
         // (never < 0) and silently move on — wrong. `\d+` rejects.
-        #expect(IPSWService.parseUnsatisfiableTotal("bytes */-5") == nil)
+        #expect(DownloadService.parseUnsatisfiableTotal("bytes */-5") == nil)
     }
 
     @Test("parseUnsatisfiableTotal extracts total from 416 header")
     func parseUnsatisfiableTotalExtractsTotal() {
-        #expect(IPSWService.parseUnsatisfiableTotal("bytes */1234") == 1234)
-        #expect(IPSWService.parseUnsatisfiableTotal("*/0") == 0)
-        #expect(IPSWService.parseUnsatisfiableTotal(nil) == nil)
-        #expect(IPSWService.parseUnsatisfiableTotal("malformed") == nil)
+        #expect(DownloadService.parseUnsatisfiableTotal("bytes */1234") == 1234)
+        #expect(DownloadService.parseUnsatisfiableTotal("*/0") == 0)
+        #expect(DownloadService.parseUnsatisfiableTotal(nil) == nil)
+        #expect(DownloadService.parseUnsatisfiableTotal("malformed") == nil)
     }
 }
 

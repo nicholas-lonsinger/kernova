@@ -200,7 +200,7 @@ struct MacOSVersionTests {
 ///
 /// Deliberately its own class rather than `StubURLProtocol`: that one's handler
 /// is a global, and Swift Testing runs suites in parallel, so sharing it lets
-/// this suite and `IPSWServiceDownloadTests` clobber each other's handler.
+/// this suite and `DownloadServiceTests` clobber each other's handler.
 /// `.serialized` orders tests *within* a suite and does not prevent that.
 final class ProbeStubURLProtocol: URLProtocol, @unchecked Sendable {
     struct Reply {

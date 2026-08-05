@@ -443,9 +443,9 @@ struct VMInstanceTests {
         try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
 
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
-        let bundle = IPSWBundle(url: IPSWService.resumeBundleURL(for: destination))
+        let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destination))
         try bundle.prepareForFreshDownload(
-            with: IPSWDownloadMetadata(
+            with: DownloadBundleMetadata(
                 originalURL: URL(fileURLWithPath: "/tmp/RestoreImage.ipsw"),
                 etag: nil,
                 lastModified: nil,

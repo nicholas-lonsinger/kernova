@@ -3,26 +3,26 @@ import Testing
 
 @testable import Kernova
 
-/// Integration tests for `IPSWService.downloadRestoreImage`.
+/// Integration tests for `DownloadService.download`.
 ///
 /// Drives the full HTTP flow against a stub `URLProtocol`. The stub returns
 /// canned responses keyed by `Range` header presence so the same suite can
 /// exercise fresh downloads, resume happy paths, file-changed scenarios, and
 /// 416 handling without touching the network.
-@Suite("IPSWService Download Tests", .serialized)
-struct IPSWServiceDownloadTests {
+@Suite("DownloadService Tests", .serialized)
+struct DownloadServiceTests {
     // MARK: - Test infrastructure
 
     /// Creates a unique temp directory for a single test.
     private static func makeTempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent(
-                "IPSWServiceDownloadTests-\(UUID().uuidString)", isDirectory: true)
+                "DownloadServiceTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 
-    /// Builds an `IPSWService` whose `URLSession` routes every request through `StubURLProtocol`.
+    /// Builds a `DownloadService` whose `URLSession` routes every request through `StubURLProtocol`.
     ///
     /// The configuration is `.ephemeral` to avoid any disk caching between tests.
     /// The default throwaway `MockFileSystem` keeps successful-download
@@ -30,16 +30,16 @@ struct IPSWServiceDownloadTests {
     /// run; tests that assert on the disposal pass their own mock.
     private static func makeServiceWithStub(
         fileSystem: any FileSystemOperating = MockFileSystem()
-    ) -> IPSWService {
+    ) -> DownloadService {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses =
             [StubURLProtocol.self] + (configuration.protocolClasses ?? [])
-        return IPSWService(sessionConfiguration: configuration, fileSystem: fileSystem)
+        return DownloadService(sessionConfiguration: configuration, fileSystem: fileSystem)
     }
 
     private static func mustParseURL(_ string: String) -> URL {
         guard let url = URL(string: string) else {
-            assertionFailure("IPSWServiceDownloadTests: failed to construct URL from '\(string)'")
+            assertionFailure("DownloadServiceTests: failed to construct URL from '\(string)'")
             return URL(filePath: "/")
         }
         return url
@@ -70,7 +70,7 @@ struct IPSWServiceDownloadTests {
 
         let fileSystem = MockFileSystem()
         let service = Self.makeServiceWithStub(fileSystem: fileSystem)
-        try await service.downloadRestoreImage(
+        try await service.download(
             from: Self.remoteURL,
             to: destination,
             progressHandler: { _ in }
@@ -81,7 +81,7 @@ struct IPSWServiceDownloadTests {
         #expect(written == payload)
 
         // Bundle has been finalized: the spent bundle went to the Trash seam.
-        let bundleURL = IPSWService.resumeBundleURL(for: destination)
+        let bundleURL = DownloadService.resumeBundleURL(for: destination)
         #expect(fileSystem.trashedURLs == [bundleURL])
     }
 
@@ -107,7 +107,7 @@ struct IPSWServiceDownloadTests {
         fileSystem.trashError = CocoaError(.fileWriteNoPermission)
         let service = Self.makeServiceWithStub(fileSystem: fileSystem)
 
-        try await service.downloadRestoreImage(
+        try await service.download(
             from: Self.remoteURL,
             to: destination,
             progressHandler: { _ in }
@@ -118,12 +118,12 @@ struct IPSWServiceDownloadTests {
 
         // The husk is now a deliberately permitted state: the directory
         // survives the failed disposal, but holds no bytes to resume from.
-        let bundle = IPSWBundle(url: IPSWService.resumeBundleURL(for: destination))
+        let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destination))
         #expect(bundle.exists)
         #expect(!bundle.isResumable)
     }
 
-    @Test("A husk beside a complete IPSW skips the download instead of re-fetching")
+    @Test("A husk beside a complete file skips the download instead of re-fetching")
     func huskBesideCompleteImageTakesSkipPath() async throws {
         // Regression test for the re-download loop: with the skip-existing guard
         // keyed on `exists`, a husk kept the fast path from firing, the absent
@@ -132,15 +132,15 @@ struct IPSWServiceDownloadTests {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
-        let bundleURL = IPSWService.resumeBundleURL(for: destination)
-        let bundle = IPSWBundle(url: bundleURL)
+        let bundleURL = DownloadService.resumeBundleURL(for: destination)
+        let bundle = DownloadBundle(url: bundleURL)
 
         // A complete image at the destination, plus the husk a failed disposal
         // left beside it: metadata intact, `data` already moved away.
         let complete = Data(repeating: 0x99, count: 2048)
         try complete.write(to: destination)
         try bundle.prepareForFreshDownload(
-            with: IPSWDownloadMetadata(
+            with: DownloadBundleMetadata(
                 originalURL: Self.remoteURL,
                 etag: "\"v1\"",
                 lastModified: nil,
@@ -151,7 +151,7 @@ struct IPSWServiceDownloadTests {
         #expect(bundle.exists)
 
         StubURLProtocol.handler = { _ in
-            Issue.record("Husk beside a complete IPSW must not trigger a re-download")
+            Issue.record("Husk beside a complete file must not trigger a re-download")
             return .response(url: Self.remoteURL, statusCode: 500, body: Data(), headers: [:])
         }
         defer { StubURLProtocol.handler = nil }
@@ -159,7 +159,7 @@ struct IPSWServiceDownloadTests {
         let recorder = ProgressRecorder()
         let fileSystem = MockFileSystem()
         let service = Self.makeServiceWithStub(fileSystem: fileSystem)
-        try await service.downloadRestoreImage(
+        try await service.download(
             from: Self.remoteURL,
             to: destination,
             progressHandler: { [recorder] progress in
@@ -180,8 +180,8 @@ struct IPSWServiceDownloadTests {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
-        let bundleURL = IPSWService.resumeBundleURL(for: destination)
-        let bundle = IPSWBundle(url: bundleURL)
+        let bundleURL = DownloadService.resumeBundleURL(for: destination)
+        let bundle = DownloadBundle(url: bundleURL)
 
         let prefix = Data(repeating: 0x11, count: 1024)
         let suffix = Data(repeating: 0x22, count: 2048)
@@ -189,7 +189,7 @@ struct IPSWServiceDownloadTests {
 
         // Seed the bundle with the first half of the payload and metadata.
         try bundle.prepareForFreshDownload(
-            with: IPSWDownloadMetadata(
+            with: DownloadBundleMetadata(
                 originalURL: Self.remoteURL,
                 etag: "\"v1\"",
                 lastModified: "Mon, 01 Jan 2026 00:00:00 GMT",
@@ -214,7 +214,7 @@ struct IPSWServiceDownloadTests {
         defer { StubURLProtocol.handler = nil }
 
         let service = Self.makeServiceWithStub()
-        try await service.downloadRestoreImage(
+        try await service.download(
             from: Self.remoteURL,
             to: destination,
             progressHandler: { _ in }
@@ -229,8 +229,8 @@ struct IPSWServiceDownloadTests {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
-        let bundleURL = IPSWService.resumeBundleURL(for: destination)
-        let bundle = IPSWBundle(url: bundleURL)
+        let bundleURL = DownloadService.resumeBundleURL(for: destination)
+        let bundle = DownloadBundle(url: bundleURL)
 
         // Seed bundle with stale partial data. The new payload is INTENTIONALLY
         // shorter than the stale data; if truncation didn't happen, the final
@@ -239,7 +239,7 @@ struct IPSWServiceDownloadTests {
         // instead of just confirming "no bytes overlap visibly."
         let stale = Data(repeating: 0xFF, count: 8192)
         try bundle.prepareForFreshDownload(
-            with: IPSWDownloadMetadata(
+            with: DownloadBundleMetadata(
                 originalURL: Self.remoteURL,
                 etag: "\"stale-v1\"",
                 lastModified: nil,
@@ -257,7 +257,7 @@ struct IPSWServiceDownloadTests {
         defer { StubURLProtocol.handler = nil }
 
         let service = Self.makeServiceWithStub()
-        try await service.downloadRestoreImage(
+        try await service.download(
             from: Self.remoteURL,
             to: destination,
             progressHandler: { _ in }
@@ -275,12 +275,12 @@ struct IPSWServiceDownloadTests {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
-        let bundleURL = IPSWService.resumeBundleURL(for: destination)
-        let bundle = IPSWBundle(url: bundleURL)
+        let bundleURL = DownloadService.resumeBundleURL(for: destination)
+        let bundle = DownloadBundle(url: bundleURL)
 
         let complete = Data(repeating: 0x77, count: 4096)
         try bundle.prepareForFreshDownload(
-            with: IPSWDownloadMetadata(
+            with: DownloadBundleMetadata(
                 originalURL: Self.remoteURL,
                 etag: "\"v1\"",
                 lastModified: nil,
@@ -301,7 +301,7 @@ struct IPSWServiceDownloadTests {
 
         let fileSystem = MockFileSystem()
         let service = Self.makeServiceWithStub(fileSystem: fileSystem)
-        try await service.downloadRestoreImage(
+        try await service.download(
             from: Self.remoteURL,
             to: destination,
             progressHandler: { _ in }
@@ -323,13 +323,13 @@ struct IPSWServiceDownloadTests {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
-        let bundleURL = IPSWService.resumeBundleURL(for: destination)
-        let bundle = IPSWBundle(url: bundleURL)
+        let bundleURL = DownloadService.resumeBundleURL(for: destination)
+        let bundle = DownloadBundle(url: bundleURL)
 
         // Seed a partial bundle so the resume Range header is sent and the
         // 206 branch is selected.
         try bundle.prepareForFreshDownload(
-            with: IPSWDownloadMetadata(
+            with: DownloadBundleMetadata(
                 originalURL: Self.remoteURL,
                 etag: "\"v1\"",
                 lastModified: nil,
@@ -351,13 +351,13 @@ struct IPSWServiceDownloadTests {
 
         let service = Self.makeServiceWithStub()
         do {
-            try await service.downloadRestoreImage(
+            try await service.download(
                 from: Self.remoteURL,
                 to: destination,
                 progressHandler: { _ in }
             )
             Issue.record("Expected fail-fast on 206 without Content-Range")
-        } catch IPSWError.downloadFailed {
+        } catch DownloadError.downloadFailed {
             // Expected
         } catch {
             Issue.record("Unexpected error: \(error)")
@@ -369,7 +369,7 @@ struct IPSWServiceDownloadTests {
         #expect(!FileManager.default.fileExists(atPath: destination.path))
     }
 
-    @Test("4xx server error throws IPSWError.downloadFailed")
+    @Test("4xx server error throws DownloadError.downloadFailed")
     func httpErrorThrows() async throws {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
@@ -382,13 +382,13 @@ struct IPSWServiceDownloadTests {
 
         let service = Self.makeServiceWithStub()
         do {
-            try await service.downloadRestoreImage(
+            try await service.download(
                 from: Self.remoteURL,
                 to: destination,
                 progressHandler: { _ in }
             )
-            Issue.record("Expected downloadRestoreImage to throw on 404")
-        } catch IPSWError.downloadFailed {
+            Issue.record("Expected download to throw on 404")
+        } catch DownloadError.downloadFailed {
             // Expected
         } catch {
             Issue.record("Unexpected error: \(error)")
@@ -411,7 +411,7 @@ struct IPSWServiceDownloadTests {
 
         let progressBox = ProgressRecorder()
         let service = Self.makeServiceWithStub()
-        try await service.downloadRestoreImage(
+        try await service.download(
             from: Self.remoteURL,
             to: destination,
             progressHandler: { [progressBox] progress in
@@ -446,13 +446,13 @@ struct IPSWServiceDownloadTests {
 
         let service = Self.makeServiceWithStub()
         do {
-            try await service.downloadRestoreImage(
+            try await service.download(
                 from: Self.remoteURL,
                 to: destination,
                 progressHandler: { _ in }
             )
-            Issue.record("Expected downloadRestoreImage to throw on mid-stream failure")
-        } catch IPSWError.downloadFailed {
+            Issue.record("Expected download to throw on mid-stream failure")
+        } catch DownloadError.downloadFailed {
             // Expected
         } catch {
             Issue.record("Unexpected error: \(error)")
@@ -463,7 +463,7 @@ struct IPSWServiceDownloadTests {
         // the error before yielding any of the buffered bytes — what matters is
         // that the bundle survived for a future resume.
         #expect(!FileManager.default.fileExists(atPath: destination.path))
-        let bundle = IPSWBundle(url: IPSWService.resumeBundleURL(for: destination))
+        let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destination))
         #expect(bundle.exists)
         #expect(bundle.partialByteCount <= Int64(partial.count))
     }
@@ -473,11 +473,11 @@ struct IPSWServiceDownloadTests {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
-        let bundleURL = IPSWService.resumeBundleURL(for: destination)
+        let bundleURL = DownloadService.resumeBundleURL(for: destination)
 
         // Hand-craft a bundle with garbage in Info.plist and bogus data.
         try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
-        let bundle = IPSWBundle(url: bundleURL)
+        let bundle = DownloadBundle(url: bundleURL)
         try Data("not a plist".utf8).write(to: bundle.infoPlistURL)
         try Data(repeating: 0xCC, count: 1024).write(to: bundle.dataURL)
 
@@ -492,7 +492,7 @@ struct IPSWServiceDownloadTests {
         defer { StubURLProtocol.handler = nil }
 
         let service = Self.makeServiceWithStub()
-        try await service.downloadRestoreImage(
+        try await service.download(
             from: Self.remoteURL,
             to: destination,
             progressHandler: { _ in }
@@ -507,13 +507,13 @@ struct IPSWServiceDownloadTests {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
-        let bundleURL = IPSWService.resumeBundleURL(for: destination)
-        let bundle = IPSWBundle(url: bundleURL)
+        let bundleURL = DownloadService.resumeBundleURL(for: destination)
+        let bundle = DownloadBundle(url: bundleURL)
 
         // Seed bundle with metadata pointing at a DIFFERENT URL than the
         // caller will pass.
         try bundle.prepareForFreshDownload(
-            with: IPSWDownloadMetadata(
+            with: DownloadBundleMetadata(
                 originalURL: Self.staleRemoteURL,
                 etag: "\"old\"",
                 lastModified: nil,
@@ -534,7 +534,7 @@ struct IPSWServiceDownloadTests {
         defer { StubURLProtocol.handler = nil }
 
         let service = Self.makeServiceWithStub()
-        try await service.downloadRestoreImage(
+        try await service.download(
             from: Self.remoteURL,
             to: destination,
             progressHandler: { _ in }
@@ -553,11 +553,11 @@ struct IPSWServiceDownloadTests {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
-        let bundleURL = IPSWService.resumeBundleURL(for: destination)
-        let bundle = IPSWBundle(url: bundleURL)
+        let bundleURL = DownloadService.resumeBundleURL(for: destination)
+        let bundle = DownloadBundle(url: bundleURL)
 
         try bundle.prepareForFreshDownload(
-            with: IPSWDownloadMetadata(
+            with: DownloadBundleMetadata(
                 originalURL: Self.remoteURL,
                 etag: "\"v1\"",
                 lastModified: nil,
@@ -581,13 +581,13 @@ struct IPSWServiceDownloadTests {
 
         let service = Self.makeServiceWithStub()
         do {
-            try await service.downloadRestoreImage(
+            try await service.download(
                 from: Self.remoteURL,
                 to: destination,
                 progressHandler: { _ in }
             )
             Issue.record("Expected throw on 206 Content-Range start mismatch")
-        } catch IPSWError.downloadFailed {
+        } catch DownloadError.downloadFailed {
             // Expected
         } catch {
             Issue.record("Unexpected error: \(error)")
@@ -607,11 +607,11 @@ struct IPSWServiceDownloadTests {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
-        let bundleURL = IPSWService.resumeBundleURL(for: destination)
-        let bundle = IPSWBundle(url: bundleURL)
+        let bundleURL = DownloadService.resumeBundleURL(for: destination)
+        let bundle = DownloadBundle(url: bundleURL)
 
         try bundle.prepareForFreshDownload(
-            with: IPSWDownloadMetadata(
+            with: DownloadBundleMetadata(
                 originalURL: Self.remoteURL,
                 etag: "\"v1\"",
                 lastModified: nil,
@@ -632,13 +632,13 @@ struct IPSWServiceDownloadTests {
 
         let service = Self.makeServiceWithStub()
         do {
-            try await service.downloadRestoreImage(
+            try await service.download(
                 from: Self.remoteURL,
                 to: destination,
                 progressHandler: { _ in }
             )
             Issue.record("Expected throw on 416 with mismatched size")
-        } catch IPSWError.downloadFailed {
+        } catch DownloadError.downloadFailed {
             // Expected
         } catch {
             Issue.record("Unexpected error: \(error)")
@@ -653,15 +653,15 @@ struct IPSWServiceDownloadTests {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
-        let bundleURL = IPSWService.resumeBundleURL(for: destination)
-        let bundle = IPSWBundle(url: bundleURL)
+        let bundleURL = DownloadService.resumeBundleURL(for: destination)
+        let bundle = DownloadBundle(url: bundleURL)
 
         let prefix = Data(repeating: 0x11, count: 4096)
         let suffix = Data(repeating: 0x22, count: 8192)
         let total = prefix + suffix
 
         try bundle.prepareForFreshDownload(
-            with: IPSWDownloadMetadata(
+            with: DownloadBundleMetadata(
                 originalURL: Self.remoteURL,
                 etag: "\"v1\"",
                 lastModified: nil,
@@ -683,7 +683,7 @@ struct IPSWServiceDownloadTests {
 
         let recorder = ProgressRecorder()
         let service = Self.makeServiceWithStub()
-        try await service.downloadRestoreImage(
+        try await service.download(
             from: Self.remoteURL,
             to: destination,
             progressHandler: { [recorder] progress in
@@ -728,9 +728,9 @@ struct IPSWServiceDownloadTests {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let bundleURL = temp.appendingPathComponent("R.kernovadownload")
-        let bundle = IPSWBundle(url: bundleURL)
+        let bundle = DownloadBundle(url: bundleURL)
         try bundle.prepareForFreshDownload(
-            with: IPSWDownloadMetadata(
+            with: DownloadBundleMetadata(
                 originalURL: Self.remoteURL,
                 etag: "\"v1\"",
                 lastModified: nil,
@@ -739,7 +739,7 @@ struct IPSWServiceDownloadTests {
         )
 
         let (stream, continuation) = AsyncThrowingStream<Data, any Error>.makeStream()
-        let service = IPSWService()
+        let service = DownloadService()
 
         let streamTask = Task {
             try await service.streamBytes(
@@ -785,9 +785,9 @@ struct IPSWServiceDownloadTests {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let bundleURL = temp.appendingPathComponent("R.kernovadownload")
-        let bundle = IPSWBundle(url: bundleURL)
+        let bundle = DownloadBundle(url: bundleURL)
         try bundle.prepareForFreshDownload(
-            with: IPSWDownloadMetadata(
+            with: DownloadBundleMetadata(
                 originalURL: Self.remoteURL,
                 etag: "\"v1\"",
                 lastModified: nil,
@@ -796,7 +796,7 @@ struct IPSWServiceDownloadTests {
         )
 
         let (stream, continuation) = AsyncThrowingStream<Data, any Error>.makeStream()
-        let service = IPSWService()
+        let service = DownloadService()
 
         let streamTask = Task {
             try await service.streamBytes(
@@ -837,9 +837,9 @@ struct IPSWServiceDownloadTests {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let bundleURL = temp.appendingPathComponent("R.kernovadownload")
-        let bundle = IPSWBundle(url: bundleURL)
+        let bundle = DownloadBundle(url: bundleURL)
         try bundle.prepareForFreshDownload(
-            with: IPSWDownloadMetadata(
+            with: DownloadBundleMetadata(
                 originalURL: Self.remoteURL,
                 etag: "\"v1\"",
                 lastModified: nil,
@@ -848,11 +848,11 @@ struct IPSWServiceDownloadTests {
         )
 
         let (stream, continuation) = AsyncThrowingStream<Data, any Error>.makeStream()
-        let service = IPSWService()
+        let service = DownloadService()
 
         // Yield 1024 bytes then finish, but tell streamBytes the expected
         // total is 4096. The loop exits normally and the size check should
-        // throw IPSWError.downloadFailed.
+        // throw DownloadError.downloadFailed.
         continuation.yield(Data(repeating: 0xCC, count: 1024))
         continuation.finish()
 
@@ -864,8 +864,8 @@ struct IPSWServiceDownloadTests {
                 expectedTotal: 4096,
                 progressHandler: { _ in }
             )
-            Issue.record("Expected IPSWError.downloadFailed for short stream")
-        } catch IPSWError.downloadFailed {
+            Issue.record("Expected DownloadError.downloadFailed for short stream")
+        } catch DownloadError.downloadFailed {
             // Expected
         } catch {
             Issue.record("Unexpected error: \(error)")
@@ -892,7 +892,7 @@ struct IPSWServiceDownloadTests {
 
         let progressBox = ProgressRecorder()
         let service = Self.makeServiceWithStub()
-        try await service.downloadRestoreImage(
+        try await service.download(
             from: Self.remoteURL,
             to: destination,
             progressHandler: { [progressBox] progress in
@@ -931,11 +931,11 @@ struct IPSWServiceDownloadTests {
 
         let service = Self.makeServiceWithStub()
         let first = Task {
-            try await service.downloadRestoreImage(
+            try await service.download(
                 from: Self.remoteURL, to: destination, progressHandler: { _ in })
         }
         let second = Task {
-            try await service.downloadRestoreImage(
+            try await service.download(
                 from: Self.remoteURL, to: destination, progressHandler: { _ in })
         }
         try await first.value
@@ -965,7 +965,7 @@ struct IPSWServiceDownloadTests {
         // stays out of the way and the GET below is the replacement download.
         let fileSystem = MockFileSystem()
         let service = Self.makeServiceWithStub(fileSystem: fileSystem)
-        try await service.downloadRestoreImage(
+        try await service.download(
             from: Self.remoteURL,
             to: destination,
             discardsExistingDownload: true,
@@ -995,14 +995,14 @@ struct IPSWServiceDownloadTests {
         let service = Self.makeServiceWithStub(fileSystem: fileSystem)
 
         do {
-            try await service.downloadRestoreImage(
+            try await service.download(
                 from: Self.remoteURL,
                 to: destination,
                 discardsExistingDownload: true,
                 progressHandler: { _ in }
             )
-            Issue.record("Expected downloadRestoreImage to throw when the image can't be trashed")
-        } catch IPSWError.freshDownloadCleanupFailed {
+            Issue.record("Expected download to throw when the image can't be trashed")
+        } catch DownloadError.freshDownloadCleanupFailed {
             // Expected
         } catch {
             Issue.record("Unexpected error: \(error)")
@@ -1019,12 +1019,12 @@ struct IPSWServiceDownloadTests {
             "https://user:secret@cdn.example.com/builds/RestoreImage.ipsw?X-Amz-Signature=abc123&Expires=99#part"
         )
         #expect(
-            IPSWService.loggableURL(signed)
+            DownloadService.loggableURL(signed)
                 == "https://cdn.example.com/builds/RestoreImage.ipsw"
         )
 
         let plain = Self.mustParseURL("https://updates.example.com/2026/UniversalMac.ipsw")
-        #expect(IPSWService.loggableURL(plain) == plain.absoluteString)
+        #expect(DownloadService.loggableURL(plain) == plain.absoluteString)
     }
 }
 
