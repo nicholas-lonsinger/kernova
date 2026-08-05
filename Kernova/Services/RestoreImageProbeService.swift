@@ -29,11 +29,14 @@ final class RestoreImageProbeService: RestoreImageProbing {
     private static let maxRangeBytes: Int64 = 16 * 1024 * 1024
 
     private let session: URLSession
+    private let sizeProbe: RemoteFileSizeProbe
 
     init(sessionConfiguration: URLSessionConfiguration? = nil) {
         let configuration = sessionConfiguration ?? .ephemeral
         configuration.timeoutIntervalForRequest = 30
-        self.session = URLSession(configuration: configuration)
+        let session = URLSession(configuration: configuration)
+        self.session = session
+        self.sizeProbe = RemoteFileSizeProbe(session: session)
     }
 
     deinit {
@@ -66,69 +69,12 @@ final class RestoreImageProbeService: RestoreImageProbing {
 
     // MARK: - HTTP
 
-    /// The file's length in bytes.
-    ///
-    /// `HEAD` answers it wherever a server implements it. A server that refuses
-    /// `HEAD` — pre-signed S3 and CloudFront links answer 403, others 405 — still
-    /// serves the ranged `GET`s the rest of the probe is built from, so a
-    /// non-2xx `HEAD` is not fatal: the one-byte ranged `GET`'s `Content-Range`
-    /// settles the size, and its status settles whether the URL is live at all.
+    /// The file's length in bytes, stated in restore-image terms.
     func size(of url: URL) async throws -> UInt64 {
-        guard url.scheme?.lowercased() == "https" else {
-            throw RestoreImageProbeError.insecureURL
-        }
-
-        var head = URLRequest(url: url)
-        head.httpMethod = "HEAD"
-        if let response = try await responseWithoutBody(for: head),
-            (200..<300).contains(response.statusCode),
-            response.expectedContentLength > 0
-        {
-            return UInt64(response.expectedContentLength)
-        }
-
-        var probe = URLRequest(url: url)
-        probe.setValue("bytes=0-0", forHTTPHeaderField: "Range")
-        guard let response = try await responseWithoutBody(for: probe) else {
-            throw RestoreImageProbeError.unknownSize
-        }
-        guard response.statusCode == 206 else {
-            // 2xx that isn't 206 means the Range header was ignored and the body
-            // is the whole file, which is neither a size nor something to read.
-            guard (200..<300).contains(response.statusCode) else {
-                throw RestoreImageProbeError.unreachable(statusCode: response.statusCode)
-            }
-            throw RestoreImageProbeError.rangeRequestsUnsupported
-        }
-        // `Content-Range: bytes 0-0/19772077142` — the total is after the slash.
-        // A stated zero is refused here rather than returned: callers format the
-        // result as a download size, and `bytes 0-0/0` is a server that does not
-        // know the length, not a file with no bytes.
-        guard let range = response.value(forHTTPHeaderField: "Content-Range"),
-            let total = range.split(separator: "/").last,
-            let bytes = UInt64(total.trimmingCharacters(in: .whitespaces)),
-            bytes > 0
-        else {
-            throw RestoreImageProbeError.unknownSize
-        }
-        return bytes
-    }
-
-    /// The response to `request`, with its body abandoned unread.
-    ///
-    /// `URLSession.bytes(for:)` surfaces the response as the body starts
-    /// arriving and streams the rest under backpressure, so cancelling here
-    /// costs one read-ahead buffer. `data(for:)` in its place buffers a server's
-    /// entire multi-gigabyte answer to a ranged request before the status can be
-    /// looked at. `nil` means the response was not HTTP.
-    private func responseWithoutBody(for request: URLRequest) async throws -> HTTPURLResponse? {
         do {
-            let (stream, response) = try await session.bytes(for: request)
-            stream.task.cancel()
-            return response as? HTTPURLResponse
-        } catch let error as URLError {
-            throw RestoreImageProbeError.transportFailed(
-                description: error.localizedDescription)
+            return try await sizeProbe.size(of: url)
+        } catch let error as RemoteFileSizeError {
+            throw RestoreImageProbeError(error)
         }
     }
 

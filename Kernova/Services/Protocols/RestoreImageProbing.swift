@@ -33,6 +33,19 @@ enum RestoreImageProbeError: LocalizedError, Equatable {
     }
 }
 
+extension RestoreImageProbeError {
+    /// States a size read that did not complete in restore-image terms.
+    init(_ error: RemoteFileSizeError) {
+        switch error {
+        case .insecureURL: self = .insecureURL
+        case .unreachable(let statusCode): self = .unreachable(statusCode: statusCode)
+        case .unknownSize: self = .unknownSize
+        case .rangeRequestsUnsupported: self = .rangeRequestsUnsupported
+        case .transportFailed(let description): self = .transportFailed(description: description)
+        }
+    }
+}
+
 /// Abstraction for checking a user-supplied restore image URL before download.
 protocol RestoreImageProbing: Sendable {
     /// Establishes that `url` serves an image that can install into a VM, and
