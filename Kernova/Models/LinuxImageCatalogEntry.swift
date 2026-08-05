@@ -80,7 +80,7 @@ struct LinuxImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
     /// run of characters — so `debian-13.*-arm64-netinst.iso` takes every point
     /// release of Debian 13 and nothing else.
     func matchesISOFilename(_ filename: String) -> Bool {
-        fnmatch(isoPattern, filename, 0) == 0
+        ISOFilenameGlob(isoPattern)?.matches(filename) ?? false
     }
 
     /// Whether the entry matches a picker search term, over distribution and
