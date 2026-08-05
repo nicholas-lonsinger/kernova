@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import os
 
 /// Serves a clipboard offer's representations to a pasteboard lazily.
 ///
@@ -12,6 +13,10 @@ import Foundation
 public final class LazyClipboardDataProvider: NSObject, NSPasteboardItemDataProvider {
     private let provide: (NSPasteboard.PasteboardType) -> Data?
     private let onFinished: (LazyClipboardDataProvider) -> Void
+
+    // Same category as `LazyClipboardProviderRegistry`, so a fire and the
+    // release of the provider that served it read as one sequence.
+    private static let logger = Logger(subsystem: "app.kernova", category: "ClipboardProvider")
 
     /// - Parameters:
     ///   - provide: produces the bytes for a requested type, or `nil` to leave
@@ -33,7 +38,11 @@ public final class LazyClipboardDataProvider: NSObject, NSPasteboardItemDataProv
         item: NSPasteboardItem,
         provideDataForType type: NSPasteboard.PasteboardType
     ) {
-        guard let data = provide(type) else { return }
+        let data = provide(type)
+        Self.logger.debug(
+            "Provided \(data?.count ?? 0, privacy: .public) bytes for promised type '\(type.rawValue, privacy: .public)'"
+        )
+        guard let data else { return }
         item.setData(data, forType: type)
     }
 

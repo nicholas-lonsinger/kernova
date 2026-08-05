@@ -41,6 +41,11 @@ final class VsockClipboardService: ClipboardServicing {
 
     private let channel: VsockChannel
     private let label: String
+
+    /// Log coordinate for this connection: generations and transfer ids restart
+    /// with every accepted channel, and one instance serves exactly one.
+    private let connectionTag = ClipboardConnectionTag.nextHost()
+
     private let staging: ClipboardFileStaging
 
     /// Holds folder archives built to *send* to the guest, kept separate from
@@ -214,21 +219,21 @@ final class VsockClipboardService: ClipboardServicing {
         let sender = ClipboardStreamSender(channel: channel)
         let receiver = ClipboardStreamReceiver(
             channel: channel, staging: staging,
-            onTransferTimed: { [label = self.label] metrics in
+            onTransferTimed: { [label = self.label, tag = self.connectionTag] metrics in
                 Self.logger.notice(
-                    "Guest→host clipboard transfer \(metrics.transferID, privacy: .public) ('\(label, privacy: .public)') completed: \(metrics.logSummary, privacy: .public)"
+                    "Guest→host clipboard transfer \(metrics.transferID, privacy: .public) ('\(label, privacy: .public)', conn=\(tag, privacy: .public)) completed: \(metrics.logSummary, privacy: .public)"
                 )
             },
             // A lazy pull's per-transfer awaiter takes precedence over these
             // channel-wide closures, so they fire only for an unawaited transfer.
-            onComplete: { transferID, _ in
+            onComplete: { [tag = self.connectionTag] transferID, _ in
                 Self.logger.warning(
-                    "Unawaited inbound clipboard transfer \(transferID, privacy: .public) completed — dropped"
+                    "Unawaited inbound clipboard transfer \(transferID, privacy: .public) (conn=\(tag, privacy: .public)) completed — dropped"
                 )
             },
-            onAbort: { info in
+            onAbort: { [tag = self.connectionTag] info in
                 Self.logger.debug(
-                    "Unawaited inbound clipboard transfer \(info.transferID, privacy: .public) aborted (\(info.code, privacy: .public))"
+                    "Unawaited inbound clipboard transfer \(info.transferID, privacy: .public) (conn=\(tag, privacy: .public)) aborted (\(info.code, privacy: .public))"
                 )
             })
         self.sender = sender
@@ -236,9 +241,11 @@ final class VsockClipboardService: ClipboardServicing {
 
         let channel = self.channel
         let label = self.label
+        let connectionTag = self.connectionTag
         consumeTask = Task { [weak self] in
             await Self.consume(
-                channel: channel, label: label, sender: sender, receiver: receiver,
+                channel: channel, label: label, connectionTag: connectionTag, sender: sender,
+                receiver: receiver,
                 onControlFrame: { [weak self] frame in
                     // Fire-and-forget: awaiting the main-actor hop would halt
                     // stream-frame routing while main is blocked in a paste's
@@ -253,7 +260,9 @@ final class VsockClipboardService: ClipboardServicing {
             receiver.cancelAll()
             self?.lazyCoordinator.failAll()
         }
-        Self.logger.notice("Vsock clipboard service started for '\(self.label, privacy: .public)'")
+        Self.logger.notice(
+            "Vsock clipboard service started for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
+        )
     }
 
     func stop() {
@@ -286,7 +295,9 @@ final class VsockClipboardService: ClipboardServicing {
         // Unconditional, unlike `publishProgress`'s change-guarded push: a stopped
         // VM's last snapshot would otherwise pin the status item's readout.
         progressCenter.progressChanged(from: self, nil)
-        Self.logger.notice("Vsock clipboard service stopped for '\(self.label, privacy: .public)'")
+        Self.logger.notice(
+            "Vsock clipboard service stopped for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
+        )
     }
 
     // MARK: - Transfer progress
@@ -375,7 +386,7 @@ final class VsockClipboardService: ClipboardServicing {
             lastGrabbedDigest = clipboardContent.digest
             lastTransferIssue = nil
             Self.logger.notice(
-                "Sent clipboard offer to '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), \(content.representations.count, privacy: .public) reps, \(content.totalByteCount, privacy: .public) bytes)"
+                "Sent clipboard offer to '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(content.representations.count, privacy: .public) reps, \(content.totalByteCount, privacy: .public) bytes)"
             )
         } catch {
             Self.logger.error(
@@ -396,6 +407,7 @@ final class VsockClipboardService: ClipboardServicing {
     nonisolated private static func consume(
         channel: VsockChannel,
         label: String,
+        connectionTag: ClipboardConnectionTag,
         sender: ClipboardStreamSender,
         receiver: ClipboardStreamReceiver,
         onControlFrame: @Sendable @escaping (Frame) -> Void
@@ -432,10 +444,12 @@ final class VsockClipboardService: ClipboardServicing {
                     onControlFrame(frame)
                 }
             }
-            logger.info("Vsock clipboard channel closed for '\(label, privacy: .public)'")
+            logger.info(
+                "Vsock clipboard channel closed for '\(label, privacy: .public)' (conn=\(connectionTag, privacy: .public))"
+            )
         } catch {
             logger.warning(
-                "Vsock clipboard channel ended with error for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                "Vsock clipboard channel ended with error for '\(label, privacy: .public)' (conn=\(connectionTag, privacy: .public)): \(error.localizedDescription, privacy: .public)"
             )
         }
     }
@@ -481,7 +495,7 @@ final class VsockClipboardService: ClipboardServicing {
     private func handleRequest(_ request: Kernova_V1_ClipboardRequest) {
         guard let pending = pendingOutbound, pending.generation == request.generation else {
             Self.logger.debug(
-                "Stale clipboard request gen=\(request.generation, privacy: .public) (pending=\(self.pendingOutbound?.generation ?? 0, privacy: .public))"
+                "Stale clipboard request gen=\(request.generation, privacy: .public) (pending=\(self.pendingOutbound?.generation ?? 0, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
             )
             // Abort every dropped request so the guest's parked pull wakes
             // immediately instead of stalling to its backstop timeout.
@@ -493,7 +507,7 @@ final class VsockClipboardService: ClipboardServicing {
         let repIndex = Int(request.transferID & 0xFFFF)
         guard repIndex < pending.content.representations.count else {
             Self.logger.warning(
-                "Clipboard request transfer_id \(request.transferID, privacy: .public) out of range for gen=\(request.generation, privacy: .public)"
+                "Clipboard request transfer_id \(request.transferID, privacy: .public) out of range for gen=\(request.generation, privacy: .public) (conn=\(self.connectionTag, privacy: .public))"
             )
             sender?.rejectRequest(
                 transferID: request.transferID, code: "request.range",
@@ -503,7 +517,7 @@ final class VsockClipboardService: ClipboardServicing {
         let representation = pending.content.representations[repIndex]
         guard representation.uti == request.uti else {
             Self.logger.warning(
-                "Clipboard request uti '\(request.uti, privacy: .public)' doesn't match offered rep \(repIndex, privacy: .public)"
+                "Clipboard request uti '\(request.uti, privacy: .public)' doesn't match offered rep \(repIndex, privacy: .public) (conn=\(self.connectionTag, privacy: .public))"
             )
             sender?.rejectRequest(
                 transferID: request.transferID, code: "request.uti",
@@ -526,9 +540,10 @@ final class VsockClipboardService: ClipboardServicing {
         // A directory rep is offered as a source URL plus an estimate — no
         // archive exists yet. Archive at request time (off the main actor) and
         // stream that.
-        if case .directory(let sourceURL, _) = representation.source {
+        if case .directory(let sourceURL, let estimatedByteCount) = representation.source {
             archiveAndStream(
-                sourceURL: sourceURL, folderName: representation.filename, request: request,
+                sourceURL: sourceURL, folderName: representation.filename, repIndex: repIndex,
+                estimatedByteCount: estimatedByteCount, request: request,
                 isCurrent: generation, session: session, sender: sender)
             return
         }
@@ -548,14 +563,15 @@ final class VsockClipboardService: ClipboardServicing {
                 tracker.unitEnded(session: session, id: xid, succeeded: success)
             })
         Self.logger.debug(
-            "Streaming clipboard rep \(repIndex, privacy: .public) to '\(self.label, privacy: .public)' (gen=\(request.generation, privacy: .public), \(representation.byteCount, privacy: .public) bytes)"
+            "Streaming clipboard rep \(repIndex, privacy: .public) to '\(self.label, privacy: .public)' (gen=\(request.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(representation.byteCount, privacy: .public) bytes)"
         )
     }
 
     /// Archives a source directory at request time and streams the `.aar` — the
     /// serving path for every folder rep the guest pulls.
     private func archiveAndStream(
-        sourceURL: URL, folderName: String, request: Kernova_V1_ClipboardRequest,
+        sourceURL: URL, folderName: String, repIndex: Int, estimatedByteCount: Int,
+        request: Kernova_V1_ClipboardRequest,
         isCurrent: AtomicGeneration, session: ClipboardProgressTracker.SessionToken,
         sender: ClipboardStreamSender
     ) {
@@ -566,6 +582,8 @@ final class VsockClipboardService: ClipboardServicing {
         let requestGeneration = request.generation
         let maxAccept = request.maxAcceptByteCount
         let progress = self.progress
+        let label = self.label
+        let connectionTag = self.connectionTag
         // Built on the main actor so the off-main dispatch never references the
         // main-actor `self`. `totalBytes` replaces the rep's stat-walk estimate:
         // what crosses the wire is an LZFSE archive of the folder.
@@ -578,13 +596,20 @@ final class VsockClipboardService: ClipboardServicing {
             progress.unitEnded(session: session, id: transferID, succeeded: success)
         }
         DispatchQueue.global(qos: .userInitiated).async {
+            // First statement of the closure, so the timestamp marks the archive
+            // starting rather than its enqueue; `.notice` so a hang inside the
+            // walk still leaves a record on disk.
+            Self.logger.notice(
+                "Archiving clipboard folder '\(folderName, privacy: .public)' for '\(label, privacy: .public)' (gen=\(requestGeneration, privacy: .public), conn=\(connectionTag, privacy: .public), rep \(repIndex, privacy: .public), estimate \(estimatedByteCount, privacy: .public) bytes)"
+            )
             guard
                 let rep = try? ClipboardDirectoryArchive.archivedRepresentation(
                     ofDirectoryAt: sourceURL, named: folderName, into: staging,
                     generation: archiveGeneration)
             else {
                 Self.logger.error(
-                    "Failed to archive folder '\(folderName, privacy: .public)' at request time")
+                    "Failed to archive folder '\(folderName, privacy: .public)' for '\(label, privacy: .public)' at request time"
+                )
                 sender.rejectRequest(
                     transferID: transferID, code: "archive.error",
                     message: "Could not archive the folder")
@@ -598,6 +623,9 @@ final class VsockClipboardService: ClipboardServicing {
                 maxAcceptByteCount: maxAccept, isInline: false,
                 isCurrent: { value in isCurrent.isCurrent(value) },
                 onProgress: onProgress, onComplete: onComplete)
+            Self.logger.debug(
+                "Streaming clipboard rep \(repIndex, privacy: .public) to '\(label, privacy: .public)' (gen=\(requestGeneration, privacy: .public), conn=\(connectionTag, privacy: .public), \(rep.byteCount, privacy: .public) bytes)"
+            )
         }
     }
 
@@ -634,7 +662,7 @@ final class VsockClipboardService: ClipboardServicing {
         // `materializeForCopy` sees it.
         inboundOfferSeq &+= 1
         Self.logger.notice(
-            "Received guest clipboard offer for '\(self.label, privacy: .public)' (gen=\(offer.generation, privacy: .public), \(offer.repInfo.count, privacy: .public) reps) — metadata only"
+            "Received guest clipboard offer for '\(self.label, privacy: .public)' (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(offer.repInfo.count, privacy: .public) reps) — metadata only"
         )
     }
 
@@ -1063,25 +1091,25 @@ final class VsockClipboardService: ClipboardServicing {
     private func lazyPullSnapshot(generation: UInt64, repIndex: Int) -> LazyPullSnapshot? {
         guard let promise = inboundPromise else {
             Self.logger.warning(
-                "Clipboard paste requested rep \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) for '\(self.label, privacy: .public)' with no live offer — serving nothing"
+                "Clipboard paste requested rep \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) with no live offer — serving nothing"
             )
             return nil
         }
         guard promise.generation == generation else {
             Self.logger.debug(
-                "Clipboard paste requested rep \(repIndex, privacy: .public) of superseded gen=\(generation, privacy: .public) for '\(self.label, privacy: .public)' (live gen=\(promise.generation, privacy: .public)) — serving nothing"
+                "Clipboard paste requested rep \(repIndex, privacy: .public) of superseded gen=\(generation, privacy: .public) for '\(self.label, privacy: .public)' (live gen=\(promise.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)) — serving nothing"
             )
             return nil
         }
         guard promise.reps.indices.contains(repIndex) else {
             Self.logger.warning(
-                "Clipboard paste requested out-of-range rep \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) for '\(self.label, privacy: .public)' — serving nothing"
+                "Clipboard paste requested out-of-range rep \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) — serving nothing"
             )
             return nil
         }
         guard let receiver else {
             Self.logger.warning(
-                "Clipboard paste requested un-materialized rep \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) for '\(self.label, privacy: .public)' after the service stopped — serving nothing"
+                "Clipboard paste requested un-materialized rep \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) after the service stopped — serving nothing"
             )
             return nil
         }
@@ -1171,15 +1199,19 @@ final class VsockClipboardService: ClipboardServicing {
             return rep
         case .aborted(let abort):
             Self.logger.warning(
-                "File clipboard pull \(transferID, privacy: .public) aborted (\(abort.code, privacy: .public))"
+                "File clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) aborted (\(abort.code, privacy: .public))"
             )
             return nil
         case .timedOut:
             receiver.cancelAwait(transferID)
-            Self.logger.warning("File clipboard pull \(transferID, privacy: .public) timed out")
+            Self.logger.warning(
+                "File clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) timed out"
+            )
             return nil
         case .cancelled:
-            Self.logger.debug("File clipboard pull \(transferID, privacy: .public) cancelled")
+            Self.logger.debug(
+                "File clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) cancelled"
+            )
             // Nothing will ever deliver or abort this transferID now, so release
             // the registered awaiter rather than leaking it.
             receiver.cancelAwait(transferID)
@@ -1188,7 +1220,9 @@ final class VsockClipboardService: ClipboardServicing {
             // A newer pull for this id has taken over the awaiter/slot
             // registration — touch nothing keyed by `transferID`; the retry owns
             // it and must resolve on its own.
-            Self.logger.debug("File clipboard pull \(transferID, privacy: .public) superseded by a newer fetch")
+            Self.logger.debug(
+                "File clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) superseded by a newer fetch"
+            )
             return nil
         }
     }
@@ -1228,7 +1262,7 @@ final class VsockClipboardService: ClipboardServicing {
         // with it (docs/CLIPBOARD.md §3).
         staging.sweep()
         Self.logger.debug(
-            "Guest released clipboard offer (gen=\(release.generation, privacy: .public)) for '\(self.label, privacy: .public)'"
+            "Guest released clipboard offer (gen=\(release.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)) for '\(self.label, privacy: .public)'"
         )
     }
 }
@@ -1244,6 +1278,9 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
     /// receiver.
     nonisolated func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? {
         if let cached = onMain({ self.cachedMaterialized(generation: generation, repIndex: repIndex) }) {
+            Self.logger.debug(
+                "Served clipboard rep \(repIndex, privacy: .public) (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), '\(cached.uti, privacy: .public)') from cache — no transfer"
+            )
             return pasteFileURL(for: cached, generation: generation)
         }
         guard
@@ -1262,6 +1299,9 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
     /// cap on inline content (docs/CLIPBOARD.md §1).
     nonisolated func copyToMacData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
         if let cached = onMain({ self.cachedMaterialized(generation: generation, repIndex: repIndex) }) {
+            Self.logger.debug(
+                "Served clipboard rep \(repIndex, privacy: .public) (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), '\(cached.uti, privacy: .public)') from cache — no transfer"
+            )
             return Self.residentBytes(of: cached)
         }
         guard
@@ -1321,6 +1361,11 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
         // A directory rep's pull streams the request-time archive; extract it into
         // a real folder so a Finder paste recreates the tree, not the `.aar`.
         if rep.isDirectory {
+            // `.notice` and before the call: the extract runs inside the paste's
+            // promise deadline, so a hang here has to leave a record on disk.
+            Self.logger.notice(
+                "Extracting clipboard folder '\(rep.filename, privacy: .public)' from '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(rep.byteCount, privacy: .public) archive bytes)"
+            )
             return ClipboardDirectoryArchive.extractedDirectoryURL(
                 for: rep, into: staging, generation: generation)
         }
