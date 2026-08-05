@@ -13,7 +13,7 @@ enum HostConnectionState: Equatable, Sendable {
 
 /// Clipboard sharing state for display in the menu.
 ///
-/// `enabled` / `disabled` are the host-policy feature state; the other four
+/// `enabled` / `disabled` are the host-policy feature state; the other five
 /// record the most recent flow event, each set at the moment it starts rather
 /// than on completion. A flow event overwrites `enabled`; only host policy sets
 /// `disabled`.
@@ -32,6 +32,9 @@ enum ClipboardActivity: Equatable, Sendable {
     case sentToHost
     /// An inbound paste from the host was materialized on the guest pasteboard.
     case receivedFromHost
+    /// A paste of the host's offer was refused here: its files total more than
+    /// the deadline-safe cap, so no bytes were pulled.
+    case pasteRefusedTooLarge
     /// Host policy turned clipboard sharing off.
     case disabled
 }

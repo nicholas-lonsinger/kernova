@@ -30,6 +30,8 @@ enum AgentMenuText {
         case .offeredFromHost: return "Clipboard: shared from host"
         case .sentToHost: return "Clipboard: sent to host"
         case .receivedFromHost: return "Clipboard: received from host"
+        case .pasteRefusedTooLarge:
+            return "Clipboard: too large to paste — over the 2 GB transfer limit"
         case .disabled: return "Clipboard: disabled"
         }
     }

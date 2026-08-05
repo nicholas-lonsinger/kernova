@@ -399,6 +399,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     var commandBarLaidOutHeightForTesting: CGFloat { commandBar.frame.height }
 
     var isCopyingToMacForTesting: Bool { isCopyingToMac }
+
+    /// The indicator slot's current text — the persistent content-type line, or a
+    /// transient message while one is up.
+    var indicatorTextForTesting: String { indicatorView.stringValue }
+
+    /// Fires once a "Copy to Mac" publish outcome has been rendered.
+    var onCopyOutcomeForTesting: (@MainActor () -> Void)?
     #endif
 
     // MARK: - Observation
@@ -604,20 +611,18 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             return
                 "Not enough disk space to receive the clipboard file (\(DataFormatters.formatBytes(UInt64(needed))) needed)"
         case .peerReportedError(let code, _):
-            switch code {
-            case "clipboard.transfer.too.large":
-                return "The guest rejected the transfer as too large"
-            case "clipboard.format.unavailable":
-                return "The guest couldn't provide the requested format"
-            case "clipboard.paste.disk.full":
+            switch ClipboardErrorCode(rawValue: code) {
+            case .pasteDiskFull:
                 return "The guest ran out of disk space receiving the clipboard file"
-            case "clipboard.paste.too.large":
+            case .pasteTooLarge:
                 return "Too large to paste into the guest — over the 2 GB clipboard transfer limit"
-            case "clipboard.paste.timeout":
+            case .pasteTimeout:
                 return "The clipboard transfer to the guest timed out"
-            default:
+            case .pasteFailed, .copyTooLarge, .none:
                 return "Clipboard transfer failed on the guest side"
             }
+        case .localRefusal(_, let message):
+            return message
         }
     }
 
@@ -626,7 +631,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         guard reasons.contains(.overPasteBudget) else {
             return "Couldn't fetch the clipboard content to copy"
         }
-        return "Too large to copy to your Mac — over the 2 GB clipboard transfer limit."
+        return ClipboardTransferIssue.overCopyBudgetMessage
     }
 
     // MARK: - Actions
@@ -680,6 +685,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         case .written(_, let droppedReasons, _):
             if droppedReasons.isEmpty {
                 indicatorView.showTransientMessage("Copied to Mac clipboard", style: .info)
+            } else if droppedReasons.contains(.overPasteBudget) {
+                // Partial success — name the cap, since it is what the user has to
+                // act on to get the files across.
+                indicatorView.showTransientMessage(
+                    "Copied without the files — over the 2 GB clipboard transfer limit",
+                    style: .warning)
             } else {
                 // Partial success — don't claim an unqualified one.
                 let count = droppedReasons.count
@@ -690,6 +701,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         case .writeFailed:
             indicatorView.showTransientMessage("Couldn't write to the Mac clipboard", style: .error)
         }
+        #if DEBUG
+        onCopyOutcomeForTesting?()
+        #endif
     }
 
     /// Shared intake for the Paste button, responder-chain `paste:`, and drag-and-drop.

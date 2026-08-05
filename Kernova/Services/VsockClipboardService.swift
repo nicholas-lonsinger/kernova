@@ -785,9 +785,12 @@ final class VsockClipboardService: ClipboardServicing {
         let pasteBoundTotal = pasteBoundTotalBytes(for: promise)
         let overBudget = pasteBoundTotal > UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes)
         if overBudget {
-            Self.logger.notice(
-                "Copy-to-Mac paste-bound reps total \(pasteBoundTotal, privacy: .public) bytes — over the deadline-safe cap; refusing the whole file set"
+            Self.logger.warning(
+                "Copy-to-Mac refused: \(ClipboardErrorCode.copyTooLarge.rawValue, privacy: .public) — paste-bound reps total \(pasteBoundTotal, privacy: .public) bytes, over the deadline-safe cap; refusing the whole file set"
             )
+            // The click reports its own outcome, but an automatic passthrough
+            // publish has no return path — the issue is the only surface it has.
+            lastTransferIssue = .overCopyBudget()
         }
 
         var items: [CopyToMacItem] = []
@@ -842,9 +845,10 @@ final class VsockClipboardService: ClipboardServicing {
         guard let promise = inboundPromise, promise.generation == generation else { return nil }
         let total = pasteBoundTotalBytes(for: promise)
         guard total <= UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) else {
-            Self.logger.notice(
-                "Paste-bound clipboard reps total \(total, privacy: .public) bytes — over the deadline-safe cap; refusing the paste"
+            Self.logger.warning(
+                "Paste refused: \(ClipboardErrorCode.copyTooLarge.rawValue, privacy: .public) — paste-bound reps total \(total, privacy: .public) bytes, over the deadline-safe cap"
             )
+            lastTransferIssue = .overCopyBudget()
             return nil
         }
         return lazyPullSnapshot(generation: generation, repIndex: repIndex)

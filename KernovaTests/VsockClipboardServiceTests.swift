@@ -1593,6 +1593,13 @@ struct VsockClipboardServiceTests {
         #expect(items.droppedReasons == [.overPasteBudget, .overPasteBudget])
         // The advisory is a metadata sum — nothing was pulled to decide it.
         #expect(responder.requests.isEmpty)
+        // The refusal is also raised as a transfer issue, the only surface an
+        // automatic passthrough publish — which discards the outcome — has.
+        #expect(
+            service.lastTransferIssue?.kind
+                == .localRefusal(
+                    code: ClipboardErrorCode.copyTooLarge.rawValue,
+                    message: ClipboardTransferIssue.overCopyBudgetMessage))
     }
 
     @Test("each promised file rep pastes through its own blocking pull")
@@ -1670,6 +1677,13 @@ struct VsockClipboardServiceTests {
         #expect(service.copyToMacFileURL(generation: 43, repIndex: 0) == nil)
         #expect(service.copyToMacFileURL(generation: 43, repIndex: 1) == nil)
         #expect(responder.requests.isEmpty)
+        // A provider fire has no return path to the gesture, so the refusal is
+        // reported through the issue the clipboard window renders.
+        #expect(
+            service.lastTransferIssue?.kind
+                == .localRefusal(
+                    code: ClipboardErrorCode.copyTooLarge.rawValue,
+                    message: ClipboardTransferIssue.overCopyBudgetMessage))
     }
 
     @Test(

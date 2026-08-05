@@ -263,7 +263,8 @@ struct VsockGuestClipboardAgentTests {
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
-        onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void = { _ in }
+        onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void = { _ in },
+        onClipboardNotice: @escaping @Sendable () -> Void = {}
     ) -> VsockGuestClipboardAgent {
         let provided = AtomicInt()
         let client = VsockGuestClient(
@@ -278,7 +279,7 @@ struct VsockGuestClipboardAgentTests {
             stagingTempRoot: FileManager.default.temporaryDirectory.appendingPathComponent(
                 UUID().uuidString, isDirectory: true),
             progressRevealDelay: progressRevealDelay, progressIdleLinger: progressIdleLinger,
-            onProgress: onProgress)
+            onProgress: onProgress, onClipboardNotice: onClipboardNotice)
     }
 
     /// Starts the agent, enables it (production agents are default-disabled
@@ -1733,6 +1734,53 @@ struct VsockGuestClipboardAgentTests {
             return
         }
         #expect(error.code == "clipboard.paste.too.large")
+    }
+
+    @Test(
+        "deadline cap: the refusal reaches the guest's own menu, one notice per offer, cleared by the next"
+    )
+    func tooLargeRaisesGuestNotice() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let notices = AtomicInt()
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd,
+            onClipboardNotice: { notices.increment() })
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // Two fires of one over-cap offer: the paste was made here, so the notice
+        // is raised here — once, latched with the error frame.
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        let half = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes / 2) + 1
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 31,
+                reps: [
+                    RepInfo(uti: txtUTI, byteCount: half, filename: "a.bin", isInline: false),
+                    RepInfo(uti: txtUTI, byteCount: half, filename: "b.bin", isInline: false),
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedItemCountForTesting == 2 }
+
+        #expect(await lazyPull(pasteboard, forType: .fileURL, itemIndex: 0).value == nil)
+        #expect(await lazyPull(pasteboard, forType: .fileURL, itemIndex: 1).value == nil)
+
+        try await notices.changed.wait { notices.value == 1 }
+        #expect(await MainActor.run { agent.clipboardActivity } == .pasteRefusedTooLarge)
+        #expect(notices.value == 1)
+
+        // The next offer is a fresh paste opportunity, so the refusal line goes.
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 32,
+                reps: [RepInfo(uti: ClipboardContent.utf8TextUTI, byteCount: 4, isInline: true)]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.string] }
+        #expect(await MainActor.run { agent.clipboardActivity } == .offeredFromHost)
     }
 
     @Test("deadline cap: a file rep exactly at the cap is not refused — the pull still proceeds")

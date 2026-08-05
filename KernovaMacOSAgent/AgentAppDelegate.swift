@@ -91,11 +91,17 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         // Progress emissions arrive off-main and hop via `DispatchQueue.main`,
         // not a `Task` — two independently scheduled hops carrying immutable
         // snapshots have no ordering guarantee, and the ring would jump backwards.
-        let clipboardAgent = VsockGuestClipboardAgent { [weak self] snapshot in
-            DispatchQueue.main.async {
-                self?.statusItemController?.materializationProgressChanged(snapshot)
-            }
-        }
+        let clipboardAgent = VsockGuestClipboardAgent(
+            onProgress: { [weak self] snapshot in
+                DispatchQueue.main.async {
+                    self?.statusItemController?.materializationProgressChanged(snapshot)
+                }
+            },
+            onClipboardNotice: { [weak self] in
+                DispatchQueue.main.async {
+                    self?.statusItemController?.clipboardNoticeRaised()
+                }
+            })
 
         // `onPolicy` gates the log + clipboard capabilities; `onStateChange`
         // drives the status-item icon.

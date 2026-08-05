@@ -84,6 +84,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// readout.
     private let progressTracker: ClipboardProgressTracker
 
+    /// Raised on the main queue when a refusal has just landed in
+    /// `clipboardActivity`, so the menu-bar surface can reveal it instead of
+    /// waiting for the user to open the dropdown.
+    private let onClipboardNotice: @Sendable () -> Void
+
     /// The outbound session serving the host's pulls of `pendingOutbound`, with
     /// the generation it measures.
     private var outboundSession: (generation: UInt64, token: ClipboardProgressTracker.SessionToken)?
@@ -190,9 +195,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         /// index, so a repeated `.fileURL` pull returns the same staged file
         /// instead of re-staging a duplicate.
         var stagedInlineURLs: [Int: URL] = [:]
-        /// Whether the over-cap refusal was already surfaced to the host for this
-        /// offer, so the N provider fires of one multi-file paste don't send N
-        /// duplicate `clipboard.paste.too.large` frames.
+        /// Whether the over-cap refusal was already surfaced for this offer, so
+        /// the N provider fires of one multi-file paste raise one notice and send
+        /// one error frame rather than N of each.
         var tooLargeReported = false
 
         init(generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo]) {
@@ -204,32 +209,38 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     // MARK: - Init
 
     /// Production init — uses real `NSPasteboard.general` on the clipboard port,
-    /// publishing transfer progress through `onProgress`.
+    /// publishing transfer progress through `onProgress` and clipboard refusals
+    /// through `onClipboardNotice`.
     convenience init(
-        onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void
+        onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void,
+        onClipboardNotice: @escaping @Sendable () -> Void
     ) {
         self.init(
             pasteboard: NSPasteboard.general,
             client: VsockGuestClient(port: KernovaVsockPort.clipboard, label: "clipboard"),
-            onProgress: onProgress
+            onProgress: onProgress,
+            onClipboardNotice: onClipboardNotice
         )
     }
 
     /// Designated init; tests inject a fake pasteboard and socketpair-backed
     /// client, and optionally a `freeSpaceProvider` to simulate a full disk, a
     /// `stagingTempRoot` to isolate the staging directory between parallel tests,
-    /// an `onProgress` sink to observe the readout the status item renders, and
-    /// zeroed reveal/linger delays so a test transfer surfaces while in flight.
+    /// an `onProgress` sink to observe the readout the status item renders, an
+    /// `onClipboardNotice` sink to observe refusals, and zeroed reveal/linger
+    /// delays so a test transfer surfaces while in flight.
     init(
         pasteboard: Pasteboard, client: VsockGuestClient,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         stagingTempRoot: URL = FileManager.default.temporaryDirectory,
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
-        onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void = { _ in }
+        onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void = { _ in },
+        onClipboardNotice: @escaping @Sendable () -> Void = {}
     ) {
         self.pasteboard = pasteboard
         self.client = client
+        self.onClipboardNotice = onClipboardNotice
         self.progressTracker = ClipboardProgressTracker(
             revealDelay: progressRevealDelay, idleLinger: progressIdleLinger, emit: onProgress)
         self.staging = ClipboardFileStaging(
@@ -970,11 +981,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 Self.logger.warning(
                     "Deadline-bound clipboard reps total \(totalBytes, privacy: .public) bytes — over the deadline-safe cap; refusing the paste pull"
                 )
-                // The guest has no UI; tell the host so it shows the failure.
+                // The gesture was made here, so the notice goes up here; the host
+                // is told too, since its window may be the surface in view.
                 if !promise.tooLargeReported {
                     promise.tooLargeReported = true
+                    recordPasteRefusedTooLarge()
                     sendPasteError(
-                        code: "clipboard.paste.too.large",
+                        code: .pasteTooLarge,
                         message:
                             "Too large to paste into the guest (\(totalBytes) bytes total)",
                         on: channel)
@@ -988,7 +1001,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             )
             // The guest has no UI; tell the host so it shows the failure.
             sendPasteError(
-                code: "clipboard.paste.disk.full",
+                code: .pasteDiskFull,
                 message: "Not enough disk space in the guest to receive \(info.byteCount) bytes",
                 on: channel)
             return nil
@@ -1046,7 +1059,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 transferID: transferID, code: "paste.timeout",
                 message: "Receiver gave up waiting for the clipboard transfer", on: channel)
             sendPasteError(
-                code: "clipboard.paste.timeout",
+                code: .pasteTimeout,
                 message: "The clipboard transfer to the guest timed out", on: channel)
         case .cancelled:
             // `.debug`, not `.warning`: `.cancelled` also covers benign
@@ -1070,24 +1083,40 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
     }
 
+    /// Records the over-cap paste refusal on the queue that owns the menu state,
+    /// then raises the notice so the surface reveals it.
+    ///
+    /// The refusal returns out of `provideData` without pulling anything, so
+    /// nothing is holding the main thread by the time the hop runs.
+    private func recordPasteRefusedTooLarge() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.clipboardActivityStorage = .pasteRefusedTooLarge
+            self.onClipboardNotice()
+        }
+    }
+
     /// Abort codes that are a normal supersession/teardown, not a failure worth
     /// surfacing to the user.
     private static let benignAbortCodes: Set<String> = ["superseded", "cancelled", "request.stale"]
 
-    /// Maps a receiver/peer abort code to the user-facing `clipboard.paste.*`
-    /// code the host renders.
-    private static func pasteErrorCode(forAbortCode code: String) -> String {
+    /// Maps a receiver/peer abort code to the user-facing paste code the host
+    /// renders.
+    private static func pasteErrorCode(forAbortCode code: String) -> ClipboardErrorCode {
         switch code {
-        case "disk.full": return "clipboard.paste.disk.full"
-        case "stall.timeout": return "clipboard.paste.timeout"
-        default: return "clipboard.paste.failed"
+        case "disk.full": return .pasteDiskFull
+        case "stall.timeout": return .pasteTimeout
+        default: return .pasteFailed
         }
     }
 
     /// Sends an `Error` frame so the host surfaces an inbound-paste failure in
-    /// its clipboard window — the guest agent has no UI of its own.
-    private func sendPasteError(code: String, message: String, on channel: VsockChannel) {
-        try? channel.sendErrorFrame(code: code, message: message, inReplyTo: "clipboard.request")
+    /// its clipboard window too.
+    private func sendPasteError(
+        code: ClipboardErrorCode, message: String, on channel: VsockChannel
+    ) {
+        try? channel.sendErrorFrame(
+            code: code.rawValue, message: message, inReplyTo: "clipboard.request")
     }
 
     /// Sends a `ClipboardStreamAbort` for an inbound transfer the receiver is

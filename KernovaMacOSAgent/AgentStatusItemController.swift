@@ -69,6 +69,24 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         setIcon(for: connectionState())
     }
 
+    // MARK: - Clipboard notice
+
+    /// Opens the dropdown on the clipboard refusal the agent just recorded.
+    ///
+    /// The refusal ends a gesture the user made in this guest and produces no
+    /// other signal — the paste simply yields nothing — so the line is revealed
+    /// rather than left for whenever the menu is next opened.
+    func clipboardNoticeRaised() {
+        // macOS drops status items it can't fit in a crowded menu bar.
+        guard statusItem.isVisible, statusItem.button?.window != nil else { return }
+        // Never defer this with `Task { @MainActor }`: `performClick` parks inside
+        // a nested menu-tracking loop until the dropdown closes, and parking there
+        // from a main-queue block starves every later main-queue update.
+        performOnMainRunLoop { [weak self] in
+            self?.statusItem.button?.performClick(nil)
+        }
+    }
+
     private static func symbolName(for state: HostConnectionState) -> String {
         switch state {
         case .connected:
@@ -114,6 +132,14 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
             menu.addItem(.separator())
         }
 
+        let activity = clipboardActivity()
+        // A refusal is what the auto-open is revealing, so it reads at the top
+        // level; every other activity is state the Status submenu holds.
+        if activity == .pasteRefusedTooLarge {
+            addInfoItem(AgentMenuText.clipboardLine(activity))
+            menu.addItem(.separator())
+        }
+
         addInfoItem(AgentMenuText.hostStatusLine(connectionState()))
 
         let statusMenuItem = NSMenuItem(
@@ -121,7 +147,7 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         let statusMenu = NSMenu()
         statusMenu.autoenablesItems = false
         addInfoItem(AgentMenuText.logForwardingLine(logForwardingEnabled()), to: statusMenu)
-        addInfoItem(AgentMenuText.clipboardLine(clipboardActivity()), to: statusMenu)
+        addInfoItem(AgentMenuText.clipboardLine(activity), to: statusMenu)
         statusMenuItem.submenu = statusMenu
         menu.addItem(statusMenuItem)
 

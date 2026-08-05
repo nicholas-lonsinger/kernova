@@ -32,10 +32,22 @@ struct ClipboardPassthroughCoordinatorTests {
         /// Every content handed to `grabIfChanged()` by the poll, in order.
         var grabbed: [ClipboardContent] = []
 
+        /// Makes `materializeForCopy` refuse the way `VsockClipboardService` does
+        /// over the deadline-safe cap: every rep dropped, and the transfer issue
+        /// raised in the same step.
+        var refusesOverCopyBudget = false
+
         func stop() {}
         func grabIfChanged() { grabbed.append(clipboardContent) }
         func clearBuffer() { clipboardContent = .empty }
-        // materializeForCopy uses the protocol-extension default (resolved reps).
+
+        func materializeForCopy() -> [CopyToMacItem] {
+            guard refusesOverCopyBudget else {
+                return clipboardContent.representations.map { .resolved($0) }
+            }
+            lastTransferIssue = .overCopyBudget()
+            return [.droppedFile(.overPasteBudget)]
+        }
 
         /// Simulates a new inbound guest offer: publishes `content` and bumps the
         /// inbound sequence the coordinator observes.
@@ -158,6 +170,36 @@ struct ClipboardPassthroughCoordinatorTests {
         try await published.wait {
             h.pasteboard.data(forType: textType) == Data("guest copied this".utf8)
         }
+    }
+
+    @Test("An over-cap inbound offer writes nothing and leaves the refusal on the service")
+    func inboundOverCapOfferPublishesNothing() async throws {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+
+        // What the Mac clipboard holds when the guest copies the over-cap files —
+        // and still holds afterwards, since the publish returns before it clears.
+        writeText("previous host content", to: h.pasteboard)
+        let baseline = h.pasteboard.changeCount
+
+        let published = AsyncGate()
+        h.coordinator.onInboundPublishedForTesting = { published.notify() }
+        h.coordinator.start()
+        defer { h.coordinator.stop() }
+
+        h.service.refusesOverCopyBudget = true
+        h.service.simulateInboundOffer(ClipboardContent(text: "over the cap"))
+
+        try await published.wait { h.service.lastTransferIssue != nil }
+        #expect(h.pasteboard.changeCount == baseline)
+        #expect(h.pasteboard.string(forType: .string) == "previous host content")
+        // No gesture outcome exists on this path — the coordinator discards
+        // everything but the change count — so the issue is the whole report.
+        #expect(
+            h.service.lastTransferIssue?.kind
+                == .localRefusal(
+                    code: ClipboardErrorCode.copyTooLarge.rawValue,
+                    message: ClipboardTransferIssue.overCopyBudgetMessage))
     }
 
     /// A promised-offer service: `materializeForCopy` returns metadata-only

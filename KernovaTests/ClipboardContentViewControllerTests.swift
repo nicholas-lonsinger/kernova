@@ -12,8 +12,7 @@ import KernovaTestSupport
 /// rather than polling `countForTesting` — the one-shot effect a starved CI
 /// MainActor can miss inside a poll deadline (docs/TESTING.md "Async waits in tests").
 ///
-/// File-scoped so the retention and passthrough-chrome suites share one
-/// definition of the harness.
+/// File-scoped so every suite here shares one definition of the harness.
 ///
 /// The caller still owns teardown (`pasteboard.releaseGlobally()` and
 /// `registry.releaseAllForTesting()` in `defer`), since a `defer` only fires
@@ -27,6 +26,31 @@ private func makeCopyToMacHarness() -> (
     let retained = AsyncGate()
     registry.onChangeForTesting = { retained.notify() }
     return (pasteboard, registry, retained)
+}
+
+/// The mock-backed view model every clipboard-window suite drives, on the
+/// caller's own `preferences` so selection/order persistence stays isolated.
+@MainActor
+private func makeClipboardViewModel(preferences: AppPreferences) -> VMLibraryViewModel {
+    VMLibraryViewModel(
+        storageService: MockVMStorageService(),
+        diskImageService: MockDiskImageService(),
+        virtualizationService: MockVirtualizationService(),
+        installService: MockMacOSInstallService(),
+        ipswService: MockIPSWService(),
+        usbDeviceService: MockUSBDeviceService(),
+        preferences: preferences
+    )
+}
+
+/// The VM whose clipboard window is under test.
+@MainActor
+private func makeClipboardInstance(passthroughEnabled: Bool = false) -> VMInstance {
+    var config = VMConfiguration(name: "Clipboard VM", guestOS: .linux, bootMode: .efi)
+    config.clipboardPassthroughEnabled = passthroughEnabled
+    let bundleURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(config.id.uuidString, isDirectory: true)
+    return VMInstance(configuration: config, bundleURL: bundleURL)
 }
 
 /// Verifies the host "Copy to Mac" provider-retention lifecycle: each written
@@ -47,25 +71,6 @@ struct ClipboardContentViewControllerRetentionTests {
     /// Selection/order persistence never touches the real `.standard` domain.
     private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.clipboard-retention")
 
-    private func makeViewModel() -> VMLibraryViewModel {
-        VMLibraryViewModel(
-            storageService: MockVMStorageService(),
-            diskImageService: MockDiskImageService(),
-            virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
-            preferences: preferences
-        )
-    }
-
-    private func makeInstance() -> VMInstance {
-        let config = VMConfiguration(name: "Clipboard VM", guestOS: .linux, bootMode: .efi)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
-    }
-
     @Test("copyToMac retains a provider per item in the registry and serves its bytes")
     func retainsProviderAndServesBytes() async throws {
         let (pasteboard, registry, retained) = makeCopyToMacHarness()
@@ -75,10 +80,10 @@ struct ClipboardContentViewControllerRetentionTests {
         defer { registry.releaseAllForTesting() }
 
         let service = FakeClipboardService(content: ClipboardContent(text: "lazy bytes"))
-        let instance = makeInstance()
+        let instance = makeClipboardInstance()
         instance.clipboardService = service
         let vc = ClipboardContentViewController(
-            instance: instance, viewModel: makeViewModel(),
+            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
             writePasteboard: pasteboard, providerRegistry: registry)
 
         #expect(registry.countForTesting == 0)
@@ -110,10 +115,10 @@ struct ClipboardContentViewControllerRetentionTests {
         weak var weakVC: ClipboardContentViewController?
         do {
             let service = FakeClipboardService(content: ClipboardContent(text: "durable bytes"))
-            let instance = makeInstance()
+            let instance = makeClipboardInstance()
             instance.clipboardService = service
             let vc = ClipboardContentViewController(
-                instance: instance, viewModel: makeViewModel(),
+                instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
                 writePasteboard: pasteboard, providerRegistry: registry)
             weakVC = vc
             vc.copy(nil)
@@ -148,10 +153,10 @@ struct ClipboardContentViewControllerRetentionTests {
         pasteboard.onWrite = { wrote.notify() }
 
         let service = FakeClipboardService(content: ClipboardContent(text: "doomed write"))
-        let instance = makeInstance()
+        let instance = makeClipboardInstance()
         instance.clipboardService = service
         let vc = ClipboardContentViewController(
-            instance: instance, viewModel: makeViewModel(),
+            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
             writePasteboard: pasteboard, providerRegistry: registry)
 
         #expect(registry.countForTesting == 0)
@@ -185,32 +190,14 @@ struct ClipboardContentViewControllerEditTests {
     /// Selection/order persistence never touches the real `.standard` domain.
     private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.clipboard-edit")
 
-    private func makeViewModel() -> VMLibraryViewModel {
-        VMLibraryViewModel(
-            storageService: MockVMStorageService(),
-            diskImageService: MockDiskImageService(),
-            virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
-            preferences: preferences
-        )
-    }
-
-    private func makeInstance() -> VMInstance {
-        let config = VMConfiguration(name: "Clipboard VM", guestOS: .linux, bootMode: .efi)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
-    }
-
     private func makeController(
         service: FakeClipboardService, debounce: Duration
     ) -> ClipboardContentViewController {
-        let instance = makeInstance()
+        let instance = makeClipboardInstance()
         instance.clipboardService = service
         return ClipboardContentViewController(
-            instance: instance, viewModel: makeViewModel(), editDebounceInterval: debounce)
+            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
+            editDebounceInterval: debounce)
     }
 
     @Test("a keystroke burst commits the buffer to the model off-actor after the debounce")
@@ -384,33 +371,13 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
     /// Selection/order persistence never touches the real `.standard` domain.
     private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.clipboard-passthrough-chrome")
 
-    private func makeViewModel() -> VMLibraryViewModel {
-        VMLibraryViewModel(
-            storageService: MockVMStorageService(),
-            diskImageService: MockDiskImageService(),
-            virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
-            preferences: preferences
-        )
-    }
-
-    private func makeInstance(passthroughEnabled: Bool = false) -> VMInstance {
-        var config = VMConfiguration(name: "Clipboard VM", guestOS: .linux, bootMode: .efi)
-        config.clipboardPassthroughEnabled = passthroughEnabled
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        return VMInstance(configuration: config, bundleURL: bundleURL)
-    }
-
     private func makeController(instance: VMInstance) -> ClipboardContentViewController {
-        ClipboardContentViewController(instance: instance, viewModel: makeViewModel())
+        ClipboardContentViewController(instance: instance, viewModel: makeClipboardViewModel(preferences: preferences))
     }
 
     @Test("passthrough off (the default) shows the command bar")
     func passthroughOffShowsCommandBar() {
-        let vc = makeController(instance: makeInstance())
+        let vc = makeController(instance: makeClipboardInstance())
         _ = vc.view  // forces loadView + viewDidLoad → updateUI
 
         #expect(vc.isCommandBarHiddenForTesting == false)
@@ -418,7 +385,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
 
     @Test("passthrough already on when the window opens hides the command bar")
     func passthroughOnAtOpenHidesCommandBar() {
-        let vc = makeController(instance: makeInstance(passthroughEnabled: true))
+        let vc = makeController(instance: makeClipboardInstance(passthroughEnabled: true))
         _ = vc.view  // forces loadView + viewDidLoad → updateUI
 
         #expect(vc.isCommandBarHiddenForTesting == true)
@@ -426,7 +393,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
 
     @Test("toggling passthrough live shows/hides the command bar without reopening the window")
     func liveToggleUpdatesCommandBarVisibility() async throws {
-        let instance = makeInstance()
+        let instance = makeClipboardInstance()
         let vc = makeController(instance: instance)
         _ = vc.view  // forces loadView + viewDidLoad → observeServiceChanges
         #expect(vc.isCommandBarHiddenForTesting == false)
@@ -450,7 +417,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
 
     @Test("the hidden command bar actually lays out at zero height")
     func hiddenCommandBarCollapsesToZeroHeight() {
-        let vc = makeController(instance: makeInstance(passthroughEnabled: true))
+        let vc = makeController(instance: makeClipboardInstance(passthroughEnabled: true))
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 480, height: 360),
             styleMask: [.titled], backing: .buffered, defer: true)
@@ -464,7 +431,7 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
     @Test("paste:/copy: are gated while passthrough is on and restored when it's off")
     func responderChainGatedByPassthrough() {
         let service = FakeClipboardService(content: ClipboardContent(text: "some content"))
-        let instance = makeInstance(passthroughEnabled: true)
+        let instance = makeClipboardInstance(passthroughEnabled: true)
         instance.clipboardService = service
         let vc = makeController(instance: instance)
         _ = vc.view
@@ -498,10 +465,11 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         hostPasteboard.setString("from the Mac", forType: .string)
 
         let service = FakeClipboardService(content: .empty)
-        let instance = makeInstance(passthroughEnabled: true)
+        let instance = makeClipboardInstance(passthroughEnabled: true)
         instance.clipboardService = service
         let vc = ClipboardContentViewController(
-            instance: instance, viewModel: makeViewModel(), readPasteboard: hostPasteboard)
+            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
+            readPasteboard: hostPasteboard)
         _ = vc.view
 
         vc.paste(nil)
@@ -524,10 +492,10 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         defer { registry.releaseAllForTesting() }
 
         let service = FakeClipboardService(content: ClipboardContent(text: "buffer bytes"))
-        let instance = makeInstance(passthroughEnabled: true)
+        let instance = makeClipboardInstance(passthroughEnabled: true)
         instance.clipboardService = service
         let vc = ClipboardContentViewController(
-            instance: instance, viewModel: makeViewModel(),
+            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
             writePasteboard: pasteboard, providerRegistry: registry)
 
         vc.copy(nil)
@@ -560,6 +528,138 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
     }
 }
 
+/// One-shot latch the copy-outcome wait's predicate reads, since the render is
+/// a synchronous step of the publish Task rather than observable state.
+@MainActor
+private final class CopyOutcomeLatch {
+    var didRender = false
+}
+
+/// Verifies each terminal "Copy to Mac" outcome, and each transfer issue,
+/// reaches the indicator as its own sentence.
+///
+/// The refused cases are the point: a refusal the user can't read is the same
+/// as no refusal at all, and a mixed offer that drops its files must not lead
+/// with an unqualified success.
+@Suite("ClipboardContentViewController copy-outcome messages")
+@MainActor
+struct ClipboardContentViewControllerCopyOutcomeTests {
+    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
+    ///
+    /// Selection/order persistence never touches the real `.standard` domain.
+    private let preferences = makeEphemeralPreferences(
+        suiteName: "test.kernova.clipboard-copy-outcome")
+
+    /// Runs one "Copy to Mac" to completion and returns what it left in the
+    /// indicator, waiting on the controller's own render event.
+    private func copyMessage(
+        copyItems: [CopyToMacItem]? = nil, failWrite: Bool = false
+    ) async throws -> String {
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let pasteboard = FakeWritePasteboard()
+        pasteboard.failNextWrite = failWrite
+
+        let service = FakeClipboardService(content: ClipboardContent(text: "buffer bytes"))
+        service.copyItems = copyItems
+        let instance = makeClipboardInstance()
+        instance.clipboardService = service
+        let vc = ClipboardContentViewController(
+            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
+            writePasteboard: pasteboard, providerRegistry: registry)
+
+        let rendered = AsyncGate()
+        let latch = CopyOutcomeLatch()
+        vc.onCopyOutcomeForTesting = {
+            latch.didRender = true
+            rendered.notify()
+        }
+
+        vc.copy(nil)
+        try await rendered.wait { latch.didRender }
+        return vc.indicatorTextForTesting
+    }
+
+    @Test("a clean copy confirms the write")
+    func writtenConfirmsTheCopy() async throws {
+        #expect(try await copyMessage() == "Copied to Mac clipboard")
+    }
+
+    @Test("a write that drops the over-cap files names the cap, not a plain success")
+    func writtenOverBudgetNamesTheCap() async throws {
+        let inline = ClipboardContent.Representation(
+            uti: ClipboardContent.utf8TextUTI, data: Data("note".utf8))
+        let message = try await copyMessage(
+            copyItems: [.resolved(inline), .droppedFile(.overPasteBudget)])
+        #expect(message == "Copied without the files — over the 2 GB clipboard transfer limit")
+    }
+
+    @Test("an all-dropped over-cap copy reports the refusal")
+    func nothingServedOverBudgetReportsTheRefusal() async throws {
+        let message = try await copyMessage(copyItems: [.droppedFile(.overPasteBudget)])
+        #expect(message == ClipboardTransferIssue.overCopyBudgetMessage)
+    }
+
+    @Test("nothing to serve and nothing dropped reports a fetch failure")
+    func nothingServedWithoutReasonsReportsFetchFailure() async throws {
+        #expect(try await copyMessage(copyItems: []) == "Couldn't fetch the clipboard content to copy")
+    }
+
+    @Test("a payload that stages nothing reports a preparation failure")
+    func stagingFailureReportsPreparationFailure() async throws {
+        // A file payload whose bytes were never pulled stages no file, so the
+        // publish plans an item and ends up with no pasteboard spec.
+        let unstageable = ClipboardContent.Representation(
+            uti: "public.data", source: .pendingRemote(byteCount: 10), filename: "big.bin")
+        let message = try await copyMessage(copyItems: [.resolved(unstageable)])
+        #expect(message == "Couldn't prepare the clipboard content to copy")
+    }
+
+    @Test("a failed pasteboard write reports it")
+    func writeFailureReportsIt() async throws {
+        #expect(try await copyMessage(failWrite: true) == "Couldn't write to the Mac clipboard")
+    }
+
+    @Test("every error code the guest sends renders its own message")
+    func peerReportedCodesRenderTheirOwnMessage() {
+        let service = FakeClipboardService(content: ClipboardContent(text: "buffer bytes"))
+        let instance = makeClipboardInstance()
+        instance.clipboardService = service
+        let vc = ClipboardContentViewController(
+            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences))
+
+        let expected: [(ClipboardErrorCode, String)] = [
+            (
+                .pasteTooLarge,
+                "Too large to paste into the guest — over the 2 GB clipboard transfer limit"
+            ),
+            (.pasteDiskFull, "The guest ran out of disk space receiving the clipboard file"),
+            (.pasteTimeout, "The clipboard transfer to the guest timed out"),
+            (.pasteFailed, "Clipboard transfer failed on the guest side"),
+        ]
+        for (code, message) in expected {
+            // A fresh `date` is what re-fires the transient for a repeat issue.
+            service.lastTransferIssue = ClipboardTransferIssue(
+                kind: .peerReportedError(code: code.rawValue, message: "wire text"), date: Date())
+            vc.simulateObservationForTesting()
+            #expect(vc.indicatorTextForTesting == message)
+        }
+    }
+
+    @Test("a refusal made on this side shows the message it carries")
+    func localRefusalShowsItsOwnMessage() {
+        let service = FakeClipboardService(content: ClipboardContent(text: "buffer bytes"))
+        let instance = makeClipboardInstance()
+        instance.clipboardService = service
+        let vc = ClipboardContentViewController(
+            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences))
+
+        service.lastTransferIssue = .overCopyBudget()
+        vc.simulateObservationForTesting()
+        #expect(vc.indicatorTextForTesting == ClipboardTransferIssue.overCopyBudgetMessage)
+    }
+}
+
 /// Minimal in-memory `ClipboardServicing` for driving the controller without a
 /// live VM transport.
 @MainActor
@@ -577,6 +677,12 @@ private final class FakeClipboardService: ClipboardServicing {
     var isConnected: Bool = true
     var supportsBinaryRepresentations: Bool = true
     var lastTransferIssue: ClipboardTransferIssue?
+
+    /// What `materializeForCopy` hands the publisher, or `nil` to resolve the
+    /// buffer's own representations the way the protocol default does.
+    ///
+    /// Drives the publisher to each terminal outcome without a live transport.
+    var copyItems: [CopyToMacItem]?
 
     /// Times the controller *asked* for an announcement, so a test can assert the
     /// outbound choke-point was (or wasn't) reached without a live transport.
@@ -603,8 +709,11 @@ private final class FakeClipboardService: ClipboardServicing {
         announcedCount += 1
     }
     func clearBuffer() { clipboardContent = .empty }
-    // materializeForPreview / materializeForCopy use the protocol-extension
-    // defaults (no-op / return clipboardContent unchanged).
+    // materializeForPreview uses the protocol-extension default (no-op).
+
+    func materializeForCopy() -> [CopyToMacItem] {
+        copyItems ?? clipboardContent.representations.map { .resolved($0) }
+    }
 }
 
 /// A `HostWritePasteboard` whose `writeObjects` can be forced to fail, so the

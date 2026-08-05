@@ -37,6 +37,9 @@ struct AgentMenuTextTests {
         #expect(AgentMenuText.clipboardLine(.sentToHost) == "Clipboard: sent to host")
         #expect(
             AgentMenuText.clipboardLine(.receivedFromHost) == "Clipboard: received from host")
+        #expect(
+            AgentMenuText.clipboardLine(.pasteRefusedTooLarge)
+                == "Clipboard: too large to paste — over the 2 GB transfer limit")
         #expect(AgentMenuText.clipboardLine(.disabled) == "Clipboard: disabled")
     }
 
