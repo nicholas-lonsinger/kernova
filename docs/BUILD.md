@@ -16,7 +16,7 @@ Read the relevant section before touching build machinery — hooks and worktree
 
 `DEVELOPMENT_TEAM` is not in the project file. `make bootstrap` (`Tools/bootstrap-team.sh`) derives it from your own signing certificate into the gitignored `Config/Local.xcconfig`, which the tracked `Config/Base.xcconfig` includes.
 
-`make build`/`make test`/`make test-suite` run the derivation automatically, and the post-checkout hook covers new worktrees. Raw `xcodebuild` and Xcode's own ⌘B/⌘R do not — so on a fresh clone, where hooks aren't active yet, run `make bootstrap` once first or `DEVELOPMENT_TEAM` resolves empty and the Manual/profile-less Debug targets fail to sign.
+`make build`/`make test`/`make test-suite` run the derivation automatically, and the post-checkout hook covers new worktrees. Raw `xcodebuild` and Xcode's own ⌘B/⌘R do not — so on a fresh clone, where hooks aren't active yet, run `make bootstrap` once first or `DEVELOPMENT_TEAM` resolves empty and the Automatic-signed targets fail to sign. The guest agent needs no team in Debug — it signs ad-hoc, carrying no entitlements.
 
 ## One test invocation, three test targets
 
