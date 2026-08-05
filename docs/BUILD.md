@@ -8,15 +8,13 @@ Read the relevant section before touching build machinery — hooks and worktree
 
 **pre-push** runs `make lint`. Bypass an individual push with `git push --no-verify`.
 
-**post-checkout** makes a new worktree build and sign with no manual step: it copies the gitignored local files listed in `.worktreeinclude` from the main checkout, runs `make bootstrap`'s derivation if `Config/Local.xcconfig` is still missing, then sweeps LaunchServices ghosts (below).
+**post-checkout** sets up a new worktree with no manual step: it copies the gitignored local files listed in `.worktreeinclude` from the main checkout, then sweeps LaunchServices ghosts (below).
 
 `.worktreeinclude` is the definitive list of local files a worktree inherits. Claude Code and other worktree tools read it natively; the hook is what makes a plain `git worktree add` honor it too. **Literal paths only — no globs.**
 
-## Signing team derivation
+## Signing team
 
-`DEVELOPMENT_TEAM` is not in the project file. `make bootstrap` (`Tools/bootstrap-team.sh`) derives it from your own signing certificate into the gitignored `Config/Local.xcconfig`, which the tracked `Config/Base.xcconfig` includes.
-
-`make build`/`make test`/`make test-suite` run the derivation automatically, and the post-checkout hook covers new worktrees. Raw `xcodebuild` and Xcode's own ⌘B/⌘R do not — so on a fresh clone, where hooks aren't active yet, run `make bootstrap` once first or `DEVELOPMENT_TEAM` resolves empty and the Automatic-signed targets fail to sign. The guest agent needs no team in Debug — it signs ad-hoc, carrying no entitlements.
+`DEVELOPMENT_TEAM` is not in the project file, and Debug builds need none — every target signs ad-hoc. The gitignored, hand-maintained `Config/Local.xcconfig` (one line: `DEVELOPMENT_TEAM = <team>`), included by the tracked `Config/Base.xcconfig`, supplies the team to the one consumer left: the guest agent's Release Developer ID signing ([RELEASING.md](RELEASING.md)). Worktrees inherit the file through `.worktreeinclude`.
 
 ## One test invocation, three test targets
 

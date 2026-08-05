@@ -2,13 +2,12 @@
 // project XCBuildConfigurations (targets without their own
 // baseConfigurationReference inherit it).
 //
-// DEVELOPMENT_TEAM is derived per-developer from your own signing certificate
-// by `make bootstrap` (Tools/bootstrap-team.sh) into the gitignored
-// Local.xcconfig included below — see docs/BUILD.md "Signing team derivation".
+// DEVELOPMENT_TEAM lives in the gitignored, hand-maintained Local.xcconfig
+// included below (one line: DEVELOPMENT_TEAM = <team>) — see docs/BUILD.md
+// "Signing team".
 //
 // `#include?` (with the trailing `?`) is the optional form: it silently
-// no-ops when Local.xcconfig doesn't exist yet, so a not-yet-bootstrapped
-// clone still opens/builds (Automatic-signed targets resolve a team via
-// Xcode's own account picker; the guest agent signs ad-hoc in Debug — see
-// README).
+// no-ops when Local.xcconfig doesn't exist, so a fresh clone builds with no
+// team at all — every target signs ad-hoc in Debug; only the agent's Release
+// Developer ID signing needs the team.
 #include? "Local.xcconfig"

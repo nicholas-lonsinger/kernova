@@ -2,13 +2,13 @@
 #
 # Set up fresh checkouts. Runs after `git worktree add` — the case that
 # matters: a new worktree starts without the repo's gitignored local files
-# (git only checks out tracked content), so without this hook its first
-# Xcode build fails signing until `make bootstrap` is run by hand. Also
-# fires on `git switch`/`git checkout`, where the already-present guards
-# below make it a no-op. It cannot fire on a fresh `git clone`: hooks only
-# activate once `make install-hooks` sets core.hooksPath (git never
-# auto-runs checked-in hooks), so a brand-new clone still needs one
-# `make bootstrap`/`make build` — see README "Development setup".
+# (git only checks out tracked content), so without this hook they must be
+# copied by hand (Config/Local.xcconfig among them — the agent's Release
+# signing reads its team from it). Also fires on `git switch`/`git checkout`,
+# where the already-present guards below make it a no-op. It cannot fire on
+# a fresh `git clone`: hooks only activate once `make install-hooks` sets
+# core.hooksPath (git never auto-runs checked-in hooks) — see README
+# "Development setup".
 #
 # Git runs post-checkout from the working-tree root, so the relative paths
 # below resolve within whichever worktree was just created or switched.
@@ -42,16 +42,7 @@ if [ -n "$git_dir" ] && [ "$git_dir" != "$common_dir" ] && [ -f .worktreeinclude
     fi
 fi
 
-# ---- 2. derive DEVELOPMENT_TEAM if still missing ----------------------------
-
-# Best-effort: a failed derivation (e.g. no signing certificate in the
-# keychain) must not fail the checkout; bootstrap prints its own diagnostics
-# and `make doctor` reports the missing team.
-if [ ! -f Config/Local.xcconfig ] && [ -x Tools/bootstrap-team.sh ]; then
-    Tools/bootstrap-team.sh || true
-fi
-
-# ---- 3. sweep worktree debris ------------------------------------------------
+# ---- 2. sweep worktree debris ------------------------------------------------
 
 # Best-effort: a failed sweep must not fail the checkout; `make ghosts`
 # reports anything left behind.

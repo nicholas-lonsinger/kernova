@@ -5,9 +5,8 @@
 # (CMD-B / CMD-U); this Makefile is for terminal, CI, and tooling use.
 #
 # CI mirrors the build/test invocation by hand in
-# .github/workflows/xcodebuild-test.yml — it can't run `make test` because
-# the bootstrap prerequisite needs a signing identity the runner doesn't
-# have — so keep changes to the shared xcodebuild flags in sync there.
+# .github/workflows/xcodebuild-test.yml — keep changes to the shared
+# xcodebuild flags in sync there.
 
 PROJECT      := Kernova.xcodeproj
 SCHEME       := Kernova
@@ -56,7 +55,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks bootstrap doctor ghosts clean-ghosts
+.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -67,26 +66,15 @@ help:
 	@printf '  make test-suite requires SUITE=<Target/Suite>, e.g. SUITE=KernovaTests/VMConfigurationTests\n'
 	@printf '  Append CONFIGURATION=Release to build/test in Release (default: Debug)\n'
 
-# Derives this developer's signing team from their own certificate into the
-# gitignored Config/Local.xcconfig (see Config/Base.xcconfig) — what makes a
-# fresh clone build and sign with *your* team rather than a hardcoded one
-# (#476). A prerequisite of build/test rather than a separate manual step, so
-# a fresh clone's first `make build` just works; Tools/bootstrap-team.sh is
-# idempotent (no-ops once Config/Local.xcconfig has a value), so this is cheap
-# on every subsequent build. Re-derive with `Tools/bootstrap-team.sh --force`.
-bootstrap: ## Derive your signing team into Config/Local.xcconfig (auto-run by build/test)
-	@Tools/bootstrap-team.sh
-
 # One-time per clone: point this repo's git at the checked-in hooks —
 # `.githooks/pre-push` runs `make lint` before each push (bypass an
 # individual push with `git push --no-verify`), and `.githooks/post-checkout`
 # sets up fresh worktrees: it copies the gitignored files listed in
-# .worktreeinclude from the main checkout, then bootstraps DEVELOPMENT_TEAM
-# if still missing. Per-repo config (no `--global`); core.hooksPath is
-# shared by all worktrees of this repo.
+# .worktreeinclude from the main checkout. Per-repo config (no `--global`);
+# core.hooksPath is shared by all worktrees of this repo.
 install-hooks: ## Point git at .githooks/ (pre-push lint; post-checkout worktree setup)
 	git config core.hooksPath .githooks
-	@echo 'Hooks installed. Pre-push runs `make lint`; post-checkout sets up new worktrees (.worktreeinclude copies + DEVELOPMENT_TEAM bootstrap).'
+	@echo 'Hooks installed. Pre-push runs `make lint`; post-checkout sets up new worktrees (.worktreeinclude copies).'
 
 # Silent when the hooks are wired up; otherwise a one-line nudge. Runs as a
 # prerequisite of the build/test targets so contributors who skipped the
@@ -98,7 +86,7 @@ install-hooks: ## Point git at .githooks/ (pre-push lint; post-checkout worktree
 check-hooks:
 	@Tools/hooks-installed.sh >/dev/null || printf 'Note: git hooks are not installed. Run `make install-hooks` (one-time per clone) to lint before push and auto-set-up new worktrees.\n' >&2
 
-build: check-hooks bootstrap ## Build the app for macOS
+build: check-hooks ## Build the app for macOS
 	xcodebuild $(XCODEBUILD_FLAGS) build
 
 # Removes both build arenas this checkout can have: the in-worktree
@@ -121,7 +109,7 @@ clean: ## Remove this checkout's build arenas (in-worktree DerivedData/ and the 
 		*) Tools/ghosts.sh --evict "$$arena" ;; \
 	esac
 
-test: check-hooks bootstrap ## Run the full test suite (all three test targets via Kernova.xctestplan)
+test: check-hooks ## Run the full test suite (all three test targets via Kernova.xctestplan)
 	xcodebuild $(XCODEBUILD_FLAGS) test
 
 # `xcrun` so the toolchain matches the one selected via `xcode-select`
@@ -129,7 +117,7 @@ test: check-hooks bootstrap ## Run the full test suite (all three test targets v
 test-package: ## Run only the KernovaKit SwiftPM package tests
 	xcrun swift test --package-path KernovaKit
 
-test-suite: check-hooks bootstrap ## Run a single test suite (SUITE=<Target/Suite>; see below)
+test-suite: check-hooks ## Run a single test suite (SUITE=<Target/Suite>; see below)
 	@if [ -z "$(SUITE)" ]; then \
 		echo 'Usage: make test-suite SUITE=<Target/Suite>' >&2; \
 		echo 'Example: make test-suite SUITE=KernovaTests/VMConfigurationTests' >&2; \
