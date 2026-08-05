@@ -1119,6 +1119,55 @@ struct VsockGuestClipboardAgentTests {
         #expect(try Data(contentsOf: staged) == contents)
     }
 
+    @Test("disable and stop keep materialized receive staging — a vended URL's file survives")
+    func stopKeepsMaterializedReceiveStaging() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        let contents = Data("staged for a paste".utf8)
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 3,
+                reps: [
+                    RepInfo(
+                        uti: txtUTI, byteCount: UInt64(contents.count), filename: "kept.txt",
+                        isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        try await driveInboundStream(
+            generation: 3, uti: txtUTI, filename: "kept.txt", payload: contents,
+            isInline: false, on: hostChannel)
+        let urlData = await pull.value
+        let staged = try #require(
+            urlData.flatMap { String(data: $0, encoding: .utf8) }
+                .flatMap(URL.init(string:)))
+        #expect(try Data(contentsOf: staged) == contents)
+
+        // Host policy disables sharing: the connection tears down, but the
+        // staged file behind the pasteboard-vended URL survives.
+        agent.setEnabled(false)
+        try await waitUntil { agent.liveChannelForTesting == nil }
+        #expect(FileManager.default.fileExists(atPath: staged.path))
+        #expect(try Data(contentsOf: staged) == contents)
+
+        // A full agent stop keeps it too.
+        agent.stop()
+        // stop()'s teardown is queued on the main queue; run after it.
+        await MainActor.run {}
+        #expect(FileManager.default.fileExists(atPath: staged.path))
+        #expect(try Data(contentsOf: staged) == contents)
+    }
+
     @Test("a promised file offer is written `.currentHostOnly`, and nothing is pulled at offer time")
     func filePromiseWriteIsScopedCurrentHostOnly() async throws {
         let pasteboard = FakePasteboard()

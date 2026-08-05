@@ -27,7 +27,8 @@ public protocol StagingSink: Sendable {
 /// Each instance owns a private root (the label plus a per-instance component),
 /// so no instance's `sweep()` can delete files another instance staged — a URL
 /// vended to a pasteboard outlives the session that staged it. Roots left behind
-/// by earlier instances are reclaimed at process launch by `reclaimAll`.
+/// by earlier instances are reclaimed at process launch by `reclaimAll`, and
+/// mid-process by `reclaimSiblingRoots()` once nothing can be serving from them.
 public final class ClipboardFileStaging: @unchecked Sendable {
     /// Queries free capacity (in bytes) for important, user-initiated writes at
     /// the given directory.
@@ -230,13 +231,33 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// Removes this instance's entire staging root — every live generation at
     /// once.
     ///
-    /// A previous instance's root is out of reach by construction; `reclaimAll`
-    /// reclaims those at launch.
+    /// A previous instance's root is out of reach by construction;
+    /// `reclaimSiblingRoots` and `reclaimAll` reclaim those.
     public func sweep() {
         lock.lock()
         defer { lock.unlock() }
         try? FileManager.default.removeItem(at: root)
         generationDirs.removeAll()
+    }
+
+    /// Removes every sibling root under this instance's label — staging left
+    /// behind by the same label's earlier instances — leaving this instance's
+    /// own root untouched.
+    ///
+    /// Call only when nothing can still be serving from those roots: for a
+    /// receive root, once the host pasteboard no longer holds (or has just
+    /// retracted) the write those files backed.
+    public func reclaimSiblingRoots() {
+        lock.lock()
+        defer { lock.unlock() }
+        let labelDir = root.deletingLastPathComponent()
+        guard
+            let siblings = try? FileManager.default.contentsOfDirectory(
+                at: labelDir, includingPropertiesForKeys: nil)
+        else { return }
+        for sibling in siblings where sibling.lastPathComponent != root.lastPathComponent {
+            try? FileManager.default.removeItem(at: sibling)
+        }
     }
 
     // MARK: - Private

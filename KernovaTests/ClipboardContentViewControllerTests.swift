@@ -747,4 +747,9 @@ private final class FakeWritePasteboard: HostWritePasteboard {
         onWrite?()
         return !shouldFail
     }
+
+    @discardableResult func clearContents() -> Int {
+        changeCount += 1
+        return changeCount
+    }
 }

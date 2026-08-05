@@ -37,11 +37,18 @@ final class HostClipboardPublisher {
     private var stagingGeneration: UInt64 = 1
 
     /// The write pasteboard's `changeCount` immediately after the most recent
-    /// successful write, or `nil` before any write.
+    /// successful write, or `nil` before any write (and after a retraction).
     ///
     /// A passthrough coordinator polling the same pasteboard skips this exact
     /// change, so guest content is never re-forwarded back to the guest.
     private(set) var lastWriteChangeCount: Int?
+
+    /// Whether the most recent write carried promised (offer-addressed) items.
+    ///
+    /// Those are the only kind a supersession can strand, and so the only kind
+    /// `retractPromisedWrite` retracts — a fully resolved write serves from
+    /// local staging and survives the guest clipboard moving on.
+    private var lastWriteWasPromised = false
 
     nonisolated private static let logger = Logger(
         subsystem: "app.kernova", category: "HostClipboardPublisher")
@@ -126,6 +133,7 @@ final class HostClipboardPublisher {
         providerRegistry.retain(providers)
         let changeCount = pasteboard.changeCount
         lastWriteChangeCount = changeCount
+        lastWriteWasPromised = !promises.isEmpty
         let representationCount = resolvedReps.count + promises.count
         Self.logger.info(
             "Published clipboard buffer to host pasteboard (\(representationCount, privacy: .public) reps, \(items.count, privacy: .public) items, \(droppedReasons.count, privacy: .public) dropped)"
@@ -133,6 +141,31 @@ final class HostClipboardPublisher {
         return .written(
             representationCount: representationCount, droppedReasons: droppedReasons,
             changeCount: changeCount)
+    }
+
+    /// `true` while the host pasteboard still holds this publisher's most recent
+    /// write — nothing (the user included) has replaced it since.
+    var pasteboardHoldsLastWrite: Bool {
+        lastWriteChangeCount != nil && lastWriteChangeCount == writePasteboard.changeCount
+    }
+
+    /// Clears the host pasteboard when it still holds this publisher's most
+    /// recent *promised* write, returning whether it did — the stale-promise
+    /// retraction the clipboard service triggers when the guest's clipboard
+    /// supersedes an offer whose promises can no longer be served.
+    ///
+    /// A pasteboard the user has since written over is theirs and is left
+    /// untouched, as is a fully resolved write (it keeps serving from local
+    /// staging).
+    func retractPromisedWrite() -> Bool {
+        guard lastWriteWasPromised, let lastWrite = lastWriteChangeCount,
+            writePasteboard.changeCount == lastWrite
+        else { return false }
+        writePasteboard.clearContents()
+        lastWriteChangeCount = nil
+        lastWriteWasPromised = false
+        Self.logger.notice("Retracted stale promised clipboard write from the host pasteboard")
+        return true
     }
 
     /// One pasteboard item to write: the types it promises and a closure that

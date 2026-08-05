@@ -22,8 +22,15 @@ public enum ClipboardErrorCode: String, CaseIterable, Sendable {
     /// The offer's paste-bound reps exceed the deadline-safe cap, so the host
     /// refused the Copy-to-Mac gesture.
     ///
-    /// The one code that never crosses the wire: the host both refuses and
-    /// reports this one, so it names the refusal in the log and in the host's own
-    /// transfer issue rather than in a frame.
+    /// Never crosses the wire: the host both refuses and reports this one, so it
+    /// names the refusal in the log and in the host's own transfer issue rather
+    /// than in a frame.
     case copyTooLarge = "clipboard.copy.too.large"
+
+    /// The paste fired after the VM session ended with only part of the copied
+    /// file set materialized, so the host refused to serve an incomplete set.
+    ///
+    /// Never crosses the wire: like `copyTooLarge`, the host both refuses and
+    /// reports it.
+    case pasteIncompleteSet = "clipboard.paste.incomplete.set"
 }

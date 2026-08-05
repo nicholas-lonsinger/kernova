@@ -618,10 +618,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 return "Too large to paste into the guest — over the 2 GB clipboard transfer limit"
             case .pasteTimeout:
                 return "The clipboard transfer to the guest timed out"
-            case .pasteFailed, .copyTooLarge, .none:
+            case .pasteFailed, .copyTooLarge, .pasteIncompleteSet, .none:
                 return "Clipboard transfer failed on the guest side"
             }
         case .localRefusal(_, let message):
+            return message
+        case .staleCopyRetracted(let message):
             return message
         }
     }
@@ -968,6 +970,8 @@ protocol HostWritePasteboard: AnyObject {
     var changeCount: Int { get }
     @discardableResult func prepareForNewContents(with options: NSPasteboard.ContentsOptions) -> Int
     func writeObjects(_ objects: [any NSPasteboardWriting]) -> Bool
+    /// Empties the pasteboard — the publisher's stale-promise retraction.
+    @discardableResult func clearContents() -> Int
 }
 
 extension NSPasteboard: HostWritePasteboard {}

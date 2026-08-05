@@ -146,8 +146,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// redundant outbound offers on an unchanged clipboard.
     private var lastSeenDigest: Data?
 
-    /// Materializes streamed file payloads to local temp files; swept on
-    /// connect/teardown/disable.
+    /// Materializes streamed file payloads to local temp files.
+    ///
+    /// Never swept on teardown/disable — its files may still back vended
+    /// pasteboard URLs; the generation window bounds it, and `reclaimAll` at
+    /// agent launch clears earlier processes' roots.
     private let staging: ClipboardFileStaging
 
     /// Holds folder archives built to *send* to the host, kept separate from
@@ -259,8 +262,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     // MARK: - Lifecycle
 
     func start() {
-        staging.sweep()
-        sendStaging.sweep()
         client.start { [weak self] channel in
             await self?.serve(channel: channel)
         }
@@ -287,7 +288,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             pollingTimer?.cancel()
             pollingTimer = nil
             teardownConnectionState()
-            staging.sweep()
+            // Only the outbound archives: receive staging survives a disable —
+            // its files may still back `public.file-url`s the guest pasteboard
+            // vended, and a URL vended to a pasteboard outlives the session
+            // that staged it (mirrors the host's stop()).
             sendStaging.sweep()
             clipboardActivityStorage = .disabled
             Self.logger.notice("Clipboard sharing disabled by host policy")
@@ -295,13 +299,14 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     }
 
     /// Tears down the connection and the poll timer.
+    ///
+    /// Receive staging is deliberately left in place — see `applyEnabledOnMain`.
     func stop() {
         client.stop()
         DispatchQueue.main.async { [weak self] in
             self?.pollingTimer?.cancel()
             self?.pollingTimer = nil
             self?.teardownConnectionState()
-            self?.staging.sweep()
             self?.sendStaging.sweep()
         }
         Self.logger.notice("Vsock clipboard agent stopped")

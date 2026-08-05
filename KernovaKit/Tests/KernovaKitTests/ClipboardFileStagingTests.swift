@@ -179,6 +179,29 @@ struct ClipboardFileStagingTests {
         #expect(FileManager.default.fileExists(atPath: kept.url.path))
     }
 
+    @Test("reclaimSiblingRoots removes earlier same-label roots, leaving its own and other labels")
+    func reclaimSiblingRootsScopesToLabel() throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let previousSession = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
+        let liveSession = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
+        let otherLabel = ClipboardFileStaging(label: "host-other", tempRoot: tempRoot)
+
+        let orphan = try previousSession.makeSink(generation: 1, filename: "orphan.bin")
+        try orphan.commit()
+        let kept = try liveSession.makeSink(generation: 1, filename: "kept.bin")
+        try kept.commit()
+        let unrelated = try otherLabel.makeSink(generation: 1, filename: "unrelated.bin")
+        try unrelated.commit()
+
+        liveSession.reclaimSiblingRoots()
+
+        #expect(!FileManager.default.fileExists(atPath: orphan.url.path))
+        #expect(FileManager.default.fileExists(atPath: kept.url.path))
+        #expect(FileManager.default.fileExists(atPath: unrelated.url.path))
+    }
+
     @Test("reclaimAll removes every label family under the shared parent")
     func reclaimAllSweepsEveryFamily() throws {
         let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(

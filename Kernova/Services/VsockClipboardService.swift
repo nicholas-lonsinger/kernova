@@ -130,6 +130,24 @@ final class VsockClipboardService: ClipboardServicing {
     /// pulls must not resurrect it (Copy-to-Mac would otherwise discard the edit).
     private var lastInboundPublishedDigest: Data?
 
+    /// Retracts this VM's stale promised write from the host pasteboard if the
+    /// pasteboard still holds it, returning whether it did.
+    ///
+    /// Wired by `VMInstance` to the VM's `HostClipboardPublisher` — the service
+    /// never learns the publisher type. Called on inbound supersession (a newer
+    /// offer, or a release): the guest rejects the superseded generation's pulls
+    /// as `request.stale`, so a promise left on the pasteboard would advertise
+    /// flavors that silently serve nothing. VM stop deliberately does *not*
+    /// retract — a stopped session's materialized reps stay servable.
+    var retractStaleHostWrite: (@MainActor () -> Bool)?
+
+    /// Whether the host pasteboard still holds this VM's most recent write.
+    ///
+    /// Wired by `VMInstance`; `start()` reclaims earlier sessions' staging roots
+    /// only when this reports `false` — while the pasteboard holds the write,
+    /// an earlier session's staged files may still be backing its vended URLs.
+    var hostPasteboardHoldsOurWrite: (@MainActor () -> Bool)?
+
     #if DEBUG
     /// Test seam: awaited inside `materialize` in the window between a pull
     /// resolving and the supersession re-check, so a test can drive a newer
@@ -160,6 +178,10 @@ final class VsockClipboardService: ClipboardServicing {
         /// on each pulled rep so `republishOffActor` can detect one that landed
         /// during its off-actor hash.
         var materializeEpoch = 0
+        /// Whether the post-stop partial-file-set refusal was already surfaced
+        /// for this offer, so the N provider fires of one multi-file paste raise
+        /// one issue rather than N.
+        var partialSetRefusalReported = false
 
         init(
             generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo], isConcealed: Bool
@@ -212,8 +234,15 @@ final class VsockClipboardService: ClipboardServicing {
 
     func start() {
         guard consumeTask == nil else { return }
-        staging.sweep()
-        sendStaging.sweep()
+        // Earlier sessions' staging roots: outbound-archive roots never back a
+        // host-pasteboard URL, so they are always reclaimable; receive roots may
+        // still be serving the pasteboard's current write (a stopped session's
+        // materialized reps stay servable), so they are reclaimed only once the
+        // pasteboard no longer holds this VM's write.
+        sendStaging.reclaimSiblingRoots()
+        if hostPasteboardHoldsOurWrite?() != true {
+            staging.reclaimSiblingRoots()
+        }
         isConnected = true
 
         let sender = ClipboardStreamSender(channel: channel)
@@ -290,7 +319,8 @@ final class VsockClipboardService: ClipboardServicing {
         // deliberately survive stop() — the host pasteboard may still advertise
         // this offer, and every rep already materialized stays servable from the
         // cache and the staged files (docs/CLIPBOARD.md §3). Only supersession —
-        // a newer offer or a release — wipes them.
+        // a newer offer or a release — retracts the pasteboard write; the staged
+        // files then age out of the generation window or the sibling reclaim.
         sendStaging.sweep()
         // Unconditional, unlike `publishProgress`'s change-guarded push: a stopped
         // VM's last snapshot would otherwise pin the status item's readout.
@@ -633,13 +663,28 @@ final class VsockClipboardService: ClipboardServicing {
 
     private func handleOffer(_ offer: Kernova_V1_ClipboardOffer) {
         // A newer offer supersedes the previous one: cancel any in-flight pull so
-        // its partial temp file is deleted and a blocked continuation resumes,
-        // and sweep the superseded staged files — supersession is the one point
-        // where removing a served artifact is allowed (docs/CLIPBOARD.md §3).
+        // its partial temp file is deleted and a blocked continuation resumes.
+        // The superseded generation's staged files are NOT swept — they ride the
+        // `maxGenerations` grace window (docs/CLIPBOARD.md §3), so a paste still
+        // being copied out by Finder, or a re-paste of an already-vended URL,
+        // survives the guest's next copy.
         if let previous = inboundPromise {
             receiver?.cancel(generation: previous.generation)
         }
-        staging.sweep()
+        // The host pasteboard may still hold this VM's own promised write for
+        // the superseded offer, which the guest can no longer serve
+        // (`request.stale`) — retract it rather than leave a paste that
+        // silently serves nothing, and tell the user how to get the new copy.
+        let retracted = retractStaleHostWrite?() ?? false
+        if retracted {
+            lastTransferIssue = .staleCopyRetracted()
+            // With the write retracted, no earlier session's staging can be
+            // backing a live pasteboard item any more.
+            staging.reclaimSiblingRoots()
+            Self.logger.notice(
+                "Retracted the stale host-pasteboard promise for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) superseded by guest offer gen=\(offer.generation, privacy: .public)"
+            )
+        }
 
         guard !offer.repInfo.isEmpty else {
             dropInboundPromise()
@@ -657,7 +702,8 @@ final class VsockClipboardService: ClipboardServicing {
         }
         inboundPromise = promise
         previewMaterializationStarted = 0
-        lastTransferIssue = nil
+        // A retraction's issue is the new offer's own explainer — keep it.
+        if !retracted { lastTransferIssue = nil }
         // Bumped after the promise is live, so the passthrough coordinator's
         // `materializeForCopy` sees it.
         inboundOfferSeq &+= 1
@@ -869,6 +915,36 @@ final class VsockClipboardService: ClipboardServicing {
     ) -> ClipboardContent.Representation? {
         guard let promise = inboundPromise, promise.generation == generation else { return nil }
         return promise.materialized[repIndex]
+    }
+
+    /// Whether a `.fileURL` fire for the live offer must be refused because the
+    /// service has stopped with the offer's file set only partially
+    /// materialized — all-or-nothing, so a multi-file paste after VM stop never
+    /// silently lands a subset of the copied files.
+    ///
+    /// The file set is the offer's `.fileURL`-serving reps (every promisable rep
+    /// with a filename, the ones a Finder paste creates files from). With the
+    /// receiver gone the unmaterialized siblings can never arrive, so every
+    /// file fire of the generation serves nothing and the first raises the
+    /// transfer issue; a fully-materialized set keeps serving from the cache
+    /// and staged files, and inline flavors keep serving regardless.
+    @MainActor
+    private func refusesPasteBoundFire(generation: UInt64) -> Bool {
+        guard receiver == nil, let promise = inboundPromise, promise.generation == generation
+        else { return false }
+        let fileSet = promise.reps.indices.filter { index in
+            let info = promise.reps[index]
+            return !Self.shouldSkip(info) && !info.filename.isEmpty
+        }
+        guard fileSet.contains(where: { promise.materialized[$0] == nil }) else { return false }
+        if !promise.partialSetRefusalReported {
+            promise.partialSetRefusalReported = true
+            Self.logger.warning(
+                "Clipboard paste fired for gen=\(generation, privacy: .public) of '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) after the service stopped with the file set partially materialized — \(ClipboardErrorCode.pasteIncompleteSet.rawValue, privacy: .public); serving nothing"
+            )
+            lastTransferIssue = .partialFileSetUnservable()
+        }
+        return true
     }
 
     /// Snapshots the pull state for a paste-bound `.fileURL` fire, enforcing the
@@ -1258,9 +1334,17 @@ final class VsockClipboardService: ClipboardServicing {
         // Wake any synchronous file pull blocked on the coordinator.
         lazyCoordinator.failAll()
         dropInboundPromise()
-        // A release is a supersession: the released generation's staged files go
-        // with it (docs/CLIPBOARD.md §3).
-        staging.sweep()
+        // A release is a supersession: retract the now-unservable pasteboard
+        // promise like a newer offer would. The released generation's staged
+        // files ride the grace window rather than being swept (docs/CLIPBOARD.md
+        // §3), so a paste mid-copy survives.
+        if retractStaleHostWrite?() == true {
+            lastTransferIssue = .staleCopyRetracted()
+            staging.reclaimSiblingRoots()
+            Self.logger.notice(
+                "Retracted the stale host-pasteboard promise for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) after the guest released gen=\(release.generation, privacy: .public)"
+            )
+        }
         Self.logger.debug(
             "Guest released clipboard offer (gen=\(release.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)) for '\(self.label, privacy: .public)'"
         )
@@ -1277,6 +1361,9 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
     /// the blocking pull then runs on the calling thread, woken off-main by the
     /// receiver.
     nonisolated func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? {
+        // Post-stop all-or-nothing: a partially-materialized file set serves no
+        // file at all rather than a silent subset.
+        if onMain({ self.refusesPasteBoundFire(generation: generation) }) { return nil }
         if let cached = onMain({ self.cachedMaterialized(generation: generation, repIndex: repIndex) }) {
             Self.logger.debug(
                 "Served clipboard rep \(repIndex, privacy: .public) (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), '\(cached.uti, privacy: .public)') from cache — no transfer"

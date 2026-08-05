@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 import Foundation
 import Darwin
@@ -1524,7 +1525,7 @@ struct VsockClipboardServiceTests {
         #expect(responder.requests.count == 2)
     }
 
-    @Test("after stop(), materialized reps stay servable; a never-pulled rep serves nothing")
+    @Test("after stop(), a fully-materialized file set stays servable")
     func stopKeepsMaterializedRepsServable() async throws {
         let (guest, host) = try makePair()
         guest.start()
@@ -1556,12 +1557,11 @@ struct VsockClipboardServiceTests {
                 reps: [
                     (uti: ClipboardContent.utf8TextUTI, byteCount: inlineBytes.count, filename: "", isInline: true),
                     (uti: "public.data", byteCount: fileBytes.count, filename: "kept.bin", isInline: false),
-                    (uti: "public.data", byteCount: 512, filename: "never.bin", isInline: false),
                 ]))
-        try await waitForChange { service.clipboardContent.representations.count == 3 }
+        try await waitForChange { service.clipboardContent.representations.count == 2 }
 
         // Materialize rep 0 through the preview and rep 1 through a paste-time
-        // pull; rep 2 is never pulled.
+        // pull — the whole file set is materialized before the stop.
         await service.materializeForPreview()
         let pulledURL = try #require(
             await offCooperativePool { service.copyToMacFileURL(generation: 9, repIndex: 1) })
@@ -1579,16 +1579,81 @@ struct VsockClipboardServiceTests {
             await offCooperativePool { service.copyToMacFileURL(generation: 9, repIndex: 1) })
         #expect(repeatURL == pulledURL)
         #expect(try Data(contentsOf: repeatURL) == fileBytes)
-        // A rep that never materialized has no bytes to serve once the channel is
-        // gone.
-        let neverPulled = await offCooperativePool {
-            service.copyToMacFileURL(generation: 9, repIndex: 2)
-        }
-        #expect(neverPulled == nil)
+        #expect(service.lastTransferIssue == nil)
     }
 
-    @Test("a superseding offer makes the old generation unservable and deletes its staged files")
-    func supersedingOfferWipesOldGenerationStaging() async throws {
+    @Test("after stop(), a partially-materialized file set serves nothing and raises one issue")
+    func stopRefusesPartiallyMaterializedFileSet() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        let inlineBytes = Data("still served".utf8)
+        let fileBytes = Data((0..<(64 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 9, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: inlineBytes,
+            isInline: true)
+        responder.register(
+            generation: 9, repIndex: 1, uti: "public.data", bytes: fileBytes,
+            filename: "kept.bin", isInline: false)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 9,
+                reps: [
+                    (uti: ClipboardContent.utf8TextUTI, byteCount: inlineBytes.count, filename: "", isInline: true),
+                    (uti: "public.data", byteCount: fileBytes.count, filename: "kept.bin", isInline: false),
+                    (uti: "public.data", byteCount: 512, filename: "never.bin", isInline: false),
+                ]))
+        try await waitForChange { service.clipboardContent.representations.count == 3 }
+
+        // Materialize rep 0 and rep 1; rep 2 is never pulled, so the file set
+        // {kept.bin, never.bin} is only partially materialized at the stop.
+        await service.materializeForPreview()
+        _ = try #require(
+            await offCooperativePool { service.copyToMacFileURL(generation: 9, repIndex: 1) })
+
+        service.stop()
+
+        // All-or-nothing: with never.bin unreachable, the materialized sibling
+        // is refused too — a Finder paste lands no silent partial file set.
+        let keptURL = await offCooperativePool {
+            service.copyToMacFileURL(generation: 9, repIndex: 1)
+        }
+        #expect(keptURL == nil)
+        let neverURL = await offCooperativePool {
+            service.copyToMacFileURL(generation: 9, repIndex: 2)
+        }
+        #expect(neverURL == nil)
+
+        // One issue for the whole paste, not one per fire.
+        let issue = try #require(service.lastTransferIssue)
+        guard case .localRefusal(let code, _) = issue.kind else {
+            Issue.record("Expected a localRefusal issue, got \(issue.kind)")
+            return
+        }
+        #expect(code == ClipboardErrorCode.pasteIncompleteSet.rawValue)
+        _ = await offCooperativePool { service.copyToMacFileURL(generation: 9, repIndex: 1) }
+        #expect(service.lastTransferIssue == issue)
+
+        // Inline flavors keep serving regardless.
+        let cachedData = await offCooperativePool {
+            service.copyToMacData(generation: 9, repIndex: 0, uti: ClipboardContent.utf8TextUTI)
+        }
+        #expect(cachedData == inlineBytes)
+    }
+
+    @Test("a superseding offer makes the old generation unservable; its staged file rides the grace window")
+    func supersedingOfferKeepsOldStagingInGraceWindow() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -1616,8 +1681,9 @@ struct VsockClipboardServiceTests {
             await offCooperativePool { service.copyToMacFileURL(generation: 1, repIndex: 0) })
         #expect(FileManager.default.fileExists(atPath: stagedURL.path))
 
-        // A newer offer supersedes gen=1 — the sanctioned removal point for its
-        // served artifacts.
+        // A newer offer supersedes gen=1: its coordinates stop serving, but its
+        // staged file rides the maxGenerations grace window so a Finder still
+        // copying out the vended URL isn't cut off.
         try guest.send(
             makeOffer(
                 generation: 2,
@@ -1636,12 +1702,14 @@ struct VsockClipboardServiceTests {
         }
         #expect(staleData == nil)
         #expect(responder.requests.count == 1, "A stale fire must not mint a new request")
-        // ...and the staged file behind the superseded generation is gone.
-        #expect(!FileManager.default.fileExists(atPath: stagedURL.path))
+        // ...but the staged file behind the already-vended URL survives the
+        // supersession inside the grace window.
+        #expect(FileManager.default.fileExists(atPath: stagedURL.path))
+        #expect(try Data(contentsOf: stagedURL) == fileBytes)
     }
 
-    @Test("a ClipboardRelease makes the old generation unservable and deletes its staged files")
-    func releaseWipesOldGenerationStaging() async throws {
+    @Test("a ClipboardRelease makes the old generation unservable; its staged file rides the grace window")
+    func releaseKeepsOldStagingInGraceWindow() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -1669,7 +1737,8 @@ struct VsockClipboardServiceTests {
             await offCooperativePool { service.copyToMacFileURL(generation: 15, repIndex: 0) })
         #expect(FileManager.default.fileExists(atPath: stagedURL.path))
 
-        // The guest releases the offer — a supersession, wiping its staging.
+        // The guest releases the offer — a supersession: the promise drops, but
+        // the staged file rides the grace window.
         var release = Frame()
         release.protocolVersion = 1
         release.clipboardRelease = Kernova_V1_ClipboardRelease.with { $0.generation = 15 }
@@ -1686,6 +1755,257 @@ struct VsockClipboardServiceTests {
             service.copyToMacFileURL(generation: 15, repIndex: 0)
         }
         #expect(staleURL == nil)
+        #expect(FileManager.default.fileExists(atPath: stagedURL.path))
+        #expect(try Data(contentsOf: stagedURL) == fileBytes)
+    }
+
+    @Test("a superseding offer retracts the stale host write, surfaces the issue, and reclaims older-session roots")
+    func supersedingOfferRetractsStaleHostWrite() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let label = "vm-\(UUID().uuidString)"
+        let service = VsockClipboardService(
+            channel: host, label: label, stagingTempRoot: tempRoot)
+
+        // An earlier session's receive root, still backing the pasteboard's
+        // write at start — the retraction below is what frees it.
+        let olderSession = ClipboardFileStaging(label: "host-\(label)", tempRoot: tempRoot)
+        let orphanURL = try olderSession.makeSink(generation: 1, filename: "orphan.bin").commit()
+        service.hostPasteboardHoldsOurWrite = { true }
+
+        var retractionResults: [Bool] = [false, true]
+        var retractionCalls = 0
+        service.retractStaleHostWrite = {
+            retractionCalls += 1
+            return retractionResults.isEmpty ? false : retractionResults.removeFirst()
+        }
+        service.start()
+        defer { service.stop() }
+        #expect(FileManager.default.fileExists(atPath: orphanURL.path))
+
+        // First offer: nothing of ours on the pasteboard to retract — no issue.
+        try guest.send(makeTextOffer(generation: 1, text: "first"))
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
+        #expect(retractionCalls == 1)
+        #expect(service.lastTransferIssue == nil)
+        #expect(FileManager.default.fileExists(atPath: orphanURL.path))
+
+        // Second offer supersedes a promised write still on the pasteboard: the
+        // retraction is surfaced and older-session staging is reclaimed.
+        try guest.send(makeTextOffer(generation: 2, text: "second"))
+        try await waitForChange { service.lastTransferIssue != nil }
+        #expect(retractionCalls == 2)
+        let issue = try #require(service.lastTransferIssue)
+        guard case .staleCopyRetracted = issue.kind else {
+            Issue.record("Expected a staleCopyRetracted issue, got \(issue.kind)")
+            return
+        }
+        #expect(!FileManager.default.fileExists(atPath: orphanURL.path))
+    }
+
+    @Test("a ClipboardRelease retracts the stale host write and surfaces the issue")
+    func releaseRetractsStaleHostWrite() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        // Nothing to retract at the offer; the release finds the stale write.
+        var retractionResults: [Bool] = [false, true]
+        var retractionCalls = 0
+        service.retractStaleHostWrite = {
+            retractionCalls += 1
+            return retractionResults.isEmpty ? false : retractionResults.removeFirst()
+        }
+        service.start()
+        defer { service.stop() }
+
+        try guest.send(makeTextOffer(generation: 4, text: "released"))
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
+        #expect(retractionCalls == 1)
+        #expect(service.lastTransferIssue == nil)
+
+        var release = Frame()
+        release.protocolVersion = 1
+        release.clipboardRelease = Kernova_V1_ClipboardRelease.with { $0.generation = 4 }
+        try guest.send(release)
+        try await waitForChange {
+            if case .staleCopyRetracted = service.lastTransferIssue?.kind { return true }
+            return false
+        }
+        #expect(retractionCalls == 2)
+    }
+
+    @Test("stop() never retracts the host write — only supersession and release do")
+    func stopDoesNotRetractHostWrite() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        var retractionCalls = 0
+        service.retractStaleHostWrite = {
+            retractionCalls += 1
+            return false
+        }
+        service.start()
+
+        try guest.send(makeTextOffer(generation: 1, text: "hello"))
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
+        #expect(retractionCalls == 1)
+
+        service.stop()
+        #expect(retractionCalls == 1)
+    }
+
+    @Test("retraction clears the pasteboard only while it still holds this VM's promised write")
+    func retractionRespectsPasteboardOwnership() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        let publisher = HostClipboardPublisher(
+            writePasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
+        service.retractStaleHostWrite = { publisher.retractPromisedWrite() }
+        service.start()
+        defer { service.stop() }
+
+        // Guest offer gen=1, promised onto the pasteboard by Copy to Mac.
+        try guest.send(
+            makeOffer(
+                generation: 1,
+                reps: [(uti: "public.data", byteCount: 128, filename: "a.bin", isInline: false)]))
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
+        let outcome = await publisher.publish(from: service)
+        #expect(outcome.didWrite)
+        #expect(pasteboard.pasteboardItems?.isEmpty == false)
+
+        // The guest copies again while the pasteboard still holds our write:
+        // the stale promise is retracted and the issue explains.
+        try guest.send(
+            makeOffer(
+                generation: 2,
+                reps: [(uti: "public.data", byteCount: 64, filename: "b.bin", isInline: false)]))
+        try await waitForChange { service.lastTransferIssue != nil }
+        #expect(pasteboard.pasteboardItems?.isEmpty ?? true)
+
+        // Publish gen=2, then the user copies their own content over it: the
+        // next supersession must leave the user's pasteboard untouched.
+        _ = await publisher.publish(from: service)
+        pasteboard.clearContents()
+        pasteboard.setString("mine", forType: .string)
+        let countBefore = pasteboard.changeCount
+        try guest.send(
+            makeOffer(
+                generation: 3,
+                reps: [(uti: "public.data", byteCount: 32, filename: "c.bin", isInline: false)]))
+        try await waitForChange { service.lastTransferIssue == nil }
+        #expect(pasteboard.changeCount == countBefore)
+        #expect(pasteboard.string(forType: .string) == "mine")
+    }
+
+    @Test("a resolved (non-promised) write is never retracted by a later offer")
+    func resolvedWriteSurvivesSupersession() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        let publisher = HostClipboardPublisher(
+            writePasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
+        service.retractStaleHostWrite = { publisher.retractPromisedWrite() }
+        service.start()
+        defer { service.stop() }
+
+        // Local content with no live promise resolves at the click; its bytes
+        // serve from local staging, so a guest supersession can't strand it.
+        service.clipboardContent = ClipboardContent(
+            representations: [
+                ClipboardContent.Representation(
+                    uti: ClipboardContent.utf8TextUTI, data: Data("local".utf8))
+            ])
+        let outcome = await publisher.publish(from: service)
+        #expect(outcome.didWrite)
+        let countAfterWrite = pasteboard.changeCount
+
+        try guest.send(makeTextOffer(generation: 1, text: "guest"))
+        try await waitForChange {
+            service.clipboardContent.representations.first?.isPendingRemote == true
+        }
+        #expect(pasteboard.changeCount == countAfterWrite)
+        #expect(service.lastTransferIssue == nil)
+    }
+
+    @Test("start() reclaims an earlier session's receive root once the pasteboard no longer holds the VM's write")
+    func startReclaimsSupersededSessionRoots() async throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let label = "vm-\(UUID().uuidString)"
+
+        // Session 1 stages a pulled file, then stops — the file survives stop().
+        let (guest1, host1) = try makePair()
+        guest1.start()
+        host1.start()
+        defer { guest1.close() }
+        let service1 = VsockClipboardService(
+            channel: host1, label: label, stagingTempRoot: tempRoot)
+        service1.start()
+        let fileBytes = Data((0..<(16 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
+        let responder = FakeGuestResponder(guest: guest1)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 1, repIndex: 0, uti: "public.data", bytes: fileBytes,
+            filename: "session1.bin", isInline: false)
+        responder.start()
+        try guest1.send(
+            makeOffer(
+                generation: 1,
+                reps: [(uti: "public.data", byteCount: fileBytes.count, filename: "session1.bin", isInline: false)]))
+        try await waitForChange { service1.clipboardContent.representations.count == 1 }
+        let stagedURL = try #require(
+            await offCooperativePool { service1.copyToMacFileURL(generation: 1, repIndex: 0) })
+        service1.stop()
+        #expect(FileManager.default.fileExists(atPath: stagedURL.path))
+
+        // Session 2, pasteboard still holding the VM's write: the older root
+        // keeps backing the vended URL.
+        let (guest2, host2) = try makePair()
+        guest2.start()
+        host2.start()
+        defer { guest2.close() }
+        let service2 = VsockClipboardService(
+            channel: host2, label: label, stagingTempRoot: tempRoot)
+        service2.hostPasteboardHoldsOurWrite = { true }
+        service2.start()
+        #expect(FileManager.default.fileExists(atPath: stagedURL.path))
+        service2.stop()
+
+        // Session 3, the write superseded on the pasteboard: reclaimed.
+        let (guest3, host3) = try makePair()
+        guest3.start()
+        host3.start()
+        defer { guest3.close() }
+        let service3 = VsockClipboardService(
+            channel: host3, label: label, stagingTempRoot: tempRoot)
+        service3.hostPasteboardHoldsOurWrite = { false }
+        service3.start()
+        defer { service3.stop() }
         #expect(!FileManager.default.fileExists(atPath: stagedURL.path))
     }
 

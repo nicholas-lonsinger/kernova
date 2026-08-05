@@ -21,6 +21,10 @@ struct ClipboardTransferIssue: Equatable, Sendable {
         /// This side refused the transfer, so `message` is already the sentence
         /// to show — nothing crossed the wire to be translated.
         case localRefusal(code: String, message: String)
+
+        /// The host retracted its own promised pasteboard write because the
+        /// guest clipboard moved on; `message` is already the sentence to show.
+        case staleCopyRetracted(message: String)
     }
 
     let kind: Kind
@@ -40,6 +44,31 @@ extension ClipboardTransferIssue {
         ClipboardTransferIssue(
             kind: .localRefusal(
                 code: ClipboardErrorCode.copyTooLarge.rawValue, message: overCopyBudgetMessage),
+            date: Date())
+    }
+
+    /// Raised when a newer guest offer (or a release) supersedes a Copy to Mac
+    /// still on the host pasteboard: the stale promise is retracted rather than
+    /// left advertised but unservable.
+    static func staleCopyRetracted() -> ClipboardTransferIssue {
+        ClipboardTransferIssue(
+            kind: .staleCopyRetracted(
+                message:
+                    "The guest clipboard changed, so the earlier copy was removed from the Mac clipboard — use Copy to Mac to bring over the new copy."
+            ),
+            date: Date())
+    }
+
+    /// The refusal this host raises when a paste fires after the VM session
+    /// ended with only part of the copied file set materialized: nothing is
+    /// served rather than an incomplete set.
+    static func partialFileSetUnservable() -> ClipboardTransferIssue {
+        ClipboardTransferIssue(
+            kind: .localRefusal(
+                code: ClipboardErrorCode.pasteIncompleteSet.rawValue,
+                message:
+                    "The VM disconnected before every copied file transferred, so nothing was pasted."
+            ),
             date: Date())
     }
 }
