@@ -4,7 +4,7 @@ import os
 /// Checks a user-supplied restore image URL before anything is downloaded.
 ///
 /// A class rather than a struct so `deinit` can invalidate the `URLSession`, the
-/// same reason `IPSWService` is one.
+/// same reason `DownloadService` is one.
 final class RestoreImageProbeService: RestoreImageProbing {
     private static let logger = Logger(
         subsystem: "app.kernova", category: "RestoreImageProbeService")

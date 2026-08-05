@@ -461,8 +461,8 @@ final class VMCreationViewModel {
         guard ipswSource.downloadsImage,
             !ipswDownloadPathFileExists
         else { return false }
-        let bundleURL = IPSWService.resumeBundleURL(for: URL(fileURLWithPath: ipswDownloadPath))
-        return IPSWBundle(url: bundleURL).isResumable
+        let bundleURL = DownloadService.resumeBundleURL(for: URL(fileURLWithPath: ipswDownloadPath))
+        return DownloadBundle(url: bundleURL).isResumable
     }
 
     func confirmOverwrite() {

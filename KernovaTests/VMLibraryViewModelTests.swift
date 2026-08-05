@@ -4916,7 +4916,7 @@ private final class CancelRaceInstallService: MacOSInstallProviding {
         // the CancellationError, which is what we want — we WANT to throw
         // a *different* error to exercise the race-recovery branch.
         try? await Task.sleep(for: .seconds(60))
-        throw IPSWError.downloadFailed(URLError(.badServerResponse))
+        throw DownloadError.downloadFailed(URLError(.badServerResponse))
     }
 }
 
