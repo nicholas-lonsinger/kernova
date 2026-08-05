@@ -82,6 +82,32 @@ struct LinuxImageCatalogEntryTests {
         #expect(!entry.matches(searchTerm: "fedora"))
         #expect(!entry.matches(searchTerm: "24.04"))
     }
+
+    @Test("The ISO glob takes every point release of its version and nothing else")
+    func isoGlobMatchesPointReleases() {
+        let entry = makeLinuxCatalogEntry(isoPattern: "debian-13.*-arm64-netinst.iso")
+        #expect(entry.matchesISOFilename("debian-13.1.0-arm64-netinst.iso"))
+        #expect(entry.matchesISOFilename("debian-13.12.0-arm64-netinst.iso"))
+        #expect(!entry.matchesISOFilename("debian-12.15.0-arm64-netinst.iso"))
+        #expect(!entry.matchesISOFilename("debian-13.1.0-amd64-netinst.iso"))
+    }
+
+    @Test("The glob is anchored at both ends, so a longer name is not a match")
+    func isoGlobIsAnchored() {
+        let entry = makeLinuxCatalogEntry(isoPattern: "ubuntu-26.04*-desktop-arm64.iso")
+        #expect(entry.matchesISOFilename("ubuntu-26.04.1-desktop-arm64.iso"))
+        // A partial download's bundle sits beside the image under a name this
+        // must not take for the image itself.
+        #expect(!entry.matchesISOFilename("ubuntu-26.04.1-desktop-arm64.iso.kernovadownload"))
+        #expect(!entry.matchesISOFilename("old-ubuntu-26.04.1-desktop-arm64.iso"))
+    }
+
+    @Test("A variant the glob doesn't name is excluded")
+    func isoGlobExcludesOtherVariants() {
+        let entry = makeLinuxCatalogEntry(isoPattern: "ubuntu-26.04*-live-server-arm64.iso")
+        #expect(entry.matchesISOFilename("ubuntu-26.04.1-live-server-arm64.iso"))
+        #expect(!entry.matchesISOFilename("ubuntu-26.04.1-live-server-arm64+largemem.iso"))
+    }
 }
 
 @Suite("LinuxImageCatalogService Tests")

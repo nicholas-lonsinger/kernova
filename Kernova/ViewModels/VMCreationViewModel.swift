@@ -58,6 +58,18 @@ enum IPSWSelection: Sendable, Equatable {
     }
 }
 
+/// Where a Linux guest's installer image comes from, together with what that
+/// choice carries, so a source cannot be current without its pick.
+///
+/// Set only through ``VMCreationViewModel``'s `select` methods.
+enum LinuxImageSelection: Sendable, Equatable {
+    /// A distribution from the bundled catalog. Nothing is on disk yet — the
+    /// image is resolved and downloaded after the VM is created.
+    case catalogEntry(LinuxImageCatalogEntry)
+    /// An ISO already on this Mac, with the grant minted for it at pick time.
+    case localISO(path: String, bookmark: Data?)
+}
+
 /// State machine for the VM creation wizard.
 @MainActor
 @Observable
@@ -80,16 +92,21 @@ final class VMCreationViewModel {
     /// Names what "Download Latest" will fetch, for the wizard to show.
     let ipswService: any IPSWProviding
 
+    /// Backs the Linux "Choose a Distribution…" picker.
+    let linuxCatalogService: any LinuxImageCatalogProviding
+
     init(
         catalogService: any RestoreImageCatalogProviding = RestoreImageCatalogService(),
         probeService: any RestoreImageProbing = RestoreImageProbeService(),
         localImageInspector: any LocalRestoreImageInspecting = LocalRestoreImageInspector(),
-        ipswService: any IPSWProviding = IPSWService()
+        ipswService: any IPSWProviding = IPSWService(),
+        linuxCatalogService: any LinuxImageCatalogProviding = LinuxImageCatalogService()
     ) {
         self.catalogService = catalogService
         self.probeService = probeService
         self.localImageInspector = localImageInspector
         self.ipswService = ipswService
+        self.linuxCatalogService = linuxCatalogService
     }
 
     // MARK: - Wizard State
@@ -143,14 +160,16 @@ final class VMCreationViewModel {
         }
     }
     private var confirmedOverwritePath: String?
-    var isoPath: String?
+
+    /// The Linux EFI image, once chosen; `nil` until the user picks one.
+    private(set) var linuxSelection: LinuxImageSelection?
+
     var kernelPath: String?
     var initrdPath: String?
     var kernelCommandLine: String?
 
     /// Security bookmarks paired with the panel-picked paths above; each is set
     /// alongside its path at pick time.
-    var isoBookmark: Data?
     var kernelBookmark: Data?
     var initrdBookmark: Data?
 
@@ -183,7 +202,7 @@ final class VMCreationViewModel {
                 return "Resolve the file conflict above to continue."
             case .linux:
                 switch selectedBootMode {
-                case .efi: return "Select an ISO image to continue."
+                case .efi: return "Select an ISO image or distribution to continue."
                 case .linuxKernel: return "Select a kernel image to continue."
                 case .macOS: return "Invalid boot configuration."
                 }
@@ -225,7 +244,7 @@ final class VMCreationViewModel {
             !shouldShowOverwriteWarning
         case .linux:
             switch selectedBootMode {
-            case .efi: isoPath != nil
+            case .efi: linuxSelection != nil
             case .linuxKernel: kernelPath != nil
             case .macOS: false
             }
@@ -264,17 +283,13 @@ final class VMCreationViewModel {
         downloadPath(forFilename: RestoreImageFilename.fallback)
     }
 
-    /// The Downloads path for a given IPSW filename.
+    /// Where every image the wizard downloads lands.
     ///
     /// Asks the system for the Downloads location rather than assuming a
     /// home-relative layout: under the sandbox this resolves through the
     /// container's `Downloads` symlink, which the downloads.read-write
     /// entitlement covers — no save panel or bookmark needed.
-    ///
-    /// `filename` must be one path component: callers derive it through
-    /// ``RestoreImageFilename``, which is what keeps a URL-supplied name from
-    /// walking out of Downloads.
-    static func downloadPath(forFilename filename: String) -> String {
+    static var downloadsDirectory: URL {
         guard
             let downloads = FileManager.default.urls(
                 for: .downloadsDirectory, in: .userDomainMask
@@ -284,10 +299,17 @@ final class VMCreationViewModel {
             assertionFailure("FileManager returned no Downloads directory")
             return FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("Downloads")
-                .appendingPathComponent(filename)
-                .path(percentEncoded: false)
         }
-        return downloads.appendingPathComponent(filename).path(percentEncoded: false)
+        return downloads
+    }
+
+    /// The Downloads path for a given image filename.
+    ///
+    /// `filename` must be one path component: callers derive it through
+    /// ``RestoreImageFilename``, which is what keeps a URL-supplied name from
+    /// walking out of Downloads.
+    static func downloadPath(forFilename filename: String) -> String {
+        downloadsDirectory.appendingPathComponent(filename).path(percentEncoded: false)
     }
 
     // MARK: - Source Selection
@@ -330,6 +352,22 @@ final class VMCreationViewModel {
     /// is `nil` when the bookmark could not be created.
     func selectLocalFile(path: String, bookmark: Data?) {
         ipswSelection = .localFile(path: path, bookmark: bookmark)
+    }
+
+    // MARK: - Linux Image Selection
+
+    /// Commits a distribution from the bundled catalog.
+    ///
+    /// Nothing is downloaded here: the wizard stays offline, and the image is
+    /// resolved and fetched once the VM exists.
+    func selectLinuxCatalogEntry(_ entry: LinuxImageCatalogEntry) {
+        linuxSelection = .catalogEntry(entry)
+    }
+
+    /// Commits a panel-picked ISO together with the grant minted for it, which
+    /// is `nil` when the bookmark could not be created.
+    func selectLocalISO(path: String, bookmark: Data?) {
+        linuxSelection = .localISO(path: path, bookmark: bookmark)
     }
 
     // MARK: - Latest Image Lookup
@@ -569,16 +607,17 @@ final class VMCreationViewModel {
             ? VZGenericMachineIdentifier().dataRepresentation
             : nil
 
-        // For an EFI install that picked an ISO, the installer goes in as
-        // `storageDevices[0]` so EFI boots it ahead of the main disk. Other boot
-        // modes leave the list nil so the builder synthesizes the default disk.
+        // For an EFI install from an ISO already on disk, the installer goes in
+        // as `storageDevices[0]` so EFI boots it ahead of the main disk. Other
+        // boot modes leave the list nil so the builder synthesizes the default
+        // disk — as does a catalog pick, whose ISO does not exist yet.
         var storageDisks: [StorageDisk]? = nil
-        if selectedBootMode == .efi, let isoPath, !isoPath.isEmpty {
+        if selectedBootMode == .efi, case .localISO(let path, let bookmark) = linuxSelection {
             let installerDisk = StorageDisk(
-                path: isoPath,
+                path: path,
                 readOnly: true,
-                label: URL(fileURLWithPath: isoPath).deletingPathExtension().lastPathComponent,
-                bookmark: isoBookmark
+                label: URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent,
+                bookmark: bookmark
             )
             let mainDisk = StorageDisk(
                 path: "Disk.asif",

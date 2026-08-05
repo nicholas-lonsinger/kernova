@@ -6,8 +6,8 @@ import Testing
 @Suite("BootConfigContentViewController Tests")
 @MainActor
 struct BootConfigContentViewControllerTests {
-    @Test("EFI mode shows the ISO picker row")
-    func efiShowsISORow() {
+    @Test("EFI mode offers both image sources, with neither picked to start")
+    func efiShowsBothImageSources() {
         let vm = VMCreationViewModel()
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
@@ -15,8 +15,90 @@ struct BootConfigContentViewControllerTests {
         vc.loadViewIfNeeded()
 
         #expect(firstSubview(NSSegmentedControl.self, in: vc.view)?.selectedSegment == 0)
-        #expect(findLabel(withText: "ISO Image", in: vc.view) != nil)
+        #expect(findButton(titled: "Choose a Distribution…", in: vc.view)?.state == .off)
+        #expect(findButton(titled: "ISO File…", in: vc.view)?.state == .off)
         #expect(findLabel(withText: "Kernel", in: vc.view) == nil)
+    }
+
+    @Test("A catalog pick lights its radio and names the image on a badge")
+    func catalogPickRendersBadge() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectLinuxCatalogEntry(
+            makeLinuxCatalogEntry(
+                distribution: "Ubuntu Desktop", version: "26.04 LTS",
+                approxSizeBytes: 4_161_089_536))
+        let vc = BootConfigContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        #expect(findButton(titled: "Choose a Distribution…", in: vc.view)?.state == .on)
+        #expect(findButton(titled: "ISO File…", in: vc.view)?.state == .off)
+        #expect(
+            findLabel(
+                containing: "Ubuntu Desktop  ·  26.04 LTS  ·  \(wizardApproximateSize(4_161_089_536))",
+                in: vc.view) != nil)
+        #expect(findButton(titled: "Change…", in: vc.view) != nil)
+    }
+
+    @Test("A local ISO lights its radio and shows the file path")
+    func localISORendersPathBadge() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectLocalISO(path: "/tmp/ubuntu.iso", bookmark: nil)
+        let vc = BootConfigContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        #expect(findButton(titled: "ISO File…", in: vc.view)?.state == .on)
+        #expect(findButton(titled: "Choose a Distribution…", in: vc.view)?.state == .off)
+        #expect(findLabel(withText: "/tmp/ubuntu.iso", in: vc.view) != nil)
+    }
+
+    @Test("Clicking a source radio commits nothing until the picker returns")
+    func radioClickAloneCommitsNothing() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        let vc = BootConfigContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        // Standing in for a cancelled picker: with no window there is nothing to
+        // present onto, so the click gets only the re-render.
+        findButton(titled: "Choose a Distribution…", in: vc.view)?.performClick(nil)
+
+        #expect(vm.linuxSelection == nil)
+        #expect(findButton(titled: "Choose a Distribution…", in: vc.view)?.state == .off)
+    }
+
+    @Test("Choosing from the picker commits the entry and lights its radio")
+    func catalogSheetChoiceCommits() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        let vc = BootConfigContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        let entry = makeLinuxCatalogEntry(distribution: "Debian", version: "13")
+        vc.linuxImageCatalogSheet(makeCatalogSheet(), didChoose: entry)
+
+        #expect(vm.linuxSelection == .catalogEntry(entry))
+        #expect(findButton(titled: "Choose a Distribution…", in: vc.view)?.state == .on)
+    }
+
+    @Test("Cancelling the picker leaves the earlier pick standing")
+    func catalogSheetCancelKeepsThePick() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectLocalISO(path: "/tmp/ubuntu.iso", bookmark: nil)
+        let vc = BootConfigContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        vc.linuxImageCatalogSheetDidCancel(makeCatalogSheet())
+
+        #expect(vm.linuxSelection == .localISO(path: "/tmp/ubuntu.iso", bookmark: nil))
+        #expect(findButton(titled: "ISO File…", in: vc.view)?.state == .on)
+    }
+
+    /// A picker instance to hand the delegate methods, which ignore it.
+    private func makeCatalogSheet() -> LinuxImageCatalogSheetContentViewController {
+        LinuxImageCatalogSheetContentViewController(entries: [makeLinuxCatalogEntry()])
     }
 
     @Test("Switching to Linux Kernel updates the model and shows kernel rows")

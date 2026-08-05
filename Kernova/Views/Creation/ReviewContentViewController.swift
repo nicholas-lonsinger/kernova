@@ -163,11 +163,34 @@ final class ReviewContentViewController: NSViewController {
 
         if creationVM.selectedOS == .linux {
             var rows: [NSView] = []
-            if let path = creationVM.isoPath {
-                rows.append(valueRow("ISO", URL(fileURLWithPath: path).lastPathComponent))
-            }
-            if let path = creationVM.kernelPath {
-                rows.append(valueRow("Kernel", URL(fileURLWithPath: path).lastPathComponent))
+            switch creationVM.selectedBootMode {
+            case .efi:
+                switch creationVM.linuxSelection {
+                case .catalogEntry(let entry):
+                    rows.append(valueRow("Distribution", entry.distribution))
+                    rows.append(valueRow("Version", entry.version))
+                    rows.append(
+                        valueRow(
+                            "Download Size", wizardApproximateSize(entry.approxSizeBytes)))
+                    // The folder, not a file: which point release the mirror is
+                    // serving — and so what the ISO is called — is only known
+                    // once the download resolves it.
+                    rows.append(
+                        valueRow(
+                            "Save to",
+                            wizardAbbreviateWithTilde(
+                                VMCreationViewModel.downloadsDirectory.path(percentEncoded: false))))
+                case .localISO(let path, _):
+                    rows.append(valueRow("ISO", URL(fileURLWithPath: path).lastPathComponent))
+                case nil:
+                    break
+                }
+            case .linuxKernel:
+                if let path = creationVM.kernelPath {
+                    rows.append(valueRow("Kernel", URL(fileURLWithPath: path).lastPathComponent))
+                }
+            case .macOS:
+                break
             }
             if !rows.isEmpty { addSection("Boot", rows: rows, to: summary) }
         }

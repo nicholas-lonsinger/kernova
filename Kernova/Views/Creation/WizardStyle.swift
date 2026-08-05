@@ -182,6 +182,15 @@ func makeWizardBadge(
     )
 }
 
+/// Renders a size the wizard only knows approximately.
+///
+/// A Linux catalog entry records the size of the image the catalog was
+/// generated against; the file the mirror serves at download time is a near
+/// neighbour of it, so the wizard never states it as exact.
+func wizardApproximateSize(_ bytes: UInt64) -> String {
+    "About \(DataFormatters.formatBytes(bytes))"
+}
+
 /// Abbreviates a path with a leading `~` when it lives under a home
 /// directory the user would read as "mine".
 ///
