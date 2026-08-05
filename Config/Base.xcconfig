@@ -9,6 +9,6 @@
 // `#include?` (with the trailing `?`) is the optional form: it silently
 // no-ops when Local.xcconfig doesn't exist yet, so a not-yet-bootstrapped
 // clone still opens/builds (Automatic-signed targets resolve a team via
-// Xcode's own account picker; the three Manual/profile-less targets need
+// Xcode's own account picker; the Manual-signed guest-agent target needs
 // `make bootstrap` to have run first — see README).
 #include? "Local.xcconfig"
