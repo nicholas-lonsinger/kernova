@@ -23,6 +23,11 @@ public protocol StagingSink: Sendable {
 /// One directory per offer generation; the last `maxGenerations` are retained so
 /// a paste still being copied out by Finder survives, and `sweep()` clears
 /// everything.
+///
+/// Each instance owns a private root (the label plus a per-instance component),
+/// so no instance's `sweep()` can delete files another instance staged — a URL
+/// vended to a pasteboard outlives the session that staged it. Roots left behind
+/// by earlier instances are reclaimed at process launch by `reclaimAll`.
 public final class ClipboardFileStaging: @unchecked Sendable {
     /// Queries free capacity (in bytes) for important, user-initiated writes at
     /// the given directory.
@@ -109,6 +114,8 @@ public final class ClipboardFileStaging: @unchecked Sendable {
 
     /// - Parameters:
     ///   - label: distinguishes co-resident roots (e.g. `"agent"` vs `"host"`).
+    ///     The root nests a unique per-instance component under the label, so two
+    ///     same-label instances (a VM's next session) never share a root.
     ///   - tempRoot: parent directory for the shared staging parent.
     ///   - freeSpaceProvider: queries available capacity; defaults to
     ///     `volumeAvailableCapacityForImportantUsageKey`.
@@ -121,6 +128,7 @@ public final class ClipboardFileStaging: @unchecked Sendable {
             tempRoot
             .appendingPathComponent(Self.parentDirectoryName, isDirectory: true)
             .appendingPathComponent(label, isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
         self.freeSpaceProvider = freeSpaceProvider ?? Self.defaultFreeSpace
     }
 
@@ -219,9 +227,11 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         return url
     }
 
-    /// Removes the entire staging root — crash orphans and all live generations.
+    /// Removes this instance's entire staging root — every live generation at
+    /// once.
     ///
-    /// Call on agent start/stop and capability disable.
+    /// A previous instance's root is out of reach by construction; `reclaimAll`
+    /// reclaims those at launch.
     public func sweep() {
         lock.lock()
         defer { lock.unlock() }

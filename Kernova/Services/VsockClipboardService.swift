@@ -270,7 +270,6 @@ final class VsockClipboardService: ClipboardServicing {
         isConnected = false
         pendingOutbound = nil
         currentOutboundGeneration.set(0)
-        dropInboundPromise()
         // Every session, not just the outbound one: a materialization loop parked
         // on a pull this teardown failed would leave its readout up for a gone VM.
         outboundSession = nil
@@ -278,7 +277,11 @@ final class VsockClipboardService: ClipboardServicing {
         // Synchronously, not via the tracker's emission hop: a readout still
         // standing for a VM that has gone is the stuck indicator §13 forbids.
         publishProgress(nil)
-        staging.sweep()
+        // Only the outbound archives: the inbound promise and its receive staging
+        // deliberately survive stop() — the host pasteboard may still advertise
+        // this offer, and every rep already materialized stays servable from the
+        // cache and the staged files (docs/CLIPBOARD.md §3). Only supersession —
+        // a newer offer or a release — wipes them.
         sendStaging.sweep()
         // Unconditional, unlike `publishProgress`'s change-guarded push: a stopped
         // VM's last snapshot would otherwise pin the status item's readout.
@@ -602,10 +605,13 @@ final class VsockClipboardService: ClipboardServicing {
 
     private func handleOffer(_ offer: Kernova_V1_ClipboardOffer) {
         // A newer offer supersedes the previous one: cancel any in-flight pull so
-        // its partial temp file is deleted and a blocked continuation resumes.
+        // its partial temp file is deleted and a blocked continuation resumes,
+        // and sweep the superseded staged files — supersession is the one point
+        // where removing a served artifact is allowed (docs/CLIPBOARD.md §3).
         if let previous = inboundPromise {
             receiver?.cancel(generation: previous.generation)
         }
+        staging.sweep()
 
         guard !offer.repInfo.isEmpty else {
             dropInboundPromise()
@@ -842,16 +848,18 @@ final class VsockClipboardService: ClipboardServicing {
     /// set over the cap is refused whole rather than landing 2 of 3 files.
     @MainActor
     private func pasteBoundSnapshot(generation: UInt64, repIndex: Int) -> LazyPullSnapshot? {
-        guard let promise = inboundPromise, promise.generation == generation else { return nil }
-        let total = pasteBoundTotalBytes(for: promise)
-        guard total <= UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) else {
+        guard let snapshot = lazyPullSnapshot(generation: generation, repIndex: repIndex) else {
+            return nil
+        }
+        guard snapshot.pasteBoundTotal <= UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes)
+        else {
             Self.logger.warning(
-                "Paste refused: \(ClipboardErrorCode.copyTooLarge.rawValue, privacy: .public) — paste-bound reps total \(total, privacy: .public) bytes, over the deadline-safe cap"
+                "Paste refused: \(ClipboardErrorCode.copyTooLarge.rawValue, privacy: .public) — paste-bound reps total \(snapshot.pasteBoundTotal, privacy: .public) bytes, over the deadline-safe cap"
             )
             lastTransferIssue = .overCopyBudget()
             return nil
         }
-        return lazyPullSnapshot(generation: generation, repIndex: repIndex)
+        return snapshot
     }
 
     /// Pulls representation `index` at most once across concurrent preview
@@ -1035,6 +1043,9 @@ final class VsockClipboardService: ClipboardServicing {
         let filename: String
         let generation: UInt64
         let repIndex: Int
+        /// The offer's paste-bound (non-inline) byte total, for the `.fileURL`
+        /// path's deadline-safe cap check in `pasteBoundSnapshot`.
+        let pasteBoundTotal: UInt64
         let receiver: ClipboardStreamReceiver
         let channel: VsockChannel
         let staging: ClipboardFileStaging
@@ -1044,17 +1055,42 @@ final class VsockClipboardService: ClipboardServicing {
     /// Snapshots the state for a synchronous file pull, validating that
     /// `(generation, repIndex)` still addresses the current live offer.
     ///
-    /// Returns `nil` for a stale generation, an out-of-range index, or a dropped
-    /// channel — the caller maps that to `.noCurrentOffer`.
+    /// The single site every uncached provider fire passes through, so each nil
+    /// return logs why it serves nothing — the fire has no other surface. A
+    /// stale generation logs `.debug` (the benign supersession race: the newer
+    /// offer's re-publish is what retires these promises); the other misses
+    /// persist as `.warning`.
     private func lazyPullSnapshot(generation: UInt64, repIndex: Int) -> LazyPullSnapshot? {
-        guard let promise = inboundPromise, promise.generation == generation,
-            promise.reps.indices.contains(repIndex), let receiver
-        else { return nil }
+        guard let promise = inboundPromise else {
+            Self.logger.warning(
+                "Clipboard paste requested rep \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) for '\(self.label, privacy: .public)' with no live offer — serving nothing"
+            )
+            return nil
+        }
+        guard promise.generation == generation else {
+            Self.logger.debug(
+                "Clipboard paste requested rep \(repIndex, privacy: .public) of superseded gen=\(generation, privacy: .public) for '\(self.label, privacy: .public)' (live gen=\(promise.generation, privacy: .public)) — serving nothing"
+            )
+            return nil
+        }
+        guard promise.reps.indices.contains(repIndex) else {
+            Self.logger.warning(
+                "Clipboard paste requested out-of-range rep \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) for '\(self.label, privacy: .public)' — serving nothing"
+            )
+            return nil
+        }
+        guard let receiver else {
+            Self.logger.warning(
+                "Clipboard paste requested un-materialized rep \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) for '\(self.label, privacy: .public)' after the service stopped — serving nothing"
+            )
+            return nil
+        }
         let info = promise.reps[repIndex]
         return LazyPullSnapshot(
             uti: info.uti, byteCount: info.byteCount, isInline: info.isInline,
             isDirectory: info.isDirectory, filename: info.filename,
             generation: generation, repIndex: repIndex,
+            pasteBoundTotal: pasteBoundTotalBytes(for: promise),
             receiver: receiver, channel: channel, staging: staging, timeout: lazyPullTimeout)
     }
 
@@ -1188,6 +1224,9 @@ final class VsockClipboardService: ClipboardServicing {
         // Wake any synchronous file pull blocked on the coordinator.
         lazyCoordinator.failAll()
         dropInboundPromise()
+        // A release is a supersession: the released generation's staged files go
+        // with it (docs/CLIPBOARD.md §3).
+        staging.sweep()
         Self.logger.debug(
             "Guest released clipboard offer (gen=\(release.generation, privacy: .public)) for '\(self.label, privacy: .public)'"
         )

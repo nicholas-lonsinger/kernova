@@ -154,6 +154,31 @@ struct ClipboardFileStagingTests {
         #expect(FileManager.default.fileExists(atPath: received.url.path))
     }
 
+    @Test("same-label instances from different sessions own disjoint roots; one's sweep leaves the other's files")
+    func sameLabelInstancesAreDisjoint() throws {
+        // A VM restart mints a fresh staging instance under the same label; its
+        // sweeps must never delete the previous session's files, which can still
+        // back URLs on the pasteboard.
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let previousSession = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
+        let nextSession = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
+
+        let kept = try previousSession.makeSink(generation: 1, filename: "kept.bin")
+        try kept.write(Data("kept".utf8))
+        try kept.commit()
+        let swept = try nextSession.makeSink(generation: 1, filename: "swept.bin")
+        try swept.commit()
+
+        #expect(kept.url.deletingLastPathComponent() != swept.url.deletingLastPathComponent())
+        #expect(!nextSession.isInStagingRoot(kept.url))
+
+        nextSession.sweep()
+        #expect(!FileManager.default.fileExists(atPath: swept.url.path))
+        #expect(FileManager.default.fileExists(atPath: kept.url.path))
+    }
+
     @Test("reclaimAll removes every label family under the shared parent")
     func reclaimAllSweepsEveryFamily() throws {
         let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(

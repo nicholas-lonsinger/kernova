@@ -88,6 +88,11 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             "Kernova Guest Agent v\(Self.version, privacy: .public) (\(Self.buildNumber, privacy: .public)) started"
         )
 
+        // Reclaim clipboard staging roots left by earlier agent processes —
+        // staging roots are per-instance, so a live instance's sweep can never
+        // reach them; only this launch-time reclaim bounds their growth.
+        ClipboardFileStaging.reclaimAll()
+
         // Progress emissions arrive off-main and hop via `DispatchQueue.main`,
         // not a `Task` — two independently scheduled hops carrying immutable
         // snapshots have no ordering guarantee, and the ring would jump backwards.
