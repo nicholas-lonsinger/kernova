@@ -197,7 +197,7 @@ struct ClipboardPassthroughCoordinatorTests {
         // everything but the change count — so the issue is the whole report.
         #expect(
             h.service.lastTransferIssue?.kind
-                == .localRefusal(
+                == .localFailure(
                     code: ClipboardErrorCode.copyTooLarge.rawValue,
                     message: ClipboardTransferIssue.overCopyBudgetMessage))
     }

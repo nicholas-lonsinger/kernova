@@ -328,6 +328,41 @@ struct ClipboardFileStagingTests {
         #expect(dir.deletingLastPathComponent().lastPathComponent != "..")
     }
 
+    @Test("reserveScratchDirectory hands each caller its own empty directory in the generation")
+    func reserveScratchDirectoryIsolatesCallers() throws {
+        let staging = makeStaging()
+        defer { staging.sweep() }
+
+        let first = try staging.reserveScratchDirectory(generation: 1)
+        let second = try staging.reserveScratchDirectory(generation: 1)
+
+        var isDir: ObjCBool = false
+        #expect(FileManager.default.fileExists(atPath: first.path, isDirectory: &isDir))
+        #expect(isDir.boolValue)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: first.path).isEmpty)
+        // Two drops in one generation must not write into each other's directory.
+        #expect(first != second)
+        #expect(first.deletingLastPathComponent() == second.deletingLastPathComponent())
+    }
+
+    @Test("discardGeneration retires one generation early, leaving the rest of the window")
+    func discardGenerationRetiresEarly() throws {
+        let staging = makeStaging()
+        defer { staging.sweep() }
+
+        let first = try staging.reserveScratchDirectory(generation: 1)
+        let second = try staging.reserveScratchDirectory(generation: 2)
+
+        staging.discardGeneration(1)
+        #expect(!FileManager.default.fileExists(atPath: first.path))
+        #expect(FileManager.default.fileExists(atPath: second.path))
+
+        // Discarding a generation the window already evicted is a no-op, and the
+        // number is not reused by the survivors.
+        staging.discardGeneration(1)
+        #expect(FileManager.default.fileExists(atPath: second.path))
+    }
+
     @Test("reserved trees and archives ride the generation window (3 newest survive)")
     func reservationsRideGenerationWindow() throws {
         let staging = makeStaging()

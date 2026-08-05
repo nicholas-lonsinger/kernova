@@ -58,6 +58,22 @@ final class VsockClipboardService: ClipboardServicing {
     /// new request-time archive supersedes older temps instead of accumulating.
     private var sendArchiveGeneration: UInt64 = 1
 
+    /// Holds the files a window drop materializes from a file promise, one
+    /// generation per drop.
+    ///
+    /// Separate from `sendStaging`, whose archives this session builds and owns:
+    /// a drop's files are the *source* the buffer and the offer read from, so
+    /// they retire on their own schedule (`retireUnreferencedDropDirectories`).
+    private let dropStaging: ClipboardFileStaging
+
+    /// Generation for the next drop, so each drop's files can be retired without
+    /// touching another's.
+    private var nextDropGeneration: UInt64 = 1
+
+    /// Every drop's staged directory, newest last, until nothing can read from
+    /// it.
+    private var dropDirectories: [DropDirectory] = []
+
     /// App-level aggregate this VM's readout feeds, so the menu-bar status item
     /// shows one progress readout across every live VM.
     private let progressCenter: ClipboardProgressCenter
@@ -159,6 +175,18 @@ final class VsockClipboardService: ClipboardServicing {
     nonisolated private static let logger = Logger(
         subsystem: "app.kernova", category: "VsockClipboardService")
 
+    /// One drop's staged directory, and whether the buffer or an offer has taken
+    /// its files up yet.
+    ///
+    /// A drop nothing has read from is either still receiving its promised files
+    /// or never resolved into content, and neither can be told apart from here —
+    /// so only a drop seen adopted at least once is ever reclaimed mid-session.
+    private struct DropDirectory {
+        let generation: UInt64
+        let url: URL
+        var wasAdopted = false
+    }
+
     /// One promised guest offer.
     ///
     /// Reps are indexed exactly as the guest offered them, so a `transfer_id`'s
@@ -217,6 +245,9 @@ final class VsockClipboardService: ClipboardServicing {
         self.sendStaging = ClipboardFileStaging(
             label: "host-send-\(label)", tempRoot: stagingTempRoot,
             freeSpaceProvider: freeSpaceProvider)
+        self.dropStaging = ClipboardFileStaging(
+            label: "host-drops-\(label)", tempRoot: stagingTempRoot,
+            freeSpaceProvider: freeSpaceProvider)
         // Emissions hop to main on a serial (FIFO) queue, not an unordered
         // `Task { @MainActor }`: two snapshots arriving out of order would make
         // the progress bar jump backwards.
@@ -235,13 +266,15 @@ final class VsockClipboardService: ClipboardServicing {
     func start() {
         guard consumeTask == nil else { return }
         // Earlier sessions' staging roots: outbound-archive roots never back a
-        // host-pasteboard URL, so they are always reclaimable; receive roots may
-        // still be serving the pasteboard's current write (a stopped session's
-        // materialized reps stay servable), so they are reclaimed only once the
-        // pasteboard no longer holds this VM's write.
+        // host-pasteboard URL, so they are always reclaimable; receive and drop
+        // roots may still be serving the pasteboard's current write (a stopped
+        // session's materialized reps stay servable, and a dropped file's URL is
+        // copied as-is), so they are reclaimed only once the pasteboard no longer
+        // holds this VM's write.
         sendStaging.reclaimSiblingRoots()
         if hostPasteboardHoldsOurWrite?() != true {
             staging.reclaimSiblingRoots()
+            dropStaging.reclaimSiblingRoots()
         }
         isConnected = true
 
@@ -308,6 +341,9 @@ final class VsockClipboardService: ClipboardServicing {
         isConnected = false
         pendingOutbound = nil
         currentOutboundGeneration.set(0)
+        // With the offer gone, a drop the buffer no longer shows has no reader
+        // left on this side.
+        retireUnreferencedDropDirectories()
         // Every session, not just the outbound one: a materialization loop parked
         // on a pull this teardown failed would leave its readout up for a gone VM.
         outboundSession = nil
@@ -376,6 +412,59 @@ final class VsockClipboardService: ClipboardServicing {
         lastGrabbedDigest = nil
         // The user emptied the buffer — any guest offer it was showing is stale.
         dropInboundPromise()
+        retireUnreferencedDropDirectories()
+    }
+
+    func reserveDropDestination() -> URL? {
+        let generation = nextDropGeneration
+        nextDropGeneration += 1
+        guard let url = try? dropStaging.reserveScratchDirectory(generation: generation) else {
+            Self.logger.error(
+                "Failed to reserve a clipboard drop directory for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
+            )
+            return nil
+        }
+        dropDirectories.append(DropDirectory(generation: generation, url: url))
+        // The drop this reserves is about to replace the buffer, so the drops it
+        // supersedes may already be retirable.
+        retireUnreferencedDropDirectories()
+        return url
+    }
+
+    /// Deletes the staged files of every drop nothing can still read from.
+    ///
+    /// A dropped file backs a *source* representation: the buffer renders it, the
+    /// guest streams from it while the offer carrying it is the pending one, and
+    /// a Copy to Mac puts its own URL on the host pasteboard. Deleting behind any
+    /// of those would empty a file the user can still reach, so a drop's
+    /// directory goes only once all three have moved on. What survives this is
+    /// still bounded by the staging generation window.
+    private func retireUnreferencedDropDirectories() {
+        guard !dropDirectories.isEmpty else { return }
+        let sourceURLs =
+            clipboardContent.representations + (pendingOutbound?.content.representations ?? [])
+        let readableURLs = sourceURLs.compactMap { $0.fileURL ?? $0.directorySourceURL }
+        func isRead(_ drop: DropDirectory) -> Bool {
+            readableURLs.contains { ClipboardFileStaging.isURL($0, inside: drop.url) }
+        }
+        // Latched separately from the deletion below, which the pasteboard can
+        // hold off for several passes: a drop must not lose the one observation
+        // that proves its receipt resolved.
+        for index in dropDirectories.indices where !dropDirectories[index].wasAdopted {
+            dropDirectories[index].wasAdopted = isRead(dropDirectories[index])
+        }
+        // A Copy to Mac vends a dropped file's own path, and which write is on
+        // the pasteboard is not per-drop knowledge — while this VM's write
+        // stands, every drop stays.
+        guard hostPasteboardHoldsOurWrite?() != true else { return }
+        dropDirectories.removeAll { drop in
+            guard drop.wasAdopted, !isRead(drop) else { return false }
+            dropStaging.discardGeneration(drop.generation)
+            Self.logger.debug(
+                "Reclaimed the staged files of a superseded clipboard drop for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
+            )
+            return true
+        }
     }
 
     func grabIfChanged() {
@@ -415,6 +504,9 @@ final class VsockClipboardService: ClipboardServicing {
             currentOutboundGeneration.set(generation)
             lastGrabbedDigest = clipboardContent.digest
             lastTransferIssue = nil
+            // The offer just replaced supersedes whatever drop it was reading
+            // from, so that drop's files can go.
+            retireUnreferencedDropDirectories()
             Self.logger.notice(
                 "Sent clipboard offer to '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(content.representations.count, privacy: .public) reps, \(content.totalByteCount, privacy: .public) bytes)"
             )
@@ -1061,11 +1153,8 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.warning(
                 "Not enough disk space to receive clipboard rep '\(info.uti, privacy: .public)' (\(info.byteCount, privacy: .public) bytes)"
             )
-            lastTransferIssue = ClipboardTransferIssue(
-                kind: .diskFull(
-                    needed: Int(clamping: info.byteCount),
-                    available: staging.availableCapacity().map { Int(clamping: $0) }),
-                date: Date())
+            lastTransferIssue = .diskFull(
+                needed: info.byteCount, available: staging.availableCapacity())
             return nil
         }
         // The host is the receiver here, so it sets the direction bit. [H3]
@@ -1148,11 +1237,12 @@ final class VsockClipboardService: ClipboardServicing {
         if rep != nil {
             // A healthy pull clears a stale issue, except the two kinds a
             // succeeding sibling does not disprove: a disk-full notice (another
-            // rep may still have failed to arrive) and a refusal this side made
-            // (its own surface — an over-cap file set is refused while the same
-            // offer's small inline rep pulls fine).
+            // rep may still have failed to arrive) and an outcome this side
+            // produced (its own surface — an over-cap file set is refused, and a
+            // paste that timed out stays failed, while the same offer's small
+            // inline rep pulls fine).
             switch lastTransferIssue?.kind {
-            case .diskFull, .localRefusal: break
+            case .diskFull, .localFailure: break
             case .peerReportedError, .staleCopyRetracted, .none: lastTransferIssue = nil
             }
         }
@@ -1169,9 +1259,7 @@ final class VsockClipboardService: ClipboardServicing {
     /// Records a disk-full transfer issue for a pull that aborted mid-stream
     /// because the staging volume filled (the up-front case is set in `pull`).
     private func recordPullDiskFull(_ info: ClipboardStreamAbortInfo) {
-        lastTransferIssue = ClipboardTransferIssue(
-            kind: .diskFull(needed: info.neededBytes ?? 0, available: info.availableBytes),
-            date: Date())
+        lastTransferIssue = .diskFull(from: info)
     }
 
     // MARK: - Synchronous blocking pull (paste-time provider)
@@ -1238,6 +1326,29 @@ final class VsockClipboardService: ClipboardServicing {
             receiver: receiver, channel: channel, staging: staging, timeout: lazyPullTimeout)
     }
 
+    /// Abort codes that retire a pull rather than fail it: the local teardown or
+    /// supersession `ClipboardStreamReceiver` reports, the sending side dropping
+    /// a superseded offer, and the peer rejecting a request for a generation it
+    /// has moved past.
+    ///
+    /// A paste fire raises no issue for these — whatever superseded the offer
+    /// publishes its own explainer, and a teardown is not the user's problem to
+    /// act on.
+    // `nonisolated` so the blocking pull can read it off the main actor.
+    nonisolated private static let retiringAbortCodes: Set<String> = [
+        "cancelled", "superseded", "request.stale",
+    ]
+
+    /// Records a user-visible issue for a paste-time fire that will serve
+    /// nothing.
+    ///
+    /// A provider fire has no return path to the gesture, so the issue the
+    /// clipboard window renders is the only host-side account of why a paste
+    /// produced nothing.
+    nonisolated private func recordPasteIssue(_ issue: ClipboardTransferIssue) {
+        onMain { self.lastTransferIssue = issue }
+    }
+
     /// Synchronously pulls one file rep, blocking the calling thread until the
     /// streamed bytes land (or abort/time out), staged into the host container.
     ///
@@ -1257,6 +1368,10 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.warning(
                 "Not enough disk space to stage clipboard file rep '\(snapshot.uti, privacy: .public)' (\(snapshot.byteCount, privacy: .public) bytes)"
             )
+            recordPasteIssue(
+                .diskFull(
+                    needed: snapshot.byteCount,
+                    available: snapshot.staging.availableCapacity()))
             return nil
         }
         // The host is the receiver here, so it sets the direction bit. [H3]
@@ -1317,17 +1432,25 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.warning(
                 "File clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) aborted (\(abort.code, privacy: .public))"
             )
+            if abort.code == "disk.full" {
+                recordPasteIssue(.diskFull(from: abort))
+            } else if !Self.retiringAbortCodes.contains(abort.code) {
+                recordPasteIssue(.pasteTransferFailed())
+            }
             return nil
         case .timedOut:
             receiver.cancelAwait(transferID)
             Self.logger.warning(
                 "File clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) timed out"
             )
+            recordPasteIssue(.pasteTimedOut())
             return nil
         case .cancelled:
             Self.logger.debug(
                 "File clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) cancelled"
             )
+            // No issue: a teardown or release retired the pull, and the
+            // supersession that caused it raises its own explainer.
             // Nothing will ever deliver or abort this transferID now, so release
             // the registered awaiter rather than leaking it.
             receiver.cancelAwait(transferID)
@@ -1335,7 +1458,8 @@ final class VsockClipboardService: ClipboardServicing {
         case .superseded:
             // A newer pull for this id has taken over the awaiter/slot
             // registration — touch nothing keyed by `transferID`; the retry owns
-            // it and must resolve on its own.
+            // it, must resolve on its own, and raises the issue for both fires if
+            // it fails.
             Self.logger.debug(
                 "File clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) superseded by a newer fetch"
             )
@@ -1493,21 +1617,40 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
             Self.logger.notice(
                 "Extracting clipboard folder '\(rep.filename, privacy: .public)' from '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(rep.byteCount, privacy: .public) archive bytes)"
             )
-            return ClipboardDirectoryArchive.extractedDirectoryURL(
-                for: rep, into: staging, generation: generation)
+            guard
+                let url = ClipboardDirectoryArchive.extractedDirectoryURL(
+                    for: rep, into: staging, generation: generation)
+            else {
+                Self.logger.error(
+                    "Failed to unpack clipboard folder '\(rep.filename, privacy: .public)' from '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)) — serving nothing"
+                )
+                recordPasteIssue(.pasteFolderUnpackFailed())
+                return nil
+            }
+            return url
         }
         if let url = rep.fileURL { return url }
         // A named inline rep (an image file) reassembles in memory — stage it so
         // the `.fileURL` flavor serves a durable path.
         guard let data = rep.inMemoryData,
             let sink = try? staging.makeSink(generation: generation, filename: rep.filename)
-        else { return nil }
+        else {
+            Self.logger.error(
+                "Failed to stage clipboard file '\(rep.filename, privacy: .public)' from '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)) — serving nothing"
+            )
+            recordPasteIssue(.pasteFileStagingFailed())
+            return nil
+        }
         do {
             try sink.write(data)
             return try sink.commit()
         } catch {
             // Don't offer a truncated file — abort the partial stage.
             sink.abort()
+            Self.logger.error(
+                "Failed to write staged clipboard file '\(rep.filename, privacy: .public)' from '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)): \(error.localizedDescription, privacy: .public)"
+            )
+            recordPasteIssue(.pasteFileStagingFailed())
             return nil
         }
     }

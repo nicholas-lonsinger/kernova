@@ -622,7 +622,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             case .pasteFailed, .copyTooLarge, .pasteIncompleteSet, .none:
                 return "Clipboard transfer failed on the guest side"
             }
-        case .localRefusal(_, let message):
+        case .localFailure(_, let message):
             return message
         case .staleCopyRetracted(let message):
             return message
@@ -798,28 +798,30 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
     }
 
-    /// Receives a promised file into a scratch directory and runs it through
-    /// the shared file intake.
+    /// Receives a promised file into the service's drop staging and runs it
+    /// through the shared file intake.
     ///
     /// The winning item stays on disk: the buffer's representation is
     /// disk-backed (a stat'd file, or a folder source rep archived only at
-    /// request time), so it must outlive this receipt. Losing and failed
-    /// receipts clean their scratch up.
+    /// request time), so it must outlive this receipt — the service reclaims the
+    /// directory once nothing can read from it. Losing and failed receipts clean
+    /// their own files up.
     private func receivePromisedFile(_ receiver: NSFilePromiseReceiver) {
         guard let service = instance.clipboardService else { return }
         let allowsBinary = service.supportsBinaryRepresentations
+        guard allowsBinary else {
+            // A text-only transport rejects the file whatever it holds, so say so
+            // instead of writing it out first.
+            indicatorView.showTransientMessage(
+                ClipboardPasteboardIntake.textOnlyTransportMessage, style: .warning)
+            return
+        }
 
         indicatorView.showTransientMessage("Receiving dropped file…", style: .info)
 
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("KernovaClipboardDrops-\(UUID().uuidString)", isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
-        } catch {
+        guard let destination = service.reserveDropDestination() else {
             indicatorView.showTransientMessage("Couldn't receive the dropped file", style: .error)
-            Self.logger.error(
-                "Failed to create promise scratch directory: \(error.localizedDescription, privacy: .public)"
-            )
+            Self.logger.error("Failed to reserve a directory for the dropped file promise")
             return
         }
 
@@ -830,23 +832,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         receiver.receivePromisedFiles(atDestination: destination, options: [:], operationQueue: promiseQueue) {
             [weak self] url, error in
             Task { @MainActor [weak self] in
-                // Cleanup runs even if the window closed before the promise
-                // resolved — except for the winning item, whose on-disk bytes
-                // back the buffer's representation. The directory goes only
-                // once it has drained — removeItem on a directory is recursive
-                // and must not race files still being written by a multi-file
-                // promise.
-                var keepScratch = false
-                defer {
-                    if !keepScratch {
-                        try? FileManager.default.removeItem(at: url)
-                        if let remaining = try? FileManager.default.contentsOfDirectory(atPath: destination.path),
-                            remaining.isEmpty
-                        {
-                            try? FileManager.default.removeItem(at: destination)
-                        }
-                    }
-                }
+                // Every file but the winner goes now, even if the window closed
+                // before the promise resolved; the winner's on-disk bytes back
+                // the buffer's representation, and the directory holding it is
+                // the service's to reclaim.
+                var keepFile = false
+                defer { if !keepFile { try? FileManager.default.removeItem(at: url) } }
                 guard let self else { return }
                 if let error {
                     self.indicatorView.showTransientMessage("Couldn't receive the dropped file", style: .error)
@@ -859,7 +850,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 firstFileGate.taken = true
                 let resolved = await ClipboardPasteboardIntake.read(
                     filesAt: [url], allowsBinary: allowsBinary)
-                keepScratch = self.apply(intake: resolved)
+                keepFile = self.apply(intake: resolved)
             }
         }
     }

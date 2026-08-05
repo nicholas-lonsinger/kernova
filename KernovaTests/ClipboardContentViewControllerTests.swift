@@ -650,8 +650,8 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         }
     }
 
-    @Test("a refusal made on this side shows the message it carries")
-    func localRefusalShowsItsOwnMessage() {
+    @Test("an outcome produced on this side shows the message it carries")
+    func localFailureShowsItsOwnMessage() {
         let service = FakeClipboardService(content: ClipboardContent(text: "buffer bytes"))
         let instance = makeClipboardInstance()
         instance.clipboardService = service

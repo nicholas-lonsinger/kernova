@@ -61,6 +61,17 @@ protocol ClipboardServicing: AnyObject {
     /// by `grabIfChanged()` as "unchanged" and silently never reach the guest.
     func clearBuffer()
 
+    /// Reserves a directory for the window to materialize a dropped file promise
+    /// into, or `nil` when the transport can't stage one.
+    ///
+    /// The files stay there for as long as the buffer, an offer, or the host
+    /// pasteboard can read them, and the service reclaims the directory once none
+    /// can — so the window must not delete the file it keeps, nor stage one
+    /// anywhere else.
+    ///
+    /// Default `nil`: a text-only transport never takes a file drop.
+    func reserveDropDestination() -> URL?
+
     /// Pulls the representations the clipboard window renders richly (text,
     /// inline RTF, images up to a size limit) for a lazily-offered guest payload,
     /// updating `clipboardContent` as they land.
@@ -130,6 +141,7 @@ enum CopyToMacDropReason: Sendable, Equatable {
 }
 
 extension ClipboardServicing {
+    func reserveDropDestination() -> URL? { nil }
     func materializeForPreview() async {}
     func materializeForCopy() -> [CopyToMacItem] {
         clipboardContent.representations.map { .resolved($0) }

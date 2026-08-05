@@ -152,12 +152,19 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// Whether `url` points inside this staging root.
     ///
     /// The outbound pasteboard poll skips these so a file received from the peer
-    /// is never offered back to it. The prefix is component-bounded so a sibling
-    /// root whose label extends this one (`agent` vs `agent-send`) never matches.
+    /// is never offered back to it.
     public func isInStagingRoot(_ url: URL) -> Bool {
-        let rootPath = root.standardizedFileURL.path
+        Self.isURL(url, inside: root)
+    }
+
+    /// Whether `url` is `directory` itself or something under it.
+    ///
+    /// The prefix is component-bounded, so a sibling whose name extends
+    /// `directory`'s (`agent` vs `agent-send`) never matches.
+    public static func isURL(_ url: URL, inside directory: URL) -> Bool {
+        let directoryPath = directory.standardizedFileURL.path
         let path = url.standardizedFileURL.path
-        return path == rootPath || path.hasPrefix(rootPath + "/")
+        return path == directoryPath || path.hasPrefix(directoryPath + "/")
     }
 
     /// Whether `byteCount` bytes (plus `margin`) fit on the staging volume.
@@ -215,6 +222,20 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         return url
     }
 
+    /// Reserves a fresh empty directory under the generation directory for a
+    /// caller that materializes files it does not name — a window drop whose
+    /// promised files arrive with the source app's own names.
+    ///
+    /// - Throws: a filesystem error if the directory can't be created.
+    public func reserveScratchDirectory(generation: UInt64) throws -> URL {
+        lock.lock()
+        defer { lock.unlock() }
+        let url = try directory(for: generation)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
     /// Reserves a unique destination URL under the generation directory for the
     /// sender's directory archive before it is offered.
     ///
@@ -242,6 +263,21 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         defer { lock.unlock() }
         try? FileManager.default.removeItem(at: root)
         generationDirs.removeAll()
+    }
+
+    /// Removes the directory for `generation` and drops it from the retention
+    /// window.
+    ///
+    /// The window bounds how long a generation lives by default; this retires one
+    /// early, once the caller knows nothing can still be serving from it. A
+    /// generation the window already evicted is a no-op.
+    public func discardGeneration(_ generation: UInt64) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let index = generationDirs.firstIndex(where: { $0.generation == generation })
+        else { return }
+        let dir = generationDirs.remove(at: index).dir
+        try? FileManager.default.removeItem(at: dir)
     }
 
     /// Removes every sibling root under this instance's label — staging left
