@@ -52,19 +52,14 @@ ref in the refspec. A PR's head branch must always be the clean
 ## Post-merge cleanup in an `EnterWorktree` session
 
 In an `EnterWorktree` session (the usual case), after confirming a merge landed
-(`gh pr view <N> --json state -q .state` → `"MERGED"`), fast-forward the primary
-checkout's `main`:
-
-- `git -C <primary-checkout-path> pull --prune --ff-only` — `git -C <path>` runs
-  this one command as if in the primary checkout (where `main` is checked out),
-  so it fetches, fast-forwards `main` onto the squash commit, and drops the
-  now-stale `origin/<type>/<short-description>` remote-tracking ref — all without
-  leaving the worktree. A plain `git fetch --prune` from inside the worktree
-  would only update the shared `origin/main` ref, not the local `main` branch
-  pointer, which is why this targets the primary checkout. Resolve
-  `<primary-checkout-path>` at runtime — it is the first entry of
-  `git worktree list` (the one with no `.claude/worktrees/` segment), e.g.
-  `git -C "$(git worktree list --porcelain | head -1 | cut -d' ' -f2)" pull --prune --ff-only`.
+(`gh pr view <N> --json state -q .state` → `"MERGED"`), run
+`Tools/freshen-main.sh` from the worktree: it fetches with prune (updating the
+shared `origin/main` ref and dropping the stale
+`origin/<type>/<short-description>` remote-tracking ref) and fast-forwards the
+primary checkout's local `main` onto the squash commit. Never attempt that
+fast-forward with raw git — the worktree isolation guard refuses ad-hoc
+`git -C <primary-checkout>` commands, and the script is the sanctioned,
+guarded route (its header owns the details).
 
 Working directly in a checkout (no `EnterWorktree` session), follow the
 tool-neutral post-merge steps in AGENTS.md instead.
