@@ -340,6 +340,25 @@ struct ClipboardPasteboardIntakeTests {
         #expect(note == nil)
     }
 
+    @Test("read(filesAt:) keeps a zero-byte file — native macOS copies one")
+    func readFilesAtZeroByteFile() async throws {
+        let empty = try makeTempFile(name: "empty.txt", contents: Data())
+        let full = try makeTempFile(name: "full.txt", contents: Data("hi".utf8))
+
+        guard
+            case .content(let content, let note) = await ClipboardPasteboardIntake.read(
+                filesAt: [empty, full], allowsBinary: true)
+        else {
+            Issue.record("Expected content")
+            return
+        }
+        #expect(content.representations.map(\.filename) == ["empty.txt", "full.txt"])
+        #expect(content.representations[0].byteCount == 0)
+        #expect(content.representations[0].fileURL == empty)
+        // An empty file is not an unreadable one, so nothing is noted as skipped.
+        #expect(note == nil)
+    }
+
     @Test("read(filesAt:) skips an unreadable file with a note, keeping the rest")
     func readFilesAtSkipsUnreadable() async throws {
         let good = try makeTempFile(name: "good.txt", contents: Data("ok".utf8))

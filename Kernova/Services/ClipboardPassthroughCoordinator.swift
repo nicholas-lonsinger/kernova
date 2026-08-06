@@ -154,9 +154,8 @@ final class ClipboardPassthroughCoordinator {
     private func forwardHostClipboard(to service: any ClipboardServicing) {
         let allowsBinary = service.supportsBinaryRepresentations
         switch ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: allowsBinary) {
-        case .content(let content, _):
-            service.clipboardContent = content
-            service.grabIfChanged()
+        case .content(let content, let note):
+            offer(content, note: note, to: service)
         case .pendingFiles(let urls):
             resolveAndForward(urls, allowsBinary: allowsBinary)
         case .rejected:
@@ -174,11 +173,29 @@ final class ClipboardPassthroughCoordinator {
                 filesAt: urls, allowsBinary: allowsBinary)
             // The live service may have been torn down or replaced during the resolve.
             guard let service = self?.instance?.clipboardService else { return }
-            if case .content(let content, _) = resolved {
-                service.clipboardContent = content
-                service.grabIfChanged()
+            if case .content(let content, let note) = resolved {
+                self?.offer(content, note: note, to: service)
             }
         }
+    }
+
+    /// Offers intake output to the guest, raising the intake's skip note as a
+    /// transfer issue.
+    ///
+    /// The window shows that note inline for its own paste/drop gestures; this
+    /// poll has no gesture to answer, so the issue is the only surface the skip
+    /// gets. Raised *after* the grab, which clears the issue on a successful
+    /// offer.
+    private func offer(
+        _ content: ClipboardContent, note: String?, to service: any ClipboardServicing
+    ) {
+        service.clipboardContent = content
+        service.grabIfChanged()
+        guard let note else { return }
+        Self.logger.warning(
+            "Clipboard passthrough forwarded a partial copy for '\(self.instance?.name ?? "?", privacy: .public)': \(note, privacy: .public)"
+        )
+        service.reportIssue(.forwardSkippedItems(note: note))
     }
 
     // MARK: - Guest → host (inbound)

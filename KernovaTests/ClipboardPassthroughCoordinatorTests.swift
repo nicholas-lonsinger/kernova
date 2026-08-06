@@ -37,9 +37,23 @@ struct ClipboardPassthroughCoordinatorTests {
         /// raised in the same step.
         var refusesOverCopyBudget = false
 
+        /// Fires on each `grabIfChanged` / `reportIssue`, so a wait on the poll's
+        /// off-actor file resolve resolves on the event itself.
+        @ObservationIgnored let grabRecorded = AsyncGate()
+        @ObservationIgnored let issueReported = AsyncGate()
+
         func stop() {}
-        func grabIfChanged() { grabbed.append(clipboardContent) }
         func clearBuffer() { clipboardContent = .empty }
+
+        func grabIfChanged() {
+            grabbed.append(clipboardContent)
+            grabRecorded.notify()
+        }
+
+        func reportIssue(_ issue: ClipboardTransferIssue) {
+            lastTransferIssue = issue
+            issueReported.notify()
+        }
 
         func materializeForCopy() -> [CopyToMacItem] {
             guard refusesOverCopyBudget else {
@@ -94,6 +108,25 @@ struct ClipboardPassthroughCoordinatorTests {
         pasteboard.writeObjects([item])
     }
 
+    /// Places one `public.file-url` item per URL, as a Finder ⌘C of several files
+    /// does.
+    private func writeFileURLs(_ urls: [URL], to pasteboard: NSPasteboard) {
+        pasteboard.clearContents()
+        pasteboard.writeObjects(
+            urls.map { url in
+                let item = NSPasteboardItem()
+                item.setString(url.absoluteString, forType: .fileURL)
+                return item
+            })
+    }
+
+    private func makeScratchDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kernova-passthrough-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
     @Test("A host clipboard change is forwarded to the guest on poll")
     func pollForwardsHostChange() {
         let h = makeHarness()
@@ -137,6 +170,55 @@ struct ClipboardPassthroughCoordinatorTests {
         // The poll must recognize its own write and not offer it back to the guest.
         h.coordinator.pollHostClipboard()
         #expect(h.service.grabbed.isEmpty)
+    }
+
+    @Test("a copied zero-byte file is forwarded like any other, with nothing noted")
+    func pollForwardsZeroByteFile() async throws {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+
+        let directory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let empty = directory.appendingPathComponent("empty.txt")
+        try Data().write(to: empty)
+        writeFileURLs([empty], to: h.pasteboard)
+
+        h.coordinator.pollHostClipboard()
+        try await h.service.grabRecorded.wait { !h.service.grabbed.isEmpty }
+
+        #expect(h.service.grabbed.last?.representations.map(\.filename) == ["empty.txt"])
+        #expect(h.service.grabbed.last?.representations.first?.byteCount == 0)
+        #expect(h.service.lastTransferIssue == nil)
+    }
+
+    @Test("a forward the intake could not fully read surfaces the skip as an issue")
+    func pollSurfacesIntakeSkipNote() async throws {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+
+        let directory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let kept = directory.appendingPathComponent("kept.txt")
+        let doomed = directory.appendingPathComponent("doomed.txt")
+        try Data("kept".utf8).write(to: kept)
+        try Data("doomed".utf8).write(to: doomed)
+        writeFileURLs([kept, doomed], to: h.pasteboard)
+
+        // The poll reads the URLs synchronously and stats them on a Task that
+        // cannot start until this method suspends — so deleting here reproduces
+        // exactly the race that leaves a forward carrying fewer files than were
+        // copied, with no gesture to report it back to.
+        h.coordinator.pollHostClipboard()
+        try FileManager.default.removeItem(at: doomed)
+
+        try await h.service.issueReported.wait { h.service.lastTransferIssue != nil }
+        #expect(h.service.grabbed.last?.representations.map(\.filename) == ["kept.txt"])
+        #expect(
+            h.service.lastTransferIssue?.kind
+                == .localFailure(
+                    code: ClipboardErrorCode.forwardItemsSkipped.rawValue,
+                    message: "Skipped 1 unreadable item")
+        )
     }
 
     @Test("A transient-marked snapshot is not forwarded")

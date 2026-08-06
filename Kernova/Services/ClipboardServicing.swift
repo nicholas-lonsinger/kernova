@@ -32,6 +32,14 @@ protocol ClipboardServicing: AnyObject {
     /// reports a clipboard error; cleared by the next successful transfer.
     var lastTransferIssue: ClipboardTransferIssue? { get }
 
+    /// Records a problem an *automatic* path produced, for `lastTransferIssue`
+    /// to carry.
+    ///
+    /// A window gesture reports its own outcome inline; a passthrough forward has
+    /// no return path, so the issue is the only account it can give. Default
+    /// no-op: a transport that never surfaces an issue drops it.
+    func reportIssue(_ issue: ClipboardTransferIssue)
+
     /// The clipboard transfer currently being shown, or `nil` when none is.
     ///
     /// Aggregate per *operation*, never per file: a multi-file paste fills one bar
@@ -143,6 +151,7 @@ enum CopyToMacDropReason: Sendable, Equatable {
 extension ClipboardServicing {
     func reserveDropDestination() -> URL? { nil }
     func materializeForPreview() async {}
+    func reportIssue(_ issue: ClipboardTransferIssue) {}
     func materializeForCopy() -> [CopyToMacItem] {
         clipboardContent.representations.map { .resolved($0) }
     }

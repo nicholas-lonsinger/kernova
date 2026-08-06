@@ -6,10 +6,10 @@ import Foundation
 struct DataFormattersTests {
     // MARK: - formatBytes
 
-    @Test("formatBytes returns 'Zero KB' for zero bytes")
+    @Test("formatBytes returns '0 bytes' for zero bytes")
     func formatBytesZero() {
         let result = DataFormatters.formatBytes(0)
-        #expect(result == "Zero KB")
+        #expect(result == "0 bytes")
     }
 
     @Test("formatBytes formats kilobytes")

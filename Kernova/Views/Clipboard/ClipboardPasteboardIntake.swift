@@ -197,16 +197,19 @@ enum ClipboardPasteboardIntake {
     }
 
     /// Builds a disk-backed `.file` representation from a single file URL via a
-    /// stat (name + size + content UTI), or `nil` when it can't be read or is
-    /// empty (a directory has no `.fileSize`, so it returns `nil` here — the
-    /// folder path builds a source rep instead).
+    /// stat (name + size + content UTI), or `nil` when it can't be read (a
+    /// directory has no `.fileSize`, so it returns `nil` here — the folder path
+    /// builds a source rep instead).
+    ///
+    /// Size gates nothing: native macOS copies a zero-byte file, so one crosses
+    /// at `byteCount == 0`.
     nonisolated private static func fileRepresentation(
         at url: URL
     ) -> ClipboardContent.Representation? {
         guard
             let values = try? url.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey]),
             let type = values.contentType,
-            let fileSize = values.fileSize, fileSize > 0
+            let fileSize = values.fileSize
         else { return nil }
         return ClipboardContent.Representation(
             uti: type.identifier, fileURL: url, byteCount: fileSize,
