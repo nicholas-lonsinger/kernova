@@ -51,17 +51,12 @@ ref in the refspec. A PR's head branch must always be the clean
 
 ## Post-merge cleanup in an `EnterWorktree` session
 
-In an `EnterWorktree` session (the usual case), after confirming a merge landed
-(`gh pr view <N> --json state -q .state` → `"MERGED"`), run `/github:freshen-main`
-from the worktree to fast-forward the primary checkout's `main` onto the squash
-commit. Never attempt that fast-forward with raw git — the worktree isolation
-guard refuses ad-hoc `git -C <primary-checkout>` commands, and the skill is the
-sanctioned route. It ships in the
-[github plugin](https://github.com/nicholas-lonsinger/claude-plugins), which
-owns the mechanism and how to read its output.
-
-Working directly in a checkout (no `EnterWorktree` session), follow the
-tool-neutral post-merge steps in AGENTS.md instead.
+AGENTS.md's post-merge steps assume the checkout that holds `main`. An
+`EnterWorktree` session is not it: `main` is checked out in the primary
+checkout, so nothing run from here advances it, and the worktree isolation
+guard refuses ad-hoc `git -C <primary-checkout>` commands. After confirming
+the merge landed (`gh pr view <N> --json state -q .state` → `"MERGED"`),
+fast-forward `main` in that checkout rather than from this worktree.
 
 ## Matching review effort to the diff
 
