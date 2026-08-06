@@ -302,17 +302,27 @@ func pinnedVersionDirectory(in url: String) -> (
 /// the entry's own version label states.
 ///
 /// Debian's "12" names the series the pin sits inside, and the archive lists
-/// 13.x.y right beside 12.x.y, so the major is what a bump preserves. Kali's
-/// "2026.2" *is* the pin and names no series above it, so a new quarter takes
-/// the version whole. A label naming no part of the pin fixes the major — the
-/// conservative reading of a label that says nothing.
-func fixedComponentCount(ofPin version: String, statedBy label: String) -> Int {
-    let pinned = version.components(separatedBy: ".")
+/// 13.x.y right beside 12.x.y, so the major is what a bump preserves. A label
+/// restating the pin whole names no series above it — Kali's "2026.2" *is* the
+/// pin — so a new quarter takes the version, year boundary included. A label
+/// naming no part of the pin fixes the major, the conservative reading of a
+/// label that says nothing.
+///
+/// The whole-version reading is taken only behind a literal. A bare version
+/// directory is how both Debian's archive and Ubuntu's `releases/` lay out
+/// every release of the distribution, so a label matching one there says
+/// nothing about whether the entry tracks the newest release or is pinned to
+/// that one, and rolling it would retarget the entry to a different release.
+func fixedComponentCount(ofPin pin: (prefix: String, version: String), statedBy label: String)
+    -> Int
+{
+    let pinned = pin.version.components(separatedBy: ".")
     // "26.04 LTS" states "26.04"; what trails the version is not part of it.
     let stated = (label.components(separatedBy: " ").first ?? label).components(separatedBy: ".")
     guard stated.count <= pinned.count, pinned.prefix(stated.count).elementsEqual(stated)
     else { return 1 }
-    return stated.count == pinned.count ? 0 : stated.count
+    guard stated.count == pinned.count, !pin.prefix.isEmpty else { return stated.count }
+    return 0
 }
 
 /// The entry a newer version-pinned directory produces — the bumped URL, plus
@@ -323,7 +333,8 @@ func newerPinnedEntry(for entry: CatalogEntry) async -> (entry: CatalogEntry, no
         let base = URL(string: pinned.base), let data = await get(base)
     else { return nil }
 
-    let fixed = fixedComponentCount(ofPin: pinned.version, statedBy: entry.version)
+    let fixed = fixedComponentCount(
+        ofPin: (prefix: pinned.prefix, version: pinned.version), statedBy: entry.version)
     let pinnedParts = pinned.version.components(separatedBy: ".")
     let page = String(decoding: data, as: UTF8.self)
     var newest = pinned.version
@@ -377,7 +388,7 @@ log("Refreshing \(catalog.images.count) entry/entries against their mirrors…")
 // MARK: - 2. Resolve every entry
 
 var resolutions: [Resolution] = []
-var failures: [(id: String, reason: String)] = []
+var failures: [(id: String, notes: [String], reason: String)] = []
 
 for original in catalog.images {
     var entry = original
@@ -389,14 +400,14 @@ for original in catalog.images {
     }
 
     guard let directory = URL(string: entry.directoryURL), directory.scheme == "https" else {
-        failures.append((entry.id, "'\(entry.directoryURL)' is not an HTTPS URL"))
+        failures.append((entry.id, notes, "'\(entry.directoryURL)' is not an HTTPS URL"))
         continue
     }
     let manifestURL = directory.appendingPathComponent(entry.checksumManifest)
     guard let manifestData = await get(manifestURL) else {
         failures.append(
             (
-                entry.id,
+                entry.id, notes,
                 "no checksum manifest at \(manifestURL.absoluteString) — a respin renames the "
                     + "manifest, so check the directory and update checksumManifest"
             ))
@@ -406,7 +417,7 @@ for original in catalog.images {
     let rows = parseManifest(String(decoding: manifestData, as: UTF8.self))
     guard !rows.isEmpty else {
         failures.append(
-            (entry.id, "\(manifestURL.absoluteString) parsed as no (file, hash) pairs at all"))
+            (entry.id, notes, "\(manifestURL.absoluteString) parsed as no (file, hash) pairs at all"))
         continue
     }
     // Newest is decided by the numbers inside the text the pattern's `*`
@@ -426,7 +437,7 @@ for original in catalog.images {
     else {
         failures.append(
             (
-                entry.id,
+                entry.id, notes,
                 "no filename in \(entry.checksumManifest) matched '\(entry.isoPattern)' "
                     + "(\(rows.count) pair(s) listed)"
             ))
@@ -435,7 +446,7 @@ for original in catalog.images {
 
     let isoURL = directory.appendingPathComponent(best)
     guard let size = await probeSize(isoURL) else {
-        failures.append((entry.id, "no size for \(isoURL.absoluteString)"))
+        failures.append((entry.id, notes, "no size for \(isoURL.absoluteString)"))
         continue
     }
 
@@ -458,7 +469,10 @@ for original in catalog.images {
 // MARK: - 3. Refuse to publish a run that lost an entry
 
 guard failures.isEmpty else {
-    for (id, reason) in failures { log("  \(id) — \(reason)") }
+    for failure in failures {
+        log("  \(failure.id) — \(failure.reason)")
+        for note in failure.notes { log("      \(note)") }
+    }
     fail(
         "\(failures.count) entry/entries did not resolve — \(outputURL.lastPathComponent) is left "
             + "as it is")
