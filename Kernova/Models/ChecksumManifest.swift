@@ -71,8 +71,9 @@ enum ChecksumManifest {
     /// Whether `candidate` is a SHA-256 digest written as 64 hex digits.
     ///
     /// A SHA-512 line, which several of these mirrors carry beside the SHA-256
-    /// one, fails on the length.
-    private static func isSHA256(_ candidate: String) -> Bool {
+    /// one, fails on the length. Also the shape a digest typed into the wizard
+    /// is admitted on, so a manifest's digest and a user's are held to one rule.
+    static func isSHA256(_ candidate: String) -> Bool {
         candidate.count == 64 && candidate.allSatisfy(isHexDigit)
     }
 

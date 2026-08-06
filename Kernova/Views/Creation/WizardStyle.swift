@@ -191,6 +191,14 @@ func wizardApproximateSize(_ bytes: UInt64) -> String {
     "About \(DataFormatters.formatBytes(bytes))"
 }
 
+/// States what a user-supplied image URL's download will be checked against.
+///
+/// The one phrase the boot step's badge and the Review step's row both use, so
+/// a pick reads the same at both.
+func wizardVerificationSummary(sha256: String?) -> String {
+    sha256 == nil ? "Not verified" : "Verified with your checksum"
+}
+
 /// Abbreviates a path with a leading `~` when it lives under a home
 /// directory the user would read as "mine".
 ///

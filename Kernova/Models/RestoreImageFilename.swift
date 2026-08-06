@@ -34,40 +34,13 @@ enum RestoreImageFilename {
     }
 
     /// A destination filename unique to `url`.
-    ///
-    /// The digest covers the whole absolute URL, so two images differing only in
-    /// host or query land on different files, while one URL always resolves to
-    /// the same file and stays resumable across attempts.
     static func unique(for url: URL) -> String {
-        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
-        let discriminator =
-            digest.prefix(discriminatorBytes)
-            .map { String(format: "%02x", $0) }
-            .joined()
-        return "\(stem(of: url.lastPathComponent) ?? defaultStem)-\(discriminator).ipsw"
+        UniqueDownloadFilename.make(
+            for: url, fileExtension: "ipsw", defaultStem: defaultStem)
     }
 
     /// Stem of a generated filename when the URL's own last component yields none.
     private static let defaultStem = "RestoreImage"
-
-    /// Leading bytes of the URL digest a generated filename carries.
-    private static let discriminatorBytes = 4
-
-    /// Longest stem a generated filename keeps, so a hostile URL cannot push the
-    /// name past the byte limit a path component has.
-    private static let maximumStemLength = 64
-
-    /// The part of `candidate` before its extension, or `nil` when `candidate`
-    /// is not usable as a filename at all.
-    private static func stem(of candidate: String) -> String? {
-        guard SafeFilename.isSingleComponent(candidate) else { return nil }
-        var stem = candidate
-        if let dot = stem.lastIndex(of: "."), dot != stem.startIndex {
-            stem = String(stem[stem.startIndex..<dot])
-        }
-        guard !stem.isEmpty else { return nil }
-        return String(stem.prefix(maximumStemLength))
-    }
 }
 
 /// A macOS marketing version, parsed for comparison against a host.

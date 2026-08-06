@@ -597,7 +597,7 @@ struct VMConfigurationTests {
     @Test("linuxInstallContext round-trips through JSON")
     func linuxInstallContextRoundTrip() throws {
         let context = LinuxInstallContext(
-            entry: makeLinuxCatalogEntry(),
+            source: .catalogEntry(makeLinuxCatalogEntry()),
             downloadDestinationPath: "/Users/me/Downloads/debian-13.6.0-arm64-netinst.iso"
         )
         let config = VMConfiguration(
@@ -611,7 +611,7 @@ struct VMConfigurationTests {
         let decoded = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
 
         #expect(decoded.linuxInstallContext == context)
-        #expect(decoded.linuxInstallContext?.entry.id == "debian-13")
+        #expect(catalogEntry(of: decoded.linuxInstallContext)?.id == "debian-13")
         #expect(
             decoded.linuxInstallContext?.downloadDestinationPath
                 == "/Users/me/Downloads/debian-13.6.0-arm64-netinst.iso")

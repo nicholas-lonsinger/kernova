@@ -157,6 +157,43 @@ struct ReviewContentViewControllerTests {
                 in: vc.view) != nil)
     }
 
+    @Test("A Linux URL pick names the file, its size, where it lands and how it is checked")
+    func linuxShowsVerifiedURLPick() throws {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        let image = makeCustomLinuxImage()
+        vm.selectLinuxCustomURL(image, sizeBytes: 1_073_741_824)
+        let vc = ReviewContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        #expect(findLabel(withText: "From URL", in: vc.view) != nil)
+        // The name in the link the user pasted, not the name on disk.
+        #expect(findLabel(withText: "alpine-3.22-aarch64.iso", in: vc.view) != nil)
+        #expect(
+            findLabel(withText: DataFormatters.formatBytes(1_073_741_824), in: vc.view) != nil)
+        #expect(findLabel(withText: "Verified with your checksum", in: vc.view) != nil)
+        // The URL names its own destination, so unlike a catalog pick the whole
+        // path is known here — carrying a suffix unique to this link.
+        let destination = try #require(try? image.destinationFilename())
+        #expect(destination != "alpine-3.22-aarch64.iso")
+        #expect(
+            findLabel(
+                withText: wizardAbbreviateWithTilde(
+                    VMCreationViewModel.downloadPath(forFilename: destination)),
+                in: vc.view) != nil)
+    }
+
+    @Test("A Linux URL pick with no checksum says the download is not verified")
+    func linuxShowsUnverifiedURLPick() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectLinuxCustomURL(makeCustomLinuxImage(sha256: nil), sizeBytes: 1_073_741_824)
+        let vc = ReviewContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        #expect(findLabel(withText: "Not verified", in: vc.view) != nil)
+    }
+
     @Test("Start-after-create switch writes back to the model")
     func startToggleWriteBack() {
         let vm = VMCreationViewModel()  // startAfterCreate defaults to true

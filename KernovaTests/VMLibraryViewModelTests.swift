@@ -2601,7 +2601,7 @@ struct VMLibraryViewModelTests {
     ) -> VMInstance {
         let instance = makeInstance(name: "Debian")
         instance.configuration.linuxInstallContext = LinuxInstallContext(
-            entry: makeLinuxCatalogEntry(), downloadDestinationPath: destinationPath)
+            source: .catalogEntry(makeLinuxCatalogEntry()), downloadDestinationPath: destinationPath)
         instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
         instance.status = .initialBoot
         viewModel.instances.append(instance)
@@ -2612,7 +2612,7 @@ struct VMLibraryViewModelTests {
     @Test("A pending Linux image download loads as .initialBoot")
     func initialStatusHonorsLinuxContext() {
         var config = VMConfiguration(name: "Debian", guestOS: .linux, bootMode: .efi)
-        config.linuxInstallContext = LinuxInstallContext(entry: makeLinuxCatalogEntry())
+        config.linuxInstallContext = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let layout = VMBundleLayout(
             bundleURL: FileManager.default.temporaryDirectory
                 .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true))
@@ -2634,7 +2634,7 @@ struct VMLibraryViewModelTests {
         await viewModel.createVM(from: wizard)
 
         let created = viewModel.instances.first
-        #expect(created?.configuration.linuxInstallContext?.entry == entry)
+        #expect(catalogEntry(of: created?.configuration.linuxInstallContext) == entry)
         // The download is what the VM is waiting on, so it has never booted.
         #expect(created?.status == .initialBoot)
         #expect(created?.configuration.installContext == nil)

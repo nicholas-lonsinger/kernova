@@ -6,8 +6,8 @@ import Testing
 @Suite("BootConfigContentViewController Tests")
 @MainActor
 struct BootConfigContentViewControllerTests {
-    @Test("EFI mode offers both image sources, with neither picked to start")
-    func efiShowsBothImageSources() {
+    @Test("EFI mode offers all three image sources, with none picked to start")
+    func efiShowsEveryImageSource() {
         let vm = VMCreationViewModel()
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
@@ -16,8 +16,43 @@ struct BootConfigContentViewControllerTests {
 
         #expect(firstSubview(NSSegmentedControl.self, in: vc.view)?.selectedSegment == 0)
         #expect(findButton(titled: "Choose a Distribution…", in: vc.view)?.state == .off)
+        #expect(findButton(titled: "Image URL…", in: vc.view)?.state == .off)
         #expect(findButton(titled: "ISO File…", in: vc.view)?.state == .off)
         #expect(findLabel(withText: "Kernel", in: vc.view) == nil)
+    }
+
+    @Test("A verified URL pick lights its radio and names the file, size and verification")
+    func verifiedURLPickRendersBadge() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectLinuxCustomURL(makeCustomLinuxImage(), sizeBytes: 1_073_741_824)
+        let vc = BootConfigContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        #expect(findButton(titled: "Image URL…", in: vc.view)?.state == .on)
+        #expect(findButton(titled: "Choose a Distribution…", in: vc.view)?.state == .off)
+        #expect(
+            findLabel(
+                containing:
+                    "alpine-3.22-aarch64.iso  ·  \(DataFormatters.formatBytes(1_073_741_824))  ·  Verified with your checksum",
+                in: vc.view) != nil)
+        #expect(findLabel(containing: "won't be verified", in: vc.view) == nil)
+        #expect(findButton(titled: "Change…", in: vc.view) != nil)
+    }
+
+    @Test("An unverified URL pick says so on the badge and in a banner")
+    func unverifiedURLPickWarns() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectLinuxCustomURL(makeCustomLinuxImage(sha256: nil), sizeBytes: 1_073_741_824)
+        let vc = BootConfigContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        #expect(findLabel(containing: "Not verified", in: vc.view) != nil)
+        #expect(
+            findLabel(
+                containing: "This download won't be verified. Choose a host you trust.",
+                in: vc.view) != nil)
     }
 
     @Test("A catalog pick lights its radio and names the image on a badge")
@@ -96,9 +131,42 @@ struct BootConfigContentViewControllerTests {
         #expect(findButton(titled: "ISO File…", in: vc.view)?.state == .on)
     }
 
+    @Test("Choosing from the URL sheet commits the image and lights its radio")
+    func urlSheetChoiceCommits() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        let vc = BootConfigContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        let image = makeCustomLinuxImage()
+        vc.linuxImageURLSheet(makeURLSheet(), didChoose: image, sizeBytes: 1_073_741_824)
+
+        #expect(vm.linuxSelection == .customURL(image: image, sizeBytes: 1_073_741_824))
+        #expect(findButton(titled: "Image URL…", in: vc.view)?.state == .on)
+    }
+
+    @Test("Cancelling the URL sheet leaves the earlier pick standing")
+    func urlSheetCancelKeepsThePick() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectLinuxCatalogEntry(makeLinuxCatalogEntry())
+        let vc = BootConfigContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        vc.linuxImageURLSheetDidCancel(makeURLSheet())
+
+        #expect(findButton(titled: "Choose a Distribution…", in: vc.view)?.state == .on)
+        #expect(findButton(titled: "Image URL…", in: vc.view)?.state == .off)
+    }
+
     /// A picker instance to hand the delegate methods, which ignore it.
     private func makeCatalogSheet() -> LinuxImageCatalogSheetContentViewController {
         LinuxImageCatalogSheetContentViewController(entries: [makeLinuxCatalogEntry()])
+    }
+
+    /// A URL sheet instance to hand the delegate methods, which ignore it.
+    private func makeURLSheet() -> LinuxImageURLSheetContentViewController {
+        LinuxImageURLSheetContentViewController(resolveService: MockLinuxImageResolveService())
     }
 
     @Test("Switching to Linux Kernel updates the model and shows kernel rows")

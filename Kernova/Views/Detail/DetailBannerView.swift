@@ -105,7 +105,7 @@ extension DetailBannerView {
 
     private static func initialBootSubtitle(for instance: VMInstance) -> String {
         if let linux = instance.configuration.linuxInstallContext {
-            let image = "\(linux.entry.distribution) \(linux.entry.version)"
+            let image = linux.imageDisplayName
             if instance.hasResumableInstallDownload {
                 return "An interrupted download of \(image) will resume when you click "
                     + "\(instance.startAction.label)."

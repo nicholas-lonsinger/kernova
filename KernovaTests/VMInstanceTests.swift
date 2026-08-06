@@ -521,7 +521,7 @@ struct VMInstanceTests {
     func startActionDownload() {
         let instance = makeInstance(status: .stopped)
         instance.configuration.linuxInstallContext = LinuxInstallContext(
-            entry: makeLinuxCatalogEntry())
+            source: .catalogEntry(makeLinuxCatalogEntry()))
 
         // No destination until the mirror is asked, which is exactly when there
         // is nothing to resume from.
@@ -547,7 +547,7 @@ struct VMInstanceTests {
 
         let instance = makeInstance(status: .stopped)
         instance.configuration.linuxInstallContext = LinuxInstallContext(
-            entry: makeLinuxCatalogEntry(),
+            source: .catalogEntry(makeLinuxCatalogEntry()),
             downloadDestinationPath: destination.path(percentEncoded: false))
 
         #expect(instance.hasResumableInstallDownload == true)
