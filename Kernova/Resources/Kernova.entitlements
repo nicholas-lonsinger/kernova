@@ -12,8 +12,10 @@
 	     network-family listeners only). -->
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
-	<!-- Sole network use: IPSWService's URLSession download of macOS restore
-	     images from Apple's CDN. -->
+	<!-- Sole network use: DownloadService's streamed image downloads — macOS
+	     restore images from Apple's CDN, Linux installer images and their
+	     checksum manifests from the distributions' mirrors — plus the ranged
+	     probes that size or vet them first. -->
 	<key>com.apple.security.network.client</key>
 	<true/>
 	<!-- Powerbox grants from NSOpenPanel/NSSavePanel (external disk images,

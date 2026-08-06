@@ -11,9 +11,9 @@ Everything `Kernova/Resources/Kernova.entitlements` claims:
 | Entitlement | Why it is needed |
 |---|---|
 | `com.apple.security.app-sandbox` | Mac App Store eligibility |
-| `com.apple.security.network.client` | Sole network use: macOS restore-image traffic — `IPSWService` downloads and `RestoreImageProbeService`'s ranged probe of a user-supplied URL |
+| `com.apple.security.network.client` | Sole network use: guest-image traffic — `DownloadService` streams macOS restore images and Linux installer ISOs, `LinuxImageResolveService` fetches checksum manifests, and `RemoteFileSizeProbe` sizes both kinds before any download |
 | `com.apple.security.files.user-selected.read-write` | Powerbox grants from open/save panels — disk images, ISOs, shared folders, Linux kernel/initrd, local IPSWs |
-| `com.apple.security.files.downloads.read-write` | The fixed IPSW download destination in `~/Downloads` and its `.kernovadownload` resume sidecar |
+| `com.apple.security.files.downloads.read-write` | The fixed download destination in `~/Downloads` — macOS restore images and Linux installer ISOs — and their `.kernovadownload` resume sidecars |
 | `com.apple.security.files.bookmarks.app-scope` | Persisting those panel grants across launches |
 | `com.apple.security.virtualization` | Running guests |
 | `com.apple.security.device.audio-input` | Opt-in per-VM microphone passthrough |

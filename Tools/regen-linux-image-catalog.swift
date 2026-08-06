@@ -189,18 +189,28 @@ func parseManifest(_ text: String) -> [ManifestRow] {
     return rows
 }
 
-/// Whether a filename matches a glob whose only metacharacter is `*`.
-func matchesGlob(_ name: String, pattern: String) -> Bool {
+/// The text each `*` absorbed when the glob matches `name`, or `nil` when it
+/// does not. `*` is the glob's only metacharacter.
+func globCaptures(_ name: String, pattern: String) -> [String]? {
     let segments = pattern.components(separatedBy: "*")
-    guard let first = segments.first, let last = segments.last else { return false }
-    guard segments.count > 1 else { return name == pattern }
-    guard name.hasPrefix(first) else { return false }
+    guard let first = segments.first, let last = segments.last else { return nil }
+    guard segments.count > 1 else { return name == pattern ? [] : nil }
+    guard name.hasPrefix(first) else { return nil }
+    var captures: [String] = []
     var rest = Substring(name).dropFirst(first.count)
     for segment in segments.dropFirst().dropLast() {
-        guard let found = rest.range(of: segment) else { return false }
+        guard let found = rest.range(of: segment) else { return nil }
+        captures.append(String(rest[..<found.lowerBound]))
         rest = rest[found.upperBound...]
     }
-    return rest.count >= last.count && rest.hasSuffix(last)
+    guard rest.count >= last.count, rest.hasSuffix(last) else { return nil }
+    captures.append(String(rest.dropLast(last.count)))
+    return captures
+}
+
+/// Whether a filename matches a glob whose only metacharacter is `*`.
+func matchesGlob(_ name: String, pattern: String) -> Bool {
+    globCaptures(name, pattern: pattern) != nil
 }
 
 /// The numbers embedded in a filename, in order: `24.04.4` reads as
@@ -220,7 +230,8 @@ func versionKey(_ name: String) -> [Int] {
     return key
 }
 
-/// Orders two filenames of one distribution, newest first.
+/// Orders two version-bearing strings (a directory name, or the text a glob's
+/// wildcards absorbed), newest first.
 func isNewerFilename(_ lhs: String, _ rhs: String) -> Bool {
     let left = versionKey(lhs)
     let right = versionKey(rhs)
@@ -323,8 +334,21 @@ for original in catalog.images {
             (entry.id, "\(manifestURL.absoluteString) parsed as no (file, hash) pairs at all"))
         continue
     }
-    let matches = rows.filter { matchesGlob($0.filename, pattern: entry.isoPattern) }
-    guard let best = matches.map(\.filename).sorted(by: isNewerFilename).first else {
+    // Newest is decided by the numbers inside the text the pattern's `*`
+    // absorbed, never the whole filename — mirroring the app's
+    // `ISOFilenameGlob.newest(among:)`: the literal part carries numbers that
+    // say nothing about the version (`arm64` in every one of them), and a
+    // point release adds a component inside the wildcard.
+    let matches = rows.compactMap { row in
+        globCaptures(row.filename, pattern: entry.isoPattern)
+            .map { (filename: row.filename, captured: $0.joined()) }
+    }
+    guard
+        let best = matches.sorted(by: {
+            isNewerFilename($0.captured, $1.captured)
+                || ($0.captured == $1.captured && $0.filename > $1.filename)
+        }).first?.filename
+    else {
         failures.append(
             (
                 entry.id,
