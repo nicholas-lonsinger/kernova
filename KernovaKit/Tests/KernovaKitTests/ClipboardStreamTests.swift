@@ -12,7 +12,7 @@ struct ClipboardStreamTests {
     private static let chunk = 4096
     private static let window = 16384  // 4 chunks
 
-    private func roomyHarness(noAckTimeout: Duration = .seconds(10)) throws -> StreamHarness {
+    private func roomyHarness(noAckTimeout: TimeInterval = 10) throws -> StreamHarness<MonotonicEngineClock> {
         try StreamHarness(
             chunkSize: Self.chunk, windowBytes: Self.window, noAckTimeout: noAckTimeout,
             freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })  // 100 GiB
@@ -24,9 +24,9 @@ struct ClipboardStreamTests {
     /// a few KiB exercises several quantum boundaries. The ack latency bound is
     /// pushed out of reach so the expected ack schedules stay pure byte-quantum
     /// functions — deterministic even on a stalled CI scheduler.
-    private func quantumHarness() throws -> StreamHarness {
+    private func quantumHarness() throws -> StreamHarness<MonotonicEngineClock> {
         try StreamHarness(
-            chunkSize: 1024, windowBytes: 16384, ackLatencyBound: .seconds(600),
+            chunkSize: 1024, windowBytes: 16384, ackLatencyBound: 600,
             freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
     }
 
@@ -38,6 +38,30 @@ struct ClipboardStreamTests {
     }
 
     // MARK: - Round trips
+
+    @Test("an inline multi-chunk payload round-trips on the modern clock conformance")
+    func inlineRoundTripOnContinuousClock() async throws {
+        // The default harness runs every suite on `MonotonicEngineClock` (the
+        // macOS 12 fallback); this is the package-level pass over the other
+        // production conformance, so both real clocks stream on every CI run.
+        guard #available(macOS 13.0, *) else { return }
+        let harness = try StreamHarness(
+            clock: ContinuousEngineClock(), chunkSize: Self.chunk, windowBytes: Self.window)
+        defer { harness.tearDown() }
+
+        var bytes = Data()
+        for i in 0..<(Self.chunk * 4 + 57) { bytes.append(UInt8((i * 17 + 3) & 0xFF)) }
+        let rep = ClipboardContent.Representation(uti: "public.utf8-plain-text", data: bytes)
+
+        harness.sender.startTransfer(
+            transferID: 1, generation: 1, representation: rep, maxAcceptByteCount: .max,
+            isInline: true, isCurrent: { _ in true })
+
+        try await harness.collector.gate.wait { harness.collector.representation(1) != nil }
+        let received = try #require(harness.collector.representation(1))
+        #expect(received.inMemoryData == bytes)
+        #expect(harness.collector.abortCount == 0)
+    }
 
     @Test("an inline multi-chunk payload round-trips with identical bytes and digest")
     func inlineRoundTrip() async throws {
@@ -255,7 +279,7 @@ struct ClipboardStreamTests {
             transferID: 3, generation: 1, representation: rep, maxAcceptByteCount: .max,
             isInline: false, isCurrent: { _ in true })
 
-        try await harness.collector.gate.wait(timeout: .seconds(60)) {
+        try await harness.collector.gate.wait(timeout: 60) {
             harness.collector.representation(3) != nil || harness.collector.abortCount > 0
         }
         let received = try #require(harness.collector.representation(3))
@@ -367,14 +391,14 @@ struct ClipboardStreamTests {
 
     @Test("a stale last-ack forces an ack on the next chunk even below the byte quantum")
     func staleLastAckForcesAckBelowQuantum() async throws {
-        // ackLatencyBound: .zero makes every landing chunk see a stale last-ack
+        // ackLatencyBound: 0 makes every landing chunk see a stale last-ack
         // (elapsed ≥ 0 always holds), deterministically forcing the
         // latency-bound path that the production 1 s value only takes under
         // degraded I/O — the guard that slow durable writes cannot stretch the
         // gap between credit-opening acks past the sender's fixed no-ack
         // deadline (#377).
         let harness = try StreamHarness(
-            chunkSize: 1024, windowBytes: 16384, ackLatencyBound: .zero,
+            chunkSize: 1024, windowBytes: 16384, ackLatencyBound: 0,
             freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
         defer { harness.tearDown() }
 
@@ -445,13 +469,13 @@ struct ClipboardStreamTests {
     /// is a pure function of which writes the test released — never of how long
     /// a loaded CI runner took to run them.
     private func gatedHarness(freeSpace: @escaping @Sendable () -> Int64 = { 100 << 30 }) throws
-        -> (harness: StreamHarness, sink: Box<GatedSink?>)
+        -> (harness: StreamHarness<MonotonicEngineClock>, sink: Box<GatedSink?>)
     {
         let stagingBox = Box<ClipboardFileStaging?>(nil)
         let sinkBox = Box<GatedSink?>(nil)
         let harness = try StreamHarness(
             chunkSize: Self.chunk, windowBytes: Self.window,
-            ackLatencyBound: .seconds(600),
+            ackLatencyBound: 600,
             freeSpaceProvider: { _ in freeSpace() },
             sinkFactory: { generation, filename in
                 guard let staging = stagingBox.value else {
@@ -470,7 +494,7 @@ struct ClipboardStreamTests {
     /// Opens an inbound file transfer of `totalBytes` and waits for its
     /// go-signal ack, so the staging sink is open before the test drives chunks.
     private func beginFileTransfer(
-        _ harness: StreamHarness, id: UInt64, totalBytes: Int, filename: String
+        _ harness: StreamHarness<MonotonicEngineClock>, id: UInt64, totalBytes: Int, filename: String
     ) async throws {
         harness.receiver.handleBegin(
             .with {
@@ -486,7 +510,7 @@ struct ClipboardStreamTests {
     /// Progress is the receive lane's own signal — it fires per *accepted*
     /// chunk, before those bytes reach the sink — which is what makes the write
     /// lane's independence observable.
-    private func trackProgress(_ harness: StreamHarness, _ id: UInt64) -> (
+    private func trackProgress(_ harness: StreamHarness<MonotonicEngineClock>, _ id: UInt64) -> (
         received: Box<Int>, gate: AsyncGate
     ) {
         let received = Box<Int>(0)
@@ -1083,7 +1107,7 @@ struct ClipboardStreamTests {
         // and the no-ack deadline must fire.
         let harness = try StreamHarness(
             chunkSize: Self.chunk, windowBytes: Self.window,
-            noAckTimeout: .milliseconds(200), suppressAcks: true,
+            noAckTimeout: 0.2, suppressAcks: true,
             freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
         defer { harness.tearDown() }
 
@@ -1102,7 +1126,7 @@ struct ClipboardStreamTests {
     func inboundStallTimesOut() async throws {
         let harness = try StreamHarness(
             chunkSize: Self.chunk, windowBytes: Self.window,
-            stallTimeout: .milliseconds(150),
+            stallTimeout: 0.15,
             freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
         defer { harness.tearDown() }
 
@@ -1134,7 +1158,7 @@ struct ClipboardStreamTests {
         // watching *after* activity, not just after Begin.
         let harness = try StreamHarness(
             chunkSize: Self.chunk, windowBytes: Self.window,
-            stallTimeout: .milliseconds(150),
+            stallTimeout: 0.15,
             freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
         defer { harness.tearDown() }
 

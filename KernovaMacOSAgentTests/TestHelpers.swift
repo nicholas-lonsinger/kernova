@@ -48,7 +48,7 @@ func nextFrame(from channel: VsockChannel) async throws -> Frame {
         return try await iterator.next()
     }
     let timeoutTask = Task<Void, Never> {
-        try? await Task.sleep(for: timeout)
+        try? await MonotonicEngineClock().sleep(for: timeout)
         receiver.cancel()
     }
     defer { timeoutTask.cancel() }
@@ -59,7 +59,7 @@ func nextFrame(from channel: VsockChannel) async throws -> Frame {
         }
         return frame
     } catch is CancellationError {
-        throw TestFailure("Timed out waiting for a frame after \(timeout)")
+        throw TestFailure("Timed out waiting for a frame after \(timeout) s")
     }
 }
 
@@ -76,14 +76,35 @@ func awaitFirst<T: Sendable>(_ stream: AsyncStream<T>) async throws -> T {
         return await iterator.next()
     }
     let timeoutTask = Task<Void, Never> {
-        try? await Task.sleep(for: timeout)
+        try? await MonotonicEngineClock().sleep(for: timeout)
         task.cancel()
     }
     defer { timeoutTask.cancel() }
     guard let value = await task.value else {
-        throw TestFailure("Timed out waiting for stream value after \(timeout)")
+        throw TestFailure("Timed out waiting for stream value after \(timeout) s")
     }
     return value
+}
+
+// MARK: - Clock-parameterized client factory
+
+/// Builds a `VsockGuestClient` on the clock `kind` names, erased for tests
+/// parameterized over both production clocks (`EngineClockKind.allCases`).
+func makeTestClient(
+    kind: EngineClockKind,
+    port: UInt32,
+    label: String,
+    retryInterval: TimeInterval,
+    socketProvider: VsockSocketProvider? = nil
+) -> any VsockReconnecting {
+    if kind == .continuous, #available(macOS 13.0, *) {
+        return VsockGuestClient(
+            port: port, label: label, clock: ContinuousEngineClock(),
+            retryInterval: retryInterval, socketProvider: socketProvider)
+    }
+    return VsockGuestClient(
+        port: port, label: label, clock: MonotonicEngineClock(),
+        retryInterval: retryInterval, socketProvider: socketProvider)
 }
 
 // MARK: - AtomicInt

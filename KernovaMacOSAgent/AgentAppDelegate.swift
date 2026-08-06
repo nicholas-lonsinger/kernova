@@ -43,7 +43,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
 
     private var vsockConnection: VsockHostConnection?
     private var clipboardAgent: VsockGuestClipboardAgent?
-    private var controlAgent: VsockGuestControlAgent?
+    private var controlAgent: (any VsockGuestControlling)?
     private var statusItemController: AgentStatusItemController?
 
     /// Retained so the signal sources stay armed for the process lifetime.
@@ -110,7 +110,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
 
         // `onPolicy` gates the log + clipboard capabilities; `onStateChange`
         // drives the status-item icon.
-        let controlAgent = VsockGuestControlAgent(
+        let controlAgent = makeVsockGuestControlAgent(
             onPolicy: { [weak self] policy in
                 vsockConnection.setEnabled(policy.logForwardingEnabled)
                 clipboardAgent.applyPolicy(
@@ -182,7 +182,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     private func installSignalHandlers(
         vsockConnection: VsockHostConnection,
         clipboardAgent: VsockGuestClipboardAgent,
-        controlAgent: VsockGuestControlAgent
+        controlAgent: any VsockGuestControlling
     ) {
         signal(SIGINT, SIG_IGN)
         signal(SIGTERM, SIG_IGN)

@@ -7,8 +7,9 @@ actor isolation. It records what exists and how the pieces connect; what a compo
 owned by its own doc comment.
 
 Kernova manages virtual machines through Apple's Virtualization.framework, with macOS and Linux
-guests. Pure AppKit (no `import SwiftUI` in the app target), macOS 26, Swift 6 strict concurrency,
-no non-Apple dependencies.
+guests. Pure AppKit (no `import SwiftUI` in the app target), Swift 6 strict concurrency,
+no non-Apple dependencies. The app targets macOS 26; the guest agent and `KernovaKit` deploy back
+to macOS 12 so the agent runs in every macOS guest the catalog can install.
 
 Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
 [SANDBOX.md](SANDBOX.md), toolbar construction in [TOOLBAR.md](TOOLBAR.md).
@@ -161,7 +162,10 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
   `NSPasteboard`.
 - `VsockClipboardService` — the macOS transport, over `VsockChannel`, driving `KernovaKit`'s
   `ClipboardStreamSender`/`ClipboardStreamReceiver`. Offers are metadata-only; bytes stream on
-  request.
+  request. The receiver and the agent's watchdog types are generic over `EngineClock`
+  (`ContinuousClock` on macOS 13+, `CLOCK_MONOTONIC` on 12), chosen once at construction behind
+  `#available` and held through clock-free facade protocols (`ClipboardStreamReceiving`,
+  `VsockReconnecting`, `VsockGuestControlling`) by owners that must run on 12.
 - `HostClipboardPublisher`, `ClipboardPassthroughCoordinator` — host-side publication of inbound
   guest content, and the auto-publish path.
 - `ClipboardProgressCenter` — app-level singleton, not per VM: clipboard services are per-VM but

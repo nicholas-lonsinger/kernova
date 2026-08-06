@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "KernovaKit",
     platforms: [
-        .macOS(.v15)
+        .macOS(.v12)
     ],
     products: [
         .library(name: "KernovaKit", targets: ["KernovaKit"]),
@@ -25,6 +25,7 @@ let package = Package(
         ),
         .target(
             name: "KernovaTestSupport",
+            dependencies: ["KernovaKit"],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]

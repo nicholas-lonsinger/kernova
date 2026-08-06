@@ -263,7 +263,7 @@ struct VsockGuestClipboardAgentTests {
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
-        refusalBurstWindow: Duration = VsockGuestClipboardAgent.defaultRefusalBurstWindow,
+        refusalBurstWindow: TimeInterval = VsockGuestClipboardAgent.defaultRefusalBurstWindow,
         onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void = { _ in },
         onClipboardNotice: @escaping @Sendable () -> Void = {}
     ) -> VsockGuestClipboardAgent {
@@ -271,7 +271,8 @@ struct VsockGuestClipboardAgentTests {
         let client = VsockGuestClient(
             port: 49152,
             label: "clipboard-test",
-            retryInterval: .milliseconds(50)
+            clock: MonotonicEngineClock(),
+            retryInterval: 0.05
         ) { _, _ in
             provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
         }
@@ -400,51 +401,6 @@ struct VsockGuestClipboardAgentTests {
         #expect(transfer.begin.filename == "notes.bin")
         #expect(transfer.bytes == contents)
         #expect(transfer.end.sha256 == Data(SHA256.hash(data: contents)))
-    }
-
-    @Test("outbound copied zero-byte file: offered and streamed as an empty payload")
-    func outboundCopiedZeroByteFileOfferAndStream() async throws {
-        let pasteboard = FakePasteboard()
-        let (agentFd, remoteFd) = try makeRawSocketPair()
-        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
-        hostChannel.start()
-        defer { hostChannel.close() }
-
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
-        defer { agent.stop() }
-
-        try await startAgentAndWaitForLiveChannel(agent: agent)
-
-        // Finder copies an empty file, so the guest offers one: the stat gate
-        // keeps the rep at `byteCount == 0` rather than dropping it.
-        let url = try writeTempFile(name: "empty.bin", data: Data())
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        pasteboard.setItem([(type: .fileURL, data: Data(url.absoluteString.utf8))])
-        await MainActor.run { agent.checkClipboardChange() }
-
-        let offerFrame = try await nextFrame(from: hostChannel)
-        guard case .clipboardOffer(let offer) = offerFrame.payload else {
-            throw TestFailure("Expected ClipboardOffer, got \(String(describing: offerFrame.payload))")
-        }
-        let info = try #require(offer.repInfo.first)
-        #expect(offer.repInfo.count == 1)
-        #expect(info.byteCount == 0)
-        #expect(info.filename == "empty.bin")
-        #expect(!info.isInline)
-
-        // The whole stream path survives at zero bytes: Begin, no chunks, End
-        // carrying the empty-input SHA-256.
-        let transferID: UInt64 = (offer.generation << 16) | 0
-        try hostChannel.send(
-            makeRequestFrame(
-                generation: offer.generation, transferID: transferID, uti: info.uti))
-
-        let transfer = try await collectOutboundTransfer(
-            transferID: transferID, from: hostChannel)
-        #expect(transfer.begin.totalBytes == 0)
-        #expect(transfer.begin.filename == "empty.bin")
-        #expect(transfer.bytes.isEmpty)
-        #expect(transfer.end.sha256 == Data(SHA256.hash(data: Data())))
     }
 
     @Test("serving a host pull publishes an outbound readout, cleared at the terminal")
@@ -1788,8 +1744,8 @@ struct VsockGuestClipboardAgentTests {
         try await expectNoRequest(from: hostChannel)
     }
 
-    @Test("an inbound zero-byte file rep is promised and pastes as a real empty file")
-    func inboundZeroByteFileRepPastesAnEmptyFile() async throws {
+    @Test("an inbound zero-byte rep that is not a directory is never promised")
+    func inboundZeroByteNonDirectoryRepIsNotPromised() async throws {
         let pasteboard = FakePasteboard()
         let (agentFd, remoteFd) = try makeRawSocketPair()
         let hostChannel = VsockChannel(fileDescriptor: remoteFd)
@@ -1800,49 +1756,15 @@ struct VsockGuestClipboardAgentTests {
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
-        // An empty file is content a native Mac-to-Mac copy carries, so it is a
-        // rep like any other: the empty-payload skip reaches only *inline* reps.
-        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        // The empty-payload skip still holds for everything but a directory: a
+        // zero-byte file rep carries nothing a paste could serve.
         try hostChannel.send(
             makeOfferFrame(
                 generation: 19,
                 reps: [
-                    RepInfo(uti: txtUTI, byteCount: 0, filename: "empty.txt", isInline: false)
-                ]))
-
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
-
-        let pull = lazyPull(pasteboard, forType: .fileURL)
-        try await driveInboundStream(
-            generation: 19, uti: txtUTI, filename: "empty.txt", payload: Data(), isInline: false,
-            on: hostChannel)
-        let urlData = await pull.value
-        let staged = try #require(
-            urlData.flatMap { String(data: $0, encoding: .utf8) }
-                .flatMap(URL.init(string:)))
-        #expect(staged.lastPathComponent == "empty.txt")
-        #expect(try Data(contentsOf: staged).isEmpty)
-    }
-
-    @Test("an inbound zero-byte rep with no filename is never promised")
-    func inboundZeroByteInlineRepIsNotPromised() async throws {
-        let pasteboard = FakePasteboard()
-        let (agentFd, remoteFd) = try makeRawSocketPair()
-        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
-        hostChannel.start()
-        defer { hostChannel.close() }
-
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
-        defer { agent.stop() }
-        try await startAgentAndWaitForLiveChannel(agent: agent)
-
-        // No filename means no file for a paste to create, so a byte-less rep is
-        // an empty pasteboard flavor and carries nothing.
-        try hostChannel.send(
-            makeOfferFrame(
-                generation: 19,
-                reps: [
-                    RepInfo(uti: UTType.png.identifier, byteCount: 0, isInline: true),
+                    RepInfo(
+                        uti: UTType.png.identifier, byteCount: 0, filename: "nothing.png",
+                        isInline: false),
                     .text("keep"),
                 ]))
 
@@ -2158,7 +2080,7 @@ struct VsockGuestClipboardAgentTests {
         // without the test waiting out the production window.
         let notices = AtomicInt()
         let agent = makeAgent(
-            pasteboard: pasteboard, agentFd: agentFd, refusalBurstWindow: .milliseconds(1),
+            pasteboard: pasteboard, agentFd: agentFd, refusalBurstWindow: 0.001,
             onClipboardNotice: { notices.increment() })
         defer { agent.stop() }
 
@@ -2185,7 +2107,7 @@ struct VsockGuestClipboardAgentTests {
 
         // The offer is still live and the user pastes again — a new gesture, owed
         // its own answer on both surfaces rather than a silent no-op.
-        try await Task.sleep(for: .milliseconds(20))
+        try await Task.sleep(nanoseconds: 20_000_000)
         #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
         try await notices.changed.wait { notices.value == 2 }
         let second = try await maybeNextFrame(from: hostChannel)
@@ -2641,23 +2563,24 @@ struct VsockGuestClipboardAgentTests {
         // and the send-failure handler resolves the pull synchronously via
         // `cancelAwait` + `coordinator.abort`, so `invokeProvider` returns nil on
         // the same thread without ever blocking toward the 120 s backstop.
-        let start = ContinuousClock.now
+        let wallClock = MonotonicEngineClock()
+        let start = wallClock.now
         let provided: Data? = await offCooperativePool {
             DispatchQueue.main.sync {
                 agent.liveChannelForTesting?.close()
                 return pasteboard.invokeProvider(forType: .string)
             }
         }
-        let elapsed = ContinuousClock.now - start
+        let elapsed = wallClock.seconds(since: start)
 
         #expect(provided == nil)
         // Promptly: well under the lazy-pull backstop. A regression that didn't
         // resolve the pull on send failure would block the full timeout.
         #expect(
-            elapsed < .seconds(5),
+            elapsed < 5,
             """
             Send failure must resolve the pull promptly, not block toward the \
-            \(ClipboardStreamTuning.lazyPullTimeout) backstop (took \(elapsed))
+            \(ClipboardStreamTuning.lazyPullTimeout) s backstop (took \(elapsed) s)
             """)
     }
 
@@ -2682,7 +2605,8 @@ struct VsockGuestClipboardAgentTests {
         let client = VsockGuestClient(
             port: 49152,
             label: "clipboard-reconnect-test",
-            retryInterval: .milliseconds(50)
+            clock: MonotonicEngineClock(),
+            retryInterval: 0.05
         ) { _, _ in
             let n = provideCount.increment()
             guard let fd = fdBox.fd(at: n - 1) else {
@@ -2817,7 +2741,8 @@ struct VsockGuestClipboardAgentTests {
         let client = VsockGuestClient(
             port: 49152,
             label: "clipboard-sync-publish-test",
-            retryInterval: .milliseconds(50)
+            clock: MonotonicEngineClock(),
+            retryInterval: 0.05
         ) { _, _ in
             provideCount.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no more fds"))
         }
@@ -2952,7 +2877,7 @@ struct VsockGuestClipboardAgentTests {
         agent.start()
 
         // Without an enabling policy, no connection should come up.
-        try await Task.sleep(for: .milliseconds(150))
+        try await Task.sleep(nanoseconds: 150_000_000)
         let stillNil = DispatchQueue.main.sync { agent.liveChannelForTesting }
         #expect(stillNil == nil)
 
@@ -3218,7 +3143,7 @@ struct VsockGuestClipboardAgentTests {
     /// agent's reaction (if any) runs on the main queue and would have been
     /// dispatched before this window elapses.
     private func maybeNextFrame(
-        from channel: VsockChannel, window: Duration = .milliseconds(200),
+        from channel: VsockChannel, window: TimeInterval = 0.2,
         skippingAcks: Bool = false
     ) async throws -> Frame? {
         let receiver = Task<Frame?, Never> {
@@ -3229,7 +3154,7 @@ struct VsockGuestClipboardAgentTests {
             }
             return nil
         }
-        try await Task.sleep(for: window)
+        try await MonotonicEngineClock().sleep(for: window)
         receiver.cancel()
         return await receiver.value
     }

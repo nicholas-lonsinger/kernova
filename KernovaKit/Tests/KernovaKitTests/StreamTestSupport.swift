@@ -55,16 +55,17 @@ func materializedFiles(under directory: URL) -> [URL] {
     }
 }
 
-/// Polls `predicate` until it holds or `timeout` elapses.
+/// Polls `predicate` until it holds or `timeout` seconds elapse.
 func pollUntil(
-    timeout: Duration = testWaitBackstop, _ predicate: @Sendable () -> Bool
+    timeout: TimeInterval = testWaitBackstop, _ predicate: @Sendable () -> Bool
 ) async throws {
-    let deadline = ContinuousClock.now.advanced(by: timeout)
+    let clock = MonotonicEngineClock()
+    let start = clock.now
     while !predicate() {
-        if ContinuousClock.now >= deadline {
-            throw StreamTestFailure("Condition not met within \(timeout)")
+        if clock.seconds(since: start) >= timeout {
+            throw StreamTestFailure("Condition not met within \(timeout) s")
         }
-        try await Task.sleep(for: .milliseconds(10))
+        try await Task.sleep(nanoseconds: 10_000_000)
     }
 }
 
@@ -255,9 +256,9 @@ final class StreamCollector: @unchecked Sendable {
 /// (channel B) over a socketpair, with two routing tasks standing in for the
 /// owning services: A's inbound acks/aborts feed the sender; B's inbound
 /// begin/chunk/end/abort feed the receiver.
-final class StreamHarness: @unchecked Sendable {
+final class StreamHarness<Clock: EngineClock>: @unchecked Sendable {
     let sender: ClipboardStreamSender
-    let receiver: ClipboardStreamReceiver
+    let receiver: ClipboardStreamReceiver<Clock>
     let staging: ClipboardFileStaging
     /// Parent of the staging root; tests scan it for materialized temp files.
     let stagingTempRoot: URL
@@ -268,15 +269,16 @@ final class StreamHarness: @unchecked Sendable {
     private var routeTasks: [Task<Void, Never>] = []
 
     init(
+        clock: Clock,
         chunkSize: Int,
         windowBytes: Int,
-        noAckTimeout: Duration = .seconds(10),
-        ackLatencyBound: Duration = ClipboardStreamTuning.ackLatencyBound,
-        stallTimeout: Duration = ClipboardStreamTuning.inboundStallTimeout,
+        noAckTimeout: TimeInterval = 10,
+        ackLatencyBound: TimeInterval = ClipboardStreamTuning.ackLatencyBound,
+        stallTimeout: TimeInterval = ClipboardStreamTuning.inboundStallTimeout,
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
         suppressAcks: Bool = false,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
-        sinkFactory: ClipboardStreamReceiver.SinkFactory? = nil
+        sinkFactory: ClipboardSinkFactory? = nil
     ) throws {
         (a, b) = try makeStartedChannelPair()
         stagingTempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -289,6 +291,7 @@ final class StreamHarness: @unchecked Sendable {
             channel: a, chunkSize: chunkSize, windowBytes: windowBytes, noAckTimeout: noAckTimeout)
         let collector = self.collector
         receiver = ClipboardStreamReceiver(
+            clock: clock,
             channel: b, staging: staging, windowBytes: windowBytes,
             ackLatencyBound: ackLatencyBound, stallTimeout: stallTimeout,
             maxResidentInlineBytes: maxResidentInlineBytes,
@@ -340,5 +343,34 @@ final class StreamHarness: @unchecked Sendable {
         a.close()
         b.close()
         staging.sweep()
+    }
+}
+
+extension StreamHarness where Clock == MonotonicEngineClock {
+    /// Harness on the macOS 12 fallback clock — the default for tests that
+    /// don't parameterize over clocks.
+    convenience init(
+        chunkSize: Int,
+        windowBytes: Int,
+        noAckTimeout: TimeInterval = 10,
+        ackLatencyBound: TimeInterval = ClipboardStreamTuning.ackLatencyBound,
+        stallTimeout: TimeInterval = ClipboardStreamTuning.inboundStallTimeout,
+        maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
+        suppressAcks: Bool = false,
+        freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
+        sinkFactory: ClipboardSinkFactory? = nil
+    ) throws {
+        try self.init(
+            clock: MonotonicEngineClock(),
+            chunkSize: chunkSize,
+            windowBytes: windowBytes,
+            noAckTimeout: noAckTimeout,
+            ackLatencyBound: ackLatencyBound,
+            stallTimeout: stallTimeout,
+            maxResidentInlineBytes: maxResidentInlineBytes,
+            suppressAcks: suppressAcks,
+            freeSpaceProvider: freeSpaceProvider,
+            sinkFactory: sinkFactory
+        )
     }
 }

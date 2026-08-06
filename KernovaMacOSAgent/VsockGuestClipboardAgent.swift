@@ -79,18 +79,18 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// One paste gesture fires one data provider per promised item, so its
     /// refusals arrive as a burst and are worth one message; a paste made after
     /// the window is a second gesture and is owed its own answer.
-    static let defaultRefusalBurstWindow: Duration = .seconds(2)
+    static let defaultRefusalBurstWindow: TimeInterval = 2
 
     /// What the paste progress readout calls the machine the bytes come from —
     /// the guest can't learn the host's actual computer name over the control
     /// handshake.
     private static let pasteSourceName = "Mac"
 
-    private let client: VsockGuestClient
+    private let client: any VsockReconnecting
     private let pasteboard: Pasteboard
 
     /// How long one reported refusal silences the rest of its burst.
-    private let refusalBurstWindow: Duration
+    private let refusalBurstWindow: TimeInterval
 
     /// Aggregates what this side streams to the host into the status item's
     /// readout.
@@ -116,7 +116,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     /// Streaming engine for the current connection.
     private var sender: ClipboardStreamSender?
-    private var receiver: ClipboardStreamReceiver?
+    private var receiver: (any ClipboardStreamReceiving)?
 
     #if DEBUG
     /// Test seam.
@@ -231,7 +231,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         var stagedInlineURLs: [Int: URL] = [:]
         /// When this offer's last refusal was reported, opening the burst window
         /// that keeps the rest of one paste's provider fires quiet.
-        var lastRefusalReportedAt: ContinuousClock.Instant?
+        var lastRefusalReportedAt: MonotonicEngineClock.Instant?
 
         init(generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo]) {
             self.generation = generation
@@ -250,7 +250,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     ) {
         self.init(
             pasteboard: NSPasteboard.general,
-            client: VsockGuestClient(port: KernovaVsockPort.clipboard, label: "clipboard"),
+            client: makeVsockGuestClient(port: KernovaVsockPort.clipboard, label: "clipboard"),
             onProgress: onProgress,
             onClipboardNotice: onClipboardNotice
         )
@@ -265,12 +265,12 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// wait, and zeroed reveal/linger delays so a test transfer surfaces while in
     /// flight.
     init(
-        pasteboard: Pasteboard, client: VsockGuestClient,
+        pasteboard: Pasteboard, client: any VsockReconnecting,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         stagingTempRoot: URL = FileManager.default.temporaryDirectory,
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
-        refusalBurstWindow: Duration = VsockGuestClipboardAgent.defaultRefusalBurstWindow,
+        refusalBurstWindow: TimeInterval = VsockGuestClipboardAgent.defaultRefusalBurstWindow,
         onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void = { _ in },
         onClipboardNotice: @escaping @Sendable () -> Void = {}
     ) {
@@ -411,7 +411,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // The engine is created off-main (its callbacks hop to main themselves);
         // only the published references are assigned on the main queue.
         let sender = ClipboardStreamSender(channel: channel)
-        let receiver = ClipboardStreamReceiver(
+        let receiver = makeClipboardStreamReceiver(
             channel: channel, staging: self.staging,
             // The only measured throughput number for the real vsock link, so it
             // logs at `.notice` (persisted) rather than `.debug`.
@@ -1030,7 +1030,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// off-main into the coordinator, never hopping to the thread this call
     /// holds.
     private func awaitPull(
-        transferID: UInt64, receiver: ClipboardStreamReceiver,
+        transferID: UInt64, receiver: any ClipboardStreamReceiving,
         sendRequest: @escaping () throws -> Void
     ) -> LazyPullOutcome {
         let coordinator = lazyCoordinator
@@ -1105,7 +1105,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// `allowsFileURLPull` before this is reached.
     private func pullRepresentation(
         _ repIndex: Int, promise: InboundPromise, channel: VsockChannel,
-        receiver: ClipboardStreamReceiver
+        receiver: any ClipboardStreamReceiving
     ) -> ClipboardContent.Representation? {
         let info = promise.reps[repIndex]
         // The guest is the receiver, so it does not set the direction bit.
@@ -1221,8 +1221,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// Whether a refusal for `promise` may be reported now, opening the burst
     /// window when it may.
     private func allowsRefusalReport(for promise: InboundPromise) -> Bool {
-        let now = ContinuousClock.now
-        if let last = promise.lastRefusalReportedAt, now - last < refusalBurstWindow { return false }
+        let clock = MonotonicEngineClock()
+        let now = clock.now
+        if let last = promise.lastRefusalReportedAt, clock.seconds(from: last, to: now) < refusalBurstWindow {
+            return false
+        }
         promise.lastRefusalReportedAt = now
         return true
     }

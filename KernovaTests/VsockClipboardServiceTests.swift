@@ -2814,7 +2814,7 @@ struct VsockClipboardServiceTests {
         // regression the pull resolves to nothing when this fires, so the
         // test fails either way and the value's size never masks it.
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: .seconds(5))
+            channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: 5)
         service.start()
         defer { service.stop() }
 
@@ -3300,7 +3300,7 @@ struct VsockClipboardServiceTests {
         // the production 120 s.
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)",
-            lazyPullTimeout: .milliseconds(200))
+            lazyPullTimeout: 0.2)
         service.start()
         defer { service.stop() }
 
@@ -3380,7 +3380,7 @@ struct VsockClipboardServiceTests {
         // failure-kind-agnostic — materializeForPreview skips the generation
         // latch on any nil pull result, timeout and abort alike.
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: .seconds(60))
+            channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: 60)
         service.start()
         defer { service.stop() }
 
@@ -3573,7 +3573,7 @@ struct VsockClipboardServiceTests {
         // the production window.
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)",
-            lazyPullTimeout: .milliseconds(200))
+            lazyPullTimeout: 0.2)
         service.start()
         defer { service.stop() }
 

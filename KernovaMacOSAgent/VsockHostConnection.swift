@@ -16,7 +16,7 @@ final class VsockHostConnection: @unchecked Sendable {
     /// VM start to the first vsock connect on macOS.
     static let logBufferLimit = 256
 
-    private let client: VsockGuestClient
+    private let client: any VsockReconnecting
 
     let lock = NSLock()
     var pendingLogs: [Frame] = []
@@ -40,7 +40,7 @@ final class VsockHostConnection: @unchecked Sendable {
     }
 
     init() {
-        self.client = VsockGuestClient(port: KernovaVsockPort.log, label: "log")
+        self.client = makeVsockGuestClient(port: KernovaVsockPort.log, label: "log")
         // Default-disabled: no connect attempts until the host's first
         // `PolicyUpdate(logForwardingEnabled: true)`.
         self.client.pause()

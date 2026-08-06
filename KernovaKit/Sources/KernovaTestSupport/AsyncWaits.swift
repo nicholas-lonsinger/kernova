@@ -1,14 +1,15 @@
 import Foundation
+import KernovaKit
 
 // MARK: - testWaitBackstop
 
-/// Default stuck-condition backstop for every test wait helper.
+/// Default stuck-condition backstop for every test wait helper, in seconds.
 ///
 /// Sized past any plausible CI scheduler stall — starved macos-26 runners have
 /// defeated 5 s and 10 s backstops. Success-path waits must not pass a smaller
 /// explicit timeout; explicit values are for behavior-under-test deadlines only
 /// (docs/TESTING.md, "Async waits in tests").
-public let testWaitBackstop: Duration = .seconds(60)
+public let testWaitBackstop: TimeInterval = 60
 
 // MARK: - TestFailure
 
@@ -72,29 +73,34 @@ public final class AsyncGate: @unchecked Sendable {
     }
 
     /// Suspend until `predicate()` holds (re-checked on each `notify()`), or
-    /// throw `TestFailure` after `timeout`.
+    /// throw `TestFailure` after `timeout` seconds.
     public func wait(
-        timeout: Duration = testWaitBackstop,
+        timeout: TimeInterval = testWaitBackstop,
         isolation: isolated (any Actor)? = #isolation,
         until predicate: () -> Bool
     ) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
+        let clock = MonotonicEngineClock()
+        let start = clock.now
         while !predicate() {
-            if ContinuousClock.now >= deadline {
-                throw TestFailure("Condition not met within \(timeout)")
+            if clock.seconds(since: start) >= timeout {
+                throw TestFailure("Condition not met within \(timeout) s")
             }
-            await armOnce(deadline: deadline, isolation: isolation, predicate: predicate)
+            await armOnce(
+                clock: clock, start: start, timeout: timeout,
+                isolation: isolation, predicate: predicate)
         }
     }
 
     /// Suspends until the next `notify()`, an immediate hit (the predicate
     /// already holds at arm time, closing the arm-vs-notify race), or the
-    /// `deadline` backstop — whichever comes first.
+    /// deadline backstop (`start` + `timeout`) — whichever comes first.
     // `isolation` uses the Swift `isolated` keyword to pin this helper to the
     // caller's actor, so it is intentionally never referenced by name.
     // periphery:ignore:parameters isolation
     private func armOnce(
-        deadline: ContinuousClock.Instant,
+        clock: MonotonicEngineClock,
+        start: MonotonicEngineClock.Instant,
+        timeout: TimeInterval,
         isolation: isolated (any Actor)?,
         predicate: () -> Bool
     ) async {
@@ -119,7 +125,7 @@ public final class AsyncGate: @unchecked Sendable {
             // Resume at the deadline even if no notify arrives, so a stuck
             // condition fails the wait instead of hanging.
             backstop = Task {
-                try? await Task.sleep(until: deadline, clock: ContinuousClock())
+                try? await clock.sleep(for: max(0, timeout - clock.seconds(since: start)))
                 self.lock.withLock { self.waiters[id] = nil }
                 once.fire { cont.resume() }
             }
@@ -133,21 +139,23 @@ public final class AsyncGate: @unchecked Sendable {
 // `isolation` uses the Swift `isolated` keyword to inherit the caller's actor
 // isolation, so it is intentionally never referenced by name.
 // periphery:ignore:parameters isolation
-/// Polls `predicate` every 50 ms until it returns `true` or `timeout` elapses.
+/// Polls `predicate` every 50 ms until it returns `true` or `timeout` seconds
+/// elapse.
 ///
 /// The deadline here *is* the pass/fail criterion — prefer `AsyncGate` for a new
 /// timing-sensitive wait; polling is for predicates with no signal to await.
 public func waitUntil(
-    timeout: Duration = testWaitBackstop,
+    timeout: TimeInterval = testWaitBackstop,
     isolation: isolated (any Actor)? = #isolation,
     _ predicate: () -> Bool
 ) async throws {
-    let deadline = ContinuousClock.now.advanced(by: timeout)
-    while !predicate() && ContinuousClock.now < deadline {
-        try await Task.sleep(for: .milliseconds(50))
+    let clock = MonotonicEngineClock()
+    let start = clock.now
+    while !predicate() && clock.seconds(since: start) < timeout {
+        try await Task.sleep(nanoseconds: 50_000_000)
     }
     guard predicate() else {
-        throw TestFailure("Predicate did not become true within \(timeout)")
+        throw TestFailure("Predicate did not become true within \(timeout) s")
     }
 }
 
