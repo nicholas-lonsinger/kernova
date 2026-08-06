@@ -221,6 +221,63 @@ struct ClipboardPassthroughCoordinatorTests {
         )
     }
 
+    @Test("a forward whose every item went unreadable surfaces the rejection")
+    func pollSurfacesWholeCopyRejection() async throws {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+
+        let directory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let doomed = directory.appendingPathComponent("doomed.txt")
+        try Data("doomed".utf8).write(to: doomed)
+        writeFileURLs([doomed], to: h.pasteboard)
+
+        // The total of the partial case: nothing resolves, so nothing is
+        // forwarded and the guest is left with a copy that never arrived.
+        h.coordinator.pollHostClipboard()
+        try FileManager.default.removeItem(at: doomed)
+
+        try await h.service.issueReported.wait { h.service.lastTransferIssue != nil }
+        #expect(h.service.grabbed.isEmpty)
+        #expect(
+            h.service.lastTransferIssue?.kind
+                == .localFailure(
+                    code: ClipboardErrorCode.forwardItemsSkipped.rawValue,
+                    message: "Couldn't read the dropped item")
+        )
+    }
+
+    @Test("a text-only transport's blanket file rejection is not reported")
+    func pollStaysQuietForTextOnlyTransport() async throws {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+        h.service.supportsBinaryRepresentations = false
+
+        let directory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("notes.txt")
+        try Data("notes".utf8).write(to: file)
+        writeFileURLs([file], to: h.pasteboard)
+
+        // Wait on the resolve *completing*, not on a bounded sleep: the rejection
+        // branch runs on an unstructured Task, so a sleep that outruns a loaded
+        // scheduler would assert "no issue" before the branch that could raise
+        // one had run, and pass for the wrong reason.
+        var resolveCompleted = false
+        let resolved = AsyncGate()
+        h.coordinator.onForwardResolvedForTesting = {
+            resolveCompleted = true
+            resolved.notify()
+        }
+        h.coordinator.pollHostClipboard()
+        try await resolved.wait { resolveCompleted }
+
+        // A Linux guest rejects every file copy by design, so reporting here
+        // would fire on each one rather than on anything the user can act on.
+        #expect(h.service.grabbed.isEmpty)
+        #expect(h.service.lastTransferIssue == nil)
+    }
+
     @Test("A transient-marked snapshot is not forwarded")
     func transientMarkerSkipped() {
         let h = makeHarness()

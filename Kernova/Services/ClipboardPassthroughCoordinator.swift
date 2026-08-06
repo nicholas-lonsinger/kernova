@@ -70,6 +70,11 @@ final class ClipboardPassthroughCoordinator {
     #if DEBUG
     /// Fires after each inbound auto-publish completes.
     var onInboundPublishedForTesting: (@MainActor () -> Void)?
+
+    /// Fires once the poll's off-actor file resolve has been handled, on every
+    /// outcome — the seam a test needs to observe that a forward produced
+    /// *nothing*, which no other signal announces.
+    var onForwardResolvedForTesting: (@MainActor () -> Void)?
     #endif
 
     private static let logger = Logger(
@@ -159,7 +164,11 @@ final class ClipboardPassthroughCoordinator {
         case .pendingFiles(let urls):
             resolveAndForward(urls, allowsBinary: allowsBinary)
         case .rejected:
-            // Nothing to forward; the intake already logged the reason.
+            // Every rejection here is a verdict that the pasteboard holds
+            // nothing shareable — an empty clipboard, a privacy marker, a
+            // text-only transport — so there is no failure to report. The
+            // rejection in `resolveAndForward` is the other kind: items were
+            // there and could not be read.
             break
         }
     }
@@ -171,29 +180,49 @@ final class ClipboardPassthroughCoordinator {
         Task { @MainActor [weak self] in
             let resolved = await ClipboardPasteboardIntake.read(
                 filesAt: urls, allowsBinary: allowsBinary)
+            guard let self else { return }
+            #if DEBUG
+            defer { self.onForwardResolvedForTesting?() }
+            #endif
             // The live service may have been torn down or replaced during the resolve.
-            guard let service = self?.instance?.clipboardService else { return }
-            if case .content(let content, let note) = resolved {
-                self?.offer(content, note: note, to: service)
+            guard let service = self.instance?.clipboardService else { return }
+            switch resolved {
+            case .content(let content, let note):
+                self.offer(content, note: note, to: service)
+            case .rejected(let message):
+                // Every copied item failed, so nothing is forwarded — the total
+                // of the partial case below, and owed the same report. A
+                // text-only transport is exempt: it rejects *every* file copy by
+                // design, so reporting here would fire on each one.
+                guard allowsBinary else { return }
+                self.reportUnforwarded(message, to: service)
+            case .pendingFiles:
+                break
             }
         }
     }
 
-    /// Offers intake output to the guest, raising the intake's skip note as a
-    /// transfer issue.
+    /// Offers intake output to the guest, raising the intake's skip note when it
+    /// carried one.
     ///
-    /// The window shows that note inline for its own paste/drop gestures; this
-    /// poll has no gesture to answer, so the issue is the only surface the skip
-    /// gets. Raised *after* the grab, which clears the issue on a successful
-    /// offer.
+    /// Raised *after* the grab, which clears the issue on a successful offer.
     private func offer(
         _ content: ClipboardContent, note: String?, to service: any ClipboardServicing
     ) {
         service.clipboardContent = content
         service.grabIfChanged()
         guard let note else { return }
+        reportUnforwarded(note, to: service)
+    }
+
+    /// Raises an intake outcome the user is owed — a partial copy's skip note,
+    /// or the rejection when nothing resolved at all — as a transfer issue.
+    ///
+    /// The window shows these inline for its own paste/drop gestures; this poll
+    /// has no gesture to answer, so the issue is the only surface they get.
+    private func reportUnforwarded(_ note: String, to service: any ClipboardServicing) {
         Self.logger.warning(
-            "Clipboard passthrough forwarded a partial copy for '\(self.instance?.name ?? "?", privacy: .public)': \(note, privacy: .public)"
+            "Clipboard passthrough could not forward every copied item for '\(self.instance?.name ?? "?", privacy: .public)': \(note, privacy: .public)"
         )
         service.reportIssue(.forwardSkippedItems(note: note))
     }
