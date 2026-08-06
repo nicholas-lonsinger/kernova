@@ -37,7 +37,7 @@ final class DetailEmptyStateView: NSView {
         description.maximumNumberOfLines = 0
 
         let button = NSButton(title: "New Virtual Machine", target: self, action: #selector(newVMTapped))
-        button.bezelStyle = .rounded
+        button.bezelStyle = .push
 
         let stack = NSStackView(views: [icon, title, description, button])
         stack.orientation = .vertical

@@ -293,7 +293,7 @@ private final class DisplayPlaceholderEmptyStateView: NSView {
         buttonRow.setViews(
             actions.map { action in
                 let button = NSButton(title: action.title, target: nil, action: action.selector)
-                button.bezelStyle = .rounded
+                button.bezelStyle = .push
                 button.controlSize = .regular
                 return button
             },

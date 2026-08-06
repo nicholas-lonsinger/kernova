@@ -217,7 +217,7 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
         let done = NSButton(
             title: "Done", target: self, action: #selector(doneTapped(_:))
         )
-        done.bezelStyle = .rounded
+        done.bezelStyle = .push
         done.keyEquivalent = "\r"  // Return = default action
 
         let stack = NSStackView(views: [spacer, done])

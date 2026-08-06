@@ -103,7 +103,7 @@ struct ConfigurationBuilder: Sendable {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         let platform = VZMacPlatformConfiguration()
 
-        platform.auxiliaryStorage = VZMacAuxiliaryStorage(contentsOf: layout.auxiliaryStorageURL)
+        platform.auxiliaryStorage = VZMacAuxiliaryStorage(url: layout.auxiliaryStorageURL)
 
         if let modelData = config.hardwareModelData,
             let hardwareModel = VZMacHardwareModel(dataRepresentation: modelData)

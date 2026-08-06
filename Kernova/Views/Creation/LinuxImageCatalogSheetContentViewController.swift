@@ -230,13 +230,13 @@ final class LinuxImageCatalogSheetContentViewController: NSViewController {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelTapped))
-        cancel.bezelStyle = .rounded
+        cancel.bezelStyle = .push
         cancel.keyEquivalent = "\u{1b}"  // Escape
 
         chooseButton.title = "Choose"
         chooseButton.target = self
         chooseButton.action = #selector(chooseTapped)
-        chooseButton.bezelStyle = .rounded
+        chooseButton.bezelStyle = .push
         chooseButton.keyEquivalent = "\r"  // Return = default action
 
         let stack = NSStackView(views: [note, spacer, cancel, chooseButton])

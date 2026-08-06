@@ -88,7 +88,7 @@ final class GuestSetupProgressViewController: NSViewController {
         detailStack.spacing = Spacing.hairline
 
         cancelButton.title = "Cancel"
-        cancelButton.bezelStyle = .rounded
+        cancelButton.bezelStyle = .push
         cancelButton.target = self
         cancelButton.action = #selector(cancelTapped)
 

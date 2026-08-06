@@ -138,7 +138,7 @@ final class AgentStatusPopoverContentViewController: NSViewController {
     }
 
     private func configureActionButton() {
-        actionButton.bezelStyle = .rounded
+        actionButton.bezelStyle = .push
         actionButton.keyEquivalent = "\r"
         actionButton.target = self
         actionButton.action = #selector(actionTapped(_:))

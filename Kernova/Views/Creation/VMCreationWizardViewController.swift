@@ -158,23 +158,23 @@ final class VMCreationWizardViewController: NSViewController {
         let container = NSView()
 
         cancelButton.title = "Cancel"
-        cancelButton.bezelStyle = .rounded
+        cancelButton.bezelStyle = .push
         cancelButton.target = self
         cancelButton.action = #selector(cancelTapped)
         cancelButton.keyEquivalent = "\u{1B}"  // Escape
 
         backButton.title = "Back"
-        backButton.bezelStyle = .rounded
+        backButton.bezelStyle = .push
         backButton.target = self
         backButton.action = #selector(backTapped)
 
         nextButton.title = "Next"
-        nextButton.bezelStyle = .rounded
+        nextButton.bezelStyle = .push
         nextButton.target = self
         nextButton.action = #selector(nextTapped)
 
         createButton.title = "Create"
-        createButton.bezelStyle = .rounded
+        createButton.bezelStyle = .push
         createButton.target = self
         createButton.action = #selector(createTapped)
 
