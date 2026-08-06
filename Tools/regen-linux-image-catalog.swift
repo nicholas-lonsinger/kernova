@@ -15,7 +15,8 @@
 // Which distributions are offered is a curated decision, so the entry list is
 // edited by hand and this script never adds or removes one. What it refreshes
 // is what the mirrors change on their own: the byte size behind each entry,
-// and the version-pinned archive directory an oldstable entry points at.
+// and the version-pinned directory an entry points at, along with every field
+// of that entry restating the version the pin names.
 //
 // ## How an entry resolves
 //
@@ -243,49 +244,134 @@ func isNewerFilename(_ lhs: String, _ rhs: String) -> Bool {
     return lhs > rhs
 }
 
-/// The version-pinned directory a URL points into, split into what precedes
-/// it, the version itself, and what follows.
+/// The literal naming a path segment and the version it ends with — `12.15.0`
+/// reads as `("", "12.15.0")` and `kali-2026.2` as `("kali-", "2026.2")` — or
+/// `nil` for a segment ending in anything else.
 ///
-/// An oldstable release has no "current" URL to follow — it lives under a
-/// directory named for one exact version, which stops being the newest when
-/// the release gets a point update.
-func pinnedVersionDirectory(in url: String) -> (base: String, version: String, tail: String)? {
-    let segments = url.components(separatedBy: "/")
-    guard
-        let index = segments.firstIndex(where: { segment in
-            let parts = segment.components(separatedBy: ".")
-            return parts.count == 3 && parts.allSatisfy { !$0.isEmpty && Int($0) != nil }
-        })
+/// A version is two or more numeric components whose last may carry a respin
+/// letter: Kali serves `kali-2025.1c/` in place of the `kali-2025.1/` it
+/// replaces, and the letter rides along into the ISO filenames inside.
+func versionedSegment(_ segment: String) -> (prefix: String, version: String)? {
+    let parts = segment.components(separatedBy: ".")
+    guard parts.count >= 2,
+        parts.dropFirst().dropLast().allSatisfy({ !$0.isEmpty && Int($0) != nil })
     else { return nil }
+    // Digits and, on a respin, letters — and nothing else, which is what keeps
+    // `12.15.0-live` and `12.3.0-NEVER-RELEASED` out of a Debian bump. Both sit
+    // in the archive index beside the release they name.
+    let last = parts[parts.count - 1]
+    let released = last.prefix(while: \.isNumber)
+    guard !released.isEmpty, last.dropFirst(released.count).allSatisfy(\.isLetter) else {
+        return nil
+    }
+    // Only the first component can carry the literal, and its trailing digits
+    // are the version's first number: `kali-2026` is `kali-` then `2026`.
+    let digits = parts[0].reversed().prefix(while: \.isNumber).count
+    guard digits > 0 else { return nil }
     return (
-        base: segments[..<index].joined(separator: "/") + "/",
-        version: segments[index],
-        tail: "/" + segments[(index + 1)...].joined(separator: "/")
+        prefix: String(parts[0].dropLast(digits)),
+        version: String(parts[0].suffix(digits)) + "." + parts.dropFirst().joined(separator: ".")
     )
 }
 
-/// The newest version-pinned directory an index page lists for one release
-/// series, or `nil` when the page names nothing newer than what is pinned.
-func newerPinnedDirectory(for url: String) async -> String? {
-    guard let pinned = pinnedVersionDirectory(in: url), let base = URL(string: pinned.base),
-        let series = pinned.version.components(separatedBy: ".").first,
-        let data = await get(base)
+/// The version-pinned directory a URL points into, split into what precedes
+/// it, the literal naming it, the version itself, and what follows.
+///
+/// An oldstable release has no "current" URL to follow — it lives under a
+/// directory named for one exact version, which stops being the newest when
+/// the release gets a point update. A rolling release pinned so the picker's
+/// label matches what downloads has the same shape behind a literal
+/// (`kali-2026.2/`).
+func pinnedVersionDirectory(in url: String) -> (
+    base: String, prefix: String, version: String, tail: String
+)? {
+    let segments = url.components(separatedBy: "/")
+    for (index, segment) in segments.enumerated() {
+        guard let split = versionedSegment(segment) else { continue }
+        return (
+            base: segments[..<index].joined(separator: "/") + "/",
+            prefix: split.prefix,
+            version: split.version,
+            tail: "/" + segments[(index + 1)...].joined(separator: "/")
+        )
+    }
+    return nil
+}
+
+/// How many leading components of a pinned version a bump has to keep, which
+/// the entry's own version label states.
+///
+/// Debian's "12" names the series the pin sits inside, and the archive lists
+/// 13.x.y right beside 12.x.y, so the major is what a bump preserves. A label
+/// restating the pin whole names no series above it — Kali's "2026.2" *is* the
+/// pin — so a new quarter takes the version, year boundary included. A label
+/// naming no part of the pin fixes the major, the conservative reading of a
+/// label that says nothing.
+///
+/// The whole-version reading is taken only behind a literal. A bare version
+/// directory is how both Debian's archive and Ubuntu's `releases/` lay out
+/// every release of the distribution, so a label matching one there says
+/// nothing about whether the entry tracks the newest release or is pinned to
+/// that one, and rolling it would retarget the entry to a different release.
+func fixedComponentCount(ofPin pin: (prefix: String, version: String), statedBy label: String)
+    -> Int
+{
+    let pinned = pin.version.components(separatedBy: ".")
+    // "26.04 LTS" states "26.04"; what trails the version is not part of it.
+    let stated = (label.components(separatedBy: " ").first ?? label).components(separatedBy: ".")
+    guard stated.count <= pinned.count, pinned.prefix(stated.count).elementsEqual(stated)
+    else { return 1 }
+    guard stated.count == pinned.count, !pin.prefix.isEmpty else { return stated.count }
+    return 0
+}
+
+/// The entry a newer version-pinned directory produces — the bumped URL, plus
+/// every field restating the version the old pin named — or `nil` when the
+/// index page lists nothing newer than what is pinned.
+func newerPinnedEntry(for entry: CatalogEntry) async -> (entry: CatalogEntry, notes: [String])? {
+    guard let pinned = pinnedVersionDirectory(in: entry.directoryURL),
+        let base = URL(string: pinned.base), let data = await get(base)
     else { return nil }
 
+    let fixed = fixedComponentCount(
+        ofPin: (prefix: pinned.prefix, version: pinned.version), statedBy: entry.version)
+    let pinnedParts = pinned.version.components(separatedBy: ".")
     let page = String(decoding: data, as: UTF8.self)
     var newest = pinned.version
     for reference in page.components(separatedBy: "href=\"").dropFirst() {
         guard let quote = reference.firstIndex(of: "\"") else { continue }
         let candidate = String(reference[reference.startIndex..<quote]).trimmingCharacters(
             in: CharacterSet(charactersIn: "/"))
-        let parts = candidate.components(separatedBy: ".")
-        guard parts.count == 3, parts.allSatisfy({ !$0.isEmpty && Int($0) != nil }),
-            parts[0] == series, isNewerFilename(candidate, newest)
+        guard let split = versionedSegment(candidate), split.prefix == pinned.prefix else {
+            continue
+        }
+        let parts = split.version.components(separatedBy: ".")
+        guard parts.count == pinnedParts.count,
+            parts.prefix(fixed).elementsEqual(pinnedParts.prefix(fixed)),
+            isNewerFilename(split.version, newest)
         else { continue }
-        newest = candidate
+        newest = split.version
     }
     guard newest != pinned.version else { return nil }
-    return pinned.base + newest + pinned.tail
+
+    var bumped = entry
+    bumped.directoryURL = pinned.base + pinned.prefix + newest + pinned.tail
+    var notes = ["directory bumped from \(entry.directoryURL)"]
+    // A field restating the pinned version is stating this entry's own pin,
+    // so it follows the pin rather than being left naming a release the
+    // mirror has stopped serving.
+    let restating: [(name: String, field: WritableKeyPath<CatalogEntry, String>)] = [
+        ("version", \.version), ("isoPattern", \.isoPattern),
+        ("checksumManifest", \.checksumManifest),
+    ]
+    for (name, field) in restating {
+        let stated = bumped[keyPath: field]
+        let rolled = stated.replacingOccurrences(of: pinned.version, with: newest)
+        guard rolled != stated else { continue }
+        bumped[keyPath: field] = rolled
+        notes.append("\(name) '\(stated)' → '\(rolled)'")
+    }
+    return (bumped, notes)
 }
 
 // MARK: - 1. Read the curated catalog
@@ -302,26 +388,26 @@ log("Refreshing \(catalog.images.count) entry/entries against their mirrors…")
 // MARK: - 2. Resolve every entry
 
 var resolutions: [Resolution] = []
-var failures: [(id: String, reason: String)] = []
+var failures: [(id: String, notes: [String], reason: String)] = []
 
 for original in catalog.images {
     var entry = original
     var notes: [String] = []
 
-    if let bumped = await newerPinnedDirectory(for: entry.directoryURL) {
-        notes.append("directory bumped from \(entry.directoryURL)")
-        entry.directoryURL = bumped
+    if let rolled = await newerPinnedEntry(for: entry) {
+        entry = rolled.entry
+        notes.append(contentsOf: rolled.notes)
     }
 
     guard let directory = URL(string: entry.directoryURL), directory.scheme == "https" else {
-        failures.append((entry.id, "'\(entry.directoryURL)' is not an HTTPS URL"))
+        failures.append((entry.id, notes, "'\(entry.directoryURL)' is not an HTTPS URL"))
         continue
     }
     let manifestURL = directory.appendingPathComponent(entry.checksumManifest)
     guard let manifestData = await get(manifestURL) else {
         failures.append(
             (
-                entry.id,
+                entry.id, notes,
                 "no checksum manifest at \(manifestURL.absoluteString) — a respin renames the "
                     + "manifest, so check the directory and update checksumManifest"
             ))
@@ -331,7 +417,7 @@ for original in catalog.images {
     let rows = parseManifest(String(decoding: manifestData, as: UTF8.self))
     guard !rows.isEmpty else {
         failures.append(
-            (entry.id, "\(manifestURL.absoluteString) parsed as no (file, hash) pairs at all"))
+            (entry.id, notes, "\(manifestURL.absoluteString) parsed as no (file, hash) pairs at all"))
         continue
     }
     // Newest is decided by the numbers inside the text the pattern's `*`
@@ -351,7 +437,7 @@ for original in catalog.images {
     else {
         failures.append(
             (
-                entry.id,
+                entry.id, notes,
                 "no filename in \(entry.checksumManifest) matched '\(entry.isoPattern)' "
                     + "(\(rows.count) pair(s) listed)"
             ))
@@ -360,13 +446,14 @@ for original in catalog.images {
 
     let isoURL = directory.appendingPathComponent(best)
     guard let size = await probeSize(isoURL) else {
-        failures.append((entry.id, "no size for \(isoURL.absoluteString)"))
+        failures.append((entry.id, notes, "no size for \(isoURL.absoluteString)"))
         continue
     }
 
     // The version label is what the picker shows, and a mirror rolling forward
-    // does not tell anyone. Reported rather than rewritten: only a person can
-    // say whether "26.04 LTS" should have become "26.04.1".
+    // does not tell anyone. A label naming something other than the pin is
+    // reported rather than rewritten: only a person can say whether "26.04 LTS"
+    // should have become "26.04.1".
     let label = entry.version.components(separatedBy: " ").first ?? entry.version
     if !best.contains(label) {
         notes.append("version label '\(entry.version)' does not appear in \(best)")
@@ -382,7 +469,10 @@ for original in catalog.images {
 // MARK: - 3. Refuse to publish a run that lost an entry
 
 guard failures.isEmpty else {
-    for (id, reason) in failures { log("  \(id) — \(reason)") }
+    for failure in failures {
+        log("  \(failure.id) — \(failure.reason)")
+        for note in failure.notes { log("      \(note)") }
+    }
     fail(
         "\(failures.count) entry/entries did not resolve — \(outputURL.lastPathComponent) is left "
             + "as it is")
