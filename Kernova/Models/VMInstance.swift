@@ -251,14 +251,29 @@ final class VMInstance {
 
     let bundleLayout: VMBundleLayout
 
+    // MARK: - Preferences
+
+    /// App-wide settings this session honors — today, the clipboard paste
+    /// ceiling, which is app-wide rather than per-VM because it trades against
+    /// *this Mac's* throughput and a `VMConfiguration` field would travel inside
+    /// the bundle.
+    ///
+    /// Injected rather than read from `.shared` at the use site so a test can
+    /// drive it without writing the real defaults domain.
+    let preferences: AppPreferences
+
     // MARK: - Initializer
 
-    init(configuration: VMConfiguration, bundleURL: URL, status: VMStatus = .stopped) {
+    init(
+        configuration: VMConfiguration, bundleURL: URL, status: VMStatus = .stopped,
+        preferences: AppPreferences = .shared
+    ) {
         self.instanceID = configuration.id
         self.configuration = configuration
         self.bundleURL = bundleURL
         self.bundleLayout = VMBundleLayout(bundleURL: bundleURL)
         self.status = status
+        self.preferences = preferences
     }
 
     // MARK: - VM Bundle Paths (forwarded from VMBundleLayout)
@@ -695,6 +710,50 @@ final class VMInstance {
         return !requiringClipboardStreaming || control.guestSupportsClipboardStreaming
     }
 
+    // MARK: - Agent Policy
+
+    /// The policy pushed to a guest with nothing to push through — every
+    /// capability off, and the built-in paste ceiling.
+    static let disabledAgentPolicy = AgentPolicySnapshot(
+        logForwardingEnabled: false,
+        clipboardSharingEnabled: false,
+        clipboardMaxPasteBytes: ClipboardPasteLimit.defaultBytes)
+
+    /// The policy a given configuration produces, combined with the app-wide
+    /// clipboard preference.
+    ///
+    /// The one place a snapshot is built, so the initial Hello push, a live
+    /// toggle, and a preference change can never send differently shaped policy.
+    func agentPolicySnapshot(for configuration: VMConfiguration) -> AgentPolicySnapshot {
+        AgentPolicySnapshot(
+            logForwardingEnabled: configuration.agentLogForwardingEnabled,
+            clipboardSharingEnabled: configuration.clipboardSharingEnabled,
+            clipboardMaxPasteBytes: preferences.clipboardMaxPasteBytes)
+    }
+
+    /// This instance's current policy.
+    var agentPolicySnapshot: AgentPolicySnapshot { agentPolicySnapshot(for: configuration) }
+
+    /// The paste ceiling this session actually enforces — the user's value, held
+    /// at the default while the connected agent can't honor a pushed one.
+    ///
+    /// Both the host's own budget checks and the messages naming the figure read
+    /// this, so the host never allows a paste the guest is going to refuse.
+    var effectiveClipboardMaxPasteBytes: Int {
+        let requested = preferences.clipboardMaxPasteBytes
+        guard let control = vsockControlService else { return requested }
+        return control.effectiveMaxPasteBytes(requested)
+    }
+
+    /// Re-pushes the current policy to a connected guest agent.
+    ///
+    /// For app-wide settings that reach the guest but produce no `VMConfiguration`
+    /// diff for `applyLivePolicy` to notice. No-ops with no control channel — the
+    /// next Hello sends the current snapshot anyway.
+    func resendAgentPolicy() {
+        vsockControlService?.sendPolicyUpdate(agentPolicySnapshot)
+    }
+
     /// Builds the control service for one accepted channel, wired to this
     /// instance's policy, agent-info, guest-suspension and channel-loss hooks.
     ///
@@ -705,16 +764,7 @@ final class VMInstance {
             channel: channel,
             label: name,
             policyProvider: { [weak self] in
-                guard let self else {
-                    return AgentPolicySnapshot(
-                        logForwardingEnabled: false,
-                        clipboardSharingEnabled: false
-                    )
-                }
-                return AgentPolicySnapshot(
-                    logForwardingEnabled: self.configuration.agentLogForwardingEnabled,
-                    clipboardSharingEnabled: self.configuration.clipboardSharingEnabled
-                )
+                self?.agentPolicySnapshot ?? Self.disabledAgentPolicy
             },
             onAgentInfoObserved: { [weak self] info in
                 self?.recordObservedAgentInfo(info)
@@ -764,7 +814,13 @@ final class VMInstance {
                 return
             }
             self.clipboardService?.stop()
-            let service = VsockClipboardService(channel: channel, label: self.name)
+            // Read through `self` at each budget check, so a Settings change
+            // lands on the live session without restarting the service.
+            let service = VsockClipboardService(
+                channel: channel, label: self.name,
+                maxPasteBytes: { [weak self] in
+                    self?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes
+                })
             let publisher = self.hostClipboardPublisher
             service.hostPasteboardHoldsOurWrite = { publisher.pasteboardHoldsLastWrite }
             service.retractStaleHostWrite = { [weak self] in
@@ -959,12 +1015,7 @@ final class VMInstance {
         // arrives. The control service is nil in the window between accepting a
         // connection and the guest's Hello — the next Hello-driven send catches
         // that up.
-        vsockControlService?.sendPolicyUpdate(
-            AgentPolicySnapshot(
-                logForwardingEnabled: newConfig.agentLogForwardingEnabled,
-                clipboardSharingEnabled: newConfig.clipboardSharingEnabled
-            )
-        )
+        vsockControlService?.sendPolicyUpdate(agentPolicySnapshot(for: newConfig))
 
         if logChanged {
             applyLiveLogPolicy(enabled: newConfig.agentLogForwardingEnabled, on: socketDevice)

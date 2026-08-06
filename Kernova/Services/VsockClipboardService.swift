@@ -82,6 +82,10 @@ final class VsockClipboardService: ClipboardServicing {
     /// open.
     private let lazyPullTimeout: Duration
 
+    /// The ceiling on a paste's file-representation total, read at each budget
+    /// check rather than captured, so a Settings change reaches a live session.
+    private let maxPasteBytes: @MainActor () -> Int
+
     /// Off-main authority for this VM's clipboard progress, aggregating every
     /// transfer of one operation into the snapshot each surface renders.
     ///
@@ -229,6 +233,7 @@ final class VsockClipboardService: ClipboardServicing {
     init(
         channel: VsockChannel, label: String,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
+        maxPasteBytes: @escaping @MainActor () -> Int = { ClipboardPasteLimit.defaultBytes },
         lazyPullTimeout: Duration = ClipboardStreamTuning.lazyPullTimeout,
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
@@ -237,6 +242,7 @@ final class VsockClipboardService: ClipboardServicing {
     ) {
         self.channel = channel
         self.label = label
+        self.maxPasteBytes = maxPasteBytes
         self.lazyPullTimeout = lazyPullTimeout
         self.progressCenter = progressCenter
         self.staging = ClipboardFileStaging(
@@ -985,14 +991,15 @@ final class VsockClipboardService: ClipboardServicing {
         }
 
         let pasteBoundTotal = pasteBoundTotalBytes(for: promise)
-        let overBudget = pasteBoundTotal > UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes)
+        let limit = maxPasteBytes()
+        let overBudget = pasteBoundTotal > UInt64(limit)
         if overBudget {
             Self.logger.warning(
-                "Copy-to-Mac refused: \(ClipboardErrorCode.copyTooLarge.rawValue, privacy: .public) — paste-bound reps total \(pasteBoundTotal, privacy: .public) bytes, over the deadline-safe cap; refusing the whole file set"
+                "Copy-to-Mac refused: \(ClipboardErrorCode.copyTooLarge.rawValue, privacy: .public) — paste-bound reps total \(pasteBoundTotal, privacy: .public) bytes, over the \(limit, privacy: .public)-byte cap; refusing the whole file set"
             )
             // The click reports its own outcome, but an automatic passthrough
             // publish has no return path — the issue is the only surface it has.
-            lastTransferIssue = .overCopyBudget()
+            lastTransferIssue = .overCopyBudget(limitBytes: limit)
         }
 
         var items: [CopyToMacItem] = []
@@ -1081,12 +1088,12 @@ final class VsockClipboardService: ClipboardServicing {
         guard let snapshot = lazyPullSnapshot(generation: generation, repIndex: repIndex) else {
             return nil
         }
-        guard snapshot.pasteBoundTotal <= UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes)
-        else {
+        let limit = maxPasteBytes()
+        guard snapshot.pasteBoundTotal <= UInt64(limit) else {
             Self.logger.warning(
-                "Paste refused: \(ClipboardErrorCode.copyTooLarge.rawValue, privacy: .public) — paste-bound reps total \(snapshot.pasteBoundTotal, privacy: .public) bytes, over the deadline-safe cap"
+                "Paste refused: \(ClipboardErrorCode.copyTooLarge.rawValue, privacy: .public) — paste-bound reps total \(snapshot.pasteBoundTotal, privacy: .public) bytes, over the \(limit, privacy: .public)-byte cap"
             )
-            lastTransferIssue = .overCopyBudget()
+            lastTransferIssue = .overCopyBudget(limitBytes: limit)
             return nil
         }
         return snapshot

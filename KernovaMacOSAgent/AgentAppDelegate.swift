@@ -113,7 +113,9 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         let controlAgent = VsockGuestControlAgent(
             onPolicy: { [weak self] policy in
                 vsockConnection.setEnabled(policy.logForwardingEnabled)
-                clipboardAgent.setEnabled(policy.clipboardSharingEnabled)
+                clipboardAgent.applyPolicy(
+                    enabled: policy.clipboardSharingEnabled,
+                    maxPasteBytes: ClipboardPasteLimit.fromPolicy(policy.clipboardMaxPasteBytes))
                 Task { @MainActor in
                     self?.updateAppNap(clipboardEnabled: policy.clipboardSharingEnabled)
                 }
@@ -138,6 +140,9 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
                 vsockConnection?.isLogForwardingEnabled ?? false
             },
             clipboardActivity: { [weak clipboardAgent] in clipboardAgent?.clipboardActivity ?? .disabled },
+            clipboardPasteLimitBytes: { [weak clipboardAgent] in
+                clipboardAgent?.pasteLimitBytes ?? ClipboardPasteLimit.defaultBytes
+            },
             onQuit: { NSApp.terminate(nil) }
         )
 

@@ -651,6 +651,14 @@ public nonisolated struct Kernova_V1_PolicyUpdate: Sendable {
   /// data frames with the host on the clipboard port.
   public var clipboardSharingEnabled: Bool = false
 
+  /// Ceiling on the total of one paste's file representations, in bytes. Both
+  /// ends enforce it against their own inbound pastes, so the host pushes its
+  /// value here rather than letting the two sides hold separate figures.
+  ///
+  /// `0` means unset — the receiver uses its own built-in default. Only a guest
+  /// advertising `clipboard.paste.limit.v1` is sent a non-default value.
+  public var clipboardMaxPasteBytes: UInt64 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1509,7 +1517,7 @@ nonisolated extension Kernova_V1_Heartbeat: SwiftProtobuf.Message, SwiftProtobuf
 
 nonisolated extension Kernova_V1_PolicyUpdate: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PolicyUpdate"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}log_forwarding_enabled\0\u{3}clipboard_sharing_enabled\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}log_forwarding_enabled\0\u{3}clipboard_sharing_enabled\0\u{3}clipboard_max_paste_bytes\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1519,6 +1527,7 @@ nonisolated extension Kernova_V1_PolicyUpdate: SwiftProtobuf.Message, SwiftProto
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularBoolField(value: &self.logForwardingEnabled) }()
       case 2: try { try decoder.decodeSingularBoolField(value: &self.clipboardSharingEnabled) }()
+      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.clipboardMaxPasteBytes) }()
       default: break
       }
     }
@@ -1531,12 +1540,16 @@ nonisolated extension Kernova_V1_PolicyUpdate: SwiftProtobuf.Message, SwiftProto
     if self.clipboardSharingEnabled != false {
       try visitor.visitSingularBoolField(value: self.clipboardSharingEnabled, fieldNumber: 2)
     }
+    if self.clipboardMaxPasteBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.clipboardMaxPasteBytes, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Kernova_V1_PolicyUpdate, rhs: Kernova_V1_PolicyUpdate) -> Bool {
     if lhs.logForwardingEnabled != rhs.logForwardingEnabled {return false}
     if lhs.clipboardSharingEnabled != rhs.clipboardSharingEnabled {return false}
+    if lhs.clipboardMaxPasteBytes != rhs.clipboardMaxPasteBytes {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

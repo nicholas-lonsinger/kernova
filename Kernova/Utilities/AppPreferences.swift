@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// App-wide user preferences backed by `UserDefaults`.
 ///
@@ -33,6 +34,7 @@ struct AppPreferences {
         // Also inverted — see `keepInMenuBarOnQuit`'s RATIONALE.
         static let allowDuplicateMachineIDBoot = "allowDuplicateMachineIDBoot"
         static let cloneKeepsMachineID = "cloneKeepsMachineID"
+        static let clipboardMaxPasteBytes = "clipboardMaxPasteBytes"
     }
 
     // MARK: - Inverted Storage
@@ -132,6 +134,19 @@ struct AppPreferences {
     var cloneGeneratesNewMachineID: Bool {
         get { invertedBool(forKey: Keys.cloneKeepsMachineID) }
         nonmutating set { setInvertedBool(newValue, forKey: Keys.cloneKeepsMachineID) }
+    }
+
+    /// Ceiling on the total of one paste's file representations, in bytes.
+    ///
+    /// Always one of `ClipboardPasteLimit.choices`: an unset key and any value
+    /// off the ladder both resolve to the nearest offered stop, so no
+    /// enforcement point ever sees a ceiling with no derivation behind it.
+    var clipboardMaxPasteBytes: Int {
+        get {
+            ClipboardPasteLimit.resolve(
+                defaults.object(forKey: Keys.clipboardMaxPasteBytes) as? Int)
+        }
+        nonmutating set { defaults.set(newValue, forKey: Keys.clipboardMaxPasteBytes) }
     }
 
     /// Title of the Option-alternate Clone menu item, which clones with the

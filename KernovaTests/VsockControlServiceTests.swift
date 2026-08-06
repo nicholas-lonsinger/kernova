@@ -20,16 +20,17 @@ struct VsockControlServiceTests {
     /// Tests use
     /// this to drive the `agentStatus` numeric-comparison matrix.
     private func makeGuestHello(
-        agentVersion: String, osVersion: String = "26.0", streamingCapable: Bool = true
+        agentVersion: String, osVersion: String = "26.0", streamingCapable: Bool = true,
+        pasteLimitCapable: Bool = true
     ) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.hello = Kernova_V1_Hello.with {
             $0.serviceVersion = 1
-            $0.capabilities =
-                streamingCapable
-                ? KernovaCapability.controlChannelDefaults
-                : [KernovaCapability.controlV1, KernovaCapability.controlHeartbeatV1]
+            var capabilities = [KernovaCapability.controlV1, KernovaCapability.controlHeartbeatV1]
+            if streamingCapable { capabilities.append(KernovaCapability.clipboardStreamV1) }
+            if pasteLimitCapable { capabilities.append(KernovaCapability.clipboardPasteLimitV1) }
+            $0.capabilities = capabilities
             $0.agentInfo = Kernova_V1_AgentInfo.with {
                 $0.os = "macOS"
                 $0.osVersion = osVersion
@@ -884,7 +885,9 @@ struct VsockControlServiceTests {
         let service = makeService(
             channel: host,
             policyProvider: {
-                AgentPolicySnapshot(logForwardingEnabled: true, clipboardSharingEnabled: false)
+                AgentPolicySnapshot(
+                    logForwardingEnabled: true, clipboardSharingEnabled: false,
+                    clipboardMaxPasteBytes: ClipboardPasteLimit.defaultBytes)
             }
         )
         service.start()
@@ -1083,7 +1086,9 @@ struct VsockControlServiceTests {
         try await waitForChange { service.guestSupportsClipboardStreaming }
 
         service.sendPolicyUpdate(
-            AgentPolicySnapshot(logForwardingEnabled: false, clipboardSharingEnabled: true)
+            AgentPolicySnapshot(
+                logForwardingEnabled: false, clipboardSharingEnabled: true,
+                clipboardMaxPasteBytes: ClipboardPasteLimit.defaultBytes)
         )
 
         var policy: Kernova_V1_PolicyUpdate?
@@ -1116,7 +1121,9 @@ struct VsockControlServiceTests {
         try guest.send(makeGuestHello(agentVersion: "0.15.0", streamingCapable: false))
 
         service.sendPolicyUpdate(
-            AgentPolicySnapshot(logForwardingEnabled: true, clipboardSharingEnabled: true)
+            AgentPolicySnapshot(
+                logForwardingEnabled: true, clipboardSharingEnabled: true,
+                clipboardMaxPasteBytes: ClipboardPasteLimit.defaultBytes)
         )
 
         var policy: Kernova_V1_PolicyUpdate?
@@ -1143,7 +1150,9 @@ struct VsockControlServiceTests {
         let service = makeService(
             channel: host,
             policyProvider: {
-                AgentPolicySnapshot(logForwardingEnabled: false, clipboardSharingEnabled: true)
+                AgentPolicySnapshot(
+                    logForwardingEnabled: false, clipboardSharingEnabled: true,
+                    clipboardMaxPasteBytes: ClipboardPasteLimit.defaultBytes)
             })
         service.start()
         defer { service.stop() }
@@ -1161,6 +1170,75 @@ struct VsockControlServiceTests {
         let received = try #require(policy)
         #expect(received.clipboardSharingEnabled == true)
         #expect(service.guestSupportsClipboardStreaming == true)
+    }
+
+    // MARK: - Paste ceiling
+
+    /// What a guest sees, and what the host will enforce, for a snapshot
+    /// carrying `requested` as its ceiling.
+    ///
+    /// Read while the service is still connected — `stop()` clears the observed
+    /// capabilities, so the host's own effective ceiling has to be captured
+    /// here rather than by the caller after teardown.
+    private struct PushedCeiling {
+        var pushedBytes: UInt64
+        var guestSupportsPasteLimit: Bool
+        var hostEnforces: Int
+    }
+
+    private func pushCeiling(
+        requested: Int, pasteLimitCapable: Bool
+    ) async throws -> PushedCeiling {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = makeService(
+            channel: host,
+            policyProvider: {
+                AgentPolicySnapshot(
+                    logForwardingEnabled: false, clipboardSharingEnabled: true,
+                    clipboardMaxPasteBytes: requested)
+            })
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)  // host hello
+        try guest.send(
+            makeGuestHello(agentVersion: "0.54.0", pasteLimitCapable: pasteLimitCapable))
+
+        var policy: Kernova_V1_PolicyUpdate?
+        for _ in 0..<6 where policy == nil {
+            let next = try await nextFrame(from: guest)
+            if case .policyUpdate(let p) = next.payload {
+                policy = p
+            }
+        }
+        return PushedCeiling(
+            pushedBytes: try #require(policy).clipboardMaxPasteBytes,
+            guestSupportsPasteLimit: service.guestSupportsPasteLimit,
+            hostEnforces: service.effectiveMaxPasteBytes(requested))
+    }
+
+    @Test("the user's paste ceiling reaches a guest that advertises the capability")
+    func pasteCeilingReachesACapableGuest() async throws {
+        let raised = 16 * 1024 * 1024 * 1024
+        let result = try await pushCeiling(requested: raised, pasteLimitCapable: true)
+        #expect(result.pushedBytes == UInt64(raised))
+        #expect(result.guestSupportsPasteLimit == true)
+        #expect(result.hostEnforces == raised)
+    }
+
+    @Test("a guest without the capability is held at the default, and so is this host")
+    func pasteCeilingHeldAtDefaultWithoutCapability() async throws {
+        let raised = 16 * 1024 * 1024 * 1024
+        let result = try await pushCeiling(requested: raised, pasteLimitCapable: false)
+        // Both sides fall back together — the host must not admit a paste the
+        // older agent will refuse on its own built-in ceiling.
+        #expect(result.pushedBytes == UInt64(ClipboardPasteLimit.defaultBytes))
+        #expect(result.guestSupportsPasteLimit == false)
+        #expect(result.hostEnforces == ClipboardPasteLimit.defaultBytes)
     }
 }
 

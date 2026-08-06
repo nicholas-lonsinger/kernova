@@ -54,15 +54,17 @@ extension ClipboardTransferIssue {
     /// Shown for a Copy to Mac refused over the deadline-safe cap, wherever it
     /// surfaces: the click's own outcome and the transfer issue an automatic
     /// passthrough publish raises are the same refusal.
-    static let overCopyBudgetMessage =
-        "Too large to copy to your Mac — over the \(ClipboardStreamTuning.maxDeadlineSafePasteDisplayLimit) clipboard transfer limit."
+    static func overCopyBudgetMessage(limitBytes: Int) -> String {
+        "Too large to copy to your Mac — over the \(ClipboardPasteLimit.displayLimit(limitBytes)) clipboard transfer limit."
+    }
 
     /// The refusal this host raises when a Copy-to-Mac gesture's paste-bound reps
     /// exceed the deadline-safe cap.
-    static func overCopyBudget() -> ClipboardTransferIssue {
+    static func overCopyBudget(limitBytes: Int) -> ClipboardTransferIssue {
         ClipboardTransferIssue(
             kind: .localFailure(
-                code: ClipboardErrorCode.copyTooLarge.rawValue, message: overCopyBudgetMessage),
+                code: ClipboardErrorCode.copyTooLarge.rawValue,
+                message: overCopyBudgetMessage(limitBytes: limitBytes)),
             date: Date())
     }
 

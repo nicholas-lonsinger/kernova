@@ -45,7 +45,7 @@ struct ClipboardPassthroughCoordinatorTests {
             guard refusesOverCopyBudget else {
                 return clipboardContent.representations.map { .resolved($0) }
             }
-            lastTransferIssue = .overCopyBudget()
+            lastTransferIssue = .overCopyBudget(limitBytes: ClipboardPasteLimit.defaultBytes)
             return [.droppedFile(.overPasteBudget)]
         }
 
@@ -202,7 +202,8 @@ struct ClipboardPassthroughCoordinatorTests {
             h.service.lastTransferIssue?.kind
                 == .localFailure(
                     code: ClipboardErrorCode.copyTooLarge.rawValue,
-                    message: ClipboardTransferIssue.overCopyBudgetMessage))
+                    message: ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: ClipboardPasteLimit.defaultBytes))
+        )
     }
 
     /// A promised-offer service: `materializeForCopy` returns metadata-only

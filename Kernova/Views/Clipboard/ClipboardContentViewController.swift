@@ -616,7 +616,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 return "The guest ran out of disk space receiving the clipboard file"
             case .pasteTooLarge:
                 return
-                    "Too large to paste into the guest — over the \(ClipboardStreamTuning.maxDeadlineSafePasteDisplayLimit) clipboard transfer limit"
+                    "Too large to paste into the guest — over the \(ClipboardPasteLimit.displayLimit(instance.effectiveClipboardMaxPasteBytes)) clipboard transfer limit"
             case .pasteTimeout:
                 return "The clipboard transfer to the guest timed out"
             case .pasteFailed, .copyTooLarge, .pasteIncompleteSet, .none:
@@ -630,11 +630,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     }
 
     /// The message shown when "Copy to Mac" placed nothing on the pasteboard.
-    private static func dropMessage(for reasons: [CopyToMacDropReason]) -> String {
+    private func dropMessage(for reasons: [CopyToMacDropReason]) -> String {
         guard reasons.contains(.overPasteBudget) else {
             return "Couldn't fetch the clipboard content to copy"
         }
-        return ClipboardTransferIssue.overCopyBudgetMessage
+        return ClipboardTransferIssue.overCopyBudgetMessage(
+            limitBytes: instance.effectiveClipboardMaxPasteBytes)
     }
 
     // MARK: - Actions
@@ -681,7 +682,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private func showCopyOutcome(_ outcome: HostPublishOutcome) {
         switch outcome {
         case .nothingServed(let reasons):
-            indicatorView.showTransientMessage(Self.dropMessage(for: reasons), style: .error)
+            indicatorView.showTransientMessage(dropMessage(for: reasons), style: .error)
         case .stagingFailed:
             indicatorView.showTransientMessage(
                 "Couldn't prepare the clipboard content to copy", style: .error)
@@ -692,7 +693,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 // Partial success — name the cap, since it is what the user has to
                 // act on to get the files across.
                 indicatorView.showTransientMessage(
-                    "Copied without the files — over the \(ClipboardStreamTuning.maxDeadlineSafePasteDisplayLimit) clipboard transfer limit",
+                    "Copied without the files — over the \(ClipboardPasteLimit.displayLimit(instance.effectiveClipboardMaxPasteBytes)) clipboard transfer limit",
                     style: .warning)
             } else {
                 // Partial success — don't claim an unqualified one.

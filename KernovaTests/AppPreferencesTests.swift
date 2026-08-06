@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import KernovaKit
 import KernovaTestSupport
 @testable import Kernova
 
@@ -209,6 +210,35 @@ struct AppPreferencesTests {
             // plain `integer(forKey:)` would.
             prefs.mainToolbarNewVMCollapseIndex = 0
             #expect(prefs.mainToolbarNewVMCollapseIndex == 0)
+        }
+    }
+
+    @Test("clipboardMaxPasteBytes defaults to the derived ceiling")
+    func clipboardMaxPasteBytesDefaults() throws {
+        try withEphemeralPreferences { prefs, _ in
+            #expect(prefs.clipboardMaxPasteBytes == ClipboardPasteLimit.defaultBytes)
+        }
+    }
+
+    @Test("clipboardMaxPasteBytes round-trips every offered ceiling through UserDefaults")
+    func clipboardMaxPasteBytesRoundTrips() throws {
+        try withEphemeralPreferences { prefs, defaults in
+            for choice in ClipboardPasteLimit.choices {
+                prefs.clipboardMaxPasteBytes = choice
+                #expect(prefs.clipboardMaxPasteBytes == choice)
+                #expect(defaults.object(forKey: "clipboardMaxPasteBytes") as? Int == choice)
+            }
+        }
+    }
+
+    @Test("a stored ceiling off the offered ladder reads back as the nearest one")
+    func clipboardMaxPasteBytesClampsOnRead() throws {
+        try withEphemeralPreferences { prefs, defaults in
+            // Nothing writes this through the setter — a hand-edited default, or
+            // a value from a build whose ladder differed. It must never reach an
+            // enforcement point as-is.
+            defaults.set(3 * 1024 * 1024 * 1024, forKey: "clipboardMaxPasteBytes")
+            #expect(ClipboardPasteLimit.choices.contains(prefs.clipboardMaxPasteBytes))
         }
     }
 

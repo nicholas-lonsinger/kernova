@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaKit
 import Testing
 import KernovaTestSupport
 
@@ -45,12 +46,19 @@ private func makeClipboardViewModel(preferences: AppPreferences) -> VMLibraryVie
 
 /// The VM whose clipboard window is under test.
 @MainActor
+/// Builds an instance over an isolated defaults suite.
+///
+/// Ephemeral preferences, not `.shared`: the messages naming the paste ceiling
+/// read it live, so an instance on the real domain makes those assertions depend
+/// on whatever the developer last picked in Settings.
 private func makeClipboardInstance(passthroughEnabled: Bool = false) -> VMInstance {
     var config = VMConfiguration(name: "Clipboard VM", guestOS: .linux, bootMode: .efi)
     config.clipboardPassthroughEnabled = passthroughEnabled
     let bundleURL = FileManager.default.temporaryDirectory
         .appendingPathComponent(config.id.uuidString, isDirectory: true)
-    return VMInstance(configuration: config, bundleURL: bundleURL)
+    return VMInstance(
+        configuration: config, bundleURL: bundleURL,
+        preferences: makeEphemeralPreferences(suiteName: "test.kernova.clipboard-vc-instance"))
 }
 
 /// Verifies the host "Copy to Mac" provider-retention lifecycle: each written
@@ -594,14 +602,14 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         // Built from the cap, not typed: retuning the cap moves this sentence.
         #expect(
             message
-                == "Copied without the files — over the \(ClipboardStreamTuning.maxDeadlineSafePasteDisplayLimit) clipboard transfer limit"
+                == "Copied without the files — over the \(ClipboardPasteLimit.displayLimit(ClipboardPasteLimit.defaultBytes)) clipboard transfer limit"
         )
     }
 
     @Test("an all-dropped over-cap copy reports the refusal")
     func nothingServedOverBudgetReportsTheRefusal() async throws {
         let message = try await copyMessage(copyItems: [.droppedFile(.overPasteBudget)])
-        #expect(message == ClipboardTransferIssue.overCopyBudgetMessage)
+        #expect(message == ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: ClipboardPasteLimit.defaultBytes))
     }
 
     @Test("nothing to serve and nothing dropped reports a fetch failure")
@@ -635,7 +643,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         let expected: [(ClipboardErrorCode, String)] = [
             (
                 .pasteTooLarge,
-                "Too large to paste into the guest — over the \(ClipboardStreamTuning.maxDeadlineSafePasteDisplayLimit) clipboard transfer limit"
+                "Too large to paste into the guest — over the \(ClipboardPasteLimit.displayLimit(ClipboardPasteLimit.defaultBytes)) clipboard transfer limit"
             ),
             (.pasteDiskFull, "The guest ran out of disk space receiving the clipboard file"),
             (.pasteTimeout, "The clipboard transfer to the guest timed out"),
@@ -658,9 +666,11 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences))
 
-        service.lastTransferIssue = .overCopyBudget()
+        service.lastTransferIssue = .overCopyBudget(limitBytes: ClipboardPasteLimit.defaultBytes)
         vc.simulateObservationForTesting()
-        #expect(vc.indicatorTextForTesting == ClipboardTransferIssue.overCopyBudgetMessage)
+        #expect(
+            vc.indicatorTextForTesting
+                == ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: ClipboardPasteLimit.defaultBytes))
     }
 }
 

@@ -2278,7 +2278,7 @@ struct VsockClipboardServiceTests {
         // gate is all-or-nothing over the total, so the whole set is refused
         // rather than pasted piecemeal. The inline text rep still promises: only
         // paste-bound (non-inline) reps are budget-gated.
-        let half = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) / 2 + 1
+        let half = UInt64(ClipboardPasteLimit.defaultBytes) / 2 + 1
         try guest.send(
             makeOffer(
                 generation: 13,
@@ -2301,7 +2301,81 @@ struct VsockClipboardServiceTests {
             service.lastTransferIssue?.kind
                 == .localFailure(
                     code: ClipboardErrorCode.copyTooLarge.rawValue,
-                    message: ClipboardTransferIssue.overCopyBudgetMessage))
+                    message: ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: ClipboardPasteLimit.defaultBytes))
+        )
+    }
+
+    @Test("a lowered ceiling refuses a file set the default would have served")
+    func loweredCeilingRefusesUnderTheDefault() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let lowered = 512 * 1024 * 1024
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", maxPasteBytes: { lowered })
+        service.start()
+        defer { service.stop() }
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.start()
+
+        // Comfortably under the built-in default, so only the injected ceiling
+        // can be what refuses it.
+        let overLowered = lowered + 1
+        try guest.send(
+            makeOffer(
+                generation: 51,
+                reps: [
+                    (uti: "public.data", byteCount: overLowered, filename: "a.bin", isInline: false)
+                ]))
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
+
+        let items = service.materializeForCopy()
+        #expect(items.droppedReasons == [.overPasteBudget])
+        #expect(responder.requests.isEmpty)
+        // The message names the ceiling actually enforced, not the default.
+        #expect(
+            service.lastTransferIssue?.kind
+                == .localFailure(
+                    code: ClipboardErrorCode.copyTooLarge.rawValue,
+                    message: ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: lowered)))
+    }
+
+    @Test("a raised ceiling serves a file set the default would have refused")
+    func raisedCeilingAdmitsOverTheDefault() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let raised = 16 * 1024 * 1024 * 1024
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", maxPasteBytes: { raised })
+        service.start()
+        defer { service.stop() }
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.start()
+
+        let overDefault = ClipboardPasteLimit.defaultBytes + 1
+        try guest.send(
+            makeOffer(
+                generation: 52,
+                reps: [
+                    (uti: "public.data", byteCount: overDefault, filename: "a.bin", isInline: false)
+                ]))
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
+
+        let items = service.materializeForCopy()
+        #expect(items.droppedReasons.isEmpty)
+        #expect(items.promised.map(\.repIndex) == [0])
+        // Still metadata-only: admitting the set pulls nothing at the click.
+        #expect(responder.requests.isEmpty)
+        #expect(service.lastTransferIssue == nil)
     }
 
     @Test("a sibling rep pulling fine does not clear the refusal the file set raised")
@@ -2325,7 +2399,7 @@ struct VsockClipboardServiceTests {
 
         // The shape that erased the refusal: over-cap files alongside a small
         // inline text rep the window previews.
-        let half = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) / 2 + 1
+        let half = UInt64(ClipboardPasteLimit.defaultBytes) / 2 + 1
         try guest.send(
             makeOffer(
                 generation: 14,
@@ -2345,7 +2419,8 @@ struct VsockClipboardServiceTests {
             refusal.kind
                 == .localFailure(
                     code: ClipboardErrorCode.copyTooLarge.rawValue,
-                    message: ClipboardTransferIssue.overCopyBudgetMessage))
+                    message: ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: ClipboardPasteLimit.defaultBytes))
+        )
 
         // The preview pulls the text rep successfully. That says nothing about
         // the refused file set, which is still the only thing the user must act
@@ -2411,7 +2486,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let half = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) / 2 + 1
+        let half = UInt64(ClipboardPasteLimit.defaultBytes) / 2 + 1
         try guest.send(
             makeOffer(
                 generation: 43,
@@ -2436,7 +2511,8 @@ struct VsockClipboardServiceTests {
             service.lastTransferIssue?.kind
                 == .localFailure(
                     code: ClipboardErrorCode.copyTooLarge.rawValue,
-                    message: ClipboardTransferIssue.overCopyBudgetMessage))
+                    message: ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: ClipboardPasteLimit.defaultBytes))
+        )
     }
 
     @Test("an image file is paste-bound too — an over-cap image set is refused whole")
@@ -2454,7 +2530,7 @@ struct VsockClipboardServiceTests {
         // each is served as `public.file-url` as well, so both count against the
         // paste budget their sum exceeds.
         let png = UTType.png.identifier
-        let half = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) / 2 + 1
+        let half = UInt64(ClipboardPasteLimit.defaultBytes) / 2 + 1
         try guest.send(
             makeRawOffer(
                 generation: 71,
@@ -2472,7 +2548,8 @@ struct VsockClipboardServiceTests {
             service.lastTransferIssue?.kind
                 == .localFailure(
                     code: ClipboardErrorCode.copyTooLarge.rawValue,
-                    message: ClipboardTransferIssue.overCopyBudgetMessage))
+                    message: ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: ClipboardPasteLimit.defaultBytes))
+        )
         // The cap governs the file flavor, not the inline one (§1): each rep
         // still promises, with `.fileURL` withheld from the item it plans.
         #expect(items.promised.map(\.repIndex) == [0, 1])
@@ -2570,7 +2647,8 @@ struct VsockClipboardServiceTests {
             service.lastTransferIssue?.kind
                 == .localFailure(
                     code: ClipboardErrorCode.copyTooLarge.rawValue,
-                    message: ClipboardTransferIssue.overCopyBudgetMessage))
+                    message: ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: ClipboardPasteLimit.defaultBytes))
+        )
         #expect(service.copyToMacFileURL(generation: 73, repIndex: 0) == nil)
         #expect(responder.requests.isEmpty)
     }
