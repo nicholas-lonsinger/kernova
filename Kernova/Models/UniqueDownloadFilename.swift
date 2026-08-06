@@ -33,6 +33,35 @@ enum UniqueDownloadFilename {
         return "\(stem(of: url.lastPathComponent) ?? defaultStem)-\(discriminator).\(fileExtension)"
     }
 
+    /// The name the source gave a file ``make(for:fileExtension:defaultStem:)``
+    /// named, or `nil` when `filename` carries no discriminator.
+    ///
+    /// The discriminator is a digest and cannot be inverted, so only the stem
+    /// comes back — which is what says where the file came from. A stem long
+    /// enough to have been truncated comes back truncated, so a source name
+    /// past ``maximumStemLength`` is not recognized.
+    static func sourceFilename(of filename: String, fileExtension: String) -> String? {
+        guard let stem = stem(of: filename, requiring: fileExtension) else { return nil }
+        // `-<discriminator>`, with at least one character of source name ahead
+        // of it — a name that is nothing but a discriminator names no source.
+        let suffixLength = discriminatorBytes * 2 + 1
+        guard stem.count > suffixLength else { return nil }
+        let source = stem.dropLast(suffixLength)
+        let suffix = stem.dropFirst(source.count)
+        guard suffix.first == "-",
+            suffix.dropFirst().allSatisfy({ $0.isASCII && $0.isHexDigit && !$0.isUppercase })
+        else { return nil }
+        return "\(source).\(fileExtension)"
+    }
+
+    /// The part of `candidate` before a `.<fileExtension>` it must end in.
+    private static func stem(of candidate: String, requiring fileExtension: String) -> String? {
+        guard let name = SafeFilename.sanitized(candidate, requiring: fileExtension) else {
+            return nil
+        }
+        return String(name.dropLast(fileExtension.count + 1))
+    }
+
     /// The part of `candidate` before its extension, or `nil` when `candidate`
     /// is not usable as a filename at all.
     private static func stem(of candidate: String) -> String? {

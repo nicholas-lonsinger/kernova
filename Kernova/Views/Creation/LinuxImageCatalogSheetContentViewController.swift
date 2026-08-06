@@ -342,16 +342,39 @@ final class LinuxImageCatalogSheetContentViewController: NSViewController {
 
     /// IDs of the entries `filenames` holds an image for.
     ///
+    /// Each name has to answer twice. Reading it back through
+    /// ``LinuxImageFilename/sourceFilename(of:)`` says which image it is, and an
+    /// ISO the user fetched themselves — sitting under the mirror's own name,
+    /// with no discriminator — is not one of this app's downloads at all.
+    /// Naming it again off *this* entry's directory says the download it came
+    /// from was this entry's: an identically-named ISO fetched from another
+    /// mirror or pasted as a URL carries a different discriminator, so choosing
+    /// this row would fetch the whole image again.
+    ///
+    /// Which point release the mirror serves *now* is a question only a
+    /// resolution answers, and this sheet reaches no network — so the column
+    /// states which images are on disk, never that the next download will skip.
+    ///
     /// A completed download is the only thing that can match: an interrupted one
     /// keeps its bytes in a `.kernovadownload` bundle beside the destination,
-    /// which the entry's `.iso`-anchored glob does not take.
+    /// which is not an `.iso` name at all.
     private static func downloadedEntryIDs(
         among entries: [LinuxImageCatalogEntry], in filenames: [String]
     ) -> Set<String> {
-        Set(
+        let downloaded = filenames.compactMap { filename in
+            LinuxImageFilename.sourceFilename(of: filename)
+                .map { (onDisk: filename, published: $0) }
+        }
+        return Set(
             entries.compactMap { entry -> String? in
                 guard let glob = ISOFilenameGlob(entry.isoPattern) else { return nil }
-                return filenames.contains(where: glob.matches) ? entry.id : nil
+                let held = downloaded.contains { image in
+                    glob.matches(image.published)
+                        && LinuxImageFilename.destination(
+                            for: entry.directoryURL.appendingPathComponent(image.published))
+                            == image.onDisk
+                }
+                return held ? entry.id : nil
             })
     }
 

@@ -50,4 +50,37 @@ struct LinuxImageFilenameTests {
         #expect(name.hasPrefix("LinuxImage-"))
         #expect(name.hasSuffix(".iso"))
     }
+
+    // MARK: - Reading a destination back
+
+    @Test("A destination this app generated names the image the source published")
+    func sourceFilenameRecoversTheSourceName() throws {
+        let iso = try url(
+            "https://cdimage.debian.org/debian-cd/current/arm64/iso-cd/debian-13.6.0-arm64-netinst.iso"
+        )
+
+        #expect(
+            LinuxImageFilename.sourceFilename(of: LinuxImageFilename.destination(for: iso))
+                == "debian-13.6.0-arm64-netinst.iso")
+    }
+
+    @Test(
+        "A name this app did not generate belongs to no source",
+        arguments: [
+            // The mirror's own name, as a user's own fetch would leave it.
+            "debian-13.6.0-arm64-netinst.iso",
+            // A discriminator that is not eight lowercase hex characters.
+            "debian-1a2b3c4.iso",
+            "debian-1a2b3c4de.iso",
+            "debian-1A2B3C4D.iso",
+            "debian-nothexes.iso",
+            // Nothing in front of the discriminator to name a source.
+            "-1a2b3c4d.iso",
+            // Not an ISO, so not an image at all — a resume bundle among them.
+            "debian-13.6.0-arm64-netinst-1a2b3c4d.kernovadownload",
+            "debian-1a2b3c4d.img",
+        ])
+    func sourceFilenameRefusesForeignNames(candidate: String) {
+        #expect(LinuxImageFilename.sourceFilename(of: candidate) == nil)
+    }
 }

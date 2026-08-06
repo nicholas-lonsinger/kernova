@@ -38,6 +38,17 @@ struct LinuxImageCatalogSheetContentViewControllerTests {
         return vc
     }
 
+    /// The Downloads name a completed download leaves behind.
+    ///
+    /// Built the way the pipeline builds it — the resolved ISO URL through
+    /// ``LinuxImageFilename`` — rather than spelled out, so a test never asserts
+    /// against a discriminator it invented.
+    private func downloadedName(
+        of published: String, from entry: LinuxImageCatalogEntry
+    ) -> String {
+        LinuxImageFilename.destination(for: entry.directoryURL.appendingPathComponent(published))
+    }
+
     /// The text the sheet renders in `column` for the row at `row`.
     private func cellText(
         _ vc: LinuxImageCatalogSheetContentViewController, row: Int, column identifier: String
@@ -125,16 +136,55 @@ struct LinuxImageCatalogSheetContentViewControllerTests {
 
     @Test("The Status column names only the images already in Downloads")
     func statusNamesDownloadedImages() throws {
-        let vc = makeSheet(downloads: ["debian-13.1.0-arm64-netinst.iso"])
+        let debian = try #require(entries.last)
+        let vc = makeSheet(
+            downloads: [downloadedName(of: "debian-13.1.0-arm64-netinst.iso", from: debian)])
 
         #expect(try cellText(vc, row: 0, column: "status").isEmpty)
         #expect(try cellText(vc, row: 2, column: "status") == "In Downloads")
     }
 
+    @Test("An ISO the user fetched themselves does not read as In Downloads")
+    func statusIgnoresImagesThisAppDidNotDownload() throws {
+        // Under the mirror's own name, so no download will ever find or adopt
+        // it — saying it is there would promise a fast path that is not there.
+        let vc = makeSheet(downloads: ["debian-13.1.0-arm64-netinst.iso"])
+
+        #expect(try cellText(vc, row: 2, column: "status").isEmpty)
+    }
+
+    @Test("The same image fetched from another mirror does not read as In Downloads")
+    func statusIgnoresTheSameImageFromAnotherURL() throws {
+        // Same published filename, different directory, so the discriminator
+        // differs and choosing this row downloads the whole ISO again.
+        let elsewhere = makeLinuxCatalogEntry(
+            directoryURLString: "https://mirror.example/debian-cd/current/arm64/iso-cd/")
+        let vc = makeSheet(
+            downloads: [downloadedName(of: "debian-13.1.0-arm64-netinst.iso", from: elsewhere)])
+
+        #expect(try cellText(vc, row: 2, column: "status").isEmpty)
+    }
+
+    @Test("A pasted-URL download does not read as In Downloads for a catalog row")
+    func statusIgnoresACustomURLDownload() throws {
+        // The URL source names its destination the same way, so a link ending
+        // in a catalog image's filename lands on a name whose stem matches that
+        // row's glob — and whose discriminator says it came from elsewhere.
+        let pasted = try #require(
+            URL(string: "https://example.com/debian-13.1.0-arm64-netinst.iso"))
+        let vc = makeSheet(downloads: [LinuxImageFilename.destination(for: pasted)])
+
+        #expect(try cellText(vc, row: 2, column: "status").isEmpty)
+    }
+
     @Test("A half-finished download does not read as In Downloads")
     func statusIgnoresPartialDownloads() throws {
-        let vc = makeSheet(
-            downloads: ["ubuntu-26.04.1-desktop-arm64.iso.kernovadownload"])
+        // The bundle replaces the destination's extension rather than following
+        // it, so nothing about a partial download reads as an `.iso`.
+        let ubuntu = try #require(entries.first)
+        let complete = downloadedName(of: "ubuntu-26.04.1-desktop-arm64.iso", from: ubuntu)
+        let partial = (complete as NSString).deletingPathExtension + ".kernovadownload"
+        let vc = makeSheet(downloads: [partial])
 
         #expect(try cellText(vc, row: 0, column: "status").isEmpty)
     }
@@ -142,8 +192,10 @@ struct LinuxImageCatalogSheetContentViewControllerTests {
     @Test("Downloads is read once, however many rows render and filters run")
     func downloadsAreEnumeratedOncePerSheet() throws {
         var reads = 0
+        let debian = try #require(entries.last)
         let vc = makeSheet(
-            downloads: ["debian-13.1.0-arm64-netinst.iso"], onDownloadsRead: { reads += 1 })
+            downloads: [downloadedName(of: "debian-13.1.0-arm64-netinst.iso", from: debian)],
+            onDownloadsRead: { reads += 1 })
 
         for row in 0..<3 { _ = try cellText(vc, row: row, column: "status") }
         for term in ["u", "ub", "ubu"] {
