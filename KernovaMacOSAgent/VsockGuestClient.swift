@@ -319,10 +319,13 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
     /// Opens a raw `AF_VSOCK / SOCK_STREAM` socket and connects it to the host.
     ///
     /// Both paths bound the connect at `connectTimeoutSeconds`, by different
-    /// means: macOS 13+ uses the non-blocking-plus-poll idiom, while Monterey —
-    /// whose virtio-vsock driver never completes a non-blocking connect
-    /// (docs/research/2026-08-02-macos12-vsock-nonblocking-connect.md) — runs a
-    /// blocking `connect(2)` on a throwaway thread it can walk away from.
+    /// means: macOS 14+ uses the non-blocking-plus-poll idiom, while macOS 12
+    /// and 13 run a blocking `connect(2)` on a throwaway thread the loop can
+    /// walk away from — Monterey's virtio-vsock never completes a non-blocking
+    /// connect (docs/research/2026-08-02-macos12-vsock-nonblocking-connect.md),
+    /// and macOS 13's completes it while leaving the socket state-blind, so
+    /// poll, kqueue, and `SO_RCVTIMEO`/`SO_SNDTIMEO` all misbehave on the fd
+    /// (docs/research/2026-08-06-macos13-vsock-nonblocking-state-blind.md).
     private static func openVsockToHost(
         port: UInt32, label: String, clock: Clock
     ) -> Result<Int32, VsockProviderError> {
@@ -340,7 +343,7 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
         addr.svm_port = port
         addr.svm_cid = UInt32(VMADDR_CID_HOST)
 
-        if #available(macOS 13.0, *) {
+        if #available(macOS 14.0, *) {
             guard connectNonBlocking(fd: fd, addr: addr, label: label, port: port, clock: clock)
             else {
                 close(fd)
@@ -495,7 +498,7 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
     /// The caller owns `fd` on both paths and must `close()` it on a `false`
     /// return — this helper never takes ownership.
     @available(macOS 13.0, *)
-    private static func awaitConnectCompletion(
+    static func awaitConnectCompletion(
         fd: Int32, label: String, port: UInt32, clock: Clock
     ) -> Bool {
         var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
@@ -521,11 +524,14 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
             return false
         }
 
-        // Check the error flags before trusting SO_ERROR: POLLHUP can arrive with
-        // POLLOUT when the peer hung up between EINPROGRESS and completion, and
-        // SO_ERROR then reads 0 because the connect itself succeeded.
-        let errorRevents = Int16(POLLHUP) | Int16(POLLERR) | Int16(POLLNVAL)
-        if pfd.revents & errorRevents != 0 {
+        // POLLHUP is not a verdict here: a state-blind fd can raise it for a
+        // connect the host has in fact accepted, with SO_ERROR reading 0
+        // (docs/research/2026-08-06-macos13-vsock-nonblocking-state-blind.md),
+        // so the SO_ERROR check below is the sole authority for it — a genuine
+        // post-connect hangup surfaces as EOF on the first read and rides the
+        // normal reconnect path. Only the structural flags are fatal on sight.
+        let fatalRevents = Int16(POLLERR) | Int16(POLLNVAL)
+        if pfd.revents & fatalRevents != 0 {
             var soError: Int32 = 0
             var soErrorLen = socklen_t(MemoryLayout<Int32>.size)
             let errStr: String
