@@ -6,11 +6,10 @@ prerequisites behind it, and the verification checklist. The entitlement story
 is in [SANDBOX.md](SANDBOX.md).
 
 Releasing is **Nicholas-specific** and does not touch CI or the clone-and-run
-story. CI builds Debug with `CODE_SIGNING_ALLOWED=NO`, and the Debug
-configuration signs ad-hoc — anyone can clone and build with no Apple
-account or team. Everything below concerns the **Release** configuration and the
-Developer ID identity (team `8MT4P4GZL2`, bundle id `app.kernova`, Apple
-Silicon only).
+story. The Debug configuration signs ad-hoc — anyone, including CI, can clone
+and build with no Apple account or team. Everything below concerns the
+**Release** configuration and the Developer ID identity (team `8MT4P4GZL2`,
+bundle id `app.kernova`, Apple Silicon only).
 
 ## One-time prerequisites
 

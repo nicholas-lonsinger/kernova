@@ -194,8 +194,8 @@ section 'Signing'
 # Debug signs ad-hoc unless the gitignored, hand-maintained
 # Config/Local.xcconfig overrides CODE_SIGN_IDENTITY; the same file supplies
 # DEVELOPMENT_TEAM, which automatic signing resolves the certificate through
-# and the agent's Release Developer ID signing needs. CI can't catch a broken
-# team here: it builds with CODE_SIGNING_ALLOWED=NO.
+# and the agent's Release Developer ID signing needs. CI has no Local.xcconfig
+# and signs ad-hoc too, so it can't catch a broken team here either.
 local_xcconfig="Config/Local.xcconfig"
 resolved_team=""
 resolved_identity=""
