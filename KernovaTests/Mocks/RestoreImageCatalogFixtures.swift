@@ -8,7 +8,7 @@ func makeCatalogEntry(
     build: String = "24G90",
     urlString: String? = nil,
     sizeBytes: UInt64 = 16_808_427_372,
-    lastModified: String = "Mon, 18 Aug 2025 12:00:00 GMT",
+    lastModified: String? = "Mon, 18 Aug 2025 12:00:00 GMT",
     source: String = "apple-live"
 ) -> RestoreImageCatalogEntry {
     let resolved =
