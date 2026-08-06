@@ -44,7 +44,9 @@ message Frame {
 
     ClipboardOffer clipboard_offer = 20;
     ClipboardRequest clipboard_request = 21;
+
     // 22 retired (see `reserved` above).
+
     ClipboardRelease clipboard_release = 23;
 
     // Chunk-streamed clipboard data. One streamed representation per
@@ -58,6 +60,7 @@ message Frame {
     ClipboardStreamAbort clipboard_stream_abort = 28;
 
     // 29 retired (see `reserved` above).
+
     LogRecord log_record = 30;
   }
 }

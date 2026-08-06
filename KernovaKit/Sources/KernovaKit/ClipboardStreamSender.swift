@@ -10,8 +10,8 @@ import Foundation
 /// Swift-concurrency cooperative thread. Per-transfer state is guarded by each
 /// transfer's `NSCondition`; the transfer table is guarded by `lock`.
 ///
-/// The blocking read is deliberate rather than a `DispatchIO` port left undone —
-/// the dedicated queue is what makes it safe.
+/// The blocking read is deliberate rather than a `DispatchIO` port left undone:
+/// the per-transfer queue is what keeps it off the cooperative pool.
 public final class ClipboardStreamSender: @unchecked Sendable {
     private let channel: VsockChannel
     private let chunkSize: Int

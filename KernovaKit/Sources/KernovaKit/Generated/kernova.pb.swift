@@ -101,7 +101,6 @@ public nonisolated struct Kernova_V1_Frame: Sendable {
     set {payload = .clipboardRequest(newValue)}
   }
 
-  /// 22 retired (see `reserved` above).
   public var clipboardRelease: Kernova_V1_ClipboardRelease {
     get {
       if case .clipboardRelease(let v)? = payload {return v}
@@ -154,7 +153,6 @@ public nonisolated struct Kernova_V1_Frame: Sendable {
     set {payload = .clipboardStreamAbort(newValue)}
   }
 
-  /// 29 retired (see `reserved` above).
   public var logRecord: Kernova_V1_LogRecord {
     get {
       if case .logRecord(let v)? = payload {return v}
@@ -178,7 +176,6 @@ public nonisolated struct Kernova_V1_Frame: Sendable {
     case policyUpdate(Kernova_V1_PolicyUpdate)
     case clipboardOffer(Kernova_V1_ClipboardOffer)
     case clipboardRequest(Kernova_V1_ClipboardRequest)
-    /// 22 retired (see `reserved` above).
     case clipboardRelease(Kernova_V1_ClipboardRelease)
     /// Chunk-streamed clipboard data. One streamed representation per
     /// `transfer_id`: Begin announces it, a series of Chunks carries the bytes,
@@ -189,7 +186,6 @@ public nonisolated struct Kernova_V1_Frame: Sendable {
     case clipboardStreamEnd(Kernova_V1_ClipboardStreamEnd)
     case clipboardStreamAck(Kernova_V1_ClipboardStreamAck)
     case clipboardStreamAbort(Kernova_V1_ClipboardStreamAbort)
-    /// 29 retired (see `reserved` above).
     case logRecord(Kernova_V1_LogRecord)
 
   }
