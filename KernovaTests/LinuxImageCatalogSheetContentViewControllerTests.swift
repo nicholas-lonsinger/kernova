@@ -22,13 +22,17 @@ struct LinuxImageCatalogSheetContentViewControllerTests {
     private func makeSheet(
         entries: [LinuxImageCatalogEntry]? = nil,
         selectedID: String? = nil,
-        downloadedIDs: Set<String> = []
+        downloads: [String] = [],
+        onDownloadsRead: @escaping @MainActor () -> Void = {}
     ) -> LinuxImageCatalogSheetContentViewController {
         let vc = LinuxImageCatalogSheetContentViewController(
             entries: entries ?? self.entries,
             selectedID: selectedID,
             generatedAt: "2026-08-05",
-            isDownloaded: { downloadedIDs.contains($0.id) }
+            downloadsFilenames: {
+                onDownloadsRead()
+                return downloads
+            }
         )
         vc.loadViewIfNeeded()
         return vc
@@ -121,10 +125,33 @@ struct LinuxImageCatalogSheetContentViewControllerTests {
 
     @Test("The Status column names only the images already in Downloads")
     func statusNamesDownloadedImages() throws {
-        let vc = makeSheet(downloadedIDs: ["debian-13"])
+        let vc = makeSheet(downloads: ["debian-13.1.0-arm64-netinst.iso"])
 
         #expect(try cellText(vc, row: 0, column: "status").isEmpty)
         #expect(try cellText(vc, row: 2, column: "status") == "In Downloads")
+    }
+
+    @Test("A half-finished download does not read as In Downloads")
+    func statusIgnoresPartialDownloads() throws {
+        let vc = makeSheet(
+            downloads: ["ubuntu-26.04.1-desktop-arm64.iso.kernovadownload"])
+
+        #expect(try cellText(vc, row: 0, column: "status").isEmpty)
+    }
+
+    @Test("Downloads is read once, however many rows render and filters run")
+    func downloadsAreEnumeratedOncePerSheet() throws {
+        var reads = 0
+        let vc = makeSheet(
+            downloads: ["debian-13.1.0-arm64-netinst.iso"], onDownloadsRead: { reads += 1 })
+
+        for row in 0..<3 { _ = try cellText(vc, row: row, column: "status") }
+        for term in ["u", "ub", "ubu"] {
+            vc.applyFilter(term)
+            _ = try cellText(vc, row: 0, column: "status")
+        }
+
+        #expect(reads == 1)
     }
 
     @Test("Sizes are stated as the approximations they are")
