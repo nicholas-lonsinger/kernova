@@ -109,8 +109,11 @@ substitute mocks. Services split by concurrency: those that touch
   `Kernova/Resources/LinuxImageCatalog.json`, backing the Linux boot step's "Choose a
   Distribution…" source. It reaches no network; an entry names a directory, an ISO filename glob,
   and a checksum manifest rather than a fixed URL.
-- `LinuxImageResolveService` (a `final class`, for `URLSession` lifetime) — turns a catalog entry
-  into the file that exists right now, returning its URL, SHA-256, and size.
+- `LinuxImageResolveService` (a `final class`, for `URLSession` lifetime) — turns a Linux image
+  source into the file to fetch, returning its URL, SHA-256, and size. A catalog entry resolves
+  against its mirror's manifest; a user-supplied URL names its own file and carries only the
+  digest the user typed, so all that is read is its length. The wizard's "Image URL…" check and
+  the install pipeline both go through it, so one set of admission rules governs both.
 
 `ConfigurationBuilder` translates a `VMConfiguration` into a `VZVirtualMachineConfiguration` — the
 single VZ-facing translation point, covering boot loader, CPU, memory, storage, network, display,
@@ -195,8 +198,9 @@ calls `applyLiveRemovableMediaChange(for:target:)`.
   imports and clones cannot claim the same bundle URL.
 - `VMLifecycleCoordinator` — `@MainActor`; owns `VirtualizationService`, `MacOSInstallService`,
   `IPSWService`, `USBDeviceService`, and the Linux resolve/download seams (`LinuxImageResolving`,
-  `Downloading`), and orchestrates multi-step flows: a macOS install, and a Linux catalog pick's
-  resolve → download → SHA-256 verify → attach pipeline, each driven by the install context
+  `Downloading`), and orchestrates multi-step flows: a macOS install, and a Linux image pick's
+  resolve → download → SHA-256 verify → attach pipeline, whose verify step runs only where a
+  digest exists to check against, each driven by the install context
   persisted on `VMConfiguration` (`installContext` / `linuxInstallContext`) until it completes.
   It serializes lifecycle operations per VM; `stop` and `forceStop` deliberately bypass that
   serialization so a hung operation can always be cancelled.
@@ -204,8 +208,8 @@ calls `applyLiveRemovableMediaChange(for:target:)`.
   UI-framework dependency. Each macOS restore-image source is backed by an injected service
   protocol, so the wizard can name the version, build and size the source will install before
   anything is downloaded — including "Download Latest", which reaches `IPSWProviding` for what VZ
-  would resolve. The Linux boot step's distribution picker is backed the same way by
-  `LinuxImageCatalogProviding`.
+  would resolve. The Linux boot step's two download sources are backed the same way, by
+  `LinuxImageCatalogProviding` and `LinuxImageResolving`.
 - `VMDirectoryWatcher` — a `DispatchSource` on the VMs directory that triggers reconciliation in
   `VMLibraryViewModel` when the library changes on disk.
 

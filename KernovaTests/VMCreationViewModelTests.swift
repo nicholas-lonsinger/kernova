@@ -569,7 +569,7 @@ struct VMCreationViewModelTests {
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
 
-        #expect(vm.validationMessage == "Select an ISO image or distribution to continue.")
+        #expect(vm.validationMessage == "Select an installer image to continue.")
     }
 
     @Test("validationMessage returns kernel hint for Linux kernel with no kernelPath")
@@ -617,11 +617,70 @@ struct VMCreationViewModelTests {
 
         let context = try #require(vm.buildLinuxInstallContext())
 
-        #expect(context.entry == entry)
+        #expect(catalogEntry(of: context) == entry)
         // The mirror names the file, and only a resolution just before the
         // download can say what that name is.
         #expect(context.downloadDestinationPath == nil)
         #expect(!context.requestedFreshDownload)
+    }
+
+    @Test("buildLinuxInstallContext snapshots a URL pick with its checksum and destination")
+    func buildLinuxInstallContextURLPick() throws {
+        let vm = VMCreationViewModel()
+        let digest = String(repeating: "a", count: 64)
+        vm.selectLinuxCustomURL(
+            makeResolvedLinuxImage(
+                isoURLString: "https://mirror.example/alpine-3.22-aarch64.iso",
+                filename: "alpine-3.22-aarch64.iso", sha256: digest))
+
+        let context = try #require(vm.buildLinuxInstallContext())
+
+        #expect(
+            customImage(of: context)?.url
+                == URL(string: "https://mirror.example/alpine-3.22-aarch64.iso"))
+        #expect(customImage(of: context)?.sha256 == digest)
+        #expect(context.hasVerifyStep)
+        // A fixed URL names its own file, so unlike a catalog pick the
+        // destination is known before the VM is created.
+        #expect(
+            context.downloadDestinationPath
+                == VMCreationViewModel.downloadPath(forFilename: "alpine-3.22-aarch64.iso"))
+    }
+
+    @Test("A URL pick with no checksum carries none, and has nothing to verify")
+    func buildLinuxInstallContextUnverifiedURLPick() throws {
+        let vm = VMCreationViewModel()
+        vm.selectLinuxCustomURL(
+            makeResolvedLinuxImage(
+                isoURLString: "https://mirror.example/alpine-3.22-aarch64.iso",
+                filename: "alpine-3.22-aarch64.iso", sha256: nil))
+
+        let context = try #require(vm.buildLinuxInstallContext())
+
+        #expect(customImage(of: context)?.sha256 == nil)
+        #expect(context.hasVerifyStep == false)
+    }
+
+    @Test("An EFI image pick does not follow a switch to Linux-kernel boot")
+    func buildLinuxInstallContextGatedOnEFI() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectedBootMode = .efi
+        vm.selectLinuxCatalogEntry(makeLinuxCatalogEntry())
+        #expect(vm.buildLinuxInstallContext() != nil)
+
+        // A kernel-boot VM never boots an installer image, so a pick made
+        // before the switch must not reach the created VM — the same rule
+        // `buildConfiguration()` applies to the installer `storageDisks`.
+        vm.selectedBootMode = .linuxKernel
+        #expect(vm.buildLinuxInstallContext() == nil)
+
+        vm.selectLinuxCustomURL(makeResolvedLinuxImage())
+        #expect(vm.buildLinuxInstallContext() == nil)
+
+        // Switching back restores the pick, which was never dropped.
+        vm.selectedBootMode = .efi
+        #expect(vm.buildLinuxInstallContext() != nil)
     }
 
     @Test("buildLinuxInstallContext is nil for a local ISO and for no selection at all")

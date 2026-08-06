@@ -157,6 +157,43 @@ struct ReviewContentViewControllerTests {
                 in: vc.view) != nil)
     }
 
+    @Test("A Linux URL pick names the file, its size, where it lands and how it is checked")
+    func linuxShowsVerifiedURLPick() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectLinuxCustomURL(
+            makeResolvedLinuxImage(
+                isoURLString: "https://mirror.example/alpine-3.22-aarch64.iso",
+                filename: "alpine-3.22-aarch64.iso", sha256: String(repeating: "a", count: 64),
+                sizeBytes: 1_073_741_824))
+        let vc = ReviewContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        #expect(findLabel(withText: "From URL", in: vc.view) != nil)
+        #expect(findLabel(withText: "alpine-3.22-aarch64.iso", in: vc.view) != nil)
+        #expect(
+            findLabel(withText: DataFormatters.formatBytes(1_073_741_824), in: vc.view) != nil)
+        #expect(findLabel(withText: "Verified with your checksum", in: vc.view) != nil)
+        // The URL names its own file, so unlike a catalog pick the whole
+        // destination path is known here.
+        #expect(
+            findLabel(
+                withText: wizardAbbreviateWithTilde(
+                    VMCreationViewModel.downloadPath(forFilename: "alpine-3.22-aarch64.iso")),
+                in: vc.view) != nil)
+    }
+
+    @Test("A Linux URL pick with no checksum says the download is not verified")
+    func linuxShowsUnverifiedURLPick() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectLinuxCustomURL(makeResolvedLinuxImage(sha256: nil))
+        let vc = ReviewContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        #expect(findLabel(withText: "Not verified", in: vc.view) != nil)
+    }
+
     @Test("Start-after-create switch writes back to the model")
     func startToggleWriteBack() {
         let vm = VMCreationViewModel()  // startAfterCreate defaults to true

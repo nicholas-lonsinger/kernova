@@ -180,6 +180,19 @@ final class ReviewContentViewController: NSViewController {
                             "Save to",
                             wizardAbbreviateWithTilde(
                                 VMCreationViewModel.downloadsDirectory.path(percentEncoded: false))))
+                case .customURL(let image):
+                    rows.append(valueRow("Installer Image", "From URL"))
+                    rows.append(valueRow("File", image.filename))
+                    rows.append(
+                        valueRow("Download Size", DataFormatters.formatBytes(image.sizeBytes)))
+                    rows.append(
+                        valueRow(
+                            "Verification", wizardVerificationSummary(sha256: image.sha256)))
+                    rows.append(
+                        valueRow(
+                            "Save to",
+                            wizardAbbreviateWithTilde(
+                                VMCreationViewModel.downloadPath(forFilename: image.filename))))
                 case .localISO(let path, _):
                     rows.append(valueRow("ISO", URL(fileURLWithPath: path).lastPathComponent))
                 case nil:

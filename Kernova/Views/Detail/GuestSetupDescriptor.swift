@@ -81,11 +81,11 @@ struct GuestSetupDescriptor: Sendable, Equatable {
                     dismissTitle: "Keep Installing")),
         ])
 
-    /// A Linux installer image: downloaded from its mirror, then checked
-    /// against the digest that mirror publishes for it.
-    static func linuxImage(distribution: String, version: String) -> GuestSetupDescriptor {
+    /// A Linux installer image: downloaded from where it is served, then
+    /// checked against the digest published or supplied for it.
+    static func linuxImage(named image: String) -> GuestSetupDescriptor {
         GuestSetupDescriptor(
-            title: "Downloading \(distribution) \(version)",
+            title: "Downloading \(image)",
             icon: .symbol("opticaldisc"),
             stepCopy: [
                 .download: StepCopy(
@@ -110,7 +110,6 @@ struct GuestSetupDescriptor: Sendable, Equatable {
     /// The descriptor for whichever setup `instance` has pending.
     @MainActor static func forSetup(of instance: VMInstance) -> GuestSetupDescriptor {
         guard let context = instance.configuration.linuxInstallContext else { return .macOSInstall }
-        return .linuxImage(
-            distribution: context.entry.distribution, version: context.entry.version)
+        return .linuxImage(named: context.imageDisplayName)
     }
 }

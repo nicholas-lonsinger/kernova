@@ -2,7 +2,8 @@ import Foundation
 import os
 
 /// Coordinates VM lifecycle operations and the guest-setup pipelines — a macOS
-/// install, and a Linux installer image fetched, verified and attached.
+/// install, and a Linux installer image fetched, checked against whatever
+/// digest stands behind it, and attached.
 ///
 /// All methods re-throw errors — the caller is responsible for presentation.
 ///
@@ -412,7 +413,8 @@ final class VMLifecycleCoordinator {
     }
 
     /// Fetches the Linux installer image `context` names, checks it against the
-    /// digest its mirror publishes, and attaches it as the VM's boot media.
+    /// digest published or supplied for it, and attaches it as the VM's boot
+    /// media.
     ///
     /// Every step is re-entrant: a cancelled or failed attempt leaves the
     /// context in place, so the next Start resolves again and resumes from
@@ -423,15 +425,24 @@ final class VMLifecycleCoordinator {
     ) async throws {
         try await serialized(instance, action: "downloadLinuxImage") {
             Self.logger.debug(
-                "downloadLinuxImage: entering for '\(instance.name, privacy: .public)', entry=\(context.entry.id, privacy: .public)"
+                "downloadLinuxImage: entering for '\(instance.name, privacy: .public)', image=\(context.imageDisplayName, privacy: .public)"
             )
 
             do {
-                instance.setupState = .linuxImage()
+                instance.setupState = .linuxImage(hasVerifyStep: context.hasVerifyStep)
                 instance.status = .installing
 
-                // Resolved on every attempt — see `LinuxImageCatalogEntry`.
-                let image = try await linuxImageResolveService.resolve(context.entry)
+                // Resolved on every attempt: a catalog entry because the mirror
+                // renames its ISO in place (see `LinuxImageCatalogEntry`), a
+                // pasted URL because the size it answers with is the ceiling
+                // this transfer is held to.
+                let image: ResolvedLinuxImage
+                switch context.source {
+                case .catalogEntry(let entry):
+                    image = try await linuxImageResolveService.resolve(entry)
+                case .customURL(let custom):
+                    image = try await linuxImageResolveService.resolve(custom)
+                }
 
                 // `image.filename`, never `isoURL.lastPathComponent`: the
                 // resolution already checked the name is one visible path
@@ -503,22 +514,24 @@ final class VMLifecycleCoordinator {
                 // Runs whether the bytes were just fetched or the download
                 // skipped over a file already sitting complete at the
                 // destination: an image nothing has checked is an image that
-                // could install anything.
-                instance.setupState?.advance(progress: .fraction(0))
-                let digest = try await FileDigest.sha256(of: downloadDestination) { fraction in
-                    instance.setupState?.progress = .fraction(fraction)
-                }
-                let expected = image.sha256.lowercased()
-                guard digest == expected else {
-                    Self.logger.error(
-                        "downloadLinuxImage: '\(image.filename, privacy: .public)' hashes to \(digest, privacy: .public), not the published \(expected, privacy: .public)"
-                    )
-                    discardUnverifiedImage(at: downloadDestination)
-                    throw DownloadError.checksumMismatch(
-                        filename: image.filename, expected: expected, actual: digest)
+                // could install anything. A pasted URL with no digest behind it
+                // has nothing to check against, and the wizard said so.
+                if let expected = image.sha256?.lowercased() {
+                    instance.setupState?.advance(progress: .fraction(0))
+                    let digest = try await FileDigest.sha256(of: downloadDestination) { fraction in
+                        instance.setupState?.progress = .fraction(fraction)
+                    }
+                    guard digest == expected else {
+                        Self.logger.error(
+                            "downloadLinuxImage: '\(image.filename, privacy: .public)' hashes to \(digest, privacy: .public), not the expected \(expected, privacy: .public)"
+                        )
+                        discardUnverifiedImage(at: downloadDestination)
+                        throw DownloadError.checksumMismatch(
+                            filename: image.filename, expected: expected, actual: digest)
+                    }
                 }
 
-                attachVerifiedImage(at: downloadDestination, to: instance)
+                attachInstallerImage(at: downloadDestination, to: instance)
                 instance.setupState = nil
                 // The VM entered `.installing` for the pipeline and nothing
                 // else takes it out — unlike a macOS install, no VZ session ran
@@ -559,7 +572,7 @@ final class VMLifecycleCoordinator {
         do {
             try fileSystem.trashItem(at: destination)
             Self.logger.notice(
-                "Trashed '\(destination.lastPathComponent, privacy: .public)' — it did not match its published checksum"
+                "Trashed '\(destination.lastPathComponent, privacy: .public)' — it did not match its expected checksum"
             )
         } catch {
             Self.logger.warning(
@@ -569,14 +582,14 @@ final class VMLifecycleCoordinator {
         downloadService.discardResumeData(at: destination, permanently: false)
     }
 
-    /// Attaches a verified installer image ahead of the VM's main disk and
+    /// Attaches the fetched installer image ahead of the VM's main disk and
     /// clears the pending download intent.
     ///
     /// The bookmark is minted without a panel — Downloads is covered by the
     /// downloads entitlement — and it is worth minting because, unlike an IPSW
     /// consumed by an install, this attachment outlives the setup and has to
     /// track the file if the user later moves it.
-    private func attachVerifiedImage(at destination: URL, to instance: VMInstance) {
+    private func attachInstallerImage(at destination: URL, to instance: VMInstance) {
         let installer = StorageDisk(
             path: destination.path(percentEncoded: false),
             readOnly: true,
@@ -593,7 +606,7 @@ final class VMLifecycleCoordinator {
             config.linuxInstallContext = nil
         }
         Self.logger.notice(
-            "Attached verified installer image '\(destination.lastPathComponent, privacy: .public)' to '\(instance.name, privacy: .public)'"
+            "Attached installer image '\(destination.lastPathComponent, privacy: .public)' to '\(instance.name, privacy: .public)'"
         )
     }
 

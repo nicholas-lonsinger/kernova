@@ -1,12 +1,16 @@
 import Foundation
 import os
 
-/// Resolves a Linux catalog entry against its mirror, just before downloading.
+/// Resolves a Linux installer image source against its server, just before
+/// downloading — and, for a user-supplied URL, once more in the wizard so the
+/// pick is admitted before it is committed to.
 ///
-/// The manifest is the index: it is fetched, parsed, matched against the
-/// entry's glob, and the newest match is the image — no directory listing is
-/// scraped and no filename is guessed. What comes back carries the mirror's own
-/// SHA-256, which is what the download is verified against.
+/// For a catalog entry the manifest is the index: it is fetched, parsed,
+/// matched against the entry's glob, and the newest match is the image — no
+/// directory listing is scraped and no filename is guessed. What comes back
+/// carries the mirror's own SHA-256, which is what the download is verified
+/// against. A pasted URL names its file outright and carries only the digest
+/// the user typed, so all that is read is the file's length.
 ///
 /// A class rather than a struct so `deinit` can invalidate the `URLSession`, the
 /// same reason `DownloadService` is one.
@@ -92,6 +96,32 @@ final class LinuxImageResolveService: LinuxImageResolving {
         )
         return ResolvedLinuxImage(
             isoURL: isoURL, filename: safeFilename, sha256: sha256, sizeBytes: sizeBytes)
+    }
+
+    func resolve(_ image: CustomLinuxImage) async throws -> ResolvedLinuxImage {
+        let filename = try image.validatedFilename()
+        let sizeBytes: UInt64
+        do {
+            // The digest carries integrity independently of the transport, so
+            // it — and only it — is what admits a plain-`http` link here.
+            sizeBytes = try await sizeProbe.size(
+                of: image.url, allowingHTTP: image.sha256 != nil)
+        } catch {
+            // A cancelled request fails as a transport error, and the caller
+            // that cancelled has no error of its own to report.
+            try Task.checkCancellation()
+            Self.logger.error(
+                "No size for '\(DownloadService.loggableURL(image.url), privacy: .public)': \(String(describing: error), privacy: .public)"
+            )
+            throw (error as? RemoteFileSizeError).map(LinuxImageURLError.init)
+                ?? .transportFailed(description: error.localizedDescription)
+        }
+
+        Self.logger.notice(
+            "Checked the image at \(image.url.host() ?? "?", privacy: .public): '\(filename, privacy: .public)' (\(sizeBytes, privacy: .public) bytes, \(image.sha256 == nil ? "unverified" : "verified", privacy: .public))"
+        )
+        return ResolvedLinuxImage(
+            isoURL: image.url, filename: filename, sha256: image.sha256, sizeBytes: sizeBytes)
     }
 
     // MARK: - HTTP

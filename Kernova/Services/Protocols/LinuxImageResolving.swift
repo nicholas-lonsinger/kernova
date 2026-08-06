@@ -48,10 +48,78 @@ enum LinuxImageResolveError: LocalizedError, Equatable {
     }
 }
 
-/// Abstraction for turning a Linux catalog entry into the image to download.
+/// Why a user-supplied installer image URL was refused.
+///
+/// Separate from ``LinuxImageResolveError`` because every case there states
+/// something about a mirror and its manifest, and none of that exists here: a
+/// pasted URL is refused on what the user typed and what the server answered.
+enum LinuxImageURLError: LocalizedError, Equatable {
+    /// The text is not a URL naming a host.
+    case malformedURL
+    /// The URL's scheme is neither `http` nor `https`.
+    case unsupportedScheme
+    /// A plain-`http` URL with no digest behind it.
+    case insecureURL
+    /// The URL does not end in a filename that can be saved as an ISO.
+    case notAnISOLink
+    /// The supplied digest is not 64 hex characters.
+    case malformedChecksum
+    /// The server answered, but not with the file.
+    case unreachable(statusCode: Int)
+    /// The server would not say how large the file is.
+    case sizeUnavailable
+    /// The request did not complete.
+    case transportFailed(description: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .malformedURL:
+            "That isn't a valid URL. Paste the full link, starting with https://"
+        case .unsupportedScheme:
+            "Installer images can only be downloaded over https:// or http://"
+        case .insecureURL:
+            "Without a SHA-256 checksum, the link has to start with https://"
+        case .notAnISOLink:
+            "That link doesn't end in the name of an .iso file."
+        case .malformedChecksum:
+            "That isn't a SHA-256 checksum. It should be 64 hexadecimal characters."
+        case .unreachable(let statusCode):
+            "Nothing is hosted at that URL (HTTP \(statusCode)). Check the link and try again."
+        case .sizeUnavailable:
+            "That server didn't report the file's size. Try a direct link to the .iso file."
+        case .transportFailed(let description):
+            "Couldn't reach that URL: \(description)"
+        }
+    }
+}
+
+extension LinuxImageURLError {
+    /// States a size read that did not complete in pasted-URL terms.
+    init(_ error: RemoteFileSizeError) {
+        switch error {
+        case .insecureURL: self = .insecureURL
+        case .unreachable(let statusCode): self = .unreachable(statusCode: statusCode)
+        // A server that ignores `Range` leaves the size unread just as surely as
+        // one that states none, and the user's move is the same either way.
+        case .unknownSize, .rangeRequestsUnsupported: self = .sizeUnavailable
+        case .transportFailed(let description): self = .transportFailed(description: description)
+        }
+    }
+}
+
+/// Abstraction for turning a Linux installer image source into the image to
+/// download.
 protocol LinuxImageResolving: Sendable {
     /// The ISO `entry` names right now, with the digest to verify it against.
     ///
     /// Nothing about the answer is cached — see ``LinuxImageCatalogEntry``.
     func resolve(_ entry: LinuxImageCatalogEntry) async throws -> ResolvedLinuxImage
+
+    /// The ISO at `image`'s URL, with the digest the user supplied for it —
+    /// which is `nil` when they supplied none and nothing will be verified.
+    ///
+    /// A fixed URL names one file, so this resolves nothing about *which* image
+    /// to fetch. What it establishes is that the URL is admissible and live, and
+    /// how large the file is, which is the ceiling the transfer is held to.
+    func resolve(_ image: CustomLinuxImage) async throws -> ResolvedLinuxImage
 }

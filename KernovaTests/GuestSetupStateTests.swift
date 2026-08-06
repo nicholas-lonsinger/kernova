@@ -38,7 +38,7 @@ struct GuestSetupStateTests {
 
     @Test("A Linux image download runs Download then Verify")
     func linuxImageSteps() {
-        let state = GuestSetupState.linuxImage()
+        let state = GuestSetupState.linuxImage(hasVerifyStep: true)
 
         #expect(state.steps.map(\.id) == [.download, .verify])
         #expect(state.steps.map(\.label) == ["Download", "Verify"])
@@ -46,11 +46,21 @@ struct GuestSetupStateTests {
         #expect(state.progress == .download(.zero))
     }
 
+    @Test("A Linux image with no digest behind it is the download alone")
+    func linuxImageWithoutVerifyStep() {
+        let state = GuestSetupState.linuxImage(hasVerifyStep: false)
+
+        #expect(state.steps.map(\.id) == [.download])
+        // One step says nothing the progress bar doesn't already.
+        #expect(state.showsStepIndicator == false)
+        #expect(state.progress == .download(.zero))
+    }
+
     // MARK: - Step transitions
 
     @Test("Advancing completes the finished step and activates the next")
     func advanceMovesTheActiveStep() {
-        var state = GuestSetupState.linuxImage()
+        var state = GuestSetupState.linuxImage(hasVerifyStep: true)
 
         state.advance(progress: .fraction(0))
 

@@ -66,6 +66,9 @@ enum LinuxImageSelection: Sendable, Equatable {
     /// A distribution from the bundled catalog. Nothing is on disk yet — the
     /// image is resolved and downloaded after the VM is created.
     case catalogEntry(LinuxImageCatalogEntry)
+    /// An ISO at a URL the user supplied, as the wizard's check left it: the
+    /// size is what that check read, and is shown rather than persisted.
+    case customURL(ResolvedLinuxImage)
     /// An ISO already on this Mac, with the grant minted for it at pick time.
     case localISO(path: String, bookmark: Data?)
 }
@@ -95,18 +98,25 @@ final class VMCreationViewModel {
     /// Backs the Linux "Choose a Distribution…" picker.
     let linuxCatalogService: any LinuxImageCatalogProviding
 
+    /// Backs the Linux "Image URL…" sheet's pre-download check — the same
+    /// service the install pipeline resolves through, so a URL is admitted on
+    /// one set of rules at both ends.
+    let linuxImageResolveService: any LinuxImageResolving
+
     init(
         catalogService: any RestoreImageCatalogProviding = RestoreImageCatalogService(),
         probeService: any RestoreImageProbing = RestoreImageProbeService(),
         localImageInspector: any LocalRestoreImageInspecting = LocalRestoreImageInspector(),
         ipswService: any IPSWProviding = IPSWService(),
-        linuxCatalogService: any LinuxImageCatalogProviding = LinuxImageCatalogService()
+        linuxCatalogService: any LinuxImageCatalogProviding = LinuxImageCatalogService(),
+        linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService()
     ) {
         self.catalogService = catalogService
         self.probeService = probeService
         self.localImageInspector = localImageInspector
         self.ipswService = ipswService
         self.linuxCatalogService = linuxCatalogService
+        self.linuxImageResolveService = linuxImageResolveService
     }
 
     // MARK: - Wizard State
@@ -202,7 +212,7 @@ final class VMCreationViewModel {
                 return "Resolve the file conflict above to continue."
             case .linux:
                 switch selectedBootMode {
-                case .efi: return "Select an ISO image or distribution to continue."
+                case .efi: return "Select an installer image to continue."
                 case .linuxKernel: return "Select a kernel image to continue."
                 case .macOS: return "Invalid boot configuration."
                 }
@@ -306,8 +316,8 @@ final class VMCreationViewModel {
     /// The Downloads path for a given image filename.
     ///
     /// `filename` must be one path component: callers derive it through
-    /// ``RestoreImageFilename``, which is what keeps a URL-supplied name from
-    /// walking out of Downloads.
+    /// ``SafeFilename``, which is what keeps a URL-supplied name from walking
+    /// out of Downloads.
     static func downloadPath(forFilename filename: String) -> String {
         downloadsDirectory.appendingPathComponent(filename).path(percentEncoded: false)
     }
@@ -362,6 +372,12 @@ final class VMCreationViewModel {
     /// resolved and fetched once the VM exists.
     func selectLinuxCatalogEntry(_ entry: LinuxImageCatalogEntry) {
         linuxSelection = .catalogEntry(entry)
+    }
+
+    /// Commits a checked URL, on the same "downloaded after the VM exists"
+    /// terms as a catalog pick.
+    func selectLinuxCustomURL(_ image: ResolvedLinuxImage) {
+        linuxSelection = .customURL(image)
     }
 
     /// Commits a panel-picked ISO together with the grant minted for it, which
@@ -472,16 +488,31 @@ final class VMCreationViewModel {
         }
     }
 
-    /// Snapshots a Linux catalog pick into a persistable
-    /// `LinuxInstallContext`, or `nil` when nothing is to be downloaded.
+    /// Snapshots a Linux image pick that has still to be downloaded into a
+    /// persistable `LinuxInstallContext`, or `nil` when nothing is.
     ///
     /// A local ISO is already on disk and goes straight into `storageDisks`;
-    /// only a catalog pick leaves work for the post-create pipeline. No
-    /// destination yet: the mirror names the file, and only a resolution just
-    /// before the download can say what that name is.
+    /// the two download sources leave work for the post-create pipeline. Gated
+    /// on the EFI boot mode alongside its siblings in ``buildConfiguration()``,
+    /// so a pick made under EFI does not follow a switch to Linux-kernel boot
+    /// onto a VM that never boots an installer.
+    ///
+    /// A catalog pick gets no destination: the mirror names the file, and only
+    /// a resolution just before the download can say what that name is. A URL
+    /// names its own file, so its destination is known here.
     func buildLinuxInstallContext() -> LinuxInstallContext? {
-        guard case .catalogEntry(let entry) = linuxSelection else { return nil }
-        return LinuxInstallContext(entry: entry)
+        guard selectedBootMode == .efi else { return nil }
+        switch linuxSelection {
+        case .catalogEntry(let entry):
+            return LinuxInstallContext(source: .catalogEntry(entry))
+        case .customURL(let image):
+            return LinuxInstallContext(
+                source: .customURL(
+                    CustomLinuxImage(url: image.isoURL, sha256: image.sha256)),
+                downloadDestinationPath: Self.downloadPath(forFilename: image.filename))
+        case .localISO, nil:
+            return nil
+        }
     }
 
     /// Whether the user confirmed overwriting the destination the wizard is

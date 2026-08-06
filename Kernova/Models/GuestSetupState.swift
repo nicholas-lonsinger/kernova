@@ -113,10 +113,18 @@ struct GuestSetupState: Sendable, Equatable {
             progress: .download(.zero))
     }
 
-    /// A Linux installer image: fetched from its mirror, then checked against
-    /// the digest that mirror published for it.
-    static func linuxImage() -> GuestSetupState {
-        GuestSetupState(
+    /// A Linux installer image: fetched from where it is served, then checked
+    /// against the digest published or supplied for it.
+    ///
+    /// A user-supplied URL can carry no digest, and there is then nothing to
+    /// verify — the fetch is the whole flow.
+    static func linuxImage(hasVerifyStep: Bool) -> GuestSetupState {
+        guard hasVerifyStep else {
+            return GuestSetupState(
+                steps: [SetupStep(id: .download, label: "Download")],
+                progress: .download(.zero))
+        }
+        return GuestSetupState(
             steps: [
                 SetupStep(id: .download, label: "Download"),
                 SetupStep(id: .verify, label: "Verify"),

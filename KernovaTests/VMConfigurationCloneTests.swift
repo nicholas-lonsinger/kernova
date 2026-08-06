@@ -312,7 +312,7 @@ struct VMConfigurationCloneTests {
         macOS.installContext = MacOSInstallContext(
             source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
         var linux = makeConfig()
-        linux.linuxInstallContext = LinuxInstallContext(entry: makeLinuxCatalogEntry())
+        linux.linuxInstallContext = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
 
         #expect(macOS.clonedForNewInstance(existingNames: []).installContext == nil)
         #expect(linux.clonedForNewInstance(existingNames: []).linuxInstallContext == nil)

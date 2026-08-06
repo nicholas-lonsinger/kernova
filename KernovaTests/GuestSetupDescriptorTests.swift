@@ -46,10 +46,9 @@ struct GuestSetupDescriptorTests {
 
     // MARK: - Linux image
 
-    @Test("A Linux image names the distribution it is fetching")
+    @Test("A Linux image names the image it is fetching")
     func linuxChrome() {
-        let descriptor = GuestSetupDescriptor.linuxImage(
-            distribution: "Ubuntu Desktop", version: "26.04 LTS")
+        let descriptor = GuestSetupDescriptor.linuxImage(named: "Ubuntu Desktop 26.04 LTS")
 
         #expect(descriptor.title == "Downloading Ubuntu Desktop 26.04 LTS")
         #expect(descriptor.icon == .symbol("opticaldisc"))
@@ -59,7 +58,7 @@ struct GuestSetupDescriptorTests {
 
     @Test("A cancelled Linux download keeps its partial bytes, and a cancelled check keeps the file")
     func linuxCancelCopy() {
-        let descriptor = GuestSetupDescriptor.linuxImage(distribution: "Debian", version: "13")
+        let descriptor = GuestSetupDescriptor.linuxImage(named: "Debian 13")
 
         let download = descriptor.copy(for: .download).cancelPrompt
         #expect(download.title == "Cancel Download?")
@@ -86,7 +85,7 @@ struct GuestSetupDescriptorTests {
             configuration: {
                 var config = VMConfiguration(name: "Debian", guestOS: .linux, bootMode: .efi)
                 config.linuxInstallContext = LinuxInstallContext(
-                    entry: makeLinuxCatalogEntry(distribution: "Debian", version: "13"))
+                    source: .catalogEntry(makeLinuxCatalogEntry(distribution: "Debian", version: "13")))
                 return config
             }(),
             bundleURL: FileManager.default.temporaryDirectory.appendingPathComponent("linux"))
@@ -102,6 +101,25 @@ struct GuestSetupDescriptorTests {
         #expect(GuestSetupDescriptor.forSetup(of: macOS).title == "Installing macOS")
     }
 
+    @Test("A URL pick's setup is titled with the file it is fetching")
+    func descriptorNamesAPastedImage() {
+        let instance = VMInstance(
+            configuration: {
+                var config = VMConfiguration(name: "Alpine", guestOS: .linux, bootMode: .efi)
+                config.linuxInstallContext = LinuxInstallContext(
+                    source: .customURL(
+                        CustomLinuxImage(
+                            url: URL(string: "https://mirror.example/alpine-3.22-aarch64.iso")!,
+                            sha256: nil)))
+                return config
+            }(),
+            bundleURL: FileManager.default.temporaryDirectory.appendingPathComponent("alpine"))
+
+        #expect(
+            GuestSetupDescriptor.forSetup(of: instance).title
+                == "Downloading alpine-3.22-aarch64.iso")
+    }
+
     // MARK: - Steps and copy agree
 
     @Test("Every step each flow runs has copy of its own")
@@ -111,8 +129,8 @@ struct GuestSetupDescriptorTests {
         for step in GuestSetupState.macOSInstall(hasDownloadStep: true).steps {
             #expect(GuestSetupDescriptor.macOSInstall.stepCopy[step.id] != nil)
         }
-        let linux = GuestSetupDescriptor.linuxImage(distribution: "Debian", version: "13")
-        for step in GuestSetupState.linuxImage().steps {
+        let linux = GuestSetupDescriptor.linuxImage(named: "Debian 13")
+        for step in GuestSetupState.linuxImage(hasVerifyStep: true).steps {
             #expect(linux.stepCopy[step.id] != nil)
         }
     }

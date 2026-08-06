@@ -24,6 +24,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
     /// Where the EFI installer image comes from, one radio each.
     private enum ImageSource: Hashable {
         case catalog
+        case customURL
         case localISO
     }
 
@@ -122,14 +123,20 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
             ]))
     }
 
-    /// Renders the two EFI image sources and, once one has been picked, a badge
-    /// naming what it is.
+    /// Renders the three EFI image sources and, once one has been picked, a
+    /// badge naming what it is.
     private func addImageSection() {
         let catalogOption = makeSourceRadio(
             for: .catalog,
             symbol: "list.bullet",
             title: "Choose a Distribution…",
             description: "Download a Linux installer image after the virtual machine is created."
+        )
+        let urlOption = makeSourceRadio(
+            for: .customURL,
+            symbol: "link",
+            title: "Image URL…",
+            description: "Download an installer image from a link you supply."
         )
         let localOption = makeSourceRadio(
             for: .localISO,
@@ -138,7 +145,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
             description: "Boot an ISO image already on your Mac."
         )
 
-        let options = NSStackView(views: [catalogOption, localOption])
+        let options = NSStackView(views: [catalogOption, urlOption, localOption])
         options.orientation = .vertical
         options.alignment = .leading
         options.spacing = Spacing.large
@@ -158,6 +165,25 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
                     trailingButton: makeLinkButton(
                         "Change…", target: self, action: #selector(changeDistribution))
                 ))
+        case .customURL(let image):
+            conditionalContainer.addArrangedSubview(
+                makeWizardBadge(
+                    symbolName: "link",
+                    text: [
+                        image.filename, DataFormatters.formatBytes(image.sizeBytes),
+                        wizardVerificationSummary(sha256: image.sha256),
+                    ].joined(separator: "  ·  "),
+                    trailingButton: makeLinkButton(
+                        "Change…", target: self, action: #selector(changeImageURL))
+                ))
+            if image.sha256 == nil {
+                addFullWidth(
+                    makeGroupedFormBanner(
+                        symbolName: "exclamationmark.triangle.fill",
+                        tint: .systemYellow,
+                        message: "This download won't be verified. Choose a host you trust."
+                    ))
+            }
         case .localISO(let path, _):
             conditionalContainer.addArrangedSubview(
                 makeWizardPathBadge(
@@ -184,6 +210,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
     private var currentImageSource: ImageSource? {
         switch creationVM.linuxSelection {
         case .catalogEntry: .catalog
+        case .customURL: .customURL
         case .localISO: .localISO
         case nil: nil
         }
@@ -193,6 +220,12 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
     private var selectedCatalogID: String? {
         guard case .catalogEntry(let entry) = creationVM.linuxSelection else { return nil }
         return entry.id
+    }
+
+    /// The URL and checksum the URL sheet re-opens on, from the current pick.
+    private var selectedCustomImage: ResolvedLinuxImage? {
+        guard case .customURL(let image) = creationVM.linuxSelection else { return nil }
+        return image
     }
 
     /// Adds an arranged subview to the conditional container and pins its width
@@ -249,12 +282,17 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         rebuildConditional()
         switch source {
         case .catalog: chooseDistribution()
+        case .customURL: chooseImageURL()
         case .localISO: browseISO()
         }
     }
 
     @objc private func changeDistribution() {
         chooseDistribution()
+    }
+
+    @objc private func changeImageURL() {
+        chooseImageURL()
     }
 
     @objc private func changeISOFile() {
@@ -268,6 +306,19 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
             entries: creationVM.linuxCatalogService.entries,
             selectedID: selectedCatalogID,
             generatedAt: creationVM.linuxCatalogService.generatedAt
+        )
+        sheet.delegate = self
+        catalogSheetPresenter.show(content: sheet, in: window)
+    }
+
+    /// Opens the nested URL sheet, seeded with the current pick.
+    private func chooseImageURL() {
+        guard let window = view.window, !catalogSheetPresenter.isShown else { return }
+        let current = selectedCustomImage
+        let sheet = LinuxImageURLSheetContentViewController(
+            resolveService: creationVM.linuxImageResolveService,
+            initialURL: current?.isoURL.absoluteString,
+            initialChecksum: current?.sha256
         )
         sheet.delegate = self
         catalogSheetPresenter.show(content: sheet, in: window)
@@ -340,6 +391,25 @@ extension BootConfigContentViewController: LinuxImageCatalogSheetContentViewCont
     ) {
         // The model was never touched, so the radios already show the source
         // that was selected before the picker opened.
+        catalogSheetPresenter.close()
+    }
+}
+
+// MARK: - LinuxImageURLSheetContentViewControllerDelegate
+
+extension BootConfigContentViewController: LinuxImageURLSheetContentViewControllerDelegate {
+    func linuxImageURLSheet(
+        _ vc: LinuxImageURLSheetContentViewController,
+        didChoose image: ResolvedLinuxImage
+    ) {
+        catalogSheetPresenter.close()
+        creationVM.selectLinuxCustomURL(image)
+        rebuildConditional()
+    }
+
+    func linuxImageURLSheetDidCancel(
+        _ vc: LinuxImageURLSheetContentViewController
+    ) {
         catalogSheetPresenter.close()
     }
 }

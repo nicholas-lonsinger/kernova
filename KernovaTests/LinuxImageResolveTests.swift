@@ -576,4 +576,99 @@ struct LinuxImageResolveServiceTests {
             ResolveStubURLProtocol.requestedURLs.last?.lastPathComponent
                 == "ubuntu-24.04.4-desktop-arm64.iso")
     }
+
+    // MARK: - A user-supplied URL
+
+    /// Answers every request with `statusCode` and a stated `size`.
+    private func serveISO(statusCode: Int = 200, size: Int = 1_073_741_824) {
+        ResolveStubURLProtocol.reset()
+        ResolveStubURLProtocol.handler = { _ in
+            ResolveStubURLProtocol.Reply(
+                statusCode: statusCode, body: Data(), headers: ["Content-Length": "\(size)"])
+        }
+    }
+
+    @Test("A pasted URL resolves to itself, its filename and the size the server states")
+    func resolvesPastedURL() async throws {
+        serveISO()
+        defer { ResolveStubURLProtocol.reset() }
+        let digest = String(repeating: "a", count: 64)
+        let pasted = try CustomLinuxImage.make(
+            urlText: "https://mirror.example/alpine-3.22-aarch64.iso", checksumText: digest)
+
+        let image = try await makeService().resolve(pasted)
+
+        #expect(image.isoURL == pasted.url)
+        #expect(image.filename == "alpine-3.22-aarch64.iso")
+        #expect(image.sha256 == digest)
+        #expect(image.sizeBytes == 1_073_741_824)
+        // No manifest is read: the URL names the file outright.
+        #expect(ResolveStubURLProtocol.requestedURLs.allSatisfy { $0 == pasted.url })
+    }
+
+    @Test("A pasted URL with no checksum resolves with nothing to verify against")
+    func resolvesUnverifiedPastedURL() async throws {
+        serveISO()
+        defer { ResolveStubURLProtocol.reset() }
+
+        let image = try await makeService().resolve(
+            try CustomLinuxImage.make(
+                urlText: "https://mirror.example/alpine-3.22-aarch64.iso", checksumText: ""))
+
+        #expect(image.sha256 == nil)
+    }
+
+    @Test("A plain-HTTP URL is contacted only when a checksum stands behind it")
+    func httpFollowsTheChecksum() async throws {
+        serveISO()
+        defer { ResolveStubURLProtocol.reset() }
+        let url = URL(string: "http://mirror.example/alpine-3.22-aarch64.iso")!
+
+        let image = try await makeService().resolve(
+            CustomLinuxImage(url: url, sha256: String(repeating: "b", count: 64)))
+        #expect(image.sizeBytes == 1_073_741_824)
+
+        // The same URL with the digest edited away — the probe's HTTPS refusal
+        // is what stops it, before a request is issued.
+        ResolveStubURLProtocol.reset()
+        ResolveStubURLProtocol.handler = { _ in
+            ResolveStubURLProtocol.Reply(statusCode: 200, body: Data())
+        }
+        await #expect(throws: LinuxImageURLError.insecureURL) {
+            _ = try await makeService().resolve(CustomLinuxImage(url: url, sha256: nil))
+        }
+        #expect(ResolveStubURLProtocol.requestedURLs.isEmpty)
+    }
+
+    @Test("A URL nothing is hosted at is reported with its status")
+    func reportsUnreachablePastedURL() async {
+        serveISO(statusCode: 404)
+        defer { ResolveStubURLProtocol.reset() }
+
+        await #expect(throws: LinuxImageURLError.unreachable(statusCode: 404)) {
+            _ = try await makeService().resolve(
+                CustomLinuxImage(
+                    url: URL(string: "https://mirror.example/alpine-3.22-aarch64.iso")!,
+                    sha256: nil))
+        }
+    }
+
+    @Test("A server that states no size leaves the transfer unbounded, so it is refused")
+    func refusesPastedURLWithoutSize() async {
+        ResolveStubURLProtocol.reset()
+        ResolveStubURLProtocol.handler = { request in
+            // HEAD refused, and the ranged GET answers 200 — the whole file,
+            // which is neither a size nor something to read.
+            ResolveStubURLProtocol.Reply(
+                statusCode: request.httpMethod == "HEAD" ? 405 : 200, body: Data())
+        }
+        defer { ResolveStubURLProtocol.reset() }
+
+        await #expect(throws: LinuxImageURLError.sizeUnavailable) {
+            _ = try await makeService().resolve(
+                CustomLinuxImage(
+                    url: URL(string: "https://mirror.example/alpine-3.22-aarch64.iso")!,
+                    sha256: nil))
+        }
+    }
 }
