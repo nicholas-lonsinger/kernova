@@ -421,6 +421,10 @@ final class VsockClipboardService: ClipboardServicing {
         retireUnreferencedDropDirectories()
     }
 
+    func reportIssue(_ issue: ClipboardTransferIssue) {
+        lastTransferIssue = issue
+    }
+
     func reserveDropDestination() -> URL? {
         let generation = nextDropGeneration
         nextDropGeneration += 1
@@ -895,14 +899,16 @@ final class VsockClipboardService: ClipboardServicing {
     }
 
     /// A representation excluded from the receive side without reading a byte: a
-    /// transient-marker / raw file-url UTI, or an empty payload.
+    /// transient-marker / raw file-url UTI, or an inline payload with no bytes.
     ///
-    /// A directory rep is exempt from the empty-payload skip: its `byte_count` is
-    /// an estimate of the tree's file bytes (`kernova.proto`), which a tree of
-    /// empty files, bare subdirectories, or nothing at all makes 0 while the
-    /// archive still carries the tree.
+    /// The empty-payload skip is keyed on the *filename*, so it reaches only
+    /// inline reps. A named rep is a file the paste creates, and an empty file is
+    /// content native macOS copies; a folder's `byte_count` is an estimate of the
+    /// tree's file bytes (`kernova.proto`), which a tree of empty files, bare
+    /// subdirectories, or nothing at all makes 0 while the archive still carries
+    /// the tree.
     private static func shouldSkip(_ info: Kernova_V1_ClipboardRepresentationInfo) -> Bool {
-        (info.byteCount == 0 && !info.isDirectory)
+        (info.byteCount == 0 && info.filename.isEmpty)
             || ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: info.uti)
     }
 

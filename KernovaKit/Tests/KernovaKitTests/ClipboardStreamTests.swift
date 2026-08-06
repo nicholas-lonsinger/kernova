@@ -118,6 +118,59 @@ struct ClipboardStreamTests {
         }
     }
 
+    @Test("a zero-byte file payload round-trips: Begin, no chunks, the empty-input digest")
+    func zeroByteFileRoundTrip() async throws {
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+
+        let source = try tempFile(bytes: Data())
+        defer { try? FileManager.default.removeItem(at: source) }
+        let rep = ClipboardContent.Representation(
+            uti: "public.data", fileURL: source, byteCount: 0, filename: "empty.bin")
+
+        harness.sender.startTransfer(
+            transferID: 3, generation: 1, representation: rep, maxAcceptByteCount: .max,
+            isInline: false, isCurrent: { _ in true })
+
+        try await harness.collector.gate.wait { harness.collector.representation(3) != nil }
+        let received = try #require(harness.collector.representation(3))
+        let url = try #require(received.fileURL)
+        #expect(try Data(contentsOf: url).isEmpty)
+        #expect(received.byteCount == 0)
+        #expect(received.filename == "empty.bin")
+        if case .file(_, _, let sha256) = received.source {
+            #expect(sha256 == Data(SHA256.hash(data: Data())))
+        } else {
+            Issue.record("Expected a .file representation")
+        }
+        #expect(harness.collector.abortCount == 0)
+    }
+
+    @Test("a superseded zero-byte transfer delivers nothing and tells the peer")
+    func supersededZeroByteTransferDeliversNothing() async throws {
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+
+        let source = try tempFile(bytes: Data())
+        defer { try? FileManager.default.removeItem(at: source) }
+        let rep = ClipboardContent.Representation(
+            uti: "public.data", fileURL: source, byteCount: 0, filename: "empty.bin")
+
+        // Every abort and supersession check used to sit inside the chunk loop,
+        // which a zero-byte payload never enters — so an already-retired empty
+        // transfer streamed and reported success anyway. `isCurrent` false at
+        // run time is the deterministic stand-in for a newer copy landing in
+        // the gap between registration and this transfer's queue.
+        harness.sender.startTransfer(
+            transferID: 4, generation: 1, representation: rep, maxAcceptByteCount: .max,
+            isInline: false, isCurrent: { _ in false })
+
+        try await harness.collector.gate.wait { harness.collector.abortCount == 1 }
+        #expect(harness.collector.abortInfos.first?.code == "superseded")
+        #expect(harness.collector.representation(4) == nil)
+        #expect(harness.collector.completedCount == 0)
+    }
+
     @Test("completed transfers report timing metrics for the throughput log line")
     func completedTransfersReportTimingMetrics() async throws {
         let harness = try roomyHarness()

@@ -619,7 +619,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                     "Too large to paste into the guest — over the \(ClipboardPasteLimit.displayLimit(instance.effectiveClipboardMaxPasteBytes)) clipboard transfer limit"
             case .pasteTimeout:
                 return "The clipboard transfer to the guest timed out"
-            case .pasteFailed, .copyTooLarge, .pasteIncompleteSet, .none:
+            case .pasteFailed, .copyTooLarge, .pasteIncompleteSet, .forwardItemsSkipped, .none:
                 return "Clipboard transfer failed on the guest side"
             }
         case .localFailure(_, let message):

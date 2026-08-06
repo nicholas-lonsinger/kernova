@@ -124,6 +124,16 @@ extension ClipboardTransferIssue {
             date: Date())
     }
 
+    /// Raised when an automatic passthrough forward left unreadable items out of
+    /// the offer; `note` is the intake's own wording, the same sentence the
+    /// window's own paste/drop gestures show inline.
+    static func forwardSkippedItems(note: String) -> ClipboardTransferIssue {
+        ClipboardTransferIssue(
+            kind: .localFailure(
+                code: ClipboardErrorCode.forwardItemsSkipped.rawValue, message: note),
+            date: Date())
+    }
+
     /// Raised when a copied file's bytes arrived but could not be written to a
     /// file on this Mac for the paste to serve.
     static func pasteFileStagingFailed() -> ClipboardTransferIssue {

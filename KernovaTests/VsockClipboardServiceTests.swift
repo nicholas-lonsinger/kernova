@@ -2475,6 +2475,39 @@ struct VsockClipboardServiceTests {
         #expect(try Data(contentsOf: #require(secondURL)) == bBytes)
     }
 
+    @Test("a promised zero-byte file rep pastes as a real empty file")
+    func copyPromisedZeroByteFilePastes() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // The whole stream path survives at zero bytes: Begin, no chunks, End
+        // carrying the empty-input SHA-256.
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 47, repIndex: 0, uti: "public.data", bytes: Data(), filename: "empty.bin",
+            isInline: false)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 47,
+                reps: [(uti: "public.data", byteCount: 0, filename: "empty.bin", isInline: false)]))
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
+        #expect(service.materializeForCopy().promised.map(\.repIndex) == [0])
+
+        let url = try #require(
+            await offCooperativePool { service.copyToMacFileURL(generation: 47, repIndex: 0) })
+        #expect(url.lastPathComponent == "empty.bin")
+        #expect(try Data(contentsOf: url).isEmpty)
+    }
+
     @Test("a paste-time fire refuses the whole over-budget file set — no piecemeal pastes")
     func copyPasteTimeRefusesOverTotal() async throws {
         let (guest, host) = try makePair()
@@ -3824,8 +3857,8 @@ struct VsockClipboardServiceTests {
         #expect(!reps.contains { $0.uti == "public.file-url" })
     }
 
-    @Test("a zero-byte rep that is not a directory is still filtered from the placeholders")
-    func offerFiltersZeroByteNonDirectoryRep() async throws {
+    @Test("a zero-byte file rep survives the placeholder filter and is promised")
+    func offerKeepsZeroByteFileRep() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -3835,13 +3868,42 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        // The empty-payload skip still holds for everything but a directory: a
-        // zero-byte file rep carries nothing a paste could serve.
+        // An empty file is content a native Mac-to-Mac copy carries, so it is a
+        // rep like any other: the empty-payload skip reaches only *inline* reps.
         try guest.send(
             makeOffer(
                 generation: 33,
                 reps: [
                     (uti: "public.png", byteCount: 0, filename: "nothing.png", isInline: false),
+                    (uti: "public.png", byteCount: 1024, filename: "shot.png", isInline: false),
+                ]))
+
+        try await waitForChange {
+            service.clipboardContent.representations.map(\.filename)
+                == ["nothing.png", "shot.png"]
+        }
+        #expect(service.clipboardContent.representations[0].byteCount == 0)
+        #expect(service.materializeForCopy().promised.map(\.repIndex) == [0, 1])
+    }
+
+    @Test("a zero-byte rep with no filename is still filtered from the placeholders")
+    func offerFiltersZeroByteInlineRep() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // No filename means no file for a paste to create, so a byte-less rep is
+        // an empty pasteboard flavor and carries nothing.
+        try guest.send(
+            makeOffer(
+                generation: 33,
+                reps: [
+                    (uti: "public.png", byteCount: 0, filename: "", isInline: true),
                     (uti: "public.png", byteCount: 1024, filename: "shot.png", isInline: false),
                 ]))
 
@@ -3874,13 +3936,13 @@ struct VsockClipboardServiceTests {
         service.clipboardContent = shown
 
         // Every rep of the guest's offer is filtered — an identity-skip type and a
-        // zero-byte non-directory rep.
+        // byte-less inline rep.
         try guest.send(
             makeOffer(
                 generation: 41,
                 reps: [
                     (uti: "org.nspasteboard.TransientType", byteCount: 4, filename: "", isInline: true),
-                    (uti: "public.png", byteCount: 0, filename: "nothing.png", isInline: false),
+                    (uti: "public.png", byteCount: 0, filename: "", isInline: true),
                 ]))
         // Barrier: an error frame after the offer; once it surfaces, handleOffer ran.
         try guest.sendErrorFrame(

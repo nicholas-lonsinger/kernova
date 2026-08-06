@@ -402,6 +402,51 @@ struct VsockGuestClipboardAgentTests {
         #expect(transfer.end.sha256 == Data(SHA256.hash(data: contents)))
     }
 
+    @Test("outbound copied zero-byte file: offered and streamed as an empty payload")
+    func outboundCopiedZeroByteFileOfferAndStream() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // Finder copies an empty file, so the guest offers one: the stat gate
+        // keeps the rep at `byteCount == 0` rather than dropping it.
+        let url = try writeTempFile(name: "empty.bin", data: Data())
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        pasteboard.setItem([(type: .fileURL, data: Data(url.absoluteString.utf8))])
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let offerFrame = try await nextFrame(from: hostChannel)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            throw TestFailure("Expected ClipboardOffer, got \(String(describing: offerFrame.payload))")
+        }
+        let info = try #require(offer.repInfo.first)
+        #expect(offer.repInfo.count == 1)
+        #expect(info.byteCount == 0)
+        #expect(info.filename == "empty.bin")
+        #expect(!info.isInline)
+
+        // The whole stream path survives at zero bytes: Begin, no chunks, End
+        // carrying the empty-input SHA-256.
+        let transferID: UInt64 = (offer.generation << 16) | 0
+        try hostChannel.send(
+            makeRequestFrame(
+                generation: offer.generation, transferID: transferID, uti: info.uti))
+
+        let transfer = try await collectOutboundTransfer(
+            transferID: transferID, from: hostChannel)
+        #expect(transfer.begin.totalBytes == 0)
+        #expect(transfer.begin.filename == "empty.bin")
+        #expect(transfer.bytes.isEmpty)
+        #expect(transfer.end.sha256 == Data(SHA256.hash(data: Data())))
+    }
+
     @Test("serving a host pull publishes an outbound readout, cleared at the terminal")
     func outboundPullPublishesProgress() async throws {
         let pasteboard = FakePasteboard()
@@ -1743,8 +1788,8 @@ struct VsockGuestClipboardAgentTests {
         try await expectNoRequest(from: hostChannel)
     }
 
-    @Test("an inbound zero-byte rep that is not a directory is never promised")
-    func inboundZeroByteNonDirectoryRepIsNotPromised() async throws {
+    @Test("an inbound zero-byte file rep is promised and pastes as a real empty file")
+    func inboundZeroByteFileRepPastesAnEmptyFile() async throws {
         let pasteboard = FakePasteboard()
         let (agentFd, remoteFd) = try makeRawSocketPair()
         let hostChannel = VsockChannel(fileDescriptor: remoteFd)
@@ -1755,15 +1800,49 @@ struct VsockGuestClipboardAgentTests {
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
-        // The empty-payload skip still holds for everything but a directory: a
-        // zero-byte file rep carries nothing a paste could serve.
+        // An empty file is content a native Mac-to-Mac copy carries, so it is a
+        // rep like any other: the empty-payload skip reaches only *inline* reps.
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
         try hostChannel.send(
             makeOfferFrame(
                 generation: 19,
                 reps: [
-                    RepInfo(
-                        uti: UTType.png.identifier, byteCount: 0, filename: "nothing.png",
-                        isInline: false),
+                    RepInfo(uti: txtUTI, byteCount: 0, filename: "empty.txt", isInline: false)
+                ]))
+
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        try await driveInboundStream(
+            generation: 19, uti: txtUTI, filename: "empty.txt", payload: Data(), isInline: false,
+            on: hostChannel)
+        let urlData = await pull.value
+        let staged = try #require(
+            urlData.flatMap { String(data: $0, encoding: .utf8) }
+                .flatMap(URL.init(string:)))
+        #expect(staged.lastPathComponent == "empty.txt")
+        #expect(try Data(contentsOf: staged).isEmpty)
+    }
+
+    @Test("an inbound zero-byte rep with no filename is never promised")
+    func inboundZeroByteInlineRepIsNotPromised() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // No filename means no file for a paste to create, so a byte-less rep is
+        // an empty pasteboard flavor and carries nothing.
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 19,
+                reps: [
+                    RepInfo(uti: UTType.png.identifier, byteCount: 0, isInline: true),
                     .text("keep"),
                 ]))
 

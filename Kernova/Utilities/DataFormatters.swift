@@ -5,6 +5,11 @@ enum DataFormatters {
     private nonisolated(unsafe) static let byteFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
+        // `allowsNonnumericFormatting` governs the zero case alone, rendering it
+        // "Zero KB"; every other value formats identically either way. An empty
+        // file crosses the clipboard, so its size reads "0 bytes" — the unit
+        // Finder's own Get Info uses for one.
+        formatter.allowsNonnumericFormatting = false
         return formatter
     }()
 

@@ -640,30 +640,43 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// Cheap main-queue metadata check for copied *files and folders*, one per
     /// pasteboard item.
     ///
-    /// A directory is not gated on size (its inode `.fileSize` is meaningless).
-    /// An item inside our own staging root (materialized from a prior inbound
-    /// paste) is skipped so it can't be offered back to the host.
+    /// Size gates nothing: a directory's inode `.fileSize` is meaningless, and a
+    /// zero-byte file is content native macOS copies. An item inside our own
+    /// staging root (materialized from a prior inbound paste) is skipped so it
+    /// can't be offered back to the host — that one is by design, so only the
+    /// unreadable items below are counted and logged.
     private func fileExpansionCandidates() -> [FileCandidate] {
         var candidates: [FileCandidate] = []
+        var unreadable = 0
         for url in pasteboard.itemFileURLs where !staging.isInStagingRoot(url) {
             guard
                 let values = try? url.resourceValues(forKeys: [
                     .contentTypeKey, .isDirectoryKey, .fileSizeKey,
                 ])
-            else { continue }
+            else {
+                unreadable += 1
+                continue
+            }
             if values.isDirectory == true {
                 candidates.append(
                     FileCandidate(
                         url: url, type: values.contentType ?? .folder,
                         filename: url.lastPathComponent, byteCount: 0, isDirectory: true))
             } else {
-                guard let type = values.contentType, let size = values.fileSize, size > 0
-                else { continue }
+                guard let type = values.contentType, let size = values.fileSize else {
+                    unreadable += 1
+                    continue
+                }
                 candidates.append(
                     FileCandidate(
                         url: url, type: type, filename: url.lastPathComponent, byteCount: size,
                         isDirectory: false))
             }
+        }
+        if unreadable > 0 {
+            Self.logger.warning(
+                "Skipped \(unreadable, privacy: .public) unreadable copied item(s) — not offered to the host"
+            )
         }
         return candidates
     }
@@ -1323,15 +1336,17 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// sanitization gate.
     ///
     /// An identity-skip type (transient marker, raw `public.file-url` smuggle) or
-    /// an empty payload is never surfaced, and a `provideData` pull can only
-    /// reach a rep this gate kept.
+    /// an inline payload with no bytes is never surfaced, and a `provideData`
+    /// pull can only reach a rep this gate kept.
     ///
-    /// A directory rep is exempt from the empty-payload skip: its `byte_count` is
-    /// an estimate of the tree's file bytes (`kernova.proto`), which a tree of
-    /// empty files, bare subdirectories, or nothing at all makes 0 while the
-    /// archive still carries the tree.
+    /// The empty-payload skip is keyed on the *filename*, so it reaches only
+    /// inline reps. A named rep is a file the paste creates, and an empty file is
+    /// content native macOS copies; a folder's `byte_count` is an estimate of the
+    /// tree's file bytes (`kernova.proto`), which a tree of empty files, bare
+    /// subdirectories, or nothing at all makes 0 while the archive still carries
+    /// the tree.
     private static func isPromisable(_ info: Kernova_V1_ClipboardRepresentationInfo) -> Bool {
-        (info.byteCount != 0 || info.isDirectory)
+        (info.byteCount != 0 || !info.filename.isEmpty)
             && !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: info.uti)
     }
 
