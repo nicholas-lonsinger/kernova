@@ -445,33 +445,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         }
     }
 
-    // MARK: - Hot-Toggleable Fields
-
-    /// Fields the user may edit while the VM is running.
-    ///
-    /// Changes to these bypass the read-only settings lock. Entries need not
-    /// have a guest-side effect — `applyLivePolicy` checks the fields it pushes
-    /// to the guest directly rather than iterating this list.
-    static let hotToggleFields: [KeyPath<VMConfiguration, Bool> & Sendable] = [
-        \.agentLogForwardingEnabled,
-        \.clipboardSharingEnabled,
-        \.clipboardPassthroughEnabled,
-        \.serialSocketRelayEnabled,
-        \.agentInstallNudgeDismissed,
-        \.displayAutoResizes,
-    ]
-
-    /// Returns `true` if any field that is editable while the VM is running
-    /// differs between `old` and `new`.
-    static func liveEditableFieldsChanged(
-        old: VMConfiguration,
-        new: VMConfiguration
-    ) -> Bool {
-        if hotToggleFields.contains(where: { old[keyPath: $0] != new[keyPath: $0] }) {
-            return true
-        }
-        return removableMediaChanged(old: old, new: new)
-    }
+    // MARK: - Removable Media
 
     static func removableMediaChanged(old: VMConfiguration, new: VMConfiguration) -> Bool {
         (old.removableMedia ?? []) != (new.removableMedia ?? [])

@@ -180,8 +180,6 @@ Also here: `LoginItemService` (the `SMAppService.mainApp` wrapper behind the Ope
 rename, and guest-driven `VMInstance.onUpdateConfiguration` callbacks — routes through
 `VMLibraryViewModel.updateConfiguration(of:mutate:)`, which persists and then calls
 `applyLivePolicy`. No control writes `instance.configuration` directly.
-`VMConfiguration.liveEditableFieldsChanged(old:new:)` is the single source of truth for whether a
-change takes effect while the VM runs.
 
 **Removable-media reconcile.** `applyLivePolicy` drops media changes into a coalescing drain that
 calls `applyLiveRemovableMediaChange(for:target:)`.

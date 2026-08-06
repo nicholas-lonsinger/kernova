@@ -218,16 +218,4 @@ struct DataFormattersTests {
         #expect(DataFormatters.formatDiskSize(2500) == "2.5\u{2007}TB")
         #expect(DataFormatters.formatDiskSize(7500) == "7.5\u{2007}TB")
     }
-
-    // MARK: - formatCPUCount
-
-    @Test("formatCPUCount returns singular for 1 core")
-    func formatCPUCountSingular() {
-        #expect(DataFormatters.formatCPUCount(1) == "1 core")
-    }
-
-    @Test("formatCPUCount returns plural for multiple cores")
-    func formatCPUCountPlural() {
-        #expect(DataFormatters.formatCPUCount(4) == "4 cores")
-    }
 }

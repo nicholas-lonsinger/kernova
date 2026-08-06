@@ -329,12 +329,6 @@ final class GuestSetupProgressViewController: NSViewController {
         return "\(speed) — \(eta)\u{2007}remaining"
     }
 
-    /// Composes both subtitle lines into one newline-separated string.
-    nonisolated static func detailText(for progress: SetupStepProgress, verb: String) -> String {
-        [detailLine1(for: progress, verb: verb), detailLine2(for: progress)]
-            .compactMap { $0 }.joined(separator: "\n")
-    }
-
     // MARK: - Cancel
 
     @objc private func cancelTapped() {

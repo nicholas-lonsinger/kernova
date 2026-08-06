@@ -3,6 +3,9 @@ import Foundation
 import Darwin
 import KernovaKit
 
+/// Tests that seed the ring directly call `bufferFrameUnlessDisabled` on a
+/// fresh connection, whose policy is `.undecided` — the state that buffers, so
+/// they run through the in-lock policy re-check on its appending branch.
 @Suite("VsockHostConnection log buffer")
 struct VsockHostConnectionTests {
     // MARK: - Buffer helpers
@@ -55,7 +58,7 @@ struct VsockHostConnectionTests {
         let cap = VsockHostConnection.logBufferLimit
 
         for i in 0..<total {
-            conn.bufferFrame(makeLogFrame(message: "frame\(i)"))
+            conn.bufferFrameUnlessDisabled(makeLogFrame(message: "frame\(i)"))
         }
 
         #expect(pendingLogCount(conn) == cap)
@@ -69,7 +72,7 @@ struct VsockHostConnectionTests {
         let cap = VsockHostConnection.logBufferLimit
 
         for i in 0..<(cap + 10) {
-            conn.bufferFrame(makeLogFrame(message: "f\(i)"))
+            conn.bufferFrameUnlessDisabled(makeLogFrame(message: "f\(i)"))
         }
 
         #expect(pendingLogCount(conn) == cap)
@@ -83,7 +86,7 @@ struct VsockHostConnectionTests {
         let frameCount = 10
 
         for i in 0..<frameCount {
-            conn.bufferFrame(makeLogFrame(message: "flush\(i)"))
+            conn.bufferFrameUnlessDisabled(makeLogFrame(message: "flush\(i)"))
         }
 
         let (sender, receiver) = try makeChannelPair()
@@ -109,7 +112,7 @@ struct VsockHostConnectionTests {
         let conn = VsockHostConnection()
 
         for i in 0..<5 {
-            conn.bufferFrame(makeLogFrame(message: "m\(i)"))
+            conn.bufferFrameUnlessDisabled(makeLogFrame(message: "m\(i)"))
         }
 
         let (sender, receiver) = try makeChannelPair()
@@ -140,7 +143,7 @@ struct VsockHostConnectionTests {
         // Named frames r00..r19 (zero-padded for sortable string comparison).
         for i in 0..<frameCount {
             let name = String(format: "r%02d", i)
-            conn.bufferFrame(makeLogFrame(message: name + String(repeating: "x", count: 4096)))
+            conn.bufferFrameUnlessDisabled(makeLogFrame(message: name + String(repeating: "x", count: 4096)))
         }
 
         let (senderFd, receiverFd) = try makeRawSocketPair()
@@ -184,7 +187,7 @@ struct VsockHostConnectionTests {
 
         // Preload exactly cap frames: pre0 .. pre255
         for i in 0..<cap {
-            conn.bufferFrame(makeLogFrame(message: "pre\(i)"))
+            conn.bufferFrameUnlessDisabled(makeLogFrame(message: "pre\(i)"))
         }
 
         // Close both ends before flush so every send throws .closed —
@@ -197,7 +200,7 @@ struct VsockHostConnectionTests {
         // Now push 10 more frames: post0 .. post9
         // The cap enforcer must drop the 10 oldest (pre0..pre9).
         for i in 0..<postCount {
-            conn.bufferFrame(makeLogFrame(message: "post\(i)"))
+            conn.bufferFrameUnlessDisabled(makeLogFrame(message: "post\(i)"))
         }
 
         let messages = pendingMessages(conn)
@@ -233,7 +236,7 @@ struct VsockHostConnectionTests {
         // The simplest direct test: after a successful flush, buffer is empty;
         // a subsequent forwardLog that succeeds on the live channel returns true
         // and leaves buffer empty. Drive this by flushing onto a working channel.
-        conn.bufferFrame(makeLogFrame(message: "pre"))
+        conn.bufferFrameUnlessDisabled(makeLogFrame(message: "pre"))
         conn.flushPendingLogs(on: sender)
         _ = try await nextFrame(from: receiver)
         #expect(pendingLogCount(conn) == 0)
@@ -250,7 +253,7 @@ struct VsockHostConnectionTests {
 
         // Put one frame in buffer, then flush onto a dead channel.
         // The send fails and the frame is re-enqueued.
-        conn.bufferFrame(makeLogFrame(message: "initial"))
+        conn.bufferFrameUnlessDisabled(makeLogFrame(message: "initial"))
 
         let (sender, receiver) = try makeChannelPair()
         sender.close()
@@ -284,6 +287,16 @@ struct VsockHostConnectionTests {
         #expect(result == false)
         #expect(pendingLogCount(conn) == 0)
         #expect(conn.isLogForwardingEnabled == false)
+    }
+
+    @Test("Explicitly disabled: bufferFrameUnlessDisabled drops the frame")
+    func explicitlyDisabledDropsBufferedFrame() {
+        let conn = VsockHostConnection()
+        conn.setEnabled(false)
+
+        conn.bufferFrameUnlessDisabled(makeLogFrame(message: "dropped"))
+
+        #expect(pendingLogCount(conn) == 0)
     }
 
     // MARK: - Undecided policy: pre-handshake buffering (#598)

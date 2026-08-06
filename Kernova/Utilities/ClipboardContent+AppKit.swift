@@ -35,12 +35,6 @@ extension ClipboardContent {
         representations.filter { !$0.filename.isEmpty }
     }
 
-    /// The inline representations — alternative encodings of one inline content
-    /// item (text + RTF + image data; the consumer picks the richest).
-    var inlineRepresentations: [Representation] {
-        representations.filter { $0.filename.isEmpty }
-    }
-
     /// The inline rich-text representation best suited to a styled preview, or
     /// `nil` when none is present.
     ///

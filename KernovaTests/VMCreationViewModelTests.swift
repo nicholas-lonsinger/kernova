@@ -211,40 +211,6 @@ struct VMCreationViewModelTests {
         #expect(vm.effectiveBootMode == .linuxKernel)
     }
 
-    // MARK: - applyOSDefaults
-
-    @Test("applyOSDefaults sets correct values for macOS")
-    func applyOSDefaultsMacOS() {
-        let vm = VMCreationViewModel()
-        vm.selectedOS = .macOS
-        // Set non-default values first
-        vm.cpuCount = 1
-        vm.memoryInGB = 1
-        vm.diskSizeInGB = 1
-
-        vm.applyOSDefaults()
-
-        #expect(vm.cpuCount == VMGuestOS.macOS.defaultCPUCount)
-        #expect(vm.memoryInGB == VMGuestOS.macOS.defaultMemoryInGB)
-        #expect(vm.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
-    }
-
-    @Test("applyOSDefaults sets correct values for Linux")
-    func applyOSDefaultsLinux() {
-        let vm = VMCreationViewModel()
-        vm.selectedOS = .linux
-        // Set non-default values first
-        vm.cpuCount = 1
-        vm.memoryInGB = 1
-        vm.diskSizeInGB = 1
-
-        vm.applyOSDefaults()
-
-        #expect(vm.cpuCount == VMGuestOS.linux.defaultCPUCount)
-        #expect(vm.memoryInGB == VMGuestOS.linux.defaultMemoryInGB)
-        #expect(vm.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
-    }
-
     // MARK: - buildConfiguration
 
     @Test("buildConfiguration produces configuration with correct fields for Linux EFI")

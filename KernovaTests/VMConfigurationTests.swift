@@ -780,28 +780,6 @@ struct VMConfigurationTests {
         #expect(config.displayAutoResizes == true)
     }
 
-    @Test("hotToggleFields covers displayAutoResizes")
-    func displayAutoResizesIsHotToggleable() {
-        #expect(VMConfiguration.hotToggleFields.contains(\.displayAutoResizes))
-
-        var base = VMConfiguration(name: "Test VM", guestOS: .macOS, bootMode: .macOS)
-        var modified = base
-        modified.displayAutoResizes = false
-        #expect(VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
-
-        // Match-window sizing only applies at boot, so it must not read as live.
-        base.displaySizesToWindow = false
-        modified = base
-        modified.displaySizesToWindow = true
-        #expect(!VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
-
-        // Nor HiDPI: it picks the density the next boot is configured with.
-        base.displayHiDPI = false
-        modified = base
-        modified.displayHiDPI = true
-        #expect(!VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
-    }
-
     @Test("displayResolution reads and writes the stored trio")
     func displayResolutionAccessesTheTrio() {
         var config = VMConfiguration(
@@ -1283,29 +1261,20 @@ struct VMConfigurationTests {
         }
     }
 
-    // MARK: - Live-Editable Fields
+    // MARK: - Removable Media Changes
 
-    @Test("liveEditableFieldsChanged detects added removable media item")
-    func liveEditableDetectsAddedRemovableMedia() {
-        let base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
-        var modified = base
-        modified.removableMedia = [RemovableMediaItem(path: "/tmp/install.iso", readOnly: true)]
-        #expect(VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
-        #expect(VMConfiguration.liveEditableFieldsChanged(old: modified, new: base))
-    }
-
-    @Test("liveEditableFieldsChanged detects readOnly flip on a removable media item")
-    func liveEditableDetectsRemovableMediaReadOnlyFlip() {
+    @Test("removableMediaChanged detects a readOnly flip on an existing item")
+    func removableMediaChangedDetectsReadOnlyFlip() {
         let id = UUID()
         var base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
         base.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: true)]
         var modified = base
         modified.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: false)]
-        #expect(VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
+        #expect(VMConfiguration.removableMediaChanged(old: base, new: modified))
     }
 
-    @Test("liveEditableFieldsChanged ignores storageDisks changes")
-    func liveEditableIgnoresStorageDisksChanges() {
+    @Test("removableMediaChanged ignores storageDisks changes")
+    func removableMediaChangedIgnoresStorageDisks() {
         // Storage disks are restart-only on VZ (storageDevices is fixed at
         // VM start). The live reconcile flow only acts on removableMedia.
         let base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
@@ -1313,22 +1282,7 @@ struct VMConfigurationTests {
         modified.storageDisks = [
             StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio)
         ]
-        #expect(!VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
-    }
-
-    @Test("liveEditableFieldsChanged still covers existing hotToggleFields")
-    func liveEditableCoversHotToggleFields() {
-        var base = VMConfiguration(name: "VM", guestOS: .macOS, bootMode: .macOS)
-        base.clipboardSharingEnabled = false
-        var modified = base
-        modified.clipboardSharingEnabled = true
-        #expect(VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
-    }
-
-    @Test("liveEditableFieldsChanged returns false for identical configs")
-    func liveEditableReturnsFalseForIdenticalConfigs() {
-        let base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
-        #expect(!VMConfiguration.liveEditableFieldsChanged(old: base, new: base))
+        #expect(!VMConfiguration.removableMediaChanged(old: base, new: modified))
     }
 
     @Test("removableMediaChanged detects list mutations")

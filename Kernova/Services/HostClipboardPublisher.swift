@@ -366,12 +366,6 @@ enum HostPublishOutcome {
     /// `writeObjects` returned false — nothing was placed.
     case writeFailed
 
-    /// `true` only when the write landed on the pasteboard.
-    var didWrite: Bool {
-        if case .written = self { return true }
-        return false
-    }
-
     /// The pasteboard's change count right after a successful write, else `nil`.
     var postWriteChangeCount: Int? {
         if case .written(_, _, let changeCount) = self { return changeCount }

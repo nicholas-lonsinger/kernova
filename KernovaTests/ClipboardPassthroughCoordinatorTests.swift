@@ -126,7 +126,10 @@ struct ClipboardPassthroughCoordinatorTests {
         // the shared publisher.
         h.service.clipboardContent = ClipboardContent(text: "from guest")
         let outcome = await h.publisher.publish(from: h.service)
-        #expect(outcome.didWrite)
+        guard case .written = outcome else {
+            Issue.record("Expected the publish to land on the pasteboard, got \(outcome)")
+            return
+        }
 
         // The poll must recognize its own write and not offer it back to the guest.
         h.coordinator.pollHostClipboard()

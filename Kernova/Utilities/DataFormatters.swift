@@ -103,11 +103,6 @@ enum DataFormatters {
         return formatted.replacingOccurrences(of: " ", with: "\u{2007}")
     }
 
-    /// Formats a CPU count for display.
-    static func formatCPUCount(_ count: Int) -> String {
-        count == 1 ? "1 core" : "\(count) cores"
-    }
-
     /// Quotes each item with typographic double quotes and joins them with the
     /// locale's list conjunction.
     ///
