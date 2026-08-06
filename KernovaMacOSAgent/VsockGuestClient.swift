@@ -23,12 +23,11 @@ protocol VsockReconnecting: AnyObject, Sendable {
 func makeVsockGuestClient(
     port: UInt32, label: String, retryInterval: TimeInterval = 5
 ) -> any VsockReconnecting {
-    if #available(macOS 13.0, *) {
-        return VsockGuestClient(
-            port: port, label: label, clock: ContinuousEngineClock(), retryInterval: retryInterval)
+    func build<C: EngineClock>(_ clock: C) -> any VsockReconnecting {
+        VsockGuestClient(port: port, label: label, clock: clock, retryInterval: retryInterval)
     }
-    return VsockGuestClient(
-        port: port, label: label, clock: MonotonicEngineClock(), retryInterval: retryInterval)
+    if #available(macOS 13.0, *) { return build(ContinuousEngineClock()) }
+    return build(MonotonicEngineClock())
 }
 
 /// Outcome of a `VsockSocketProvider` failure: `.transient` retries the
@@ -108,30 +107,47 @@ final class BlockingConnectHandoff: @unchecked Sendable {
     var outcome: Int32? { lock.withLock { recorded } }
 }
 
-/// Admits one in-flight blocking `connect(2)` per client label.
+/// Bounds the in-flight blocking `connect(2)` attempts per client label.
 ///
-/// An abandoned connect stays parked in the kernel while the reconnect loop keeps
-/// retrying on its own schedule; without this gate a host that never accepts
-/// would strand one thread per retry for the life of the process. A label's slot
-/// frees the moment its syscall returns, so recovery needs no separate sweep.
+/// An abandoned connect stays parked in the kernel indefinitely — one was
+/// observed outlasting 12 minutes
+/// (docs/research/2026-08-02-macos12-vsock-blocking-connect-parks.md) — while
+/// the reconnect loop keeps retrying on its own schedule. Unbounded, a host
+/// that never accepts would strand one thread per retry for the life of the
+/// process; a single slot would let one doomed park suppress every later
+/// attempt just as permanently. The cap admits fresh attempts alongside parked
+/// ones, so a recovered host reconnects on the next retry while a wedged label
+/// strands at most `maxInFlightPerLabel` threads. A slot frees the moment its
+/// syscall returns, so recovery needs no separate sweep.
 final class BlockingConnectGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var inFlight: Set<String> = []
+    /// Most parked connects one label may hold before new attempts are refused.
+    static let maxInFlightPerLabel = 3
 
-    /// Claims the slot for `label`, refusing it while an earlier connect is parked.
+    private let lock = NSLock()
+    private var inFlight: [String: Int] = [:]
+
+    /// Claims a slot for `label`, refusing it when the cap is already parked.
     ///
-    /// - Returns: `true` when the slot was free and is now held.
+    /// - Returns: `true` when a slot was free and is now held.
     func claim(_ label: String) -> Bool {
-        lock.withLock { inFlight.insert(label).inserted }
+        lock.withLock {
+            let count = inFlight[label, default: 0]
+            guard count < Self.maxInFlightPerLabel else { return false }
+            inFlight[label] = count + 1
+            return true
+        }
     }
 
     func release(_ label: String) {
-        lock.withLock { _ = inFlight.remove(label) }
+        lock.withLock {
+            let count = inFlight[label, default: 0]
+            inFlight[label] = count > 1 ? count - 1 : nil
+        }
     }
 
-    /// Whether `label` currently holds the slot — for tests.
+    /// Whether `label` currently holds at least one slot — for tests.
     func isClaimed(_ label: String) -> Bool {
-        lock.withLock { inFlight.contains(label) }
+        lock.withLock { inFlight[label, default: 0] > 0 }
     }
 }
 
@@ -368,8 +384,11 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
                     .transient("connect() to '\(label)' port \(port) outran \(connectTimeoutSeconds)s"))
             case .busy:
                 close(fd)
+                logger.warning(
+                    "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) refused: \(BlockingConnectGate.maxInFlightPerLabel, privacy: .public) earlier attempts are still parked"
+                )
                 return .failure(
-                    .transient("connect() to '\(label)' port \(port) is still parked from an earlier attempt"))
+                    .transient("connect() to '\(label)' port \(port) is still parked from earlier attempts"))
             }
         }
 
@@ -385,7 +404,7 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
         /// thread owns `fd` and closes it when the call returns — the caller
         /// must not.
         case abandoned
-        /// An earlier attempt on this label is still parked; no socket was used.
+        /// The label's parked-connect cap is already reached; no socket was used.
         case busy
     }
 
@@ -448,8 +467,9 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
     /// `connect(2)`. Non-blocking mode covers the connect phase only; blocking
     /// mode is restored afterwards so those socket-level timeouts still apply.
     /// The caller owns `fd` on both paths and must `close()` it on a `false`
-    /// return.
-    @available(macOS 13.0, *)
+    /// return. The availability matches the policy split in `openVsockToHost`:
+    /// this idiom is proven only on macOS 26+.
+    @available(macOS 26.0, *)
     private static func connectNonBlocking(
         fd: Int32, addr: sockaddr_vm, label: String, port: UInt32, clock: Clock
     ) -> Bool {
@@ -500,7 +520,7 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
     ///
     /// The caller owns `fd` on both paths and must `close()` it on a `false`
     /// return — this helper never takes ownership.
-    @available(macOS 13.0, *)
+    @available(macOS 26.0, *)
     static func awaitConnectCompletion(
         fd: Int32, label: String, port: UInt32, clock: Clock
     ) -> Bool {
@@ -527,12 +547,15 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
             return false
         }
 
-        // POLLHUP is not a verdict here: a state-blind fd can raise it for a
-        // connect the host has in fact accepted, with SO_ERROR reading 0
-        // (docs/research/2026-08-06-macos13-vsock-nonblocking-state-blind.md),
-        // so the SO_ERROR check below is the sole authority for it — a genuine
-        // post-connect hangup surfaces as EOF on the first read and rides the
-        // normal reconnect path. Only the structural flags are fatal on sight.
+        // POLLHUP is not a verdict here: with SO_ERROR reading 0 the connect
+        // itself completed, and a peer that hung up right after accepting — the
+        // host does exactly that when its admission check refuses a channel —
+        // surfaces as EOF on the first read and rides the normal reconnect
+        // path. The SO_ERROR check below is the sole authority; only the
+        // structural flags are fatal on sight. (Treating POLLHUP as fatal is
+        // also how the state-blind pre-26 fds first presented —
+        // docs/research/2026-08-06-macos13-vsock-nonblocking-state-blind.md —
+        // before the whole idiom was routed away from those OSes.)
         let fatalRevents = Int16(POLLERR) | Int16(POLLNVAL)
         if pfd.revents & fatalRevents != 0 {
             var soError: Int32 = 0

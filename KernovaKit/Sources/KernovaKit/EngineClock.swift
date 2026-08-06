@@ -86,9 +86,20 @@ public struct MonotonicEngineClock: EngineClock {
         return -TimeInterval(start.nanoseconds - end.nanoseconds) / 1_000_000_000
     }
 
-    /// Suspends via `Task.sleep(nanoseconds:)`.
+    /// Suspends until `interval` seconds of `CLOCK_MONOTONIC` time have passed.
+    ///
+    /// `Task.sleep(nanoseconds:)` counts uptime and freezes across system
+    /// sleep, so a single call would violate this protocol's counts-time-asleep
+    /// contract; sleeping in bounded slices and re-reading the deadline clock
+    /// caps the post-resume overshoot at one slice.
     public func sleep(for interval: TimeInterval) async throws {
         let clamped = min(max(interval, 0), 1_000_000_000)
-        try await Task.sleep(nanoseconds: UInt64(clamped * 1_000_000_000))
+        let deadline = Instant(nanoseconds: now.nanoseconds &+ UInt64(clamped * 1_000_000_000))
+        while true {
+            let remaining = seconds(from: now, to: deadline)
+            guard remaining > 0 else { return }
+            let slice = min(remaining, 1)
+            try await Task.sleep(nanoseconds: UInt64(slice * 1_000_000_000))
+        }
     }
 }

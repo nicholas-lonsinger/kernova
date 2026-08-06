@@ -514,29 +514,45 @@ struct BlockingConnectTests {
         #expect(handoff.outcome == ECONNREFUSED)
     }
 
-    @Test("Only one connect per label is admitted until its slot is released")
-    func gateAdmitsOnePerLabel() {
+    @Test("A parked connect leaves room for fresh attempts up to the cap")
+    func gateAdmitsFreshAttemptsWhileParked() {
         let gate = BlockingConnectGate()
 
-        #expect(gate.claim("control"))
+        for _ in 0..<BlockingConnectGate.maxInFlightPerLabel {
+            #expect(gate.claim("control"))
+        }
         #expect(gate.isClaimed("control"))
         #expect(gate.claim("control") == false)
 
         gate.release("control")
-        #expect(gate.isClaimed("control") == false)
         #expect(gate.claim("control"))
+        #expect(gate.claim("control") == false)
+    }
+
+    @Test("Releasing every slot clears the label entirely")
+    func gateClearsWhenAllSlotsRelease() {
+        let gate = BlockingConnectGate()
+
+        #expect(gate.claim("control"))
+        #expect(gate.claim("control"))
+        gate.release("control")
+        #expect(gate.isClaimed("control"))
+        gate.release("control")
+        #expect(gate.isClaimed("control") == false)
     }
 
     @Test("Labels hold their slots independently")
     func gateSeparatesLabels() {
         let gate = BlockingConnectGate()
 
-        #expect(gate.claim("control"))
+        for _ in 0..<BlockingConnectGate.maxInFlightPerLabel {
+            #expect(gate.claim("control"))
+        }
         #expect(gate.claim("clipboard"))
         #expect(gate.claim("control") == false)
 
         gate.release("control")
-        #expect(gate.claim("clipboard") == false)
+        #expect(gate.claim("clipboard"))
         #expect(gate.isClaimed("clipboard"))
     }
 
@@ -551,8 +567,8 @@ struct BlockingConnectTests {
         #expect(gate.claim("control"))
     }
 
-    @Test("Concurrent claims on one label admit exactly one winner")
-    func gateAdmitsExactlyOneUnderContention() async {
+    @Test("Concurrent claims on one label admit exactly the cap")
+    func gateAdmitsExactlyTheCapUnderContention() async {
         let gate = BlockingConnectGate()
         let winners = CallCounter()
 
@@ -564,7 +580,7 @@ struct BlockingConnectTests {
             }
         }
 
-        #expect(await winners.value == 1)
+        #expect(await winners.value == BlockingConnectGate.maxInFlightPerLabel)
     }
 }
 
@@ -574,7 +590,7 @@ struct BlockingConnectTests {
 struct AwaitConnectCompletionTests {
     @Test("POLLHUP with SO_ERROR == 0 is a completed connect, not a failure")
     func pollhupWithNoSocketErrorCompletes() throws {
-        guard #available(macOS 13.0, *) else { return }
+        guard #available(macOS 26.0, *) else { return }
         // A socketpair end whose peer has closed reports POLLHUP from poll()
         // while SO_ERROR reads 0 — the shape a state-blind vsock fd produces
         // for a connect the host accepted
@@ -590,7 +606,7 @@ struct AwaitConnectCompletionTests {
 
     @Test("POLLNVAL (invalid descriptor) stays fatal")
     func pollnvalFails() throws {
-        guard #available(macOS 13.0, *) else { return }
+        guard #available(macOS 26.0, *) else { return }
         var fds: [Int32] = [0, 0]
         try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
         close(fds[0])

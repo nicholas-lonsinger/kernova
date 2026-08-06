@@ -21,22 +21,16 @@ func makeVsockGuestControlAgent(
     onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
     onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil
 ) -> any VsockGuestControlling {
-    if #available(macOS 13.0, *) {
-        let clock = ContinuousEngineClock()
-        return VsockGuestControlAgent(
+    func build<C: EngineClock>(_ clock: C) -> any VsockGuestControlling {
+        VsockGuestControlAgent(
             clock: clock,
             client: VsockGuestClient(port: KernovaVsockPort.control, label: "control", clock: clock),
             onPolicy: onPolicy,
             onStateChange: onStateChange
         )
     }
-    let clock = MonotonicEngineClock()
-    return VsockGuestControlAgent(
-        clock: clock,
-        client: VsockGuestClient(port: KernovaVsockPort.control, label: "control", clock: clock),
-        onPolicy: onPolicy,
-        onStateChange: onStateChange
-    )
+    if #available(macOS 13.0, *) { return build(ContinuousEngineClock()) }
+    return build(MonotonicEngineClock())
 }
 
 // File-scope stand-in for a `static let`, which a generic type cannot hold.

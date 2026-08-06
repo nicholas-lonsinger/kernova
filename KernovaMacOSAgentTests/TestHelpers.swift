@@ -97,14 +97,13 @@ func makeTestClient(
     retryInterval: TimeInterval,
     socketProvider: VsockSocketProvider? = nil
 ) -> any VsockReconnecting {
-    if kind == .continuous, #available(macOS 13.0, *) {
-        return VsockGuestClient(
-            port: port, label: label, clock: ContinuousEngineClock(),
+    func build<C: EngineClock>(_ clock: C) -> any VsockReconnecting {
+        VsockGuestClient(
+            port: port, label: label, clock: clock,
             retryInterval: retryInterval, socketProvider: socketProvider)
     }
-    return VsockGuestClient(
-        port: port, label: label, clock: MonotonicEngineClock(),
-        retryInterval: retryInterval, socketProvider: socketProvider)
+    if kind == .continuous, #available(macOS 13.0, *) { return build(ContinuousEngineClock()) }
+    return build(MonotonicEngineClock())
 }
 
 // MARK: - AtomicInt

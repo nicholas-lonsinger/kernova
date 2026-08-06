@@ -64,9 +64,9 @@ public func makeClipboardStreamReceiver(
     onComplete: @escaping @Sendable (UInt64, ClipboardContent.Representation) -> Void,
     onAbort: @escaping @Sendable (ClipboardStreamAbortInfo) -> Void
 ) -> any ClipboardStreamReceiving {
-    if #available(macOS 13.0, *) {
-        return ClipboardStreamReceiver(
-            clock: ContinuousEngineClock(),
+    func build<C: EngineClock>(_ clock: C) -> any ClipboardStreamReceiving {
+        ClipboardStreamReceiver(
+            clock: clock,
             channel: channel,
             staging: staging,
             windowBytes: windowBytes,
@@ -79,17 +79,6 @@ public func makeClipboardStreamReceiver(
             onAbort: onAbort
         )
     }
-    return ClipboardStreamReceiver(
-        clock: MonotonicEngineClock(),
-        channel: channel,
-        staging: staging,
-        windowBytes: windowBytes,
-        ackLatencyBound: ackLatencyBound,
-        stallTimeout: stallTimeout,
-        maxResidentInlineBytes: maxResidentInlineBytes,
-        sinkFactory: sinkFactory,
-        onTransferTimed: onTransferTimed,
-        onComplete: onComplete,
-        onAbort: onAbort
-    )
+    if #available(macOS 13.0, *) { return build(ContinuousEngineClock()) }
+    return build(MonotonicEngineClock())
 }

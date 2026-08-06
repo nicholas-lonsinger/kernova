@@ -26,6 +26,10 @@ public enum KernovaOSVersion {
         displayString(ProcessInfo.processInfo.operatingSystemVersion)
     }
 
+    /// Compiled once — the pattern is a compile-time constant.
+    private static let dottedDecimalRegex = try? NSRegularExpression(
+        pattern: #"\d+(?:\.\d+)*"#)
+
     /// The first dotted-decimal run in `reported`, or `nil` when it holds none.
     ///
     /// `AgentInfo.os_version` is peer-supplied, so a peer that sends a
@@ -37,7 +41,7 @@ public enum KernovaOSVersion {
     /// - Returns: The leading dotted-decimal run, or `nil` when `reported`
     ///   contains no digits.
     public static func numericVersion(in reported: String) -> String? {
-        guard let regex = try? NSRegularExpression(pattern: #"\d+(?:\.\d+)*"#) else {
+        guard let regex = Self.dottedDecimalRegex else {
             logger.fault("Dotted-decimal version pattern failed to compile")
             assertionFailure("Dotted-decimal version pattern failed to compile")
             return nil
