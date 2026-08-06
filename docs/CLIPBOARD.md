@@ -75,12 +75,17 @@ Caveats this does **not** waive:
   flavor's bytes are pulled inside the consumer's provide callback, against an OS paste deadline
   nothing can signal into or extend. Reserve direct-to-RAM pulls for inline content that
   comfortably fits.
-- **That deadline derives the one residual cap §1 admits** — a fixed bound on the **total** of one
+- **That deadline derives the one residual cap §1 admits** — a bound on the **total** of one
   paste's file representations, identical in both directions. The OS clock sees one paste as one
   operation, not each file, so an over-cap offer is **refused whole**, at the Copy to Mac click
   where one is in play, never delivered as a piecemeal subset. It is a permanent constraint of
-  serving pastes through this API, not a defect to dissolve; the figure and its derivation live
-  on `ClipboardStreamTuning.maxDeadlineSafePasteBytes`.
+  serving pastes through this API, not a defect to dissolve. The user selects it from a bounded
+  ladder; the derivation of the default, and the ladder itself, live on `ClipboardPasteLimit`.
+- **The cap is enforced by the receiver, once per direction** — the side whose paste deadline is
+  at risk. The guest gates host→guest, the host gates guest→host, and neither caps what it
+  *sends*. So the host pushes the value in `PolicyUpdate` to keep the guest's copy tracking the
+  user's choice, gated on `clipboard.paste.limit.v1`; that capability governs what the *guest*
+  will apply and must never clamp the host's own ceiling, which no peer is party to.
 - **Keep the two directions symmetric.** A capability that makes a payload lazy-eligible one way
   must make it lazy-eligible the other.
 

@@ -31,7 +31,8 @@ enum AgentMenuText {
         case .offeredFromHost: return "Clipboard: shared from host"
         case .sentToHost: return "Clipboard: sent to host"
         case .receivedFromHost: return "Clipboard: received from host"
-        case .pasteRefused(let code): return "Clipboard: \(pasteRefusalDetail(code))"
+        case .pasteRefused(let code, let pasteLimitBytes):
+            return "Clipboard: \(pasteRefusalDetail(code, pasteLimitBytes: pasteLimitBytes))"
         case .disabled: return "Clipboard: disabled"
         }
     }
@@ -40,11 +41,14 @@ enum AgentMenuText {
     ///
     /// `copyTooLarge` and `pasteIncompleteSet` are host-only refusals that never
     /// reach the guest, so they read as the generic failure.
-    private static func pasteRefusalDetail(_ code: ClipboardErrorCode) -> String {
+    private static func pasteRefusalDetail(
+        _ code: ClipboardErrorCode, pasteLimitBytes: Int?
+    ) -> String {
         switch code {
         case .pasteTooLarge:
+            guard let pasteLimitBytes else { return "too large to paste" }
             return
-                "too large to paste — over the \(ClipboardStreamTuning.maxDeadlineSafePasteDisplayLimit) transfer limit"
+                "too large to paste — over the \(ClipboardPasteLimit.displayLimit(pasteLimitBytes)) transfer limit"
         case .pasteDiskFull: return "not enough disk space to paste"
         case .pasteTimeout: return "paste timed out"
         case .pasteFailed, .copyTooLarge, .pasteIncompleteSet: return "paste failed"

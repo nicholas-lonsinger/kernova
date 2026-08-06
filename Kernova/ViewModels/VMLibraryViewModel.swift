@@ -156,7 +156,9 @@ final class VMLibraryViewModel {
                     let config = try storageService.loadConfiguration(from: bundleURL)
                     let layout = VMBundleLayout(bundleURL: bundleURL)
                     let initialStatus = Self.initialStatus(for: config, layout: layout)
-                    let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: initialStatus)
+                    let instance = VMInstance(
+                        configuration: config, bundleURL: bundleURL, status: initialStatus,
+                        preferences: preferences)
                     wirePersistence(for: instance)
                     return instance
                 } catch {
@@ -223,7 +225,9 @@ final class VMLibraryViewModel {
             let bundleURL = try storageService.createVMBundle(for: config)
             let layout = VMBundleLayout(bundleURL: bundleURL)
             let initialStatus = Self.initialStatus(for: config, layout: layout)
-            let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: initialStatus)
+            let instance = VMInstance(
+                configuration: config, bundleURL: bundleURL, status: initialStatus,
+                preferences: preferences)
             wirePersistence(for: instance)
 
             try await diskImageService.createDiskImage(
@@ -1141,7 +1145,9 @@ final class VMLibraryViewModel {
             let initialStatus = Self.initialStatus(for: config, layout: sourceLayout)
 
             let destinationURL = reserveDestination(for: sourceURL, in: vmsDir)
-            let phantom = VMInstance(configuration: config, bundleURL: destinationURL, status: initialStatus)
+            let phantom = VMInstance(
+                configuration: config, bundleURL: destinationURL, status: initialStatus,
+                preferences: preferences)
 
             prepareBundle(
                 phantom, operation: .importing,
@@ -1315,6 +1321,20 @@ final class VMLibraryViewModel {
         let saved = saveConfiguration(for: instance)
         applyLivePolicy(for: instance, old: old, new: new)
         return saved
+    }
+
+    /// Carries an app-wide clipboard paste-ceiling change to every running VM.
+    ///
+    /// The ceiling lives in `AppPreferences`, so it produces no `VMConfiguration`
+    /// diff for `applyLivePolicy` to carry. Two things need it: the guest, which
+    /// enforces host→guest pastes against its own copy, and any passthrough
+    /// session holding an offer the old ceiling refused. Instances with neither
+    /// no-op.
+    func applyClipboardPasteLimitChange() {
+        for instance in instances {
+            instance.resendAgentPolicy()
+            instance.republishPassthroughIfCeilingRaised()
+        }
     }
 
     /// Pushes a configuration change to a running VM.
@@ -1947,7 +1967,8 @@ final class VMLibraryViewModel {
             return
         }
 
-        let phantom = VMInstance(configuration: clonedConfig, bundleURL: bundleURL)
+        let phantom = VMInstance(
+            configuration: clonedConfig, bundleURL: bundleURL, preferences: preferences)
 
         let sourceBundleURL = instance.bundleURL
         let sourceName = instance.name
@@ -2156,7 +2177,8 @@ final class VMLibraryViewModel {
                 let instance = VMInstance(
                     configuration: config,
                     bundleURL: bundleURL,
-                    status: initialStatus
+                    status: initialStatus,
+                    preferences: preferences
                 )
                 wirePersistence(for: instance)
                 instances.append(instance)

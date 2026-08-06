@@ -133,10 +133,10 @@ enum CopyToMacItem: Sendable {
 
 /// Why a "Copy to Mac" file payload couldn't be placed on the host pasteboard.
 enum CopyToMacDropReason: Sendable, Equatable {
-    /// The offer's `public.file-url`-serving reps total over
-    /// `ClipboardStreamTuning.maxDeadlineSafePasteBytes`, so no paste could pull
-    /// them inside the OS pasteboard-promise deadline. All-or-nothing: the whole
-    /// set is refused together rather than landing piecemeal.
+    /// The offer's `public.file-url`-serving reps total over the user's paste
+    /// ceiling (`ClipboardPasteLimit`), so no paste could pull them inside the OS
+    /// pasteboard-promise deadline. All-or-nothing: the whole set is refused
+    /// together rather than landing piecemeal.
     case overPasteBudget
 }
 

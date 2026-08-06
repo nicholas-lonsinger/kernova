@@ -187,9 +187,24 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// first `PolicyUpdate(clipboardSharingEnabled: true)`.
     private var enabled: Bool = false
 
+    /// Ceiling on the total of an inbound paste's file representations, as
+    /// pushed by the host.
+    ///
+    /// Starts at the built-in default and is replaced by the host's first
+    /// `PolicyUpdate` — which is also what turns sharing on, so no paste is ever
+    /// gated on the placeholder.
+    ///
+    /// Main-queue confined, like `enabled`: `provideData` — and the
+    /// `allowsFileURLPull` gate inside it — runs on the agent's main thread.
+    private var maxPasteBytes: Int = ClipboardPasteLimit.defaultBytes
+
     #if DEBUG
     /// Test seam.
     var isEnabledForTesting: Bool { enabled }
+
+    /// Test seam for the applied ceiling, so a test can wait for a pushed policy
+    /// to land instead of polling for its side effects.
+    var pasteLimitForTesting: Int { maxPasteBytes }
     #endif
 
     /// Most recent clipboard activity, surfaced to the menu-bar UI.
@@ -283,9 +298,15 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         Self.logger.notice("Vsock clipboard agent started")
     }
 
-    /// Applies a host policy update for clipboard sharing.
-    func setEnabled(_ enabled: Bool) {
+    /// Applies a host policy update: whether clipboard sharing is on, and the
+    /// ceiling this side enforces on an inbound paste's file reps.
+    ///
+    /// One call rather than a setter per field — the control agent delivers the
+    /// policy off-main, and two independently scheduled hops could apply a
+    /// snapshot's halves out of order.
+    func applyPolicy(enabled: Bool, maxPasteBytes: Int) {
         DispatchQueue.main.async { [weak self] in
+            self?.maxPasteBytes = maxPasteBytes
             self?.applyEnabledOnMain(enabled)
         }
     }
@@ -1041,9 +1062,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // clock sees the sum, not each file. Checked before the disk-space gate:
         // an over-cap offer never gets far enough to need the space.
         let totalBytes = Self.syncDeadlineBoundLoad(for: promise)
-        if totalBytes > UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) {
+        if totalBytes > UInt64(maxPasteBytes) {
             Self.logger.warning(
-                "Deadline-bound clipboard reps total \(totalBytes, privacy: .public) bytes — over the deadline-safe cap; refusing the paste pull"
+                "Deadline-bound clipboard reps total \(totalBytes, privacy: .public) bytes — over the \(self.maxPasteBytes, privacy: .public)-byte cap; refusing the paste pull"
             )
             reportPasteFailure(
                 code: .pasteTooLarge,
@@ -1169,7 +1190,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     private func recordPasteFailure(code: ClipboardErrorCode, generation: UInt64) {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.inboundPromise?.generation == generation else { return }
-            self.clipboardActivityStorage = .pasteRefused(code)
+            // Capture the ceiling now: a host that raises it after this refusal
+            // must not rewrite the figure this refusal names.
+            self.clipboardActivityStorage = .pasteRefused(
+                code, pasteLimitBytes: code == .pasteTooLarge ? self.maxPasteBytes : nil)
             self.onClipboardNotice()
         }
     }

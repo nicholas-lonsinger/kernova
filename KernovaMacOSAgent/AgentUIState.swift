@@ -38,7 +38,11 @@ enum ClipboardActivity: Equatable, Sendable {
     ///
     /// The gesture was made in this guest, so the reason is reported here as well
     /// as to the host.
-    case pasteRefused(ClipboardErrorCode)
+    /// `pasteLimitBytes` is the ceiling that was in force at the refusal, carried
+    /// here rather than read when the menu is built: the menu rebuilds on every
+    /// open, so a ceiling raised after the refusal would otherwise rewrite the
+    /// figure a past refusal names. `nil` for reasons no ceiling explains.
+    case pasteRefused(ClipboardErrorCode, pasteLimitBytes: Int?)
     /// Host policy turned clipboard sharing off.
     case disabled
 }

@@ -18,10 +18,18 @@ public enum KernovaCapability {
     /// Required on both sides for clipboard sharing to be enabled.
     public static let clipboardStreamV1 = "clipboard.stream.v1"
 
+    /// Honoring `PolicyUpdate.clipboard_max_paste_bytes` — the user-selected
+    /// ceiling on a paste's file-representation total.
+    ///
+    /// Both ends enforce the ceiling independently, so the host uses the user's
+    /// value only for a guest advertising this; otherwise both sides fall back
+    /// to `ClipboardPasteLimit.defaultBytes` and stay in agreement.
+    public static let clipboardPasteLimitV1 = "clipboard.paste.limit.v1"
+
     /// The capabilities advertised by both the host control service and the
     /// guest control agent today.
     public static let controlChannelDefaults = [
-        controlV1, controlHeartbeatV1, clipboardStreamV1,
+        controlV1, controlHeartbeatV1, clipboardStreamV1, clipboardPasteLimitV1,
     ]
 
     /// Every capability tag this build recognizes — the allowlist for

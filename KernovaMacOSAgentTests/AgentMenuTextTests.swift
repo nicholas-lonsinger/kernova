@@ -30,40 +30,70 @@ struct AgentMenuTextTests {
 
     // MARK: - clipboardLine
 
+    /// The ceiling every non-refusal line ignores.
+    private static let limit = ClipboardPasteLimit.defaultBytes
+
     @Test("clipboardLine for each activity")
     func clipboard() {
         #expect(AgentMenuText.clipboardLine(.enabled) == "Clipboard: enabled")
-        #expect(AgentMenuText.clipboardLine(.offeredToHost) == "Clipboard: shared with host")
-        #expect(AgentMenuText.clipboardLine(.offeredFromHost) == "Clipboard: shared from host")
-        #expect(AgentMenuText.clipboardLine(.sentToHost) == "Clipboard: sent to host")
         #expect(
-            AgentMenuText.clipboardLine(.receivedFromHost) == "Clipboard: received from host")
-        #expect(AgentMenuText.clipboardLine(.disabled) == "Clipboard: disabled")
+            AgentMenuText.clipboardLine(.offeredToHost)
+                == "Clipboard: shared with host")
+        #expect(
+            AgentMenuText.clipboardLine(.offeredFromHost)
+                == "Clipboard: shared from host")
+        #expect(
+            AgentMenuText.clipboardLine(.sentToHost)
+                == "Clipboard: sent to host")
+        #expect(
+            AgentMenuText.clipboardLine(.receivedFromHost)
+                == "Clipboard: received from host")
+        #expect(
+            AgentMenuText.clipboardLine(.disabled) == "Clipboard: disabled")
     }
 
     @Test("clipboardLine names every paste failure the guest can report, honestly per code")
     func clipboardRefusalLines() {
-        // The over-cap sentence is built from the cap, not typed: retuning
-        // `maxDeadlineSafePasteBytes` moves the figure here too.
+        let limit = Self.limit
+        // The over-cap sentence is built from the ceiling, not typed.
         #expect(
-            AgentMenuText.clipboardLine(.pasteRefused(.pasteTooLarge))
-                == "Clipboard: too large to paste — over the \(ClipboardStreamTuning.maxDeadlineSafePasteDisplayLimit) transfer limit"
+            AgentMenuText.clipboardLine(.pasteRefused(.pasteTooLarge, pasteLimitBytes: limit))
+                == "Clipboard: too large to paste — over the \(ClipboardPasteLimit.displayLimit(limit)) transfer limit"
         )
         #expect(
-            AgentMenuText.clipboardLine(.pasteRefused(.pasteDiskFull))
+            AgentMenuText.clipboardLine(.pasteRefused(.pasteDiskFull, pasteLimitBytes: limit))
                 == "Clipboard: not enough disk space to paste")
         #expect(
-            AgentMenuText.clipboardLine(.pasteRefused(.pasteTimeout))
+            AgentMenuText.clipboardLine(.pasteRefused(.pasteTimeout, pasteLimitBytes: limit))
                 == "Clipboard: paste timed out")
         #expect(
-            AgentMenuText.clipboardLine(.pasteRefused(.pasteFailed)) == "Clipboard: paste failed")
+            AgentMenuText.clipboardLine(.pasteRefused(.pasteFailed, pasteLimitBytes: limit))
+                == "Clipboard: paste failed")
         // Host-only refusals never reach the guest; they read as the generic
         // failure rather than a sentence about a gesture made elsewhere.
         #expect(
-            AgentMenuText.clipboardLine(.pasteRefused(.copyTooLarge)) == "Clipboard: paste failed")
-        #expect(
-            AgentMenuText.clipboardLine(.pasteRefused(.pasteIncompleteSet))
+            AgentMenuText.clipboardLine(.pasteRefused(.copyTooLarge, pasteLimitBytes: limit))
                 == "Clipboard: paste failed")
+        #expect(
+            AgentMenuText.clipboardLine(.pasteRefused(.pasteIncompleteSet, pasteLimitBytes: limit))
+                == "Clipboard: paste failed")
+    }
+
+    @Test("the over-cap line names the ceiling the refusal carries, not a current one")
+    func clipboardRefusalNamesTheCarriedCeiling() {
+        let raised = 16 * 1024 * 1024 * 1024
+        #expect(
+            AgentMenuText.clipboardLine(.pasteRefused(.pasteTooLarge, pasteLimitBytes: raised))
+                == "Clipboard: too large to paste — over the 16 GB transfer limit")
+    }
+
+    @Test("an over-cap refusal with no carried ceiling names none rather than inventing one")
+    func clipboardRefusalWithoutACeilingNamesNone() {
+        // The menu rebuilds on every open, so the figure has to come from the
+        // refusal itself; absent one, the line says only what it knows.
+        #expect(
+            AgentMenuText.clipboardLine(.pasteRefused(.pasteTooLarge, pasteLimitBytes: nil))
+                == "Clipboard: too large to paste")
     }
 
     // MARK: - logForwardingLine / statusSubmenu

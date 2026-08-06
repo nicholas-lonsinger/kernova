@@ -256,7 +256,7 @@ struct VsockGuestClipboardAgentTests {
     /// returns the given fd on first call, transient failure thereafter.
     ///
     /// The short retry interval keeps the pause/resume wake-up snappy — the agent
-    /// is now default-paused at construction, and `setEnabled(true)` only
+    /// is now default-paused at construction, and `applyPolicy(enabled: true, …)` only
     /// takes effect on the next loop iteration after the current sleep.
     private func makeAgent(
         pasteboard: FakePasteboard, agentFd: Int32,
@@ -291,10 +291,11 @@ struct VsockGuestClipboardAgentTests {
     /// After this returns, callers driving
     /// `checkClipboardChange()` see a non-nil channel.
     private func startAgentAndWaitForLiveChannel(
-        agent: VsockGuestClipboardAgent
+        agent: VsockGuestClipboardAgent,
+        maxPasteBytes: Int = ClipboardPasteLimit.defaultBytes
     ) async throws {
         agent.start()
-        agent.setEnabled(true)
+        agent.applyPolicy(enabled: true, maxPasteBytes: maxPasteBytes)
         // RATIONALE: sanctioned no-signal polls (docs/TESTING.md "Async waits
         // in tests") — the `…ForTesting` lifecycle reads are SUT-internal
         // state, not @Observable or a test double; the pasteboard-write waits
@@ -1298,7 +1299,7 @@ struct VsockGuestClipboardAgentTests {
 
         // Host policy disables sharing: the connection tears down, but the
         // staged file behind the pasteboard-vended URL survives.
-        agent.setEnabled(false)
+        agent.applyPolicy(enabled: false, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
         try await waitUntil { agent.liveChannelForTesting == nil }
         #expect(FileManager.default.fileExists(atPath: staged.path))
         #expect(try Data(contentsOf: staged) == contents)
@@ -1852,7 +1853,7 @@ struct VsockGuestClipboardAgentTests {
         // The paste was made in this guest, so the guest's own menu names the
         // reason too, and the notice reveals it.
         try await notices.changed.wait { notices.value == 1 }
-        #expect(await MainActor.run { agent.clipboardActivity } == .pasteRefused(.pasteDiskFull))
+        #expect(await MainActor.run { agent.clipboardActivity } == .pasteRefused(.pasteDiskFull, pasteLimitBytes: nil))
     }
 
     @Test(
@@ -1902,7 +1903,7 @@ struct VsockGuestClipboardAgentTests {
         }
         #expect(error.code == expected.rawValue)
         try await notices.changed.wait { notices.value == 1 }
-        #expect(await MainActor.run { agent.clipboardActivity } == .pasteRefused(expected))
+        #expect(await MainActor.run { agent.clipboardActivity } == .pasteRefused(expected, pasteLimitBytes: nil))
     }
 
     // MARK: - Deadline-safe size cap (#561)
@@ -1924,7 +1925,7 @@ struct VsockGuestClipboardAgentTests {
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
         let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
+        let overCap = UInt64(ClipboardPasteLimit.defaultBytes) + 1
         try hostChannel.send(
             makeOfferFrame(
                 generation: 21,
@@ -1954,7 +1955,7 @@ struct VsockGuestClipboardAgentTests {
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
-        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
+        let overCap = UInt64(ClipboardPasteLimit.defaultBytes) + 1
         try hostChannel.send(
             makeOfferFrame(
                 generation: 26,
@@ -1995,7 +1996,7 @@ struct VsockGuestClipboardAgentTests {
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
         let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
+        let overCap = UInt64(ClipboardPasteLimit.defaultBytes) + 1
         try hostChannel.send(
             makeOfferFrame(
                 generation: 22,
@@ -2036,7 +2037,7 @@ struct VsockGuestClipboardAgentTests {
         // Two fires of one over-cap offer: the paste was made here, so the notice
         // is raised here — once, latched with the error frame.
         let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        let half = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes / 2) + 1
+        let half = UInt64(ClipboardPasteLimit.defaultBytes / 2) + 1
         try hostChannel.send(
             makeOfferFrame(
                 generation: 31,
@@ -2050,7 +2051,9 @@ struct VsockGuestClipboardAgentTests {
         #expect(await lazyPull(pasteboard, forType: .fileURL, itemIndex: 1).value == nil)
 
         try await notices.changed.wait { notices.value == 1 }
-        #expect(await MainActor.run { agent.clipboardActivity } == .pasteRefused(.pasteTooLarge))
+        #expect(
+            await MainActor.run { agent.clipboardActivity }
+                == .pasteRefused(.pasteTooLarge, pasteLimitBytes: ClipboardPasteLimit.defaultBytes))
         #expect(notices.value == 1)
 
         // The next offer is a fresh paste opportunity, so the refusal line goes.
@@ -2083,7 +2086,7 @@ struct VsockGuestClipboardAgentTests {
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
         let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
+        let overCap = UInt64(ClipboardPasteLimit.defaultBytes) + 1
         try hostChannel.send(
             makeOfferFrame(
                 generation: 33,
@@ -2139,7 +2142,7 @@ struct VsockGuestClipboardAgentTests {
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
         let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
+        let overCap = UInt64(ClipboardPasteLimit.defaultBytes) + 1
         try hostChannel.send(
             makeOfferFrame(
                 generation: 35,
@@ -2150,7 +2153,7 @@ struct VsockGuestClipboardAgentTests {
 
         #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
         try await seen.changed.wait { seen.value != nil }
-        #expect(seen.value == .pasteRefused(.pasteTooLarge))
+        #expect(seen.value == .pasteRefused(.pasteTooLarge, pasteLimitBytes: ClipboardPasteLimit.defaultBytes))
     }
 
     @Test("a refusal recorded for a superseded offer is dropped, not written over the newer one")
@@ -2169,7 +2172,7 @@ struct VsockGuestClipboardAgentTests {
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
         let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
+        let overCap = UInt64(ClipboardPasteLimit.defaultBytes) + 1
         try hostChannel.send(
             makeOfferFrame(
                 generation: 36,
@@ -2214,7 +2217,7 @@ struct VsockGuestClipboardAgentTests {
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
         let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        let atCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes)
+        let atCap = UInt64(ClipboardPasteLimit.defaultBytes)
         try hostChannel.send(
             makeOfferFrame(
                 generation: 23,
@@ -2226,6 +2229,116 @@ struct VsockGuestClipboardAgentTests {
         // The cap uses `>`, not `>=` — an exactly-at-cap rep must issue a real
         // request rather than being refused pre-flight. Abort it to resolve the
         // pull without streaming the full 256 MiB in-test.
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        let req = try await awaitRequest(on: hostChannel)
+        try hostChannel.send(
+            makeAbortFrame(transferID: req.transferID, code: "host.abort", message: "test abort"))
+        _ = await pull.value
+    }
+
+    @Test("deadline cap: a host-pushed ceiling below the default refuses what the default allowed")
+    func loweredCeilingRefusesUnderTheDefault() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        let lowered = 512 * 1024 * 1024
+        try await startAgentAndWaitForLiveChannel(agent: agent, maxPasteBytes: lowered)
+
+        // Comfortably under the built-in default, so only the pushed ceiling can
+        // be what refuses it.
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        let overLowered = UInt64(lowered) + 1
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 41,
+                reps: [
+                    RepInfo(
+                        uti: txtUTI, byteCount: overLowered, filename: "big.bin", isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
+        try await expectNoRequest(from: hostChannel)
+    }
+
+    @Test("deadline cap: raising the ceiling after a refusal does not rewrite the figure it named")
+    func refusalKeepsTheCeilingItWasRefusedAt() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let notices = AtomicInt()
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
+        defer { agent.stop() }
+
+        let lowered = 512 * 1024 * 1024
+        try await startAgentAndWaitForLiveChannel(agent: agent, maxPasteBytes: lowered)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 43,
+                reps: [
+                    RepInfo(
+                        uti: txtUTI, byteCount: UInt64(lowered) + 1, filename: "big.bin",
+                        isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+        #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
+
+        try await notices.changed.wait { notices.value == 1 }
+        #expect(
+            await MainActor.run { agent.clipboardActivity }
+                == .pasteRefused(.pasteTooLarge, pasteLimitBytes: lowered))
+
+        // The user raises the ceiling. The menu rebuilds on every open, so a
+        // refusal that read its figure live would start naming 16 GB for a
+        // payload the 512 MB ceiling refused. `applyPolicy` hops to main, so
+        // these reads queue behind it rather than racing it.
+        let raised = 16 * 1024 * 1024 * 1024
+        agent.applyPolicy(enabled: true, maxPasteBytes: raised)
+        #expect(await MainActor.run { agent.pasteLimitForTesting } == raised)
+        #expect(
+            await MainActor.run { agent.clipboardActivity }
+                == .pasteRefused(.pasteTooLarge, pasteLimitBytes: lowered))
+    }
+
+    @Test("deadline cap: a host-pushed ceiling above the default admits what the default refused")
+    func raisedCeilingAdmitsOverTheDefault() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        let raised = 16 * 1024 * 1024 * 1024
+        try await startAgentAndWaitForLiveChannel(agent: agent, maxPasteBytes: raised)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        let overDefault = UInt64(ClipboardPasteLimit.defaultBytes) + 1
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 42,
+                reps: [
+                    RepInfo(
+                        uti: txtUTI, byteCount: overDefault, filename: "huge.bin", isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        // A real request going out is the proof it was admitted; abort it so the
+        // pull resolves without streaming the payload in-test.
         let pull = lazyPull(pasteboard, forType: .fileURL)
         let req = try await awaitRequest(on: hostChannel)
         try hostChannel.send(
@@ -2249,7 +2362,7 @@ struct VsockGuestClipboardAgentTests {
         // An inline-only rep (no filename) is never served as `public.file-url`,
         // so the deadline cap — which follows that flavor — never applies to it;
         // §1 leaves inline content unbounded.
-        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
+        let overCap = UInt64(ClipboardPasteLimit.defaultBytes) + 1
         try hostChannel.send(
             makeOfferFrame(
                 generation: 24,
@@ -2283,7 +2396,7 @@ struct VsockGuestClipboardAgentTests {
         // Each file is individually under the cap; together they exceed it. The
         // whole set refuses — no piecemeal partial paste — with exactly one
         // error frame across both fires.
-        let half = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes / 2) + 1
+        let half = UInt64(ClipboardPasteLimit.defaultBytes / 2) + 1
         let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
         try hostChannel.send(
             makeOfferFrame(
@@ -2326,7 +2439,7 @@ struct VsockGuestClipboardAgentTests {
         // deadline-bound through that flavor — the cap follows the flavor a paste
         // fires, not the rep.
         let pngType = NSPasteboard.PasteboardType(UTType.png.identifier)
-        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes) + 1
+        let overCap = UInt64(ClipboardPasteLimit.defaultBytes) + 1
         try hostChannel.send(
             makeOfferFrame(
                 generation: 29,
@@ -2406,7 +2519,7 @@ struct VsockGuestClipboardAgentTests {
         // A tiny file rides with an at-cap folder: the sync total exceeds the
         // cap, so even the tiny file's pull refuses (all-or-nothing).
         let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        let atCap = UInt64(ClipboardStreamTuning.maxDeadlineSafePasteBytes)
+        let atCap = UInt64(ClipboardPasteLimit.defaultBytes)
         try hostChannel.send(
             makeOfferFrame(
                 generation: 28,
@@ -2503,7 +2616,8 @@ struct VsockGuestClipboardAgentTests {
         defer { agent.stop() }
 
         agent.start()
-        agent.setEnabled(true)  // production agents are default-disabled until host policy enables them
+        // Production agents are default-disabled until host policy enables them.
+        agent.applyPolicy(enabled: true, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
 
         // First connection: wait for liveChannel to be published.
         try await waitUntil { agent.liveChannelForTesting != nil }
@@ -2632,7 +2746,8 @@ struct VsockGuestClipboardAgentTests {
         let agent = VsockGuestClipboardAgent(pasteboard: pasteboard, client: client)
         defer { agent.stop() }
         agent.start()
-        agent.setEnabled(true)  // production agents are default-disabled until host policy enables them
+        // Production agents are default-disabled until host policy enables them.
+        agent.applyPolicy(enabled: true, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
 
         // Wait until publish settles. Under the current code (await MainActor.run),
         // this happens before the read loop starts.
@@ -2732,7 +2847,7 @@ struct VsockGuestClipboardAgentTests {
 
     // MARK: - Policy enforcement
 
-    @Test("Default-disabled: setEnabled(false) is the construction state")
+    @Test("Default-disabled: enabled=false is the construction state")
     func defaultDisabledAtConstruction() async throws {
         let pasteboard = FakePasteboard()
         let (agentFd, _) = try makeRawSocketPair()
@@ -2744,8 +2859,8 @@ struct VsockGuestClipboardAgentTests {
         #expect(isEnabled == false)
     }
 
-    @Test("setEnabled(true) brings up the connection; setEnabled(false) tears it down")
-    func setEnabledTogglesLiveChannel() async throws {
+    @Test("applyPolicy(enabled: true) brings up the connection; enabled: false tears it down")
+    func applyPolicyTogglesLiveChannel() async throws {
         let pasteboard = FakePasteboard()
         let (agentFd, remoteFd) = try makeRawSocketPair()
         let hostChannel = VsockChannel(fileDescriptor: remoteFd)
@@ -2757,17 +2872,17 @@ struct VsockGuestClipboardAgentTests {
 
         agent.start()
 
-        // Without setEnabled(true), no connection should come up.
+        // Without an enabling policy, no connection should come up.
         try await Task.sleep(for: .milliseconds(150))
         let stillNil = DispatchQueue.main.sync { agent.liveChannelForTesting }
         #expect(stillNil == nil)
 
         // Enable: connection comes up.
-        agent.setEnabled(true)
+        agent.applyPolicy(enabled: true, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
         try await waitUntil { agent.liveChannelForTesting != nil }
 
         // Disable: liveChannel is cleared.
-        agent.setEnabled(false)
+        agent.applyPolicy(enabled: false, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
         try await waitUntil { agent.liveChannelForTesting == nil }
     }
 
@@ -2871,8 +2986,8 @@ struct VsockGuestClipboardAgentTests {
         #expect(after == .sentToHost)
     }
 
-    @Test("setEnabled(false) sets activity to .disabled; re-enabling resets to .enabled")
-    func setEnabledTogglesActivity() async throws {
+    @Test("applyPolicy(enabled: false) sets activity to .disabled; re-enabling resets to .enabled")
+    func applyPolicyTogglesActivity() async throws {
         let pasteboard = FakePasteboard()
         let (agentFd, remoteFd) = try makeRawSocketPair()
         let hostChannel = VsockChannel(fileDescriptor: remoteFd)
@@ -2884,11 +2999,11 @@ struct VsockGuestClipboardAgentTests {
         try await startAgentAndWaitForLiveChannel(agent: agent)  // leaves it enabled
         #expect(await MainActor.run { agent.clipboardActivity } == .enabled)
 
-        agent.setEnabled(false)
+        agent.applyPolicy(enabled: false, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
         try await waitUntil { DispatchQueue.main.sync { agent.isEnabledForTesting } == false }
         #expect(await MainActor.run { agent.clipboardActivity } == .disabled)
 
-        agent.setEnabled(true)
+        agent.applyPolicy(enabled: true, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
         try await waitUntil { DispatchQueue.main.sync { agent.isEnabledForTesting } == true }
         #expect(await MainActor.run { agent.clipboardActivity } == .enabled)
     }

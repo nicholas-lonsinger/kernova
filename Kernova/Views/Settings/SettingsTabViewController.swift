@@ -16,11 +16,13 @@ enum SettingsPaneMetrics {
 /// The toolbar-style tab container for the Settings window.
 ///
 /// Holds a **General** tab (Open at Login), a **Reminders** tab (turning
-/// suppressed reminders back on), and an **Advanced** tab; the toolbar style
-/// is used so further panes can be added later as additional `NSTabViewItem`s.
+/// suppressed reminders back on), a **Clipboard** tab (the maximum paste size),
+/// and an **Advanced** tab; the toolbar style is used so further panes can be
+/// added later as additional `NSTabViewItem`s.
 ///
-/// The Reminders pane needs the app's `VMLibraryViewModel` (to list and re-arm
-/// per-VM install nudges), so this controller is constructed with it.
+/// The Reminders and Clipboard panes need the app's `VMLibraryViewModel` — to
+/// list and re-arm per-VM install nudges, and to push a changed paste ceiling to
+/// running guests — so this controller is constructed with it.
 @MainActor
 final class SettingsTabViewController: NSTabViewController {
     private static let logger = Logger(subsystem: "app.kernova", category: "SettingsTabViewController")
@@ -51,6 +53,12 @@ final class SettingsTabViewController: NSTabViewController {
         reminders.label = "Reminders"
         reminders.image = Self.symbol("bell")
         addTabViewItem(reminders)
+
+        let clipboard = NSTabViewItem(
+            viewController: ClipboardSettingsViewController(viewModel: viewModel))
+        clipboard.label = "Clipboard"
+        clipboard.image = Self.symbol("clipboard")
+        addTabViewItem(clipboard)
 
         let advanced = NSTabViewItem(viewController: AdvancedSettingsViewController())
         advanced.label = "Advanced"
