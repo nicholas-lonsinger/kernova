@@ -20,8 +20,7 @@ struct LinuxInstallContextTests {
                 makeLinuxCatalogEntry(
                     id: "ubuntu-desktop-26.04", distribution: "Ubuntu Desktop",
                     version: "26.04 LTS")),
-            downloadDestinationPath: "/Users/test/Downloads/ubuntu-26.04-desktop-arm64.iso",
-            requestedFreshDownload: true
+            downloadDestinationPath: "/Users/test/Downloads/ubuntu-26.04-desktop-arm64-1a2b3c4d.iso"
         )
 
         #expect(try roundTrip(context) == context)

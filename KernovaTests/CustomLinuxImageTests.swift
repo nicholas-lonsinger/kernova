@@ -69,49 +69,6 @@ struct CustomLinuxImageTests {
         }
     }
 
-    // MARK: - Destination
-
-    @Test("The destination is unique to the URL, not the name the URL gives")
-    func destinationIsUniquePerURL() throws {
-        // A link ending in a name the user already has in Downloads would
-        // otherwise resolve to their file, which the download adopts in place
-        // of fetching — installing an image they never chose.
-        let first = try CustomLinuxImage.make(
-            urlText: "https://one.example/alpine.iso", checksumText: "")
-        let second = try CustomLinuxImage.make(
-            urlText: "https://two.example/alpine.iso", checksumText: "")
-
-        let firstName = try first.destinationFilename()
-        let secondName = try second.destinationFilename()
-
-        #expect(firstName != secondName)
-        #expect(firstName != "alpine.iso")
-        #expect(firstName.hasPrefix("alpine-"))
-        #expect(firstName.hasSuffix(".iso"))
-        // The display name stays the one in the link the user pasted.
-        #expect(first.displayName == "alpine.iso")
-    }
-
-    @Test("One URL always names the same destination, so a download stays resumable")
-    func destinationIsStableForOneURL() throws {
-        let image = try CustomLinuxImage.make(
-            urlText: "https://mirror.example/alpine-3.22-aarch64.iso", checksumText: "")
-
-        #expect(try image.destinationFilename() == (try image.destinationFilename()))
-    }
-
-    @Test("A URL that names no usable stem still yields an .iso destination")
-    func destinationFallsBackToADefaultStem() throws {
-        // Not reachable through `make`, which refuses a link naming no `.iso`;
-        // this pins the fallback the generator carries anyway.
-        let name = UniqueDownloadFilename.make(
-            for: URL(string: "https://mirror.example/")!, fileExtension: "iso",
-            defaultStem: "LinuxImage")
-
-        #expect(name.hasPrefix("LinuxImage-"))
-        #expect(name.hasSuffix(".iso"))
-    }
-
     @Test("Text that names no host is not a URL")
     func refusesMalformedURL() {
         for text in ["", "   ", "not a url", "https:///alpine.iso"] {
@@ -121,7 +78,7 @@ struct CustomLinuxImageTests {
         }
     }
 
-    @Test("A link that doesn't end in an .iso filename names no destination")
+    @Test("A link that doesn't end in an .iso filename is not admitted")
     func refusesNonISOLink() {
         for text in [
             "https://mirror.example/downloads/",
@@ -140,6 +97,7 @@ struct CustomLinuxImageTests {
             urlText: "https://mirror.example/alpine-3.22-aarch64.iso?mirror=eu", checksumText: "")
 
         #expect(image.displayName == "alpine-3.22-aarch64.iso")
+        #expect(try image.admittedFilename() == "alpine-3.22-aarch64.iso")
     }
 
     @Test("A percent-encoded name that decodes to a path is refused")
@@ -160,17 +118,17 @@ struct CustomLinuxImageTests {
         #expect(throws: LinuxImageURLError.insecureURL) {
             try CustomLinuxImage(
                 url: URL(string: "http://mirror.example/alpine.iso")!, sha256: nil
-            ).destinationFilename()
+            ).admittedFilename()
         }
         #expect(throws: LinuxImageURLError.malformedChecksum) {
             try CustomLinuxImage(
                 url: URL(string: "https://mirror.example/alpine.iso")!, sha256: "deadbeef"
-            ).destinationFilename()
+            ).admittedFilename()
         }
         #expect(throws: LinuxImageURLError.notAnISOLink) {
             try CustomLinuxImage(
                 url: URL(string: "https://mirror.example/alpine.img")!, sha256: nil
-            ).destinationFilename()
+            ).admittedFilename()
         }
     }
 }

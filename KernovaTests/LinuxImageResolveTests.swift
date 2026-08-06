@@ -435,6 +435,11 @@ struct LinuxImageResolveServiceTests {
         let image = try await makeService().resolve(ubuntuEntry)
 
         #expect(image.filename == "ubuntu-24.04.4-desktop-arm64.iso")
+        // The mirror names the image; it does not name the file that image is
+        // written to, which carries a suffix unique to the URL resolved.
+        #expect(image.destinationFilename != image.filename)
+        #expect(image.destinationFilename.hasPrefix("ubuntu-24.04.4-desktop-arm64-"))
+        #expect(image.destinationFilename.hasSuffix(".iso"))
         #expect(
             image.sha256 == "0be6df929cb47d4f188ab94d1fdedc75aa947d1fe7d4a17fb70f65c130699a44")
         #expect(
@@ -599,11 +604,12 @@ struct LinuxImageResolveServiceTests {
         let image = try await makeService().resolve(pasted)
 
         #expect(image.isoURL == pasted.url)
+        #expect(image.filename == "alpine-3.22-aarch64.iso")
         // The destination is unique to the URL, so it can never land on a file
         // the user happens to already have under the link's own name.
-        #expect(image.filename == (try pasted.destinationFilename()))
-        #expect(image.filename != "alpine-3.22-aarch64.iso")
-        #expect(image.filename.hasSuffix(".iso"))
+        #expect(image.destinationFilename != image.filename)
+        #expect(image.destinationFilename.hasPrefix("alpine-3.22-aarch64-"))
+        #expect(image.destinationFilename.hasSuffix(".iso"))
         #expect(image.sha256 == digest)
         #expect(image.sizeBytes == 1_073_741_824)
         // No manifest is read: the URL names the file outright.

@@ -24,17 +24,12 @@ struct LinuxInstallContext: Codable, Sendable, Equatable {
     /// file — which for a catalog entry is only at download time, the mirror
     /// being the one to say which point release it is serving.
     ///
+    /// Always a name ``LinuxImageFilename`` derived, so there is never a file
+    /// here the user put there and no replace-existing prompt to show.
+    ///
     /// A sibling `.kernovadownload` bundle at this location holds in-progress
     /// download state and enables resume across app restarts.
     var downloadDestinationPath: String?
-
-    /// `true` when the user confirmed replacing the image already at the
-    /// destination.
-    ///
-    /// Honored once: the existing ISO and any `.kernovadownload` bundle are
-    /// trashed, then the flag is cleared so a retry after a failed attempt
-    /// reuses the freshly-downloaded file rather than trashing it again.
-    var requestedFreshDownload: Bool = false
 
     var downloadDestinationURL: URL? {
         downloadDestinationPath.map { URL(fileURLWithPath: $0) }
@@ -59,14 +54,9 @@ struct LinuxInstallContext: Codable, Sendable, Equatable {
         }
     }
 
-    init(
-        source: Source,
-        downloadDestinationPath: String? = nil,
-        requestedFreshDownload: Bool = false
-    ) {
+    init(source: Source, downloadDestinationPath: String? = nil) {
         self.source = source
         self.downloadDestinationPath = downloadDestinationPath
-        self.requestedFreshDownload = requestedFreshDownload
     }
 
     // MARK: - Codable
@@ -84,7 +74,6 @@ struct LinuxInstallContext: Codable, Sendable, Equatable {
         case remoteURL
         case sha256
         case downloadDestinationPath
-        case requestedFreshDownload
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -99,7 +88,6 @@ struct LinuxInstallContext: Codable, Sendable, Equatable {
             try c.encodeIfPresent(image.sha256, forKey: .sha256)
         }
         try c.encodeIfPresent(downloadDestinationPath, forKey: .downloadDestinationPath)
-        try c.encode(requestedFreshDownload, forKey: .requestedFreshDownload)
     }
 
     init(from decoder: any Decoder) throws {
@@ -115,7 +103,5 @@ struct LinuxInstallContext: Codable, Sendable, Equatable {
         }
         downloadDestinationPath = try c.decodeIfPresent(
             String.self, forKey: .downloadDestinationPath)
-        requestedFreshDownload =
-            try c.decodeIfPresent(Bool.self, forKey: .requestedFreshDownload) ?? false
     }
 }

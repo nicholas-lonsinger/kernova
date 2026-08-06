@@ -24,19 +24,16 @@ struct CustomLinuxImage: Codable, Sendable, Equatable {
         SafeFilename.sanitized(url.lastPathComponent, requiring: "iso") ?? "the installer image"
     }
 
-    /// The filename this image's download lands on, after every condition
+    /// The name ``url`` gives the image, after every condition
     /// ``make(urlText:checksumText:)`` checked is checked again.
     ///
     /// Re-checked at use time because the value reaching here comes off a
     /// `config.json` a user can edit — the same reason `LinuxImageResolveService`
     /// re-admits a catalog entry before contacting its mirror.
     ///
-    /// The name is unique to ``url`` rather than taken from it. A link ending
-    /// in a name the user already has in Downloads would otherwise resolve to
-    /// that file, which `DownloadService` adopts as the download in place of
-    /// fetching anything — installing an image the user never chose when there
-    /// is no digest, and trashing their file when there is one.
-    func destinationFilename() throws -> String {
+    /// Nothing is named from this: the download lands on
+    /// ``LinuxImageFilename/destination(for:)``.
+    func admittedFilename() throws -> String {
         if let sha256, !ChecksumManifest.isSHA256(sha256) {
             throw LinuxImageURLError.malformedChecksum
         }
@@ -55,18 +52,14 @@ struct CustomLinuxImage: Codable, Sendable, Equatable {
         guard url.host() != nil else {
             throw LinuxImageURLError.malformedURL
         }
-        // A direct link to a named `.iso` is what makes the generated name
-        // recognizable and the destination an ISO, which is what the
-        // replace-existing guard in the download pipeline keys on.
-        guard SafeFilename.sanitized(url.lastPathComponent, requiring: "iso") != nil else {
+        // A direct link to a named `.iso` is what holds a pasted URL to naming
+        // an image rather than a landing page, and what gives the generated
+        // destination a stem the user can recognize.
+        guard let filename = SafeFilename.sanitized(url.lastPathComponent, requiring: "iso") else {
             throw LinuxImageURLError.notAnISOLink
         }
-        return UniqueDownloadFilename.make(
-            for: url, fileExtension: "iso", defaultStem: Self.defaultStem)
+        return filename
     }
-
-    /// Stem of a generated filename when the URL's own last component yields none.
-    private static let defaultStem = "LinuxImage"
 
     /// The image `urlText` and `checksumText` name, or the first reason they
     /// name none.
@@ -78,7 +71,7 @@ struct CustomLinuxImage: Codable, Sendable, Equatable {
         guard let url = URL(string: urlText.trimmingCharacters(in: .whitespacesAndNewlines))
         else { throw LinuxImageURLError.malformedURL }
         let image = CustomLinuxImage(url: url, sha256: sha256)
-        _ = try image.destinationFilename()
+        _ = try image.admittedFilename()
         return image
     }
 

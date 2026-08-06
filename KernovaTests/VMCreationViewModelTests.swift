@@ -621,7 +621,6 @@ struct VMCreationViewModelTests {
         // The mirror names the file, and only a resolution just before the
         // download can say what that name is.
         #expect(context.downloadDestinationPath == nil)
-        #expect(!context.requestedFreshDownload)
     }
 
     @Test("buildLinuxInstallContext snapshots a URL pick with its checksum and destination")
@@ -641,7 +640,7 @@ struct VMCreationViewModelTests {
         // A fixed URL names its own destination, so unlike a catalog pick it is
         // known before the VM is created — and it is unique to the link, so it
         // can never land on a file the user already has.
-        let destination = try #require(try? image.destinationFilename())
+        let destination = LinuxImageFilename.destination(for: image.url)
         #expect(destination != "alpine-3.22-aarch64.iso")
         #expect(
             context.downloadDestinationPath
@@ -740,7 +739,6 @@ struct VMCreationViewModelTests {
         #expect(context.source == .localFile)
         #expect(context.localIPSWPath == "/tmp/macOS-26.ipsw")
         #expect(context.downloadDestinationPath == nil)
-        #expect(!context.requestedFreshDownload)
     }
 
     @Test("buildInstallContext carries a local pick's bookmark")

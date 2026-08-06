@@ -99,7 +99,7 @@ final class LinuxImageResolveService: LinuxImageResolving {
     }
 
     func resolve(_ image: CustomLinuxImage) async throws -> ResolvedLinuxImage {
-        let filename = try image.destinationFilename()
+        let filename = try image.admittedFilename()
         let sizeBytes: UInt64
         do {
             sizeBytes = try await sizeProbe.size(of: image.url)

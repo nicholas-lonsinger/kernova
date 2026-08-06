@@ -190,13 +190,12 @@ final class ReviewContentViewController: NSViewController {
                             "Verification", wizardVerificationSummary(sha256: image.sha256)))
                     // The destination carries a suffix unique to this link, so
                     // it names a file only this pick can ever write.
-                    if let destination = try? image.destinationFilename() {
-                        rows.append(
-                            valueRow(
-                                "Save to",
-                                wizardAbbreviateWithTilde(
-                                    VMCreationViewModel.downloadPath(forFilename: destination))))
-                    }
+                    rows.append(
+                        valueRow(
+                            "Save to",
+                            wizardAbbreviateWithTilde(
+                                VMCreationViewModel.downloadPath(
+                                    forFilename: LinuxImageFilename.destination(for: image.url)))))
                 case .localISO(let path, _):
                     rows.append(valueRow("ISO", URL(fileURLWithPath: path).lastPathComponent))
                 case nil:
