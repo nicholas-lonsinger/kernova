@@ -16,6 +16,16 @@ func customImage(of context: LinuxInstallContext?) -> CustomLinuxImage? {
     return image
 }
 
+/// Builds a user-supplied image, defaulted so a test only names what it cares
+/// about.
+func makeCustomLinuxImage(
+    urlString: String = "https://mirror.example/alpine-3.22-aarch64.iso",
+    sha256: String? = String(repeating: "a", count: 64)
+) -> CustomLinuxImage {
+    CustomLinuxImage(
+        url: URL(string: urlString) ?? URL(fileURLWithPath: "/"), sha256: sha256)
+}
+
 /// Builds a Linux catalog entry, defaulted so a test only names what it cares
 /// about.
 func makeLinuxCatalogEntry(

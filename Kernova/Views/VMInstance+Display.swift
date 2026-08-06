@@ -112,8 +112,9 @@ extension VMInstance {
     /// The file a pending setup would download into, or `nil` when this VM's
     /// setup fetches nothing (a local IPSW or ISO, or no setup at all).
     ///
-    /// A Linux context has no destination until its first resolution names the
-    /// file, which is exactly when there is nothing to resume from yet.
+    /// A Linux catalog pick has no destination until its first resolution names
+    /// the file; a URL pick names its own and carries one from the moment the VM
+    /// is created.
     private var pendingSetupDownloadDestination: URL? {
         if let context = configuration.installContext {
             return context.source.downloadsImage ? context.downloadDestinationURL : nil

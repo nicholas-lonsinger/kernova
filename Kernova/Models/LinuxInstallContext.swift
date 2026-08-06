@@ -44,9 +44,9 @@ struct LinuxInstallContext: Codable, Sendable, Equatable {
     var imageDisplayName: String {
         switch source {
         case .catalogEntry(let entry): "\(entry.distribution) \(entry.version)"
-        // The name the download lands on, and the only thing a bare URL offers
-        // that reads as an image.
-        case .customURL(let image): (try? image.validatedFilename()) ?? "the installer image"
+        // The name in the link, not the name on disk: the destination carries a
+        // uniqueness suffix the user never typed and would not recognize.
+        case .customURL(let image): image.displayName
         }
     }
 

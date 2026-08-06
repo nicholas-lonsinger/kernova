@@ -180,19 +180,23 @@ final class ReviewContentViewController: NSViewController {
                             "Save to",
                             wizardAbbreviateWithTilde(
                                 VMCreationViewModel.downloadsDirectory.path(percentEncoded: false))))
-                case .customURL(let image):
+                case .customURL(let image, let sizeBytes):
                     rows.append(valueRow("Installer Image", "From URL"))
-                    rows.append(valueRow("File", image.filename))
+                    rows.append(valueRow("File", image.displayName))
                     rows.append(
-                        valueRow("Download Size", DataFormatters.formatBytes(image.sizeBytes)))
+                        valueRow("Download Size", DataFormatters.formatBytes(sizeBytes)))
                     rows.append(
                         valueRow(
                             "Verification", wizardVerificationSummary(sha256: image.sha256)))
-                    rows.append(
-                        valueRow(
-                            "Save to",
-                            wizardAbbreviateWithTilde(
-                                VMCreationViewModel.downloadPath(forFilename: image.filename))))
+                    // The destination carries a suffix unique to this link, so
+                    // it names a file only this pick can ever write.
+                    if let destination = try? image.destinationFilename() {
+                        rows.append(
+                            valueRow(
+                                "Save to",
+                                wizardAbbreviateWithTilde(
+                                    VMCreationViewModel.downloadPath(forFilename: destination))))
+                    }
                 case .localISO(let path, _):
                     rows.append(valueRow("ISO", URL(fileURLWithPath: path).lastPathComponent))
                 case nil:

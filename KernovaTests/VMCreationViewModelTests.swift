@@ -628,10 +628,8 @@ struct VMCreationViewModelTests {
     func buildLinuxInstallContextURLPick() throws {
         let vm = VMCreationViewModel()
         let digest = String(repeating: "a", count: 64)
-        vm.selectLinuxCustomURL(
-            makeResolvedLinuxImage(
-                isoURLString: "https://mirror.example/alpine-3.22-aarch64.iso",
-                filename: "alpine-3.22-aarch64.iso", sha256: digest))
+        let image = makeCustomLinuxImage(sha256: digest)
+        vm.selectLinuxCustomURL(image, sizeBytes: 1_073_741_824)
 
         let context = try #require(vm.buildLinuxInstallContext())
 
@@ -640,20 +638,20 @@ struct VMCreationViewModelTests {
                 == URL(string: "https://mirror.example/alpine-3.22-aarch64.iso"))
         #expect(customImage(of: context)?.sha256 == digest)
         #expect(context.hasVerifyStep)
-        // A fixed URL names its own file, so unlike a catalog pick the
-        // destination is known before the VM is created.
+        // A fixed URL names its own destination, so unlike a catalog pick it is
+        // known before the VM is created — and it is unique to the link, so it
+        // can never land on a file the user already has.
+        let destination = try #require(try? image.destinationFilename())
+        #expect(destination != "alpine-3.22-aarch64.iso")
         #expect(
             context.downloadDestinationPath
-                == VMCreationViewModel.downloadPath(forFilename: "alpine-3.22-aarch64.iso"))
+                == VMCreationViewModel.downloadPath(forFilename: destination))
     }
 
     @Test("A URL pick with no checksum carries none, and has nothing to verify")
     func buildLinuxInstallContextUnverifiedURLPick() throws {
         let vm = VMCreationViewModel()
-        vm.selectLinuxCustomURL(
-            makeResolvedLinuxImage(
-                isoURLString: "https://mirror.example/alpine-3.22-aarch64.iso",
-                filename: "alpine-3.22-aarch64.iso", sha256: nil))
+        vm.selectLinuxCustomURL(makeCustomLinuxImage(sha256: nil), sizeBytes: 1_073_741_824)
 
         let context = try #require(vm.buildLinuxInstallContext())
 
@@ -675,7 +673,7 @@ struct VMCreationViewModelTests {
         vm.selectedBootMode = .linuxKernel
         #expect(vm.buildLinuxInstallContext() == nil)
 
-        vm.selectLinuxCustomURL(makeResolvedLinuxImage())
+        vm.selectLinuxCustomURL(makeCustomLinuxImage(), sizeBytes: 1_073_741_824)
         #expect(vm.buildLinuxInstallContext() == nil)
 
         // Switching back restores the pick, which was never dropped.

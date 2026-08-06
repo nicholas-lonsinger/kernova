@@ -599,7 +599,11 @@ struct LinuxImageResolveServiceTests {
         let image = try await makeService().resolve(pasted)
 
         #expect(image.isoURL == pasted.url)
-        #expect(image.filename == "alpine-3.22-aarch64.iso")
+        // The destination is unique to the URL, so it can never land on a file
+        // the user happens to already have under the link's own name.
+        #expect(image.filename == (try pasted.destinationFilename()))
+        #expect(image.filename != "alpine-3.22-aarch64.iso")
+        #expect(image.filename.hasSuffix(".iso"))
         #expect(image.sha256 == digest)
         #expect(image.sizeBytes == 1_073_741_824)
         // No manifest is read: the URL names the file outright.
@@ -618,21 +622,17 @@ struct LinuxImageResolveServiceTests {
         #expect(image.sha256 == nil)
     }
 
-    @Test("A plain-HTTP URL is contacted only when a checksum stands behind it")
-    func httpFollowsTheChecksum() async throws {
+    @Test("A plain-HTTP URL is refused before anything is requested")
+    func refusesHTTPPastedURL() async {
         serveISO()
         defer { ResolveStubURLProtocol.reset() }
         let url = URL(string: "http://mirror.example/alpine-3.22-aarch64.iso")!
 
-        let image = try await makeService().resolve(
-            CustomLinuxImage(url: url, sha256: String(repeating: "b", count: 64)))
-        #expect(image.sizeBytes == 1_073_741_824)
-
-        // The same URL with the digest edited away — the probe's HTTPS refusal
-        // is what stops it, before a request is issued.
-        ResolveStubURLProtocol.reset()
-        ResolveStubURLProtocol.handler = { _ in
-            ResolveStubURLProtocol.Reply(statusCode: 200, body: Data())
+        // A checksum buys no admission: ATS would refuse the load anyway, and
+        // the stub here would otherwise hide that.
+        await #expect(throws: LinuxImageURLError.insecureURL) {
+            _ = try await makeService().resolve(
+                CustomLinuxImage(url: url, sha256: String(repeating: "b", count: 64)))
         }
         await #expect(throws: LinuxImageURLError.insecureURL) {
             _ = try await makeService().resolve(CustomLinuxImage(url: url, sha256: nil))

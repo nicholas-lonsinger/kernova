@@ -30,16 +30,11 @@ struct RemoteFileSizeProbe: Sendable {
     /// `HEAD` — pre-signed S3 and CloudFront links answer 403, others 405 —
     /// still serves ranged `GET`s, so a non-2xx `HEAD` is not fatal: the
     /// one-byte ranged `GET`'s `Content-Range` settles the size, and its status
-    /// settles whether the URL is live at all. The returned size is always
+    /// settles whether the URL is live at all. A scheme other than `https` is
+    /// refused before any request is issued, and the returned size is always
     /// greater than zero.
-    ///
-    /// The scheme is checked before any request is issued: `https` always, and
-    /// plain `http` only under `allowingHTTP`, for a caller that holds a digest
-    /// over the bytes it is about to fetch and so does not need the transport to
-    /// carry integrity for it.
-    func size(of url: URL, allowingHTTP: Bool = false) async throws -> UInt64 {
-        let scheme = url.scheme?.lowercased()
-        guard scheme == "https" || (allowingHTTP && scheme == "http") else {
+    func size(of url: URL) async throws -> UInt64 {
+        guard url.scheme?.lowercased() == "https" else {
             throw RemoteFileSizeError.insecureURL
         }
 

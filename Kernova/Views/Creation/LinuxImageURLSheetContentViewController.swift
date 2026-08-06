@@ -4,10 +4,11 @@ import Foundation
 /// Delegate for ``LinuxImageURLSheetContentViewController``.
 @MainActor
 protocol LinuxImageURLSheetContentViewControllerDelegate: AnyObject {
-    /// The user accepted a checked image.
+    /// The user accepted a checked image, with the length the check read for it.
     func linuxImageURLSheet(
         _ vc: LinuxImageURLSheetContentViewController,
-        didChoose image: ResolvedLinuxImage
+        didChoose image: CustomLinuxImage,
+        sizeBytes: UInt64
     )
 
     /// The user dismissed without choosing.
@@ -22,8 +23,7 @@ protocol LinuxImageURLSheetContentViewControllerDelegate: AnyObject {
 /// **Use** stays disabled until the check passes. What it establishes is that
 /// the link is admissible and live and how large the file is — an ISO has no
 /// structure to read the way an IPSW's zip directory does. The checksum is
-/// optional; without one the download is not verified, and the link then has to
-/// be HTTPS, since nothing else stands behind the bytes.
+/// optional; without one the download is not verified.
 @MainActor
 final class LinuxImageURLSheetContentViewController: NSViewController {
     weak var delegate: LinuxImageURLSheetContentViewControllerDelegate?
@@ -31,7 +31,10 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
     private let resolveService: any LinuxImageResolving
 
     /// The last successful check, and what **Use** hands to the delegate.
-    private(set) var checkedImage: ResolvedLinuxImage?
+    private(set) var checkedImage: CustomLinuxImage?
+
+    /// The length that check read, carried alongside so the wizard can show it.
+    private(set) var checkedSizeBytes: UInt64?
 
     private let urlField = NSTextField()
     private let checksumField = NSTextField()
@@ -191,7 +194,7 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
         checksumField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let checksumNote = makeGroupedFormCaption(
-            "Without a checksum the download isn't verified, and the link has to be HTTPS.")
+            "Without a checksum, the download isn't verified.")
 
         resultContainer.orientation = .vertical
         resultContainer.alignment = .leading
@@ -323,8 +326,11 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
         var rows: [NSView] = [
             makeWizardBadge(
                 symbolName: "checkmark.seal.fill",
-                text: [image.filename, DataFormatters.formatBytes(image.sizeBytes)]
-                    .joined(separator: "  ·  "),
+                text: [
+                    image.isoURL.lastPathComponent, DataFormatters.formatBytes(image.sizeBytes),
+                ].joined(separator: "  ·  "),
+                // The destination, which carries a suffix unique to this link so
+                // it can never land on a file the user already has.
                 secondaryText: wizardAbbreviateWithTilde(
                     VMCreationViewModel.downloadPath(forFilename: image.filename))
             )
@@ -377,19 +383,22 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
         }
 
         checkedImage = nil
+        checkedSizeBytes = nil
         showChecking()
         checkTask = Task { [weak self, resolveService] in
             do {
                 let resolved = try await resolveService.resolve(image)
                 guard let self, !Task.isCancelled else { return }
                 self.checkTask = nil
-                self.checkedImage = resolved
+                self.checkedImage = image
+                self.checkedSizeBytes = resolved.sizeBytes
                 self.showSuccess(resolved)
                 self.updateControls()
             } catch {
                 guard let self, !Task.isCancelled else { return }
                 self.checkTask = nil
                 self.checkedImage = nil
+                self.checkedSizeBytes = nil
                 self.showFailure(self.describe(error))
                 self.updateControls()
             }
@@ -408,8 +417,8 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
     }
 
     @objc private func useTapped() {
-        guard let image = checkedImage else { return }
-        delegate?.linuxImageURLSheet(self, didChoose: image)
+        guard let image = checkedImage, let sizeBytes = checkedSizeBytes else { return }
+        delegate?.linuxImageURLSheet(self, didChoose: image, sizeBytes: sizeBytes)
     }
 
     // MARK: - Helpers
@@ -431,6 +440,7 @@ extension LinuxImageURLSheetContentViewController: NSTextFieldDelegate {
         checkTask?.cancel()
         checkTask = nil
         checkedImage = nil
+        checkedSizeBytes = nil
         setResult([])
         updateControls()
     }

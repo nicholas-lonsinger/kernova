@@ -165,12 +165,12 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
                     trailingButton: makeLinkButton(
                         "Change…", target: self, action: #selector(changeDistribution))
                 ))
-        case .customURL(let image):
+        case .customURL(let image, let sizeBytes):
             conditionalContainer.addArrangedSubview(
                 makeWizardBadge(
                     symbolName: "link",
                     text: [
-                        image.filename, DataFormatters.formatBytes(image.sizeBytes),
+                        image.displayName, DataFormatters.formatBytes(sizeBytes),
                         wizardVerificationSummary(sha256: image.sha256),
                     ].joined(separator: "  ·  "),
                     trailingButton: makeLinkButton(
@@ -223,8 +223,8 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
     }
 
     /// The URL and checksum the URL sheet re-opens on, from the current pick.
-    private var selectedCustomImage: ResolvedLinuxImage? {
-        guard case .customURL(let image) = creationVM.linuxSelection else { return nil }
+    private var selectedCustomImage: CustomLinuxImage? {
+        guard case .customURL(let image, _) = creationVM.linuxSelection else { return nil }
         return image
     }
 
@@ -276,9 +276,9 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
 
     @objc private func sourceRadioClicked(_ sender: NSButton) {
         guard let source = radios.first(where: { $0.value === sender })?.key else { return }
-        // Both sources commit only when the user actually picks something. Re-render
-        // from the (still-current) model so the just-clicked radio doesn't stay
-        // selected if the picker is cancelled, then open it.
+        // Every source commits only when the user actually picks something.
+        // Re-render from the (still-current) model so the just-clicked radio
+        // doesn't stay selected if the picker is cancelled, then open it.
         rebuildConditional()
         switch source {
         case .catalog: chooseDistribution()
@@ -317,7 +317,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         let current = selectedCustomImage
         let sheet = LinuxImageURLSheetContentViewController(
             resolveService: creationVM.linuxImageResolveService,
-            initialURL: current?.isoURL.absoluteString,
+            initialURL: current?.url.absoluteString,
             initialChecksum: current?.sha256
         )
         sheet.delegate = self
@@ -400,10 +400,11 @@ extension BootConfigContentViewController: LinuxImageCatalogSheetContentViewCont
 extension BootConfigContentViewController: LinuxImageURLSheetContentViewControllerDelegate {
     func linuxImageURLSheet(
         _ vc: LinuxImageURLSheetContentViewController,
-        didChoose image: ResolvedLinuxImage
+        didChoose image: CustomLinuxImage,
+        sizeBytes: UInt64
     ) {
         catalogSheetPresenter.close()
-        creationVM.selectLinuxCustomURL(image)
+        creationVM.selectLinuxCustomURL(image, sizeBytes: sizeBytes)
         rebuildConditional()
     }
 

@@ -99,13 +99,10 @@ final class LinuxImageResolveService: LinuxImageResolving {
     }
 
     func resolve(_ image: CustomLinuxImage) async throws -> ResolvedLinuxImage {
-        let filename = try image.validatedFilename()
+        let filename = try image.destinationFilename()
         let sizeBytes: UInt64
         do {
-            // The digest carries integrity independently of the transport, so
-            // it — and only it — is what admits a plain-`http` link here.
-            sizeBytes = try await sizeProbe.size(
-                of: image.url, allowingHTTP: image.sha256 != nil)
+            sizeBytes = try await sizeProbe.size(of: image.url)
         } catch {
             // A cancelled request fails as a transport error, and the caller
             // that cancelled has no error of its own to report.

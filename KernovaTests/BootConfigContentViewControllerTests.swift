@@ -25,11 +25,7 @@ struct BootConfigContentViewControllerTests {
     func verifiedURLPickRendersBadge() {
         let vm = VMCreationViewModel()
         vm.selectedOS = .linux
-        vm.selectLinuxCustomURL(
-            makeResolvedLinuxImage(
-                isoURLString: "https://mirror.example/alpine-3.22-aarch64.iso",
-                filename: "alpine-3.22-aarch64.iso", sha256: String(repeating: "a", count: 64),
-                sizeBytes: 1_073_741_824))
+        vm.selectLinuxCustomURL(makeCustomLinuxImage(), sizeBytes: 1_073_741_824)
         let vc = BootConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
@@ -48,10 +44,7 @@ struct BootConfigContentViewControllerTests {
     func unverifiedURLPickWarns() {
         let vm = VMCreationViewModel()
         vm.selectedOS = .linux
-        vm.selectLinuxCustomURL(
-            makeResolvedLinuxImage(
-                isoURLString: "https://mirror.example/alpine-3.22-aarch64.iso",
-                filename: "alpine-3.22-aarch64.iso", sha256: nil))
+        vm.selectLinuxCustomURL(makeCustomLinuxImage(sha256: nil), sizeBytes: 1_073_741_824)
         let vc = BootConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
@@ -145,12 +138,10 @@ struct BootConfigContentViewControllerTests {
         let vc = BootConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        let image = makeResolvedLinuxImage(
-            isoURLString: "https://mirror.example/alpine-3.22-aarch64.iso",
-            filename: "alpine-3.22-aarch64.iso")
-        vc.linuxImageURLSheet(makeURLSheet(), didChoose: image)
+        let image = makeCustomLinuxImage()
+        vc.linuxImageURLSheet(makeURLSheet(), didChoose: image, sizeBytes: 1_073_741_824)
 
-        #expect(vm.linuxSelection == .customURL(image))
+        #expect(vm.linuxSelection == .customURL(image: image, sizeBytes: 1_073_741_824))
         #expect(findButton(titled: "Image URL…", in: vc.view)?.state == .on)
     }
 

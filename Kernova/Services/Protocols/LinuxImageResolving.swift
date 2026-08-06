@@ -56,9 +56,7 @@ enum LinuxImageResolveError: LocalizedError, Equatable {
 enum LinuxImageURLError: LocalizedError, Equatable {
     /// The text is not a URL naming a host.
     case malformedURL
-    /// The URL's scheme is neither `http` nor `https`.
-    case unsupportedScheme
-    /// A plain-`http` URL with no digest behind it.
+    /// The URL's scheme is not `https`.
     case insecureURL
     /// The URL does not end in a filename that can be saved as an ISO.
     case notAnISOLink
@@ -75,10 +73,8 @@ enum LinuxImageURLError: LocalizedError, Equatable {
         switch self {
         case .malformedURL:
             "That isn't a valid URL. Paste the full link, starting with https://"
-        case .unsupportedScheme:
-            "Installer images can only be downloaded over https:// or http://"
         case .insecureURL:
-            "Without a SHA-256 checksum, the link has to start with https://"
+            "That link isn't secure. Installer images must be served over HTTPS."
         case .notAnISOLink:
             "That link doesn't end in the name of an .iso file."
         case .malformedChecksum:

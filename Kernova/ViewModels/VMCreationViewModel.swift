@@ -66,9 +66,10 @@ enum LinuxImageSelection: Sendable, Equatable {
     /// A distribution from the bundled catalog. Nothing is on disk yet — the
     /// image is resolved and downloaded after the VM is created.
     case catalogEntry(LinuxImageCatalogEntry)
-    /// An ISO at a URL the user supplied, as the wizard's check left it: the
-    /// size is what that check read, and is shown rather than persisted.
-    case customURL(ResolvedLinuxImage)
+    /// An ISO at a URL the user supplied, with the length the wizard's check
+    /// read for it — shown, never persisted, since the download re-reads it for
+    /// the ceiling it holds the transfer to.
+    case customURL(image: CustomLinuxImage, sizeBytes: UInt64)
     /// An ISO already on this Mac, with the grant minted for it at pick time.
     case localISO(path: String, bookmark: Data?)
 }
@@ -376,8 +377,8 @@ final class VMCreationViewModel {
 
     /// Commits a checked URL, on the same "downloaded after the VM exists"
     /// terms as a catalog pick.
-    func selectLinuxCustomURL(_ image: ResolvedLinuxImage) {
-        linuxSelection = .customURL(image)
+    func selectLinuxCustomURL(_ image: CustomLinuxImage, sizeBytes: UInt64) {
+        linuxSelection = .customURL(image: image, sizeBytes: sizeBytes)
     }
 
     /// Commits a panel-picked ISO together with the grant minted for it, which
@@ -499,17 +500,18 @@ final class VMCreationViewModel {
     ///
     /// A catalog pick gets no destination: the mirror names the file, and only
     /// a resolution just before the download can say what that name is. A URL
-    /// names its own file, so its destination is known here.
+    /// names its own destination, which the check just admitted, so it is known
+    /// here.
     func buildLinuxInstallContext() -> LinuxInstallContext? {
         guard selectedBootMode == .efi else { return nil }
         switch linuxSelection {
         case .catalogEntry(let entry):
             return LinuxInstallContext(source: .catalogEntry(entry))
-        case .customURL(let image):
+        case .customURL(let image, _):
             return LinuxInstallContext(
-                source: .customURL(
-                    CustomLinuxImage(url: image.isoURL, sha256: image.sha256)),
-                downloadDestinationPath: Self.downloadPath(forFilename: image.filename))
+                source: .customURL(image),
+                downloadDestinationPath: (try? image.destinationFilename())
+                    .map(Self.downloadPath(forFilename:)))
         case .localISO, nil:
             return nil
         }

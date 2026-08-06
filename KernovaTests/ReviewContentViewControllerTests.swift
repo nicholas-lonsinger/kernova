@@ -158,28 +158,28 @@ struct ReviewContentViewControllerTests {
     }
 
     @Test("A Linux URL pick names the file, its size, where it lands and how it is checked")
-    func linuxShowsVerifiedURLPick() {
+    func linuxShowsVerifiedURLPick() throws {
         let vm = VMCreationViewModel()
         vm.selectedOS = .linux
-        vm.selectLinuxCustomURL(
-            makeResolvedLinuxImage(
-                isoURLString: "https://mirror.example/alpine-3.22-aarch64.iso",
-                filename: "alpine-3.22-aarch64.iso", sha256: String(repeating: "a", count: 64),
-                sizeBytes: 1_073_741_824))
+        let image = makeCustomLinuxImage()
+        vm.selectLinuxCustomURL(image, sizeBytes: 1_073_741_824)
         let vc = ReviewContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
         #expect(findLabel(withText: "From URL", in: vc.view) != nil)
+        // The name in the link the user pasted, not the name on disk.
         #expect(findLabel(withText: "alpine-3.22-aarch64.iso", in: vc.view) != nil)
         #expect(
             findLabel(withText: DataFormatters.formatBytes(1_073_741_824), in: vc.view) != nil)
         #expect(findLabel(withText: "Verified with your checksum", in: vc.view) != nil)
-        // The URL names its own file, so unlike a catalog pick the whole
-        // destination path is known here.
+        // The URL names its own destination, so unlike a catalog pick the whole
+        // path is known here — carrying a suffix unique to this link.
+        let destination = try #require(try? image.destinationFilename())
+        #expect(destination != "alpine-3.22-aarch64.iso")
         #expect(
             findLabel(
                 withText: wizardAbbreviateWithTilde(
-                    VMCreationViewModel.downloadPath(forFilename: "alpine-3.22-aarch64.iso")),
+                    VMCreationViewModel.downloadPath(forFilename: destination)),
                 in: vc.view) != nil)
     }
 
@@ -187,7 +187,7 @@ struct ReviewContentViewControllerTests {
     func linuxShowsUnverifiedURLPick() {
         let vm = VMCreationViewModel()
         vm.selectedOS = .linux
-        vm.selectLinuxCustomURL(makeResolvedLinuxImage(sha256: nil))
+        vm.selectLinuxCustomURL(makeCustomLinuxImage(sha256: nil), sizeBytes: 1_073_741_824)
         let vc = ReviewContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 

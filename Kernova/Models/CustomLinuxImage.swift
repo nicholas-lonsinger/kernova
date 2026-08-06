@@ -15,15 +15,28 @@ struct CustomLinuxImage: Codable, Sendable, Equatable {
     /// verified.
     var sha256: String?
 
+    /// The name ``url`` itself gives the image, or a stand-in when it gives
+    /// none.
+    ///
+    /// Shown, never written: nothing on disk is named from this, so it does not
+    /// have to be safe to append to a directory and does not throw.
+    var displayName: String {
+        SafeFilename.sanitized(url.lastPathComponent, requiring: "iso") ?? "the installer image"
+    }
+
     /// The filename this image's download lands on, after every condition
     /// ``make(urlText:checksumText:)`` checked is checked again.
     ///
     /// Re-checked at use time because the value reaching here comes off a
     /// `config.json` a user can edit — the same reason `LinuxImageResolveService`
-    /// re-admits a catalog entry before contacting its mirror. The scheme
-    /// requirement follows the digest: without one, nothing but the transport
-    /// stands behind the bytes.
-    func validatedFilename() throws -> String {
+    /// re-admits a catalog entry before contacting its mirror.
+    ///
+    /// The name is unique to ``url`` rather than taken from it. A link ending
+    /// in a name the user already has in Downloads would otherwise resolve to
+    /// that file, which `DownloadService` adopts as the download in place of
+    /// fetching anything — installing an image the user never chose when there
+    /// is no digest, and trashing their file when there is one.
+    func destinationFilename() throws -> String {
         if let sha256, !ChecksumManifest.isSHA256(sha256) {
             throw LinuxImageURLError.malformedChecksum
         }
@@ -32,20 +45,28 @@ struct CustomLinuxImage: Codable, Sendable, Equatable {
         guard let scheme = url.scheme?.lowercased() else {
             throw LinuxImageURLError.malformedURL
         }
-        guard scheme == "https" || scheme == "http" else {
-            throw LinuxImageURLError.unsupportedScheme
+        // HTTPS only, whatever digest is supplied: App Transport Security
+        // refuses a cleartext load to any public host before the request is
+        // issued, so admitting one here would only defer the refusal into an
+        // error that says nothing the user can act on.
+        guard scheme == "https" else {
+            throw LinuxImageURLError.insecureURL
         }
         guard url.host() != nil else {
             throw LinuxImageURLError.malformedURL
         }
-        guard scheme == "https" || sha256 != nil else {
-            throw LinuxImageURLError.insecureURL
-        }
-        guard let filename = SafeFilename.sanitized(url.lastPathComponent, requiring: "iso") else {
+        // A direct link to a named `.iso` is what makes the generated name
+        // recognizable and the destination an ISO, which is what the
+        // replace-existing guard in the download pipeline keys on.
+        guard SafeFilename.sanitized(url.lastPathComponent, requiring: "iso") != nil else {
             throw LinuxImageURLError.notAnISOLink
         }
-        return filename
+        return UniqueDownloadFilename.make(
+            for: url, fileExtension: "iso", defaultStem: Self.defaultStem)
     }
+
+    /// Stem of a generated filename when the URL's own last component yields none.
+    private static let defaultStem = "LinuxImage"
 
     /// The image `urlText` and `checksumText` name, or the first reason they
     /// name none.
@@ -57,7 +78,7 @@ struct CustomLinuxImage: Codable, Sendable, Equatable {
         guard let url = URL(string: urlText.trimmingCharacters(in: .whitespacesAndNewlines))
         else { throw LinuxImageURLError.malformedURL }
         let image = CustomLinuxImage(url: url, sha256: sha256)
-        _ = try image.validatedFilename()
+        _ = try image.destinationFilename()
         return image
     }
 

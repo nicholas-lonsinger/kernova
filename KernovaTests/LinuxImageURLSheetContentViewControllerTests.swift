@@ -61,7 +61,9 @@ struct LinuxImageURLSheetContentViewControllerTests {
 
         #expect(resolve.resolveCallCount == 1)
         #expect(resolve.lastResolvedCustomImage?.sha256 == Self.digest)
-        #expect(vc.checkedImage == resolve.resolveResult)
+        #expect(vc.checkedImage?.url.absoluteString == Self.isoURL)
+        #expect(vc.checkedImage?.sha256 == Self.digest)
+        #expect(vc.checkedSizeBytes == resolve.resolveResult.sizeBytes)
         #expect(findButton(titled: "Use", in: vc.view)?.isEnabled == true)
         #expect(findLabel(containing: "alpine-3.22-aarch64.iso", in: vc.view) != nil)
         #expect(findLabel(containing: "won't be verified", in: vc.view) == nil)
@@ -99,23 +101,19 @@ struct LinuxImageURLSheetContentViewControllerTests {
         #expect(findButton(titled: "Use", in: vc.view)?.isEnabled == false)
     }
 
-    @Test("An http link with no checksum is refused, and accepted with one")
-    func httpFollowsTheChecksum() async {
+    @Test("An http link is refused with or without a checksum, before anything is contacted")
+    func httpIsRefused() async {
         let httpURL = "http://mirror.example/alpine-3.22-aarch64.iso"
         let resolve = MockLinuxImageResolveService()
-        let vc = makeSheet(resolve: resolve, initialURL: httpURL)
 
-        await check(vc)
+        for checksum in ["", Self.digest] {
+            let vc = makeSheet(resolve: resolve, initialURL: httpURL, initialChecksum: checksum)
+            await check(vc)
 
+            #expect(vc.checkedImage == nil)
+            #expect(findLabel(containing: "must be served over HTTPS", in: vc.view) != nil)
+        }
         #expect(resolve.resolveCallCount == 0)
-        #expect(findLabel(containing: "has to start with https://", in: vc.view) != nil)
-
-        let withChecksum = makeSheet(
-            resolve: resolve, initialURL: httpURL, initialChecksum: Self.digest)
-        await check(withChecksum)
-
-        #expect(resolve.resolveCallCount == 1)
-        #expect(withChecksum.checkedImage != nil)
     }
 
     @Test("A malformed URL is refused without reaching the resolve")
@@ -164,7 +162,9 @@ struct LinuxImageURLSheetContentViewControllerTests {
         await check(vc)
         findButton(titled: "Use", in: vc.view)?.performClick(nil)
 
-        #expect(delegate.chosen == resolve.resolveResult)
+        #expect(delegate.chosen?.url.absoluteString == Self.isoURL)
+        #expect(delegate.chosen?.sha256 == Self.digest)
+        #expect(delegate.chosenSizeBytes == resolve.resolveResult.sizeBytes)
         #expect(delegate.cancelCount == 0)
     }
 
@@ -223,14 +223,17 @@ struct LinuxImageURLSheetContentViewControllerTests {
     // MARK: - Helpers
 
     private final class RecordingDelegate: LinuxImageURLSheetContentViewControllerDelegate {
-        var chosen: ResolvedLinuxImage?
+        var chosen: CustomLinuxImage?
+        var chosenSizeBytes: UInt64?
         var cancelCount = 0
 
         func linuxImageURLSheet(
             _ vc: LinuxImageURLSheetContentViewController,
-            didChoose image: ResolvedLinuxImage
+            didChoose image: CustomLinuxImage,
+            sizeBytes: UInt64
         ) {
             chosen = image
+            chosenSizeBytes = sizeBytes
         }
 
         func linuxImageURLSheetDidCancel(_ vc: LinuxImageURLSheetContentViewController) {
