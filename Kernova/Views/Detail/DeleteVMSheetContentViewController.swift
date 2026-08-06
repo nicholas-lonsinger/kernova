@@ -498,7 +498,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
         let cancelButton = NSButton(
             title: "Cancel", target: self, action: #selector(cancelTapped(_:))
         )
-        cancelButton.bezelStyle = .rounded
+        cancelButton.bezelStyle = .push
         cancelButton.keyEquivalent = "\u{1B}"  // Escape
 
         // No ellipsis on the action buttons themselves (project HIG: "none on alert
@@ -507,7 +507,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
             title: mode == .immediate ? "Delete Immediately" : "Move to Trash",
             target: self, action: #selector(confirmTapped(_:))
         )
-        confirmButton.bezelStyle = .rounded
+        confirmButton.bezelStyle = .push
         // Trash is recoverable, so confirm is the intentional Return default. Immediate
         // delete is irreversible: no Return default, so a stray Return can't trigger it —
         // the user must click (or press Escape to cancel).

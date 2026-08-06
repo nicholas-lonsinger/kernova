@@ -142,7 +142,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.containerSize = NSSize(
+        textView.textContainer?.size = NSSize(
             width: 0,
             height: CGFloat.greatestFiniteMagnitude
         )

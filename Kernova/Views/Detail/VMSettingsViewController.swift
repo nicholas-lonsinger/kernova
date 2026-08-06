@@ -1025,7 +1025,7 @@ extension VMSettingsViewController {
 
     private func makePushButton(_ title: String, action: Selector) -> NSButton {
         let button = NSButton(title: title, target: self, action: action)
-        button.bezelStyle = .rounded
+        button.bezelStyle = .push
         button.setContentHuggingPriority(.required, for: .horizontal)
         return button
     }

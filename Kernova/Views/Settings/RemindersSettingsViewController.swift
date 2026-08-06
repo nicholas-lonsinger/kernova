@@ -75,7 +75,7 @@ final class RemindersSettingsViewController: NSViewController {
 
         let resetButton = NSButton(
             title: "Reset All Reminders", target: self, action: #selector(resetAllReminders))
-        resetButton.bezelStyle = .rounded
+        resetButton.bezelStyle = .push
         resetButton.controlSize = .small
         resetButton.setContentHuggingPriority(.required, for: .horizontal)
         let resetCaption = makeGroupedFormCaption(

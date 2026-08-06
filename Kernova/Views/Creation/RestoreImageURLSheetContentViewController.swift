@@ -171,7 +171,7 @@ final class RestoreImageURLSheetContentViewController: NSViewController {
         checkButton.title = "Check"
         checkButton.target = self
         checkButton.action = #selector(checkTapped)
-        checkButton.bezelStyle = .rounded
+        checkButton.bezelStyle = .push
         checkButton.setContentHuggingPriority(.required, for: .horizontal)
 
         let field = NSStackView(views: [urlField, checkButton])
@@ -222,13 +222,13 @@ final class RestoreImageURLSheetContentViewController: NSViewController {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelTapped))
-        cancel.bezelStyle = .rounded
+        cancel.bezelStyle = .push
         cancel.keyEquivalent = "\u{1b}"  // Escape
 
         useButton.title = "Use"
         useButton.target = self
         useButton.action = #selector(useTapped)
-        useButton.bezelStyle = .rounded
+        useButton.bezelStyle = .push
 
         let stack = NSStackView(views: [note, spacer, cancel, useButton])
         stack.orientation = .horizontal

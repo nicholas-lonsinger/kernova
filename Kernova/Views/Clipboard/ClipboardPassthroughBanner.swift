@@ -30,7 +30,7 @@ final class ClipboardPassthroughBanner: NSView {
         label.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let button = NSButton(title: "Turn Off", target: self, action: #selector(turnOffClicked))
-        button.bezelStyle = .rounded
+        button.bezelStyle = .push
         button.controlSize = .small
         button.setContentHuggingPriority(.required, for: .horizontal)
         button.setContentCompressionResistancePriority(.required, for: .horizontal)

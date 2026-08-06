@@ -140,13 +140,13 @@ final class DiskSizePopoverContentViewController: NSViewController {
         let cancelButton = NSButton(
             title: "Cancel", target: self, action: #selector(cancelTapped(_:))
         )
-        cancelButton.bezelStyle = .rounded
+        cancelButton.bezelStyle = .push
         cancelButton.keyEquivalent = "\u{1B}"  // Escape
 
         let createButton = NSButton(
             title: "Create", target: self, action: #selector(createTapped(_:))
         )
-        createButton.bezelStyle = .rounded
+        createButton.bezelStyle = .push
         createButton.keyEquivalent = "\r"
         createButton.setAccessibilityLabel("Create disk")
 

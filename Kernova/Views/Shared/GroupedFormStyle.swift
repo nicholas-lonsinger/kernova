@@ -236,7 +236,7 @@ func makeGroupedFormCaption(_ text: String) -> NSTextField {
 func makeLinkButton(_ title: String, target: AnyObject, action: Selector) -> NSButton {
     let button = NSButton(title: title, target: target, action: action)
     button.isBordered = false
-    button.bezelStyle = .inline
+    button.bezelStyle = .badge
     button.font = .preferredFont(forTextStyle: .caption1)
     button.contentTintColor = .linkColor
     button.setContentHuggingPriority(.required, for: .horizontal)
