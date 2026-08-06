@@ -22,6 +22,11 @@ message Frame {
   // protocol (`ClipboardStreamBegin`/`ClipboardChunk`/`ClipboardStreamEnd`).
   // Never reuse — reserved for wire history.
   reserved 22;
+
+  // 29 was `ClipboardTreeFetch`, which pulled a directory representation's
+  // placeholder tree one node at a time (a listing, or one child file).
+  // Retired with the File Provider placeholder mechanism it fed: a directory
+  // rep now rides the plain-file stream path as a request-time archive.
   reserved 29;
 
   oneof payload {
@@ -39,7 +44,9 @@ message Frame {
 
     ClipboardOffer clipboard_offer = 20;
     ClipboardRequest clipboard_request = 21;
+
     // 22 retired (see `reserved` above).
+
     ClipboardRelease clipboard_release = 23;
 
     // Chunk-streamed clipboard data. One streamed representation per
@@ -52,6 +59,8 @@ message Frame {
     ClipboardStreamAck clipboard_stream_ack = 27;
     ClipboardStreamAbort clipboard_stream_abort = 28;
 
+    // 29 retired (see `reserved` above).
+
     LogRecord log_record = 30;
   }
 }
@@ -59,8 +68,8 @@ message Frame {
 // Sent by both sides immediately after a vsock connection is accepted.
 //
 // Each side advertises its protocol version, the capabilities it supports,
-// and identifying information for diagnostics. Capability strings use a dotted
-// namespace (e.g. "clipboard.text", "clipboard.image.png", "log.records.v1").
+// and identifying information for diagnostics. `KernovaCapability` owns the
+// tag list both sides advertise and recognize.
 message Hello {
   // Bumps when the service-level protocol changes within a given
   // `protocol_version`. Independent from `Frame.protocol_version`.

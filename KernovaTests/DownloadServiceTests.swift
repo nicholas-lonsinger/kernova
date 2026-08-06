@@ -1256,10 +1256,14 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
         }
     }
 
-    // RATIONALE: URLProtocol is instantiated per-request by URLSession on an
-    // internal queue; the test sets `handler` before kicking off the download
-    // and clears it after, so the global isn't racy in practice. Marking it
-    // nonisolated(unsafe) sidesteps Sendable diagnostics for the closure.
+    /// The response shape for the case in flight, set before a download starts.
+    ///
+    /// Belongs to `DownloadServiceTests` alone: the handler is a global, Swift Testing
+    /// runs suites in parallel, and that suite's `.serialized` orders only its own
+    /// cases — a second suite driving this class would clobber it, which is why the
+    /// other URL-stubbing suites each declare their own `URLProtocol`.
+    /// `nonisolated(unsafe)`: URLSession instantiates the protocol per request on a
+    /// session-internal queue, so no actor can own this.
     nonisolated(unsafe) static var handler: ((URLRequest) -> StubResponse)?
 
     override class func canInit(with request: URLRequest) -> Bool { true }

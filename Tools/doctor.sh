@@ -9,8 +9,8 @@
 # failed (optional/tooling checks only warn). That makes it usable both as a
 # human sanity check and as a scriptable gate in CI.
 #
-# Requirements checked here mirror README.md "Requirements" and the toolchain
-# the Makefile actually invokes (e.g. `xcrun swift-format`).
+# Requirements checked here mirror the toolchain the Makefile actually invokes
+# (e.g. `xcrun swift-format`).
 
 set -uo pipefail
 

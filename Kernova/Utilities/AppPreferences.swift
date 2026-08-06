@@ -15,13 +15,14 @@ struct AppPreferences {
         self.defaults = defaults
     }
 
+    /// The literal `UserDefaults` key strings.
+    ///
+    /// Renaming one orphans the value every existing install has already stored
+    /// under the old string, so each key stays as written — including where its
+    /// namespacing reads inconsistently against its neighbours.
     private enum Keys {
         static let alwaysShowAdvancedOptions = "alwaysShowAdvancedOptions"
         static let expandedSidebarSections = "KernovaSidebarExpandedSections"
-        // RATIONALE: these two deliberately keep unnamespaced key strings — the
-        // ones existing users' persisted selection and order are already stored
-        // under. Not a namespacing inconsistency to "fix": changing them drops
-        // that saved state.
         static let lastSelectedVMID = "lastSelectedVMID"
         static let vmOrder = "vmOrder"
         // Deliberately inverted relative to `keepInMenuBarOnQuit` — see that

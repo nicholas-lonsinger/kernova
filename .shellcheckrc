@@ -2,7 +2,7 @@
 # (shellcheck searches upward from each script's directory for this file).
 # SC2016 ("Expressions don't expand in single quotes"): disabled repo-wide.
 # The Tools/ scripts' user-facing pass/warn/detail text quotes commands and
-# flags in backticks inside single-quoted strings (e.g. `make fp-reset`,
+# flags in backticks inside single-quoted strings (e.g. `make ghosts`,
 # `--fix`) — display markup, not intended command substitution — and that
 # trips SC2016 on every such line.
 disable=SC2016

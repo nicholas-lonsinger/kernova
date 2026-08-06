@@ -965,9 +965,6 @@ final class VMLibraryViewModel {
                 try SecurityScopedBookmark.withResolvedURL(bookmark: bookmark, fallback: url) {
                     target in
                     if permanently {
-                        // RATIONALE: the user-confirmed "Delete Immediately" path — the
-                        // deliberate exception to AGENTS.md's "Prefer `trash` over `rm`"
-                        // guideline.
                         try fileSystem.removeItem(at: target)
                     } else {
                         try fileSystem.trashItem(at: target)

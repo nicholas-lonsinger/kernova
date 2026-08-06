@@ -87,7 +87,9 @@ State *the constraint that makes this form required here*, never *what the code 
 
 ## Periphery directives
 
-When the dead-code scan flags a symbol that is alive through machinery its symbol graph cannot see, annotate the declaration with `// periphery:ignore - <reason>` instead of deleting it. The invisible paths: protocol witnesses invoked by compiler-emitted code (string interpolation, `Codable`), members reached through type inference on argument labels, declarations referenced only from a test target the scan does not index, and symbols intentionally retained for API symmetry.
+When the dead-code scan flags a symbol that is alive through machinery its symbol graph cannot see, annotate the declaration with `// periphery:ignore - <reason>` instead of deleting it. The invisible paths: protocol witnesses invoked by compiler-emitted code (string interpolation, `Codable`), members reached through type inference on argument labels, parameters carried for their type rather than their name (`isolated (any Actor)?`), and symbols intentionally retained for API symmetry.
+
+The scan indexes the test targets, so a reference from a test counts as usage: a production symbol only tests call is never flagged, and finding one is a manual job.
 
 Annotate freely here, unlike a `RATIONALE:` — the scan re-raises the symbol deterministically on every run, and the reason is a statement about this codebase's own wiring that any reader can verify.
 
@@ -95,14 +97,19 @@ Annotate freely here, unlike a `RATIONALE:` — the scan re-raises the symbol de
 - **Fix** when the finding is real — delete the symbol, or demote `public` to `internal` if only the access level is redundant.
 - **Dismiss** never applies: every annotation carries a reason, since silently retained symbols become a maintenance hazard.
 
-**Format** — put the directive **between** the doc comment and the declaration so DocC still associates the doc with the symbol, and keep the reason in the same comment block, with no blank line after the directive:
+**Format** — put the directive **between** the doc comment and the declaration so DocC still associates the doc with the symbol, and keep the reason in the same comment block, with no blank line after the directive. `periphery:ignore:parameters <names>` scopes it to those parameters instead of the whole declaration:
 
 ```swift
-/// `true` when no buffered bytes remain.
-// periphery:ignore - Used by `VsockFrameTests` via `@testable import`,
-// which Periphery's scheme-based scan doesn't currently index for the
-// SwiftPM package test target.
-var isEmpty: Bool { buffer.count == readOffset }
+/// Suspends until the next `notify()`, an immediate hit, or the `deadline`
+/// backstop — whichever comes first.
+// `isolation` uses the Swift `isolated` keyword to pin this helper to the
+// caller's actor, so it is intentionally never referenced by name.
+// periphery:ignore:parameters isolation
+private func armOnce(
+    deadline: ContinuousClock.Instant,
+    isolation: isolated (any Actor)?,
+    predicate: () -> Bool
+) async {
 ```
 
 Audit with `grep -r "periphery:ignore"` and drop any whose machinery has since become visible to Periphery. Prefer per-symbol annotations over re-toggling broad config flags like `retain_public` — see `.periphery.yml`.

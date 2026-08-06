@@ -118,12 +118,9 @@ final class HostClipboardPublisher {
         }
 
         let pasteboard = writePasteboard
-        // RATIONALE: `.currentHostOnly` keeps guest content — host-owned data on
-        // arrival — from being re-advertised to the user's other Apple-Account
-        // devices over Universal Clipboard (docs/CLIPBOARD.md §10). The option is
-        // per-write state, reset by every `prepareForNewContents`/`clearContents`,
-        // so it is applied at this single publication choke point rather than once
-        // at init.
+        // `.currentHostOnly` (docs/CLIPBOARD.md §10) is per-write state, reset by
+        // every `prepareForNewContents`/`clearContents`, so it is applied at this
+        // single publication choke point rather than once at init.
         pasteboard.prepareForNewContents(with: .currentHostOnly)
         guard pasteboard.writeObjects(items) else {
             // The write failed, so the providers were never retained.

@@ -47,7 +47,7 @@ usage='Usage: Tools/ghosts.sh [--fix | --sweep | --evict <dir>]'
 case "${1:-}" in
     '') ;;
     --fix) FIX=1 ;;
-    --sweep | --sweep-ls) SWEEP=1 ;;
+    --sweep) SWEEP=1 ;;
     --evict)
         EVICT=1
         EVICT_DIR="${2:-}"

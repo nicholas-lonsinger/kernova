@@ -164,7 +164,7 @@ doctor: ## Check the local toolchain (macOS, Xcode, Swift, swift-format) and rep
 # git worktrees left behind by torn-down worktrees (the post-checkout hook
 # sweeps registrations and arenas on new checkouts; this reports whatever
 # remains) — plus LIVE on-disk Kernova.app copies (Trash, DerivedData) that
-# outrank the installed /Applications copy in the LaunchServices/PluginKit
+# outrank the installed /Applications copy in the LaunchServices
 # CFBundleVersion election (#454). `ghosts` only reports; `clean-ghosts` also
 # unregisters/kills/prunes/evicts, prompting only for live competing copies.
 ghosts: ## Report stale/competing Kernova Launch Services, process, and worktree registrations
