@@ -514,16 +514,61 @@ struct BlockingConnectTests {
         #expect(handoff.outcome == ECONNREFUSED)
     }
 
-    @Test("A parked connect leaves room for fresh attempts up to the cap")
-    func gateAdmitsFreshAttemptsWhileParked() {
-        let gate = BlockingConnectGate()
+    @Test("Past the prompt cap, admission waits out a doubling backoff")
+    func gateBacksOffPastPromptCap() {
+        let clock = TickClock()
+        let gate = BlockingConnectGate { clock.nanoseconds }
 
-        for _ in 0..<BlockingConnectGate.maxInFlightPerLabel {
+        for _ in 0..<BlockingConnectGate.maxPromptSlots {
             #expect(gate.claim("control"))
         }
-        #expect(gate.isClaimed("control"))
         #expect(gate.claim("control") == false)
 
+        clock.advance(seconds: BlockingConnectGate.backoffFloor - 1)
+        #expect(gate.claim("control") == false)
+        clock.advance(seconds: 1)
+        #expect(gate.claim("control"))
+
+        // One slot past the cap doubles the wait.
+        clock.advance(seconds: BlockingConnectGate.backoffFloor)
+        #expect(gate.claim("control") == false)
+        clock.advance(seconds: BlockingConnectGate.backoffFloor)
+        #expect(gate.claim("control"))
+    }
+
+    @Test("The backoff never exceeds its ceiling however many slots are parked")
+    func gateBackoffStopsAtCeiling() {
+        let clock = TickClock()
+        let gate = BlockingConnectGate { clock.nanoseconds }
+
+        for _ in 0..<BlockingConnectGate.maxPromptSlots {
+            #expect(gate.claim("control"))
+        }
+        var backoff = BlockingConnectGate.backoffFloor
+        while backoff < BlockingConnectGate.backoffCeiling {
+            #expect(gate.claim("control") == false)
+            clock.advance(seconds: backoff)
+            #expect(gate.claim("control"))
+            backoff *= 2
+        }
+        // From here every admission needs exactly the ceiling, never more.
+        for _ in 0..<2 {
+            clock.advance(seconds: BlockingConnectGate.backoffCeiling - 1)
+            #expect(gate.claim("control") == false)
+            clock.advance(seconds: 1)
+            #expect(gate.claim("control"))
+        }
+    }
+
+    @Test("A release below the cap restores prompt admission")
+    func gateRestoresPromptAdmissionOnRelease() {
+        let clock = TickClock()
+        let gate = BlockingConnectGate { clock.nanoseconds }
+
+        for _ in 0..<BlockingConnectGate.maxPromptSlots {
+            #expect(gate.claim("control"))
+        }
+        #expect(gate.claim("control") == false)
         gate.release("control")
         #expect(gate.claim("control"))
         #expect(gate.claim("control") == false)
@@ -543,9 +588,10 @@ struct BlockingConnectTests {
 
     @Test("Labels hold their slots independently")
     func gateSeparatesLabels() {
-        let gate = BlockingConnectGate()
+        let clock = TickClock()
+        let gate = BlockingConnectGate { clock.nanoseconds }
 
-        for _ in 0..<BlockingConnectGate.maxInFlightPerLabel {
+        for _ in 0..<BlockingConnectGate.maxPromptSlots {
             #expect(gate.claim("control"))
         }
         #expect(gate.claim("clipboard"))
@@ -567,9 +613,10 @@ struct BlockingConnectTests {
         #expect(gate.claim("control"))
     }
 
-    @Test("Concurrent claims on one label admit exactly the cap")
+    @Test("Concurrent claims on one label admit exactly the prompt cap")
     func gateAdmitsExactlyTheCapUnderContention() async {
-        let gate = BlockingConnectGate()
+        let clock = TickClock()
+        let gate = BlockingConnectGate { clock.nanoseconds }
         let winners = CallCounter()
 
         await withTaskGroup(of: Void.self) { group in
@@ -580,7 +627,119 @@ struct BlockingConnectTests {
             }
         }
 
-        #expect(await winners.value == BlockingConnectGate.maxInFlightPerLabel)
+        #expect(await winners.value == BlockingConnectGate.maxPromptSlots)
+    }
+}
+
+/// Manually advanced nanosecond source for gate-backoff tests.
+private final class TickClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: UInt64 = 0
+
+    var nanoseconds: UInt64 { lock.withLock { stored } }
+
+    /// Advances the reading by `seconds`.
+    func advance(seconds: TimeInterval) {
+        lock.withLock { stored += UInt64(seconds * 1_000_000_000) }
+    }
+}
+
+@Suite("boundedBlockingConnect: outcome arms over real descriptors")
+struct BoundedBlockingConnectTests {
+    private typealias Client = VsockGuestClient<MonotonicEngineClock>
+
+    @Test("A prompt success hands the open fd to the caller and frees the gate")
+    func promptSuccessKeepsCallerOwnership() throws {
+        var fds: [Int32] = [0, 0]
+        try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
+        defer {
+            close(fds[0])
+            close(fds[1])
+        }
+        let gate = BlockingConnectGate()
+
+        let outcome = Client.boundedBlockingConnect(
+            fd: fds[0], label: "test", port: 0, gate: gate
+        ) { 0 }
+
+        #expect(outcome == .connected)
+        #expect(fcntl(fds[0], F_GETFD) >= 0)
+        #expect(gate.isClaimed("test") == false)
+    }
+
+    @Test("A prompt failure reports its errno with the caller still owning the fd")
+    func promptFailureReportsErrno() throws {
+        var fds: [Int32] = [0, 0]
+        try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
+        defer {
+            close(fds[0])
+            close(fds[1])
+        }
+        let gate = BlockingConnectGate()
+
+        let outcome = Client.boundedBlockingConnect(
+            fd: fds[0], label: "test", port: 0, gate: gate
+        ) { ECONNREFUSED }
+
+        #expect(outcome == .failed(errno: ECONNREFUSED))
+        #expect(fcntl(fds[0], F_GETFD) >= 0)
+        #expect(gate.isClaimed("test") == false)
+    }
+
+    @Test("An outrun deadline abandons the worker, which closes the fd when the call returns")
+    func deadlineAbandonsWorkerWhichCloses() async throws {
+        var fds: [Int32] = [0, 0]
+        try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
+        defer { close(fds[1]) }
+        let fd = fds[0]
+        let gate = BlockingConnectGate()
+        let parked = DispatchSemaphore(value: 0)
+
+        let outcome = Client.boundedBlockingConnect(
+            fd: fd, label: "test", port: 0, gate: gate, deadline: 0.05
+        ) {
+            parked.wait()
+            return ECONNABORTED
+        }
+
+        #expect(outcome == .abandoned)
+        #expect(gate.isClaimed("test"))
+        #expect(fcntl(fd, F_GETFD) >= 0)
+
+        // The kernel finally returns; the worker releases its slot, then
+        // closes the fd it now owns.
+        parked.signal()
+        // RATIONALE: another thread's close(2) emits no signal — genuinely
+        // signal-less predicate.
+        try await waitUntil { fcntl(fd, F_GETFD) == -1 }
+        #expect(gate.isClaimed("test") == false)
+    }
+
+    @Test("A gate refusal reports busy without running the connect or touching the fd")
+    func gateRefusalSkipsTheSocket() throws {
+        var fds: [Int32] = [0, 0]
+        try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
+        defer {
+            close(fds[0])
+            close(fds[1])
+        }
+        let clock = TickClock()
+        let gate = BlockingConnectGate { clock.nanoseconds }
+        for _ in 0..<BlockingConnectGate.maxPromptSlots {
+            #expect(gate.claim("test"))
+        }
+        let calls = AtomicInt()
+
+        let outcome = Client.boundedBlockingConnect(
+            fd: fds[0], label: "test", port: 0, gate: gate
+        ) {
+            calls.increment()
+            return 0
+        }
+
+        #expect(outcome == .busy)
+        #expect(calls.value == 0)
+        #expect(fcntl(fds[0], F_GETFD) >= 0)
     }
 }
 
@@ -605,15 +764,14 @@ struct AwaitConnectCompletionTests {
     }
 
     @Test("POLLNVAL (invalid descriptor) stays fatal")
-    func pollnvalFails() throws {
+    func pollnvalFails() {
         guard #available(macOS 26.0, *) else { return }
-        var fds: [Int32] = [0, 0]
-        try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
-        close(fds[0])
-        close(fds[1])
+        // A number at the fd-table size can never name an open descriptor, so
+        // poll() reports POLLNVAL with no fd-reuse window.
+        let fd = getdtablesize()
         #expect(
             !VsockGuestClient<MonotonicEngineClock>.awaitConnectCompletion(
-                fd: fds[0], label: "test", port: 0, clock: MonotonicEngineClock()))
+                fd: fd, label: "test", port: 0, clock: MonotonicEngineClock()))
     }
 }
 

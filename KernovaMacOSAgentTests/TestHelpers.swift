@@ -102,8 +102,7 @@ func makeTestClient(
             port: port, label: label, clock: clock,
             retryInterval: retryInterval, socketProvider: socketProvider)
     }
-    if kind == .continuous, #available(macOS 13.0, *) { return build(ContinuousEngineClock()) }
-    return build(MonotonicEngineClock())
+    return build(kind.makeClock())
 }
 
 // MARK: - AtomicInt

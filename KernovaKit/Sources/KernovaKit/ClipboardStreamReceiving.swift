@@ -79,6 +79,5 @@ public func makeClipboardStreamReceiver(
             onAbort: onAbort
         )
     }
-    if #available(macOS 13.0, *) { return build(ContinuousEngineClock()) }
-    return build(MonotonicEngineClock())
+    return build(makePlatformEngineClock())
 }

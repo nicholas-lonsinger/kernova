@@ -55,20 +55,6 @@ func materializedFiles(under directory: URL) -> [URL] {
     }
 }
 
-/// Polls `predicate` until it holds or `timeout` seconds elapse.
-func pollUntil(
-    timeout: TimeInterval = testWaitBackstop, _ predicate: @Sendable () -> Bool
-) async throws {
-    let clock = MonotonicEngineClock()
-    let start = clock.now
-    while !predicate() {
-        if clock.seconds(since: start) >= timeout {
-            throw StreamTestFailure("Condition not met within \(timeout) s")
-        }
-        try await Task.sleep(nanoseconds: 10_000_000)
-    }
-}
-
 // MARK: - Staging sink doubles
 
 /// A `StagingSink` that parks every `write` until the test allows it through,

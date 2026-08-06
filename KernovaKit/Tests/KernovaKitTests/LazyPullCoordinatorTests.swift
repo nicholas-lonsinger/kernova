@@ -50,10 +50,10 @@ struct LazyPullCoordinatorTests {
     /// suite's ~15 concurrent blocking pulls would otherwise park shared
     /// global-pool workers at once, and GCD throttles new-worker creation
     /// under saturation. A freshly dispatched `pull` then can't get a thread
-    /// within a sibling's `pollUntil` window, its slot never registers, and
+    /// within a sibling's `waitUntil` window, its slot never registers, and
     /// the whole cluster times out together — a starvation cascade that
     /// self-reinforces (each test's deliver/abort/failAll, which would free a
-    /// worker, is gated behind the very `pollUntil` that's timing out) and
+    /// worker, is gated behind the very `waitUntil` that's timing out) and
     /// survives the automatic retry (#578).
     private func runPull(
         _ coordinator: LazyPullCoordinator,
@@ -86,7 +86,7 @@ struct LazyPullCoordinatorTests {
     func deliverWakesPull() async throws {
         let coordinator = LazyPullCoordinator()
         async let outcome = runPull(coordinator, transferID: 7, timeout: 5)
-        try await pollUntil { coordinator.pendingSlotCountForTesting == 1 }
+        try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
         coordinator.deliver(7, inlineRep("hello"))
 
         guard case .delivered(let rep) = await outcome else {
@@ -101,7 +101,7 @@ struct LazyPullCoordinatorTests {
     func abortWakesPull() async throws {
         let coordinator = LazyPullCoordinator()
         async let outcome = runPull(coordinator, transferID: 3, timeout: 5)
-        try await pollUntil { coordinator.pendingSlotCountForTesting == 1 }
+        try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
         coordinator.abort(
             3,
             ClipboardStreamAbortInfo(
@@ -188,7 +188,7 @@ struct LazyPullCoordinatorTests {
         let coordinator = LazyPullCoordinator()
         coordinator.heartbeat(404)  // nobody waiting
         async let outcome = runPull(coordinator, transferID: 12, timeout: 5)
-        try await pollUntil { coordinator.pendingSlotCountForTesting == 1 }
+        try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
         coordinator.deliver(12, inlineRep("done"))
         // A late heartbeat after the slot resolves must not crash or hang.
         coordinator.heartbeat(12)
@@ -203,7 +203,7 @@ struct LazyPullCoordinatorTests {
         let coordinator = LazyPullCoordinator()
         async let a = runPull(coordinator, transferID: 1, timeout: 5)
         async let b = runPull(coordinator, transferID: 2, timeout: 5)
-        try await pollUntil { coordinator.pendingSlotCountForTesting == 2 }
+        try await waitUntil { coordinator.pendingSlotCountForTesting == 2 }
         coordinator.failAll()
 
         let outcomes = await [a, b]
@@ -221,7 +221,7 @@ struct LazyPullCoordinatorTests {
         let coordinator = LazyPullCoordinator()
         async let first = runPull(coordinator, transferID: 100, timeout: 5)
         async let second = runPull(coordinator, transferID: 200, timeout: 5)
-        try await pollUntil { coordinator.pendingSlotCountForTesting == 2 }
+        try await waitUntil { coordinator.pendingSlotCountForTesting == 2 }
 
         coordinator.deliver(100, inlineRep("first"))
         coordinator.abort(
@@ -246,7 +246,7 @@ struct LazyPullCoordinatorTests {
     func idempotentDelivery() async throws {
         let coordinator = LazyPullCoordinator()
         async let outcome = runPull(coordinator, transferID: 9, timeout: 5)
-        try await pollUntil { coordinator.pendingSlotCountForTesting == 1 }
+        try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
         coordinator.deliver(9, inlineRep("once"))
         // Second delivery and a late abort must not crash or change the result.
         coordinator.deliver(9, inlineRep("twice"))
@@ -277,7 +277,7 @@ struct LazyPullCoordinatorTests {
     func pullSupersedesInFlightPullForSameID() async throws {
         let coordinator = LazyPullCoordinator()
         async let first = runPull(coordinator, transferID: 7, timeout: 5)
-        try await pollUntil { coordinator.pendingSlotCountForTesting == 1 }
+        try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
 
         async let second = runPull(coordinator, transferID: 7, timeout: 5)
         // The registration itself resolves the displaced pull — no need to
@@ -308,7 +308,7 @@ struct LazyPullCoordinatorTests {
         // reach anyone.
         let coordinator = LazyPullCoordinator()
         async let first = runPull(coordinator, transferID: 7, timeout: 5)
-        try await pollUntil { coordinator.pendingSlotCountForTesting == 1 }
+        try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
 
         async let second = runPull(coordinator, transferID: 7, timeout: 5)
         guard case .superseded = await first else {
@@ -397,7 +397,7 @@ struct LazyPullCoordinatorTests {
             onAbort: { info in coordinator.abort(transferID, info) })
 
         async let firstAttempt = runPull(coordinator, transferID: transferID, timeout: 5)
-        try await pollUntil { coordinator.pendingSlotCountForTesting == 1 }
+        try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
 
         // The retry: a second concurrent pull for the identical id.
         async let secondAttempt = runPull(coordinator, transferID: transferID, timeout: 5)

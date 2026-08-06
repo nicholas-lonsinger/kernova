@@ -30,6 +30,16 @@ extension EngineClock {
     }
 }
 
+/// The platform-default engine clock — `ContinuousClock` on macOS 13+,
+/// `CLOCK_MONOTONIC` below.
+///
+/// The one clock-selection `#available` in production code: factories open the
+/// returned existential straight into their generic build functions.
+public func makePlatformEngineClock() -> any EngineClock {
+    if #available(macOS 13.0, *) { return ContinuousEngineClock() }
+    return MonotonicEngineClock()
+}
+
 /// `ContinuousClock` as an `EngineClock` — the conformance every macOS 13+
 /// system runs, storing genuine `ContinuousClock.Instant`s.
 @available(macOS 13.0, *)
@@ -93,6 +103,7 @@ public struct MonotonicEngineClock: EngineClock {
     /// contract; sleeping in bounded slices and re-reading the deadline clock
     /// caps the post-resume overshoot at one slice.
     public func sleep(for interval: TimeInterval) async throws {
+        try Task.checkCancellation()
         let clamped = min(max(interval, 0), 1_000_000_000)
         let deadline = Instant(nanoseconds: now.nanoseconds &+ UInt64(clamped * 1_000_000_000))
         while true {

@@ -29,8 +29,7 @@ func makeVsockGuestControlAgent(
             onStateChange: onStateChange
         )
     }
-    if #available(macOS 13.0, *) { return build(ContinuousEngineClock()) }
-    return build(MonotonicEngineClock())
+    return build(makePlatformEngineClock())
 }
 
 // File-scope stand-in for a `static let`, which a generic type cannot hold.

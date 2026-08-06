@@ -91,10 +91,7 @@ struct VsockGuestControlAgentTests {
                 onStateChange: onStateChange
             )
         }
-        if kind == .continuous, #available(macOS 13.0, *) {
-            return build(ContinuousEngineClock())
-        }
-        return build(MonotonicEngineClock())
+        return build(kind.makeClock())
     }
 
     // MARK: - Hello
@@ -340,12 +337,7 @@ struct VsockGuestControlAgentTests {
                 terminateAfter: 0.5
             )
         }
-        let agent: any VsockGuestControlling
-        if kind == .continuous, #available(macOS 13.0, *) {
-            agent = build(ContinuousEngineClock())
-        } else {
-            agent = build(MonotonicEngineClock())
-        }
+        let agent = build(kind.makeClock())
         defer { agent.stop() }
         agent.start()
 

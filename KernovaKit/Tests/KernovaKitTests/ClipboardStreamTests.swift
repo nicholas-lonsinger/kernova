@@ -695,7 +695,7 @@ struct ClipboardStreamTests {
         // RATIONALE: filesystem-appearance poll (mirrors `cancelDeletesPartial`)
         // — the partial's deletion runs on the write lane after the abort has
         // already been delivered, so there is no test-owned signal to gate on.
-        try await pollUntil {
+        try await waitUntil {
             !materializedFiles(under: harness.stagingTempRoot).contains {
                 $0.lastPathComponent == "failing.bin"
             }
@@ -784,7 +784,7 @@ struct ClipboardStreamTests {
         // RATIONALE: filesystem-appearance poll (mirrors `cancelDeletesPartial`)
         // — supersession is silent on the channel-wide path, so no collector
         // signal fires for it.
-        try await pollUntil {
+        try await waitUntil {
             !materializedFiles(under: harness.stagingTempRoot).contains {
                 $0.lastPathComponent == "superseded.bin"
             }
@@ -963,16 +963,16 @@ struct ClipboardStreamTests {
         // per-transfer DispatchQueue; the only test-owned signal
         // (StreamCollector.gate) fires on onComplete/onAbort, never on partial-file
         // I/O. Per docs/TESTING.md "Async waits in tests", a filesystem-appearance poll is
-        // a sanctioned `pollUntil` use.
+        // a sanctioned `waitUntil` use.
         // The partial temp file is created off the transfer queue.
-        try await pollUntil {
+        try await waitUntil {
             materializedFiles(under: harness.stagingTempRoot).contains {
                 $0.lastPathComponent == "partial.bin"
             }
         }
         // A superseding cancel deletes the partial rather than leaking it.
         harness.receiver.cancel(generation: 1)
-        try await pollUntil {
+        try await waitUntil {
             !materializedFiles(under: harness.stagingTempRoot).contains {
                 $0.lastPathComponent == "partial.bin"
             }
@@ -1144,7 +1144,7 @@ struct ClipboardStreamTests {
         // abort this test just observed is delivered *before* the deletion runs
         // — deliberately, so a wedged write can't delay waking a blocked pull.
         // There is no test-owned signal for the deletion itself.
-        try await pollUntil {
+        try await waitUntil {
             !materializedFiles(under: harness.stagingTempRoot).contains {
                 $0.lastPathComponent == "stalled.bin"
             }
@@ -1179,7 +1179,7 @@ struct ClipboardStreamTests {
         #expect(harness.collector.representation(8) == nil)
         // RATIONALE: filesystem-appearance poll — see `inboundStallTimesOut`.
         // The partial's deletion runs on the write lane, after the abort.
-        try await pollUntil {
+        try await waitUntil {
             !materializedFiles(under: harness.stagingTempRoot).contains {
                 $0.lastPathComponent == "mid-stall.bin"
             }
@@ -1309,11 +1309,11 @@ struct ClipboardStreamTests {
                 $0.data = Data(repeating: 0xAB, count: Self.chunk)
             })
         // The sink was created and a partial written.
-        try await pollUntil { !materializedFiles(under: harness.stagingTempRoot).isEmpty }
+        try await waitUntil { !materializedFiles(under: harness.stagingTempRoot).isEmpty }
         // Supersede the generation: the spilled partial must be deleted, exactly
         // like a file rep's.
         harness.receiver.cancel(generation: 1)
-        try await pollUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
+        try await waitUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
     }
 
     @Test("a chunk past the declared total is rejected with size.overrun")

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// The two production `EngineClock` conformances, as a parameterization axis
 /// for suites that must exercise both on every CI run.
@@ -8,4 +9,13 @@ import Foundation
 public enum EngineClockKind: String, CaseIterable, Sendable {
     case continuous
     case monotonic
+
+    /// The concrete clock this kind names, erased for the caller's generic
+    /// build function to open — the one kind-selection `#available` in tests.
+    public func makeClock() -> any EngineClock {
+        if self == .continuous, #available(macOS 13.0, *) {
+            return ContinuousEngineClock()
+        }
+        return MonotonicEngineClock()
+    }
 }
