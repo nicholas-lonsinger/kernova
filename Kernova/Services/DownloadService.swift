@@ -32,9 +32,12 @@ final class DownloadService: Sendable {
     ///
     /// The partial download lives at `<destinationURL minus its extension>.kernovadownload/`;
     /// its `data` file size IS the resume offset, and `Info.plist` holds the
-    /// ETag / Last-Modified used for `If-Range`. The bundle is preserved for a
-    /// later resume on any failure, cancellation included (which throws
-    /// `CancellationError`). A completed file with no bundle beside it is skipped.
+    /// ETag / Last-Modified used for `If-Range`. The bundle survives a failure
+    /// a later attempt can resume past, cancellation included (which throws
+    /// `CancellationError`); one it cannot — a response disagreeing with the
+    /// bytes already on disk, or a body running past `expectedSizeBytes` —
+    /// discards the bundle so the next attempt restarts from zero. A completed
+    /// file with no bundle beside it is skipped.
     ///
     /// Calls are serialized per destination: two callers pinned to the same
     /// remote file share one path and one bundle, so a second caller waits for
@@ -443,7 +446,10 @@ final class DownloadService: Sendable {
     ///
     /// `expectedSizeBytes` bounds the file the caller is willing to land:
     /// `initialOffset` plus everything written is held under it, so a resumed
-    /// transfer spends the same budget the first attempt did.
+    /// transfer spends the same budget the first attempt did. A body running
+    /// past it takes the bundle with it — the offset the transfer stopped at
+    /// is the ceiling, so a preserved bundle would trip this same check on the
+    /// first chunk of every later attempt.
     func streamBytes(
         from chunks: AsyncThrowingStream<Data, any Error>,
         into bundle: DownloadBundle,
@@ -493,8 +499,9 @@ final class DownloadService: Sendable {
                     UInt64(clamping: totalWritten) + UInt64(data.count) > ceiling
                 {
                     Self.logger.error(
-                        "Transfer ran past its expected \(ceiling, privacy: .public) bytes — stopping"
+                        "Transfer ran past its expected \(ceiling, privacy: .public) bytes — stopping and discarding the bundle so the next attempt restarts from zero"
                     )
+                    try? FileManager.default.removeItem(at: bundle.url)
                     throw DownloadError.oversizedTransfer(expectedBytes: ceiling)
                 }
                 try handle.write(contentsOf: data)

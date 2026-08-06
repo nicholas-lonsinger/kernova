@@ -947,7 +947,7 @@ struct DownloadServiceTests {
 
         #expect(!FileManager.default.fileExists(atPath: destination.path))
         let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destination))
-        #expect(bundle.partialByteCount <= 4096)
+        #expect(!bundle.exists)
     }
 
     @Test("The ceiling is spent by the bytes a resume already has on disk")
@@ -989,7 +989,65 @@ struct DownloadServiceTests {
         }
 
         #expect(!FileManager.default.fileExists(atPath: destination.path))
-        #expect(bundle.partialByteCount == Int64(prefix.count))
+        // Discarded, not left at the ceiling for the next attempt to trip over.
+        #expect(!bundle.exists)
+    }
+
+    @Test("A retry after an oversized abort starts over instead of tripping the same ceiling")
+    func oversizedTransferDiscardsBundleSoTheRetryStartsOver() async throws {
+        // The ceiling and the body are independent requests to the same URL, so
+        // a mirror serving more than the probed size aborts the transfer with
+        // the bundle sitting at the ceiling. Kept, it would send every later
+        // Start back into the same check at the same offset, and the VM could
+        // never finish setup.
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let destination = temp.appendingPathComponent("installer.iso")
+        let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destination))
+
+        try bundle.prepareForFreshDownload(
+            with: DownloadBundleMetadata(
+                originalURL: Self.remoteURL, etag: "\"v1\"", lastModified: nil, createdAt: Date()))
+        try Data(repeating: 0x11, count: 4096).write(to: bundle.dataURL)
+
+        let payload = Data(repeating: 0x33, count: 4096)
+        // A resume is answered by the mirror that overruns; a request carrying
+        // no Range — what an attempt with no bundle behind it sends — gets the
+        // file the ceiling was probed against.
+        StubURLProtocol.handler = { request in
+            guard request.value(forHTTPHeaderField: "Range") == nil else {
+                return .partialResponse(
+                    url: request.url ?? Self.remoteURL,
+                    body: Data(repeating: 0x22, count: 1000),
+                    start: 4096, end: 5095, total: 5096)
+            }
+            return .fullResponse(url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let service = Self.makeServiceWithStub()
+        do {
+            try await service.download(
+                from: Self.remoteURL,
+                to: destination,
+                expectedSizeBytes: 4096,
+                progressHandler: { _ in }
+            )
+            Issue.record("Expected DownloadError.oversizedTransfer")
+        } catch DownloadError.oversizedTransfer {
+            // Expected
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(!bundle.exists)
+
+        try await service.download(
+            from: Self.remoteURL,
+            to: destination,
+            expectedSizeBytes: 4096,
+            progressHandler: { _ in }
+        )
+        #expect(try Data(contentsOf: destination) == payload)
     }
 
     @Test("A transfer that fits its ceiling, and one with no ceiling at all, both complete")
