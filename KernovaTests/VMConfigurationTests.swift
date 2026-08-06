@@ -8,7 +8,7 @@ struct VMConfigurationTests {
     ///
     /// Pass extra comma-separated JSON fields via `extraFields` to add or override entries.
     private static func makeBaseJSON(
-        name: String = "Old VM",
+        name: String = "Base VM",
         extraFields: String = ""
     ) -> String {
         let extra = extraFields.isEmpty ? "" : ",\n            \(extraFields)"
@@ -185,7 +185,7 @@ struct VMConfigurationTests {
         decoder.dateDecodingStrategy = .iso8601
         let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
 
-        #expect(config.name == "Old VM")
+        #expect(config.name == "Base VM")
         #expect(config.genericMachineIdentifierData == nil)
         #expect(config.macAddress == nil)
     }
@@ -569,8 +569,8 @@ struct VMConfigurationTests {
         #expect(decoded.installContext?.localIPSWPath == "/tmp/macOS-26.ipsw")
     }
 
-    @Test("Legacy config.json without installContext key decodes as nil")
-    func legacyConfigWithoutInstallContextDecodesAsNil() throws {
+    @Test("A config omitting installContext decodes it as nil")
+    func configOmittingInstallContextDecodesNil() throws {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
@@ -638,12 +638,8 @@ struct VMConfigurationTests {
         #expect(jsonObject["linuxInstallContext"] == nil)
     }
 
-    @Test("Pre-existing config.json with installContext missing requestedFreshDownload decodes cleanly")
-    func legacyInstallContextWithoutRequestedFreshDownloadDecodes() throws {
-        // Wire-shape from before `requestedFreshDownload` was added — Codable
-        // must tolerate the missing field and default it to `false` so users
-        // who created VMs on an older build don't have their install state
-        // become un-decodable.
+    @Test("An installContext omitting requestedFreshDownload decodes it as false")
+    func installContextOmittingRequestedFreshDownloadDecodesFalse() throws {
         let baseFields = """
             "installContext": {
                 "source": "downloadLatest",
@@ -900,8 +896,6 @@ struct VMConfigurationTests {
 
     @Test("Configs missing the clipboardPassthroughEnabled key default it off")
     func clipboardPassthroughMissingKeyUsesDefault() throws {
-        // `makeBaseJSON` predates the passthrough key — the shape of a config
-        // saved before passthrough existed. It must fall through to `false`.
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let decoded = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
@@ -941,11 +935,8 @@ struct VMConfigurationTests {
         #expect(decoded.agentLogForwardingEnabled == true)
     }
 
-    @Test("Missing agentLogForwardingEnabled decodes as false (existing-VM migration)")
+    @Test("A config omitting agentLogForwardingEnabled decodes it as false")
     func missingAgentLogForwardingEnabledDecodesFalse() throws {
-        // Older configs predate the field — they must still decode, with the
-        // new flag defaulting to off so existing VMs don't suddenly forward
-        // logs without the user opting in.
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
@@ -985,11 +976,8 @@ struct VMConfigurationTests {
         #expect(decoded.lastSeenAgentVersion == "0.9.2")
     }
 
-    @Test("Missing lastSeenAgentVersion decodes as nil (existing-VM migration)")
+    @Test("A config omitting lastSeenAgentVersion decodes it as nil")
     func missingLastSeenAgentVersionDecodesNil() throws {
-        // Older configs predate the field — they must still decode, with the
-        // optional defaulting to nil so the post-start watchdog doesn't
-        // misfire on VMs that have never connected an agent.
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
@@ -1029,11 +1017,8 @@ struct VMConfigurationTests {
         #expect(decoded.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
     }
 
-    @Test("Missing lastSeenGuestOSVersion decodes as nil (existing-VM migration)")
+    @Test("A config omitting lastSeenGuestOSVersion decodes it as nil")
     func missingLastSeenGuestOSVersionDecodesNil() throws {
-        // Older configs predate the field — they must still decode, with the
-        // optional defaulting to nil so the VM reads "Unknown" until an agent
-        // reports.
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
@@ -1073,11 +1058,8 @@ struct VMConfigurationTests {
         #expect(decoded.agentInstallNudgeDismissed == true)
     }
 
-    @Test("Missing agentInstallNudgeDismissed decodes as false (existing-VM migration)")
+    @Test("A config omitting agentInstallNudgeDismissed decodes it as false")
     func missingAgentInstallNudgeDismissedDecodesFalse() throws {
-        // Older configs predate the field — they must still decode, with the
-        // flag defaulting to off so the install nudge keeps surfacing for
-        // VMs the user has never actively dismissed.
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))

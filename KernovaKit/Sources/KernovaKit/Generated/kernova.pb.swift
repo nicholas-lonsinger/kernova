@@ -154,6 +154,7 @@ public nonisolated struct Kernova_V1_Frame: Sendable {
     set {payload = .clipboardStreamAbort(newValue)}
   }
 
+  /// 29 retired (see `reserved` above).
   public var logRecord: Kernova_V1_LogRecord {
     get {
       if case .logRecord(let v)? = payload {return v}
@@ -188,6 +189,7 @@ public nonisolated struct Kernova_V1_Frame: Sendable {
     case clipboardStreamEnd(Kernova_V1_ClipboardStreamEnd)
     case clipboardStreamAck(Kernova_V1_ClipboardStreamAck)
     case clipboardStreamAbort(Kernova_V1_ClipboardStreamAbort)
+    /// 29 retired (see `reserved` above).
     case logRecord(Kernova_V1_LogRecord)
 
   }
@@ -198,8 +200,8 @@ public nonisolated struct Kernova_V1_Frame: Sendable {
 /// Sent by both sides immediately after a vsock connection is accepted.
 ///
 /// Each side advertises its protocol version, the capabilities it supports,
-/// and identifying information for diagnostics. Capability strings use a dotted
-/// namespace (e.g. "clipboard.text", "clipboard.image.png", "log.records.v1").
+/// and identifying information for diagnostics. `KernovaCapability` owns the
+/// tag list both sides advertise and recognize.
 public nonisolated struct Kernova_V1_Hello: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for

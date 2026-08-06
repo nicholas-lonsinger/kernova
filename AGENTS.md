@@ -82,7 +82,7 @@ Persisted formats are current-only — no migration code. Back-compat shims, dec
 
 ### File Operations
 
-Prefer `trash` over `rm` when deleting files.
+Prefer `trash` over `rm` when deleting files. A user-confirmed permanent-delete flow ("Delete Immediately") is the exception and removes outright.
 
 ### Review Feedback Handling
 

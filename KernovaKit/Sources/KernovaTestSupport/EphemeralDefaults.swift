@@ -1,7 +1,7 @@
 import Foundation
 
-// Shared ephemeral-`UserDefaults` test helpers for the test bundles that
-// exercise a `UserDefaults`-backed preferences wrapper.
+// Ephemeral-`UserDefaults` test helpers for the test bundle that exercises a
+// `UserDefaults`-backed preferences wrapper.
 
 // MARK: - makeEphemeralDefaults
 

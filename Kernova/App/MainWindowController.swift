@@ -314,12 +314,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// Re-applies toolbar enablement after any sheet, and recreates the app's
     /// custom toolbar items when the closing sheet is the customize palette.
     ///
-    /// RATIONALE: AppKit bakes the section-specific glass treatment into a
-    /// bordered item's view at creation, and a customization drag across the
-    /// sidebar tracking separator reuses the existing instance without firing
-    /// toolbarWillAddItem or toolbarDidRemoveItem (verified empirically), so a
-    /// moved item keeps the wrong treatment. Reinserting at the same index routes
-    /// through the delegate factory.
+    /// AppKit bakes the section-specific glass treatment into a bordered item's
+    /// view at creation, and a customization drag across the sidebar tracking
+    /// separator reuses the existing instance without firing toolbarWillAddItem
+    /// or toolbarDidRemoveItem, so a moved item keeps the wrong treatment.
+    /// Reinserting at the same index routes through the delegate factory.
     func windowDidEndSheet(_ notification: Notification) {
         // Every sheet, not just the palette: item enablement is applied from the
         // observation with `autovalidates` off, so a refresh that lands while a

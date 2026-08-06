@@ -310,8 +310,6 @@ final class DownloadService: Sendable {
         let bundleURL = Self.resumeBundleURL(for: destinationURL)
         do {
             if permanently {
-                // RATIONALE: the user-confirmed "Delete Immediately" path; the deliberate
-                // exception to AGENTS.md's "prefer trash over rm" guideline.
                 try fileSystem.removeItem(at: bundleURL)
             } else {
                 try fileSystem.trashItem(at: bundleURL)

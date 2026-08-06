@@ -236,11 +236,11 @@ NSSplitViewController (MainWindowController)
 └── Detail:  DetailContainerViewController  (owns DetailAlertsPresenter)
     ├── VMDisplayBackingView (layered on top; VZVirtualMachineView + overlays)
     └── DetailEmptyStateView ⇆ VMDetailRouterViewController  (routes via DetailRoute.resolve)
-            ├── VMSettingsViewController                   (stopped / error / running-settings)
-            ├── InitialBootBannerView + VMSettingsViewController
-            ├── DetailStatusPlaceholderViewController      (preparing / transition)
-            ├── MacOSInstallProgressViewController         (installing)
-            └── VMDisplayPlaceholderContentViewController  (external / suspended / unavailable)
+            ├── VMSettingsViewController                    (stopped / running-settings)
+            ├── DetailBannerView + VMSettingsViewController (initial boot / error)
+            ├── DetailStatusPlaceholderViewController       (preparing / transition)
+            ├── GuestSetupProgressViewController            (setup)
+            └── VMDisplayPlaceholderContentViewController   (external / suspended / unavailable)
 
 VMCreationWizardViewController (modal sheet, presented by DetailContainerViewController)
 ├── OSSelectionContentViewController
@@ -349,7 +349,7 @@ kernel resources until relaunch — hence one owner (`RuntimeFileAccess`) and on
 
 - **KernovaMacOSAgent** — `Kernova Guest Agent.app`, the `.accessory` menu-bar app that runs inside
   macOS guests, holding three independent vsock connections to the host (control, log forwarding,
-  clipboard). It is not embedded as a bundle: a build phase `ditto`-copies it into
+  clipboard). It is not embedded as a bundle: the `Package Guest Agent DMG` build phase produces
   `Contents/Resources/KernovaMacOSAgent.dmg`, so it must already carry its final Developer ID
   signature when the DMG is baked — export-time re-signing cannot reach inside a DMG resource
   ([RELEASING.md](RELEASING.md)); version bumps are in [BUILD.md](BUILD.md).

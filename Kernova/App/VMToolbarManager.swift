@@ -463,9 +463,8 @@ final class VMToolbarManager: NSObject {
         item.action = action
         item.toolTip = toolTip
         item.isBordered = true
-        // RATIONALE: the update methods own enabled state; with autovalidation
-        // on, AppKit would force isEnabled=true and fight the manual updates,
-        // producing a visible flicker when switching between stopped VMs.
+        // Autovalidation fights the update methods' writes visibly here: the
+        // items flicker when switching between stopped VMs (docs/TOOLBAR.md).
         item.autovalidates = false
         return item
     }

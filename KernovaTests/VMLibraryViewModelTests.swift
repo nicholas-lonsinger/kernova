@@ -2401,7 +2401,7 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.instances[0].status == .initialBoot)
     }
 
-    @Test("loadVMs assigns .stopped when no installContext (back-compat)")
+    @Test("loadVMs assigns .stopped when no installContext")
     func loadVMsAssignsStoppedWithoutInstallContext() {
         let storage = MockVMStorageService()
         let config = VMConfiguration(name: "Installed VM", guestOS: .linux, bootMode: .efi)

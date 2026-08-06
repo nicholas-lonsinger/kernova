@@ -926,12 +926,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return (types: item.map { $0.type }, provider: provider)
         }
 
-        // RATIONALE: `.currentHostOnly` keeps the continuity-pasteboard
-        // advertiser from fetching the promised flavors at offer time — on the
-        // sync path, producing `public.file-url` materializes the whole file with
-        // zero user interaction (docs/CLIPBOARD.md §3). The option is per-write
-        // state, reset by every prepare/clear, so it is applied at this single
-        // publication choke point.
+        // `.currentHostOnly` (docs/CLIPBOARD.md §3) is per-write state, reset by
+        // every prepare/clear, so it is applied at this single publication choke
+        // point.
         pasteboard.prepareForNewContents(with: .currentHostOnly)
         let written = pasteboard.writeItems(writes)
         lastPasteboardChangeCount = pasteboard.changeCount
