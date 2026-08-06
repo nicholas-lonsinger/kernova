@@ -210,6 +210,22 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         }
         defer { reader.close() }
 
+        // Retirement is checked per chunk in the loop below, which a zero-byte
+        // payload never enters — so check once here, before anything is
+        // announced. Every transfer then honors an abort or supersession that
+        // landed between `startTransfer` registering it and this queue reaching
+        // it, whatever its size (docs/CLIPBOARD.md §9).
+        let retirement = transfer.retirement()
+        if retirement.retired {
+            notifyPeerOfRetirement(transfer, reason: retirement.reason)
+            return
+        }
+        guard isCurrent(transfer.generation) else {
+            transfer.markAborted(.superseded)
+            notifyPeerOfRetirement(transfer, reason: .superseded)
+            return
+        }
+
         guard
             send(
                 .with {
@@ -236,11 +252,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
                 offset: offset, chunkSize: nextChunkSize, timeout: noAckTimeout)
             switch outcome {
             case .aborted(let reason):
-                // A local supersede/cancel notifies the peer; an inbound abort
-                // (the peer already gave up) does not echo back.
-                if reason == .superseded {
-                    sendAbort(transfer: transfer, code: "superseded", message: "Offer superseded")
-                }
+                notifyPeerOfRetirement(transfer, reason: reason)
                 return
             case .timedOut:
                 sendAbort(transfer: transfer, code: "ack.timeout", message: "Peer stopped acknowledging")
@@ -252,7 +264,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
             // Supersession: a newer local copy retired this offer.
             guard isCurrent(transfer.generation) else {
                 transfer.markAborted(.superseded)
-                sendAbort(transfer: transfer, code: "superseded", message: "Offer superseded")
+                notifyPeerOfRetirement(transfer, reason: .superseded)
                 return
             }
 
@@ -310,6 +322,18 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         sendAbort(transferID: transfer.transferID, code: code, message: message)
     }
 
+    /// Tells the peer about a retirement when it is the peer's news.
+    ///
+    /// A local supersede/cancel is; an inbound abort is not, since the peer
+    /// already gave up. The single place that decision is made, shared by the
+    /// pre-Begin check and the chunk loop.
+    private func notifyPeerOfRetirement(
+        _ transfer: OutboundTransfer, reason: OutboundTransfer.AbortReason?
+    ) {
+        guard reason == .superseded else { return }
+        sendAbort(transfer: transfer, code: "superseded", message: "Offer superseded")
+    }
+
     /// Writes a `ClipboardStreamAbort` for `transferID`.
     private func sendAbort(transferID: UInt64, code: String, message: String) {
         _ = send(
@@ -362,6 +386,20 @@ private final class OutboundTransfer: @unchecked Sendable {
     }
 
     enum CreditOutcome { case proceed, aborted(AbortReason?), timedOut }
+
+    /// Whether the transfer has already been retired, and why.
+    ///
+    /// `awaitCredit`'s abort check without the wait, for the payload-independent
+    /// check that runs before the chunk loop.
+    ///
+    /// Reads under `condition`, the lock `markAborted` writes under, so a
+    /// retirement racing this read resolves one way or the other rather than
+    /// tearing.
+    func retirement() -> (retired: Bool, reason: AbortReason?) {
+        condition.lock()
+        defer { condition.unlock() }
+        return (aborted, abortReason)
+    }
 
     /// Blocks until there is credit for a `chunkSize` chunk at `offset`, the
     /// transfer is aborted, or the no-ack deadline elapses without progress.
