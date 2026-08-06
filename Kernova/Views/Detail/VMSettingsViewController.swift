@@ -1728,7 +1728,7 @@ extension VMSettingsViewController {
 
 // MARK: - Actions
 
-extension VMSettingsViewController {
+extension VMSettingsViewController: NSMenuItemValidation {
     @objc private func startRename() {
         guard instance.status.canRename else { return }
         viewModel.renameVMInDetail(instance)
@@ -1736,10 +1736,6 @@ extension VMSettingsViewController {
 
     /// Disables the name field's right-click "Rename" while the VM can't be
     /// renamed (e.g. while running), mirroring the disabled name button.
-    // periphery:ignore - AppKit's menu-validation machinery invokes this
-    // informal-protocol method on the name button's menu target (`self`)
-    // before showing the "Rename" item; that framework-driven call is
-    // invisible to Periphery's symbol graph.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(startRename) {
             return instance.status.canRename
