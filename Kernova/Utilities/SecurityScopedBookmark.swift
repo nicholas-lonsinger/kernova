@@ -5,9 +5,8 @@ import os
 /// mechanism for persisting a user's open/save-panel grant across launches.
 ///
 /// Runtime behavior here, and in ``ScopedAccess`` and `RuntimeFileAccess`, is
-/// untested by construction: bookmark creation and resolution need a signed,
-/// sandboxed process holding a real panel grant, and CI runs unsigned, where the
-/// sandbox is not enforced at all.
+/// untested by construction: bookmark creation and resolution need a real
+/// open/save-panel grant, which only a user driving the panel can mint.
 ///
 /// Every panel pick site converts its URL through ``capture(_:)`` and stores the
 /// resulting `(path, bookmark)` pair on the model; every access site resolves it

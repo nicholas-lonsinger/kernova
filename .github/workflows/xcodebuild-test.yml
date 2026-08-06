@@ -38,7 +38,10 @@ jobs:
 
       # These invocations mirror the Makefile's XCODEBUILD_FLAGS by hand.
       #
-      # CI builds with signing off: the runner has no identity.
+      # Debug signs ad-hoc (Config/Base.xcconfig's CODE_SIGN_IDENTITY = "-"),
+      # which needs no identity or team, so it embeds the app's sandbox
+      # entitlements and the TEST_HOST-hosted unit tests run sandboxed here
+      # exactly as they do locally.
       - name: Build for testing
         run: |
           set -o pipefail
@@ -49,7 +52,6 @@ jobs:
             -derivedDataPath DerivedData/Kernova \
             -configuration Debug \
             -skipPackagePluginValidation \
-            CODE_SIGNING_ALLOWED=NO \
             COMPILER_INDEX_STORE_ENABLE=NO \
             2>&1 | if command -v xcbeautify &>/dev/null; then xcbeautify --renderer github-actions; else cat; fi
 
@@ -64,7 +66,6 @@ jobs:
             -configuration Debug \
             -resultBundlePath artifacts/TestResults.xcresult \
             -skipPackagePluginValidation \
-            CODE_SIGNING_ALLOWED=NO \
             COMPILER_INDEX_STORE_ENABLE=NO \
             2>&1 | if command -v xcbeautify &>/dev/null; then xcbeautify --renderer github-actions; else cat; fi
 
