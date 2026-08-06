@@ -73,12 +73,6 @@ struct LinuxImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
         return lhs.id < rhs.id
     }
 
-    /// Whether `filename` is an ISO this entry names, matching ``isoPattern``
-    /// as an ``ISOFilenameGlob``.
-    func matchesISOFilename(_ filename: String) -> Bool {
-        ISOFilenameGlob(isoPattern)?.matches(filename) ?? false
-    }
-
     /// Whether the entry matches a picker search term, over distribution and
     /// version.
     func matches(searchTerm: String) -> Bool {

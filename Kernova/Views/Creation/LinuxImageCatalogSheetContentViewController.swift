@@ -29,7 +29,8 @@ final class LinuxImageCatalogSheetContentViewController: NSViewController {
     /// The rows currently shown, after the search filter.
     private(set) var visibleEntries: [LinuxImageCatalogEntry]
     private let generatedAt: String?
-    private let isDownloaded: @MainActor (LinuxImageCatalogEntry) -> Bool
+    /// IDs of the entries whose image is already in the user's Downloads folder.
+    private let downloadedIDs: Set<String>
     /// Entry to select once the table exists, from a previous pick.
     private let pendingSelectedID: String?
 
@@ -54,15 +55,16 @@ final class LinuxImageCatalogSheetContentViewController: NSViewController {
 
     /// Builds the picker over `entries`, preselecting `selectedID`.
     ///
-    /// `isDownloaded` reports whether an image for the entry is already in the
-    /// user's Downloads folder, and defaults to matching that folder's contents
-    /// against the entry's glob — the exact filename is a mirror's to decide, so
-    /// there is no single path to probe the way the macOS picker has.
+    /// `downloadsFilenames` lists the user's Downloads folder and defaults to a
+    /// `FileManager` enumeration of it. It is called once, here, and the Status
+    /// column matches the names it returned: the exact ISO filename is a
+    /// mirror's to decide, so there is no single path to probe the way the macOS
+    /// picker has.
     init(
         entries: [LinuxImageCatalogEntry],
         selectedID: String? = nil,
         generatedAt: String? = nil,
-        isDownloaded: (@MainActor (LinuxImageCatalogEntry) -> Bool)? = nil
+        downloadsFilenames: (@MainActor () -> [String])? = nil
     ) {
         // Sorted here so the rows read in catalog order whatever order they
         // arrive in.
@@ -70,7 +72,8 @@ final class LinuxImageCatalogSheetContentViewController: NSViewController {
         self.entries = ordered
         self.visibleEntries = ordered
         self.generatedAt = generatedAt
-        self.isDownloaded = isDownloaded ?? { Self.downloadsHoldsImage(for: $0) }
+        self.downloadedIDs = Self.downloadedEntryIDs(
+            among: ordered, in: downloadsFilenames?() ?? Self.downloadsFolderFilenames())
         self.pendingSelectedID = selectedID
         super.init(nibName: nil, bundle: nil)
     }
@@ -330,18 +333,26 @@ final class LinuxImageCatalogSheetContentViewController: NSViewController {
 
     // MARK: - Helpers
 
-    /// Whether the user's Downloads folder already holds an image this entry
-    /// names.
+    /// The names of everything directly inside the user's Downloads folder, or
+    /// none when it cannot be read.
+    private static func downloadsFolderFilenames() -> [String] {
+        let downloads = VMCreationViewModel.downloadsDirectory.path(percentEncoded: false)
+        return (try? FileManager.default.contentsOfDirectory(atPath: downloads)) ?? []
+    }
+
+    /// IDs of the entries `filenames` holds an image for.
     ///
     /// A completed download is the only thing that can match: an interrupted one
     /// keeps its bytes in a `.kernovadownload` bundle beside the destination,
     /// which the entry's `.iso`-anchored glob does not take.
-    private static func downloadsHoldsImage(for entry: LinuxImageCatalogEntry) -> Bool {
-        let downloads = VMCreationViewModel.downloadsDirectory.path(percentEncoded: false)
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: downloads) else {
-            return false
-        }
-        return names.contains { entry.matchesISOFilename($0) }
+    private static func downloadedEntryIDs(
+        among entries: [LinuxImageCatalogEntry], in filenames: [String]
+    ) -> Set<String> {
+        Set(
+            entries.compactMap { entry -> String? in
+                guard let glob = ISOFilenameGlob(entry.isoPattern) else { return nil }
+                return filenames.contains(where: glob.matches) ? entry.id : nil
+            })
     }
 
     private func makeHorizontalSeparator() -> NSBox {
@@ -421,7 +432,7 @@ extension LinuxImageCatalogSheetContentViewController: NSTableViewDelegate {
         case Column.size:
             return wizardApproximateSize(entry.approxSizeBytes)
         case Column.status:
-            return isDownloaded(entry) ? "In Downloads" : ""
+            return downloadedIDs.contains(entry.id) ? "In Downloads" : ""
         default:
             return ""
         }
