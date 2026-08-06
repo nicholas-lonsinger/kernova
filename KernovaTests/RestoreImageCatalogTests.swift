@@ -108,6 +108,11 @@ struct RestoreImageCatalogEntryTests {
     func releaseDateRejectsGarbage() {
         #expect(makeCatalogEntry(lastModified: "not a date").releaseDate == nil)
     }
+
+    @Test("An absent Last-Modified yields no date, like an unparseable one")
+    func releaseDateAbsent() {
+        #expect(makeCatalogEntry(lastModified: nil).releaseDate == nil)
+    }
 }
 
 @Suite("RestoreImageCatalogService Tests")
@@ -154,6 +159,17 @@ struct RestoreImageCatalogServiceTests {
         let catalog = try #require(result.catalog)
         #expect(catalog.images.map(\.build) == ["24G90"])
         #expect(result.rejections == [.undecodableEntry(index: 0)])
+    }
+
+    @Test("An entry with no Last-Modified key is kept, not dropped")
+    func keepsEntryWithoutLastModified() throws {
+        let noDate = goodEntry.replacingOccurrences(
+            of: "\"lastModified\": \"Mon, 18 Aug 2025 12:00:00 GMT\",", with: "")
+        let result = RestoreImageCatalogService.parse(json(images: noDate))
+        let catalog = try #require(result.catalog)
+        #expect(result.rejections.isEmpty)
+        #expect(catalog.images.map(\.build) == ["24G90"])
+        #expect(catalog.images.first?.releaseDate == nil)
     }
 
     @Test("An undecodable document yields no catalog")

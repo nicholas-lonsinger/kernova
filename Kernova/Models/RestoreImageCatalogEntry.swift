@@ -12,8 +12,9 @@ struct RestoreImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
     var build: String
     var url: URL
     var sizeBytes: UInt64
-    /// The `Last-Modified` Apple's CDN reports for ``url``, in RFC 1123 form.
-    var lastModified: String
+    /// The `Last-Modified` Apple's CDN reports for ``url``, in RFC 1123 form,
+    /// or `nil` when it reported none — the generator omits the key then.
+    var lastModified: String?
     /// Which pass of `Tools/regen-restore-image-catalog.swift` found this image.
     var source: String
 
@@ -24,9 +25,9 @@ struct RestoreImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
         RestoreImageFilename.destination(for: url)
     }
 
-    /// ``lastModified`` parsed for display, or `nil` if Apple's header did not parse.
+    /// ``lastModified`` parsed for display, or `nil` if it is absent or did not parse.
     var releaseDate: Date? {
-        Self.rfc1123Formatter.date(from: lastModified)
+        lastModified.flatMap { Self.rfc1123Formatter.date(from: $0) }
     }
 
     /// `version` split into numeric components, zero-padded to three.
