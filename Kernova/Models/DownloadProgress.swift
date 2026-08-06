@@ -1,7 +1,7 @@
 import Foundation
 
 /// Snapshot of a download's progress, delivered to a progress handler.
-struct DownloadProgress: Sendable {
+struct DownloadProgress: Sendable, Equatable {
     let bytesWritten: Int64
     let totalBytes: Int64
     /// EWMA-smoothed download speed; zero before the first progress report.

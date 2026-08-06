@@ -1,0 +1,55 @@
+import Foundation
+
+@testable import Kernova
+
+/// Scripted stand-in for `Downloading`.
+///
+/// `downloadedContents`, when set, is written to the destination so the caller's
+/// verification step has a real file to read; leaving it `nil` models the
+/// skip-existing fast path, where the service returns without fetching because
+/// the file is already there.
+final class MockDownloadService: Downloading, @unchecked Sendable {
+    var downloadCallCount = 0
+    var lastDownloadRemoteURL: URL?
+    var lastDownloadDestinationURL: URL?
+    var lastDownloadDiscardsExisting: Bool?
+    var discardResumeDataCallCount = 0
+    /// URLs passed to `discardResumeData(at:permanently:)`, in call order.
+    var discardedResumeDataURLs: [URL] = []
+    var lastDiscardResumeDataPermanently: Bool?
+
+    /// Thrown instead of downloading, per the per-method `<method>Error` convention.
+    var downloadError: (any Error)?
+
+    /// Written to the destination on success.
+    var downloadedContents: Data?
+
+    /// Samples handed to the progress handler before the download returns.
+    var progressSamples: [DownloadProgress] = []
+
+    func download(
+        from remoteURL: URL,
+        to destinationURL: URL,
+        discardsExistingDownload: Bool,
+        progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
+    ) async throws {
+        downloadCallCount += 1
+        lastDownloadRemoteURL = remoteURL
+        lastDownloadDestinationURL = destinationURL
+        lastDownloadDiscardsExisting = discardsExistingDownload
+        for sample in progressSamples {
+            await MainActor.run { progressHandler(sample) }
+        }
+        if let error = downloadError { throw error }
+        guard let downloadedContents else { return }
+        try FileManager.default.createDirectory(
+            at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try downloadedContents.write(to: destinationURL)
+    }
+
+    func discardResumeData(at destinationURL: URL, permanently: Bool) {
+        discardResumeDataCallCount += 1
+        discardedResumeDataURLs.append(destinationURL)
+        lastDiscardResumeDataPermanently = permanently
+    }
+}

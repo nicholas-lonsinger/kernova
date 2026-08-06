@@ -592,6 +592,52 @@ struct VMConfigurationTests {
         #expect(jsonObject["installContext"] == nil)
     }
 
+    // MARK: - linuxInstallContext Tests
+
+    @Test("linuxInstallContext round-trips through JSON")
+    func linuxInstallContextRoundTrip() throws {
+        let context = LinuxImageDownloadContext(
+            entry: makeLinuxCatalogEntry(),
+            downloadDestinationPath: "/Users/me/Downloads/debian-13.6.0-arm64-netinst.iso"
+        )
+        let config = VMConfiguration(
+            name: "Pending Debian VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            linuxInstallContext: context
+        )
+
+        let data = try VMConfiguration.makeJSONEncoder().encode(config)
+        let decoded = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.linuxInstallContext == context)
+        #expect(decoded.linuxInstallContext?.entry.id == "debian-13")
+        #expect(
+            decoded.linuxInstallContext?.downloadDestinationPath
+                == "/Users/me/Downloads/debian-13.6.0-arm64-netinst.iso")
+        // The two contexts are separate fields, and each guest uses only its own.
+        #expect(decoded.installContext == nil)
+    }
+
+    @Test("A config.json without linuxInstallContext decodes as nil")
+    func configWithoutLinuxInstallContextDecodesAsNil() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+
+        #expect(config.linuxInstallContext == nil)
+    }
+
+    @Test("VMConfiguration with nil linuxInstallContext omits field from JSON")
+    func nilLinuxInstallContextOmittedFromJSON() throws {
+        let config = VMConfiguration(name: "Plain VM", guestOS: .linux, bootMode: .efi)
+
+        let data = try JSONEncoder().encode(config)
+        let jsonObject = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+
+        #expect(jsonObject["linuxInstallContext"] == nil)
+    }
+
     @Test("Pre-existing config.json with installContext missing requestedFreshDownload decodes cleanly")
     func legacyInstallContextWithoutRequestedFreshDownloadDecodes() throws {
         // Wire-shape from before `requestedFreshDownload` was added — Codable

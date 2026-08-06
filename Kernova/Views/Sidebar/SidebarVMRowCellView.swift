@@ -175,7 +175,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
                 _ = instance.statusToolTip
                 _ = instance.statusDisplayNSColor
                 _ = instance.agentStatus
-                _ = instance.installState
+                _ = instance.setupState
                 _ = instance.configuration.agentInstallNudgeDismissed
                 _ = instance.configuration.lastSeenAgentVersion
             },
@@ -442,7 +442,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     /// installed" for a VM whose agent state is unknown.
     static func visibleAgentStatus(for instance: VMInstance) -> AgentStatus? {
         guard instance.configuration.guestOS == .macOS else { return nil }
-        guard instance.installState == nil else { return nil }
+        guard instance.setupState == nil else { return nil }
         // Live-paused counts: the VM is still in memory and resumable, so the
         // badge shouldn't blink out and back when the user pauses. Cold-paused
         // (paused to disk, nothing in memory) does not.

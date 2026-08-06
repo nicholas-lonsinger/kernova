@@ -69,7 +69,7 @@ final class MacOSInstallService {
         // RATIONALE: `attachVirtualMachine` runs *before* the cancellation check
         // below on purpose. A cancel in this window unwinds with
         // `instance.virtualMachine` set, which
-        // `VMLibraryViewModel.installAndAutoBoot`'s `catch is CancellationError`
+        // `VMLibraryViewModel.runGuestSetup`'s `catch is CancellationError`
         // tears down. Checking first would leave the configured pipes dangling on
         // `instance` with no matching VM.
         let vm = instance.attachVirtualMachine(from: result.configuration)
@@ -111,7 +111,7 @@ final class MacOSInstallService {
 
         // `waitForVMStopped` observes cancellation but never throws, so the signal
         // has to be re-raised here: otherwise a cancel landing during the wait lets
-        // the install return success and `installAndAutoBoot` auto-boots it.
+        // the install return success and `runGuestSetup` auto-boots it.
         try Task.checkCancellation()
 
         // If the delegate never fired (timed out, or deallocated before
@@ -121,7 +121,7 @@ final class MacOSInstallService {
             instance.resetToStopped()
         }
 
-        instance.installState?.currentPhase = .installing(progress: 1.0)
+        instance.setupState?.progress = .fraction(1.0)
 
         Self.logger.info("macOS installation completed for '\(instance.name, privacy: .public)'")
     }

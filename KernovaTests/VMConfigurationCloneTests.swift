@@ -302,6 +302,22 @@ struct VMConfigurationCloneTests {
         #expect(clone.removableMedia == nil)
     }
 
+    // MARK: - Setup Intent
+
+    @Test("Clone clears both pending setup contexts")
+    func cloneClearsSetupContexts() {
+        // The clone copies the source bundle's finished artifacts, so carrying
+        // either context would falsely mark it as awaiting an initial boot.
+        var macOS = makeConfig(guestOS: .macOS, bootMode: .macOS)
+        macOS.installContext = MacOSInstallContext(
+            source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
+        var linux = makeConfig()
+        linux.linuxInstallContext = LinuxImageDownloadContext(entry: makeLinuxCatalogEntry())
+
+        #expect(macOS.clonedForNewInstance(existingNames: []).installContext == nil)
+        #expect(linux.clonedForNewInstance(existingNames: []).linuxInstallContext == nil)
+    }
+
     // MARK: - Security Bookmarks
 
     @Test("Clone carries security bookmarks through disks, media, and shared directories")

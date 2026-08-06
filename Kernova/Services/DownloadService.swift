@@ -561,6 +561,10 @@ final class DownloadService: Sendable {
     }
 }
 
+// MARK: - Downloading
+
+extension DownloadService: Downloading {}
+
 // MARK: - Bundle Layout
 
 /// Metadata serialized as `Info.plist` at the root of a `.kernovadownload` bundle.
@@ -775,6 +779,8 @@ enum DownloadError: LocalizedError {
     case freshDownloadCleanupFailed(path: String, underlying: any Error)
     /// The requested destination does not name a file of the expected type.
     case invalidDownloadDestination(path: String)
+    /// The downloaded file's SHA-256 differs from the one its publisher states.
+    case checksumMismatch(filename: String, expected: String, actual: String)
 
     var errorDescription: String? {
         switch self {
@@ -784,6 +790,8 @@ enum DownloadError: LocalizedError {
             "Could not remove the existing file at \(path) before downloading the replacement: \(underlying.localizedDescription)"
         case .invalidDownloadDestination(let path):
             "Cannot download to '\(path)' — the destination is not a supported file type."
+        case .checksumMismatch(let filename, _, _):
+            "\(filename) doesn't match the checksum its publisher lists. Try downloading it again."
         }
     }
 }
