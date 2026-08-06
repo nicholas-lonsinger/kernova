@@ -160,14 +160,6 @@ struct SpiceAgentProtocolTests {
         #expect(String(data: payload, encoding: .utf8) == text)
     }
 
-    @Test("Clipboard release message has empty payload")
-    func buildClipboardRelease() {
-        let message = SpiceMessageBuilder.buildClipboardRelease()
-
-        let dataSize = message.readLittleEndianUInt32(at: VDIChunkHeader.size + 16)
-        #expect(dataSize == 0)
-    }
-
     // MARK: - Parser
 
     @Test("Parser handles announce capabilities from guest")
@@ -443,9 +435,6 @@ struct SpiceAgentProtocolTests {
 
         let data = SpiceMessageBuilder.buildClipboardData(type: .utf8Text, data: Data([0x41]))
         #expect(data.readLittleEndianUInt32(at: 0) == SpiceConstants.serverPort)
-
-        let release = SpiceMessageBuilder.buildClipboardRelease()
-        #expect(release.readLittleEndianUInt32(at: 0) == SpiceConstants.serverPort)
     }
 
     // MARK: - Capability Checking

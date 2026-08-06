@@ -93,17 +93,6 @@ struct VMBundleLayout: Sendable {
         return DiskSizes(onDiskBytes: onDisk, capacityBytes: capacity)
     }
 
-    /// Actual bytes consumed on disk by a disk image, or `nil` if the file
-    /// doesn't resolve.
-    func diskOnDiskBytes(forRelativePath path: String, isInternal: Bool) -> UInt64? {
-        diskSizes(forRelativePath: path, isInternal: isInternal).onDiskBytes
-    }
-
-    /// Virtual capacity (bytes) of a disk image, or `nil` when it can't be read.
-    func diskCapacityBytes(forRelativePath path: String, isInternal: Bool) -> UInt64? {
-        diskSizes(forRelativePath: path, isInternal: isInternal).capacityBytes
-    }
-
     /// Outcome of inspecting a file's ASIF header for its virtual capacity.
     private enum ASIFCapacity {
         case capacity(UInt64)

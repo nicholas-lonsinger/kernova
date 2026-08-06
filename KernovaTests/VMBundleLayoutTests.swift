@@ -98,14 +98,21 @@ struct VMBundleLayoutTests {
         #expect(layout.hasSaveFile == true)
     }
 
-    // MARK: - diskOnDiskBytes
+    // MARK: - diskSizes.onDiskBytes
 
     private func mainDiskOnDiskBytes(_ layout: VMBundleLayout) -> UInt64? {
-        layout.diskOnDiskBytes(
-            forRelativePath: layout.diskImageURL.lastPathComponent, isInternal: true)
+        layout.diskSizes(
+            forRelativePath: layout.diskImageURL.lastPathComponent, isInternal: true
+        ).onDiskBytes
     }
 
-    @Test("diskOnDiskBytes returns nil when disk image does not exist")
+    private func mainDiskCapacityBytes(_ layout: VMBundleLayout) -> UInt64? {
+        layout.diskSizes(
+            forRelativePath: layout.diskImageURL.lastPathComponent, isInternal: true
+        ).capacityBytes
+    }
+
+    @Test("onDiskBytes is nil when the disk image does not exist")
     func diskOnDiskBytesReturnsNilForMissingFile() {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -113,7 +120,7 @@ struct VMBundleLayoutTests {
         #expect(mainDiskOnDiskBytes(layout) == nil)
     }
 
-    @Test("diskOnDiskBytes returns non-nil for an existing file")
+    @Test("onDiskBytes is non-nil for an existing file")
     func diskOnDiskBytesReturnsSize() throws {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -130,7 +137,7 @@ struct VMBundleLayoutTests {
         #expect(usage! >= 4096)
     }
 
-    @Test("diskOnDiskBytes returns physical allocation less than logical size for sparse files")
+    @Test("onDiskBytes is the physical allocation, below the logical size for sparse files")
     func diskOnDiskBytesReturnsSparseSize() throws {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -153,9 +160,9 @@ struct VMBundleLayoutTests {
         #expect(usage! < logicalSize)
     }
 
-    // MARK: - diskCapacityBytes
+    // MARK: - diskSizes.capacityBytes
 
-    @Test("diskCapacityBytes reads the virtual capacity from a shdw header")
+    @Test("capacityBytes reads the virtual capacity from a shdw header")
     func diskCapacityBytesReadsASIFHeader() throws {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -170,12 +177,10 @@ struct VMBundleLayoutTests {
         withUnsafeBytes(of: &sectorsBE) { header.replaceSubrange(0x30..<0x38, with: $0) }
         try header.write(to: layout.diskImageURL)
 
-        let capacity = layout.diskCapacityBytes(
-            forRelativePath: layout.diskImageURL.lastPathComponent, isInternal: true)
-        #expect(capacity == 50_000_000_000)
+        #expect(mainDiskCapacityBytes(layout) == 50_000_000_000)
     }
 
-    @Test("diskCapacityBytes returns the logical file size for a non-ASIF file")
+    @Test("capacityBytes is the logical file size for a non-ASIF file")
     func diskCapacityBytesLogicalSizeForNonASIF() throws {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -186,12 +191,10 @@ struct VMBundleLayoutTests {
         // A raw image (no `shdw` magic): apparent size *is* the capacity.
         try Data(repeating: 0xAB, count: 0x40).write(to: layout.diskImageURL)
 
-        #expect(
-            layout.diskCapacityBytes(
-                forRelativePath: layout.diskImageURL.lastPathComponent, isInternal: true) == 0x40)
+        #expect(mainDiskCapacityBytes(layout) == 0x40)
     }
 
-    @Test("diskCapacityBytes resolves an external (absolute) path's logical size")
+    @Test("capacityBytes resolves an external (absolute) path's logical size")
     func diskCapacityBytesExternalAbsolutePath() throws {
         let fileURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString).img")
@@ -200,21 +203,21 @@ struct VMBundleLayoutTests {
 
         let layout = VMBundleLayout(bundleURL: FileManager.default.temporaryDirectory)
         #expect(
-            layout.diskCapacityBytes(
-                forRelativePath: fileURL.path(percentEncoded: false), isInternal: false) == 2048)
+            layout.diskSizes(
+                forRelativePath: fileURL.path(percentEncoded: false), isInternal: false
+            )
+            .capacityBytes == 2048)
     }
 
-    @Test("diskCapacityBytes returns nil for a missing file")
+    @Test("capacityBytes is nil for a missing file")
     func diskCapacityBytesNilForMissingFile() {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let layout = VMBundleLayout(bundleURL: tempDir)
-        #expect(
-            layout.diskCapacityBytes(
-                forRelativePath: layout.diskImageURL.lastPathComponent, isInternal: true) == nil)
+        #expect(mainDiskCapacityBytes(layout) == nil)
     }
 
-    @Test("diskCapacityBytes returns nil for a malformed ASIF rather than its file size")
+    @Test("capacityBytes is nil for a malformed ASIF rather than its file size")
     func diskCapacityBytesNilForMalformedASIF() throws {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -232,12 +235,10 @@ struct VMBundleLayoutTests {
         withUnsafeBytes(of: &sectorsBE) { header.replaceSubrange(0x30..<0x38, with: $0) }
         try header.write(to: layout.diskImageURL)
 
-        #expect(
-            layout.diskCapacityBytes(
-                forRelativePath: layout.diskImageURL.lastPathComponent, isInternal: true) == nil)
+        #expect(mainDiskCapacityBytes(layout) == nil)
     }
 
-    @Test("diskCapacityBytes rejects a sector count that overflows when ×512")
+    @Test("capacityBytes rejects a sector count that overflows when ×512")
     func diskCapacityBytesNilForOverflowingSectorCount() throws {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -254,9 +255,7 @@ struct VMBundleLayoutTests {
         withUnsafeBytes(of: &sectorsBE) { header.replaceSubrange(0x30..<0x38, with: $0) }
         try header.write(to: layout.diskImageURL)
 
-        #expect(
-            layout.diskCapacityBytes(
-                forRelativePath: layout.diskImageURL.lastPathComponent, isInternal: true) == nil)
+        #expect(mainDiskCapacityBytes(layout) == nil)
     }
 
     // MARK: - diskSizes

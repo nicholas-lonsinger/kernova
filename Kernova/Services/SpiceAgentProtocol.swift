@@ -174,11 +174,6 @@ enum SpiceMessageBuilder {
         return wrapMessage(type: .clipboard, payload: payload)
     }
 
-    /// Builds a `CLIPBOARD_RELEASE` message.
-    static func buildClipboardRelease() -> Data {
-        wrapMessage(type: .clipboardRelease, payload: Data())
-    }
-
     // MARK: - Private
 
     private static func wrapMessage(type: SpiceAgentMessageType, payload: Data) -> Data {

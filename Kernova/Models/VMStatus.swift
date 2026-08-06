@@ -1,7 +1,7 @@
 import Foundation
 
 /// The runtime status of a virtual machine.
-enum VMStatus: String, Codable, Sendable {
+enum VMStatus: Sendable {
     case stopped
     case starting
     case running

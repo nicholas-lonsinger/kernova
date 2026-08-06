@@ -2100,7 +2100,10 @@ struct VsockClipboardServiceTests {
                 reps: [(uti: "public.data", byteCount: 128, filename: "a.bin", isInline: false)]))
         try await waitForChange { service.clipboardContent.representations.count == 1 }
         let outcome = await publisher.publish(from: service)
-        #expect(outcome.didWrite)
+        guard case .written = outcome else {
+            Issue.record("Expected the publish to land on the pasteboard, got \(outcome)")
+            return
+        }
         #expect(pasteboard.pasteboardItems?.isEmpty == false)
 
         // The guest copies again while the pasteboard still holds our write:
@@ -2151,7 +2154,10 @@ struct VsockClipboardServiceTests {
                     uti: ClipboardContent.utf8TextUTI, data: Data("local".utf8))
             ])
         let outcome = await publisher.publish(from: service)
-        #expect(outcome.didWrite)
+        guard case .written = outcome else {
+            Issue.record("Expected the publish to land on the pasteboard, got \(outcome)")
+            return
+        }
         let countAfterWrite = pasteboard.changeCount
 
         try guest.send(makeTextOffer(generation: 1, text: "guest"))

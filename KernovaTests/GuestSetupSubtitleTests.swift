@@ -6,15 +6,15 @@ import Testing
 /// Verifies the guest-setup download-progress subtitle holds a stable
 /// horizontal position as it updates (#555).
 ///
-/// The subtitle is one center-aligned wrapping label, so any change in a line's
+/// The subtitle is two center-aligned labels, so any change in a line's
 /// *rendered width* re-centers it and reads as horizontal jitter. These tests
-/// measure the actual rendered width of the assembled lines in the label's own
-/// font and assert the structural invariants that keep it still — rather than
-/// counting characters, which a proportional unit suffix (KB vs MB) would defeat.
+/// measure the actual rendered width of each line in the labels' own font and
+/// assert the structural invariants that keep it still — rather than counting
+/// characters, which a proportional unit suffix (KB vs MB) would defeat.
 @MainActor
 @Suite("Guest setup subtitle width stability")
 struct GuestSetupSubtitleTests {
-    /// The exact font `GuestSetupProgressViewController` gives `detailLabel`.
+    /// The exact font `GuestSetupProgressViewController` gives its detail labels.
     private static let font = NSFont.monospacedDigitSystemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .regular)
 
@@ -31,11 +31,13 @@ struct GuestSetupSubtitleTests {
     /// The subtitle lines for an estimate of `etaSeconds` at `bytesPerSecond`.
     private func downloadLines(etaSeconds: Int, bytesPerSecond: Double) -> [String] {
         let remaining = Int64((Double(etaSeconds) * bytesPerSecond).rounded())
-        let progress = DownloadProgress(
-            bytesWritten: 0, totalBytes: remaining, bytesPerSecond: bytesPerSecond)
-        return GuestSetupProgressViewController.detailText(
-            for: .download(progress), verb: Self.downloadVerb
-        ).components(separatedBy: "\n")
+        let progress = SetupStepProgress.download(
+            DownloadProgress(
+                bytesWritten: 0, totalBytes: remaining, bytesPerSecond: bytesPerSecond))
+        return [
+            GuestSetupProgressViewController.detailLine1(for: progress, verb: Self.downloadVerb),
+            GuestSetupProgressViewController.detailLine2(for: progress),
+        ].compactMap { $0 }
     }
 
     /// ETA values spanning every unit boundary the H:MM:SS clock can cross.
@@ -65,17 +67,15 @@ struct GuestSetupSubtitleTests {
         // Just above the guard yields a real estimate; just below yields the
         // placeholder. Both render the same "1.0 KB/s" speed, so line 2 must not
         // move as the speed dips across the guard and back.
-        let numeric = GuestSetupProgressViewController.detailText(
+        let numeric = GuestSetupProgressViewController.detailLine2(
             for: .download(
-                DownloadProgress(bytesWritten: 0, totalBytes: 100_100, bytesPerSecond: 1_001)),
-            verb: Self.downloadVerb
-        ).components(separatedBy: "\n")[1]
-        let placeholder = GuestSetupProgressViewController.detailText(
+                DownloadProgress(bytesWritten: 0, totalBytes: 100_100, bytesPerSecond: 1_001)))
+        let placeholder = GuestSetupProgressViewController.detailLine2(
             for: .download(
-                DownloadProgress(bytesWritten: 0, totalBytes: 99_900, bytesPerSecond: 999)),
-            verb: Self.downloadVerb
-        ).components(separatedBy: "\n")[1]
-        #expect(abs(width(numeric) - width(placeholder)) < tolerance)
+                DownloadProgress(bytesWritten: 0, totalBytes: 99_900, bytesPerSecond: 999)))
+        #expect(numeric != nil)
+        #expect(placeholder != nil)
+        #expect(abs(width(numeric ?? "") - width(placeholder ?? "")) < tolerance)
     }
 
     @Test("Line 1 always sets the label box: every line-2 width stays below every line-1 width")
@@ -99,21 +99,11 @@ struct GuestSetupSubtitleTests {
     func installPercentStable() {
         let widths = [0.0, 0.09, 0.10, 0.5, 0.99, 1.0].map {
             width(
-                GuestSetupProgressViewController.detailText(
+                GuestSetupProgressViewController.detailLine1(
                     for: .fraction($0), verb: Self.installVerb))
         }
         let spread = (widths.max() ?? 0) - (widths.min() ?? 0)
         #expect(spread < tolerance, "install percentage width moved by \(spread)pt")
-    }
-
-    @Test("Line 2 is omitted before the first speed sample")
-    func line2AbsentWithoutSpeed() {
-        let lines = GuestSetupProgressViewController.detailText(
-            for: .download(
-                DownloadProgress(bytesWritten: 0, totalBytes: 1_000_000, bytesPerSecond: 0)),
-            verb: Self.downloadVerb
-        ).components(separatedBy: "\n")
-        #expect(lines.count == 1)
     }
 
     // MARK: - Per-line builders (the labels are refreshed on separate cadences)
@@ -137,23 +127,19 @@ struct GuestSetupSubtitleTests {
         #expect(line2?.contains(DataFormatters.etaUnknownPlaceholder) == true)
     }
 
-    @Test("detailText composes exactly line 1, then line 2 when present")
-    func detailTextComposesLines() {
+    @Test("detailLine1 names the step's verb and its percentage for both progress kinds")
+    func line1CarriesVerbAndPercent() {
         let downloading = SetupStepProgress.download(
             DownloadProgress(bytesWritten: 0, totalBytes: 100_000_000, bytesPerSecond: 10_000_000))
-        let line1 = GuestSetupProgressViewController.detailLine1(
+        let downloadLine1 = GuestSetupProgressViewController.detailLine1(
             for: downloading, verb: Self.downloadVerb)
-        let line2 = GuestSetupProgressViewController.detailLine2(for: downloading)
-        #expect(line2 != nil)
-        #expect(
-            GuestSetupProgressViewController.detailText(
-                for: downloading, verb: Self.downloadVerb) == "\(line1)\n\(line2!)")
+        #expect(downloadLine1.hasPrefix(Self.downloadVerb))
+        #expect(downloadLine1.hasSuffix("0%"))
 
-        // A fraction-only step has no line 2, so the composed text is line 1 alone.
         let installing = SetupStepProgress.fraction(0.42)
-        #expect(
-            GuestSetupProgressViewController.detailText(for: installing, verb: Self.installVerb)
-                == GuestSetupProgressViewController.detailLine1(
-                    for: installing, verb: Self.installVerb))
+        let installLine1 = GuestSetupProgressViewController.detailLine1(
+            for: installing, verb: Self.installVerb)
+        #expect(installLine1.hasPrefix(Self.installVerb))
+        #expect(installLine1.hasSuffix("42%"))
     }
 }

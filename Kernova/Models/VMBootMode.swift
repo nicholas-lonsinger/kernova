@@ -18,11 +18,4 @@ enum VMBootMode: String, Codable, Sendable {
         case .linuxKernel: "Linux Kernel"
         }
     }
-
-    static func validModes(for guestOS: VMGuestOS) -> [VMBootMode] {
-        switch guestOS {
-        case .macOS: [.macOS]
-        case .linux: [.efi, .linuxKernel]
-        }
-    }
 }

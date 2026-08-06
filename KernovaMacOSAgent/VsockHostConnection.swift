@@ -129,17 +129,13 @@ final class VsockHostConnection: @unchecked Sendable {
         return false
     }
 
-    /// Appends a frame to the pre-connect ring, dropping oldest entries once the cap is exceeded.
-    func bufferFrame(_ frame: Frame) {
-        lock.withLock { appendToRingLocked(frame) }
-    }
-
-    /// Buffers `frame` unless host policy has meanwhile gone explicitly `.disabled`.
+    /// Appends `frame` to the pre-connect ring unless host policy has meanwhile
+    /// gone explicitly `.disabled`.
     ///
     /// `forwardLog` samples the policy before building the frame, so re-checking
     /// under the same lock hold as the append is what keeps a concurrent
     /// `setEnabled(false)` from leaving this frame behind its own buffer clear.
-    private func bufferFrameUnlessDisabled(_ frame: Frame) {
+    func bufferFrameUnlessDisabled(_ frame: Frame) {
         lock.withLock {
             guard policy != .disabled else { return }
             appendToRingLocked(frame)

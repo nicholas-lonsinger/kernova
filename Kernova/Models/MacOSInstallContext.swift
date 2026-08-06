@@ -68,7 +68,7 @@ struct MacOSInstallContext: Codable, Sendable, Equatable {
     /// Honored once: the existing IPSW file and any `.kernovadownload` bundle
     /// are trashed, then the flag is cleared so a retry after a failed install
     /// reuses the freshly-downloaded file rather than trashing it again.
-    var requestedFreshDownload: Bool = false
+    var requestedFreshDownload: Bool
 
     var downloadDestinationURL: URL? {
         downloadDestinationPath.map { URL(fileURLWithPath: $0) }
@@ -98,19 +98,9 @@ struct MacOSInstallContext: Codable, Sendable, Equatable {
         self.build = build
     }
 
-    // Custom decoder so a context missing these keys decodes with
-    // `requestedFreshDownload = false` and a nil bookmark rather than failing.
-    enum CodingKeys: String, CodingKey {
-        case source
-        case downloadDestinationPath
-        case localIPSWPath
-        case localIPSWBookmark
-        case requestedFreshDownload
-        case remoteURL
-        case version
-        case build
-    }
-
+    // Custom `init(from:)` for the non-optional-with-a-default
+    // `requestedFreshDownload`, which synthesis would `decode` rather than
+    // `decodeIfPresent` (see `VMConfiguration.init(from:)`).
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.source = try c.decode(Source.self, forKey: .source)

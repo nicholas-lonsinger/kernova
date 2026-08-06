@@ -29,10 +29,8 @@ struct OSSelectionContentViewControllerTests {
         #expect(findButton(titled: "macOS", in: vc.view)?.state == .off)
     }
 
-    @Test("Selecting an OS does not apply OS resource defaults")
-    func selectingDoesNotApplyOSDefaults() {
-        // `applyOSDefaults()` is intentionally never called by the wizard;
-        // changing the OS must leave CPU/memory at their standing values.
+    @Test("Selecting an OS leaves the resource values the user is standing on")
+    func selectingLeavesResourceValues() {
         let vm = VMCreationViewModel()
         let originalCPU = vm.cpuCount
         let originalMemory = vm.memoryInGB

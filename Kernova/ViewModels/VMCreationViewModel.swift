@@ -418,14 +418,6 @@ final class VMCreationViewModel {
         return task
     }
 
-    // MARK: - Apply Defaults
-
-    func applyOSDefaults() {
-        cpuCount = selectedOS.defaultCPUCount
-        memoryInGB = selectedOS.defaultMemoryInGB
-        diskSizeInGB = VMGuestOS.defaultDiskSizeInGB
-    }
-
     // MARK: - Overwrite Warning
 
     var ipswDownloadPathFileExists: Bool {

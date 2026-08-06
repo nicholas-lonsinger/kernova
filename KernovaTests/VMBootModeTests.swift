@@ -13,20 +13,6 @@ struct VMBootModeTests {
         #expect(VMBootMode.linuxKernel.displayName == "Linux Kernel")
     }
 
-    // MARK: - Valid Modes
-
-    @Test("validModes for macOS returns only macOS boot mode")
-    func validModesForMacOS() {
-        let modes = VMBootMode.validModes(for: .macOS)
-        #expect(modes == [.macOS])
-    }
-
-    @Test("validModes for Linux returns EFI and linuxKernel")
-    func validModesForLinux() {
-        let modes = VMBootMode.validModes(for: .linux)
-        #expect(modes == [.efi, .linuxKernel])
-    }
-
     // MARK: - Codable Round-Trip
 
     @Test("macOS boot mode round-trips through JSON")

@@ -93,7 +93,7 @@ final class VMLifecycleCoordinator {
         action: String,
         body: () async throws -> T
     ) async throws -> T {
-        guard activeOperations[instance.id] == nil else {
+        guard !hasActiveOperation(for: instance.id) else {
             Self.logger.warning(
                 "Rejected \(action, privacy: .public) for '\(instance.name, privacy: .public)': operation already in progress"
             )
