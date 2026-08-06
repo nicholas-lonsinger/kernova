@@ -734,15 +734,23 @@ final class VMInstance {
     /// This instance's current policy.
     var agentPolicySnapshot: AgentPolicySnapshot { agentPolicySnapshot(for: configuration) }
 
-    /// The paste ceiling this session actually enforces — the user's value, held
-    /// at the default while the connected agent can't honor a pushed one.
+    /// The ceiling the **host** enforces: the user's value, always.
     ///
-    /// Both the host's own budget checks and the messages naming the figure read
-    /// this, so the host never allows a paste the guest is going to refuse.
-    var effectiveClipboardMaxPasteBytes: Int {
-        let requested = preferences.clipboardMaxPasteBytes
-        guard let control = vsockControlService else { return requested }
-        return control.effectiveMaxPasteBytes(requested)
+    /// Each direction has exactly one enforcer, and it is the receiver — the side
+    /// whose paste deadline is at risk. This governs guest→host only
+    /// (`materializeForCopy` / `pasteBoundSnapshot`); the guest's own
+    /// `allowsFileURLPull` governs host→guest, and neither side caps what it
+    /// *sends*. So the guest's capability, and the control channel's health, say
+    /// nothing about what belongs here: clamping on either would drop the user's
+    /// setting over a peer that is only ever the sender in this direction.
+    var effectiveClipboardMaxPasteBytes: Int { preferences.clipboardMaxPasteBytes }
+
+    /// Asks any live passthrough session to replay an offer a lower ceiling
+    /// refused.
+    ///
+    /// No-ops when passthrough is off.
+    func republishPassthroughIfCeilingRaised() {
+        clipboardPassthroughCoordinator?.republishIfCeilingRaised()
     }
 
     /// Re-pushes the current policy to a connected guest agent.

@@ -65,7 +65,7 @@ struct ClipboardPassthroughCoordinatorTests {
         let publisher: HostClipboardPublisher
     }
 
-    private func makeHarness() -> Harness {
+    private func makeHarness(preferences: AppPreferences? = nil) -> Harness {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
         pasteboard.clearContents()
         let publisher = HostClipboardPublisher(
@@ -73,7 +73,10 @@ struct ClipboardPassthroughCoordinatorTests {
         let config = VMConfiguration(name: "Passthrough VM", guestOS: .macOS, bootMode: .macOS)
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+        let instance = VMInstance(
+            configuration: config, bundleURL: bundleURL,
+            preferences: preferences
+                ?? makeEphemeralPreferences(suiteName: "test.kernova.passthrough-instance"))
         let service = FakePassthroughService()
         instance.clipboardService = service
         let coordinator = ClipboardPassthroughCoordinator(
@@ -204,6 +207,120 @@ struct ClipboardPassthroughCoordinatorTests {
                     code: ClipboardErrorCode.copyTooLarge.rawValue,
                     message: ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: ClipboardPasteLimit.defaultBytes))
         )
+    }
+
+    // MARK: - Replaying a refusal after the ceiling is raised
+
+    /// Drives a passthrough session to the state the raise has to rescue: an
+    /// inbound offer refused over the ceiling, nothing on the Mac clipboard.
+    private func makeBudgetRefusedHarness(
+        preferences: AppPreferences, hostContent: String = "previous host content"
+    ) async throws -> Harness {
+        let h = makeHarness(preferences: preferences)
+        writeText(hostContent, to: h.pasteboard)
+
+        // Wait on the publish *completing*, not on `lastTransferIssue`: the
+        // service raises that inside `materializeForCopy`, while the coordinator
+        // records the refusal only once the publish returns. Keying on the issue
+        // lets the raise land before there is a refusal to replay.
+        var publishCompleted = false
+        let published = AsyncGate()
+        h.coordinator.onInboundPublishedForTesting = {
+            publishCompleted = true
+            published.notify()
+        }
+        h.coordinator.start()
+        // Settle the outbound poll first, so this models a session that has been
+        // running rather than one started microseconds ago. Otherwise the 0.5 s
+        // timer's first tick — which forwards unconditionally — lands mid-test on
+        // a loaded machine and overwrites the service buffer with host content.
+        h.coordinator.pollHostClipboard()
+
+        h.service.refusesOverCopyBudget = true
+        h.service.simulateInboundOffer(ClipboardContent(text: "over the cap"))
+        try await published.wait { publishCompleted }
+        return h
+    }
+
+    @Test("raising the ceiling republishes the offer the old one refused")
+    func raisingTheCeilingRepublishes() async throws {
+        let preferences = makeEphemeralPreferences(suiteName: "test.kernova.passthrough-raise")
+        preferences.clipboardMaxPasteBytes = 512 * 1024 * 1024
+        let h = try await makeBudgetRefusedHarness(preferences: preferences)
+        defer {
+            h.coordinator.stop()
+            h.pasteboard.releaseGlobally()
+        }
+
+        // The user raises the ceiling — the action the refusal invites. Without a
+        // replay this offer's sequence is already consumed and re-copying the
+        // same content in the guest is deduped, so it would never arrive.
+        let republished = AsyncGate()
+        h.coordinator.onInboundPublishedForTesting = { republished.notify() }
+        preferences.clipboardMaxPasteBytes = 16 * 1024 * 1024 * 1024
+        h.service.refusesOverCopyBudget = false
+        h.coordinator.republishIfCeilingRaised()
+
+        // A published guest rep lands under its own UTI, not `.string` — that
+        // type only ever holds what `writeText` put there.
+        let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        try await republished.wait {
+            h.pasteboard.data(forType: textType) == Data("over the cap".utf8)
+        }
+    }
+
+    @Test("a ceiling raised over content the user has since copied leaves their clipboard alone")
+    func raisingTheCeilingSparesAUserCopy() async throws {
+        let preferences = makeEphemeralPreferences(suiteName: "test.kernova.passthrough-user-copy")
+        preferences.clipboardMaxPasteBytes = 512 * 1024 * 1024
+        let h = try await makeBudgetRefusedHarness(preferences: preferences)
+        defer {
+            h.coordinator.stop()
+            h.pasteboard.releaseGlobally()
+        }
+
+        // The user copies on the Mac between the refusal and the raise. That
+        // pasteboard is theirs; replaying the guest's older offer over it would
+        // destroy a copy they just made.
+        writeText("what the user copied", to: h.pasteboard)
+        var republished = false
+        h.coordinator.onInboundPublishedForTesting = { republished = true }
+        h.service.refusesOverCopyBudget = false
+        preferences.clipboardMaxPasteBytes = 16 * 1024 * 1024 * 1024
+        h.coordinator.republishIfCeilingRaised()
+
+        // Bounded negative check, as in `stopHaltsInboundPublish`. RATIONALE:
+        // asserting the *absence* of an event needs a bounded wait; the short
+        // sleep is the backstop, not a success deadline.
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(!republished)
+        #expect(h.pasteboard.string(forType: .string) == "what the user copied")
+    }
+
+    @Test("a ceiling that did not rise republishes nothing")
+    func anUnraisedCeilingRepublishesNothing() async throws {
+        let preferences = makeEphemeralPreferences(suiteName: "test.kernova.passthrough-lower")
+        preferences.clipboardMaxPasteBytes = 16 * 1024 * 1024 * 1024
+        let h = try await makeBudgetRefusedHarness(preferences: preferences)
+        defer {
+            h.coordinator.stop()
+            h.pasteboard.releaseGlobally()
+        }
+
+        // Lowering it can only refuse more, so replaying would rewrite the Mac
+        // clipboard for no gain.
+        var republished = false
+        h.coordinator.onInboundPublishedForTesting = { republished = true }
+        h.service.refusesOverCopyBudget = false
+        preferences.clipboardMaxPasteBytes = 512 * 1024 * 1024
+        h.coordinator.republishIfCeilingRaised()
+
+        // Bounded negative check, as in `stopHaltsInboundPublish`. RATIONALE:
+        // asserting the *absence* of an event needs a bounded wait; the short
+        // sleep is the backstop, not a success deadline.
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(!republished)
+        #expect(h.pasteboard.string(forType: .string) == "previous host content")
     }
 
     /// A promised-offer service: `materializeForCopy` returns metadata-only

@@ -368,4 +368,13 @@ enum HostPublishOutcome {
         if case .written(_, _, let changeCount) = self { return changeCount }
         return nil
     }
+
+    /// Payloads this publish could not serve, whether or not anything else was.
+    var droppedReasons: [CopyToMacDropReason] {
+        switch self {
+        case .nothingServed(let reasons): return reasons
+        case .written(_, let droppedReasons, _): return droppedReasons
+        case .stagingFailed, .writeFailed: return []
+        }
+    }
 }

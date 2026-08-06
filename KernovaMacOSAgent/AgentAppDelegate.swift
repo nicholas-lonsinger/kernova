@@ -140,9 +140,6 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
                 vsockConnection?.isLogForwardingEnabled ?? false
             },
             clipboardActivity: { [weak clipboardAgent] in clipboardAgent?.clipboardActivity ?? .disabled },
-            clipboardPasteLimitBytes: { [weak clipboardAgent] in
-                clipboardAgent?.pasteLimitBytes ?? ClipboardPasteLimit.defaultBytes
-            },
             onQuit: { NSApp.terminate(nil) }
         )
 

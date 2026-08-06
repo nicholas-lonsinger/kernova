@@ -109,11 +109,10 @@ struct ClipboardPasteLimitPolicyPushTests {
 
         let pushed = try await nextPolicy(from: guest)
         #expect(pushed.clipboardMaxPasteBytes == UInt64(raised))
-        // The host's own checks agree with what the guest was just told.
         #expect(instance.effectiveClipboardMaxPasteBytes == raised)
     }
 
-    @Test("the re-push holds an agent without the capability at the default, host included")
+    @Test("an agent without the capability is sent the default but does not clamp the host")
     func rePushHeldAtDefaultWithoutCapability() async throws {
         let preferences = makeEphemeralPreferences(suiteName: "test.kernova.ceiling-push-old")
         let viewModel = VMLibraryViewModel(
@@ -143,8 +142,11 @@ struct ClipboardPasteLimitPolicyPushTests {
 
         let pushed = try await nextPolicy(from: guest)
         // The older agent enforces its own built-in ceiling whatever it is sent,
-        // so the host must not admit a paste it will refuse.
+        // so it is sent the figure it will actually apply.
         #expect(pushed.clipboardMaxPasteBytes == UInt64(ClipboardPasteLimit.defaultBytes))
-        #expect(instance.effectiveClipboardMaxPasteBytes == ClipboardPasteLimit.defaultBytes)
+        // The host's ceiling is its own: it gates guest→host, which that agent
+        // only ever *sends* into and never refuses. Clamping it here would drop
+        // the user's setting over a capability that does not apply.
+        #expect(instance.effectiveClipboardMaxPasteBytes == raised)
     }
 }

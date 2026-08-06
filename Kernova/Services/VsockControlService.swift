@@ -304,12 +304,15 @@ final class VsockControlService {
         }
     }
 
-    /// The paste ceiling both ends will actually enforce for this connection:
-    /// the user's value for an agent advertising `clipboard.paste.limit.v1`,
-    /// otherwise the built-in default.
+    /// The ceiling the **guest** will enforce once this policy lands: the user's
+    /// value for an agent advertising `clipboard.paste.limit.v1`, otherwise the
+    /// built-in default the older agent falls back to on its own.
     ///
-    /// The host's own enforcement reads through here too, so a raised limit
-    /// never becomes a one-way disagreement with an agent that predates it.
+    /// Send-side only. The host's own ceiling is independent of this — the guest
+    /// enforces host→guest and the host enforces guest→host, so neither side's
+    /// capability constrains the other's (`VMInstance.effectiveClipboardMaxPasteBytes`).
+    /// Sending the figure the peer will actually apply keeps the wire honest and
+    /// gives the host a true answer for messages naming the guest's ceiling.
     func effectiveMaxPasteBytes(_ requested: Int) -> Int {
         guestSupportsPasteLimit ? requested : ClipboardPasteLimit.defaultBytes
     }

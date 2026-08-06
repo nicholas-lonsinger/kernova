@@ -198,18 +198,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// `allowsFileURLPull` gate inside it — runs on the agent's main thread.
     private var maxPasteBytes: Int = ClipboardPasteLimit.defaultBytes
 
-    /// The ceiling this agent is currently enforcing, for the menu-bar status
-    /// line.
-    ///
-    /// The caller must be on the main queue.
-    var pasteLimitBytes: Int {
-        dispatchPrecondition(condition: .onQueue(.main))
-        return maxPasteBytes
-    }
-
     #if DEBUG
     /// Test seam.
     var isEnabledForTesting: Bool { enabled }
+
+    /// Test seam for the applied ceiling, so a test can wait for a pushed policy
+    /// to land instead of polling for its side effects.
+    var pasteLimitForTesting: Int { maxPasteBytes }
     #endif
 
     /// Most recent clipboard activity, surfaced to the menu-bar UI.
@@ -1195,7 +1190,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     private func recordPasteFailure(code: ClipboardErrorCode, generation: UInt64) {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.inboundPromise?.generation == generation else { return }
-            self.clipboardActivityStorage = .pasteRefused(code)
+            // Capture the ceiling now: a host that raises it after this refusal
+            // must not rewrite the figure this refusal names.
+            self.clipboardActivityStorage = .pasteRefused(
+                code, pasteLimitBytes: code == .pasteTooLarge ? self.maxPasteBytes : nil)
             self.onClipboardNotice()
         }
     }

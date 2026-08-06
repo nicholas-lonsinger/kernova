@@ -24,16 +24,14 @@ enum AgentMenuText {
         "Log Forwarding: \(enabled ? "enabled" : "disabled")"
     }
 
-    /// The clipboard status line. `pasteLimitBytes` is the ceiling the agent is
-    /// enforcing, which only the over-the-limit refusal names.
-    static func clipboardLine(_ activity: ClipboardActivity, pasteLimitBytes: Int) -> String {
+    static func clipboardLine(_ activity: ClipboardActivity) -> String {
         switch activity {
         case .enabled: return "Clipboard: enabled"
         case .offeredToHost: return "Clipboard: shared with host"
         case .offeredFromHost: return "Clipboard: shared from host"
         case .sentToHost: return "Clipboard: sent to host"
         case .receivedFromHost: return "Clipboard: received from host"
-        case .pasteRefused(let code):
+        case .pasteRefused(let code, let pasteLimitBytes):
             return "Clipboard: \(pasteRefusalDetail(code, pasteLimitBytes: pasteLimitBytes))"
         case .disabled: return "Clipboard: disabled"
         }
@@ -44,10 +42,11 @@ enum AgentMenuText {
     /// `copyTooLarge` and `pasteIncompleteSet` are host-only refusals that never
     /// reach the guest, so they read as the generic failure.
     private static func pasteRefusalDetail(
-        _ code: ClipboardErrorCode, pasteLimitBytes: Int
+        _ code: ClipboardErrorCode, pasteLimitBytes: Int?
     ) -> String {
         switch code {
         case .pasteTooLarge:
+            guard let pasteLimitBytes else { return "too large to paste" }
             return
                 "too large to paste — over the \(ClipboardPasteLimit.displayLimit(pasteLimitBytes)) transfer limit"
         case .pasteDiskFull: return "not enough disk space to paste"

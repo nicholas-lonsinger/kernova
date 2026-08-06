@@ -1853,7 +1853,7 @@ struct VsockGuestClipboardAgentTests {
         // The paste was made in this guest, so the guest's own menu names the
         // reason too, and the notice reveals it.
         try await notices.changed.wait { notices.value == 1 }
-        #expect(await MainActor.run { agent.clipboardActivity } == .pasteRefused(.pasteDiskFull))
+        #expect(await MainActor.run { agent.clipboardActivity } == .pasteRefused(.pasteDiskFull, pasteLimitBytes: nil))
     }
 
     @Test(
@@ -1903,7 +1903,7 @@ struct VsockGuestClipboardAgentTests {
         }
         #expect(error.code == expected.rawValue)
         try await notices.changed.wait { notices.value == 1 }
-        #expect(await MainActor.run { agent.clipboardActivity } == .pasteRefused(expected))
+        #expect(await MainActor.run { agent.clipboardActivity } == .pasteRefused(expected, pasteLimitBytes: nil))
     }
 
     // MARK: - Deadline-safe size cap (#561)
@@ -2051,7 +2051,9 @@ struct VsockGuestClipboardAgentTests {
         #expect(await lazyPull(pasteboard, forType: .fileURL, itemIndex: 1).value == nil)
 
         try await notices.changed.wait { notices.value == 1 }
-        #expect(await MainActor.run { agent.clipboardActivity } == .pasteRefused(.pasteTooLarge))
+        #expect(
+            await MainActor.run { agent.clipboardActivity }
+                == .pasteRefused(.pasteTooLarge, pasteLimitBytes: ClipboardPasteLimit.defaultBytes))
         #expect(notices.value == 1)
 
         // The next offer is a fresh paste opportunity, so the refusal line goes.
@@ -2151,7 +2153,7 @@ struct VsockGuestClipboardAgentTests {
 
         #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
         try await seen.changed.wait { seen.value != nil }
-        #expect(seen.value == .pasteRefused(.pasteTooLarge))
+        #expect(seen.value == .pasteRefused(.pasteTooLarge, pasteLimitBytes: ClipboardPasteLimit.defaultBytes))
     }
 
     @Test("a refusal recorded for a superseded offer is dropped, not written over the newer one")
@@ -2263,6 +2265,51 @@ struct VsockGuestClipboardAgentTests {
 
         #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
         try await expectNoRequest(from: hostChannel)
+    }
+
+    @Test("deadline cap: raising the ceiling after a refusal does not rewrite the figure it named")
+    func refusalKeepsTheCeilingItWasRefusedAt() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let notices = AtomicInt()
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
+        defer { agent.stop() }
+
+        let lowered = 512 * 1024 * 1024
+        try await startAgentAndWaitForLiveChannel(agent: agent, maxPasteBytes: lowered)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 43,
+                reps: [
+                    RepInfo(
+                        uti: txtUTI, byteCount: UInt64(lowered) + 1, filename: "big.bin",
+                        isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+        #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
+
+        try await notices.changed.wait { notices.value == 1 }
+        #expect(
+            await MainActor.run { agent.clipboardActivity }
+                == .pasteRefused(.pasteTooLarge, pasteLimitBytes: lowered))
+
+        // The user raises the ceiling. The menu rebuilds on every open, so a
+        // refusal that read its figure live would start naming 16 GB for a
+        // payload the 512 MB ceiling refused. `applyPolicy` hops to main, so
+        // these reads queue behind it rather than racing it.
+        let raised = 16 * 1024 * 1024 * 1024
+        agent.applyPolicy(enabled: true, maxPasteBytes: raised)
+        #expect(await MainActor.run { agent.pasteLimitForTesting } == raised)
+        #expect(
+            await MainActor.run { agent.clipboardActivity }
+                == .pasteRefused(.pasteTooLarge, pasteLimitBytes: lowered))
     }
 
     @Test("deadline cap: a host-pushed ceiling above the default admits what the default refused")

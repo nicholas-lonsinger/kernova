@@ -46,6 +46,25 @@ final class ClipboardPassthroughCoordinator {
     /// re-observation (or per-rep materialization) doesn't re-publish.
     private var lastInboundOfferSeq: UInt64 = 0
 
+    /// The offer whose files the paste ceiling withheld.
+    ///
+    /// Carries the ceiling that withheld them and what the host pasteboard held
+    /// once the refusal settled — the state `republishIfCeilingRaised()` acts on.
+    ///
+    /// The change count is captured here rather than compared against
+    /// `lastPasteboardChangeCount`: a refusal that serves nothing performs no
+    /// write, so that field still holds whatever the poll last absorbed and
+    /// would answer a question about the poll's timing, not about the user.
+    ///
+    /// Cleared by any publish that drops nothing, so only a live refusal is ever
+    /// replayed.
+    ///
+    /// `digest` pins the buffer's *contents*, which the sequence alone does not:
+    /// an outbound poll writes the host clipboard into the same buffer without
+    /// advancing the inbound sequence, so a replay keyed on the sequence could
+    /// publish content the refusal was never about.
+    private var budgetRefusedOffer: (seq: UInt64, ceiling: Int, pasteboardChangeCount: Int, digest: Data)?
+
     private var isRunning = false
 
     #if DEBUG
@@ -181,6 +200,13 @@ final class ClipboardPassthroughCoordinator {
         let seq = service.inboundOfferSeq
         guard seq != lastInboundOfferSeq else { return }
         lastInboundOfferSeq = seq
+        publishInbound(from: service, seq: seq)
+    }
+
+    /// Writes one inbound offer to the host pasteboard, remembering a refusal the
+    /// paste ceiling caused so a later raise can deliver what it withheld.
+    private func publishInbound(from service: any ClipboardServicing, seq: UInt64) {
+        let ceiling = instance?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes
         Task { @MainActor [weak self] in
             guard let self else { return }
             let outcome = await self.publisher.publish(from: service)
@@ -188,9 +214,40 @@ final class ClipboardPassthroughCoordinator {
             if let changeCount = outcome.postWriteChangeCount {
                 self.lastPasteboardChangeCount = changeCount
             }
+            self.budgetRefusedOffer =
+                outcome.droppedReasons.contains(.overPasteBudget)
+                ? (seq, ceiling, self.pasteboard.changeCount, service.clipboardContent.digest)
+                : nil
             #if DEBUG
             self.onInboundPublishedForTesting?()
             #endif
         }
+    }
+
+    /// Re-publishes the current offer when a raised paste ceiling would now serve
+    /// files the last publish withheld.
+    ///
+    /// Without this, raising the limit — the very action the refusal invites —
+    /// changes nothing: this offer's sequence is already consumed, and re-copying
+    /// the same content in the guest is suppressed by its digest dedup, so the
+    /// content stays unreachable until unrelated content is copied.
+    ///
+    /// Deliberately narrow. It fires only for an offer that was *refused over the
+    /// ceiling*, only while that offer is still the live one, only when the
+    /// ceiling actually rose, and only while the host pasteboard still holds what
+    /// we last put there — a pasteboard the user has written since is theirs, and
+    /// re-publishing over it would destroy their copy.
+    func republishIfCeilingRaised() {
+        guard isRunning, let refused = budgetRefusedOffer,
+            let instance, let service = instance.clipboardService,
+            service.inboundOfferSeq == refused.seq,
+            service.clipboardContent.digest == refused.digest,
+            instance.effectiveClipboardMaxPasteBytes > refused.ceiling,
+            pasteboard.changeCount == refused.pasteboardChangeCount
+        else { return }
+        Self.logger.notice(
+            "Paste ceiling raised — republishing the offer it refused for '\(instance.name, privacy: .public)'"
+        )
+        publishInbound(from: service, seq: refused.seq)
     }
 }

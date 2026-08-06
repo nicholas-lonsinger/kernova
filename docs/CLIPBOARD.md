@@ -81,9 +81,11 @@ Caveats this does **not** waive:
   where one is in play, never delivered as a piecemeal subset. It is a permanent constraint of
   serving pastes through this API, not a defect to dissolve. The user selects it from a bounded
   ladder; the derivation of the default, and the ladder itself, live on `ClipboardPasteLimit`.
-  **Both ends enforce it independently**, so the host pushes the value in `PolicyUpdate` and holds
-  both sides at the default for a guest that does not advertise `clipboard.paste.limit.v1` — a
-  ceiling the two ends disagree on is worse than a lower one they share.
+- **The cap is enforced by the receiver, once per direction** — the side whose paste deadline is
+  at risk. The guest gates host→guest, the host gates guest→host, and neither caps what it
+  *sends*. So the host pushes the value in `PolicyUpdate` to keep the guest's copy tracking the
+  user's choice, gated on `clipboard.paste.limit.v1`; that capability governs what the *guest*
+  will apply and must never clamp the host's own ceiling, which no peer is party to.
 - **Keep the two directions symmetric.** A capability that makes a payload lazy-eligible one way
   must make it lazy-eligible the other.
 

@@ -20,7 +20,6 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     private let hostBundledVersion: () -> String
     private let logForwardingEnabled: () -> Bool
     private let clipboardActivity: () -> ClipboardActivity
-    private let clipboardPasteLimitBytes: () -> Int
     private let onQuit: () -> Void
 
     /// Built lazily, since most sessions never reveal a paste readout.
@@ -33,7 +32,6 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         hostBundledVersion: @escaping () -> String,
         logForwardingEnabled: @escaping () -> Bool,
         clipboardActivity: @escaping () -> ClipboardActivity,
-        clipboardPasteLimitBytes: @escaping () -> Int,
         onQuit: @escaping () -> Void
     ) {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -42,7 +40,6 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         self.hostBundledVersion = hostBundledVersion
         self.logForwardingEnabled = logForwardingEnabled
         self.clipboardActivity = clipboardActivity
-        self.clipboardPasteLimitBytes = clipboardPasteLimitBytes
         self.onQuit = onQuit
         super.init()
 
@@ -134,11 +131,10 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         }
 
         let activity = clipboardActivity()
-        let pasteLimitBytes = clipboardPasteLimitBytes()
         // A refusal is what the auto-open is revealing, so it reads at the top
         // level; every other activity is state the Status submenu holds.
         if case .pasteRefused = activity {
-            addInfoItem(AgentMenuText.clipboardLine(activity, pasteLimitBytes: pasteLimitBytes))
+            addInfoItem(AgentMenuText.clipboardLine(activity))
             menu.addItem(.separator())
         }
 
@@ -149,8 +145,7 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         let statusMenu = NSMenu()
         statusMenu.autoenablesItems = false
         addInfoItem(AgentMenuText.logForwardingLine(logForwardingEnabled()), to: statusMenu)
-        addInfoItem(
-            AgentMenuText.clipboardLine(activity, pasteLimitBytes: pasteLimitBytes), to: statusMenu)
+        addInfoItem(AgentMenuText.clipboardLine(activity), to: statusMenu)
         statusMenuItem.submenu = statusMenu
         menu.addItem(statusMenuItem)
 

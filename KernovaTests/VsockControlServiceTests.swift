@@ -1178,12 +1178,12 @@ struct VsockControlServiceTests {
     /// carrying `requested` as its ceiling.
     ///
     /// Read while the service is still connected — `stop()` clears the observed
-    /// capabilities, so the host's own effective ceiling has to be captured
-    /// here rather than by the caller after teardown.
+    /// capabilities, so the derived values have to be captured here rather than
+    /// by the caller after teardown.
     private struct PushedCeiling {
         var pushedBytes: UInt64
         var guestSupportsPasteLimit: Bool
-        var hostEnforces: Int
+        var guestWillEnforce: Int
     }
 
     private func pushCeiling(
@@ -1218,7 +1218,7 @@ struct VsockControlServiceTests {
         return PushedCeiling(
             pushedBytes: try #require(policy).clipboardMaxPasteBytes,
             guestSupportsPasteLimit: service.guestSupportsPasteLimit,
-            hostEnforces: service.effectiveMaxPasteBytes(requested))
+            guestWillEnforce: service.effectiveMaxPasteBytes(requested))
     }
 
     @Test("the user's paste ceiling reaches a guest that advertises the capability")
@@ -1227,18 +1227,18 @@ struct VsockControlServiceTests {
         let result = try await pushCeiling(requested: raised, pasteLimitCapable: true)
         #expect(result.pushedBytes == UInt64(raised))
         #expect(result.guestSupportsPasteLimit == true)
-        #expect(result.hostEnforces == raised)
+        #expect(result.guestWillEnforce == raised)
     }
 
-    @Test("a guest without the capability is held at the default, and so is this host")
+    @Test("a guest without the capability is sent the ceiling it will actually apply")
     func pasteCeilingHeldAtDefaultWithoutCapability() async throws {
         let raised = 16 * 1024 * 1024 * 1024
         let result = try await pushCeiling(requested: raised, pasteLimitCapable: false)
-        // Both sides fall back together — the host must not admit a paste the
-        // older agent will refuse on its own built-in ceiling.
+        // The older agent ignores the field and falls back on its own, so
+        // sending anything else would be a figure nothing honors.
         #expect(result.pushedBytes == UInt64(ClipboardPasteLimit.defaultBytes))
         #expect(result.guestSupportsPasteLimit == false)
-        #expect(result.hostEnforces == ClipboardPasteLimit.defaultBytes)
+        #expect(result.guestWillEnforce == ClipboardPasteLimit.defaultBytes)
     }
 }
 

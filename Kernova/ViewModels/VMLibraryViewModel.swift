@@ -1323,15 +1323,17 @@ final class VMLibraryViewModel {
         return saved
     }
 
-    /// Re-pushes policy to every connected guest agent after the app-wide
-    /// clipboard paste ceiling changes.
+    /// Carries an app-wide clipboard paste-ceiling change to every running VM.
     ///
-    /// The ceiling is enforced on both sides of the wire but lives in
-    /// `AppPreferences`, so it produces no `VMConfiguration` diff for
-    /// `applyLivePolicy` to carry. Instances with no control channel no-op.
+    /// The ceiling lives in `AppPreferences`, so it produces no `VMConfiguration`
+    /// diff for `applyLivePolicy` to carry. Two things need it: the guest, which
+    /// enforces host→guest pastes against its own copy, and any passthrough
+    /// session holding an offer the old ceiling refused. Instances with neither
+    /// no-op.
     func applyClipboardPasteLimitChange() {
         for instance in instances {
             instance.resendAgentPolicy()
+            instance.republishPassthroughIfCeilingRaised()
         }
     }
 
