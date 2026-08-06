@@ -406,8 +406,9 @@ let payload: [String: Any] = [
     },
 ]
 
-let json = try JSONSerialization.data(
+var json = try JSONSerialization.data(
     withJSONObject: payload, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+json.append(0x0A)
 try FileManager.default.createDirectory(
     at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 try json.write(to: outputURL, options: .atomic)
