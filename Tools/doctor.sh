@@ -191,21 +191,33 @@ fi
 
 section 'Signing'
 
-# Debug builds sign ad-hoc and need no team; DEVELOPMENT_TEAM matters only
-# for the agent's Release Developer ID signing, supplied by the gitignored,
-# hand-maintained Config/Local.xcconfig. CI can't catch a broken team here:
-# it builds with CODE_SIGNING_ALLOWED=NO.
+# Debug signs ad-hoc unless the gitignored, hand-maintained
+# Config/Local.xcconfig overrides CODE_SIGN_IDENTITY; the same file supplies
+# DEVELOPMENT_TEAM, which automatic signing resolves the certificate through
+# and the agent's Release Developer ID signing needs. CI can't catch a broken
+# team here: it builds with CODE_SIGNING_ALLOWED=NO.
 local_xcconfig="Config/Local.xcconfig"
 resolved_team=""
+resolved_identity=""
 if [ -f "$local_xcconfig" ]; then
     resolved_team=$(sed -n 's/^[[:space:]]*DEVELOPMENT_TEAM[[:space:]]*=[[:space:]]*\([^[:space:];]*\).*/\1/p' "$local_xcconfig" | head -1)
+    # Unlike the team, an identity name contains spaces, so take the rest of
+    # the line and trim instead of matching a run of non-space characters.
+    resolved_identity=$(sed -n 's/^[[:space:]]*CODE_SIGN_IDENTITY[[:space:]]*=[[:space:]]*//p' "$local_xcconfig" | head -1 | sed 's/[[:space:]]*$//')
 fi
 
 if [ -n "$resolved_team" ]; then
     pass "DEVELOPMENT_TEAM = $resolved_team ($local_xcconfig)"
 else
-    warn "No DEVELOPMENT_TEAM set — fine for Debug (all targets sign ad-hoc)"
+    warn "No DEVELOPMENT_TEAM set — fine for Debug (signs ad-hoc)"
     detail "Release signing needs $local_xcconfig with: DEVELOPMENT_TEAM = <your 10-char team ID>"
+fi
+
+if [ -n "$resolved_identity" ] && [ "$resolved_identity" != "-" ]; then
+    pass "Debug CODE_SIGN_IDENTITY = $resolved_identity ($local_xcconfig)"
+else
+    warn "Debug signs ad-hoc — macOS privacy grants re-prompt after every rebuild"
+    detail "With a development certificate, add to $local_xcconfig: CODE_SIGN_IDENTITY = Apple Development"
 fi
 
 # `security find-identity` lists every codesigning-capable identity in the

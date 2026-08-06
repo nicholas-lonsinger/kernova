@@ -2,12 +2,17 @@
 // project XCBuildConfigurations (targets without their own
 // baseConfigurationReference inherit it).
 //
-// DEVELOPMENT_TEAM lives in the gitignored, hand-maintained Local.xcconfig
-// included below (one line: DEVELOPMENT_TEAM = <team>) — see docs/BUILD.md
-// "Signing team".
+// DEVELOPMENT_TEAM and the CODE_SIGN_IDENTITY override live in the
+// gitignored, hand-maintained Local.xcconfig included below — see
+// docs/BUILD.md "Signing identity".
 //
 // `#include?` (with the trailing `?`) is the optional form: it silently
-// no-ops when Local.xcconfig doesn't exist, so a fresh clone builds with no
-// team at all — every target signs ad-hoc in Debug; only the agent's Release
-// Developer ID signing needs the team.
+// no-ops when Local.xcconfig doesn't exist, so a fresh clone builds with
+// neither a team nor a certificate.
+
+// Debug's signing identity. Every Release configuration pins its own at
+// target level, which outranks a project xcconfig, so the Local.xcconfig
+// override below reaches Debug alone.
+CODE_SIGN_IDENTITY = -
+
 #include? "Local.xcconfig"

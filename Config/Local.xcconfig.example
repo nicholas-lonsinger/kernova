@@ -1,5 +1,5 @@
 // Template for the gitignored Config/Local.xcconfig — copy it there and set
-// your team. See docs/BUILD.md "Signing team".
+// your team. See docs/BUILD.md "Signing identity".
 //
 // The team ID is the OU of your signing certificate. On an Apple Development
 // certificate the CN parenthetical is a per-developer identifier that looks
@@ -7,3 +7,9 @@
 //   security find-certificate -c "Developer ID Application" -p \
 //     | openssl x509 -noout -subject
 DEVELOPMENT_TEAM = ABCDE12345
+
+// Signs Debug with your development certificate rather than ad-hoc, giving
+// the app one code identity across rebuilds so macOS privacy grants stick.
+// Drop the line to sign ad-hoc; keep it alongside DEVELOPMENT_TEAM, since
+// automatic signing resolves the certificate through the team.
+CODE_SIGN_IDENTITY = Apple Development

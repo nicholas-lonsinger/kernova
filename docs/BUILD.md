@@ -1,6 +1,6 @@
 # BUILD.md
 
-Read the relevant section before touching build machinery — hooks and worktree setup, signing-team derivation, test-target topology, DerivedData, build numbers, guest-agent versioning, or LaunchServices cleanup. None of it is needed for a routine `make build` / `make test`; fresh-clone setup is in the [README](../README.md#development-setup).
+Read the relevant section before touching build machinery — hooks and worktree setup, the signing identity, test-target topology, DerivedData, build numbers, guest-agent versioning, or LaunchServices cleanup. None of it is needed for a routine `make build` / `make test`; fresh-clone setup is in the [README](../README.md#development-setup).
 
 ## Git hooks and worktree setup
 
@@ -12,9 +12,15 @@ Read the relevant section before touching build machinery — hooks and worktree
 
 `.worktreeinclude` is the definitive list of local files a worktree inherits. Claude Code and other worktree tools read it natively; the hook is what makes a plain `git worktree add` honor it too. **Literal paths only — no globs.**
 
-## Signing team
+## Signing identity
 
-`DEVELOPMENT_TEAM` is not in the project file, and Debug builds need none — every target signs ad-hoc. The gitignored, hand-maintained `Config/Local.xcconfig` (one line: `DEVELOPMENT_TEAM = <team>`), included by the tracked `Config/Base.xcconfig`, supplies the team to the one consumer left: the guest agent's Release Developer ID signing ([RELEASING.md](RELEASING.md)). Worktrees inherit the file through `.worktreeinclude`.
+Debug signs ad-hoc by default — `Config/Base.xcconfig` sets `CODE_SIGN_IDENTITY = -` — so a fresh clone builds with no Apple account, team, or certificate. The gitignored, hand-maintained `Config/Local.xcconfig`, included by that file and templated by `Config/Local.xcconfig.example`, overrides both that and `DEVELOPMENT_TEAM`. Worktrees inherit it through `.worktreeinclude`.
+
+Set `CODE_SIGN_IDENTITY = Apple Development` there whenever you have a certificate. TCC keys each privacy grant to the app's designated requirement: under a real identity that is `identifier "app.kernova" and anchor apple generic and certificate leaf[subject.CN] = …`, stable across rebuilds, while an ad-hoc signature's is a bare `cdhash`. Every rebuild is then a new app to TCC, and a grant like the Downloads folder re-prompts instead of sticking.
+
+`DEVELOPMENT_TEAM` is what automatic signing resolves that certificate through, and the guest agent's Release Developer ID signing needs it too ([RELEASING.md](RELEASING.md)) — keep the two lines together.
+
+Every Release configuration pins its identity at target level, which outranks a project xcconfig, so the override reaches Debug alone. The guest agent stays ad-hoc in Debug as well: it runs inside the guest, where a host code identity buys nothing.
 
 ## One test invocation, three test targets
 
