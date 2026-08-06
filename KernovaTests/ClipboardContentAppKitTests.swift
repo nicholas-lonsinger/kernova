@@ -40,7 +40,9 @@ struct ClipboardContentAppKitTests {
         #expect(content.filePayloads.allSatisfy { !$0.filename.isEmpty })
         // The complement is exactly the inline set — no representation is both,
         // and none is neither.
-        #expect(content.representations.count - content.filePayloads.count == 1)
+        let inline = content.representations.filter { $0.filename.isEmpty }
+        #expect(inline.count == 1)
+        #expect(content.filePayloads.count + inline.count == content.representations.count)
     }
 
     @Test("richTextRepresentation finds an inline RTF rep")
