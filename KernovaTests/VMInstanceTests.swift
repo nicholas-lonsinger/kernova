@@ -520,7 +520,7 @@ struct VMInstanceTests {
     @Test("startAction is .download with a pending Linux image and nothing partial on disk")
     func startActionDownload() {
         let instance = makeInstance(status: .stopped)
-        instance.configuration.linuxInstallContext = LinuxImageDownloadContext(
+        instance.configuration.linuxInstallContext = LinuxInstallContext(
             entry: makeLinuxCatalogEntry())
 
         // No destination until the mirror is asked, which is exactly when there
@@ -546,7 +546,7 @@ struct VMInstanceTests {
         try Data(repeating: 0x11, count: 1024).write(to: bundle.dataURL)
 
         let instance = makeInstance(status: .stopped)
-        instance.configuration.linuxInstallContext = LinuxImageDownloadContext(
+        instance.configuration.linuxInstallContext = LinuxInstallContext(
             entry: makeLinuxCatalogEntry(),
             downloadDestinationPath: destination.path(percentEncoded: false))
 

@@ -15,8 +15,9 @@ import Foundation
 /// that lists SHA-512 alongside SHA-256 lists both in the one file. Only the
 /// SHA-256 pairs come back.
 ///
-/// Clearsigning is not verified here: HTTPS plus the digest is what makes a
-/// download trustworthy.
+/// Clearsigning is not verified here. The manifest and the ISO come from the
+/// one mirror the redirect chose, so the digest catches a corrupted or wrong
+/// file — not a mirror serving both to match.
 enum ChecksumManifest {
     /// One `(filename, digest)` pair a manifest states.
     struct Row: Sendable, Equatable {

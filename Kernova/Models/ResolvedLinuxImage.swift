@@ -2,9 +2,8 @@ import Foundation
 
 /// The one installer image a catalog entry names right now.
 ///
-/// A catalog entry names a directory and a glob because a point release renames
-/// the ISO in place; this is what that entry resolved to against the mirror's
-/// own checksum manifest, and it is what the download verifies against.
+/// What the entry resolved to against the mirror's own checksum manifest, and
+/// what the download is verified against.
 struct ResolvedLinuxImage: Sendable, Equatable {
     /// Where the ISO is served from.
     var isoURL: URL

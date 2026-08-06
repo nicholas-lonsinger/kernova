@@ -76,10 +76,10 @@
     {
       "approxSizeBytes" : 3972624384,
       "checksumManifest" : "SHA256SUMS",
-      "directoryURL" : "https://cdimage.kali.org/current/",
+      "directoryURL" : "https://cdimage.kali.org/kali-2026.2/",
       "distribution" : "Kali Linux",
       "id" : "kali-current",
-      "isoPattern" : "kali-linux-*-installer-arm64.iso",
+      "isoPattern" : "kali-linux-2026.2*-installer-arm64.iso",
       "version" : "2026.2"
     }
   ]

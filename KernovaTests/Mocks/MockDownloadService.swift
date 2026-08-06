@@ -13,6 +13,7 @@ final class MockDownloadService: Downloading, @unchecked Sendable {
     var lastDownloadRemoteURL: URL?
     var lastDownloadDestinationURL: URL?
     var lastDownloadDiscardsExisting: Bool?
+    var lastDownloadExpectedSizeBytes: UInt64?
     var discardResumeDataCallCount = 0
     /// URLs passed to `discardResumeData(at:permanently:)`, in call order.
     var discardedResumeDataURLs: [URL] = []
@@ -31,12 +32,14 @@ final class MockDownloadService: Downloading, @unchecked Sendable {
         from remoteURL: URL,
         to destinationURL: URL,
         discardsExistingDownload: Bool,
+        expectedSizeBytes: UInt64?,
         progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
     ) async throws {
         downloadCallCount += 1
         lastDownloadRemoteURL = remoteURL
         lastDownloadDestinationURL = destinationURL
         lastDownloadDiscardsExisting = discardsExistingDownload
+        lastDownloadExpectedSizeBytes = expectedSizeBytes
         for sample in progressSamples {
             await MainActor.run { progressHandler(sample) }
         }

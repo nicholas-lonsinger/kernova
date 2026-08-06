@@ -2,10 +2,7 @@ import Foundation
 
 /// Persisted intent to fetch a Linux installer image for a VM that has not yet
 /// completed its initial boot.
-///
-/// Consulted by `VMLifecycleCoordinator.downloadLinuxImage(on:context:)` on
-/// every Start while non-nil.
-struct LinuxImageDownloadContext: Codable, Sendable, Equatable {
+struct LinuxInstallContext: Codable, Sendable, Equatable {
     /// The catalog entry as it read when the user picked it.
     ///
     /// Embedded rather than referenced by id: the bundled catalog is rewritten
@@ -40,22 +37,5 @@ struct LinuxImageDownloadContext: Codable, Sendable, Equatable {
         self.entry = entry
         self.downloadDestinationPath = downloadDestinationPath
         self.requestedFreshDownload = requestedFreshDownload
-    }
-
-    // Custom decoder so a context missing these keys decodes with a nil
-    // destination and `requestedFreshDownload = false` rather than failing.
-    enum CodingKeys: String, CodingKey {
-        case entry
-        case downloadDestinationPath
-        case requestedFreshDownload
-    }
-
-    init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.entry = try c.decode(LinuxImageCatalogEntry.self, forKey: .entry)
-        self.downloadDestinationPath = try c.decodeIfPresent(
-            String.self, forKey: .downloadDestinationPath)
-        self.requestedFreshDownload =
-            try c.decodeIfPresent(Bool.self, forKey: .requestedFreshDownload) ?? false
     }
 }

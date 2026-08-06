@@ -9,10 +9,15 @@ protocol Downloading: Sendable {
     /// `discardsExistingDownload` replaces what is at the destination instead:
     /// the file and its partial bundle are trashed as part of this call, so the
     /// disposal is serialized with any download already streaming there.
+    ///
+    /// `expectedSizeBytes` is a hard ceiling on the bytes that may land on
+    /// disk, resumed ones included; `nil` leaves the transfer unbounded, which
+    /// is the only option when the source publishes no size.
     func download(
         from remoteURL: URL,
         to destinationURL: URL,
         discardsExistingDownload: Bool,
+        expectedSizeBytes: UInt64?,
         progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
     ) async throws
 

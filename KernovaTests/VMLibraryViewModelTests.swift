@@ -1,3 +1,4 @@
+import CryptoKit
 import Testing
 import Foundation
 import Virtualization
@@ -25,7 +26,10 @@ struct VMLibraryViewModelTests {
         virtualizationService: MockVirtualizationService = MockVirtualizationService(),
         usbDeviceService: any USBDeviceProviding = MockUSBDeviceService(),
         linuxImageResolveService: MockLinuxImageResolveService = MockLinuxImageResolveService(),
-        downloadService: MockDownloadService = MockDownloadService()
+        downloadService: MockDownloadService = MockDownloadService(),
+        downloadsDirectory: URL? = FileManager.default.urls(
+            for: .downloadsDirectory, in: .userDomainMask
+        ).first
     ) -> (
         VMLibraryViewModel, MockVMStorageService, MockDiskImageService, MockVirtualizationService,
         any USBDeviceProviding
@@ -40,6 +44,7 @@ struct VMLibraryViewModelTests {
             linuxImageResolveService: linuxImageResolveService,
             downloadService: downloadService,
             fileSystem: fileSystem,
+            downloadsDirectory: downloadsDirectory,
             preferences: preferences
         )
         vm.presenter = presenter
@@ -2595,7 +2600,7 @@ struct VMLibraryViewModelTests {
         destinationPath: String? = nil
     ) -> VMInstance {
         let instance = makeInstance(name: "Debian")
-        instance.configuration.linuxInstallContext = LinuxImageDownloadContext(
+        instance.configuration.linuxInstallContext = LinuxInstallContext(
             entry: makeLinuxCatalogEntry(), downloadDestinationPath: destinationPath)
         instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
         instance.status = .initialBoot
@@ -2607,7 +2612,7 @@ struct VMLibraryViewModelTests {
     @Test("A pending Linux image download loads as .initialBoot")
     func initialStatusHonorsLinuxContext() {
         var config = VMConfiguration(name: "Debian", guestOS: .linux, bootMode: .efi)
-        config.linuxInstallContext = LinuxImageDownloadContext(entry: makeLinuxCatalogEntry())
+        config.linuxInstallContext = LinuxInstallContext(entry: makeLinuxCatalogEntry())
         let layout = VMBundleLayout(
             bundleURL: FileManager.default.temporaryDirectory
                 .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true))
@@ -2673,6 +2678,41 @@ struct VMLibraryViewModelTests {
         #expect(virtService.startCallCount == 0)
         #expect(instance.status == .error)
         #expect(instance.configuration.linuxInstallContext != nil)
+    }
+
+    @Test("A finished Linux download hands straight off to the boot it was waiting on")
+    func startChainsTheBootAfterTheLinuxPipeline() async throws {
+        // The pipeline runs the VM through `.installing`, and the Start chained
+        // off its success is the one thing that has to survive that: the real
+        // service refuses a start from a status failing `canStart`.
+        let downloads = FileManager.default.temporaryDirectory
+            .appendingPathComponent("linuxAutoBoot-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: downloads) }
+
+        let contents = Data("kernova linux image fixture".utf8)
+        let digest = SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined()
+        let resolveService = MockLinuxImageResolveService()
+        resolveService.resolveResult = makeResolvedLinuxImage(
+            sha256: digest, sizeBytes: UInt64(contents.count))
+        let downloadService = MockDownloadService()
+        downloadService.downloadedContents = contents
+
+        let virtService = MockVirtualizationService()
+        let (viewModel, storage, _, _, _) = makeViewModel(
+            virtualizationService: virtService, linuxImageResolveService: resolveService,
+            downloadService: downloadService, downloadsDirectory: downloads)
+        let instance = makePendingLinuxVM(in: viewModel, storage: storage)
+
+        await viewModel.start(instance)
+        await instance.setupTask?.value
+
+        #expect(instance.configuration.linuxInstallContext == nil)
+        #expect(virtService.startCallCount == 1)
+        // The status the pipeline handed the boot, not just that a boot ran.
+        #expect(virtService.statusAtStart == .stopped)
+        #expect(instance.status == .running)
+        #expect(presenter.showError == false)
     }
 
     @Test("A second Start during a running Linux download is ignored")

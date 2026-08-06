@@ -131,6 +131,9 @@ struct LinuxImageCatalogSheetContentViewControllerTests {
     func sizeColumnMarksTheSizeApproximate() throws {
         let vc = makeSheet(entries: [makeLinuxCatalogEntry(approxSizeBytes: 735_358_976)])
         #expect(try cellText(vc, row: 0, column: "size") == wizardApproximateSize(735_358_976))
+        // Spelled out once, so the hedge in front of the number is pinned
+        // rather than compared against itself.
+        #expect(wizardApproximateSize(4_161_089_536) == "About 4.16 GB")
     }
 
     @Test("Distribution and version each get their own column")

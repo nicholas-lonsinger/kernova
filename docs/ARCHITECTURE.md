@@ -51,9 +51,8 @@ bar and Option-revealed in the sidebar, gated by `AppPreferences.alwaysShowAdvan
 - `VMBundleLayout` — a `Sendable` struct deriving every in-bundle path (disk image, aux storage,
   save file, serial log) from the bundle root; the one place path logic lives.
 - `VMStatus`, `VMBootMode`, `VMGuestOS` — enums.
-- `GuestSetupState` — the runtime step model (Download/Install for macOS, Download/Verify for
-  Linux) behind the one setup-progress view both guests share, with per-flow copy supplied by a
-  `GuestSetupDescriptor`.
+- `GuestSetupState` — the runtime step model behind the one setup-progress view both guests share,
+  with per-flow copy supplied by a `GuestSetupDescriptor`.
 
 **Storage topology mirrors VZ.** `VMConfiguration.storageDisks` maps onto `vzConfig.storageDevices`
 and `removableMedia` onto `usbControllers[0].usbDevices`. Removable media is hot-pluggable; storage
@@ -109,11 +108,9 @@ substitute mocks. Services split by concurrency: those that touch
 - `LinuxImageCatalogService` — decodes the bundled snapshot of curated Linux installer images,
   `Kernova/Resources/LinuxImageCatalog.json`, backing the Linux boot step's "Choose a
   Distribution…" source. It reaches no network; an entry names a directory, an ISO filename glob,
-  and a checksum manifest rather than a fixed URL, because distributions rename ISOs in place on
-  point releases.
+  and a checksum manifest rather than a fixed URL.
 - `LinuxImageResolveService` (a `final class`, for `URLSession` lifetime) — turns a catalog entry
-  into the file that exists right now: fetches the entry's checksum manifest, matches the glob,
-  picks the newest match, and returns its URL, SHA-256, and size.
+  into the file that exists right now, returning its URL, SHA-256, and size.
 
 `ConfigurationBuilder` translates a `VMConfiguration` into a `VZVirtualMachineConfiguration` — the
 single VZ-facing translation point, covering boot loader, CPU, memory, storage, network, display,

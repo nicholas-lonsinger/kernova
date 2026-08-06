@@ -402,9 +402,8 @@ final class VMLifecycleCoordinator {
     /// Where a resolved Linux image is written: inside Downloads, under the
     /// name the mirror just gave it.
     ///
-    /// Never built from the persisted path. That path comes out of a
-    /// `config.json` a user can edit, and the mirror renames the ISO on every
-    /// point release, so only the name this resolution produced describes the
+    /// Never built from the persisted path, which comes out of a `config.json`
+    /// a user can edit: only the name this resolution produced describes the
     /// bytes about to land. Falls back to the persisted path when
     /// normalization is disabled, and is `nil` only when there is neither.
     func linuxDownloadDestination(persisted: URL?, filename: String) -> URL? {
@@ -420,7 +419,7 @@ final class VMLifecycleCoordinator {
     /// whatever partial bytes are on disk.
     func downloadLinuxImage(
         on instance: VMInstance,
-        context: LinuxImageDownloadContext
+        context: LinuxInstallContext
     ) async throws {
         try await serialized(instance, action: "downloadLinuxImage") {
             Self.logger.debug(
@@ -431,9 +430,7 @@ final class VMLifecycleCoordinator {
                 instance.setupState = .linuxImage()
                 instance.status = .installing
 
-                // Resolved on every attempt and never cached: the mirror
-                // renames the ISO in place on a point release, so only the
-                // answer this attempt got names the file that exists now.
+                // Resolved on every attempt — see `LinuxImageCatalogEntry`.
                 let image = try await linuxImageResolveService.resolve(context.entry)
 
                 // `image.filename`, never `isoURL.lastPathComponent`: the
@@ -497,7 +494,8 @@ final class VMLifecycleCoordinator {
                 try await downloadService.download(
                     from: image.isoURL,
                     to: downloadDestination,
-                    discardsExistingDownload: requestedFreshDownload
+                    discardsExistingDownload: requestedFreshDownload,
+                    expectedSizeBytes: image.sizeBytes
                 ) { progress in
                     instance.setupState?.progress = .download(progress)
                 }
@@ -522,6 +520,11 @@ final class VMLifecycleCoordinator {
 
                 attachVerifiedImage(at: downloadDestination, to: instance)
                 instance.setupState = nil
+                // The VM entered `.installing` for the pipeline and nothing
+                // else takes it out — unlike a macOS install, no VZ session ran
+                // to leave it `.stopped`. The caller chains a Start straight
+                // off this return, and `.installing` fails its guard.
+                instance.status = .stopped
             } catch is CancellationError {
                 Self.logger.info(
                     "Linux image download cancelled for '\(instance.name, privacy: .public)'")

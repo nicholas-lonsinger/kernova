@@ -252,6 +252,22 @@ struct SafeFilenameTests {
         #expect(SafeFilename.sanitized("image.iso", requiring: "ipsw") == nil)
         #expect(SafeFilename.sanitized("image.ipsw", requiring: "iso") == nil)
     }
+
+    @Test("A name is accepted right up to the byte bound and refused past it")
+    func refusesAnOverlongName() {
+        let atBound =
+            String(repeating: "a", count: SafeFilename.maximumByteCount - ".iso".utf8.count)
+            + ".iso"
+        #expect(atBound.utf8.count == SafeFilename.maximumByteCount)
+        #expect(SafeFilename.sanitized(atBound, requiring: "iso") == atBound)
+        #expect(SafeFilename.sanitized("a" + atBound, requiring: "iso") == nil)
+
+        // Bounded in UTF-8 bytes, which is what the filesystem counts: this one
+        // is barely half the bound in characters and past it on disk.
+        let multibyte = String(repeating: "é", count: 101) + ".iso"
+        #expect(multibyte.count < SafeFilename.maximumByteCount)
+        #expect(SafeFilename.sanitized(multibyte, requiring: "iso") == nil)
+    }
 }
 
 /// Stub for the resolve service's requests.
@@ -355,6 +371,60 @@ struct LinuxImageResolveServiceTests {
             return ResolveStubURLProtocol.Reply(
                 statusCode: 200, body: Data(), headers: ["Content-Length": "\(isoSize)"])
         }
+    }
+
+    /// A hand-built entry the catalog would have refused, standing in for one
+    /// edited into a VM's `config.json` after the picker wrote it.
+    private func editedEntry(
+        directoryURLString: String = "https://cdimage.ubuntu.com/ubuntu/releases/noble/release/",
+        isoPattern: String = "ubuntu-24.04*-desktop-arm64.iso",
+        checksumManifest: String = "SHA256SUMS"
+    ) -> LinuxImageCatalogEntry {
+        makeLinuxCatalogEntry(
+            id: "ubuntu-desktop-24.04",
+            directoryURLString: directoryURLString,
+            isoPattern: isoPattern,
+            checksumManifest: checksumManifest
+        )
+    }
+
+    @Test("A directory that is not HTTPS is refused before anything is requested")
+    func refusesInsecureDirectory() async throws {
+        serve(manifest: ubuntuManifest)
+        defer { ResolveStubURLProtocol.reset() }
+        let entry = editedEntry(
+            directoryURLString: "http://cdimage.ubuntu.com/ubuntu/releases/noble/release/")
+
+        await #expect(throws: LinuxImageResolveError.insecureDirectory(url: entry.directoryURL)) {
+            _ = try await makeService().resolve(entry)
+        }
+        #expect(ResolveStubURLProtocol.requestedURLs.isEmpty)
+    }
+
+    @Test("An ISO pattern that is not a wildcard .iso filename is refused before any request")
+    func refusesInvalidISOPattern() async throws {
+        serve(manifest: ubuntuManifest)
+        defer { ResolveStubURLProtocol.reset() }
+
+        await #expect(
+            throws: LinuxImageResolveError.invalidISOPattern(pattern: "../*.iso")
+        ) {
+            _ = try await makeService().resolve(editedEntry(isoPattern: "../*.iso"))
+        }
+        #expect(ResolveStubURLProtocol.requestedURLs.isEmpty)
+    }
+
+    @Test("A checksum manifest that is not a filename is refused before any request")
+    func refusesInvalidManifestName() async throws {
+        serve(manifest: ubuntuManifest)
+        defer { ResolveStubURLProtocol.reset() }
+
+        await #expect(
+            throws: LinuxImageResolveError.invalidManifestName(manifest: "../../etc/passwd")
+        ) {
+            _ = try await makeService().resolve(editedEntry(checksumManifest: "../../etc/passwd"))
+        }
+        #expect(ResolveStubURLProtocol.requestedURLs.isEmpty)
     }
 
     @Test("The newest match in the manifest becomes the image, with its digest and size")

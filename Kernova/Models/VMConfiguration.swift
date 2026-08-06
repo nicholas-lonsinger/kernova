@@ -186,11 +186,11 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     /// Pending Linux installer-image download from the creation wizard.
     ///
-    /// Non-nil ⇔ this VM has never completed its initial boot: its presence
+    /// Non-nil ⇒ this VM has never completed its initial boot: its presence
     /// routes `start(_:)` through the download pipeline. Cleared exactly once,
     /// after the verified ISO is attached. Always `nil` for macOS guests, and
     /// for a Linux guest whose ISO the user picked off their own disk.
-    var linuxInstallContext: LinuxImageDownloadContext?
+    var linuxInstallContext: LinuxInstallContext?
 
     // MARK: - Metadata
 
@@ -237,7 +237,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         removableMedia: [RemovableMediaItem]? = nil,
         sharedDirectories: [SharedDirectory]? = nil,
         installContext: MacOSInstallContext? = nil,
-        linuxInstallContext: LinuxImageDownloadContext? = nil,
+        linuxInstallContext: LinuxInstallContext? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -332,7 +332,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.sharedDirectories = try c.decodeIfPresent([SharedDirectory].self, forKey: .sharedDirectories)
         self.installContext = try c.decodeIfPresent(MacOSInstallContext.self, forKey: .installContext)
         self.linuxInstallContext = try c.decodeIfPresent(
-            LinuxImageDownloadContext.self, forKey: .linuxInstallContext)
+            LinuxInstallContext.self, forKey: .linuxInstallContext)
         self.createdAt = try c.decode(Date.self, forKey: .createdAt)
     }
 

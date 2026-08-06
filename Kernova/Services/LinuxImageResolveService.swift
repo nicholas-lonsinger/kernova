@@ -3,12 +3,10 @@ import os
 
 /// Resolves a Linux catalog entry against its mirror, just before downloading.
 ///
-/// The entry names a directory, a checksum manifest inside it and a glob,
-/// because the ISO is renamed in place on every point release. The manifest is
-/// the index: it is fetched, parsed, matched against the glob, and the newest
-/// match is the image — no directory listing is scraped and no filename is
-/// guessed. What comes back carries the mirror's own SHA-256, which is what the
-/// download is verified against.
+/// The manifest is the index: it is fetched, parsed, matched against the
+/// entry's glob, and the newest match is the image — no directory listing is
+/// scraped and no filename is guessed. What comes back carries the mirror's own
+/// SHA-256, which is what the download is verified against.
 ///
 /// A class rather than a struct so `deinit` can invalidate the `URLSession`, the
 /// same reason `DownloadService` is one.
@@ -40,6 +38,19 @@ final class LinuxImageResolveService: LinuxImageResolving {
     }
 
     func resolve(_ entry: LinuxImageCatalogEntry) async throws -> ResolvedLinuxImage {
+        // The entry reaching here came off a `config.json` a user can edit, so
+        // it gets the catalog's own admission checks before it names a host to
+        // contact or a file to read.
+        guard entry.directoryURL.scheme?.lowercased() == "https" else {
+            throw LinuxImageResolveError.insecureDirectory(url: entry.directoryURL)
+        }
+        guard LinuxImageCatalogService.isFilenameGlob(entry.isoPattern) else {
+            throw LinuxImageResolveError.invalidISOPattern(pattern: entry.isoPattern)
+        }
+        guard LinuxImageCatalogService.isFilename(entry.checksumManifest) else {
+            throw LinuxImageResolveError.invalidManifestName(manifest: entry.checksumManifest)
+        }
+
         let manifestURL = entry.directoryURL.appendingPathComponent(entry.checksumManifest)
         let text = try await manifestText(at: manifestURL, named: entry.checksumManifest)
         let rows = ChecksumManifest.parse(text)
@@ -49,9 +60,9 @@ final class LinuxImageResolveService: LinuxImageResolving {
 
         let digests = Dictionary(
             rows.map { ($0.filename, $0.sha256) }, uniquingKeysWith: { first, _ in first })
-        // The catalog refuses an entry whose pattern is not a wildcard `.iso`
-        // filename, so a glob that will not compile and a manifest listing
-        // nothing that matches come to the same thing: no image to download.
+        // The pattern is a wildcard `.iso` filename by the guard above, so a
+        // glob that will not compile and a manifest listing nothing that
+        // matches come to the same thing: no image to download.
         guard let glob = ISOFilenameGlob(entry.isoPattern),
             let filename = glob.newest(among: digests.keys),
             let sha256 = digests[filename]

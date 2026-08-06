@@ -481,16 +481,15 @@ final class VMCreationViewModel {
     }
 
     /// Snapshots a Linux catalog pick into a persistable
-    /// `LinuxImageDownloadContext`, or `nil` when nothing is to be downloaded.
+    /// `LinuxInstallContext`, or `nil` when nothing is to be downloaded.
     ///
     /// A local ISO is already on disk and goes straight into `storageDisks`;
-    /// only a catalog pick leaves work for the post-create pipeline, which
-    /// reads this from the VM's bundle on every Start until the verified ISO is
-    /// attached. No destination yet: the mirror names the file, and only a
-    /// resolution just before the download can say what that name is.
-    func buildLinuxDownloadContext() -> LinuxImageDownloadContext? {
+    /// only a catalog pick leaves work for the post-create pipeline. No
+    /// destination yet: the mirror names the file, and only a resolution just
+    /// before the download can say what that name is.
+    func buildLinuxInstallContext() -> LinuxInstallContext? {
         guard case .catalogEntry(let entry) = linuxSelection else { return nil }
-        return LinuxImageDownloadContext(entry: entry)
+        return LinuxInstallContext(entry: entry)
     }
 
     /// Whether the user confirmed overwriting the destination the wizard is

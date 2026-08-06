@@ -105,6 +105,9 @@ final class VMLibraryViewModel {
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
         downloadService: any Downloading = DownloadService(),
         fileSystem: any FileSystemOperating = FileManager.default,
+        downloadsDirectory: URL? = FileManager.default.urls(
+            for: .downloadsDirectory, in: .userDomainMask
+        ).first,
         preferences: AppPreferences = .shared
     ) {
         self.storageService = storageService
@@ -118,7 +121,8 @@ final class VMLibraryViewModel {
             usbDeviceService: usbDeviceService,
             linuxImageResolveService: linuxImageResolveService,
             downloadService: downloadService,
-            fileSystem: fileSystem
+            fileSystem: fileSystem,
+            downloadsDirectory: downloadsDirectory
         )
 
         loadVMs()
@@ -213,7 +217,7 @@ final class VMLibraryViewModel {
             case .macOS:
                 config.installContext = wizard.buildInstallContext()
             case .linux:
-                config.linuxInstallContext = wizard.buildLinuxDownloadContext()
+                config.linuxInstallContext = wizard.buildLinuxInstallContext()
             }
 
             let bundleURL = try storageService.createVMBundle(for: config)

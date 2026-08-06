@@ -244,8 +244,8 @@ struct LinuxImageCatalogServiceTests {
         #expect(Set(service.entries.map(\.id)).count == service.entries.count)
         for entry in service.entries {
             #expect(entry.directoryURL.scheme == "https")
-            // A filename resolves against the directory only when it ends in a
-            // separator; without one the last segment is replaced instead.
+            // Written with a trailing slash throughout, which is what the
+            // picker shows; the resolver appends to it either way.
             #expect(entry.directoryURL.absoluteString.hasSuffix("/"))
             #expect(LinuxImageCatalogService.isFilenameGlob(entry.isoPattern))
             #expect(LinuxImageCatalogService.isFilename(entry.checksumManifest))

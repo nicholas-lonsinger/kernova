@@ -919,7 +919,7 @@ struct VMLifecycleCoordinatorTests {
 
     /// A Linux VM carrying `context`, with the configuration dispatcher wired so
     /// `performConfigurationMutation` is observable.
-    private func makeLinuxInstance(context: LinuxImageDownloadContext) -> VMInstance {
+    private func makeLinuxInstance(context: LinuxInstallContext) -> VMInstance {
         let instance = makeInstance(name: "Debian")
         instance.configuration.linuxInstallContext = context
         instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
@@ -932,10 +932,10 @@ struct VMLifecycleCoordinatorTests {
         let fixture = try makeLinuxFixture()
         defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         let entry = makeLinuxCatalogEntry()
-        let instance = makeLinuxInstance(context: LinuxImageDownloadContext(entry: entry))
+        let instance = makeLinuxInstance(context: LinuxInstallContext(entry: entry))
 
         try await fixture.coordinator.downloadLinuxImage(
-            on: instance, context: LinuxImageDownloadContext(entry: entry))
+            on: instance, context: LinuxInstallContext(entry: entry))
 
         let expected = fixture.downloads.appendingPathComponent(
             fixture.resolveService.resolveResult.filename)
@@ -943,6 +943,10 @@ struct VMLifecycleCoordinatorTests {
         #expect(fixture.resolveService.lastResolvedEntry == entry)
         #expect(fixture.downloadService.lastDownloadRemoteURL == fixture.resolveService.resolveResult.isoURL)
         #expect(fixture.downloadService.lastDownloadDestinationURL == expected)
+        // The resolution's own size is the ceiling the transfer is held to.
+        #expect(
+            fixture.downloadService.lastDownloadExpectedSizeBytes
+                == fixture.resolveService.resolveResult.sizeBytes)
 
         // The installer boots ahead of the synthesized main disk, read-only and
         // on the USB bus its `.iso` extension implies.
@@ -959,13 +963,16 @@ struct VMLifecycleCoordinatorTests {
         #expect(instance.configuration.linuxInstallContext == nil)
         #expect(instance.setupState == nil)
         #expect(fixture.fileSystem.trashedURLs.isEmpty)
+        // The pipeline put the VM in `.installing`; it has to come to rest in a
+        // status the auto-boot chained off this return can start from.
+        #expect(instance.status == .stopped)
     }
 
     @Test("downloadLinuxImage keeps a pre-existing main disk and puts the ISO in front of it")
     func downloadLinuxImageKeepsExistingDisks() async throws {
         let fixture = try makeLinuxFixture()
         defer { try? FileManager.default.removeItem(at: fixture.downloads) }
-        let context = LinuxImageDownloadContext(entry: makeLinuxCatalogEntry())
+        let context = LinuxInstallContext(entry: makeLinuxCatalogEntry())
         let instance = makeLinuxInstance(context: context)
         let existing = StorageDisk(
             path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio)
@@ -979,16 +986,13 @@ struct VMLifecycleCoordinatorTests {
     }
 
     @Test("downloadLinuxImage persists the destination before the download runs")
-    func downloadLinuxImagePersistsDestination() async {
+    func downloadLinuxImagePersistsDestination() async throws {
         // Read on the failure path: a successful run clears the context.
-        guard let fixture = try? makeLinuxFixture() else {
-            Issue.record("Could not build the fixture")
-            return
-        }
+        let fixture = try makeLinuxFixture()
         defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         fixture.downloadService.downloadError = DownloadError.downloadFailed(
             URLError(.notConnectedToInternet))
-        let context = LinuxImageDownloadContext(entry: makeLinuxCatalogEntry())
+        let context = LinuxInstallContext(entry: makeLinuxCatalogEntry())
         let instance = makeLinuxInstance(context: context)
 
         await #expect(throws: DownloadError.self) {
@@ -1010,7 +1014,7 @@ struct VMLifecycleCoordinatorTests {
         // A hand-edited config.json, and a name from a resolution that has since
         // been superseded: neither may decide where the bytes land.
         let stale = URL(fileURLWithPath: "/Users/Shared/../../etc/passwd")
-        let context = LinuxImageDownloadContext(
+        let context = LinuxInstallContext(
             entry: makeLinuxCatalogEntry(),
             downloadDestinationPath: stale.path(percentEncoded: false))
         let instance = makeLinuxInstance(context: context)
@@ -1057,7 +1061,7 @@ struct VMLifecycleCoordinatorTests {
         // tampered-with download.
         fixture.resolveService.resolveResult = makeResolvedLinuxImage(
             sha256: String(repeating: "a", count: 64))
-        let context = LinuxImageDownloadContext(entry: makeLinuxCatalogEntry())
+        let context = LinuxInstallContext(entry: makeLinuxCatalogEntry())
         let instance = makeLinuxInstance(context: context)
 
         let expected = fixture.downloads.appendingPathComponent(
@@ -1065,8 +1069,10 @@ struct VMLifecycleCoordinatorTests {
         do {
             try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
             Issue.record("Expected checksumMismatch")
-        } catch DownloadError.checksumMismatch(let filename, _, let actual) {
+        } catch DownloadError.checksumMismatch(let filename, let expected, let actual) {
             #expect(filename == fixture.resolveService.resolveResult.filename)
+            // The digest the manifest stated, against what the bytes hash to.
+            #expect(expected == fixture.resolveService.resolveResult.sha256)
             #expect(actual == fixture.digest)
         }
 
@@ -1091,7 +1097,7 @@ struct VMLifecycleCoordinatorTests {
             fixture.resolveService.resolveResult.filename)
         try Data("not the image the mirror published".utf8).write(to: destination)
 
-        let context = LinuxImageDownloadContext(entry: makeLinuxCatalogEntry())
+        let context = LinuxInstallContext(entry: makeLinuxCatalogEntry())
         let instance = makeLinuxInstance(context: context)
 
         await #expect(throws: DownloadError.self) {
@@ -1103,16 +1109,13 @@ struct VMLifecycleCoordinatorTests {
     }
 
     @Test("downloadLinuxImage forwards requestedFreshDownload and clears it before downloading")
-    func downloadLinuxImageForwardsFreshDownload() async {
-        guard let fixture = try? makeLinuxFixture() else {
-            Issue.record("Could not build the fixture")
-            return
-        }
+    func downloadLinuxImageForwardsFreshDownload() async throws {
+        let fixture = try makeLinuxFixture()
         defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         // Read on the failure path: a successful run clears the whole context.
         fixture.downloadService.downloadError = DownloadError.downloadFailed(
             URLError(.notConnectedToInternet))
-        let context = LinuxImageDownloadContext(
+        let context = LinuxInstallContext(
             entry: makeLinuxCatalogEntry(), requestedFreshDownload: true)
         let instance = makeLinuxInstance(context: context)
 
@@ -1130,7 +1133,7 @@ struct VMLifecycleCoordinatorTests {
         let fixture = try makeLinuxFixture()
         defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         fixture.resolveService.resolveError = CancellationError()
-        let context = LinuxImageDownloadContext(entry: makeLinuxCatalogEntry())
+        let context = LinuxInstallContext(entry: makeLinuxCatalogEntry())
         let instance = makeLinuxInstance(context: context)
 
         await #expect(throws: CancellationError.self) {
@@ -1149,7 +1152,7 @@ struct VMLifecycleCoordinatorTests {
         defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         fixture.downloadService.downloadError = NSError(
             domain: NSURLErrorDomain, code: NSURLErrorCancelled, userInfo: nil)
-        let context = LinuxImageDownloadContext(entry: makeLinuxCatalogEntry())
+        let context = LinuxInstallContext(entry: makeLinuxCatalogEntry())
         let instance = makeLinuxInstance(context: context)
 
         await #expect(throws: CancellationError.self) {
@@ -1165,7 +1168,7 @@ struct VMLifecycleCoordinatorTests {
         defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         fixture.resolveService.resolveError = LinuxImageResolveError.noMatchingImage(
             pattern: "debian-13.*-arm64-netinst.iso")
-        let context = LinuxImageDownloadContext(entry: makeLinuxCatalogEntry())
+        let context = LinuxInstallContext(entry: makeLinuxCatalogEntry())
         let instance = makeLinuxInstance(context: context)
 
         await #expect(throws: LinuxImageResolveError.self) {
@@ -1183,7 +1186,7 @@ struct VMLifecycleCoordinatorTests {
         fixture.downloadService.progressSamples = [
             DownloadProgress(bytesWritten: 10, totalBytes: 100, bytesPerSecond: 5)
         ]
-        let context = LinuxImageDownloadContext(entry: makeLinuxCatalogEntry())
+        let context = LinuxInstallContext(entry: makeLinuxCatalogEntry())
         let instance = makeLinuxInstance(context: context)
 
         // Sampled at each configuration write, the two points in the pipeline

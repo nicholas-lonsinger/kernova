@@ -89,7 +89,9 @@ struct LinuxImageCatalogService: LinuxImageCatalogProviding {
     /// There is no host allowlist to check the way the macOS catalog checks for
     /// Apple: these images come from each distribution's own mirrors, and a
     /// list of them written here would go stale without anything noticing.
-    /// HTTPS plus the manifest's SHA-256 is what makes a download trustworthy.
+    /// HTTPS authenticates the mirror the redirect landed on; the SHA-256 that
+    /// same mirror publishes catches a corrupted or wrong file — not a mirror
+    /// serving both to match.
     static func parse(_ data: Data) -> ParseResult {
         guard let document = try? JSONDecoder().decode(LenientCatalog.self, from: data) else {
             return ParseResult(catalog: nil, rejections: [.undecodableDocument])
@@ -135,8 +137,8 @@ struct LinuxImageCatalogService: LinuxImageCatalogProviding {
     }
 
     /// Whether a string is a usable ISO glob: a filename, carrying at least one
-    /// `*` to absorb the version the mirror renames on every point release, and
-    /// ending in the extension the resolved file must have.
+    /// `*` to absorb the version, and ending in the extension the resolved file
+    /// must have.
     static func isFilenameGlob(_ candidate: String) -> Bool {
         isFilename(candidate) && candidate.contains("*") && candidate.hasSuffix(".iso")
     }

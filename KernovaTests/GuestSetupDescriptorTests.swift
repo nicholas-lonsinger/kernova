@@ -85,7 +85,7 @@ struct GuestSetupDescriptorTests {
         let linux = VMInstance(
             configuration: {
                 var config = VMConfiguration(name: "Debian", guestOS: .linux, bootMode: .efi)
-                config.linuxInstallContext = LinuxImageDownloadContext(
+                config.linuxInstallContext = LinuxInstallContext(
                     entry: makeLinuxCatalogEntry(distribution: "Debian", version: "13"))
                 return config
             }(),

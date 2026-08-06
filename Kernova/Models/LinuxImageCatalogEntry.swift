@@ -13,8 +13,8 @@ struct LinuxImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
     var distribution: String
     /// Version as shown to the user (`"26.04 LTS"`), not necessarily numeric.
     var version: String
-    /// Directory holding both the ISO and ``checksumManifest``, trailing slash
-    /// included so a filename resolves against it.
+    /// Directory holding both the ISO and ``checksumManifest``, written with a
+    /// trailing slash.
     var directoryURL: URL
     /// Glob matching the ISO's filename inside ``directoryURL``, anchored at
     /// both ends, where each `*` matches a run of characters within the one

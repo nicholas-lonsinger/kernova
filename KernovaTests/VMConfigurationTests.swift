@@ -596,7 +596,7 @@ struct VMConfigurationTests {
 
     @Test("linuxInstallContext round-trips through JSON")
     func linuxInstallContextRoundTrip() throws {
-        let context = LinuxImageDownloadContext(
+        let context = LinuxInstallContext(
             entry: makeLinuxCatalogEntry(),
             downloadDestinationPath: "/Users/me/Downloads/debian-13.6.0-arm64-netinst.iso"
         )

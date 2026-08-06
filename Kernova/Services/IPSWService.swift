@@ -42,6 +42,9 @@ struct IPSWService: Sendable {
             from: remoteURL,
             to: destinationURL,
             discardsExistingDownload: discardsExistingDownload,
+            // Apple publishes no size for a restore image ahead of the
+            // transfer, so there is no ceiling to hold this one to.
+            expectedSizeBytes: nil,
             progressHandler: progressHandler
         )
     }

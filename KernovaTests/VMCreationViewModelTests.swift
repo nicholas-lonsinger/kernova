@@ -640,16 +640,16 @@ struct VMCreationViewModelTests {
         #expect(vm.validationMessage == "Enter a name for your virtual machine.")
     }
 
-    // MARK: - buildLinuxDownloadContext
+    // MARK: - buildLinuxInstallContext
 
-    @Test("buildLinuxDownloadContext snapshots a catalog pick with nothing downloaded yet")
-    func buildLinuxDownloadContextCatalogPick() throws {
+    @Test("buildLinuxInstallContext snapshots a catalog pick with nothing downloaded yet")
+    func buildLinuxInstallContextCatalogPick() throws {
         let vm = VMCreationViewModel()
         let entry = makeLinuxCatalogEntry(
             id: "ubuntu-desktop-26.04", distribution: "Ubuntu Desktop", version: "26.04 LTS")
         vm.selectLinuxCatalogEntry(entry)
 
-        let context = try #require(vm.buildLinuxDownloadContext())
+        let context = try #require(vm.buildLinuxInstallContext())
 
         #expect(context.entry == entry)
         // The mirror names the file, and only a resolution just before the
@@ -658,39 +658,39 @@ struct VMCreationViewModelTests {
         #expect(!context.requestedFreshDownload)
     }
 
-    @Test("buildLinuxDownloadContext is nil for a local ISO and for no selection at all")
-    func buildLinuxDownloadContextWithoutCatalogPick() {
+    @Test("buildLinuxInstallContext is nil for a local ISO and for no selection at all")
+    func buildLinuxInstallContextWithoutCatalogPick() {
         let vm = VMCreationViewModel()
         // Nothing chosen yet.
-        #expect(vm.buildLinuxDownloadContext() == nil)
+        #expect(vm.buildLinuxInstallContext() == nil)
 
         // An ISO already on disk goes straight into `storageDisks`; there is
         // nothing left for the post-create pipeline to fetch.
         vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: Data([0x01]))
-        #expect(vm.buildLinuxDownloadContext() == nil)
+        #expect(vm.buildLinuxInstallContext() == nil)
 
         vm.selectLinuxCatalogEntry(makeLinuxCatalogEntry())
-        #expect(vm.buildLinuxDownloadContext() != nil)
+        #expect(vm.buildLinuxInstallContext() != nil)
 
         // Moving back to a local ISO retracts the download.
         vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: nil)
-        #expect(vm.buildLinuxDownloadContext() == nil)
+        #expect(vm.buildLinuxInstallContext() == nil)
     }
 
     @Test("A catalog pick leaves storageDisks to the pipeline, a local ISO fills them in")
-    func buildLinuxDownloadContextMatchesBuildConfiguration() {
+    func buildLinuxInstallContextMatchesBuildConfiguration() {
         let vm = VMCreationViewModel()
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
         vm.selectLinuxCatalogEntry(makeLinuxCatalogEntry())
 
         #expect(vm.buildConfiguration().storageDisks == nil)
-        #expect(vm.buildLinuxDownloadContext() != nil)
+        #expect(vm.buildLinuxInstallContext() != nil)
 
         vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: nil)
 
         #expect(vm.buildConfiguration().storageDisks?.count == 2)
-        #expect(vm.buildLinuxDownloadContext() == nil)
+        #expect(vm.buildLinuxInstallContext() == nil)
     }
 
     // MARK: - buildInstallContext

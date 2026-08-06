@@ -73,7 +73,7 @@ struct ISOFilenameGlob: Sendable {
     ///
     /// A digit run too long to be an `Int` counts as zero, which is what keeps
     /// an absurd one from winning.
-    static func versionKey(_ text: String) -> [Int] {
+    private static func versionKey(_ text: String) -> [Int] {
         var key: [Int] = []
         var digits = ""
         for character in text {

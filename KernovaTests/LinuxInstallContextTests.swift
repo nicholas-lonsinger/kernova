@@ -3,19 +3,19 @@ import Testing
 
 @testable import Kernova
 
-@Suite("LinuxImageDownloadContext Tests")
-struct LinuxImageDownloadContextTests {
-    private func roundTrip(_ context: LinuxImageDownloadContext) throws
-        -> LinuxImageDownloadContext
+@Suite("LinuxInstallContext Tests")
+struct LinuxInstallContextTests {
+    private func roundTrip(_ context: LinuxInstallContext) throws
+        -> LinuxInstallContext
     {
         let data = try VMConfiguration.makeJSONEncoder().encode(context)
         return try VMConfiguration.makeJSONDecoder().decode(
-            LinuxImageDownloadContext.self, from: data)
+            LinuxInstallContext.self, from: data)
     }
 
     @Test("A fully populated context survives a round trip")
     func fullRoundTrip() throws {
-        let context = LinuxImageDownloadContext(
+        let context = LinuxInstallContext(
             entry: makeLinuxCatalogEntry(
                 id: "ubuntu-desktop-26.04", distribution: "Ubuntu Desktop", version: "26.04 LTS"),
             downloadDestinationPath: "/Users/test/Downloads/ubuntu-26.04-desktop-arm64.iso",
@@ -35,31 +35,16 @@ struct LinuxImageDownloadContextTests {
             isoPattern: "Fedora-Workstation-Live-44-*.aarch64.iso",
             checksumManifest: "Fedora-Workstation-44-1.7-aarch64-CHECKSUM")
 
-        let decoded = try roundTrip(LinuxImageDownloadContext(entry: entry))
+        let decoded = try roundTrip(LinuxInstallContext(entry: entry))
 
         #expect(decoded.entry == entry)
         #expect(decoded.entry.isoPattern == "Fedora-Workstation-Live-44-*.aarch64.iso")
         #expect(decoded.entry.checksumManifest == "Fedora-Workstation-44-1.7-aarch64-CHECKSUM")
     }
 
-    @Test("A context with only its entry decodes with the documented defaults")
-    func absentKeysTakeDefaults() throws {
-        let entry = makeLinuxCatalogEntry()
-        let entryJSON = String(
-            decoding: try VMConfiguration.makeJSONEncoder().encode(entry), as: UTF8.self)
-        let json = Data("{\"entry\":\(entryJSON)}".utf8)
-
-        let decoded = try VMConfiguration.makeJSONDecoder().decode(
-            LinuxImageDownloadContext.self, from: json)
-
-        #expect(decoded.entry == entry)
-        #expect(decoded.downloadDestinationPath == nil)
-        #expect(decoded.requestedFreshDownload == false)
-    }
-
     @Test("downloadDestinationURL is nil until a resolution names the file")
     func destinationURL() {
-        var context = LinuxImageDownloadContext(entry: makeLinuxCatalogEntry())
+        var context = LinuxInstallContext(entry: makeLinuxCatalogEntry())
         #expect(context.downloadDestinationURL == nil)
 
         context.downloadDestinationPath = "/Users/test/Downloads/debian-13.6.0-arm64-netinst.iso"
