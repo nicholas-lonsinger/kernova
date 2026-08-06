@@ -127,11 +127,34 @@ struct ReviewContentViewControllerTests {
     func linuxShowsISO() {
         let vm = VMCreationViewModel()
         vm.selectedOS = .linux
-        vm.isoPath = "/tmp/ubuntu.iso"
+        vm.selectLocalISO(path: "/tmp/ubuntu.iso", bookmark: nil)
         let vc = ReviewContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
         #expect(findLabel(withText: "ubuntu.iso", in: vc.view) != nil)
+    }
+
+    @Test("A Linux catalog pick names the distribution, its size, and where it lands")
+    func linuxShowsCatalogPick() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectLinuxCatalogEntry(
+            makeLinuxCatalogEntry(
+                distribution: "Ubuntu Desktop", version: "26.04 LTS",
+                approxSizeBytes: 4_161_089_536))
+        let vc = ReviewContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        #expect(findLabel(withText: "Ubuntu Desktop", in: vc.view) != nil)
+        #expect(findLabel(withText: "26.04 LTS", in: vc.view) != nil)
+        #expect(
+            findLabel(withText: wizardApproximateSize(4_161_089_536), in: vc.view) != nil)
+        // The folder only: the mirror names the file, at download time.
+        #expect(
+            findLabel(
+                withText: wizardAbbreviateWithTilde(
+                    VMCreationViewModel.downloadsDirectory.path(percentEncoded: false)),
+                in: vc.view) != nil)
     }
 
     @Test("Start-after-create switch writes back to the model")

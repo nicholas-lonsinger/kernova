@@ -71,7 +71,7 @@ final class VMDetailRouterViewController: NSViewController {
                 _ = self.instance.status
                 _ = self.instance.errorMessage
                 _ = self.instance.detailPaneMode
-                _ = self.instance.installState
+                _ = self.instance.setupState
             },
             apply: { [weak self] in self?.apply() }
         )
@@ -85,7 +85,7 @@ final class VMDetailRouterViewController: NSViewController {
             preparingLabel: instance.preparingState?.displayLabel,
             status: instance.status,
             errorMessage: instance.errorMessage,
-            hasInstallState: instance.installState != nil,
+            hasSetupState: instance.setupState != nil,
             detailPaneMode: instance.detailPaneMode)
 
         guard route != displayedRoute else { return }
@@ -111,12 +111,15 @@ final class VMDetailRouterViewController: NSViewController {
             settingsVC.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: false)
             setContent(child: settingsVC, banner: DetailBannerView.error(message: message))
 
-        case .install:
-            let installVC = MacOSInstallProgressViewController(instance: instance) { [weak self] in
+        case .setup:
+            let setupVC = GuestSetupProgressViewController(
+                instance: instance,
+                descriptor: .forSetup(of: instance)
+            ) { [weak self] in
                 guard let self else { return }
-                self.viewModel.cancelInstallation(self.instance)
+                self.viewModel.cancelGuestSetup(self.instance)
             }
-            setContent(child: installVC, banner: nil)
+            setContent(child: setupVC, banner: nil)
 
         case .display:
             displayVC.reconfigure(instance: instance)

@@ -50,7 +50,9 @@ bar and Option-revealed in the sidebar, gated by `AppPreferences.alwaysShowAdvan
   live in the `VMInstance+Display.swift` extension.
 - `VMBundleLayout` — a `Sendable` struct deriving every in-bundle path (disk image, aux storage,
   save file, serial log) from the bundle root; the one place path logic lives.
-- `VMStatus`, `VMBootMode`, `VMGuestOS`, `MacOSInstallState` — enums.
+- `VMStatus`, `VMBootMode`, `VMGuestOS` — enums.
+- `GuestSetupState` — the runtime step model behind the one setup-progress view both guests share,
+  with per-flow copy supplied by a `GuestSetupDescriptor`.
 
 **Storage topology mirrors VZ.** `VMConfiguration.storageDisks` maps onto `vzConfig.storageDevices`
 and `removableMedia` onto `usbControllers[0].usbDevices`. Removable media is hot-pluggable; storage
@@ -101,7 +103,14 @@ substitute mocks. Services split by concurrency: those that touch
 - `RestoreImageProbeService` (a `final class`, for `URLSession` lifetime) — establishes that a
   user-supplied URL serves an installable restore image, and how large it is, before any download.
   `Tools/regen-restore-image-catalog.swift` applies the same installability check to every catalog
-  candidate, which is what puts a pasted URL on the same footing as a catalog row.
+  candidate, which is what puts a pasted URL on the same footing as a catalog row. Sizing goes
+  through `RemoteFileSizeProbe`, the HEAD/ranged-GET helper it shares with the Linux resolver.
+- `LinuxImageCatalogService` — decodes the bundled snapshot of curated Linux installer images,
+  `Kernova/Resources/LinuxImageCatalog.json`, backing the Linux boot step's "Choose a
+  Distribution…" source. It reaches no network; an entry names a directory, an ISO filename glob,
+  and a checksum manifest rather than a fixed URL.
+- `LinuxImageResolveService` (a `final class`, for `URLSession` lifetime) — turns a catalog entry
+  into the file that exists right now, returning its URL, SHA-256, and size.
 
 `ConfigurationBuilder` translates a `VMConfiguration` into a `VZVirtualMachineConfiguration` — the
 single VZ-facing translation point, covering boot loader, CPU, memory, storage, network, display,
@@ -187,14 +196,18 @@ calls `applyLiveRemovableMediaChange(for:target:)`.
   `await`** — that is what reserves the destination atomically on the MainActor, so overlapping
   imports and clones cannot claim the same bundle URL.
 - `VMLifecycleCoordinator` — `@MainActor`; owns `VirtualizationService`, `MacOSInstallService`,
-  `IPSWService` and `USBDeviceService`, and orchestrates multi-step flows such as a macOS install.
+  `IPSWService`, `USBDeviceService`, and the Linux resolve/download seams (`LinuxImageResolving`,
+  `Downloading`), and orchestrates multi-step flows: a macOS install, and a Linux catalog pick's
+  resolve → download → SHA-256 verify → attach pipeline, each driven by the install context
+  persisted on `VMConfiguration` (`installContext` / `linuxInstallContext`) until it completes.
   It serializes lifecycle operations per VM; `stop` and `forceStop` deliberately bypass that
   serialization so a hung operation can always be cancelled.
 - `VMCreationViewModel` — a pure `@Observable` state machine for the creation wizard, with no
   UI-framework dependency. Each macOS restore-image source is backed by an injected service
   protocol, so the wizard can name the version, build and size the source will install before
   anything is downloaded — including "Download Latest", which reaches `IPSWProviding` for what VZ
-  would resolve.
+  would resolve. The Linux boot step's distribution picker is backed the same way by
+  `LinuxImageCatalogProviding`.
 - `VMDirectoryWatcher` — a `DispatchSource` on the VMs directory that triggers reconciliation in
   `VMLibraryViewModel` when the library changes on disk.
 

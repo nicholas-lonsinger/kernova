@@ -517,11 +517,51 @@ struct VMInstanceTests {
         #expect(instance.startAction == .install)
     }
 
+    @Test("startAction is .download with a pending Linux image and nothing partial on disk")
+    func startActionDownload() {
+        let instance = makeInstance(status: .stopped)
+        instance.configuration.linuxInstallContext = LinuxInstallContext(
+            entry: makeLinuxCatalogEntry())
+
+        // No destination until the mirror is asked, which is exactly when there
+        // is nothing to resume from.
+        #expect(instance.hasResumableInstallDownload == false)
+        #expect(instance.startAction == .download)
+        #expect(instance.startAction.label == "Download")
+    }
+
+    @Test("startAction is .resumeDownload when a Linux image's bundle holds partial bytes")
+    func startActionResumeDownload() throws {
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VMInstanceTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temp) }
+
+        let destination = temp.appendingPathComponent("debian-13.6.0-arm64-netinst.iso")
+        let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destination))
+        try bundle.prepareForFreshDownload(
+            with: DownloadBundleMetadata(
+                originalURL: URL(fileURLWithPath: destination.path(percentEncoded: false)),
+                etag: nil, lastModified: nil, createdAt: Date()))
+        try Data(repeating: 0x11, count: 1024).write(to: bundle.dataURL)
+
+        let instance = makeInstance(status: .stopped)
+        instance.configuration.linuxInstallContext = LinuxInstallContext(
+            entry: makeLinuxCatalogEntry(),
+            downloadDestinationPath: destination.path(percentEncoded: false))
+
+        #expect(instance.hasResumableInstallDownload == true)
+        #expect(instance.startAction == .resumeDownload)
+        #expect(instance.startAction.label == "Resume Download")
+    }
+
     @Test("StartAction labels match what each variant performs")
     func startActionLabels() {
         #expect(VMInstance.StartAction.start.label == "Start")
         #expect(VMInstance.StartAction.install.label == "Install")
         #expect(VMInstance.StartAction.resumeInstall.label == "Resume Install")
+        #expect(VMInstance.StartAction.download.label == "Download")
+        #expect(VMInstance.StartAction.resumeDownload.label == "Resume Download")
     }
 
     @Test("stopActionMenuTitle names the discard consequence when cold-paused")
@@ -723,7 +763,7 @@ struct VMInstanceTests {
     //   - The VM is `.running` (a frozen guest can't answer),
     //   - `lastSeenAgentVersion` is set (so we have a baseline expectation),
     //   - No agent is connected on the control channel already,
-    //   - No `installState` is in progress, and
+    //   - No `setupState` is in progress, and
     //   - No Hello arrives during the grace window.
     // Tests inject a millisecond-scale grace so the suite stays fast.
 
@@ -734,7 +774,7 @@ struct VMInstanceTests {
     private func makeMacOSInstanceWithAgentInstalled(
         lastSeen: String = "0.9.2",
         lastSeenGuestOSVersion: String? = nil,
-        installState: MacOSInstallState? = nil
+        setupState: GuestSetupState? = nil
     ) -> VMInstance {
         var config = VMConfiguration(
             name: "macOS Watchdog Test",
@@ -746,7 +786,7 @@ struct VMInstanceTests {
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
         let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .running)
-        instance.installState = installState
+        instance.setupState = setupState
         return instance
     }
 
@@ -870,11 +910,8 @@ struct VMInstanceTests {
     @Test("Watchdog is a no-op while macOS install is in progress")
     func watchdogNoopDuringMacOSInstall() async throws {
         // No agent exists during install; no point arming the watchdog.
-        let installState = MacOSInstallState(
-            hasDownloadStep: true,
-            currentPhase: .downloading(.zero)
-        )
-        let instance = makeMacOSInstanceWithAgentInstalled(installState: installState)
+        let setupState = GuestSetupState.macOSInstall(hasDownloadStep: true)
+        let instance = makeMacOSInstanceWithAgentInstalled(setupState: setupState)
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
         try await Task.sleep(for: Self.testWatchdogGrace * 3)

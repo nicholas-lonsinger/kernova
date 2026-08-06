@@ -108,17 +108,28 @@ struct VMCreationViewModelTests {
         #expect(vm.canAdvance == true)
     }
 
-    @Test("canAdvance at bootConfig for Linux EFI requires ISO path")
+    @Test("canAdvance at bootConfig for Linux EFI requires an image selection")
     func canAdvanceBootConfigLinuxEFI() {
         let vm = VMCreationViewModel()
         vm.currentStep = .bootConfig
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
 
-        vm.isoPath = nil
+        #expect(vm.linuxSelection == nil)
         #expect(vm.canAdvance == false)
 
-        vm.isoPath = "/path/to/ubuntu.iso"
+        vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: nil)
+        #expect(vm.canAdvance == true)
+    }
+
+    @Test("canAdvance at bootConfig for Linux EFI accepts a catalog pick, nothing on disk")
+    func canAdvanceBootConfigLinuxCatalogPick() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .bootConfig
+        vm.selectedOS = .linux
+        vm.selectedBootMode = .efi
+
+        vm.selectLinuxCatalogEntry(makeLinuxCatalogEntry())
         #expect(vm.canAdvance == true)
     }
 
@@ -246,7 +257,7 @@ struct VMCreationViewModelTests {
         vm.memoryInGB = 8
         vm.diskSizeInGB = 64
         vm.networkEnabled = true
-        vm.isoPath = "/path/to/ubuntu.iso"
+        vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: nil)
 
         let config = vm.buildConfiguration()
 
@@ -307,7 +318,7 @@ struct VMCreationViewModelTests {
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
         vm.vmName = "   Spaces Around   "
-        vm.isoPath = "/path/to/image.iso"
+        vm.selectLocalISO(path: "/path/to/image.iso", bookmark: nil)
 
         let config = vm.buildConfiguration()
         #expect(config.name == "Spaces Around")
@@ -319,7 +330,7 @@ struct VMCreationViewModelTests {
         vm.selectedOS = .linux
         vm.selectedBootMode = .linuxKernel
         vm.vmName = "Test"
-        vm.isoPath = "/should/be/ignored.iso"
+        vm.selectLocalISO(path: "/should/be/ignored.iso", bookmark: nil)
         vm.kernelPath = "/path/to/vmlinuz"
 
         let config = vm.buildConfiguration()
@@ -334,7 +345,7 @@ struct VMCreationViewModelTests {
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
         vm.vmName = "Test"
-        vm.isoPath = "/path/to/ubuntu.iso"
+        vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: nil)
         vm.kernelPath = "/should/be/ignored"
         vm.initrdPath = "/should/be/ignored"
         vm.kernelCommandLine = "should be ignored"
@@ -352,7 +363,7 @@ struct VMCreationViewModelTests {
         vm.selectedBootMode = .efi
         vm.vmName = "No Network"
         vm.networkEnabled = false
-        vm.isoPath = "/path/to/image.iso"
+        vm.selectLocalISO(path: "/path/to/image.iso", bookmark: nil)
 
         let config = vm.buildConfiguration()
         #expect(config.macAddress == nil)
@@ -365,7 +376,7 @@ struct VMCreationViewModelTests {
         vm.selectedBootMode = .efi
         vm.vmName = "With Network"
         vm.networkEnabled = true
-        vm.isoPath = "/path/to/image.iso"
+        vm.selectLocalISO(path: "/path/to/image.iso", bookmark: nil)
 
         let config = vm.buildConfiguration()
         #expect(config.macAddress != nil)
@@ -379,7 +390,7 @@ struct VMCreationViewModelTests {
         vm.vmName = "Test"
 
         vm.selectedBootMode = .efi
-        vm.isoPath = "/path/to/image.iso"
+        vm.selectLocalISO(path: "/path/to/image.iso", bookmark: nil)
         let efiConfig = vm.buildConfiguration()
         #expect(efiConfig.genericMachineIdentifierData != nil)
 
@@ -397,6 +408,82 @@ struct VMCreationViewModelTests {
 
         let config = vm.buildConfiguration()
         #expect(config.genericMachineIdentifierData == nil)
+    }
+
+    // MARK: - Linux Image Selection
+
+    @Test("The distribution picker reads the injected catalog, not the bundled resource")
+    func linuxCatalogServiceIsInjectable() {
+        let vm = VMCreationViewModel(
+            linuxCatalogService: MockLinuxImageCatalogService(
+                entries: [makeLinuxCatalogEntry(id: "fedora-workstation-44")],
+                generatedAt: "2026-01-01"))
+
+        #expect(vm.linuxCatalogService.entries.map(\.id) == ["fedora-workstation-44"])
+        #expect(vm.linuxCatalogService.generatedAt == "2026-01-01")
+    }
+
+    @Test("Each Linux source replaces the last, so only one pick is ever current")
+    func linuxSourcesReplaceEachOther() {
+        let vm = VMCreationViewModel()
+        let entry = makeLinuxCatalogEntry(id: "debian-13")
+
+        vm.selectLinuxCatalogEntry(entry)
+        #expect(vm.linuxSelection == .catalogEntry(entry))
+
+        vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: nil)
+        #expect(vm.linuxSelection == .localISO(path: "/path/to/ubuntu.iso", bookmark: nil))
+
+        vm.selectLinuxCatalogEntry(entry)
+        #expect(vm.linuxSelection == .catalogEntry(entry))
+    }
+
+    @Test("A local ISO carries the grant minted for it into the installer disk")
+    func localISOCarriesItsBookmark() throws {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectedBootMode = .efi
+        vm.vmName = "Test"
+        let bookmark = Data([0x01, 0x02, 0x03])
+        vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: bookmark)
+
+        let disks = try #require(vm.buildConfiguration().storageDisks)
+        #expect(disks.count == 2)
+        #expect(disks[0].path == "/path/to/ubuntu.iso")
+        #expect(disks[0].readOnly)
+        #expect(disks[0].bookmark == bookmark)
+        #expect(disks[1].isInternal)
+    }
+
+    @Test("A catalog pick attaches nothing: its ISO does not exist yet")
+    func catalogPickLeavesStorageDisksNil() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectedBootMode = .efi
+        vm.vmName = "Test"
+        vm.selectLinuxCatalogEntry(makeLinuxCatalogEntry())
+
+        let config = vm.buildConfiguration()
+
+        // The download happens after creation, so the builder synthesizes the
+        // default main disk and the ISO joins later.
+        #expect(config.storageDisks == nil)
+        #expect(config.bootMode == .efi)
+    }
+
+    @Test("Kernel boot ignores an image picked in the EFI segment")
+    func kernelBootIgnoresTheImagePick() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectedBootMode = .linuxKernel
+        vm.vmName = "Test"
+        vm.selectLinuxCatalogEntry(makeLinuxCatalogEntry())
+        vm.kernelPath = "/path/to/vmlinuz"
+
+        let config = vm.buildConfiguration()
+
+        #expect(config.storageDisks == nil)
+        #expect(config.kernelPath == "/path/to/vmlinuz")
     }
 
     // MARK: - Overwrite Warning
@@ -500,7 +587,7 @@ struct VMCreationViewModelTests {
         vm.currentStep = .bootConfig
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
-        vm.isoPath = "/path/to/image.iso"
+        vm.selectLocalISO(path: "/path/to/image.iso", bookmark: nil)
         #expect(vm.validationMessage == nil)
 
         // resources with valid name
@@ -509,15 +596,14 @@ struct VMCreationViewModelTests {
         #expect(vm.validationMessage == nil)
     }
 
-    @Test("validationMessage returns ISO hint for Linux EFI with no isoPath")
-    func validationMessageLinuxEFINoISO() {
+    @Test("validationMessage names both EFI image sources when neither is picked")
+    func validationMessageLinuxEFINoImage() {
         let vm = VMCreationViewModel()
         vm.currentStep = .bootConfig
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
-        vm.isoPath = nil
 
-        #expect(vm.validationMessage == "Select an ISO image to continue.")
+        #expect(vm.validationMessage == "Select an ISO image or distribution to continue.")
     }
 
     @Test("validationMessage returns kernel hint for Linux kernel with no kernelPath")
@@ -552,6 +638,59 @@ struct VMCreationViewModelTests {
 
         vm.vmName = "   "
         #expect(vm.validationMessage == "Enter a name for your virtual machine.")
+    }
+
+    // MARK: - buildLinuxInstallContext
+
+    @Test("buildLinuxInstallContext snapshots a catalog pick with nothing downloaded yet")
+    func buildLinuxInstallContextCatalogPick() throws {
+        let vm = VMCreationViewModel()
+        let entry = makeLinuxCatalogEntry(
+            id: "ubuntu-desktop-26.04", distribution: "Ubuntu Desktop", version: "26.04 LTS")
+        vm.selectLinuxCatalogEntry(entry)
+
+        let context = try #require(vm.buildLinuxInstallContext())
+
+        #expect(context.entry == entry)
+        // The mirror names the file, and only a resolution just before the
+        // download can say what that name is.
+        #expect(context.downloadDestinationPath == nil)
+        #expect(!context.requestedFreshDownload)
+    }
+
+    @Test("buildLinuxInstallContext is nil for a local ISO and for no selection at all")
+    func buildLinuxInstallContextWithoutCatalogPick() {
+        let vm = VMCreationViewModel()
+        // Nothing chosen yet.
+        #expect(vm.buildLinuxInstallContext() == nil)
+
+        // An ISO already on disk goes straight into `storageDisks`; there is
+        // nothing left for the post-create pipeline to fetch.
+        vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: Data([0x01]))
+        #expect(vm.buildLinuxInstallContext() == nil)
+
+        vm.selectLinuxCatalogEntry(makeLinuxCatalogEntry())
+        #expect(vm.buildLinuxInstallContext() != nil)
+
+        // Moving back to a local ISO retracts the download.
+        vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: nil)
+        #expect(vm.buildLinuxInstallContext() == nil)
+    }
+
+    @Test("A catalog pick leaves storageDisks to the pipeline, a local ISO fills them in")
+    func buildLinuxInstallContextMatchesBuildConfiguration() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectedBootMode = .efi
+        vm.selectLinuxCatalogEntry(makeLinuxCatalogEntry())
+
+        #expect(vm.buildConfiguration().storageDisks == nil)
+        #expect(vm.buildLinuxInstallContext() != nil)
+
+        vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: nil)
+
+        #expect(vm.buildConfiguration().storageDisks?.count == 2)
+        #expect(vm.buildLinuxInstallContext() == nil)
     }
 
     // MARK: - buildInstallContext

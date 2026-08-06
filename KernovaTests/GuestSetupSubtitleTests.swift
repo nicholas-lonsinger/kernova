@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-/// Verifies the "Installing macOS" download-progress subtitle holds a stable
+/// Verifies the guest-setup download-progress subtitle holds a stable
 /// horizontal position as it updates (#555).
 ///
 /// The subtitle is one center-aligned wrapping label, so any change in a line's
@@ -12,11 +12,17 @@ import Testing
 /// font and assert the structural invariants that keep it still — rather than
 /// counting characters, which a proportional unit suffix (KB vs MB) would defeat.
 @MainActor
-@Suite("macOS install subtitle width stability")
-struct MacOSInstallSubtitleTests {
-    /// The exact font `MacOSInstallProgressViewController` gives `detailLabel`.
+@Suite("Guest setup subtitle width stability")
+struct GuestSetupSubtitleTests {
+    /// The exact font `GuestSetupProgressViewController` gives `detailLabel`.
     private static let font = NSFont.monospacedDigitSystemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .regular)
+
+    /// The verbs the macOS install descriptor gives its two steps — the widest
+    /// wording the subtitle ships with.
+    private static let downloadVerb = GuestSetupDescriptor.macOSInstall.copy(for: .download)
+        .detailVerb
+    private static let installVerb = GuestSetupDescriptor.macOSInstall.copy(for: .install).detailVerb
 
     private func width(_ line: String) -> CGFloat {
         NSAttributedString(string: line, attributes: [.font: Self.font]).size().width
@@ -27,8 +33,9 @@ struct MacOSInstallSubtitleTests {
         let remaining = Int64((Double(etaSeconds) * bytesPerSecond).rounded())
         let progress = DownloadProgress(
             bytesWritten: 0, totalBytes: remaining, bytesPerSecond: bytesPerSecond)
-        return MacOSInstallProgressViewController.detailText(for: .downloading(progress))
-            .components(separatedBy: "\n")
+        return GuestSetupProgressViewController.detailText(
+            for: .download(progress), verb: Self.downloadVerb
+        ).components(separatedBy: "\n")
     }
 
     /// ETA values spanning every unit boundary the H:MM:SS clock can cross.
@@ -58,13 +65,15 @@ struct MacOSInstallSubtitleTests {
         // Just above the guard yields a real estimate; just below yields the
         // placeholder. Both render the same "1.0 KB/s" speed, so line 2 must not
         // move as the speed dips across the guard and back.
-        let numeric = MacOSInstallProgressViewController.detailText(
-            for: .downloading(
-                DownloadProgress(bytesWritten: 0, totalBytes: 100_100, bytesPerSecond: 1_001))
+        let numeric = GuestSetupProgressViewController.detailText(
+            for: .download(
+                DownloadProgress(bytesWritten: 0, totalBytes: 100_100, bytesPerSecond: 1_001)),
+            verb: Self.downloadVerb
         ).components(separatedBy: "\n")[1]
-        let placeholder = MacOSInstallProgressViewController.detailText(
-            for: .downloading(
-                DownloadProgress(bytesWritten: 0, totalBytes: 99_900, bytesPerSecond: 999))
+        let placeholder = GuestSetupProgressViewController.detailText(
+            for: .download(
+                DownloadProgress(bytesWritten: 0, totalBytes: 99_900, bytesPerSecond: 999)),
+            verb: Self.downloadVerb
         ).components(separatedBy: "\n")[1]
         #expect(abs(width(numeric) - width(placeholder)) < tolerance)
     }
@@ -89,7 +98,9 @@ struct MacOSInstallSubtitleTests {
     @Test("The install-phase percentage renders at a constant width across its range")
     func installPercentStable() {
         let widths = [0.0, 0.09, 0.10, 0.5, 0.99, 1.0].map {
-            width(MacOSInstallProgressViewController.detailText(for: .installing(progress: $0)))
+            width(
+                GuestSetupProgressViewController.detailText(
+                    for: .fraction($0), verb: Self.installVerb))
         }
         let spread = (widths.max() ?? 0) - (widths.min() ?? 0)
         #expect(spread < tolerance, "install percentage width moved by \(spread)pt")
@@ -97,9 +108,10 @@ struct MacOSInstallSubtitleTests {
 
     @Test("Line 2 is omitted before the first speed sample")
     func line2AbsentWithoutSpeed() {
-        let lines = MacOSInstallProgressViewController.detailText(
-            for: .downloading(
-                DownloadProgress(bytesWritten: 0, totalBytes: 1_000_000, bytesPerSecond: 0))
+        let lines = GuestSetupProgressViewController.detailText(
+            for: .download(
+                DownloadProgress(bytesWritten: 0, totalBytes: 1_000_000, bytesPerSecond: 0)),
+            verb: Self.downloadVerb
         ).components(separatedBy: "\n")
         #expect(lines.count == 1)
     }
@@ -108,18 +120,18 @@ struct MacOSInstallSubtitleTests {
 
     @Test("detailLine2 is nil for the install phase and before the first speed sample")
     func line2NilWhenNotApplicable() {
-        #expect(MacOSInstallProgressViewController.detailLine2(for: .installing(progress: 0.5)) == nil)
+        #expect(GuestSetupProgressViewController.detailLine2(for: .fraction(0.5)) == nil)
         #expect(
-            MacOSInstallProgressViewController.detailLine2(
-                for: .downloading(
+            GuestSetupProgressViewController.detailLine2(
+                for: .download(
                     DownloadProgress(bytesWritten: 0, totalBytes: 1_000_000, bytesPerSecond: 0)))
                 == nil)
     }
 
     @Test("detailLine2 is present, with the dash placeholder, when speed is below the ETA guard")
     func line2UsesPlaceholderBelowGuard() {
-        let line2 = MacOSInstallProgressViewController.detailLine2(
-            for: .downloading(
+        let line2 = GuestSetupProgressViewController.detailLine2(
+            for: .download(
                 DownloadProgress(bytesWritten: 0, totalBytes: 500_000, bytesPerSecond: 500)))
         #expect(line2 != nil)
         #expect(line2?.contains(DataFormatters.etaUnknownPlaceholder) == true)
@@ -127,17 +139,21 @@ struct MacOSInstallSubtitleTests {
 
     @Test("detailText composes exactly line 1, then line 2 when present")
     func detailTextComposesLines() {
-        let downloading = MacOSInstallPhase.downloading(
+        let downloading = SetupStepProgress.download(
             DownloadProgress(bytesWritten: 0, totalBytes: 100_000_000, bytesPerSecond: 10_000_000))
-        let line1 = MacOSInstallProgressViewController.detailLine1(for: downloading)
-        let line2 = MacOSInstallProgressViewController.detailLine2(for: downloading)
+        let line1 = GuestSetupProgressViewController.detailLine1(
+            for: downloading, verb: Self.downloadVerb)
+        let line2 = GuestSetupProgressViewController.detailLine2(for: downloading)
         #expect(line2 != nil)
-        #expect(MacOSInstallProgressViewController.detailText(for: downloading) == "\(line1)\n\(line2!)")
-
-        // Install phase has no line 2, so the composed text is line 1 alone.
-        let installing = MacOSInstallPhase.installing(progress: 0.42)
         #expect(
-            MacOSInstallProgressViewController.detailText(for: installing)
-                == MacOSInstallProgressViewController.detailLine1(for: installing))
+            GuestSetupProgressViewController.detailText(
+                for: downloading, verb: Self.downloadVerb) == "\(line1)\n\(line2!)")
+
+        // A fraction-only step has no line 2, so the composed text is line 1 alone.
+        let installing = SetupStepProgress.fraction(0.42)
+        #expect(
+            GuestSetupProgressViewController.detailText(for: installing, verb: Self.installVerb)
+                == GuestSetupProgressViewController.detailLine1(
+                    for: installing, verb: Self.installVerb))
     }
 }

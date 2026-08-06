@@ -21,6 +21,13 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// asserted on ordering, not just on the final value.
     var configurationAtStart: VMConfiguration?
 
+    /// The status the VM was in when `start` was called.
+    ///
+    /// The real service refuses a start from a status that fails
+    /// ``VMStatus/canStart``; recording it is what lets a caller that hands a
+    /// VM off to a boot be asserted on the state it hands over.
+    var statusAtStart: VMStatus?
+
     // MARK: - Error Injection & Recovery
 
     var startError: (any Error)?
@@ -36,6 +43,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         startCallCount += 1
         lastStartBootIntoRecovery = bootIntoRecovery
         configurationAtStart = instance.configuration
+        statusAtStart = instance.status
         if let error = startError {
             instance.tearDownSession()
             VirtualizationService.applyStartFailure(

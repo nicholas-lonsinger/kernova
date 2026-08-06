@@ -41,9 +41,12 @@ final class VMInstance {
     /// `openRuntimeFileAccess()` at boot, drained in `tearDownSession()`.
     let runtimeFileAccess = RuntimeFileAccess()
 
-    var installState: MacOSInstallState?
+    /// Progress of the guest setup running for this VM — a macOS install,
+    /// or a Linux installer image being fetched and verified.
+    var setupState: GuestSetupState?
 
-    var installTask: Task<Void, Never>?
+    /// The guest-setup pipeline in flight, owned by `VMLibraryViewModel`.
+    var setupTask: Task<Void, Never>?
 
     // MARK: - Preparing State (Clone/Import)
 
@@ -800,7 +803,7 @@ final class VMInstance {
         guard status == .running else { return }
         guard configuration.lastSeenAgentVersion != nil else { return }
         guard vsockControlService?.agentVersion == nil else { return }
-        guard installState == nil else { return }
+        guard setupState == nil else { return }
         guard agentPostStartTask == nil else { return }
 
         agentPostStartGeneration &+= 1

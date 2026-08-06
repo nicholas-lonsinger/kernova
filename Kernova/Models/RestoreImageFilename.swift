@@ -27,16 +27,10 @@ enum RestoreImageFilename {
     /// `candidate` when it is a filename safe to append to a directory, `nil`
     /// when the caller must generate one instead.
     ///
-    /// `URL.lastPathComponent` percent-decodes, so a URL ending in
-    /// `a%2F..%2F..%2Fevil.ipsw` hands back `a/../../evil.ipsw` — a value that
-    /// walks out of whatever directory it is appended to. Anything empty,
-    /// hidden (`.` and `..` included), carrying a separator, or not naming an
-    /// `.ipsw` is refused.
+    /// A restore image is an `.ipsw`; ``SafeFilename`` owns what makes a name
+    /// safe to append at all.
     static func sanitized(_ candidate: String) -> String? {
-        guard candidate.lowercased().hasSuffix(".ipsw"), isSingleComponent(candidate) else {
-            return nil
-        }
-        return candidate
+        SafeFilename.sanitized(candidate, requiring: "ipsw")
     }
 
     /// A destination filename unique to `url`.
@@ -63,23 +57,10 @@ enum RestoreImageFilename {
     /// name past the byte limit a path component has.
     private static let maximumStemLength = 64
 
-    /// Whether `candidate` is one visible path component.
-    private static func isSingleComponent(_ candidate: String) -> Bool {
-        // `.` and `..` fall out of the leading-dot refusal.
-        guard !candidate.isEmpty, !candidate.hasPrefix(".") else { return false }
-        let decoded = candidate.removingPercentEncoding ?? candidate
-        return !candidate.contains(where: isSeparator)
-            && !decoded.contains(where: isSeparator)
-    }
-
-    private static func isSeparator(_ character: Character) -> Bool {
-        character == "/" || character == "\0"
-    }
-
     /// The part of `candidate` before its extension, or `nil` when `candidate`
     /// is not usable as a filename at all.
     private static func stem(of candidate: String) -> String? {
-        guard isSingleComponent(candidate) else { return nil }
+        guard SafeFilename.isSingleComponent(candidate) else { return nil }
         var stem = candidate
         if let dot = stem.lastIndex(of: "."), dot != stem.startIndex {
             stem = String(stem[stem.startIndex..<dot])

@@ -1,7 +1,8 @@
 import Foundation
 import os
 
-/// Coordinates VM lifecycle operations and macOS installation.
+/// Coordinates VM lifecycle operations and the guest-setup pipelines — a macOS
+/// install, and a Linux installer image fetched, verified and attached.
 ///
 /// All methods re-throw errors — the caller is responsible for presentation.
 ///
@@ -17,9 +18,14 @@ final class VMLifecycleCoordinator {
     let installService: any MacOSInstallProviding
     let ipswService: any IPSWProviding
     let usbDeviceService: any USBDeviceProviding
+    let linuxImageResolveService: any LinuxImageResolving
+    let downloadService: any Downloading
 
-    /// The directory IPSW downloads must land in — the one location the
-    /// sandbox's downloads entitlement covers.
+    /// Trashes an image that failed verification.
+    private let fileSystem: any FileSystemOperating
+
+    /// The directory downloads must land in — the one location the sandbox's
+    /// downloads entitlement covers.
     ///
     /// `nil` disables normalization.
     private let downloadsDirectory: URL?
@@ -34,6 +40,9 @@ final class VMLifecycleCoordinator {
         installService: any MacOSInstallProviding,
         ipswService: any IPSWProviding,
         usbDeviceService: any USBDeviceProviding = USBDeviceService(),
+        linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
+        downloadService: any Downloading = DownloadService(),
+        fileSystem: any FileSystemOperating = FileManager.default,
         downloadsDirectory: URL? = FileManager.default.urls(
             for: .downloadsDirectory, in: .userDomainMask
         ).first
@@ -42,6 +51,9 @@ final class VMLifecycleCoordinator {
         self.installService = installService
         self.ipswService = ipswService
         self.usbDeviceService = usbDeviceService
+        self.linuxImageResolveService = linuxImageResolveService
+        self.downloadService = downloadService
+        self.fileSystem = fileSystem
         self.downloadsDirectory = downloadsDirectory
     }
 
@@ -232,10 +244,7 @@ final class VMLifecycleCoordinator {
                         throw IPSWError.noDownloadURL
                     }
 
-                    instance.installState = MacOSInstallState(
-                        hasDownloadStep: true,
-                        currentPhase: .downloading(.zero)
-                    )
+                    instance.setupState = .macOSInstall(hasDownloadStep: true)
                     instance.status = .installing
 
                     // Local because a moved latest destination lapses it below.
@@ -325,11 +334,10 @@ final class VMLifecycleCoordinator {
                         to: downloadDestination,
                         discardsExistingDownload: requestedFreshDownload
                     ) { progress in
-                        instance.installState?.currentPhase = .downloading(progress)
+                        instance.setupState?.progress = .download(progress)
                     }
 
-                    instance.installState?.downloadCompleted = true
-                    instance.installState?.currentPhase = .installing(progress: 0)
+                    instance.setupState?.advance(progress: .fraction(0))
                     ipswURL = downloadDestination
 
                 case .localFile:
@@ -352,10 +360,7 @@ final class VMLifecycleCoordinator {
                         }
                     }
 
-                    instance.installState = MacOSInstallState(
-                        hasDownloadStep: false,
-                        currentPhase: .installing(progress: 0)
-                    )
+                    instance.setupState = .macOSInstall(hasDownloadStep: false)
                     instance.status = .installing
                 }
 
@@ -363,14 +368,14 @@ final class VMLifecycleCoordinator {
                     into: instance,
                     restoreImageURL: ipswURL
                 ) { @MainActor progress in
-                    instance.installState?.currentPhase = .installing(progress: progress)
+                    instance.setupState?.progress = .fraction(progress)
                 }
 
                 // Clear the persisted install intent so subsequent Starts take the
-                // normal boot path, and clear `installState` so the progress UI
+                // normal boot path, and clear `setupState` so the progress UI
                 // tears down before the caller chains an auto-boot.
                 instance.performConfigurationMutation { $0.installContext = nil }
-                instance.installState = nil
+                instance.setupState = nil
             } catch is CancellationError {
                 Self.logger.info("macOS installation cancelled for '\(instance.name, privacy: .public)'")
                 // Re-throw so the caller knows to flip the VM back to
@@ -390,6 +395,206 @@ final class VMLifecycleCoordinator {
                 throw error
             }
         }
+    }
+
+    // MARK: - Linux Installer Image
+
+    /// Where a resolved Linux image is written: inside Downloads, under the
+    /// name the mirror just gave it.
+    ///
+    /// Never built from the persisted path, which comes out of a `config.json`
+    /// a user can edit: only the name this resolution produced describes the
+    /// bytes about to land. Falls back to the persisted path when
+    /// normalization is disabled, and is `nil` only when there is neither.
+    func linuxDownloadDestination(persisted: URL?, filename: String) -> URL? {
+        guard let downloads = downloadsDirectory else { return persisted }
+        return downloads.appendingPathComponent(filename)
+    }
+
+    /// Fetches the Linux installer image `context` names, checks it against the
+    /// digest its mirror publishes, and attaches it as the VM's boot media.
+    ///
+    /// Every step is re-entrant: a cancelled or failed attempt leaves the
+    /// context in place, so the next Start resolves again and resumes from
+    /// whatever partial bytes are on disk.
+    func downloadLinuxImage(
+        on instance: VMInstance,
+        context: LinuxInstallContext
+    ) async throws {
+        try await serialized(instance, action: "downloadLinuxImage") {
+            Self.logger.debug(
+                "downloadLinuxImage: entering for '\(instance.name, privacy: .public)', entry=\(context.entry.id, privacy: .public)"
+            )
+
+            do {
+                instance.setupState = .linuxImage()
+                instance.status = .installing
+
+                // Resolved on every attempt — see `LinuxImageCatalogEntry`.
+                let image = try await linuxImageResolveService.resolve(context.entry)
+
+                // `image.filename`, never `isoURL.lastPathComponent`: the
+                // resolution already checked the name is one visible path
+                // component, and re-deriving it from the URL percent-decodes it
+                // back into a value that can walk out of Downloads.
+                guard
+                    let downloadDestination = linuxDownloadDestination(
+                        persisted: context.downloadDestinationURL, filename: image.filename)
+                else {
+                    throw DownloadError.invalidDownloadDestination(path: image.filename)
+                }
+
+                if let persisted = context.downloadDestinationURL,
+                    persisted != downloadDestination
+                {
+                    Self.logger.notice(
+                        "downloadLinuxImage: the mirror now names the image '\(downloadDestination.lastPathComponent, privacy: .public)'"
+                    )
+                    // The partial at the abandoned path belongs to an image
+                    // this download is no longer fetching, so discard it before
+                    // the only pointer to it moves.
+                    downloadService.discardResumeData(at: persisted, permanently: false)
+                }
+                // Keep the persisted path on the file the download writes, so
+                // resume across relaunches and delete-time cleanup stay keyed
+                // to it.
+                instance.performConfigurationMutation {
+                    $0.linuxInstallContext?.downloadDestinationPath =
+                        downloadDestination.path(percentEncoded: false)
+                }
+
+                // The mirror's own size, so the bar reads against the whole
+                // file from the first sample; the transfer's `Content-Length`
+                // governs once bytes are moving.
+                instance.setupState?.progress = .download(
+                    DownloadProgress(
+                        bytesWritten: 0,
+                        totalBytes: Int64(clamping: image.sizeBytes),
+                        bytesPerSecond: 0))
+
+                // Honored ONCE, and the flag clears before the download so a
+                // retry after a later failure reuses what it fetched.
+                let requestedFreshDownload = context.requestedFreshDownload
+                if requestedFreshDownload {
+                    // The destination can come from a persisted path when
+                    // normalization is disabled, so a stray edit could
+                    // otherwise have the download trashing an arbitrary file.
+                    guard downloadDestination.pathExtension.lowercased() == "iso" else {
+                        Self.logger.error(
+                            "downloadLinuxImage: refusing to honor requestedFreshDownload for non-ISO destination '\(downloadDestination.path(percentEncoded: false), privacy: .public)'"
+                        )
+                        throw DownloadError.invalidDownloadDestination(
+                            path: downloadDestination.path(percentEncoded: false))
+                    }
+                    instance.performConfigurationMutation {
+                        $0.linuxInstallContext?.requestedFreshDownload = false
+                    }
+                }
+
+                try await downloadService.download(
+                    from: image.isoURL,
+                    to: downloadDestination,
+                    discardsExistingDownload: requestedFreshDownload,
+                    expectedSizeBytes: image.sizeBytes
+                ) { progress in
+                    instance.setupState?.progress = .download(progress)
+                }
+
+                // Runs whether the bytes were just fetched or the download
+                // skipped over a file already sitting complete at the
+                // destination: an image nothing has checked is an image that
+                // could install anything.
+                instance.setupState?.advance(progress: .fraction(0))
+                let digest = try await FileDigest.sha256(of: downloadDestination) { fraction in
+                    instance.setupState?.progress = .fraction(fraction)
+                }
+                let expected = image.sha256.lowercased()
+                guard digest == expected else {
+                    Self.logger.error(
+                        "downloadLinuxImage: '\(image.filename, privacy: .public)' hashes to \(digest, privacy: .public), not the published \(expected, privacy: .public)"
+                    )
+                    discardUnverifiedImage(at: downloadDestination)
+                    throw DownloadError.checksumMismatch(
+                        filename: image.filename, expected: expected, actual: digest)
+                }
+
+                attachVerifiedImage(at: downloadDestination, to: instance)
+                instance.setupState = nil
+                // The VM entered `.installing` for the pipeline and nothing
+                // else takes it out — unlike a macOS install, no VZ session ran
+                // to leave it `.stopped`. The caller chains a Start straight
+                // off this return, and `.installing` fails its guard.
+                instance.status = .stopped
+            } catch is CancellationError {
+                Self.logger.info(
+                    "Linux image download cancelled for '\(instance.name, privacy: .public)'")
+                // Re-thrown so the caller flips the VM back to .initialBoot
+                // rather than auto-booting on a non-success.
+                throw CancellationError()
+            } catch let error as NSError
+                where error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled
+            {
+                Self.logger.info(
+                    "Linux image download cancelled for '\(instance.name, privacy: .public)'")
+                // Normalize to CancellationError for consistent caller-side handling.
+                throw CancellationError()
+            } catch {
+                let nsError = error as NSError
+                Self.logger.error(
+                    "Linux image download failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public)]"
+                )
+                VirtualizationService.applyStartFailure(
+                    error, to: instance, transientRestingStatus: .initialBoot)
+                throw error
+            }
+        }
+    }
+
+    /// Trashes an image whose digest did not match, and any resume bundle left
+    /// beside it.
+    ///
+    /// Left in place, the file would satisfy the download's skip-existing fast
+    /// path on every retry and the VM could never reach a good copy.
+    private func discardUnverifiedImage(at destination: URL) {
+        do {
+            try fileSystem.trashItem(at: destination)
+            Self.logger.notice(
+                "Trashed '\(destination.lastPathComponent, privacy: .public)' — it did not match its published checksum"
+            )
+        } catch {
+            Self.logger.warning(
+                "Failed to trash the unverified image at '\(destination.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+        }
+        downloadService.discardResumeData(at: destination, permanently: false)
+    }
+
+    /// Attaches a verified installer image ahead of the VM's main disk and
+    /// clears the pending download intent.
+    ///
+    /// The bookmark is minted without a panel — Downloads is covered by the
+    /// downloads entitlement — and it is worth minting because, unlike an IPSW
+    /// consumed by an install, this attachment outlives the setup and has to
+    /// track the file if the user later moves it.
+    private func attachVerifiedImage(at destination: URL, to instance: VMInstance) {
+        let installer = StorageDisk(
+            path: destination.path(percentEncoded: false),
+            readOnly: true,
+            label: destination.deletingPathExtension().lastPathComponent,
+            bookmark: SecurityScopedBookmark.make(for: destination)
+        )
+        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
+        instance.performConfigurationMutation { config in
+            // Position [0] is what EFI boots first, which is the whole reason
+            // the installer is on the list at all.
+            config.storageDisks =
+                [installer]
+                + (config.storageDisks ?? [ConfigurationBuilder.defaultMainDisk(layout: layout)])
+            config.linuxInstallContext = nil
+        }
+        Self.logger.notice(
+            "Attached verified installer image '\(destination.lastPathComponent, privacy: .public)' to '\(instance.name, privacy: .public)'"
+        )
     }
 
     // MARK: - USB Device Management

@@ -82,6 +82,8 @@ final class VMToolbarManager: NSObject {
     private static let resumeToolTip = "Resume the virtual machine"
     private static let installToolTip = "Download macOS and start the installation"
     private static let resumeInstallToolTip = "Resume the interrupted download and install macOS"
+    private static let downloadToolTip = "Download the installer image and start the virtual machine"
+    private static let resumeDownloadToolTip = "Resume the interrupted installer image download"
     private static let pauseToolTip = "Pause the virtual machine"
     private static let stopToolTip = "Stop the virtual machine"
     private static let discardSavedStateToolTip = "Discard the virtual machine's saved state"
@@ -275,8 +277,8 @@ final class VMToolbarManager: NSObject {
         }
 
         let canResume = instance.status.canResume
-        // `startAction` triggers on installContext (not status), so an .error
-        // retry also gets the install-flavored labels.
+        // `startAction` triggers on the pending setup context (not status), so
+        // an .error retry also gets the setup-flavored labels.
         let startAction = instance.startAction
         let playLabel: String
         let playToolTip: String
@@ -287,6 +289,12 @@ final class VMToolbarManager: NSObject {
         case .resumeInstall:
             playLabel = startAction.label
             playToolTip = Self.resumeInstallToolTip
+        case .download:
+            playLabel = startAction.label
+            playToolTip = Self.downloadToolTip
+        case .resumeDownload:
+            playLabel = startAction.label
+            playToolTip = Self.resumeDownloadToolTip
         case .start where canResume:
             playLabel = "Resume"
             playToolTip = Self.resumeToolTip

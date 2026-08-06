@@ -184,6 +184,14 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// after a successful install. Always `nil` for Linux guests.
     var installContext: MacOSInstallContext?
 
+    /// Pending Linux installer-image download from the creation wizard.
+    ///
+    /// Non-nil ⇒ this VM has never completed its initial boot: its presence
+    /// routes `start(_:)` through the download pipeline. Cleared exactly once,
+    /// after the verified ISO is attached. Always `nil` for macOS guests, and
+    /// for a Linux guest whose ISO the user picked off their own disk.
+    var linuxInstallContext: LinuxInstallContext?
+
     // MARK: - Metadata
 
     var createdAt: Date
@@ -229,6 +237,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         removableMedia: [RemovableMediaItem]? = nil,
         sharedDirectories: [SharedDirectory]? = nil,
         installContext: MacOSInstallContext? = nil,
+        linuxInstallContext: LinuxInstallContext? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -269,6 +278,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.removableMedia = removableMedia
         self.sharedDirectories = sharedDirectories
         self.installContext = installContext
+        self.linuxInstallContext = linuxInstallContext
         self.createdAt = createdAt
     }
 
@@ -321,6 +331,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.removableMedia = try c.decodeIfPresent([RemovableMediaItem].self, forKey: .removableMedia)
         self.sharedDirectories = try c.decodeIfPresent([SharedDirectory].self, forKey: .sharedDirectories)
         self.installContext = try c.decodeIfPresent(MacOSInstallContext.self, forKey: .installContext)
+        self.linuxInstallContext = try c.decodeIfPresent(
+            LinuxInstallContext.self, forKey: .linuxInstallContext)
         self.createdAt = try c.decode(Date.self, forKey: .createdAt)
     }
 
@@ -397,9 +409,10 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         }
 
         // The clone copies the source bundle's post-install artifacts, so
-        // preserving installContext would falsely mark it as awaiting an
-        // initial boot.
+        // preserving either install context would falsely mark it as awaiting
+        // an initial boot.
         clone.installContext = nil
+        clone.linuxInstallContext = nil
 
         // A clone's guest-agent state hasn't been evaluated by the user, so let
         // the install nudge surface again rather than inheriting the dismissal.

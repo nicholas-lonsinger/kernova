@@ -1,5 +1,7 @@
-import Testing
+import CryptoKit
 import Foundation
+import Testing
+
 @testable import Kernova
 
 @Suite("VMLifecycleCoordinator Tests")
@@ -553,7 +555,7 @@ struct VMLifecycleCoordinatorTests {
         try await coordinator.installMacOS(on: instance, context: context)
 
         #expect(instance.configuration.installContext == nil)
-        #expect(instance.installState == nil)
+        #expect(instance.setupState == nil)
     }
 
     @Test("installMacOS throws CancellationError on cancel and preserves installContext")
@@ -866,6 +868,341 @@ struct VMLifecycleCoordinatorTests {
             // installContext stays so the user can retry via Start.
             #expect(instance.configuration.installContext == originalContext)
         }
+    }
+
+    // MARK: - Linux Installer Image
+
+    /// The Linux pipeline's own seams, over a test-owned Downloads directory
+    /// the download mock really writes into — verification reads the file back,
+    /// so nothing here can be faked with a path alone.
+    private struct LinuxFixture {
+        let coordinator: VMLifecycleCoordinator
+        let resolveService: MockLinuxImageResolveService
+        let downloadService: MockDownloadService
+        let fileSystem: MockFileSystem
+        let downloads: URL
+        /// The bytes the download writes and the digest they hash to.
+        let contents: Data
+        let digest: String
+    }
+
+    private func makeLinuxFixture(name: String = #function) throws -> LinuxFixture {
+        let downloads = FileManager.default.temporaryDirectory
+            .appendingPathComponent("linuxImage-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+
+        let contents = Data("kernova linux image fixture".utf8)
+        let digest = SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined()
+
+        let resolveService = MockLinuxImageResolveService()
+        resolveService.resolveResult = makeResolvedLinuxImage(
+            sha256: digest, sizeBytes: UInt64(contents.count))
+        let downloadService = MockDownloadService()
+        downloadService.downloadedContents = contents
+        let fileSystem = MockFileSystem()
+
+        let coordinator = VMLifecycleCoordinator(
+            virtualizationService: MockVirtualizationService(),
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            usbDeviceService: MockUSBDeviceService(),
+            linuxImageResolveService: resolveService,
+            downloadService: downloadService,
+            fileSystem: fileSystem,
+            downloadsDirectory: downloads
+        )
+        return LinuxFixture(
+            coordinator: coordinator, resolveService: resolveService,
+            downloadService: downloadService, fileSystem: fileSystem, downloads: downloads,
+            contents: contents, digest: digest)
+    }
+
+    /// A Linux VM carrying `context`, with the configuration dispatcher wired so
+    /// `performConfigurationMutation` is observable.
+    private func makeLinuxInstance(context: LinuxInstallContext) -> VMInstance {
+        let instance = makeInstance(name: "Debian")
+        instance.configuration.linuxInstallContext = context
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+        instance.status = .initialBoot
+        return instance
+    }
+
+    @Test("downloadLinuxImage resolves, downloads, verifies and attaches the ISO")
+    func downloadLinuxImageHappyPath() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        let entry = makeLinuxCatalogEntry()
+        let instance = makeLinuxInstance(context: LinuxInstallContext(entry: entry))
+
+        try await fixture.coordinator.downloadLinuxImage(
+            on: instance, context: LinuxInstallContext(entry: entry))
+
+        let expected = fixture.downloads.appendingPathComponent(
+            fixture.resolveService.resolveResult.filename)
+        #expect(fixture.resolveService.resolveCallCount == 1)
+        #expect(fixture.resolveService.lastResolvedEntry == entry)
+        #expect(fixture.downloadService.lastDownloadRemoteURL == fixture.resolveService.resolveResult.isoURL)
+        #expect(fixture.downloadService.lastDownloadDestinationURL == expected)
+        // The resolution's own size is the ceiling the transfer is held to.
+        #expect(
+            fixture.downloadService.lastDownloadExpectedSizeBytes
+                == fixture.resolveService.resolveResult.sizeBytes)
+
+        // The installer boots ahead of the synthesized main disk, read-only and
+        // on the USB bus its `.iso` extension implies.
+        let disks = try #require(instance.configuration.storageDisks)
+        #expect(disks.count == 2)
+        #expect(disks[0].path == expected.path(percentEncoded: false))
+        #expect(disks[0].readOnly)
+        #expect(disks[0].kind == .usbMassStorage)
+        #expect(disks[0].label == expected.deletingPathExtension().lastPathComponent)
+        #expect(disks[1].label == "Main Disk")
+        #expect(disks[1].isInternal)
+
+        // The intent is spent: the next Start takes the normal boot path.
+        #expect(instance.configuration.linuxInstallContext == nil)
+        #expect(instance.setupState == nil)
+        #expect(fixture.fileSystem.trashedURLs.isEmpty)
+        // The pipeline put the VM in `.installing`; it has to come to rest in a
+        // status the auto-boot chained off this return can start from.
+        #expect(instance.status == .stopped)
+    }
+
+    @Test("downloadLinuxImage keeps a pre-existing main disk and puts the ISO in front of it")
+    func downloadLinuxImageKeepsExistingDisks() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        let context = LinuxInstallContext(entry: makeLinuxCatalogEntry())
+        let instance = makeLinuxInstance(context: context)
+        let existing = StorageDisk(
+            path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio)
+        instance.configuration.storageDisks = [existing]
+
+        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+
+        let disks = try #require(instance.configuration.storageDisks)
+        #expect(disks.count == 2)
+        #expect(disks[1] == existing)
+    }
+
+    @Test("downloadLinuxImage persists the destination before the download runs")
+    func downloadLinuxImagePersistsDestination() async throws {
+        // Read on the failure path: a successful run clears the context.
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        fixture.downloadService.downloadError = DownloadError.downloadFailed(
+            URLError(.notConnectedToInternet))
+        let context = LinuxInstallContext(entry: makeLinuxCatalogEntry())
+        let instance = makeLinuxInstance(context: context)
+
+        await #expect(throws: DownloadError.self) {
+            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        }
+
+        let expected = fixture.downloads.appendingPathComponent(
+            fixture.resolveService.resolveResult.filename)
+        #expect(
+            instance.configuration.linuxInstallContext?.downloadDestinationPath
+                == expected.path(percentEncoded: false))
+        #expect(instance.status == .error)
+    }
+
+    @Test("A persisted destination outside Downloads is replaced by the resolved filename")
+    func downloadLinuxImageRederivesDestination() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        // A hand-edited config.json, and a name from a resolution that has since
+        // been superseded: neither may decide where the bytes land.
+        let stale = URL(fileURLWithPath: "/Users/Shared/../../etc/passwd")
+        let context = LinuxInstallContext(
+            entry: makeLinuxCatalogEntry(),
+            downloadDestinationPath: stale.path(percentEncoded: false))
+        let instance = makeLinuxInstance(context: context)
+
+        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+
+        let expected = fixture.downloads.appendingPathComponent(
+            fixture.resolveService.resolveResult.filename)
+        #expect(fixture.downloadService.lastDownloadDestinationURL == expected)
+        // The partial at the abandoned path can never be resumed, so it goes
+        // before the only pointer to it moves.
+        #expect(fixture.downloadService.discardedResumeDataURLs == [stale])
+    }
+
+    @Test("linuxDownloadDestination names the file inside Downloads, never from the persisted path")
+    func linuxDownloadDestinationIgnoresPersisted() throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+
+        let derived = fixture.coordinator.linuxDownloadDestination(
+            persisted: URL(fileURLWithPath: "/Users/Shared/old.iso"), filename: "debian.iso")
+        #expect(derived == fixture.downloads.appendingPathComponent("debian.iso"))
+
+        // With normalization disabled the persisted path is all there is.
+        let unnormalized = VMLifecycleCoordinator(
+            virtualizationService: MockVirtualizationService(),
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            usbDeviceService: MockUSBDeviceService(),
+            downloadsDirectory: nil
+        )
+        let persisted = URL(fileURLWithPath: "/Users/Shared/old.iso")
+        #expect(
+            unnormalized.linuxDownloadDestination(persisted: persisted, filename: "debian.iso")
+                == persisted)
+        #expect(unnormalized.linuxDownloadDestination(persisted: nil, filename: "debian.iso") == nil)
+    }
+
+    @Test("A checksum mismatch trashes the image, discards its bundle, and keeps the context")
+    func downloadLinuxImageChecksumMismatch() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        // The mirror's manifest and the bytes disagree — a truncated or
+        // tampered-with download.
+        fixture.resolveService.resolveResult = makeResolvedLinuxImage(
+            sha256: String(repeating: "a", count: 64))
+        let context = LinuxInstallContext(entry: makeLinuxCatalogEntry())
+        let instance = makeLinuxInstance(context: context)
+
+        let expected = fixture.downloads.appendingPathComponent(
+            fixture.resolveService.resolveResult.filename)
+        do {
+            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+            Issue.record("Expected checksumMismatch")
+        } catch DownloadError.checksumMismatch(let filename, let expected, let actual) {
+            #expect(filename == fixture.resolveService.resolveResult.filename)
+            // The digest the manifest stated, against what the bytes hash to.
+            #expect(expected == fixture.resolveService.resolveResult.sha256)
+            #expect(actual == fixture.digest)
+        }
+
+        // Left in place the bad file would satisfy the skip-existing fast path
+        // on every retry, so it goes, and the retry re-resolves from scratch.
+        #expect(fixture.fileSystem.trashedURLs == [expected])
+        #expect(fixture.downloadService.discardedResumeDataURLs == [expected])
+        #expect(instance.configuration.linuxInstallContext != nil)
+        #expect(instance.status == .error)
+        #expect(instance.errorMessage != nil)
+        #expect(instance.configuration.storageDisks == nil)
+    }
+
+    @Test("A file already at the destination is verified rather than trusted")
+    func downloadLinuxImageVerifiesTheSkipExistingPath() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        // The download returns without fetching, exactly as the service does
+        // when a completed file with no resumable bundle is already there.
+        fixture.downloadService.downloadedContents = nil
+        let destination = fixture.downloads.appendingPathComponent(
+            fixture.resolveService.resolveResult.filename)
+        try Data("not the image the mirror published".utf8).write(to: destination)
+
+        let context = LinuxInstallContext(entry: makeLinuxCatalogEntry())
+        let instance = makeLinuxInstance(context: context)
+
+        await #expect(throws: DownloadError.self) {
+            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        }
+
+        #expect(fixture.fileSystem.trashedURLs == [destination])
+        #expect(instance.configuration.storageDisks == nil)
+    }
+
+    @Test("downloadLinuxImage forwards requestedFreshDownload and clears it before downloading")
+    func downloadLinuxImageForwardsFreshDownload() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        // Read on the failure path: a successful run clears the whole context.
+        fixture.downloadService.downloadError = DownloadError.downloadFailed(
+            URLError(.notConnectedToInternet))
+        let context = LinuxInstallContext(
+            entry: makeLinuxCatalogEntry(), requestedFreshDownload: true)
+        let instance = makeLinuxInstance(context: context)
+
+        await #expect(throws: DownloadError.self) {
+            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        }
+
+        #expect(fixture.downloadService.lastDownloadDiscardsExisting == true)
+        // Spent once, so the retry resumes the partial instead of trashing it.
+        #expect(instance.configuration.linuxInstallContext?.requestedFreshDownload == false)
+    }
+
+    @Test("downloadLinuxImage throws CancellationError from the resolve step and keeps the context")
+    func downloadLinuxImageCancelDuringResolve() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        fixture.resolveService.resolveError = CancellationError()
+        let context = LinuxInstallContext(entry: makeLinuxCatalogEntry())
+        let instance = makeLinuxInstance(context: context)
+
+        await #expect(throws: CancellationError.self) {
+            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        }
+
+        #expect(fixture.downloadService.downloadCallCount == 0)
+        #expect(instance.configuration.linuxInstallContext == context)
+        // A cancel must leave the partial download alone for the next Start.
+        #expect(fixture.downloadService.discardResumeDataCallCount == 0)
+    }
+
+    @Test("A cancelled download surfaces as CancellationError however URLSession words it")
+    func downloadLinuxImageURLCancel() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        fixture.downloadService.downloadError = NSError(
+            domain: NSURLErrorDomain, code: NSURLErrorCancelled, userInfo: nil)
+        let context = LinuxInstallContext(entry: makeLinuxCatalogEntry())
+        let instance = makeLinuxInstance(context: context)
+
+        await #expect(throws: CancellationError.self) {
+            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        }
+
+        #expect(fixture.downloadService.discardResumeDataCallCount == 0)
+    }
+
+    @Test("A resolution failure leaves the VM in .error with the context intact")
+    func downloadLinuxImageResolveFailure() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        fixture.resolveService.resolveError = LinuxImageResolveError.noMatchingImage(
+            pattern: "debian-13.*-arm64-netinst.iso")
+        let context = LinuxInstallContext(entry: makeLinuxCatalogEntry())
+        let instance = makeLinuxInstance(context: context)
+
+        await #expect(throws: LinuxImageResolveError.self) {
+            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        }
+
+        #expect(instance.status == .error)
+        #expect(instance.configuration.linuxInstallContext == context)
+    }
+
+    @Test("The setup state walks Download then Verify as the pipeline runs")
+    func downloadLinuxImageDrivesTheSetupState() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        fixture.downloadService.progressSamples = [
+            DownloadProgress(bytesWritten: 10, totalBytes: 100, bytesPerSecond: 5)
+        ]
+        let context = LinuxInstallContext(entry: makeLinuxCatalogEntry())
+        let instance = makeLinuxInstance(context: context)
+
+        // Sampled at each configuration write, the two points in the pipeline
+        // whose step is known: the destination is persisted while Download
+        // runs, and the ISO is attached once Verify has finished.
+        var observedSteps: [Int] = []
+        let persist = instance.onUpdateConfiguration
+        instance.onUpdateConfiguration = { mutate in
+            if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
+            persist?(mutate)
+        }
+
+        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+
+        #expect(observedSteps == [0, 1])
+        #expect(instance.setupState == nil)
     }
 
     // MARK: - USB Device Pass-Through

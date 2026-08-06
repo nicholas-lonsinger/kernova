@@ -102,7 +102,12 @@ final class VMLibraryViewModel {
         installService: any MacOSInstallProviding = MacOSInstallService(),
         ipswService: any IPSWProviding = IPSWService(),
         usbDeviceService: any USBDeviceProviding = USBDeviceService(),
+        linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
+        downloadService: any Downloading = DownloadService(),
         fileSystem: any FileSystemOperating = FileManager.default,
+        downloadsDirectory: URL? = FileManager.default.urls(
+            for: .downloadsDirectory, in: .userDomainMask
+        ).first,
         preferences: AppPreferences = .shared
     ) {
         self.storageService = storageService
@@ -113,7 +118,11 @@ final class VMLibraryViewModel {
             virtualizationService: virtualizationService,
             installService: installService,
             ipswService: ipswService,
-            usbDeviceService: usbDeviceService
+            usbDeviceService: usbDeviceService,
+            linuxImageResolveService: linuxImageResolveService,
+            downloadService: downloadService,
+            fileSystem: fileSystem,
+            downloadsDirectory: downloadsDirectory
         )
 
         loadVMs()
@@ -125,10 +134,11 @@ final class VMLibraryViewModel {
 
     /// Status to assign to a VM when it's first loaded from disk or imported.
     ///
-    /// A surviving install context is the canonical signal that the VM has never
-    /// completed its initial boot, so it outranks `.paused`/`.stopped`.
+    /// A surviving install context — either guest's — is the canonical signal
+    /// that the VM has never completed its initial boot, so it outranks
+    /// `.paused`/`.stopped`.
     static func initialStatus(for config: VMConfiguration, layout: VMBundleLayout) -> VMStatus {
-        if config.installContext != nil {
+        if config.installContext != nil || config.linuxInstallContext != nil {
             return .initialBoot
         }
         return layout.hasSaveFile ? .paused : .stopped
@@ -200,10 +210,14 @@ final class VMLibraryViewModel {
         do {
             var config = wizard.buildConfiguration()
 
-            // Persist the install intent so the next Start can drive the install
-            // pipeline without the wizard. Linux guests have no managed install step.
-            if config.guestOS == .macOS {
+            // Persist the setup intent so the next Start can drive the pipeline
+            // without the wizard: a macOS install, or the download of a Linux
+            // installer image the user picked from the catalog.
+            switch config.guestOS {
+            case .macOS:
                 config.installContext = wizard.buildInstallContext()
+            case .linux:
+                config.linuxInstallContext = wizard.buildLinuxInstallContext()
             }
 
             let bundleURL = try storageService.createVMBundle(for: config)
@@ -238,44 +252,43 @@ final class VMLibraryViewModel {
         }
     }
 
-    // MARK: - macOS Installation
+    // MARK: - Guest Setup
 
-    /// Drives the install pipeline for an `.initialBoot` (or `.error` with
-    /// `installContext`) VM and, on success, chains an auto-boot.
+    /// Runs a guest-setup pipeline for an `.initialBoot` (or `.error` with a
+    /// surviving context) VM and, on success, chains an auto-boot.
     ///
     /// A permanent failure leaves the VM in `.error` so the banner keeps the
     /// message on screen; cancel and transient failures (the running-VM cap)
     /// return it to `.initialBoot` for a retry that resumes the download from
-    /// the `.resumedata` sidecar if present.
-    private func installAndAutoBoot(_ instance: VMInstance) {
-        guard let context = instance.configuration.installContext else {
-            assertionFailure("installAndAutoBoot called without installContext")
-            return
-        }
-        if instance.installTask != nil { return }  // guard against rapid double-click
-        instance.installTask = Task { [weak self] in
+    /// the `.kernovadownload` bundle if present.
+    private func runGuestSetup(
+        on instance: VMInstance,
+        _ pipeline: @escaping (VMLifecycleCoordinator) async throws -> Void
+    ) {
+        if instance.setupTask != nil { return }  // guard against rapid double-click
+        instance.setupTask = Task { [weak self] in
             guard let self else { return }
-            defer { instance.installTask = nil }
+            defer { instance.setupTask = nil }
             do {
-                try await self.lifecycle.installMacOS(on: instance, context: context)
-                instance.installState = nil
+                try await pipeline(self.lifecycle)
+                instance.setupState = nil
                 await self.start(instance)
             } catch is CancellationError {
                 // Tear down a VM the install attached before cancellation fired: a
                 // retry would otherwise build a fresh `VZMacAuxiliaryStorage` while
                 // the old one is still alive on `instance.virtualMachine`.
                 instance.tearDownSession()
-                instance.installState = nil
+                instance.setupState = nil
                 instance.errorMessage = nil
                 instance.status = .initialBoot
                 Self.logger.notice(
-                    "Install cancelled for '\(instance.name, privacy: .public)' — VM remains in .initialBoot"
+                    "Setup cancelled for '\(instance.name, privacy: .public)' — VM remains in .initialBoot"
                 )
             } catch {
                 // Same teardown reason as the cancel branch: an attached VM from a
                 // partial install must not bleed into the next retry.
                 instance.tearDownSession()
-                instance.installState = nil
+                instance.setupState = nil
                 if Task.isCancelled {
                     // A non-cancellation error arrived before the cancel propagated
                     // (e.g. a network failure raced it). User intent was cancel, so
@@ -283,7 +296,7 @@ final class VMLibraryViewModel {
                     instance.errorMessage = nil
                     instance.status = .initialBoot
                     Self.logger.notice(
-                        "Install cancelled for '\(instance.name, privacy: .public)' — pipeline surfaced \(error.localizedDescription, privacy: .public)"
+                        "Setup cancelled for '\(instance.name, privacy: .public)' — pipeline surfaced \(error.localizedDescription, privacy: .public)"
                     )
                 } else if let explained = self.explainedFailure(for: error, on: instance) {
                     self.surfaceError(explained.message, title: explained.title)
@@ -294,15 +307,39 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Cancels an in-progress macOS install.
+    /// Drives the macOS install pipeline for a VM carrying an `installContext`.
+    private func installAndAutoBoot(_ instance: VMInstance) {
+        guard let context = instance.configuration.installContext else {
+            assertionFailure("installAndAutoBoot called without installContext")
+            return
+        }
+        runGuestSetup(on: instance) { lifecycle in
+            try await lifecycle.installMacOS(on: instance, context: context)
+        }
+    }
+
+    /// Drives the Linux installer-image pipeline for a VM carrying a
+    /// `linuxInstallContext`.
+    private func downloadAndAutoBoot(_ instance: VMInstance) {
+        guard let context = instance.configuration.linuxInstallContext else {
+            assertionFailure("downloadAndAutoBoot called without linuxInstallContext")
+            return
+        }
+        runGuestSetup(on: instance) { lifecycle in
+            try await lifecycle.downloadLinuxImage(on: instance, context: context)
+        }
+    }
+
+    /// Cancels the in-progress guest setup — a macOS install, or a Linux
+    /// installer image being fetched or verified.
     ///
     /// The VM returns to `.initialBoot` so a subsequent Start can resume, and the
     /// bundle is preserved — this is the non-destructive cancel.
-    func cancelInstallation(_ instance: VMInstance) {
-        Self.logger.info("Cancelling installation for '\(instance.name, privacy: .public)'")
-        instance.installTask?.cancel()
-        // `installAndAutoBoot`'s cancel catch owns the status transition and
-        // `installState` cleanup — don't duplicate it here.
+    func cancelGuestSetup(_ instance: VMInstance) {
+        Self.logger.info("Cancelling setup for '\(instance.name, privacy: .public)'")
+        instance.setupTask?.cancel()
+        // `runGuestSetup`'s cancel catch owns the status transition and
+        // `setupState` cleanup — don't duplicate it here.
     }
 
     // MARK: - Lifecycle
@@ -318,10 +355,14 @@ final class VMLibraryViewModel {
     }
 
     func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async {
-        // Dispatch on installContext, not status, so `.error` retries route through
-        // the install pipeline too.
+        // Dispatch on the surviving setup context, not status, so `.error`
+        // retries route through the same pipeline too.
         if instance.configuration.installContext != nil {
             installAndAutoBoot(instance)
+            return
+        }
+        if instance.configuration.linuxInstallContext != nil {
+            downloadAndAutoBoot(instance)
             return
         }
 
@@ -478,6 +519,7 @@ final class VMLibraryViewModel {
         switch instance.startAction {
         case .start: verb = "Start"
         case .install, .resumeInstall: verb = "Install"
+        case .download, .resumeDownload: verb = "Download"
         }
         let message: String
         switch instance.configuration.guestOS {
@@ -486,7 +528,7 @@ final class VMLibraryViewModel {
                 "macOS allows at most two macOS virtual machines to run at once. Stop another macOS VM, then click \(instance.startAction.label) to try again."
         case .linux:
             message =
-                "The limit on running virtual machines has been reached. Stop another virtual machine, then click Start to try again."
+                "The limit on running virtual machines has been reached. Stop another virtual machine, then click \(instance.startAction.label) to try again."
         }
         return (title: "Couldn't \(verb) “\(instance.name)”", message: message)
     }
@@ -701,7 +743,7 @@ final class VMLibraryViewModel {
             } else {
                 try storageService.deleteVMBundle(at: instance.bundleURL)
             }
-            cleanupInstallResumeData(for: instance, permanently: permanently)
+            cleanupSetupResumeData(for: instance, permanently: permanently)
             lifecycle.clearActiveOperation(for: instance.id)
             sleepPausedInstanceIDs.remove(instance.id)
             instances.removeAll { $0.id == instance.id }
@@ -880,19 +922,29 @@ final class VMLibraryViewModel {
         return (instance.configuration.removableMedia ?? []).contains { $0.path == path }
     }
 
-    /// Trashes any in-progress IPSW download bundle for a VM that's being deleted.
+    /// Trashes any in-progress image download bundle for a VM that's being
+    /// deleted.
     ///
-    /// Every install source that fetches its image writes the same
-    /// `.kernovadownload` sidecar, so all of them are covered; the "delete
-    /// externals" toggle does not gate it, and the disposition matches the VM's
-    /// own. The completed IPSW at `downloadDestinationPath` lives at a user-known
-    /// path and is left alone.
-    private func cleanupInstallResumeData(for instance: VMInstance, permanently: Bool) {
-        guard let context = instance.configuration.installContext,
+    /// Every setup source that fetches its image — a macOS restore image from
+    /// any of its three downloading sources, or a Linux installer ISO — writes
+    /// the same `.kernovadownload` sidecar, so all of them are covered; the
+    /// "delete externals" toggle does not gate it, and the disposition matches
+    /// the VM's own. The completed image at `downloadDestinationPath` lives at a
+    /// user-known path and is left alone.
+    private func cleanupSetupResumeData(for instance: VMInstance, permanently: Bool) {
+        if let context = instance.configuration.installContext,
             context.source.downloadsImage,
             let destinationURL = context.downloadDestinationURL
-        else { return }
-        lifecycle.ipswService.discardResumeData(at: destinationURL, permanently: permanently)
+        {
+            lifecycle.ipswService.discardResumeData(at: destinationURL, permanently: permanently)
+        } else if let destinationURL = instance.configuration.linuxInstallContext?
+            .downloadDestinationURL
+        {
+            lifecycle.downloadService.discardResumeData(
+                at: destinationURL, permanently: permanently)
+        } else {
+            return
+        }
         Self.logger.notice(
             "Discarded in-progress download bundle for deleted VM '\(instance.name, privacy: .public)'"
         )
@@ -2124,9 +2176,9 @@ final class VMLibraryViewModel {
                         || instance.status == .initialBoot)
             }
             for instance in instancesToRemove {
-                // Cancel any in-flight install task before evicting — otherwise it keeps
+                // Cancel any in-flight setup task before evicting — otherwise it keeps
                 // mutating an orphan instance the view model no longer knows about.
-                instance.installTask?.cancel()
+                instance.setupTask?.cancel()
                 instances.removeAll { $0.id == instance.id }
                 if selectedID == instance.id {
                     selectedID = instances.first?.id

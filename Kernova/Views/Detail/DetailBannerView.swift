@@ -83,8 +83,8 @@ final class DetailBannerView: NSView {
 // MARK: - Banners
 
 extension DetailBannerView {
-    /// Banner for a macOS VM that hasn't completed its initial boot, its
-    /// subtitle naming what Start will do for the persisted install context.
+    /// Banner for a VM that hasn't completed its initial boot, its subtitle
+    /// naming what Start will do for the persisted setup context.
     static func initialBoot(instance: VMInstance) -> DetailBannerView {
         DetailBannerView(
             tint: StatusColor.warning,
@@ -104,6 +104,15 @@ extension DetailBannerView {
     }
 
     private static func initialBootSubtitle(for instance: VMInstance) -> String {
+        if let linux = instance.configuration.linuxInstallContext {
+            let image = "\(linux.entry.distribution) \(linux.entry.version)"
+            if instance.hasResumableInstallDownload {
+                return "An interrupted download of \(image) will resume when you click "
+                    + "\(instance.startAction.label)."
+            }
+            return "Click \(instance.startAction.label) to download \(image) and start the "
+                + "installer."
+        }
         guard let context = instance.configuration.installContext else {
             return "Click Start to install macOS."
         }

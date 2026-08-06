@@ -17,8 +17,8 @@ enum DetailRoute: Equatable {
     /// The message is part of the route so a second failure with different text
     /// re-renders rather than comparing equal to the first.
     case error(message: String?)
-    /// A macOS install is running; show the install-progress UI.
-    case install
+    /// A guest setup is running; show the setup-progress UI.
+    case setup
     /// A transient status (starting, suspending, restoring, …) with no editable
     /// content yet; show a spinner with `label`.
     case transition(label: String)
@@ -33,7 +33,7 @@ enum DetailRoute: Equatable {
         preparingLabel: String?,
         status: VMStatus,
         errorMessage: String?,
-        hasInstallState: Bool,
+        hasSetupState: Bool,
         detailPaneMode: DetailPaneMode
     ) -> DetailRoute {
         if let preparingLabel {
@@ -47,7 +47,7 @@ enum DetailRoute: Equatable {
         case .initialBoot:
             return .initialBoot
         case .installing:
-            return hasInstallState ? .install : .transition(label: status.displayName)
+            return hasSetupState ? .setup : .transition(label: status.displayName)
         default:
             if status.hasActiveDisplay {
                 return detailPaneMode == .settings ? .settings(isReadOnly: true) : .display

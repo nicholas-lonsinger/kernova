@@ -747,6 +747,7 @@ struct DownloadServiceTests {
                 into: bundle,
                 startingAt: 0,
                 expectedTotal: 4096,
+                expectedSizeBytes: nil,
                 progressHandler: { _ in }
             )
         }
@@ -804,6 +805,7 @@ struct DownloadServiceTests {
                 into: bundle,
                 startingAt: 0,
                 expectedTotal: 4096,
+                expectedSizeBytes: nil,
                 progressHandler: { _ in }
             )
         }
@@ -862,6 +864,7 @@ struct DownloadServiceTests {
                 into: bundle,
                 startingAt: 0,
                 expectedTotal: 4096,
+                expectedSizeBytes: nil,
                 progressHandler: { _ in }
             )
             Issue.record("Expected DownloadError.downloadFailed for short stream")
@@ -907,6 +910,112 @@ struct DownloadServiceTests {
         for i in 1..<samples.count {
             #expect(samples[i] >= samples[i - 1])
         }
+    }
+
+    // MARK: - Expected-size ceiling
+
+    @Test("A body running past the size the source stated is stopped at the ceiling")
+    func oversizedTransferStopsAtTheCeiling() async throws {
+        // What an unbounded body looks like from here: more bytes arriving than
+        // the resolution said the file holds. Left unchecked they fill the
+        // volume, since a chunked response states no length to check against.
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let destination = temp.appendingPathComponent("installer.iso")
+
+        StubURLProtocol.handler = { request in
+            .fullResponse(
+                url: request.url ?? Self.remoteURL,
+                body: Data(repeating: 0x55, count: 8192), etag: "\"v1\"")
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let service = Self.makeServiceWithStub()
+        do {
+            try await service.download(
+                from: Self.remoteURL,
+                to: destination,
+                expectedSizeBytes: 4096,
+                progressHandler: { _ in }
+            )
+            Issue.record("Expected DownloadError.oversizedTransfer")
+        } catch DownloadError.oversizedTransfer(let expectedBytes) {
+            #expect(expectedBytes == 4096)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+        let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destination))
+        #expect(bundle.partialByteCount <= 4096)
+    }
+
+    @Test("The ceiling is spent by the bytes a resume already has on disk")
+    func sizeCeilingCountsResumedBytes() async throws {
+        // 3000 bytes are already down and the server sends 2000 more: under the
+        // ceiling on its own, over it once the partial is counted.
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let destination = temp.appendingPathComponent("installer.iso")
+        let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destination))
+
+        let prefix = Data(repeating: 0x11, count: 3000)
+        try bundle.prepareForFreshDownload(
+            with: DownloadBundleMetadata(
+                originalURL: Self.remoteURL, etag: "\"v1\"", lastModified: nil, createdAt: Date()))
+        try prefix.write(to: bundle.dataURL)
+
+        StubURLProtocol.handler = { request in
+            .partialResponse(
+                url: request.url ?? Self.remoteURL,
+                body: Data(repeating: 0x22, count: 2000),
+                start: 3000, end: 4999, total: 5000)
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let service = Self.makeServiceWithStub()
+        do {
+            try await service.download(
+                from: Self.remoteURL,
+                to: destination,
+                expectedSizeBytes: 4096,
+                progressHandler: { _ in }
+            )
+            Issue.record("Expected DownloadError.oversizedTransfer")
+        } catch DownloadError.oversizedTransfer(let expectedBytes) {
+            #expect(expectedBytes == 4096)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+        #expect(bundle.partialByteCount == Int64(prefix.count))
+    }
+
+    @Test("A transfer that fits its ceiling, and one with no ceiling at all, both complete")
+    func sizeCeilingStopsOnlyWhatRunsPastIt() async throws {
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let payload = Data(repeating: 0x66, count: 4096)
+        StubURLProtocol.handler = { request in
+            .fullResponse(url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let service = Self.makeServiceWithStub()
+
+        // Exactly the stated size is the file the source promised, not an
+        // overrun.
+        let exact = temp.appendingPathComponent("exact.iso")
+        try await service.download(
+            from: Self.remoteURL, to: exact, expectedSizeBytes: 4096, progressHandler: { _ in })
+        #expect(try Data(contentsOf: exact) == payload)
+
+        // No ceiling: the transfer runs as it did before there was one.
+        let unbounded = temp.appendingPathComponent("unbounded.iso")
+        try await service.download(
+            from: Self.remoteURL, to: unbounded, expectedSizeBytes: nil, progressHandler: { _ in })
+        #expect(try Data(contentsOf: unbounded) == payload)
     }
 
     @Test("Concurrent downloads to one destination issue a single request")

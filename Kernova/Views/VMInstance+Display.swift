@@ -49,26 +49,36 @@ extension VMInstance {
             : "VM is paused in memory"
     }
 
-    /// The flavor of the Start control for this VM: install-flavored when a macOS
-    /// install is pending, reflecting what Start will actually do.
+    /// The flavor of the Start control for this VM: setup-flavored when a macOS
+    /// install or a Linux image download is pending, reflecting what Start will
+    /// actually do.
     enum StartAction {
         case start
         case install
         case resumeInstall
+        case download
+        case resumeDownload
 
         var label: String {
             switch self {
             case .start: "Start"
             case .install: "Install"
             case .resumeInstall: "Resume Install"
+            case .download: "Download"
+            case .resumeDownload: "Resume Download"
             }
         }
     }
 
-    /// The action the Start control performs for this VM's current install state.
+    /// The action the Start control performs for this VM's current setup state.
     var startAction: StartAction {
-        guard configuration.installContext != nil else { return .start }
-        return hasResumableInstallDownload ? .resumeInstall : .install
+        if configuration.installContext != nil {
+            return hasResumableInstallDownload ? .resumeInstall : .install
+        }
+        if configuration.linuxInstallContext != nil {
+            return hasResumableInstallDownload ? .resumeDownload : .download
+        }
+        return .start
     }
 
     /// Menu item title for the stop slot.
@@ -86,19 +96,28 @@ extension VMInstance {
         isColdPaused ? "Discard Saved State" : "Stop"
     }
 
-    /// `true` when this VM's install fetches its image, a `.kernovadownload`
-    /// bundle still holds partial bytes at the chosen path, and no completed IPSW
-    /// sits at that path yet.
+    /// `true` when this VM's pending setup fetches its image, a
+    /// `.kernovadownload` bundle still holds partial bytes at the chosen path,
+    /// and no completed image sits at that path yet.
     ///
     /// The bytes check (`isResumable` rather than `exists`) keeps a husk left by a
     /// failed disposal from labelling a from-scratch download as a resume.
     var hasResumableInstallDownload: Bool {
-        guard let context = configuration.installContext,
-            context.source.downloadsImage,
-            let destinationURL = context.downloadDestinationURL
-        else { return false }
+        guard let destinationURL = pendingSetupDownloadDestination else { return false }
         let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destinationURL))
         return bundle.isResumable
             && !FileManager.default.fileExists(atPath: destinationURL.path(percentEncoded: false))
+    }
+
+    /// The file a pending setup would download into, or `nil` when this VM's
+    /// setup fetches nothing (a local IPSW or ISO, or no setup at all).
+    ///
+    /// A Linux context has no destination until its first resolution names the
+    /// file, which is exactly when there is nothing to resume from yet.
+    private var pendingSetupDownloadDestination: URL? {
+        if let context = configuration.installContext {
+            return context.source.downloadsImage ? context.downloadDestinationURL : nil
+        }
+        return configuration.linuxInstallContext?.downloadDestinationURL
     }
 }

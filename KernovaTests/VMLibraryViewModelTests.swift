@@ -1,3 +1,4 @@
+import CryptoKit
 import Testing
 import Foundation
 import Virtualization
@@ -23,7 +24,12 @@ struct VMLibraryViewModelTests {
         storageService: MockVMStorageService = MockVMStorageService(),
         diskImageService: MockDiskImageService = MockDiskImageService(),
         virtualizationService: MockVirtualizationService = MockVirtualizationService(),
-        usbDeviceService: any USBDeviceProviding = MockUSBDeviceService()
+        usbDeviceService: any USBDeviceProviding = MockUSBDeviceService(),
+        linuxImageResolveService: MockLinuxImageResolveService = MockLinuxImageResolveService(),
+        downloadService: MockDownloadService = MockDownloadService(),
+        downloadsDirectory: URL? = FileManager.default.urls(
+            for: .downloadsDirectory, in: .userDomainMask
+        ).first
     ) -> (
         VMLibraryViewModel, MockVMStorageService, MockDiskImageService, MockVirtualizationService,
         any USBDeviceProviding
@@ -35,7 +41,10 @@ struct VMLibraryViewModelTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
             usbDeviceService: usbDeviceService,
+            linuxImageResolveService: linuxImageResolveService,
+            downloadService: downloadService,
             fileSystem: fileSystem,
+            downloadsDirectory: downloadsDirectory,
             preferences: preferences
         )
         vm.presenter = presenter
@@ -1735,7 +1744,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[instance.bundleURL] = instance.configuration
 
         await viewModel.start(instance)
-        await instance.installTask?.value
+        await instance.setupTask?.value
 
         #expect(presenter.errorTitle == "Couldn't Install “Sequoia”")
         #expect(presenter.errorMessage?.contains("at most two macOS virtual machines") == true)
@@ -1743,7 +1752,7 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errorMessage?.contains("click Install to try again") == true)
         #expect(instance.status == .initialBoot)
         #expect(instance.errorMessage == nil)
-        #expect(instance.installState == nil)
+        #expect(instance.setupState == nil)
     }
 
     @Test("An attachment failure wrapping the limit code still offers removal")
@@ -2427,8 +2436,8 @@ struct VMLibraryViewModelTests {
         #expect(storage.deleteVMBundleCallCount == 0)
     }
 
-    @Test("reconcileWithDisk cancels installTask before evicting an orphaned VM")
-    func reconcileCancelsInstallTaskBeforeEviction() async {
+    @Test("reconcileWithDisk cancels setupTask before evicting an orphaned VM")
+    func reconcileCancelsSetupTaskBeforeEviction() async {
         let (viewModel, _, _, _, _) = makeViewModel()
         var config = VMConfiguration(name: "Pending VM", guestOS: .macOS, bootMode: .macOS)
         config.installContext = MacOSInstallContext(
@@ -2440,7 +2449,7 @@ struct VMLibraryViewModelTests {
 
         // Spawn a long-running install task we can observe getting cancelled.
         let cancelStream = AsyncStream<Void>.makeStream()
-        instance.installTask = Task {
+        instance.setupTask = Task {
             await withTaskCancellationHandler {
                 try? await Task.sleep(for: .seconds(60))
             } onCancel: {
@@ -2459,8 +2468,8 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Cancel Installation
 
-    @Test("cancelInstallation preserves bundle and instance (non-destructive)")
-    func cancelInstallationPreservesBundle() async {
+    @Test("cancelGuestSetup preserves bundle and instance (non-destructive)")
+    func cancelGuestSetupPreservesBundle() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance(name: "Installing VM")
         instance.configuration.installContext = MacOSInstallContext(
@@ -2472,7 +2481,7 @@ struct VMLibraryViewModelTests {
 
         // Spawn a fake long-running install task we can observe being cancelled.
         let cancelStream = AsyncStream<Void>.makeStream()
-        instance.installTask = Task {
+        instance.setupTask = Task {
             await withTaskCancellationHandler {
                 try? await Task.sleep(for: .seconds(60))
             } onCancel: {
@@ -2481,7 +2490,7 @@ struct VMLibraryViewModelTests {
             }
         }
 
-        viewModel.cancelInstallation(instance)
+        viewModel.cancelGuestSetup(instance)
         for await _ in cancelStream.stream { break }
 
         // Bundle is preserved, instance stays in library, installContext intact.
@@ -2524,18 +2533,18 @@ struct VMLibraryViewModelTests {
         storage.bundles[instance.bundleURL] = instance.configuration
 
         // Spawn the install + auto-boot pipeline; returns immediately after
-        // arming `instance.installTask`.
+        // arming `instance.setupTask`.
         await viewModel.start(instance)
 
         // Wait until the mock install has parked, so the cancel below
         // actually races a running install rather than a not-yet-started one.
         for await _ in raceInstaller.installStartedStream { break }
 
-        viewModel.cancelInstallation(instance)
+        viewModel.cancelGuestSetup(instance)
 
         // Drain the install task to completion so post-conditions are
         // observable (the catch block runs synchronously after await).
-        await instance.installTask?.value
+        await instance.setupTask?.value
 
         // The fix routes this case through the cancel outcome: VM is back
         // to .initialBoot, no error dialog, error message cleared.
@@ -2544,8 +2553,8 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == false)
     }
 
-    @Test("cancelInstallation does not change selection")
-    func cancelInstallationKeepsSelection() async {
+    @Test("cancelGuestSetup does not change selection")
+    func cancelGuestSetupKeepsSelection() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let first = makeInstance(name: "First")
         let installing = makeInstance(name: "Installing")
@@ -2558,7 +2567,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[installing.bundleURL] = installing.configuration
 
         let cancelStream = AsyncStream<Void>.makeStream()
-        installing.installTask = Task {
+        installing.setupTask = Task {
             await withTaskCancellationHandler {
                 try? await Task.sleep(for: .seconds(60))
             } onCancel: {
@@ -2567,12 +2576,225 @@ struct VMLibraryViewModelTests {
             }
         }
 
-        viewModel.cancelInstallation(installing)
+        viewModel.cancelGuestSetup(installing)
         for await _ in cancelStream.stream { break }
 
         // Both instances remain; selection unchanged.
         #expect(viewModel.instances.count == 2)
         #expect(viewModel.selectedID == installing.id)
+    }
+
+    // MARK: - Pending Linux Image Download
+
+    /// A resolved image nothing on this Mac can already be sitting at, so a
+    /// dispatch test never reads a file out of the real Downloads folder.
+    private func makeUnusedResolvedImage() -> ResolvedLinuxImage {
+        makeResolvedLinuxImage(filename: "kernova-test-\(UUID().uuidString).iso")
+    }
+
+    /// A stopped Linux VM with a pending catalog download, registered in
+    /// `viewModel` with its configuration persisted.
+    private func makePendingLinuxVM(
+        in viewModel: VMLibraryViewModel,
+        storage: MockVMStorageService,
+        destinationPath: String? = nil
+    ) -> VMInstance {
+        let instance = makeInstance(name: "Debian")
+        instance.configuration.linuxInstallContext = LinuxInstallContext(
+            entry: makeLinuxCatalogEntry(), downloadDestinationPath: destinationPath)
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+        instance.status = .initialBoot
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+        return instance
+    }
+
+    @Test("A pending Linux image download loads as .initialBoot")
+    func initialStatusHonorsLinuxContext() {
+        var config = VMConfiguration(name: "Debian", guestOS: .linux, bootMode: .efi)
+        config.linuxInstallContext = LinuxInstallContext(entry: makeLinuxCatalogEntry())
+        let layout = VMBundleLayout(
+            bundleURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true))
+
+        #expect(VMLibraryViewModel.initialStatus(for: config, layout: layout) == .initialBoot)
+    }
+
+    @Test("createVM persists a catalog pick's download context for Linux")
+    func createVMPersistsLinuxDownloadContext() async {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let wizard = VMCreationViewModel()
+        wizard.selectedOS = .linux
+        wizard.selectedBootMode = .efi
+        wizard.vmName = "Catalog Linux VM"
+        wizard.startAfterCreate = false
+        let entry = makeLinuxCatalogEntry()
+        wizard.selectLinuxCatalogEntry(entry)
+
+        await viewModel.createVM(from: wizard)
+
+        let created = viewModel.instances.first
+        #expect(created?.configuration.linuxInstallContext?.entry == entry)
+        // The download is what the VM is waiting on, so it has never booted.
+        #expect(created?.status == .initialBoot)
+        #expect(created?.configuration.installContext == nil)
+    }
+
+    @Test("createVM leaves a local-ISO Linux VM with no download context")
+    func createVMLocalISOHasNoLinuxContext() async {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let wizard = VMCreationViewModel()
+        wizard.selectedOS = .linux
+        wizard.selectedBootMode = .efi
+        wizard.vmName = "Local ISO VM"
+        wizard.startAfterCreate = false
+        wizard.selectLocalISO(path: "/tmp/ubuntu.iso", bookmark: nil)
+
+        await viewModel.createVM(from: wizard)
+
+        let created = viewModel.instances.first
+        #expect(created?.configuration.linuxInstallContext == nil)
+        #expect(created?.status == .stopped)
+        #expect(created?.configuration.storageDisks?.count == 2)
+    }
+
+    @Test("start routes a pending Linux context through the download pipeline, not a boot")
+    func startDispatchesLinuxDownload() async {
+        let resolveService = MockLinuxImageResolveService()
+        resolveService.resolveResult = makeUnusedResolvedImage()
+        resolveService.resolveError = LinuxImageResolveError.noMatchingImage(
+            pattern: "debian-13.*-arm64-netinst.iso")
+        let virtService = MockVirtualizationService()
+        let (viewModel, storage, _, _, _) = makeViewModel(
+            virtualizationService: virtService, linuxImageResolveService: resolveService)
+        let instance = makePendingLinuxVM(in: viewModel, storage: storage)
+
+        await viewModel.start(instance)
+        await instance.setupTask?.value
+
+        #expect(resolveService.resolveCallCount == 1)
+        // Never fell through to a normal boot, and the intent survives for the
+        // retry Start.
+        #expect(virtService.startCallCount == 0)
+        #expect(instance.status == .error)
+        #expect(instance.configuration.linuxInstallContext != nil)
+    }
+
+    @Test("A finished Linux download hands straight off to the boot it was waiting on")
+    func startChainsTheBootAfterTheLinuxPipeline() async throws {
+        // The pipeline runs the VM through `.installing`, and the Start chained
+        // off its success is the one thing that has to survive that: the real
+        // service refuses a start from a status failing `canStart`.
+        let downloads = FileManager.default.temporaryDirectory
+            .appendingPathComponent("linuxAutoBoot-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: downloads) }
+
+        let contents = Data("kernova linux image fixture".utf8)
+        let digest = SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined()
+        let resolveService = MockLinuxImageResolveService()
+        resolveService.resolveResult = makeResolvedLinuxImage(
+            sha256: digest, sizeBytes: UInt64(contents.count))
+        let downloadService = MockDownloadService()
+        downloadService.downloadedContents = contents
+
+        let virtService = MockVirtualizationService()
+        let (viewModel, storage, _, _, _) = makeViewModel(
+            virtualizationService: virtService, linuxImageResolveService: resolveService,
+            downloadService: downloadService, downloadsDirectory: downloads)
+        let instance = makePendingLinuxVM(in: viewModel, storage: storage)
+
+        await viewModel.start(instance)
+        await instance.setupTask?.value
+
+        #expect(instance.configuration.linuxInstallContext == nil)
+        #expect(virtService.startCallCount == 1)
+        // The status the pipeline handed the boot, not just that a boot ran.
+        #expect(virtService.statusAtStart == .stopped)
+        #expect(instance.status == .running)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("A second Start during a running Linux download is ignored")
+    func startDoesNotRestartAnInFlightLinuxDownload() async {
+        let resolveService = MockLinuxImageResolveService()
+        let (viewModel, storage, _, _, _) = makeViewModel(
+            linuxImageResolveService: resolveService)
+        let instance = makePendingLinuxVM(in: viewModel, storage: storage)
+        instance.setupTask = Task { try? await Task.sleep(for: .seconds(60)) }
+
+        await viewModel.start(instance)
+
+        // Draining whatever task is stored settles the question: a second
+        // pipeline would have run to completion here and asked the mirror.
+        instance.setupTask?.cancel()
+        await instance.setupTask?.value
+        #expect(resolveService.resolveCallCount == 0)
+    }
+
+    @Test("cancelGuestSetup cancels a Linux download and keeps its context")
+    func cancelGuestSetupCancelsLinuxDownload() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makePendingLinuxVM(in: viewModel, storage: storage)
+        instance.status = .installing
+
+        let cancelStream = AsyncStream<Void>.makeStream()
+        instance.setupTask = Task {
+            await withTaskCancellationHandler {
+                try? await Task.sleep(for: .seconds(60))
+            } onCancel: {
+                cancelStream.continuation.yield(())
+                cancelStream.continuation.finish()
+            }
+        }
+
+        viewModel.cancelGuestSetup(instance)
+        for await _ in cancelStream.stream { break }
+
+        #expect(viewModel.instances.count == 1)
+        #expect(storage.deleteVMBundleCallCount == 0)
+        #expect(instance.configuration.linuxInstallContext != nil)
+    }
+
+    @Test("Deleting a VM discards its pending Linux download bundle")
+    func deleteDiscardsLinuxResumeData() async {
+        let downloadService = MockDownloadService()
+        let (viewModel, storage, _, _, _) = makeViewModel(downloadService: downloadService)
+        let destination = "/Users/me/Downloads/debian-13.6.0-arm64-netinst.iso"
+        let instance = makePendingLinuxVM(
+            in: viewModel, storage: storage, destinationPath: destination)
+
+        viewModel.deleteConfirmed(instance)
+
+        let discarded = downloadService.discardedResumeDataURLs.map {
+            $0.path(percentEncoded: false)
+        }
+        #expect(discarded == [destination])
+        #expect(downloadService.lastDiscardResumeDataPermanently == false)
+    }
+
+    @Test("A permanent delete disposes of the Linux download bundle the same way")
+    func permanentDeleteDiscardsLinuxResumeDataPermanently() async {
+        let downloadService = MockDownloadService()
+        let (viewModel, storage, _, _, _) = makeViewModel(downloadService: downloadService)
+        let instance = makePendingLinuxVM(
+            in: viewModel, storage: storage,
+            destinationPath: "/Users/me/Downloads/debian-13.6.0-arm64-netinst.iso")
+
+        viewModel.deleteConfirmed(instance, permanently: true)
+
+        #expect(downloadService.lastDiscardResumeDataPermanently == true)
+    }
+
+    @Test("A Linux context with no destination yet has no bundle to discard")
+    func deleteWithUnresolvedLinuxDestination() async {
+        let downloadService = MockDownloadService()
+        let (viewModel, storage, _, _, _) = makeViewModel(downloadService: downloadService)
+        let instance = makePendingLinuxVM(in: viewModel, storage: storage)
+
+        viewModel.deleteConfirmed(instance)
+
+        #expect(downloadService.discardResumeDataCallCount == 0)
     }
 
     // MARK: - Agent Install Nudge
@@ -4934,10 +5156,10 @@ struct VMLibraryViewModelTests {
 // MARK: - Test helpers
 
 /// Drives the "cancel raced a non-cancellation error" path in
-/// `VMLibraryViewModel.installAndAutoBoot`.
+/// `VMLibraryViewModel.runGuestSetup`.
 ///
 /// The mock signals via `installStartedStream` once `install` has parked, so
-/// the test can `cancelInstallation` against a known-running install rather
+/// the test can `cancelGuestSetup` against a known-running install rather
 /// than a race-prone "did the task even start yet?" guess. After
 /// `Task.isCancelled` flips, the mock throws a non-CancellationError to
 /// mimic the production case where a network error reaches the catch before

@@ -12,7 +12,7 @@ struct DetailRouteTests {
                 preparingLabel: "Cloning…",
                 status: status,
                 errorMessage: nil,
-                hasInstallState: true,
+                hasSetupState: true,
                 detailPaneMode: .display
             )
             #expect(route == .preparing(label: "Cloning…"))
@@ -27,7 +27,7 @@ struct DetailRouteTests {
             preparingLabel: nil,
             status: .stopped,
             errorMessage: nil,
-            hasInstallState: false,
+            hasSetupState: false,
             detailPaneMode: .display
         )
         #expect(route == .settings(isReadOnly: false))
@@ -39,7 +39,7 @@ struct DetailRouteTests {
             preparingLabel: nil,
             status: .error,
             errorMessage: "Boot failed.",
-            hasInstallState: false,
+            hasSetupState: false,
             detailPaneMode: .display
         )
         #expect(route == .error(message: "Boot failed."))
@@ -53,7 +53,7 @@ struct DetailRouteTests {
             preparingLabel: nil,
             status: .initialBoot,
             errorMessage: nil,
-            hasInstallState: false,
+            hasSetupState: false,
             detailPaneMode: .display
         )
         #expect(route == .initialBoot)
@@ -61,25 +61,25 @@ struct DetailRouteTests {
 
     // MARK: - Installing
 
-    @Test("Installing with an install state routes to .install")
-    func installingWithStateRoutesToInstall() {
+    @Test("Installing with a setup state routes to .setup")
+    func installingWithStateRoutesToSetup() {
         let route = DetailRoute.resolve(
             preparingLabel: nil,
             status: .installing,
             errorMessage: nil,
-            hasInstallState: true,
+            hasSetupState: true,
             detailPaneMode: .display
         )
-        #expect(route == .install)
+        #expect(route == .setup)
     }
 
-    @Test("Installing without an install state routes to a transition")
+    @Test("Installing without a setup state routes to a transition")
     func installingWithoutStateRoutesToTransition() {
         let route = DetailRoute.resolve(
             preparingLabel: nil,
             status: .installing,
             errorMessage: nil,
-            hasInstallState: false,
+            hasSetupState: false,
             detailPaneMode: .display
         )
         #expect(route == .transition(label: VMStatus.installing.displayName))
@@ -94,7 +94,7 @@ struct DetailRouteTests {
                 preparingLabel: nil,
                 status: status,
                 errorMessage: nil,
-                hasInstallState: false,
+                hasSetupState: false,
                 detailPaneMode: .display
             )
             #expect(display == .display)
@@ -103,7 +103,7 @@ struct DetailRouteTests {
                 preparingLabel: nil,
                 status: status,
                 errorMessage: nil,
-                hasInstallState: false,
+                hasSetupState: false,
                 detailPaneMode: .settings
             )
             #expect(settings == .settings(isReadOnly: true))
@@ -119,7 +119,7 @@ struct DetailRouteTests {
                 preparingLabel: nil,
                 status: .starting,
                 errorMessage: nil,
-                hasInstallState: false,
+                hasSetupState: false,
                 detailPaneMode: paneMode
             )
             #expect(route == .transition(label: VMStatus.starting.displayName))

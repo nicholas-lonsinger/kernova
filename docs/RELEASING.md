@@ -102,12 +102,23 @@ disabled**.
    Internet Archive. Commit the result when it changes — an unchanged input
    reproduces the file byte for byte, so a no-op diff means there is nothing
    new.
-3. **Archive.** In Xcode, select the **Kernova** scheme, then **Product →
+3. **Linux image catalog.** Regenerate the snapshot the wizard's distribution
+   picker ships, so the release offers what the mirrors serve today — also
+   worth a run whenever a distribution ships a point release:
+
+   ```bash
+   swift Tools/regen-linux-image-catalog.swift
+   ```
+
+   It writes nothing unless every entry resolves, so a failure names a mirror
+   that moved: repair that entry by hand and re-run. Read the diff before
+   committing it — every value in it came off a mirror.
+4. **Archive.** In Xcode, select the **Kernova** scheme, then **Product →
    Archive** (archiving builds Release).
-4. **Confirm the archive type.** In the Organizer, verify the new archive
+5. **Confirm the archive type.** In the Organizer, verify the new archive
    appears as a **macOS app** archive, not *Other Items*. If it's *Other
    Items*, a `SKIP_INSTALL` regressed on the agent or `KernovaRelaunchHelper`.
-5. **Distribute.** **Distribute App → Direct Distribution → Automatically
+6. **Distribute.** **Distribute App → Direct Distribution → Automatically
    manage signing.** Xcode re-signs the app and its nested code with Developer
    ID, submits to the notary service, staples the ticket on success, and
    enables **Export** (usually within minutes).

@@ -44,10 +44,17 @@ final class DownloadService: Sendable {
     /// `discardsExistingDownload` honors a "Download & Replace": the file and
     /// bundle at the destination are trashed first, inside the claim, so the
     /// disposal cannot reach bytes another caller is streaming into them.
+    ///
+    /// `expectedSizeBytes` caps the bytes that may land on disk, the resumed
+    /// ones included: a source serving an unbounded body — chunked, with no
+    /// `Content-Length` to check the stream against — is stopped at the ceiling
+    /// with ``DownloadError/oversizedTransfer(expectedBytes:)`` rather than
+    /// filling the volume. `nil` leaves the transfer unbounded.
     func download(
         from remoteURL: URL,
         to destinationURL: URL,
         discardsExistingDownload: Bool = false,
+        expectedSizeBytes: UInt64? = nil,
         progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
     ) async throws {
         let key = destinationURL.standardizedFileURL.path(percentEncoded: false)
@@ -58,6 +65,7 @@ final class DownloadService: Sendable {
             let claim = await Self.claimDownload(forKey: key) { [self] in
                 try await performDownload(
                     from: remoteURL, to: destinationURL, discardsExistingDownload: discards,
+                    expectedSizeBytes: expectedSizeBytes,
                     progressHandler: progressHandler)
             }
             guard claim.isOwner else {
@@ -86,6 +94,7 @@ final class DownloadService: Sendable {
         from remoteURL: URL,
         to destinationURL: URL,
         discardsExistingDownload: Bool,
+        expectedSizeBytes: UInt64?,
         progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
     ) async throws {
         Self.logger.info("Downloading from \(Self.loggableURL(remoteURL), privacy: .public)")
@@ -151,6 +160,7 @@ final class DownloadService: Sendable {
                 into: bundle,
                 startingAt: 0,
                 expectedTotal: response.expectedContentLength,
+                expectedSizeBytes: expectedSizeBytes,
                 progressHandler: progressHandler
             )
 
@@ -186,6 +196,7 @@ final class DownloadService: Sendable {
                 into: bundle,
                 startingAt: resumeOffset,
                 expectedTotal: parsedRange.total,
+                expectedSizeBytes: expectedSizeBytes,
                 progressHandler: progressHandler
             )
 
@@ -431,11 +442,16 @@ final class DownloadService: Sendable {
     }
 
     /// Streams `chunks` into the bundle's `data` file, seeking to `initialOffset` first.
+    ///
+    /// `expectedSizeBytes` bounds the file the caller is willing to land:
+    /// `initialOffset` plus everything written is held under it, so a resumed
+    /// transfer spends the same budget the first attempt did.
     func streamBytes(
         from chunks: AsyncThrowingStream<Data, any Error>,
         into bundle: DownloadBundle,
         startingAt initialOffset: Int64,
         expectedTotal: Int64,
+        expectedSizeBytes: UInt64?,
         progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
     ) async throws {
         let handle = try FileHandle(forWritingTo: bundle.dataURL)
@@ -473,6 +489,16 @@ final class DownloadService: Sendable {
                 // arrives with a chunk already pending.
                 try Task.checkCancellation()
                 guard !data.isEmpty else { continue }
+                // Checked before the write, so nothing past the ceiling ever
+                // reaches the volume.
+                if let ceiling = expectedSizeBytes,
+                    UInt64(clamping: totalWritten) + UInt64(data.count) > ceiling
+                {
+                    Self.logger.error(
+                        "Transfer ran past its expected \(ceiling, privacy: .public) bytes — stopping"
+                    )
+                    throw DownloadError.oversizedTransfer(expectedBytes: ceiling)
+                }
                 try handle.write(contentsOf: data)
                 totalWritten += Int64(data.count)
                 if let progress = Self.nextProgressSample(
@@ -498,6 +524,10 @@ final class DownloadService: Sendable {
         } catch let urlError as URLError where urlError.code == .cancelled {
             Self.logger.info("Download cancelled (URLError.cancelled)")
             throw CancellationError()
+        } catch let downloadError as DownloadError {
+            // Raised by this method, already carrying the message the user
+            // sees; `.downloadFailed` would bury it one level down.
+            throw downloadError
         } catch {
             Self.logger.error(
                 "Download failed mid-stream: \(error.localizedDescription, privacy: .public)"
@@ -560,6 +590,10 @@ final class DownloadService: Sendable {
         return total
     }
 }
+
+// MARK: - Downloading
+
+extension DownloadService: Downloading {}
 
 // MARK: - Bundle Layout
 
@@ -775,6 +809,10 @@ enum DownloadError: LocalizedError {
     case freshDownloadCleanupFailed(path: String, underlying: any Error)
     /// The requested destination does not name a file of the expected type.
     case invalidDownloadDestination(path: String)
+    /// The downloaded file's SHA-256 differs from the digest served beside it.
+    case checksumMismatch(filename: String, expected: String, actual: String)
+    /// The transfer ran past the size the source stated for it.
+    case oversizedTransfer(expectedBytes: UInt64)
 
     var errorDescription: String? {
         switch self {
@@ -784,6 +822,10 @@ enum DownloadError: LocalizedError {
             "Could not remove the existing file at \(path) before downloading the replacement: \(underlying.localizedDescription)"
         case .invalidDownloadDestination(let path):
             "Cannot download to '\(path)' — the destination is not a supported file type."
+        case .checksumMismatch(let filename, _, _):
+            "\(filename) doesn't match the checksum listed alongside it. Try downloading it again."
+        case .oversizedTransfer(let expectedBytes):
+            "The download exceeded its expected size of \(DataFormatters.formatBytes(expectedBytes)) and was stopped."
         }
     }
 }
