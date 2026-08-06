@@ -32,9 +32,12 @@ final class DownloadService: Sendable {
     ///
     /// The partial download lives at `<destinationURL minus its extension>.kernovadownload/`;
     /// its `data` file size IS the resume offset, and `Info.plist` holds the
-    /// ETag / Last-Modified used for `If-Range`. The bundle is preserved for a
-    /// later resume on any failure, cancellation included (which throws
-    /// `CancellationError`). A completed file with no bundle beside it is skipped.
+    /// ETag / Last-Modified used for `If-Range`. The bundle survives a failure
+    /// a later attempt can resume past, cancellation included (which throws
+    /// `CancellationError`); one it cannot — a response disagreeing with the
+    /// bytes already on disk, or a source larger than `expectedSizeBytes` —
+    /// discards the bundle so the next attempt restarts from zero. A completed
+    /// file with no bundle beside it is skipped.
     ///
     /// Calls are serialized per destination: two callers pinned to the same
     /// remote file share one path and one bundle, so a second caller waits for
@@ -443,7 +446,12 @@ final class DownloadService: Sendable {
     ///
     /// `expectedSizeBytes` bounds the file the caller is willing to land:
     /// `initialOffset` plus everything written is held under it, so a resumed
-    /// transfer spends the same budget the first attempt did.
+    /// transfer spends the same budget the first attempt did. A source stating
+    /// a total over the ceiling is stopped before its body moves; one stating
+    /// no total at all — chunked, the shape the ceiling exists for — is stopped
+    /// at the chunk that would cross it. Either way the bundle goes, because a
+    /// source serving more than the ceiling allows leaves no offset a resume
+    /// could finish from.
     func streamBytes(
         from chunks: AsyncThrowingStream<Data, any Error>,
         into bundle: DownloadBundle,
@@ -464,6 +472,20 @@ final class DownloadService: Sendable {
 
         var smoother = DownloadSpeedSmoother()
         var totalWritten = initialOffset
+
+        // A stated total over the ceiling can't fit however its body arrives, so
+        // stop here rather than move the whole ceiling first and abort on the
+        // chunk that crosses it — every Start would spend the transfer again.
+        if let ceiling = expectedSizeBytes, expectedTotal > 0,
+            UInt64(clamping: expectedTotal) > ceiling
+        {
+            Self.logger.error(
+                "Source states \(expectedTotal, privacy: .public) bytes against an expected \(ceiling, privacy: .public) — stopping before its body moves"
+            )
+            Self.emptyAndDiscard(bundle, dataHandle: handle)
+            handleClosed = true
+            throw DownloadError.oversizedTransfer(expectedBytes: ceiling)
+        }
 
         // Emit up front so a resumed download shows its true starting fraction
         // immediately instead of jumping after the first chunk lands.
@@ -495,6 +517,8 @@ final class DownloadService: Sendable {
                     Self.logger.error(
                         "Transfer ran past its expected \(ceiling, privacy: .public) bytes — stopping"
                     )
+                    Self.emptyAndDiscard(bundle, dataHandle: handle)
+                    handleClosed = true
                     throw DownloadError.oversizedTransfer(expectedBytes: ceiling)
                 }
                 try handle.write(contentsOf: data)
@@ -545,6 +569,41 @@ final class DownloadService: Sendable {
                     totalBytes: expectedTotal,
                     bytesPerSecond: 0
                 )
+            )
+        }
+    }
+
+    /// Empties the bundle's `data` file through the open handle, closes the
+    /// handle, then removes the bundle.
+    ///
+    /// The handle is spent when this returns, whichever steps succeeded.
+    ///
+    /// Three steps because only the first is certain. Removal can be refused —
+    /// permissions, or a volume that won't unlink an open file — and a bundle
+    /// that survives holding zero bytes still resumes from offset 0, which
+    /// sends the next attempt out with no `Range` header. Closing first is what
+    /// gives the removal its best chance on the volumes that refuse.
+    ///
+    /// Removed rather than trashed, unlike `discardResumeData`: these bytes can
+    /// never complete this download, so each Start the user pressed would
+    /// otherwise deposit another multi-GB copy in the Trash.
+    private static func emptyAndDiscard(_ bundle: DownloadBundle, dataHandle: FileHandle) {
+        do {
+            try dataHandle.truncate(atOffset: 0)
+        } catch {
+            Self.logger.warning(
+                "Failed to empty the partial data in '\(bundle.url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+        }
+        try? dataHandle.close()
+        do {
+            try FileManager.default.removeItem(at: bundle.url)
+            Self.logger.notice(
+                "Discarded the bundle at '\(bundle.url.lastPathComponent, privacy: .public)' — the next attempt restarts from zero"
+            )
+        } catch {
+            Self.logger.warning(
+                "Failed to remove the bundle at '\(bundle.url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
     }
