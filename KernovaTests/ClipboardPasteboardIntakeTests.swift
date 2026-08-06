@@ -53,8 +53,9 @@ struct ClipboardPasteboardIntakeTests {
     private func resolve(
         _ result: ClipboardIntakeResult, allowsBinary: Bool
     ) async -> ClipboardIntakeResult {
-        guard case .pendingFiles(let urls) = result else { return result }
-        return await ClipboardPasteboardIntake.read(filesAt: urls, allowsBinary: allowsBinary)
+        guard case .pendingFiles(let urls, let unresolved) = result else { return result }
+        return await ClipboardPasteboardIntake.read(
+            filesAt: urls, unresolved: unresolved, allowsBinary: allowsBinary)
     }
 
     // MARK: - Generic pasteboard reads
@@ -229,7 +230,7 @@ struct ClipboardPasteboardIntakeTests {
         write([(uti: UTType.png.identifier, data: try makePNG())], to: pasteboard)
 
         guard
-            case .rejected(let message) = ClipboardPasteboardIntake.read(
+            case .rejected(let message, _) = ClipboardPasteboardIntake.read(
                 from: pasteboard, allowsBinary: false)
         else {
             Issue.record("Expected rejection")
@@ -244,11 +245,34 @@ struct ClipboardPasteboardIntakeTests {
         write(
             [(uti: "org.nspasteboard.TransientType", data: Data([1]))], to: pasteboard)
 
-        guard case .rejected = ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: true)
+        guard
+            case .rejected(_, let unreadable) = ClipboardPasteboardIntake.read(
+                from: pasteboard, allowsBinary: true)
         else {
             Issue.record("Expected rejection")
             return
         }
+        // Nothing qualified, so nothing was lost — a verdict, not a failure.
+        #expect(unreadable == false)
+    }
+
+    @Test("a declared type the pasteboard won't hand over is rejected as unreadable")
+    func unreadableRepresentationRejectedAsLoss() {
+        // A type declared with no data and no owner to provide it: `data(forType:)`
+        // comes back nil, so content the clipboard advertised never crosses.
+        let pasteboard = makeScratchPasteboard()
+        pasteboard.clearContents()
+        pasteboard.declareTypes([NSPasteboard.PasteboardType(UTType.png.identifier)], owner: nil)
+
+        guard
+            case .rejected(let message, let unreadable) = ClipboardPasteboardIntake.read(
+                from: pasteboard, allowsBinary: true)
+        else {
+            Issue.record("Expected rejection")
+            return
+        }
+        #expect(message == "The Mac clipboard has no shareable content")
+        #expect(unreadable)
     }
 
     @Test("a large inline representation is kept (no size cap)")
@@ -290,13 +314,14 @@ struct ClipboardPasteboardIntakeTests {
         // The bytes are NOT read synchronously: read(from:) returns the URLs for
         // the caller to read off the main actor via read(filesAt:).
         guard
-            case .pendingFiles(let pending) = ClipboardPasteboardIntake.read(
+            case .pendingFiles(let pending, let unresolved) = ClipboardPasteboardIntake.read(
                 from: pasteboard, allowsBinary: true)
         else {
             Issue.record("Expected .pendingFiles")
             return
         }
         #expect(pending.map(\.path) == [url.path])
+        #expect(unresolved == 0)
     }
 
     @Test("read(from:) returns every item's file URL as .pendingFiles, in order")
@@ -312,13 +337,94 @@ struct ClipboardPasteboardIntakeTests {
         pasteboard.writeObjects([itemA, itemB])
 
         guard
-            case .pendingFiles(let urls) = ClipboardPasteboardIntake.read(
+            case .pendingFiles(let urls, _) = ClipboardPasteboardIntake.read(
                 from: pasteboard, allowsBinary: true)
         else {
             Issue.record("Expected .pendingFiles")
             return
         }
         #expect(urls.map(\.lastPathComponent) == ["a.txt", "b.txt"])
+    }
+
+    @Test("read(from:) counts a copied file that no longer exists as unresolved")
+    func readFromCountsVanishedFile() throws {
+        // The issue's case: three files copied, one deleted before the poll
+        // reads the pasteboard. The survivors are still forwarded, and the
+        // deleted one is carried as a count instead of being dropped silently.
+        let a = try makeTempFile(name: "a.txt", contents: Data("a".utf8))
+        let gone = try makeTempFile(name: "gone.txt", contents: Data("g".utf8))
+        let b = try makeTempFile(name: "b.txt", contents: Data("b".utf8))
+        let pasteboard = makeScratchPasteboard()
+        pasteboard.clearContents()
+        pasteboard.writeObjects(
+            [a, gone, b].map { url in
+                let item = NSPasteboardItem()
+                item.setString(url.absoluteString, forType: .fileURL)
+                return item
+            })
+        try FileManager.default.removeItem(at: gone)
+
+        guard
+            case .pendingFiles(let urls, let unresolved) = ClipboardPasteboardIntake.read(
+                from: pasteboard, allowsBinary: true)
+        else {
+            Issue.record("Expected .pendingFiles")
+            return
+        }
+        #expect(urls.map(\.lastPathComponent) == ["a.txt", "b.txt"])
+        #expect(unresolved == 1)
+    }
+
+    @Test("read(from:) defers to .pendingFiles even when every copied file is gone")
+    func readFromAllFilesVanished() throws {
+        let gone = try makeTempFile(name: "gone.txt", contents: Data("g".utf8))
+        let pasteboard = makeScratchPasteboard()
+        pasteboard.clearContents()
+        let item = NSPasteboardItem()
+        item.setString(gone.absoluteString, forType: .fileURL)
+        pasteboard.writeObjects([item])
+        try FileManager.default.removeItem(at: gone)
+
+        guard
+            case .pendingFiles(let urls, let unresolved) = ClipboardPasteboardIntake.read(
+                from: pasteboard, allowsBinary: true)
+        else {
+            Issue.record("Expected .pendingFiles")
+            return
+        }
+        #expect(urls.isEmpty)
+        #expect(unresolved == 1)
+    }
+
+    @Test("read(filesAt:) folds the unresolved count into the skip note")
+    func readFilesAtFoldsUnresolvedIntoNote() async throws {
+        let good = try makeTempFile(name: "good.txt", contents: Data("ok".utf8))
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-missing.txt")
+
+        guard
+            case .content(let content, let note) = await ClipboardPasteboardIntake.read(
+                filesAt: [good, missing], unresolved: 2, allowsBinary: true)
+        else {
+            Issue.record("Expected content")
+            return
+        }
+        #expect(content.representations.map(\.filename) == ["good.txt"])
+        // Two dropped before the actor hop plus the one that failed the stat.
+        #expect(note == "Skipped 3 unreadable items")
+    }
+
+    @Test("read(filesAt:) rejects on unresolved alone, with no URLs to stat")
+    func readFilesAtRejectsUnresolvedOnly() async {
+        guard
+            case .rejected(let message, let unreadable) = await ClipboardPasteboardIntake.read(
+                filesAt: [], unresolved: 2, allowsBinary: true)
+        else {
+            Issue.record("Expected rejection")
+            return
+        }
+        #expect(message == "Couldn't read the dropped items")
+        #expect(unreadable)
     }
 
     @Test("read(filesAt:) builds one ordered filename rep per file")
@@ -396,13 +502,16 @@ struct ClipboardPasteboardIntakeTests {
     func readFilesAtTextOnlyRejected() async throws {
         let a = try makeTempFile(name: "a.txt", contents: Data("a".utf8))
         guard
-            case .rejected(let message) = await ClipboardPasteboardIntake.read(
+            case .rejected(let message, let unreadable) = await ClipboardPasteboardIntake.read(
                 filesAt: [a], allowsBinary: false)
         else {
             Issue.record("Expected rejection")
             return
         }
         #expect(message == ClipboardPasteboardIntake.textOnlyTransportMessage)
+        // A policy refusal, not a read failure — the passthrough poll stays
+        // quiet for it rather than firing on every file the user copies.
+        #expect(unreadable == false)
     }
 
     @Test("dragged text file crosses as a disk-backed file representation (name + size)")
@@ -529,7 +638,7 @@ struct ClipboardPasteboardIntakeTests {
         pasteboard.writeObjects([item])
 
         guard
-            case .rejected(let message) = await resolve(
+            case .rejected(let message, _) = await resolve(
                 ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: false),
                 allowsBinary: false)
         else {
