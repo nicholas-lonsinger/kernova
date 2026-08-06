@@ -73,12 +73,8 @@ struct LinuxImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
         return lhs.id < rhs.id
     }
 
-    /// Whether `filename` is an ISO this entry names, by ``isoPattern``.
-    ///
-    /// `fnmatch` with no flags gives the glob exactly the semantics the
-    /// patterns are written for: anchored at both ends, with `*` spanning any
-    /// run of characters — so `debian-13.*-arm64-netinst.iso` takes every point
-    /// release of Debian 13 and nothing else.
+    /// Whether `filename` is an ISO this entry names, matching ``isoPattern``
+    /// as an ``ISOFilenameGlob``.
     func matchesISOFilename(_ filename: String) -> Bool {
         ISOFilenameGlob(isoPattern)?.matches(filename) ?? false
     }

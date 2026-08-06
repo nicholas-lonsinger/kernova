@@ -89,9 +89,9 @@ struct LinuxImageCatalogService: LinuxImageCatalogProviding {
     /// There is no host allowlist to check the way the macOS catalog checks for
     /// Apple: these images come from each distribution's own mirrors, and a
     /// list of them written here would go stale without anything noticing.
-    /// HTTPS authenticates the mirror the redirect landed on; the SHA-256 that
-    /// same mirror publishes catches a corrupted or wrong file — not a mirror
-    /// serving both to match.
+    /// HTTPS authenticates whichever mirror a redirect landed on, and
+    /// ``ChecksumManifest`` covers what the SHA-256 on top of that does and
+    /// does not establish.
     static func parse(_ data: Data) -> ParseResult {
         guard let document = try? JSONDecoder().decode(LenientCatalog.self, from: data) else {
             return ParseResult(catalog: nil, rejections: [.undecodableDocument])
