@@ -83,7 +83,10 @@
 		A100020D /* Exceptions for "KernovaMacOSAgent" folder in "KernovaMacOSAgent" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				app.kernova.macosagent.plist,
 				Info.plist,
+				install.command,
+				uninstall.command,
 			);
 			target = A1000204 /* KernovaMacOSAgent */;
 		};
