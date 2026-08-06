@@ -174,7 +174,7 @@ struct ReviewContentViewControllerTests {
         #expect(findLabel(withText: "Verified with your checksum", in: vc.view) != nil)
         // The URL names its own destination, so unlike a catalog pick the whole
         // path is known here — carrying a suffix unique to this link.
-        let destination = try #require(try? image.destinationFilename())
+        let destination = LinuxImageFilename.destination(for: image.url)
         #expect(destination != "alpine-3.22-aarch64.iso")
         #expect(
             findLabel(

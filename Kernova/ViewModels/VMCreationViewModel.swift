@@ -498,10 +498,10 @@ final class VMCreationViewModel {
     /// so a pick made under EFI does not follow a switch to Linux-kernel boot
     /// onto a VM that never boots an installer.
     ///
-    /// A catalog pick gets no destination: the mirror names the file, and only
-    /// a resolution just before the download can say what that name is. A URL
-    /// names its own destination, which the check just admitted, so it is known
-    /// here.
+    /// A catalog pick gets no destination: only a resolution just before the
+    /// download knows which URL the mirror is serving, and the destination is
+    /// named for that URL. A pasted URL is known from the moment it is
+    /// admitted, so its destination is too.
     func buildLinuxInstallContext() -> LinuxInstallContext? {
         guard selectedBootMode == .efi else { return nil }
         switch linuxSelection {
@@ -510,8 +510,8 @@ final class VMCreationViewModel {
         case .customURL(let image, _):
             return LinuxInstallContext(
                 source: .customURL(image),
-                downloadDestinationPath: (try? image.destinationFilename())
-                    .map(Self.downloadPath(forFilename:)))
+                downloadDestinationPath: Self.downloadPath(
+                    forFilename: LinuxImageFilename.destination(for: image.url)))
         case .localISO, nil:
             return nil
         }

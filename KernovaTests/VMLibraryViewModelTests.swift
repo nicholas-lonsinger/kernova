@@ -2588,8 +2588,12 @@ struct VMLibraryViewModelTests {
 
     /// A resolved image nothing on this Mac can already be sitting at, so a
     /// dispatch test never reads a file out of the real Downloads folder.
+    ///
+    /// The URL is what varies: the destination is named for it, not for the
+    /// name the source gives the ISO.
     private func makeUnusedResolvedImage() -> ResolvedLinuxImage {
-        makeResolvedLinuxImage(filename: "kernova-test-\(UUID().uuidString).iso")
+        makeResolvedLinuxImage(
+            isoURLString: "https://mirror.example/kernova-test-\(UUID().uuidString).iso")
     }
 
     /// A stopped Linux VM with a pending catalog download, registered in

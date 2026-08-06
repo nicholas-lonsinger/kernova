@@ -327,12 +327,12 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
             makeWizardBadge(
                 symbolName: "checkmark.seal.fill",
                 text: [
-                    image.isoURL.lastPathComponent, DataFormatters.formatBytes(image.sizeBytes),
+                    image.filename, DataFormatters.formatBytes(image.sizeBytes),
                 ].joined(separator: "  ·  "),
                 // The destination, which carries a suffix unique to this link so
                 // it can never land on a file the user already has.
                 secondaryText: wizardAbbreviateWithTilde(
-                    VMCreationViewModel.downloadPath(forFilename: image.filename))
+                    VMCreationViewModel.downloadPath(forFilename: image.destinationFilename))
             )
         ]
         if image.sha256 == nil {

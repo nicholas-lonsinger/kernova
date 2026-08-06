@@ -401,14 +401,22 @@ final class VMLifecycleCoordinator {
     // MARK: - Linux Installer Image
 
     /// Where a resolved Linux image is written: inside Downloads, under the
-    /// name the mirror just gave it.
+    /// name ``LinuxImageFilename`` derives for the URL it resolved to.
     ///
     /// Never built from the persisted path, which comes out of a `config.json`
-    /// a user can edit: only the name this resolution produced describes the
-    /// bytes about to land. Falls back to the persisted path when
-    /// normalization is disabled, and is `nil` only when there is neither.
+    /// a user can edit, and never from a name the source chose: only a name
+    /// this app derived is safe to append to a directory holding everything the
+    /// user has ever downloaded.
+    ///
+    /// Falls back to the persisted path when normalization is disabled, and
+    /// only while it still names an ISO — the download writes over this path,
+    /// and a digest failure trashes it, so an edit pointing it at an arbitrary
+    /// file names no destination at all.
     func linuxDownloadDestination(persisted: URL?, filename: String) -> URL? {
-        guard let downloads = downloadsDirectory else { return persisted }
+        guard let downloads = downloadsDirectory else {
+            guard persisted?.pathExtension.lowercased() == "iso" else { return nil }
+            return persisted
+        }
         return downloads.appendingPathComponent(filename)
     }
 
@@ -444,22 +452,26 @@ final class VMLifecycleCoordinator {
                     image = try await linuxImageResolveService.resolve(custom)
                 }
 
-                // `image.filename`, never `isoURL.lastPathComponent`: the
-                // resolution already checked the name is one visible path
-                // component, and re-deriving it from the URL percent-decodes it
-                // back into a value that can walk out of Downloads.
+                // `image.destinationFilename`, never the name the source gave
+                // the ISO: Downloads holds everything the user has ever
+                // fetched, and a file already sitting under the source's name
+                // is one the download would adopt in place of fetching, or
+                // trash for failing a digest that was never its own.
                 guard
                     let downloadDestination = linuxDownloadDestination(
-                        persisted: context.downloadDestinationURL, filename: image.filename)
+                        persisted: context.downloadDestinationURL,
+                        filename: image.destinationFilename)
                 else {
-                    throw DownloadError.invalidDownloadDestination(path: image.filename)
+                    throw DownloadError.invalidDownloadDestination(
+                        path: context.downloadDestinationURL?.path(percentEncoded: false)
+                            ?? image.destinationFilename)
                 }
 
                 if let persisted = context.downloadDestinationURL,
                     persisted != downloadDestination
                 {
                     Self.logger.notice(
-                        "downloadLinuxImage: the mirror now names the image '\(downloadDestination.lastPathComponent, privacy: .public)'"
+                        "downloadLinuxImage: the resolution moved to '\(image.filename, privacy: .public)', downloading to '\(downloadDestination.lastPathComponent, privacy: .public)'"
                     )
                     // The partial at the abandoned path belongs to an image
                     // this download is no longer fetching, so discard it before
@@ -483,29 +495,14 @@ final class VMLifecycleCoordinator {
                         totalBytes: Int64(clamping: image.sizeBytes),
                         bytesPerSecond: 0))
 
-                // Honored ONCE, and the flag clears before the download so a
-                // retry after a later failure reuses what it fetched.
-                let requestedFreshDownload = context.requestedFreshDownload
-                if requestedFreshDownload {
-                    // The destination can come from a persisted path when
-                    // normalization is disabled, so a stray edit could
-                    // otherwise have the download trashing an arbitrary file.
-                    guard downloadDestination.pathExtension.lowercased() == "iso" else {
-                        Self.logger.error(
-                            "downloadLinuxImage: refusing to honor requestedFreshDownload for non-ISO destination '\(downloadDestination.path(percentEncoded: false), privacy: .public)'"
-                        )
-                        throw DownloadError.invalidDownloadDestination(
-                            path: downloadDestination.path(percentEncoded: false))
-                    }
-                    instance.performConfigurationMutation {
-                        $0.linuxInstallContext?.requestedFreshDownload = false
-                    }
-                }
-
+                // Never replaces: the destination is named for this URL, so a
+                // file already there is what a prior attempt at this same image
+                // fetched, and adopting it is right — the verify step below
+                // holds it to the same digest a fresh download would face.
                 try await downloadService.download(
                     from: image.isoURL,
                     to: downloadDestination,
-                    discardsExistingDownload: requestedFreshDownload,
+                    discardsExistingDownload: false,
                     expectedSizeBytes: image.sizeBytes
                 ) { progress in
                     instance.setupState?.progress = .download(progress)
@@ -531,7 +528,8 @@ final class VMLifecycleCoordinator {
                     }
                 }
 
-                attachInstallerImage(at: downloadDestination, to: instance)
+                attachInstallerImage(
+                    at: downloadDestination, named: image.filename, to: instance)
                 instance.setupState = nil
                 // The VM entered `.installing` for the pipeline and nothing
                 // else takes it out — unlike a macOS install, no VZ session ran
@@ -585,15 +583,21 @@ final class VMLifecycleCoordinator {
     /// Attaches the fetched installer image ahead of the VM's main disk and
     /// clears the pending download intent.
     ///
+    /// `filename` is the name the source gave the ISO, which is what the disk
+    /// is labelled with — the file it was written to carries a discriminator
+    /// suffix no user would recognize.
+    ///
     /// The bookmark is minted without a panel — Downloads is covered by the
     /// downloads entitlement — and it is worth minting because, unlike an IPSW
     /// consumed by an install, this attachment outlives the setup and has to
     /// track the file if the user later moves it.
-    private func attachInstallerImage(at destination: URL, to instance: VMInstance) {
+    private func attachInstallerImage(
+        at destination: URL, named filename: String, to instance: VMInstance
+    ) {
         let installer = StorageDisk(
             path: destination.path(percentEncoded: false),
             readOnly: true,
-            label: destination.deletingPathExtension().lastPathComponent,
+            label: (filename as NSString).deletingPathExtension,
             bookmark: SecurityScopedBookmark.make(for: destination)
         )
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
