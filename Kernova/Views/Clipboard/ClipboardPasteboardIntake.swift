@@ -44,7 +44,7 @@ enum ClipboardPasteboardIntake {
     ///
     /// Files already on disk are expanded across *every* item, each becoming its
     /// own filename-tagged representation; the inline snapshot reads item 0 and is
-    /// taken only when no item is a file.
+    /// taken only when no item resolved to a file on disk.
     ///
     /// When a file URL or promise is present but no file is readable, the URL/path
     /// text representations are only the file's descriptor and are never returned.
@@ -67,19 +67,30 @@ enum ClipboardPasteboardIntake {
         // enumeration spans items; the inline snapshot below stays item-0-scoped.
         var fileURLs: [URL] = []
         var unresolvedFiles = 0
-        for candidate in items {
+        var firstItemVanished = false
+        for (index, candidate) in items.enumerated() {
             switch fileURLResolution(in: candidate) {
             case .resolved(let url): fileURLs.append(url)
-            case .vanished: unresolvedFiles += 1
+            case .vanished:
+                unresolvedFiles += 1
+                if index == 0 { firstItemVanished = true }
             case .notAFile: break
             }
         }
-        if !fileURLs.isEmpty || unresolvedFiles > 0 {
+        if !fileURLs.isEmpty {
             return .pendingFiles(fileURLs, unresolved: unresolvedFiles)
         }
+        // No file survived, but an item that lost its file can still carry an
+        // inline flavor to be served from — `HostClipboardPublisher` pairs an
+        // image UTI with `.fileURL` for exactly that fallback. So a vanished
+        // count travels *through* the inline read below rather than
+        // short-circuiting it.
 
         guard allowsBinary else {
-            guard let text = item.string(forType: .string), !text.isEmpty else {
+            // A file copy's path text is the file's descriptor, not content, and
+            // a text-only transport refuses file copies by policy either way.
+            guard unresolvedFiles == 0, let text = item.string(forType: .string), !text.isEmpty
+            else {
                 return .rejected(message: Self.textOnlyTransportMessage, unreadable: false)
             }
             return .content(ClipboardContent(text: text, isConcealed: isConcealed), note: nil)
@@ -110,6 +121,12 @@ enum ClipboardPasteboardIntake {
         }
 
         guard !outcome.content.isEmpty else {
+            guard unresolvedFiles == 0 else {
+                // Every file the copy named is gone and no inline flavor stood in
+                // for one — the same total loss `read(filesAt:)` reports.
+                return .rejected(
+                    message: Self.unreadableItemsMessage(count: unresolvedFiles), unreadable: true)
+            }
             // A qualifying type whose `data(forType:)` came back nil is content
             // the pasteboard held and would not hand over — a loss, unlike a
             // snapshot that never had anything shareable in it.
@@ -118,9 +135,16 @@ enum ClipboardPasteboardIntake {
                 unreadable: raw.count < qualified.count)
         }
 
+        // The inline snapshot is item-0-scoped, so surviving content stands in
+        // for item 0's own vanished file — the dual-flavor image is that case.
+        // Files on the *other* items had nothing to stand in for them.
+        let reportedLosses = unresolvedFiles - (firstItemVanished ? 1 : 0)
+
         // `evaluate` builds non-concealed content; re-stamp the concealed flag
         // when the marker called for it.
-        return .content(outcome.content.withConcealed(isConcealed), note: nil)
+        return .content(
+            outcome.content.withConcealed(isConcealed),
+            note: Self.skipNote(forSkipped: reportedLosses))
     }
 
     /// The user-facing reason a snapshot was dropped wholesale by an
@@ -145,30 +169,50 @@ enum ClipboardPasteboardIntake {
         /// A concrete `public.file-url` or a `promised-file-url` that already
         /// points at an on-disk file.
         case resolved(URL)
-        /// The item names a `public.file-url` that resolves to nothing today —
-        /// a copy whose file was deleted, renamed, or unmounted since. The
-        /// bytes are gone, so the item is a loss the caller has to count.
+        /// The item handed over a concrete `public.file-url` that resolves to
+        /// nothing today — a copy whose file was deleted, renamed, or unmounted
+        /// since. The bytes are gone, so the item is a loss the caller counts.
         case vanished
-        /// No concrete file URL: a plain snapshot, or a promise whose file
-        /// hasn't been written yet and which the caller receives asynchronously.
+        /// No concrete file URL: a plain snapshot, a promise whose file hasn't
+        /// been written yet and which the caller receives asynchronously, or an
+        /// item whose file-URL provider declined to vend one.
         case notAFile
     }
 
     /// Classifies an item's file URLs, separating a copy that lost its file
     /// from one that never named a file.
+    ///
+    /// `.vanished` needs a `public.file-url` that *decoded* and then missed:
+    /// declaring the type is not enough, because a lazy provider may vend no
+    /// URL at all while the item's inline flavors remain readable.
     private static func fileURLResolution(in item: NSPasteboardItem) -> FileURLResolution {
         let candidates: [NSPasteboard.PasteboardType] = [
             .fileURL,
             NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url"),
         ]
+        var missedConcreteURL = false
         for type in candidates {
             guard let string = item.string(forType: type),
-                let url = URL(string: string), url.isFileURL,
-                FileManager.default.fileExists(atPath: url.path)
+                let url = URL(string: string), url.isFileURL
             else { continue }
-            return .resolved(url)
+            if FileManager.default.fileExists(atPath: url.path) { return .resolved(url) }
+            // Only `public.file-url` asserts the file exists now; a promise's is
+            // an address for a file still to be written.
+            if type == .fileURL { missedConcreteURL = true }
         }
-        return item.types.contains(.fileURL) ? .vanished : .notAFile
+        // A promise can still deliver through `NSFilePromiseReceiver`, so a
+        // missed URL is not a loss while one is advertised.
+        guard missedConcreteURL, !promisesFile(item) else { return .notAFile }
+        return .vanished
+    }
+
+    /// `true` when the item advertises a file promise, whose asynchronous
+    /// receipt can still produce the file.
+    private static func promisesFile(_ item: NSPasteboardItem) -> Bool {
+        item.types.contains {
+            $0.rawValue.hasPrefix("com.apple.pasteboard.promised-file")
+                || $0.rawValue.hasPrefix("com.apple.NSFilePromise")
+        }
     }
 
     /// `true` for the types that mark a drag as a file or file promise.
@@ -223,13 +267,23 @@ enum ClipboardPasteboardIntake {
         }
         guard !representations.isEmpty else {
             return .rejected(
-                message: skipped > 1
-                    ? "Couldn't read the dropped items" : "Couldn't read the dropped item",
-                unreadable: true)
+                message: Self.unreadableItemsMessage(count: skipped), unreadable: true)
         }
-        let note =
-            skipped > 0 ? "Skipped \(skipped) unreadable item\(skipped == 1 ? "" : "s")" : nil
-        return .content(ClipboardContent(representations: representations), note: note)
+        return .content(
+            ClipboardContent(representations: representations),
+            note: Self.skipNote(forSkipped: skipped))
+    }
+
+    /// The note shown when a copy went through with `count` of its items lost,
+    /// or `nil` when none were.
+    nonisolated private static func skipNote(forSkipped count: Int) -> String? {
+        guard count > 0 else { return nil }
+        return "Skipped \(count) unreadable item\(count == 1 ? "" : "s")"
+    }
+
+    /// The rejection shown when *every* item of a copy was lost.
+    nonisolated private static func unreadableItemsMessage(count: Int) -> String {
+        count > 1 ? "Couldn't read the dropped items" : "Couldn't read the dropped item"
     }
 
     /// Builds a disk-backed `.file` representation from a single file URL via a

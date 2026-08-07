@@ -375,7 +375,7 @@ struct ClipboardPasteboardIntakeTests {
         #expect(unresolved == 1)
     }
 
-    @Test("read(from:) defers to .pendingFiles even when every copied file is gone")
+    @Test("read(from:) reports a copy whose every file is gone and has no inline flavor")
     func readFromAllFilesVanished() throws {
         let gone = try makeTempFile(name: "gone.txt", contents: Data("g".utf8))
         let pasteboard = makeScratchPasteboard()
@@ -386,14 +386,91 @@ struct ClipboardPasteboardIntakeTests {
         try FileManager.default.removeItem(at: gone)
 
         guard
-            case .pendingFiles(let urls, let unresolved) = ClipboardPasteboardIntake.read(
+            case .rejected(let message, let unreadable) = ClipboardPasteboardIntake.read(
                 from: pasteboard, allowsBinary: true)
         else {
-            Issue.record("Expected .pendingFiles")
+            Issue.record("Expected a reported rejection")
             return
         }
-        #expect(urls.isEmpty)
-        #expect(unresolved == 1)
+        // Not "no shareable content", which the poll reads as nothing having
+        // been there: items were there and could not be read.
+        #expect(message == "Couldn't read the dropped item")
+        #expect(unreadable)
+    }
+
+    @Test("a vanished file URL never suppresses the item's inline image")
+    func vanishedFileURLKeepsInlineImage() throws {
+        // `HostClipboardPublisher` pairs an image UTI with `.fileURL` on one
+        // item precisely so the inline bytes can stand in once the staged file
+        // is swept. Classifying the item as a pure loss would defeat that.
+        let png = try makePNG()
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-swept.png")
+        let pasteboard = makeScratchPasteboard()
+        pasteboard.clearContents()
+        let item = NSPasteboardItem()
+        item.setData(png, forType: NSPasteboard.PasteboardType(UTType.png.identifier))
+        item.setString(missing.absoluteString, forType: .fileURL)
+        pasteboard.writeObjects([item])
+
+        guard
+            case .content(let content, let note) = ClipboardPasteboardIntake.read(
+                from: pasteboard, allowsBinary: true)
+        else {
+            Issue.record("Expected the inline image to survive the vanished file URL")
+            return
+        }
+        #expect(content.representations.count == 1)
+        #expect(UTType(content.representations[0].uti)?.conforms(to: .image) == true)
+        // The inline flavor *is* the item's content, so nothing was lost.
+        #expect(note == nil)
+    }
+
+    @Test("a vanished file on another item is still reported alongside item 0's content")
+    func vanishedFileOnLaterItemIsReported() throws {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-gone.txt")
+        let pasteboard = makeScratchPasteboard()
+        pasteboard.clearContents()
+        let textItem = NSPasteboardItem()
+        textItem.setData(Data("hello".utf8), forType: .string)
+        let fileItem = NSPasteboardItem()
+        fileItem.setString(missing.absoluteString, forType: .fileURL)
+        pasteboard.writeObjects([textItem, fileItem])
+
+        guard
+            case .content(_, let note) = ClipboardPasteboardIntake.read(
+                from: pasteboard, allowsBinary: true)
+        else {
+            Issue.record("Expected item 0's text to survive")
+            return
+        }
+        // The inline read is item-0-scoped, so item 1's file had nothing to
+        // stand in for it — a real loss, unlike the dual-flavor case above.
+        #expect(note == "Skipped 1 unreadable item")
+    }
+
+    @Test("a promise advertising a concrete file URL still takes the promise path")
+    func promiseWithConcreteURLStillRejects() {
+        // Declaring `.fileURL` must not divert a promise away from
+        // `NSFilePromiseReceiver`: `handleDrop` reaches that fallback only on a
+        // rejection.
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-unwritten.png")
+        let pasteboard = makeScratchPasteboard()
+        pasteboard.clearContents()
+        let item = NSPasteboardItem()
+        item.setString(missing.absoluteString, forType: .fileURL)
+        item.setString(
+            missing.absoluteString,
+            forType: NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url"))
+        pasteboard.writeObjects([item])
+
+        guard case .rejected = ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: true)
+        else {
+            Issue.record("Expected a rejection so the promise receipt path runs")
+            return
+        }
     }
 
     @Test("read(filesAt:) folds the unresolved count into the skip note")
