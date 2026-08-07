@@ -62,7 +62,7 @@ struct LinuxImageCatalogService: LinuxImageCatalogProviding {
             case .undecodableEntry(let index):
                 "entry at index \(index) did not decode"
             case .insecureURL(let id, let url):
-                "\(id) has a non-HTTPS directory URL (\(url))"
+                "\(id) has a non-HTTPS URL (\(url))"
             case .invalidPattern(let id, let pattern):
                 "\(id) has an ISO pattern that is not a wildcard .iso filename ('\(pattern)')"
             case .invalidManifestName(let id, let manifest):
