@@ -70,28 +70,26 @@ struct VsockGuestControlAgentTests {
         terminateAfter: TimeInterval? = nil,
         onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
         onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil
-    ) -> any VsockGuestControlling {
+    ) -> VsockGuestControlAgent {
         let provided = AtomicInt()
         let provider: VsockSocketProvider = { _, _ in
             provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
         }
-        func build<C: EngineClock>(_ clock: C) -> any VsockGuestControlling {
-            VsockGuestControlAgent(
+        let clock = kind.makeClock()
+        return VsockGuestControlAgent(
+            clock: clock,
+            client: VsockGuestClient(
+                port: KernovaVsockPort.control,
+                label: "control-test",
                 clock: clock,
-                client: VsockGuestClient(
-                    port: KernovaVsockPort.control,
-                    label: "control-test",
-                    clock: clock,
-                    retryInterval: 60,
-                    socketProvider: provider),
-                heartbeatInterval: heartbeatInterval ?? Self.testHeartbeat,
-                unresponsiveAfter: unresponsiveAfter ?? Self.watchdogDisabledUnresponsive,
-                terminateAfter: terminateAfter ?? Self.watchdogDisabledTerminate,
-                onPolicy: onPolicy,
-                onStateChange: onStateChange
-            )
-        }
-        return build(kind.makeClock())
+                retryInterval: 60,
+                socketProvider: provider),
+            heartbeatInterval: heartbeatInterval ?? Self.testHeartbeat,
+            unresponsiveAfter: unresponsiveAfter ?? Self.watchdogDisabledUnresponsive,
+            terminateAfter: terminateAfter ?? Self.watchdogDisabledTerminate,
+            onPolicy: onPolicy,
+            onStateChange: onStateChange
+        )
     }
 
     // MARK: - Hello
@@ -175,7 +173,7 @@ struct VsockGuestControlAgentTests {
         _ = try await nextFrame(from: host)
 
         let wallClock = MonotonicEngineClock()
-        var stamps: [MonotonicEngineClock.Instant] = []
+        var stamps: [EngineInstant] = []
         while stamps.count < 3 {
             // Use the shared 5 s default. If the timer is genuinely broken
             // we'll still fail in bounded time (≤15 s); if it's just slow,
@@ -189,7 +187,7 @@ struct VsockGuestControlAgentTests {
 
         // Loop above guarantees stamps.count == 3, so gaps has exactly 2
         // elements and reduce(0, max) is the natural non-optional form.
-        let gaps = zip(stamps.dropFirst(), stamps).map { wallClock.seconds(from: $1, to: $0) }
+        let gaps = zip(stamps.dropFirst(), stamps).map { $1.seconds(to: $0) }
         let maxGap = gaps.reduce(0, max)
         // 10× cadence tolerance: catches "timer not running" / "cadence
         // misconfigured" without flagging single-tick scheduling jitter.
@@ -323,21 +321,19 @@ struct VsockGuestControlAgentTests {
             return .success(fd)
         }
 
-        func build<C: EngineClock>(_ clock: C) -> any VsockGuestControlling {
-            VsockGuestControlAgent(
+        let clock = kind.makeClock()
+        let agent = VsockGuestControlAgent(
+            clock: clock,
+            client: VsockGuestClient(
+                port: KernovaVsockPort.control,
+                label: "control-reconnect-test",
                 clock: clock,
-                client: VsockGuestClient(
-                    port: KernovaVsockPort.control,
-                    label: "control-reconnect-test",
-                    clock: clock,
-                    retryInterval: 0.05,
-                    socketProvider: provider),
-                heartbeatInterval: 0.1,
-                unresponsiveAfter: 0.2,
-                terminateAfter: 0.5
-            )
-        }
-        let agent = build(kind.makeClock())
+                retryInterval: 0.05,
+                socketProvider: provider),
+            heartbeatInterval: 0.1,
+            unresponsiveAfter: 0.2,
+            terminateAfter: 0.5
+        )
         defer { agent.stop() }
         agent.start()
 

@@ -1,22 +1,52 @@
 import Darwin
 import Foundation
 
+/// A point on the one timeline every `EngineClock` reads: nanoseconds of
+/// Darwin's `CLOCK_MONOTONIC`.
+///
+/// Darwin's `CLOCK_MONOTONIC` advances across system sleep (unlike Linux's),
+/// matching `ContinuousClock`; `CLOCK_UPTIME_RAW`/`mach_absolute_time` do not.
+/// Concrete rather than per-conformance so a holder stores `any EngineClock`,
+/// and every conformance — a manually advanced test clock included — measures
+/// with the arithmetic below.
+public struct EngineInstant: Comparable, Sendable {
+    /// The reading, in nanoseconds from an arbitrary fixed origin.
+    let nanoseconds: UInt64
+
+    /// Creates an instant at `nanoseconds` on the shared timeline.
+    public init(nanoseconds: UInt64) {
+        self.nanoseconds = nanoseconds
+    }
+
+    /// Seconds from this instant to `other`; negative when `other` precedes it.
+    public func seconds(to other: EngineInstant) -> TimeInterval {
+        if other.nanoseconds >= nanoseconds {
+            return TimeInterval(other.nanoseconds - nanoseconds) / 1_000_000_000
+        }
+        return -TimeInterval(nanoseconds - other.nanoseconds) / 1_000_000_000
+    }
+
+    /// Orders instants by their nanosecond reading.
+    public static func < (lhs: EngineInstant, rhs: EngineInstant) -> Bool {
+        lhs.nanoseconds < rhs.nanoseconds
+    }
+
+    /// The current reading of the shared timeline.
+    static var now: EngineInstant {
+        EngineInstant(nanoseconds: clock_gettime_nsec_np(CLOCK_MONOTONIC))
+    }
+}
+
 /// Monotonic time source for the stream engine and the guest agent's liveness
 /// watchdogs — `Swift.Clock`, one floor lower, so code that must run on
-/// macOS 12 guests can still store real `ContinuousClock.Instant`s on 13+.
+/// macOS 12 guests can suspend through the same seam a 13+ host does.
 ///
-/// Conformances MUST count time the system spends asleep: the liveness
-/// watchdogs measure elapsed time across VM save/restore, and an uptime clock
-/// (`DispatchTime`/`mach_absolute_time`) freezes there and never fires them.
+/// `sleep` MUST count time the system spends asleep, as `now` does: a
+/// suspension on an uptime timebase freezes across VM save/restore, so a
+/// watchdog tick sized for seconds arrives hours of `now` later — or never.
 public protocol EngineClock: Sendable {
-    /// A point in this clock's timeline.
-    associatedtype Instant: Comparable, Sendable
-
     /// The current instant.
-    var now: Instant { get }
-
-    /// Seconds from `start` to `end`; negative when `end` precedes `start`.
-    func seconds(from start: Instant, to end: Instant) -> TimeInterval
+    var now: EngineInstant { get }
 
     /// Suspends the current task for at least `interval` seconds, throwing
     /// `CancellationError` when the task is cancelled.
@@ -25,23 +55,24 @@ public protocol EngineClock: Sendable {
 
 extension EngineClock {
     /// Seconds elapsed from `start` to `now`.
-    public func seconds(since start: Instant) -> TimeInterval {
-        seconds(from: start, to: now)
+    public func seconds(since start: EngineInstant) -> TimeInterval {
+        start.seconds(to: now)
     }
 }
 
 /// The platform-default engine clock — `ContinuousClock` on macOS 13+,
 /// `CLOCK_MONOTONIC` below.
 ///
-/// The one clock-selection `#available` in production code: factories open the
-/// returned existential straight into their generic build functions.
+/// The one clock-selection `#available` in production code.
 public func makePlatformEngineClock() -> any EngineClock {
     if #available(macOS 13.0, *) { return ContinuousEngineClock() }
     return MonotonicEngineClock()
 }
 
-/// `ContinuousClock` as an `EngineClock` — the conformance every macOS 13+
-/// system runs, storing genuine `ContinuousClock.Instant`s.
+/// The engine clock every macOS 13+ system runs.
+///
+/// Suspends through `ContinuousClock`, which counts time asleep, matching
+/// `now`'s timebase.
 @available(macOS 13.0, *)
 public struct ContinuousEngineClock: EngineClock {
     private let clock = ContinuousClock()
@@ -49,15 +80,8 @@ public struct ContinuousEngineClock: EngineClock {
     /// Creates a continuous-clock instance.
     public init() {}
 
-    /// The current `ContinuousClock` instant.
-    public var now: ContinuousClock.Instant { clock.now }
-
-    /// Seconds from `start` to `end`; negative when `end` precedes `start`.
-    public func seconds(
-        from start: ContinuousClock.Instant, to end: ContinuousClock.Instant
-    ) -> TimeInterval {
-        start.duration(to: end) / .seconds(1)
-    }
+    /// The current reading of the shared timeline.
+    public var now: EngineInstant { .now }
 
     /// Suspends via `ContinuousClock.sleep(until:)`.
     public func sleep(for interval: TimeInterval) async throws {
@@ -65,36 +89,14 @@ public struct ContinuousEngineClock: EngineClock {
     }
 }
 
-/// `CLOCK_MONOTONIC` as an `EngineClock` — the macOS 12 fallback.
-///
-/// Darwin's `CLOCK_MONOTONIC` advances across system sleep (unlike Linux's),
-/// matching `ContinuousClock`; `CLOCK_UPTIME_RAW`/`mach_absolute_time` do not.
+/// The macOS 12 fallback engine clock, suspending in bounded slices because no
+/// `Swift.Clock` is available to sleep on.
 public struct MonotonicEngineClock: EngineClock {
-    /// A `CLOCK_MONOTONIC` reading in nanoseconds.
-    public struct Instant: Comparable, Sendable {
-        let nanoseconds: UInt64
-
-        /// Orders instants by their nanosecond reading.
-        public static func < (lhs: Instant, rhs: Instant) -> Bool {
-            lhs.nanoseconds < rhs.nanoseconds
-        }
-    }
-
     /// Creates a monotonic-clock instance.
     public init() {}
 
-    /// The current `CLOCK_MONOTONIC` reading.
-    public var now: Instant {
-        Instant(nanoseconds: clock_gettime_nsec_np(CLOCK_MONOTONIC))
-    }
-
-    /// Seconds from `start` to `end`; negative when `end` precedes `start`.
-    public func seconds(from start: Instant, to end: Instant) -> TimeInterval {
-        if end.nanoseconds >= start.nanoseconds {
-            return TimeInterval(end.nanoseconds - start.nanoseconds) / 1_000_000_000
-        }
-        return -TimeInterval(start.nanoseconds - end.nanoseconds) / 1_000_000_000
-    }
+    /// The current reading of the shared timeline.
+    public var now: EngineInstant { .now }
 
     /// Suspends until `interval` seconds of `CLOCK_MONOTONIC` time have passed.
     ///
@@ -105,9 +107,9 @@ public struct MonotonicEngineClock: EngineClock {
     public func sleep(for interval: TimeInterval) async throws {
         try Task.checkCancellation()
         let clamped = min(max(interval, 0), 1_000_000_000)
-        let deadline = Instant(nanoseconds: now.nanoseconds &+ UInt64(clamped * 1_000_000_000))
+        let deadline = EngineInstant(nanoseconds: now.nanoseconds &+ UInt64(clamped * 1_000_000_000))
         while true {
-            let remaining = seconds(from: now, to: deadline)
+            let remaining = now.seconds(to: deadline)
             guard remaining > 0 else { return }
             let slice = min(remaining, 1)
             try await Task.sleep(nanoseconds: UInt64(slice * 1_000_000_000))

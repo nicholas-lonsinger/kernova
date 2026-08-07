@@ -3,32 +3,6 @@ import KernovaKit
 import Darwin
 import os
 
-/// The clock-independent surface of `VsockGuestClient`, for holders that must
-/// run below macOS 13 and so cannot store a concrete clock instantiation.
-protocol VsockReconnecting: AnyObject, Sendable {
-    /// Begins the connect/serve/reconnect loop (idempotent).
-    func start(serve: @escaping @Sendable (VsockChannel) async -> Void)
-    /// Pauses the reconnect loop and tears down any active channel.
-    func pause()
-    /// Resumes the reconnect loop after `pause()`.
-    func resume()
-    /// Stops the loop for good and tears down any active channel.
-    func stop()
-    /// Currently-attached channel, for synchronous best-effort sends.
-    var liveChannel: VsockChannel? { get }
-}
-
-/// Builds a client on the platform-default clock — `ContinuousClock` on
-/// macOS 13+, `CLOCK_MONOTONIC` below — erased for holders that run on 12.
-func makeVsockGuestClient(
-    port: UInt32, label: String, retryInterval: TimeInterval = 5
-) -> any VsockReconnecting {
-    func build<C: EngineClock>(_ clock: C) -> any VsockReconnecting {
-        VsockGuestClient(port: port, label: label, clock: clock, retryInterval: retryInterval)
-    }
-    return build(makePlatformEngineClock())
-}
-
 /// Outcome of a `VsockSocketProvider` failure: `.transient` retries the
 /// connect loop, `.permanent` halts it for good.
 enum VsockProviderError: Error, Sendable, Equatable {
@@ -41,31 +15,6 @@ enum VsockProviderError: Error, Sendable, Equatable {
 /// Opens a SOCK_STREAM fd for the given port and label.
 typealias VsockSocketProvider =
     @Sendable (_ port: UInt32, _ label: String) -> Result<Int32, VsockProviderError>
-
-/// Classifies a `socket(AF_VSOCK)` errno as permanent or transient.
-///
-/// `EAFNOSUPPORT` and `EPROTONOSUPPORT` mean the kernel has no `AF_VSOCK`
-/// support and will never succeed; everything else may clear up.
-func classifySocketErrno(_ err: Int32, label: String) -> VsockProviderError {
-    switch err {
-    case EAFNOSUPPORT, EPROTONOSUPPORT:
-        clientLogger.error(
-            "socket(AF_VSOCK) unsupported for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
-        return .permanent("socket(AF_VSOCK) unsupported for '\(label)': errno=\(err)")
-    default:
-        clientLogger.warning(
-            "socket(AF_VSOCK) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
-        return .transient("socket(AF_VSOCK) failed for '\(label)': errno=\(err)")
-    }
-}
-
-// File-scope stand-ins for `static let`s, which a generic type cannot hold.
-private let clientLogger = Logger(subsystem: "app.kernova.macosagent", category: "VsockGuestClient")
-private let socketTimeoutSeconds: Int = 30
-// vsock is local-only with no SYN dance: connect is normally immediate
-// success or immediate ECONNREFUSED, so 3 s is a generous ceiling that still
-// stays under the 5 s retryInterval.
-private let connectTimeoutSeconds: Int = 3
 
 /// Carries the result of a blocking `connect(2)` back to a waiter that may have
 /// already given up, and settles which side owns the socket when the deadline and
@@ -131,18 +80,18 @@ final class BlockingConnectGate: @unchecked Sendable {
 
     private struct LabelState {
         var held = 0
-        /// Nanosecond reading of `now` at the most recent admission.
-        var lastClaimAt: UInt64 = 0
+        /// When the most recent admission was granted.
+        var lastClaimAt = EngineInstant(nanoseconds: 0)
     }
 
     private let lock = NSLock()
     private var states: [String: LabelState] = [:]
-    private let now: @Sendable () -> UInt64
+    private let clock: any EngineClock
 
-    /// Creates a gate reading time from `now` — injectable for tests,
-    /// `CLOCK_MONOTONIC` in production.
-    init(now: @escaping @Sendable () -> UInt64 = { clock_gettime_nsec_np(CLOCK_MONOTONIC) }) {
-        self.now = now
+    /// Creates a gate reading time from `clock` — a manually advanced clock in
+    /// tests, the platform clock in production.
+    init(clock: any EngineClock = makePlatformEngineClock()) {
+        self.clock = clock
     }
 
     /// Claims a slot for `label`; past the prompt cap, admits only once the
@@ -156,14 +105,10 @@ final class BlockingConnectGate: @unchecked Sendable {
                 let over = state.held - Self.maxPromptSlots
                 let backoff = min(
                     Self.backoffFloor * pow(2, Double(over)), Self.backoffCeiling)
-                let current = now()
-                let elapsed =
-                    current >= state.lastClaimAt
-                    ? TimeInterval(current - state.lastClaimAt) / 1_000_000_000 : 0
-                guard elapsed >= backoff else { return false }
+                guard clock.seconds(since: state.lastClaimAt) >= backoff else { return false }
             }
             state.held += 1
-            state.lastClaimAt = now()
+            state.lastClaimAt = clock.now
             states[label] = state
             return true
         }
@@ -193,19 +138,47 @@ private let blockingConnectGate = BlockingConnectGate()
 /// Lifecycle logging uses raw `os.Logger`, never `KernovaLogger` — the agent
 /// wires that sink through this very transport, so a write failure would
 /// schedule another send through the broken channel.
-final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked Sendable {
+final class VsockGuestClient: @unchecked Sendable {
     private enum LoopOutcome: Equatable {
         case retry
         /// Exit the loop; client is now permanently inert.
         case terminate
     }
 
-    private static var logger: Logger { clientLogger }
+    private static let logger = Logger(
+        subsystem: "app.kernova.macosagent", category: "VsockGuestClient")
+
+    /// Ceiling on how long a `recv`/`send` on a connected channel may block.
+    private static let socketTimeoutSeconds: Int = 30
+
+    /// Ceiling on one connect attempt.
+    ///
+    /// vsock is local-only with no SYN dance: connect is normally immediate
+    /// success or immediate ECONNREFUSED, so 3 s is a generous ceiling that
+    /// still stays under the 5 s `retryInterval`.
+    static let connectTimeoutSeconds: Int = 3
+
+    /// Classifies a `socket(AF_VSOCK)` errno as permanent or transient.
+    ///
+    /// `EAFNOSUPPORT` and `EPROTONOSUPPORT` mean the kernel has no `AF_VSOCK`
+    /// support and will never succeed; everything else may clear up.
+    static func classifySocketErrno(_ err: Int32, label: String) -> VsockProviderError {
+        switch err {
+        case EAFNOSUPPORT, EPROTONOSUPPORT:
+            logger.error(
+                "socket(AF_VSOCK) unsupported for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
+            return .permanent("socket(AF_VSOCK) unsupported for '\(label)': errno=\(err)")
+        default:
+            logger.warning(
+                "socket(AF_VSOCK) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
+            return .transient("socket(AF_VSOCK) failed for '\(label)': errno=\(err)")
+        }
+    }
 
     let port: UInt32
     let label: String
 
-    private let clock: Clock
+    private let clock: any EngineClock
     private let retryInterval: TimeInterval
     private let socketProvider: VsockSocketProvider
 
@@ -223,7 +196,7 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
     init(
         port: UInt32,
         label: String,
-        clock: Clock,
+        clock: any EngineClock = makePlatformEngineClock(),
         retryInterval: TimeInterval = 5,
         socketProvider: VsockSocketProvider? = nil
     ) {
@@ -378,7 +351,7 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
     /// docs/research/2026-08-06-macos14-vsock-state-blind.md) — so the split
     /// sits at the oldest OS the non-blocking idiom is proven on.
     private static func openVsockToHost(
-        port: UInt32, label: String, clock: Clock
+        port: UInt32, label: String, clock: any EngineClock
     ) -> Result<Int32, VsockProviderError> {
         let fd = socket(AF_VSOCK, SOCK_STREAM, 0)
         guard fd >= 0 else {
@@ -474,7 +447,7 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
         label: String,
         port: UInt32,
         gate: BlockingConnectGate = blockingConnectGate,
-        deadline: TimeInterval = TimeInterval(connectTimeoutSeconds),
+        deadline: TimeInterval = TimeInterval(VsockGuestClient.connectTimeoutSeconds),
         connectCall: @escaping @Sendable () -> Int32
     ) -> BlockingConnectOutcome {
         guard gate.claim(label) else { return .busy }
@@ -526,7 +499,7 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
     /// this idiom is proven only on macOS 26+.
     @available(macOS 26.0, *)
     private static func connectNonBlocking(
-        fd: Int32, addr: sockaddr_vm, label: String, port: UInt32, clock: Clock
+        fd: Int32, addr: sockaddr_vm, label: String, port: UInt32, clock: any EngineClock
     ) -> Bool {
         let originalFlags = fcntl(fd, F_GETFL, 0)
         guard originalFlags >= 0 else {
@@ -577,7 +550,7 @@ final class VsockGuestClient<Clock: EngineClock>: VsockReconnecting, @unchecked 
     /// return — this helper never takes ownership.
     @available(macOS 26.0, *)
     static func awaitConnectCompletion(
-        fd: Int32, label: String, port: UInt32, clock: Clock
+        fd: Int32, label: String, port: UInt32, clock: any EngineClock
     ) -> Bool {
         var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
         let start = clock.now

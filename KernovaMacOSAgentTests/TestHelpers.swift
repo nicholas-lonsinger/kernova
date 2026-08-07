@@ -88,7 +88,7 @@ func awaitFirst<T: Sendable>(_ stream: AsyncStream<T>) async throws -> T {
 
 // MARK: - Clock-parameterized client factory
 
-/// Builds a `VsockGuestClient` on the clock `kind` names, erased for tests
+/// Builds a `VsockGuestClient` on the clock `kind` names, for suites
 /// parameterized over both production clocks (`EngineClockKind.allCases`).
 func makeTestClient(
     kind: EngineClockKind,
@@ -96,13 +96,10 @@ func makeTestClient(
     label: String,
     retryInterval: TimeInterval,
     socketProvider: VsockSocketProvider? = nil
-) -> any VsockReconnecting {
-    func build<C: EngineClock>(_ clock: C) -> any VsockReconnecting {
-        VsockGuestClient(
-            port: port, label: label, clock: clock,
-            retryInterval: retryInterval, socketProvider: socketProvider)
-    }
-    return build(kind.makeClock())
+) -> VsockGuestClient {
+    VsockGuestClient(
+        port: port, label: label, clock: kind.makeClock(),
+        retryInterval: retryInterval, socketProvider: socketProvider)
 }
 
 // MARK: - AtomicInt

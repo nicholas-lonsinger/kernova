@@ -260,10 +260,10 @@ struct VsockGuestClipboardAgentTests {
     /// takes effect on the next loop iteration after the current sleep.
     private func makeAgent(
         pasteboard: FakePasteboard, agentFd: Int32,
+        clock: any EngineClock = MonotonicEngineClock(),
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
-        refusalBurstWindow: TimeInterval = VsockGuestClipboardAgent.defaultRefusalBurstWindow,
         onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void = { _ in },
         onClipboardNotice: @escaping @Sendable () -> Void = {}
     ) -> VsockGuestClipboardAgent {
@@ -277,11 +277,11 @@ struct VsockGuestClipboardAgentTests {
             provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
         }
         return VsockGuestClipboardAgent(
-            pasteboard: pasteboard, client: client, freeSpaceProvider: freeSpaceProvider,
+            pasteboard: pasteboard, client: client, clock: clock,
+            freeSpaceProvider: freeSpaceProvider,
             stagingTempRoot: FileManager.default.temporaryDirectory.appendingPathComponent(
                 UUID().uuidString, isDirectory: true),
             progressRevealDelay: progressRevealDelay, progressIdleLinger: progressIdleLinger,
-            refusalBurstWindow: refusalBurstWindow,
             onProgress: onProgress, onClipboardNotice: onClipboardNotice)
     }
 
@@ -2155,11 +2155,12 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        // A burst window short enough that a second paste lands outside it
-        // without the test waiting out the production window.
+        // A manually advanced clock carries the second paste past the
+        // production burst window without waiting it out.
+        let clock = TestEngineClock()
         let notices = AtomicInt()
         let agent = makeAgent(
-            pasteboard: pasteboard, agentFd: agentFd, refusalBurstWindow: 0.001,
+            pasteboard: pasteboard, agentFd: agentFd, clock: clock,
             onClipboardNotice: { notices.increment() })
         defer { agent.stop() }
 
@@ -2186,7 +2187,7 @@ struct VsockGuestClipboardAgentTests {
 
         // The offer is still live and the user pastes again — a new gesture, owed
         // its own answer on both surfaces rather than a silent no-op.
-        try await Task.sleep(nanoseconds: 20_000_000)
+        clock.advance(seconds: VsockGuestClipboardAgent.refusalBurstWindow)
         #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
         try await notices.changed.wait { notices.value == 2 }
         let second = try await maybeNextFrame(from: hostChannel)

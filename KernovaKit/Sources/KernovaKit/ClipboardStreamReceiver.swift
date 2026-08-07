@@ -1,6 +1,11 @@
 import CryptoKit
 import Foundation
 
+/// Opens the append-only staging sink for one disk-streamed transfer.
+public typealias ClipboardSinkFactory =
+    @Sendable (_ generation: UInt64, _ filename: String) throws ->
+    StagingSink
+
 /// Reassembles streamed clipboard representations from a peer, choosing its sink
 /// by representation role and size.
 ///
@@ -22,12 +27,10 @@ import Foundation
 /// transfer's state is partitioned between its two lanes (see
 /// `InboundTransfer`), and the terminal transition is claimed once under the
 /// transfer's own lock.
-public final class ClipboardStreamReceiver<Clock: EngineClock>: ClipboardStreamReceiving,
-    @unchecked Sendable
-{
-    private typealias Transfer = InboundTransfer<Clock.Instant>
+public final class ClipboardStreamReceiver: @unchecked Sendable {
+    private typealias Transfer = InboundTransfer
 
-    private let clock: Clock
+    private let clock: any EngineClock
     private let channel: VsockChannel
     private let staging: ClipboardFileStaging
 
@@ -65,7 +68,7 @@ public final class ClipboardStreamReceiver<Clock: EngineClock>: ClipboardStreamR
     /// `onComplete`, `onAbort`, and `onTransferTimed` are called off the owning
     /// actor, on whichever lane finished the transfer.
     public init(
-        clock: Clock,
+        clock: any EngineClock = makePlatformEngineClock(),
         channel: VsockChannel,
         staging: ClipboardFileStaging,
         windowBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
@@ -381,9 +384,9 @@ public final class ClipboardStreamReceiver<Clock: EngineClock>: ClipboardStreamR
                     uti: transfer.uti,
                     byteCount: byteCount,
                     streamedToDisk: transfer.streamsToDisk,
-                    duration: clock.seconds(from: transfer.beganAt, to: completedAt),
+                    duration: transfer.beganAt.seconds(to: completedAt),
                     streamingDuration: transfer.firstChunkAt.map {
-                        clock.seconds(from: $0, to: completedAt)
+                        $0.seconds(to: completedAt)
                     }))
         }
         deliverComplete(transfer.transferID, representation)
@@ -612,11 +615,11 @@ public final class ClipboardStreamReceiver<Clock: EngineClock>: ClipboardStreamR
     /// sender's fixed no-ack deadline when durable writes run slow. The tail
     /// below one quantum is acked at End.
     private func ackIfDue(
-        _ transfer: Transfer, upTo count: Int, now: Clock.Instant
+        _ transfer: Transfer, upTo count: Int, now: EngineInstant
     ) {
         guard
             count - transfer.ackedBytes >= ackQuantum
-                || clock.seconds(from: transfer.lastAckAt, to: now) >= ackLatencyBound
+                || transfer.lastAckAt.seconds(to: now) >= ackLatencyBound
         else { return }
         sendAck(transfer, upTo: count)
     }
@@ -721,7 +724,7 @@ public final class ClipboardStreamReceiver<Clock: EngineClock>: ClipboardStreamR
     ///
     /// Read on the transfer's receive lane, the anchor's isolation domain, so an
     /// assertion never races the repeating watchdog timer.
-    func lastChunkAtForTesting(_ transferID: UInt64) -> Clock.Instant? {
+    func lastChunkAtForTesting(_ transferID: UInt64) -> EngineInstant? {
         guard let transfer = transfer(transferID) else { return nil }
         return transfer.queue.sync { transfer.lastChunkAt }
     }
@@ -811,7 +814,7 @@ private struct Awaiter {
 /// so in their own docs and rely on the hand-off being ordered by the `async`
 /// that moves the work across. The one contended decision — which path reaches
 /// the terminal state first — goes through `finishOnce()`.
-private final class InboundTransfer<Instant: Comparable & Sendable>: @unchecked Sendable {
+private final class InboundTransfer: @unchecked Sendable {
     let transferID: UInt64
     let generation: UInt64
     let uti: String
@@ -831,12 +834,12 @@ private final class InboundTransfer<Instant: Comparable & Sendable>: @unchecked 
     var streamsToDisk: Bool { writeQueue != nil }
 
     /// When `handleBegin` created this transfer.
-    let beganAt: Instant
+    let beganAt: EngineInstant
     /// When the first chunk arrived.
     ///
     /// Written on `queue`; frozen once End is accepted, so the write lane's
     /// completion barrier — ordered after that — reads the final value.
-    var firstChunkAt: Instant?
+    var firstChunkAt: EngineInstant?
 
     /// Receive lane: bytes accepted off the wire — validated, hashed, and
     /// either buffered or handed to the write lane.
@@ -858,7 +861,7 @@ private final class InboundTransfer<Instant: Comparable & Sendable>: @unchecked 
     /// against `ackLatencyBound` on each durably-written chunk.
     ///
     /// Same lane ownership as `ackedBytes`.
-    var lastAckAt: Instant
+    var lastAckAt: EngineInstant
     /// Write lane: bytes written since the last free-space re-check.
     var bytesSinceCheck = 0
     /// Receive lane: running SHA-256 over the accepted bytes.
@@ -875,7 +878,7 @@ private final class InboundTransfer<Instant: Comparable & Sendable>: @unchecked 
     var endReceived = false
     /// Receive lane: when the last chunk *arrived* (seeded at acceptance) — the
     /// stall watchdog's activity anchor, which backstops a dead sender.
-    var lastChunkAt: Instant
+    var lastChunkAt: EngineInstant
     /// Receive lane: the per-transfer stall watchdog, a repeating timer on
     /// `queue` that checks `lastChunkAt` — started once per transfer, cancelled
     /// on finish, never re-armed per chunk.
@@ -905,7 +908,7 @@ private final class InboundTransfer<Instant: Comparable & Sendable>: @unchecked 
 
     init(
         transferID: UInt64, generation: UInt64, uti: String, filename: String, isInline: Bool,
-        totalBytes: Int, maxResidentInlineBytes: Int, now: Instant
+        totalBytes: Int, maxResidentInlineBytes: Int, now: EngineInstant
     ) {
         self.transferID = transferID
         self.generation = generation

@@ -12,7 +12,7 @@ struct ClipboardStreamTests {
     private static let chunk = 4096
     private static let window = 16384  // 4 chunks
 
-    private func roomyHarness(noAckTimeout: TimeInterval = 10) throws -> StreamHarness<MonotonicEngineClock> {
+    private func roomyHarness(noAckTimeout: TimeInterval = 10) throws -> StreamHarness {
         try StreamHarness(
             chunkSize: Self.chunk, windowBytes: Self.window, noAckTimeout: noAckTimeout,
             freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })  // 100 GiB
@@ -24,7 +24,7 @@ struct ClipboardStreamTests {
     /// a few KiB exercises several quantum boundaries. The ack latency bound is
     /// pushed out of reach so the expected ack schedules stay pure byte-quantum
     /// functions — deterministic even on a stalled CI scheduler.
-    private func quantumHarness() throws -> StreamHarness<MonotonicEngineClock> {
+    private func quantumHarness() throws -> StreamHarness {
         try StreamHarness(
             chunkSize: 1024, windowBytes: 16384, ackLatencyBound: 600,
             freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
@@ -39,14 +39,14 @@ struct ClipboardStreamTests {
 
     // MARK: - Round trips
 
-    @Test("an inline multi-chunk payload round-trips on the modern clock conformance")
-    func inlineRoundTripOnContinuousClock() async throws {
-        // The default harness runs every suite on `MonotonicEngineClock` (the
-        // macOS 12 fallback); this is the package-level pass over the other
-        // production conformance, so both real clocks stream on every CI run.
-        guard #available(macOS 13.0, *) else { return }
+    @Test("an inline multi-chunk payload round-trips on the macOS 12 fallback clock")
+    func inlineRoundTripOnMonotonicClock() async throws {
+        // Every other test in this suite runs the harness on the platform clock
+        // — `ContinuousEngineClock` on a 13+ runner, the clock a host build
+        // uses. This is the pass over the fallback conformance, so both real
+        // clocks stream on every CI run.
         let harness = try StreamHarness(
-            clock: ContinuousEngineClock(), chunkSize: Self.chunk, windowBytes: Self.window)
+            clock: MonotonicEngineClock(), chunkSize: Self.chunk, windowBytes: Self.window)
         defer { harness.tearDown() }
 
         var bytes = Data()
@@ -469,7 +469,7 @@ struct ClipboardStreamTests {
     /// is a pure function of which writes the test released — never of how long
     /// a loaded CI runner took to run them.
     private func gatedHarness(freeSpace: @escaping @Sendable () -> Int64 = { 100 << 30 }) throws
-        -> (harness: StreamHarness<MonotonicEngineClock>, sink: Box<GatedSink?>)
+        -> (harness: StreamHarness, sink: Box<GatedSink?>)
     {
         let stagingBox = Box<ClipboardFileStaging?>(nil)
         let sinkBox = Box<GatedSink?>(nil)
@@ -494,7 +494,7 @@ struct ClipboardStreamTests {
     /// Opens an inbound file transfer of `totalBytes` and waits for its
     /// go-signal ack, so the staging sink is open before the test drives chunks.
     private func beginFileTransfer(
-        _ harness: StreamHarness<MonotonicEngineClock>, id: UInt64, totalBytes: Int, filename: String
+        _ harness: StreamHarness, id: UInt64, totalBytes: Int, filename: String
     ) async throws {
         harness.receiver.handleBegin(
             .with {
@@ -510,7 +510,7 @@ struct ClipboardStreamTests {
     /// Progress is the receive lane's own signal — it fires per *accepted*
     /// chunk, before those bytes reach the sink — which is what makes the write
     /// lane's independence observable.
-    private func trackProgress(_ harness: StreamHarness<MonotonicEngineClock>, _ id: UInt64) -> (
+    private func trackProgress(_ harness: StreamHarness, _ id: UInt64) -> (
         received: Box<Int>, gate: AsyncGate
     ) {
         let received = Box<Int>(0)
