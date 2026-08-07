@@ -263,7 +263,7 @@ struct VsockGuestClipboardAgentTests {
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
-        refusalBurstWindow: Duration = VsockGuestClipboardAgent.defaultRefusalBurstWindow,
+        refusalBurstWindow: TimeInterval = VsockGuestClipboardAgent.defaultRefusalBurstWindow,
         onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void = { _ in },
         onClipboardNotice: @escaping @Sendable () -> Void = {}
     ) -> VsockGuestClipboardAgent {
@@ -271,7 +271,8 @@ struct VsockGuestClipboardAgentTests {
         let client = VsockGuestClient(
             port: 49152,
             label: "clipboard-test",
-            retryInterval: .milliseconds(50)
+            clock: MonotonicEngineClock(),
+            retryInterval: 0.05
         ) { _, _ in
             provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
         }
@@ -2158,7 +2159,7 @@ struct VsockGuestClipboardAgentTests {
         // without the test waiting out the production window.
         let notices = AtomicInt()
         let agent = makeAgent(
-            pasteboard: pasteboard, agentFd: agentFd, refusalBurstWindow: .milliseconds(1),
+            pasteboard: pasteboard, agentFd: agentFd, refusalBurstWindow: 0.001,
             onClipboardNotice: { notices.increment() })
         defer { agent.stop() }
 
@@ -2185,7 +2186,7 @@ struct VsockGuestClipboardAgentTests {
 
         // The offer is still live and the user pastes again — a new gesture, owed
         // its own answer on both surfaces rather than a silent no-op.
-        try await Task.sleep(for: .milliseconds(20))
+        try await Task.sleep(nanoseconds: 20_000_000)
         #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
         try await notices.changed.wait { notices.value == 2 }
         let second = try await maybeNextFrame(from: hostChannel)
@@ -2641,23 +2642,24 @@ struct VsockGuestClipboardAgentTests {
         // and the send-failure handler resolves the pull synchronously via
         // `cancelAwait` + `coordinator.abort`, so `invokeProvider` returns nil on
         // the same thread without ever blocking toward the 120 s backstop.
-        let start = ContinuousClock.now
+        let wallClock = MonotonicEngineClock()
+        let start = wallClock.now
         let provided: Data? = await offCooperativePool {
             DispatchQueue.main.sync {
                 agent.liveChannelForTesting?.close()
                 return pasteboard.invokeProvider(forType: .string)
             }
         }
-        let elapsed = ContinuousClock.now - start
+        let elapsed = wallClock.seconds(since: start)
 
         #expect(provided == nil)
         // Promptly: well under the lazy-pull backstop. A regression that didn't
         // resolve the pull on send failure would block the full timeout.
         #expect(
-            elapsed < .seconds(5),
+            elapsed < 5,
             """
             Send failure must resolve the pull promptly, not block toward the \
-            \(ClipboardStreamTuning.lazyPullTimeout) backstop (took \(elapsed))
+            \(ClipboardStreamTuning.lazyPullTimeout) s backstop (took \(elapsed) s)
             """)
     }
 
@@ -2682,7 +2684,8 @@ struct VsockGuestClipboardAgentTests {
         let client = VsockGuestClient(
             port: 49152,
             label: "clipboard-reconnect-test",
-            retryInterval: .milliseconds(50)
+            clock: MonotonicEngineClock(),
+            retryInterval: 0.05
         ) { _, _ in
             let n = provideCount.increment()
             guard let fd = fdBox.fd(at: n - 1) else {
@@ -2817,7 +2820,8 @@ struct VsockGuestClipboardAgentTests {
         let client = VsockGuestClient(
             port: 49152,
             label: "clipboard-sync-publish-test",
-            retryInterval: .milliseconds(50)
+            clock: MonotonicEngineClock(),
+            retryInterval: 0.05
         ) { _, _ in
             provideCount.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no more fds"))
         }
@@ -2952,7 +2956,7 @@ struct VsockGuestClipboardAgentTests {
         agent.start()
 
         // Without an enabling policy, no connection should come up.
-        try await Task.sleep(for: .milliseconds(150))
+        try await Task.sleep(nanoseconds: 150_000_000)
         let stillNil = DispatchQueue.main.sync { agent.liveChannelForTesting }
         #expect(stillNil == nil)
 
@@ -3218,7 +3222,7 @@ struct VsockGuestClipboardAgentTests {
     /// agent's reaction (if any) runs on the main queue and would have been
     /// dispatched before this window elapses.
     private func maybeNextFrame(
-        from channel: VsockChannel, window: Duration = .milliseconds(200),
+        from channel: VsockChannel, window: TimeInterval = 0.2,
         skippingAcks: Bool = false
     ) async throws -> Frame? {
         let receiver = Task<Frame?, Never> {
@@ -3229,7 +3233,7 @@ struct VsockGuestClipboardAgentTests {
             }
             return nil
         }
-        try await Task.sleep(for: window)
+        try await MonotonicEngineClock().sleep(for: window)
         receiver.cancel()
         return await receiver.value
     }

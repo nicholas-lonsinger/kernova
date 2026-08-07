@@ -40,21 +40,21 @@ struct VsockGuestControlAgentTests {
     /// Default outbound-heartbeat cadence: small so `heartbeatOutboundCadence`
     /// doesn't drag, and harmless to every other test (extra heartbeats only
     /// keep the connection alive).
-    private static let testHeartbeat: Duration = .milliseconds(40)
+    private static let testHeartbeat: TimeInterval = 0.04
 
     /// Default liveness windows, set far beyond any test's wall-clock budget.
     ///
     /// The watchdog can't tear the channel down mid-test at these values. Tests
     /// that *exercise* the watchdog pass explicit short windows to opt back in.
     ///
-    /// The watchdog measures `ContinuousClock.now - lastInboundFrame`, which
+    /// The watchdog measures elapsed time since `lastInboundFrame`, which
     /// keeps advancing while a contended CI MainActor stalls the test. With a
     /// short default, any non-watchdog test that paused past the window saw the
     /// channel closed out from under it — surfacing as an EOF / `.closed` flake.
     /// Making the watchdog an explicit opt-in removes that coupling. Mirrors
     /// `VsockControlServiceTests` / `makeService`. See docs/TESTING.md "Async waits in tests".
-    private static let watchdogDisabledUnresponsive: Duration = .seconds(3_600)
-    private static let watchdogDisabledTerminate: Duration = .seconds(7_200)
+    private static let watchdogDisabledUnresponsive: TimeInterval = 3_600
+    private static let watchdogDisabledTerminate: TimeInterval = 7_200
 
     /// Builds a single-fd-shot agent with the liveness watchdog disabled by
     /// default.
@@ -63,29 +63,35 @@ struct VsockGuestControlAgentTests {
     /// `client` provider hands `agentFd` on the first call, transient failure
     /// after — so reconnect tests must use a multi-fd provider explicitly.
     private func makeAgent(
+        kind: EngineClockKind = .monotonic,
         agentFd: Int32,
-        heartbeatInterval: Duration? = nil,
-        unresponsiveAfter: Duration? = nil,
-        terminateAfter: Duration? = nil,
+        heartbeatInterval: TimeInterval? = nil,
+        unresponsiveAfter: TimeInterval? = nil,
+        terminateAfter: TimeInterval? = nil,
         onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
         onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil
-    ) -> VsockGuestControlAgent {
+    ) -> any VsockGuestControlling {
         let provided = AtomicInt()
-        let client = VsockGuestClient(
-            port: KernovaVsockPort.control,
-            label: "control-test",
-            retryInterval: .seconds(60)
-        ) { _, _ in
+        let provider: VsockSocketProvider = { _, _ in
             provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
         }
-        return VsockGuestControlAgent(
-            client: client,
-            heartbeatInterval: heartbeatInterval ?? Self.testHeartbeat,
-            unresponsiveAfter: unresponsiveAfter ?? Self.watchdogDisabledUnresponsive,
-            terminateAfter: terminateAfter ?? Self.watchdogDisabledTerminate,
-            onPolicy: onPolicy,
-            onStateChange: onStateChange
-        )
+        func build<C: EngineClock>(_ clock: C) -> any VsockGuestControlling {
+            VsockGuestControlAgent(
+                clock: clock,
+                client: VsockGuestClient(
+                    port: KernovaVsockPort.control,
+                    label: "control-test",
+                    clock: clock,
+                    retryInterval: 60,
+                    socketProvider: provider),
+                heartbeatInterval: heartbeatInterval ?? Self.testHeartbeat,
+                unresponsiveAfter: unresponsiveAfter ?? Self.watchdogDisabledUnresponsive,
+                terminateAfter: terminateAfter ?? Self.watchdogDisabledTerminate,
+                onPolicy: onPolicy,
+                onStateChange: onStateChange
+            )
+        }
+        return build(kind.makeClock())
     }
 
     // MARK: - Hello
@@ -137,8 +143,8 @@ struct VsockGuestControlAgentTests {
 
     // MARK: - Heartbeat
 
-    @Test("Emits heartbeat frames on the configured cadence")
-    func heartbeatOutboundCadence() async throws {
+    @Test("Emits heartbeat frames on the configured cadence", arguments: EngineClockKind.allCases)
+    func heartbeatOutboundCadence(kind: EngineClockKind) async throws {
         let (agentFd, hostFd) = try makeRawSocketPair()
         let host = VsockChannel(fileDescriptor: hostFd)
         host.start()
@@ -160,15 +166,16 @@ struct VsockGuestControlAgentTests {
         // the stall, the test reads them back-to-back with near-zero gaps and
         // passes — which is correct for "is the timer running" but does NOT
         // catch "MainActor → late delivery".
-        let cadence: Duration = .milliseconds(100)
-        let agent = makeAgent(agentFd: agentFd, heartbeatInterval: cadence)
+        let cadence: TimeInterval = 0.1
+        let agent = makeAgent(kind: kind, agentFd: agentFd, heartbeatInterval: cadence)
         defer { agent.stop() }
         agent.start()
 
         // First frame is the agent Hello — discard.
         _ = try await nextFrame(from: host)
 
-        var stamps: [ContinuousClock.Instant] = []
+        let wallClock = MonotonicEngineClock()
+        var stamps: [MonotonicEngineClock.Instant] = []
         while stamps.count < 3 {
             // Use the shared 5 s default. If the timer is genuinely broken
             // we'll still fail in bounded time (≤15 s); if it's just slow,
@@ -176,14 +183,14 @@ struct VsockGuestControlAgentTests {
             // sharper "cadence drift" error than a generic timeout.
             let frame = try await nextFrame(from: host)
             if case .heartbeat = frame.payload {
-                stamps.append(.now)
+                stamps.append(wallClock.now)
             }
         }
 
         // Loop above guarantees stamps.count == 3, so gaps has exactly 2
-        // elements and reduce(.zero, max) is the natural non-optional form.
-        let gaps = zip(stamps.dropFirst(), stamps).map { $0 - $1 }
-        let maxGap = gaps.reduce(.zero, max)
+        // elements and reduce(0, max) is the natural non-optional form.
+        let gaps = zip(stamps.dropFirst(), stamps).map { wallClock.seconds(from: $1, to: $0) }
+        let maxGap = gaps.reduce(0, max)
         // 10× cadence tolerance: catches "timer not running" / "cadence
         // misconfigured" without flagging single-tick scheduling jitter.
         let tolerance = cadence * 10
@@ -204,7 +211,7 @@ struct VsockGuestControlAgentTests {
 
         // Wider heartbeat cadence (100 ms) + final-read timeout (800 ms) for
         // the same CI-jitter reason as `heartbeatOutboundCadence`.
-        let agent = makeAgent(agentFd: agentFd, heartbeatInterval: .milliseconds(100))
+        let agent = makeAgent(agentFd: agentFd, heartbeatInterval: 0.1)
         defer { agent.stop() }
         agent.start()
 
@@ -216,7 +223,7 @@ struct VsockGuestControlAgentTests {
         try host.send(makeHostHelloFrame())
         for n in 1...3 {
             try host.send(makeHeartbeatFrame(nonce: UInt64(n)))
-            try await Task.sleep(for: .milliseconds(50))
+            try await Task.sleep(nanoseconds: 50_000_000)
         }
 
         // The agent should still be sending heartbeats: read the next frame
@@ -241,7 +248,7 @@ struct VsockGuestControlAgentTests {
         host.start()
         defer { host.close() }
 
-        let agent = makeAgent(agentFd: agentFd, heartbeatInterval: .milliseconds(100))
+        let agent = makeAgent(agentFd: agentFd, heartbeatInterval: 0.1)
         defer { agent.stop() }
         agent.start()
 
@@ -257,8 +264,10 @@ struct VsockGuestControlAgentTests {
         #expect(agent.connectionState == .connected)
     }
 
-    @Test("connectionState reports .unresponsive after the host goes silent")
-    func connectionStateUnresponsive() async throws {
+    @Test(
+        "connectionState reports .unresponsive after the host goes silent",
+        arguments: EngineClockKind.allCases)
+    func connectionStateUnresponsive(kind: EngineClockKind) async throws {
         let (agentFd, hostFd) = try makeRawSocketPair()
         let host = VsockChannel(fileDescriptor: hostFd)
         host.start()
@@ -269,9 +278,10 @@ struct VsockGuestControlAgentTests {
         // channel down during the test.
         let states = StateBox()
         let agent = makeAgent(
+            kind: kind,
             agentFd: agentFd,
-            heartbeatInterval: .milliseconds(50),
-            unresponsiveAfter: .milliseconds(150),
+            heartbeatInterval: 0.05,
+            unresponsiveAfter: 0.15,
             onStateChange: { states.record($0) })
         defer { agent.stop() }
         agent.start()
@@ -285,8 +295,10 @@ struct VsockGuestControlAgentTests {
 
     // MARK: - Liveness teardown + reconnect
 
-    @Test("Silent host past terminateAfter closes the channel; client reconnects with a fresh Hello")
-    func unresponsiveHostTriggersReconnect() async throws {
+    @Test(
+        "Silent host past terminateAfter closes the channel; client reconnects with a fresh Hello",
+        arguments: EngineClockKind.allCases)
+    func unresponsiveHostTriggersReconnect(kind: EngineClockKind) async throws {
         let (agentFd0, hostFd0) = try makeRawSocketPair()
         let (agentFd1, hostFd1) = try makeRawSocketPair()
 
@@ -303,11 +315,7 @@ struct VsockGuestControlAgentTests {
         let fdBox = FdBox(fds: [agentFd0, agentFd1])
         let provideCount = AtomicInt()
 
-        let client = VsockGuestClient(
-            port: KernovaVsockPort.control,
-            label: "control-reconnect-test",
-            retryInterval: .milliseconds(50)
-        ) { _, _ in
+        let provider: VsockSocketProvider = { _, _ in
             let n = provideCount.increment()
             guard let fd = fdBox.fd(at: n - 1) else {
                 return .failure(.transient("test: no fd at index \(n - 1)"))
@@ -315,12 +323,21 @@ struct VsockGuestControlAgentTests {
             return .success(fd)
         }
 
-        let agent = VsockGuestControlAgent(
-            client: client,
-            heartbeatInterval: .milliseconds(100),
-            unresponsiveAfter: .milliseconds(200),
-            terminateAfter: .milliseconds(500)
-        )
+        func build<C: EngineClock>(_ clock: C) -> any VsockGuestControlling {
+            VsockGuestControlAgent(
+                clock: clock,
+                client: VsockGuestClient(
+                    port: KernovaVsockPort.control,
+                    label: "control-reconnect-test",
+                    clock: clock,
+                    retryInterval: 0.05,
+                    socketProvider: provider),
+                heartbeatInterval: 0.1,
+                unresponsiveAfter: 0.2,
+                terminateAfter: 0.5
+            )
+        }
+        let agent = build(kind.makeClock())
         defer { agent.stop() }
         agent.start()
 

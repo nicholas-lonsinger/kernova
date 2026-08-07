@@ -80,7 +80,7 @@ final class VsockClipboardService: ClipboardServicing {
 
     /// Backstop for a lazy pull the peer never answers while the channel stays
     /// open.
-    private let lazyPullTimeout: Duration
+    private let lazyPullTimeout: TimeInterval
 
     /// The ceiling on a paste's file-representation total, read at each budget
     /// check rather than captured, so a Settings change reaches a live session.
@@ -115,7 +115,7 @@ final class VsockClipboardService: ClipboardServicing {
     private let lazyCoordinator = LazyPullCoordinator()
 
     private var sender: ClipboardStreamSender?
-    private var receiver: ClipboardStreamReceiver?
+    private var receiver: (any ClipboardStreamReceiving)?
     private var consumeTask: Task<Void, Never>?
 
     /// Counter for outbound offer generations.
@@ -234,7 +234,7 @@ final class VsockClipboardService: ClipboardServicing {
         channel: VsockChannel, label: String,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         maxPasteBytes: @escaping @MainActor () -> Int = { ClipboardPasteLimit.defaultBytes },
-        lazyPullTimeout: Duration = ClipboardStreamTuning.lazyPullTimeout,
+        lazyPullTimeout: TimeInterval = ClipboardStreamTuning.lazyPullTimeout,
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
         stagingTempRoot: URL = FileManager.default.temporaryDirectory,
@@ -285,7 +285,7 @@ final class VsockClipboardService: ClipboardServicing {
         isConnected = true
 
         let sender = ClipboardStreamSender(channel: channel)
-        let receiver = ClipboardStreamReceiver(
+        let receiver = makeClipboardStreamReceiver(
             channel: channel, staging: staging,
             onTransferTimed: { [label = self.label, tag = self.connectionTag] metrics in
                 Self.logger.notice(
@@ -541,7 +541,7 @@ final class VsockClipboardService: ClipboardServicing {
         label: String,
         connectionTag: ClipboardConnectionTag,
         sender: ClipboardStreamSender,
-        receiver: ClipboardStreamReceiver,
+        receiver: any ClipboardStreamReceiving,
         onControlFrame: @Sendable @escaping (Frame) -> Void
     ) async {
         do {
@@ -1219,7 +1219,7 @@ final class VsockClipboardService: ClipboardServicing {
                     // silence. A cancelled sleep (the pull resolved first) must
                     // NOT resume.
                     while true {
-                        do { try await Task.sleep(for: backstop) } catch { return }
+                        do { try await Task.sleep(for: .seconds(backstop)) } catch { return }
                         if pull.consumeProgress() { continue }
                         receiver.cancelAwait(transferID)
                         pull.resume(nil)
@@ -1291,10 +1291,10 @@ final class VsockClipboardService: ClipboardServicing {
         /// The offer's paste-bound (non-inline) byte total, for the `.fileURL`
         /// path's deadline-safe cap check in `pasteBoundSnapshot`.
         let pasteBoundTotal: UInt64
-        let receiver: ClipboardStreamReceiver
+        let receiver: any ClipboardStreamReceiving
         let channel: VsockChannel
         let staging: ClipboardFileStaging
-        let timeout: Duration
+        let timeout: TimeInterval
     }
 
     /// Snapshots the state for a synchronous file pull, validating that

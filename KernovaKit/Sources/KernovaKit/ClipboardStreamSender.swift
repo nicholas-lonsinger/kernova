@@ -16,7 +16,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
     private let channel: VsockChannel
     private let chunkSize: Int
     private let windowBytes: Int
-    private let noAckTimeout: Duration
+    private let noAckTimeout: TimeInterval
 
     private let lock = NSLock()
     private var transfers: [UInt64: OutboundTransfer] = [:]
@@ -32,7 +32,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         channel: VsockChannel,
         chunkSize: Int = ClipboardStreamTuning.defaultChunkPayloadSize,
         windowBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
-        noAckTimeout: Duration = .seconds(10)
+        noAckTimeout: TimeInterval = 10
     ) {
         self.channel = channel
         self.chunkSize = max(1, chunkSize)
@@ -403,10 +403,10 @@ private final class OutboundTransfer: @unchecked Sendable {
 
     /// Blocks until there is credit for a `chunkSize` chunk at `offset`, the
     /// transfer is aborted, or the no-ack deadline elapses without progress.
-    func awaitCredit(offset: Int, chunkSize: Int, timeout: Duration) -> CreditOutcome {
+    func awaitCredit(offset: Int, chunkSize: Int, timeout: TimeInterval) -> CreditOutcome {
         condition.lock()
         defer { condition.unlock() }
-        let deadline = Date(timeIntervalSinceNow: timeout.timeInterval)
+        let deadline = Date(timeIntervalSinceNow: timeout)
         while true {
             if aborted { return .aborted(abortReason) }
             // Honor the receiver-advertised window (updated by acks under this

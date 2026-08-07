@@ -1,9 +1,11 @@
 import Foundation
+import os
 
 /// Numeric rendering and reading of an operating-system version, shared by the
 /// host and the guest agent so the restore-image UI and the
 /// `AgentInfo.os_version` handshake field agree on one shape.
 public enum KernovaOSVersion {
+    private static let logger = Logger(subsystem: "app.kernova", category: "KernovaOSVersion")
     /// `version` rendered the way Apple names a release: a zero patch is left
     /// off, so `26.6.0` reads as `"26.6"` and matches the catalog's own strings.
     ///
@@ -24,6 +26,10 @@ public enum KernovaOSVersion {
         displayString(ProcessInfo.processInfo.operatingSystemVersion)
     }
 
+    /// Compiled once — the pattern is a compile-time constant.
+    private static let dottedDecimalRegex = try? NSRegularExpression(
+        pattern: #"\d+(?:\.\d+)*"#)
+
     /// The first dotted-decimal run in `reported`, or `nil` when it holds none.
     ///
     /// `AgentInfo.os_version` is peer-supplied, so a peer that sends a
@@ -35,7 +41,16 @@ public enum KernovaOSVersion {
     /// - Returns: The leading dotted-decimal run, or `nil` when `reported`
     ///   contains no digits.
     public static func numericVersion(in reported: String) -> String? {
-        guard let match = reported.firstMatch(of: #/\d+(?:\.\d+)*/#) else { return nil }
-        return String(match.output)
+        guard let regex = Self.dottedDecimalRegex else {
+            logger.fault("Dotted-decimal version pattern failed to compile")
+            assertionFailure("Dotted-decimal version pattern failed to compile")
+            return nil
+        }
+        let fullRange = NSRange(reported.startIndex..., in: reported)
+        guard
+            let match = regex.firstMatch(in: reported, range: fullRange),
+            let matchRange = Range(match.range, in: reported)
+        else { return nil }
+        return String(reported[matchRange])
     }
 }
