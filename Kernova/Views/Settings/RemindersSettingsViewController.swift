@@ -9,8 +9,10 @@ import os
 /// VM Settings pane's "Show install reminder" toggle.
 ///
 /// The app-wide *Menu Bar Quit Reminder* is backed by `AppPreferences`; the
-/// per-VM *guest-agent install nudge* rows are backed by each VM's bundle
-/// configuration and written through
+/// app-wide *Guest Agent Install Reminder* by
+/// `VMLibraryViewModel.agentInstallPromptDisabled`, which overrides every
+/// per-VM row below it; the per-VM *guest-agent install nudge* rows are backed
+/// by each VM's bundle configuration and written through
 /// `VMLibraryViewModel.setAgentInstallNudgeDismissed(_:for:)`.
 ///
 /// `viewWillAppear()` rebuilds the per-VM rows from `viewModel.instances` and
@@ -31,12 +33,18 @@ final class RemindersSettingsViewController: NSViewController {
     private let viewModel: VMLibraryViewModel
 
     private let menuBarQuitSwitch = NSSwitch()
+    private let agentInstallSwitch = NSSwitch()
 
     /// The persistent container in the content stack that holds either the
     /// per-VM card or the empty-state caption, rebuilt on every appear.
     private let vmSection = NSStackView()
-    /// The live per-VM switches, paired with their VM, rebuilt on every appear.
-    private var vmSwitches: [(instance: VMInstance, control: NSSwitch)] = []
+    /// The live per-VM switches, paired with their VM and row label, rebuilt on
+    /// every appear.
+    ///
+    /// The label is grayed in step with a disabled switch.
+    private var vmSwitches: [(instance: VMInstance, control: NSSwitch, label: NSTextField)] = []
+    /// Explains the disabled per-VM rows while the app-wide switch is off.
+    private var vmOverrideCaption = NSTextField()
     /// Keeps the per-VM rows in sync with the library while the pane is visible.
     private var vmObservation: ObservationLoop?
 
@@ -56,14 +64,20 @@ final class RemindersSettingsViewController: NSViewController {
         menuBarQuitSwitch.controlSize = .small
         menuBarQuitSwitch.target = self
         menuBarQuitSwitch.action = #selector(menuBarQuitToggled)
+        agentInstallSwitch.controlSize = .small
+        agentInstallSwitch.target = self
+        agentInstallSwitch.action = #selector(agentInstallToggled)
 
-        // App-wide reminders: one card, one row.
+        // App-wide reminders.
         let appCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Menu Bar Quit Reminder", control: menuBarQuitSwitch)
+            makeGroupedFormCardRow("Menu Bar Quit Reminder", control: menuBarQuitSwitch),
+            makeGroupedFormCardRow("Guest Agent Install Reminder", control: agentInstallSwitch),
         ])
         let appMenuCaption = makeGroupedFormCaption(
             "The Menu Bar Quit Reminder appears when you quit (⌘Q) and Kernova keeps running in the "
-                + "menu bar, reminding you it — and your virtual machines — are still going.")
+                + "menu bar, reminding you it — and your virtual machines — are still going. The "
+                + "Guest Agent Install Reminder is the sidebar prompt to install the Kernova guest "
+                + "agent; turning it off silences it for every virtual machine.")
 
         // Per-VM reminders: rebuilt on every appear (VMs may be added or removed).
         vmSection.orientation = .vertical
@@ -72,6 +86,10 @@ final class RemindersSettingsViewController: NSViewController {
         let vmCaption = makeGroupedFormCaption(
             "Turn a virtual machine off to stop its sidebar reminder to install the Kernova guest "
                 + "agent. This has no effect once the agent is installed.")
+        vmOverrideCaption = makeGroupedFormCaption(
+            "The Guest Agent Install Reminder above is off, so these have no effect. Turn it back "
+                + "on to choose per virtual machine.")
+        vmOverrideCaption.isHidden = true
 
         let resetButton = NSButton(
             title: "Reset All Reminders", target: self, action: #selector(resetAllReminders))
@@ -88,6 +106,7 @@ final class RemindersSettingsViewController: NSViewController {
             makeGroupedFormSectionHeader("Virtual Machine Reminders"),
             vmSection,
             vmCaption,
+            vmOverrideCaption,
             resetButton,
             resetCaption,
         ])
@@ -95,13 +114,15 @@ final class RemindersSettingsViewController: NSViewController {
         content.alignment = .leading
         content.spacing = Spacing.small
         // Separate each logical group so they read as distinct blocks, matching
-        // the General pane's rhythm.
+        // the General pane's rhythm. The override caption sits between the two,
+        // so the spacing follows whichever of the pair is visible.
         content.setCustomSpacing(Spacing.section, after: appMenuCaption)
         content.setCustomSpacing(Spacing.section, after: vmCaption)
+        content.setCustomSpacing(Spacing.section, after: vmOverrideCaption)
 
         // Full-width members (cards and wrapping captions). The reset button is
         // intentionally excluded so it hugs its intrinsic width at the leading edge.
-        for member in [appCard, appMenuCaption, vmSection, vmCaption, resetCaption] {
+        for member in [appCard, appMenuCaption, vmSection, vmCaption, vmOverrideCaption, resetCaption] {
             member.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         }
 
@@ -156,14 +177,16 @@ final class RemindersSettingsViewController: NSViewController {
     /// Re-arms the observation that keeps the per-VM rows current while the pane
     /// is on screen.
     ///
-    /// Tracks the VM list's identity *and* each VM's nudge flag, so a VM created
-    /// or deleted in the main window, or a nudge dismissed from the sidebar
-    /// popover or VM Settings, is reflected here without a tab round-trip.
+    /// Tracks the VM list's identity, each VM's nudge flag, *and* the app-wide
+    /// suppression, so a VM created or deleted in the main window, or a nudge
+    /// dismissed from the sidebar popover or VM Settings, is reflected here
+    /// without a tab round-trip.
     private func startVMObservation() {
         vmObservation?.cancel()
         vmObservation = observeRecurring(
             track: { [weak self] in
                 guard let self else { return }
+                _ = viewModel.agentInstallPromptDisabled
                 for instance in viewModel.instances {
                     _ = instance.id
                     _ = instance.name
@@ -204,8 +227,11 @@ final class RemindersSettingsViewController: NSViewController {
             toggle.controlSize = .small
             toggle.target = self
             toggle.action = #selector(vmReminderToggled(_:))
-            vmSwitches.append((instance, toggle))
-            rows.append(makeGroupedFormCardRow(instance.name, control: toggle))
+            var rowLabel = NSTextField()
+            let row = makeGroupedFormCardRow(
+                instance.name, control: toggle, titleLabel: { rowLabel = $0 })
+            vmSwitches.append((instance, toggle, rowLabel))
+            rows.append(row)
         }
 
         let card = makeGroupedFormCard(rows: rows)
@@ -215,15 +241,30 @@ final class RemindersSettingsViewController: NSViewController {
 
     /// Mirrors every switch to current state — ON when the reminder is shown
     /// (its dismissed flag is `false`).
+    ///
+    /// A per-VM row keeps showing what its VM reverts to while the app-wide
+    /// install reminder is off; it just can't be changed until that goes back on.
     private func refreshSwitches() {
         menuBarQuitSwitch.state = preferences.menuBarQuitReminderDismissed ? .off : .on
-        for (instance, toggle) in vmSwitches {
+        let overridden = viewModel.agentInstallPromptDisabled
+        agentInstallSwitch.state = overridden ? .off : .on
+        vmOverrideCaption.isHidden = !overridden
+        for (instance, toggle, label) in vmSwitches {
             toggle.state = instance.configuration.agentInstallNudgeDismissed ? .off : .on
+            toggle.isEnabled = !overridden
+            // AppKit fades the disabled switch but not its label, which leaves
+            // the row half-lit; gray the text in step so the row reads as inert.
+            label.textColor = overridden ? .disabledControlTextColor : .labelColor
         }
     }
 
     @objc private func menuBarQuitToggled() {
         preferences.menuBarQuitReminderDismissed = (menuBarQuitSwitch.state == .off)
+    }
+
+    @objc private func agentInstallToggled() {
+        viewModel.agentInstallPromptDisabled = (agentInstallSwitch.state == .off)
+        refreshSwitches()
     }
 
     @objc private func vmReminderToggled(_ sender: NSSwitch) {

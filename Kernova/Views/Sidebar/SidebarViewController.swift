@@ -142,6 +142,10 @@ final class SidebarViewController: NSViewController {
                     // later without any id-list change; tracking this too routes
                     // that settle through `reloadInstances()`.
                     _ = self.viewModel.instances.map(\.isPreparing)
+                    // The install-prompt preference is snapshotted into each cell
+                    // at configure time, so a Settings-window toggle only reaches
+                    // the badges through a reload.
+                    _ = self.viewModel.agentInstallPromptDisabled
                 },
                 apply: { [weak self] in self?.reloadInstances() }
             )
@@ -378,7 +382,9 @@ final class SidebarViewController: NSViewController {
             instances.map { instance in
                 SidebarVMRowCellView.contentWidth(
                     forName: instance.name,
-                    showsAgentAccessory: SidebarVMRowCellView.visibleAgentStatus(for: instance) != nil
+                    showsAgentAccessory: SidebarVMRowCellView.visibleAgentStatus(
+                        for: instance,
+                        installPromptDisabled: viewModel.agentInstallPromptDisabled) != nil
                 )
             }.max() ?? 0
 
@@ -555,6 +561,7 @@ extension SidebarViewController: NSOutlineViewDelegate {
         cell.configure(
             instance: instance,
             isRenaming: viewModel.activeRename == .sidebar(instance.id),
+            installPromptDisabled: viewModel.agentInstallPromptDisabled,
             // Capture `instance` weakly: the cell stores these closures, so a
             // strong capture would keep a deleted VM alive until the cell is
             // recycled.

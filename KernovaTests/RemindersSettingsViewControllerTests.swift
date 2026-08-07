@@ -43,6 +43,14 @@ struct RemindersSettingsViewControllerTests {
     /// way NSTabViewController does: it reads `preferredContentSize` at switch
     /// time and sizes the pane's view to exactly that.
     private func makeLaidOutController(vmCount: Int) -> RemindersSettingsViewController {
+        makeLaidOutPane(vmCount: vmCount).controller
+    }
+
+    /// As ``makeLaidOutController(vmCount:)``, also handing back the view model
+    /// so a test can drive the app-wide install-prompt preference.
+    private func makeLaidOutPane(vmCount: Int) -> (
+        controller: RemindersSettingsViewController, viewModel: VMLibraryViewModel
+    ) {
         let viewModel = makeViewModel()
         for index in 1...vmCount {
             viewModel.instances.append(makeInstance(name: "VM \(index)"))
@@ -53,7 +61,33 @@ struct RemindersSettingsViewControllerTests {
         controller.viewWillAppear()
         controller.view.setFrameSize(controller.preferredContentSize)
         controller.view.layoutSubtreeIfNeeded()
-        return controller
+        return (controller, viewModel)
+    }
+
+    /// Every switch in the pane wired to `action`, in row order.
+    private func switches(action name: String, in controller: RemindersSettingsViewController)
+        -> [NSSwitch]
+    {
+        allSubviews(NSSwitch.self, in: controller.view) {
+            $0.action.map(NSStringFromSelector) == name
+        }
+    }
+
+    private func vmSwitches(in controller: RemindersSettingsViewController) -> [NSSwitch] {
+        switches(action: "vmReminderToggled:", in: controller)
+    }
+
+    /// Flips the app-wide install-reminder switch the way a click does, so the
+    /// pane's own action wiring is what drives the change.
+    private func setAppWideInstallReminder(
+        on: Bool, in controller: RemindersSettingsViewController
+    ) throws {
+        let toggle = try #require(
+            switches(action: "agentInstallToggled", in: controller).first)
+        let action = try #require(toggle.action)
+        toggle.state = on ? .on : .off
+        let delivered = NSApp.sendAction(action, to: toggle.target, from: toggle)
+        #expect(delivered)
     }
 
     private func expectHeadersAndCaptionsVisible(in root: NSView) {
@@ -93,15 +127,55 @@ struct RemindersSettingsViewControllerTests {
         #expect(documentView.frame.height > scrollView.frame.height)
     }
 
-    @Test("The app card carries the lone Menu Bar Quit row")
-    func appCardHasOneRow() throws {
+    @Test("The app card carries the Menu Bar Quit and Guest Agent Install rows")
+    func appCardHasBothRows() throws {
         let controller = makeLaidOutController(vmCount: 2)
         defer { controller.viewDidDisappear() }
 
         #expect(findLabel(withText: "Menu Bar Quit Reminder", in: controller.view) != nil)
-        // One app-wide switch plus one per VM: an extra would mean a second row
-        // crept back into the app card.
-        #expect(allSubviews(NSSwitch.self, in: controller.view).count == 3)
+        #expect(findLabel(withText: "Guest Agent Install Reminder", in: controller.view) != nil)
+        // Two app-wide switches plus one per VM: an extra would mean a third row
+        // crept into the app card.
+        #expect(allSubviews(NSSwitch.self, in: controller.view).count == 4)
+    }
+
+    @Test("Turning the app-wide install reminder off disables and explains the per-VM rows")
+    func appWideDisableGreysPerVMRows() throws {
+        let (controller, viewModel) = makeLaidOutPane(vmCount: 2)
+        defer { controller.viewDidDisappear() }
+
+        #expect(vmSwitches(in: controller).allSatisfy { $0.isEnabled })
+        let explanation = try #require(
+            findLabel(containing: "so these have no effect", in: controller.view))
+        #expect(explanation.isHidden)
+
+        try setAppWideInstallReminder(on: false, in: controller)
+
+        #expect(viewModel.agentInstallPromptDisabled == true)
+        #expect(vmSwitches(in: controller).allSatisfy { !$0.isEnabled })
+        #expect(!explanation.isHidden)
+
+        try setAppWideInstallReminder(on: true, in: controller)
+
+        #expect(viewModel.agentInstallPromptDisabled == false)
+        #expect(vmSwitches(in: controller).allSatisfy { $0.isEnabled })
+        #expect(explanation.isHidden)
+    }
+
+    /// The disabled rows keep showing each VM's own setting, so turning the
+    /// app-wide reminder back on restores what the user had chosen.
+    @Test("A disabled per-VM row still reflects its VM's dismissed flag")
+    func disabledPerVMRowKeepsItsState() throws {
+        let (controller, viewModel) = makeLaidOutPane(vmCount: 2)
+        defer { controller.viewDidDisappear() }
+        viewModel.instances[0].configuration.agentInstallNudgeDismissed = true
+        viewModel.agentInstallPromptDisabled = true
+        controller.viewWillAppear()
+
+        let switches = vmSwitches(in: controller)
+        #expect(switches.count == 2)
+        #expect(switches[0].state == .off)
+        #expect(switches[1].state == .on)
     }
 
     @Test("A short VM list hugs the content with the text laid out")

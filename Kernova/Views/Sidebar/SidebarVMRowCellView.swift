@@ -22,6 +22,12 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     private static let iconSlotWidth: CGFloat = 20
 
     private weak var instance: VMInstance?
+    /// The app-wide install-prompt suppression as of the last `configure`.
+    ///
+    /// Snapshotted rather than read live: it lives in `AppPreferences`, so the
+    /// cell's own observation loop can't see it change — the controller reloads
+    /// the rows off its `@Observable` mirror instead.
+    private var installPromptDisabled = false
     private var rowObservation: ObservationLoop?
     /// Commits the edited name; the `Bool` is `true` when editing ended by Return,
     /// which decides whether the controller restores sidebar focus.
@@ -144,6 +150,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     func configure(
         instance: VMInstance,
         isRenaming: Bool,
+        installPromptDisabled: Bool,
         onCommitRename: @escaping (String, Bool) -> Void,
         onCancelRename: @escaping () -> Void,
         onMountAgent: @escaping () -> Void,
@@ -151,6 +158,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     ) {
         let isRebindToDifferentVM = self.instance !== instance
         self.instance = instance
+        self.installPromptDisabled = installPromptDisabled
         self.onCommitRename = onCommitRename
         self.onCancelRename = onCancelRename
 
@@ -206,7 +214,9 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
             iconView.toolTip = instance.statusToolTip
         }
 
-        if let agentStatus = Self.visibleAgentStatus(for: instance) {
+        if let agentStatus = Self.visibleAgentStatus(
+            for: instance, installPromptDisabled: installPromptDisabled)
+        {
             agentButton.isHidden = false
             let dismissible = agentStatus == .waiting
             agentButton.configure(
@@ -435,12 +445,15 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     /// The agent status to surface as a sidebar indicator, or `nil` to hide.
     ///
     /// Hidden for Linux guests, during macOS install, when `.current`, when
-    /// `.waiting` was dismissed, and — the outermost gate — whenever the VM has
+    /// `.waiting` was dismissed for this VM or turned off app-wide by
+    /// `installPromptDisabled`, and — the outermost gate — whenever the VM has
     /// no live session: every state the badge renders is a statement about *this*
     /// session's control channel. On a stopped or cold-paused VM `agentStatus`
     /// degrades to `.waiting`, and the badge would report "guest agent not
     /// installed" for a VM whose agent state is unknown.
-    static func visibleAgentStatus(for instance: VMInstance) -> AgentStatus? {
+    static func visibleAgentStatus(
+        for instance: VMInstance, installPromptDisabled: Bool
+    ) -> AgentStatus? {
         guard instance.configuration.guestOS == .macOS else { return nil }
         guard instance.setupState == nil else { return nil }
         // Live-paused counts: the VM is still in memory and resumable, so the
@@ -449,7 +462,9 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         guard instance.status == .running || instance.isLivePaused else { return nil }
         let status = instance.agentStatus
         if case .current = status { return nil }
-        if case .waiting = status, instance.configuration.agentInstallNudgeDismissed {
+        if case .waiting = status,
+            installPromptDisabled || instance.configuration.agentInstallNudgeDismissed
+        {
             return nil
         }
         return status

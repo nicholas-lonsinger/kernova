@@ -30,6 +30,7 @@ struct AppPreferences {
         // property's RATIONALE.
         static let quitTerminatesApp = "quitTerminatesApp"
         static let menuBarQuitReminderDismissed = "menuBarQuitReminderDismissed"
+        static let agentInstallPromptDisabled = "agentInstallPromptDisabled"
         static let mainToolbarNewVMCollapseIndex = "KernovaMainToolbarNewVMCollapseIndex"
         // Also inverted — see `keepInMenuBarOnQuit`'s RATIONALE.
         static let allowDuplicateMachineIDBoot = "allowDuplicateMachineIDBoot"
@@ -106,6 +107,18 @@ struct AppPreferences {
         nonmutating set { defaults.set(newValue, forKey: Keys.menuBarQuitReminderDismissed) }
     }
 
+    /// Whether the sidebar's guest-agent install nudge is turned off for every
+    /// VM, defaulting to `false`.
+    ///
+    /// Suppresses only the gentle `.waiting` prompt, matching the scope of the
+    /// per-VM `VMConfiguration.agentInstallNudgeDismissed` flag it overrides.
+    /// Read and written through `VMLibraryViewModel.agentInstallPromptDisabled`,
+    /// whose `@Observable` mirror is what wakes the panes that render it.
+    var agentInstallPromptDisabled: Bool {
+        get { defaults.bool(forKey: Keys.agentInstallPromptDisabled) }
+        nonmutating set { defaults.set(newValue, forKey: Keys.agentInstallPromptDisabled) }
+    }
+
     /// The main toolbar index New VM was removed from while the sidebar is
     /// collapsed, or `nil` when it sits in the toolbar.
     ///
@@ -158,9 +171,9 @@ struct AppPreferences {
     /// Re-arms every host-side reminder by clearing its dismissed flag, so each
     /// nag shows again the next time its condition is met.
     ///
-    /// Covers only the reminders whose dismissed state lives in *this* defaults
-    /// domain — the per-VM agent-install nudges in each VM's bundle configuration
-    /// are left untouched.
+    /// Covers only the menu-bar quit reminder. The guest-agent install nudge —
+    /// app-wide here, per-VM in each bundle configuration — is re-armed as one
+    /// by `VMLibraryViewModel.resetAllAgentInstallNudges()`.
     func resetHostReminders() {
         menuBarQuitReminderDismissed = false
     }

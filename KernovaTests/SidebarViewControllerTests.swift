@@ -54,6 +54,12 @@ struct SidebarViewControllerTests {
         return instance
     }
 
+    /// The sidebar badge gate with the app-wide install prompt left on, which is
+    /// every case but the ones exercising that preference.
+    private func visibleAgentStatus(for instance: VMInstance) -> AgentStatus? {
+        SidebarVMRowCellView.visibleAgentStatus(for: instance, installPromptDisabled: false)
+    }
+
     private func titles(of menu: NSMenu) -> [String] {
         menu.items.map(\.title)
     }
@@ -97,20 +103,20 @@ struct SidebarViewControllerTests {
     @Test("Agent indicator hidden for Linux guests")
     func agentHiddenForLinux() {
         let instance = makeInstance(guestOS: .linux, status: .running)
-        #expect(SidebarVMRowCellView.visibleAgentStatus(for: instance) == nil)
+        #expect(visibleAgentStatus(for: instance) == nil)
     }
 
     @Test("Agent indicator shows .waiting for a running macOS VM without an agent")
     func agentWaitingVisibleForRunningMac() {
         let instance = makeInstance(guestOS: .macOS, status: .running)
-        #expect(SidebarVMRowCellView.visibleAgentStatus(for: instance) == .waiting)
+        #expect(visibleAgentStatus(for: instance) == .waiting)
     }
 
     @Test("Agent indicator suppressed once the install nudge is dismissed")
     func agentSuppressedWhenDismissed() {
         let instance = makeInstance(guestOS: .macOS, status: .running)
         instance.configuration.agentInstallNudgeDismissed = true
-        #expect(SidebarVMRowCellView.visibleAgentStatus(for: instance) == nil)
+        #expect(visibleAgentStatus(for: instance) == nil)
     }
 
     @Test("Agent indicator suppressed for a stopped macOS VM")
@@ -118,11 +124,11 @@ struct SidebarViewControllerTests {
         // Neither a VM that has never had an agent nor one that has: with no
         // live control channel, `.waiting` means "unknown", not "not installed".
         let fresh = makeInstance(guestOS: .macOS, status: .stopped)
-        #expect(SidebarVMRowCellView.visibleAgentStatus(for: fresh) == nil)
+        #expect(visibleAgentStatus(for: fresh) == nil)
 
         let seen = makeInstance(guestOS: .macOS, status: .stopped)
         seen.configuration.lastSeenAgentVersion = "1.2.3"
-        #expect(SidebarVMRowCellView.visibleAgentStatus(for: seen) == nil)
+        #expect(visibleAgentStatus(for: seen) == nil)
     }
 
     @Test(
@@ -131,14 +137,14 @@ struct SidebarViewControllerTests {
     )
     func agentSuppressedWhenNotInLiveSession(status: VMStatus) {
         let instance = makeInstance(guestOS: .macOS, status: status)
-        #expect(SidebarVMRowCellView.visibleAgentStatus(for: instance) == nil)
+        #expect(visibleAgentStatus(for: instance) == nil)
     }
 
     @Test("Agent indicator suppressed for a cold-paused VM")
     func agentSuppressedWhenColdPaused() {
         let instance = makeInstance(guestOS: .macOS, status: .paused)  // no live VM
         #expect(instance.isColdPaused)
-        #expect(SidebarVMRowCellView.visibleAgentStatus(for: instance) == nil)
+        #expect(visibleAgentStatus(for: instance) == nil)
     }
 
     /// The live-session gate must not swallow the *louder* agent states — only
@@ -150,7 +156,7 @@ struct SidebarViewControllerTests {
         instance.configuration.lastSeenAgentVersion = "1.2.3"
         instance.agentExpectedButMissing = true
         #expect(
-            SidebarVMRowCellView.visibleAgentStatus(for: instance)
+            visibleAgentStatus(for: instance)
                 == .expectedMissing(expected: "1.2.3")
         )
 
@@ -158,9 +164,36 @@ struct SidebarViewControllerTests {
         // gate is scoped to `.waiting`.
         instance.configuration.agentInstallNudgeDismissed = true
         #expect(
-            SidebarVMRowCellView.visibleAgentStatus(for: instance)
+            visibleAgentStatus(for: instance)
                 == .expectedMissing(expected: "1.2.3")
         )
+    }
+
+    @Test("The app-wide preference suppresses .waiting without touching the per-VM flag")
+    func agentSuppressedWhenPromptDisabledAppWide() {
+        let instance = makeInstance(guestOS: .macOS, status: .running)
+        #expect(
+            SidebarVMRowCellView.visibleAgentStatus(for: instance, installPromptDisabled: true)
+                == nil)
+        // The per-VM flag is overridden, never written: turning the preference
+        // back on must restore what this VM was set to.
+        #expect(instance.configuration.agentInstallNudgeDismissed == false)
+        #expect(visibleAgentStatus(for: instance) == .waiting)
+    }
+
+    /// The app-wide preference carries the same scope as the per-VM switch —
+    /// only the gentle install nudge.
+    ///
+    /// A gate that over-reached would silence the "didn't reconnect" and
+    /// "update available" affordances app-wide.
+    @Test("The app-wide preference leaves the louder agent states alone")
+    func agentLouderStatesSurviveAppWideDisable() {
+        let missing = makeInstance(guestOS: .macOS, status: .running)
+        missing.configuration.lastSeenAgentVersion = "1.2.3"
+        missing.agentExpectedButMissing = true
+        #expect(
+            SidebarVMRowCellView.visibleAgentStatus(for: missing, installPromptDisabled: true)
+                == .expectedMissing(expected: "1.2.3"))
     }
 
     // MARK: - Reorder index math

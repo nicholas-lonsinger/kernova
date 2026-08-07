@@ -2841,7 +2841,7 @@ struct VMLibraryViewModelTests {
         #expect(storage.saveConfigurationCallCount == 1)
     }
 
-    @Test("resetAllAgentInstallNudges re-arms every VM")
+    @Test("resetAllAgentInstallNudges re-arms every VM and the app-wide preference")
     func resetAllAgentInstallNudgesReArmsEveryVM() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let first = makeInstance(name: "First")
@@ -2851,12 +2851,54 @@ struct VMLibraryViewModelTests {
         second.configuration.agentInstallNudgeDismissed = true
         // `third` stays armed to confirm the reset no-ops on already-armed VMs.
         viewModel.instances = [first, second, third]
+        viewModel.agentInstallPromptDisabled = true
 
         viewModel.resetAllAgentInstallNudges()
 
         #expect(first.configuration.agentInstallNudgeDismissed == false)
         #expect(second.configuration.agentInstallNudgeDismissed == false)
         #expect(third.configuration.agentInstallNudgeDismissed == false)
+        #expect(viewModel.agentInstallPromptDisabled == false)
+        #expect(preferences.agentInstallPromptDisabled == false)
+    }
+
+    @Test("agentInstallPromptDisabled defaults off and persists in both directions")
+    func agentInstallPromptDisabledPersistsBothDirections() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        #expect(viewModel.agentInstallPromptDisabled == false)
+
+        viewModel.agentInstallPromptDisabled = true
+        #expect(preferences.agentInstallPromptDisabled == true)
+
+        viewModel.agentInstallPromptDisabled = false
+        #expect(preferences.agentInstallPromptDisabled == false)
+    }
+
+    @Test("agentInstallPromptDisabled is seeded from the stored preference")
+    func agentInstallPromptDisabledSeededFromPreferences() {
+        preferences.agentInstallPromptDisabled = true
+
+        let (viewModel, _, _, _, _) = makeViewModel()
+
+        #expect(viewModel.agentInstallPromptDisabled == true)
+    }
+
+    /// The app-wide preference overrides the per-VM flag rather than rewriting
+    /// it, so each VM reverts to its own choice when the preference goes off.
+    @Test("Toggling agentInstallPromptDisabled leaves every per-VM flag alone")
+    func agentInstallPromptDisabledLeavesPerVMFlagsAlone() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let dismissed = makeInstance(name: "Dismissed")
+        let armed = makeInstance(name: "Armed")
+        dismissed.configuration.agentInstallNudgeDismissed = true
+        viewModel.instances = [dismissed, armed]
+
+        viewModel.agentInstallPromptDisabled = true
+        viewModel.agentInstallPromptDisabled = false
+
+        #expect(dismissed.configuration.agentInstallNudgeDismissed == true)
+        #expect(armed.configuration.agentInstallNudgeDismissed == false)
+        #expect(storage.saveConfigurationCallCount == 0)
     }
 
     // MARK: - Rename
