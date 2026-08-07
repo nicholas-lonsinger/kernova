@@ -164,29 +164,55 @@ exe_of_pid() {
     lsof -a -p "$1" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -1
 }
 
-# The in-use refusal: one line naming each blocking process, then the way out.
-# Naming the PID is what makes the refusal actionable — the arena path says
-# which folder is stuck, never which running thing to go quit.
+# Whether the app itself is among an arena's holders. Asked with one grep
+# rather than by resolving every PID, because the display list below is capped
+# and can leave the app out — and its quit is the line a reader most needs.
+arena_holds_app() {
+    # shellcheck disable=SC2009
+    ps -axo args= 2>/dev/null | grep -F "$1/" | grep -qF '/Kernova.app/Contents/MacOS/Kernova'
+}
+
+# The in-use refusal: what is holding the arena, and how to clear it. Naming
+# the PID is what makes the refusal actionable — the arena path says which
+# folder is stuck, never which running thing to go quit.
 #
-# When the app itself is the blocker, its AppleScript quit is the one to reach
-# for: it save-suspends running guests before exiting, where a signal drops
-# them unsaved and ⌘Q closes the windows but leaves the app resident, so the
-# arena stays busy and the next run refuses again for the same reason.
-# Callers check arena_in_use first; with no blocker this prints the tail line
-# alone, which is the harmless read on a process that exited in between.
+# Two kinds of holder, labelled apart because the wrong one sends the reader
+# after the wrong process: a binary that lives inside the arena is running
+# from it and dies with the eviction, while a build tool or a log tail merely
+# carries the path in its argv. arena_pids matches argv text, so both land here.
+#
+# Capped: `make clean` evicts the arena Xcode builds into, so a build in flight
+# routes every swift-frontend and ld output path through this — uncapped, the
+# refusal is a screenful and each line costs an lsof. The full count still
+# prints, so a long tail is never silently dropped.
+#
+# Callers check arena_in_use first; with no holder left this prints the tail
+# lines alone, the harmless read on a process that exited in between.
 arena_blocked_lines() {
-    local pid exe is_app=0
+    local dir=$1 pid exe shown=0 total=0 max=5
     while IFS= read -r pid; do
         [ -z "$pid" ] && continue
+        total=$((total + 1))
+        [ "$shown" -ge "$max" ] && continue
+        shown=$((shown + 1))
         exe=$(exe_of_pid "$pid")
-        printf 'still running from inside: PID %s%s\n' "$pid" "${exe:+ (${exe##*/})}"
-        case "$exe" in */Kernova.app/Contents/MacOS/Kernova) is_app=1 ;; esac
-    done < <(arena_pids "$1")
-    if [ "$is_app" = 1 ]; then
-        printf 'quit it, then re-run: %s (save-suspends running VMs)\n' \
-            "osascript -e 'quit app \"Kernova\"'"
+        if [ -n "$exe" ] && [ "${exe#"$dir"/}" != "$exe" ]; then
+            printf 'running from inside: PID %s (%s)\n' "$pid" "${exe##*/}"
+        else
+            printf 'holding it open: PID %s%s\n' "$pid" "${exe:+ (${exe##*/})}"
+        fi
+    done < <(arena_pids "$dir")
+    [ "$total" -gt "$shown" ] && printf 'and %s more\n' "$((total - shown))"
+    if [ "$total" -gt 1 ]; then
+        printf 'quit them (or reboot), then re-run\n'
     else
         printf 'quit it (or reboot), then re-run\n'
+    fi
+    # Additive, never instead of the line above: with a mixed set, quitting the
+    # app alone leaves the arena held and the next run refusing identically.
+    if arena_holds_app "$dir"; then
+        printf 'Kernova quits cleanly with: %s (save-suspends running VMs)\n' \
+            "osascript -e 'quit app \"Kernova\"'"
     fi
 }
 
