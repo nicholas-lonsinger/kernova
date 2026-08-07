@@ -136,6 +136,153 @@ struct VMSettingsViewControllerTests {
         #expect(!containsLabel(caption, in: linuxVC.view))
     }
 
+    // MARK: - General card OS rows
+
+    private func makeOSRowsController(
+        guestOS: VMGuestOS,
+        installedImage: InstalledImage? = nil,
+        lastSeenGuestOSVersion: String? = nil
+    ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
+        let viewModel = makeViewModel()
+        let instance = makeInstance(guestOS: guestOS)
+        instance.configuration.installedImage = installedImage
+        instance.configuration.lastSeenGuestOSVersion = lastSeenGuestOSVersion
+        let vc = VMSettingsViewController(
+            instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        return (vc, instance, viewModel)
+    }
+
+    @Test("A macOS VM that knows both shows the install record and the agent report side by side")
+    func osRowsBothKnown() {
+        let (vc, _, _) = makeOSRowsController(
+            guestOS: .macOS,
+            installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84"),
+            lastSeenGuestOSVersion: "Version 26.6 (Build 25G12)")
+
+        #expect(visibleLabel("Installed From", in: vc.view))
+        #expect(visibleLabel("macOS 26.5.2 (25F84)", in: vc.view))
+        #expect(visibleLabel("OS Version", in: vc.view))
+        #expect(visibleLabel("26.6", in: vc.view))
+    }
+
+    @Test("A macOS VM with no agent shows only what the install recorded")
+    func osRowsInstallRecordOnly() {
+        let (vc, _, _) = makeOSRowsController(
+            guestOS: .macOS,
+            installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84"))
+
+        #expect(visibleLabel("Installed From", in: vc.view))
+        #expect(!visibleLabel("OS Version", in: vc.view))
+    }
+
+    @Test("A macOS VM Kernova did not install shows only what the agent reports")
+    func osRowsAgentReportOnly() {
+        let (vc, _, _) = makeOSRowsController(
+            guestOS: .macOS, lastSeenGuestOSVersion: "26.6")
+
+        #expect(!visibleLabel("Installed From", in: vc.view))
+        #expect(visibleLabel("OS Version", in: vc.view))
+    }
+
+    @Test("A macOS VM that knows neither shows neither row")
+    func osRowsNeitherKnown() {
+        let (vc, _, _) = makeOSRowsController(guestOS: .macOS)
+
+        #expect(!visibleLabel("Installed From", in: vc.view))
+        #expect(!visibleLabel("OS Version", in: vc.view))
+    }
+
+    @Test("A Linux VM names the attached media and never an OS Version row")
+    func osRowsLinuxCatalogImage() {
+        let (vc, _, _) = makeOSRowsController(
+            guestOS: .linux,
+            installedImage: .linuxCatalogImage(
+                distribution: "Ubuntu Desktop", version: "26.04 LTS"))
+
+        #expect(visibleLabel("Installer Image", in: vc.view))
+        #expect(visibleLabel("Ubuntu Desktop 26.04 LTS", in: vc.view))
+        // Booting that ISO is not installing from it — the guest's own
+        // installer can write another distribution, or nothing at all — so the
+        // row must never claim the install happened.
+        #expect(!containsLabel("Installed From", in: vc.view))
+        // Linux guests have no Kernova agent, so the row is never even built.
+        #expect(!containsLabel("OS Version", in: vc.view))
+    }
+
+    @Test("A Linux VM set up from a URL shows no OS rows at all")
+    func osRowsLinuxWithoutRecord() {
+        let (vc, _, _) = makeOSRowsController(guestOS: .linux)
+
+        #expect(!visibleLabel("Installer Image", in: vc.view))
+        #expect(!containsLabel("OS Version", in: vc.view))
+    }
+
+    /// The General card's visible run of rows and hairlines, `true` for a
+    /// hairline — collapsible rows expanded, hidden views dropped.
+    private func generalCardLayout(in view: NSView) -> [Bool] {
+        // The card's content stack is the one holding hairlines directly, which
+        // no section or form stack does.
+        guard
+            let content = firstSubview(
+                NSStackView.self, in: view,
+                where: { stack in
+                    stack.arrangedSubviews.contains { $0 is NSBox }
+                        && findLabel(withText: "Boot Mode", in: stack) != nil
+                })
+        else {
+            Issue.record("Expected a General card content stack")
+            return []
+        }
+        return content.arrangedSubviews.filter { !$0.isHidden }.flatMap { view -> [Bool] in
+            guard let collapsible = view as? GroupedFormCollapsibleRow else { return [view is NSBox] }
+            return collapsible.arrangedSubviews.filter { !$0.isHidden }.map { $0 is NSBox }
+        }
+    }
+
+    /// Whether a card's rows and hairlines strictly alternate, starting and
+    /// ending on a row — the shape a hidden row must not disturb.
+    private func separatesEveryRow(_ layout: [Bool]) -> Bool {
+        layout.first == false && layout.last == false
+            && zip(layout, layout.dropFirst()).allSatisfy { $0 != $1 }
+    }
+
+    @Test("Hidden OS rows take their separators with them")
+    func osRowsLeaveNoStrandedSeparator() {
+        // Every combination, since each leaves a different run of rows behind.
+        let noRows = makeOSRowsController(guestOS: .macOS).0
+        #expect(separatesEveryRow(generalCardLayout(in: noRows.view)))
+
+        let installOnly = makeOSRowsController(
+            guestOS: .macOS, installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84")
+        ).0
+        #expect(separatesEveryRow(generalCardLayout(in: installOnly.view)))
+
+        let agentOnly = makeOSRowsController(guestOS: .macOS, lastSeenGuestOSVersion: "26.6").0
+        #expect(separatesEveryRow(generalCardLayout(in: agentOnly.view)))
+
+        let bothRows = makeOSRowsController(
+            guestOS: .macOS, installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84"),
+            lastSeenGuestOSVersion: "26.6"
+        ).0
+        #expect(separatesEveryRow(generalCardLayout(in: bothRows.view)))
+        // Both OS rows really are in the run the check passed on.
+        #expect(generalCardLayout(in: bothRows.view).count == generalCardLayout(in: noRows.view).count + 4)
+    }
+
+    @Test("A first agent report reveals the OS Version row without rebuilding the form")
+    func osVersionRowAppearsOnFirstReport() {
+        let (vc, instance, viewModel) = makeOSRowsController(guestOS: .macOS)
+        #expect(!visibleLabel("OS Version", in: vc.view))
+
+        instance.configuration.lastSeenGuestOSVersion = "26.6"
+        vc.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: false)
+
+        #expect(visibleLabel("OS Version", in: vc.view))
+        #expect(visibleLabel("26.6", in: vc.view))
+    }
+
     // MARK: - Read-only lock behavior
 
     @Test("Read-only disables lockable controls but not hot-toggleable ones")

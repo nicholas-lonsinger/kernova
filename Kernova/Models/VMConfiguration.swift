@@ -196,6 +196,11 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     var createdAt: Date
 
+    /// The installer image this VM was set up from, or `nil` when Kernova has
+    /// no record of one — a VM it did not install, or a Linux image the user
+    /// supplied by URL.
+    var installedImage: InstalledImage?
+
     // MARK: - Initializer
 
     init(
@@ -238,7 +243,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         sharedDirectories: [SharedDirectory]? = nil,
         installContext: MacOSInstallContext? = nil,
         linuxInstallContext: LinuxInstallContext? = nil,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        installedImage: InstalledImage? = nil
     ) {
         self.id = id
         self.name = name
@@ -280,6 +286,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.installContext = installContext
         self.linuxInstallContext = linuxInstallContext
         self.createdAt = createdAt
+        self.installedImage = installedImage
     }
 
     // MARK: - Codable
@@ -334,6 +341,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.linuxInstallContext = try c.decodeIfPresent(
             LinuxInstallContext.self, forKey: .linuxInstallContext)
         self.createdAt = try c.decode(Date.self, forKey: .createdAt)
+        self.installedImage = try c.decodeIfPresent(InstalledImage.self, forKey: .installedImage)
     }
 
     // MARK: - Persistence Coding

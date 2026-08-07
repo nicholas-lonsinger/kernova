@@ -1026,6 +1026,59 @@ struct VMConfigurationTests {
         #expect(config.lastSeenGuestOSVersion == nil)
     }
 
+    // MARK: - installedImage Tests
+
+    @Test("Default installedImage is nil")
+    func defaultInstalledImage() {
+        let config = VMConfiguration(
+            name: "Test VM",
+            guestOS: .macOS,
+            bootMode: .macOS
+        )
+        #expect(config.installedImage == nil)
+    }
+
+    @Test("Configuration round-trips a macOS installedImage")
+    func macOSInstalledImageRoundTrip() throws {
+        let config = VMConfiguration(
+            name: "Persisted VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84")
+        )
+
+        let decoded = try VMConfiguration.makeJSONDecoder().decode(
+            VMConfiguration.self, from: VMConfiguration.makeJSONEncoder().encode(config))
+
+        #expect(decoded.installedImage == .macOSRestoreImage(version: "26.5.2", build: "25F84"))
+    }
+
+    @Test("Configuration round-trips a Linux installedImage")
+    func linuxInstalledImageRoundTrip() throws {
+        let config = VMConfiguration(
+            name: "Persisted VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            installedImage: .linuxCatalogImage(distribution: "Ubuntu Desktop", version: "26.04 LTS")
+        )
+
+        let decoded = try VMConfiguration.makeJSONDecoder().decode(
+            VMConfiguration.self, from: VMConfiguration.makeJSONEncoder().encode(config))
+
+        #expect(
+            decoded.installedImage
+                == .linuxCatalogImage(distribution: "Ubuntu Desktop", version: "26.04 LTS"))
+    }
+
+    @Test("A config omitting installedImage decodes it as nil")
+    func missingInstalledImageDecodesNil() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+
+        #expect(config.installedImage == nil)
+    }
+
     // MARK: - agentInstallNudgeDismissed Tests
 
     @Test("Default agentInstallNudgeDismissed is false")

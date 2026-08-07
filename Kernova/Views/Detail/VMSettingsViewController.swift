@@ -74,8 +74,13 @@ final class VMSettingsViewController: NSViewController {
     // General
     private var nameButton = NSButton()
     private let nameField = NSTextField()
-    /// Value label of the OS Version row; `nil` for Linux guests, which have
-    /// no agent to report one.
+    /// The "Installed From" row and its value label, hidden while the VM
+    /// carries no record of the image it was set up from.
+    private var installedImageRow: GroupedFormCollapsibleRow?
+    private var installedImageValueLabel: NSTextField?
+    /// The OS Version row and its value label, hidden until an agent reports
+    /// one; both `nil` for Linux guests, which have no agent to report one.
+    private var guestOSVersionRow: GroupedFormCollapsibleRow?
     private var guestOSVersionValueLabel: NSTextField?
     private var nameDisplayRow = NSView()
     private var nameEditRow = NSView()
@@ -530,6 +535,17 @@ extension VMSettingsViewController {
 
     // MARK: General
 
+    /// What the install-record row is called for `guestOS`.
+    ///
+    /// A macOS install ran to completion under Kernova, so its row names what
+    /// the VM was installed from. A Linux ISO is only attached for the
+    /// distribution's own installer to use — which can install something else,
+    /// or nothing — so that row names the media and claims nothing about the
+    /// outcome.
+    static func installedImageRowLabel(guestOS: VMGuestOS) -> String {
+        guestOS == .macOS ? "Installed From" : "Installer Image"
+    }
+
     private func buildGeneralSection() -> NSView {
         nameButton = NSButton(title: instance.name, target: self, action: #selector(startRename))
         nameButton.isBordered = false
@@ -575,12 +591,32 @@ extension VMSettingsViewController {
             makeGroupedFormCardRow(
                 "Type", control: makeGroupedFormValueLabel(instance.configuration.guestOS.displayName)),
         ]
+        // Both OS rows are built whatever the VM knows today, then hidden until
+        // it knows: an install completing or a first agent Hello fills one in
+        // while this pane is on screen, and only `apply()` runs then.
+        let installedImage = instance.configuration.installedImage?.displayName
+        let installedLabel = makeGroupedFormValueLabel(installedImage ?? "")
+        installedImageValueLabel = installedLabel
+        let installedRow = GroupedFormCollapsibleRow(
+            row: makeGroupedFormCardRow(
+                Self.installedImageRowLabel(guestOS: instance.configuration.guestOS),
+                control: installedLabel))
+        installedRow.isHidden = installedImage == nil
+        installedImageRow = installedRow
+        rows.append(installedRow)
+
         if instance.configuration.guestOS == .macOS {
-            let versionLabel = makeGroupedFormValueLabel(instance.guestOSVersionDisplay)
+            let reported = instance.guestOSVersionDisplay
+            let versionLabel = makeGroupedFormValueLabel(reported ?? "")
             guestOSVersionValueLabel = versionLabel
-            rows.append(makeGroupedFormCardRow("OS Version", control: versionLabel))
+            let versionRow = GroupedFormCollapsibleRow(
+                row: makeGroupedFormCardRow("OS Version", control: versionLabel))
+            versionRow.isHidden = reported == nil
+            guestOSVersionRow = versionRow
+            rows.append(versionRow)
         } else {
             guestOSVersionValueLabel = nil
+            guestOSVersionRow = nil
         }
         rows += [
             makeGroupedFormCardRow(
@@ -1214,7 +1250,12 @@ extension VMSettingsViewController {
     private func refreshGeneral() {
         nameButton.title = instance.name
         nameButton.isEnabled = instance.status.canRename
-        guestOSVersionValueLabel?.stringValue = instance.guestOSVersionDisplay
+        let installedImage = instance.configuration.installedImage?.displayName
+        installedImageValueLabel?.stringValue = installedImage ?? ""
+        installedImageRow?.isHidden = installedImage == nil
+        let reportedOSVersion = instance.guestOSVersionDisplay
+        guestOSVersionValueLabel?.stringValue = reportedOSVersion ?? ""
+        guestOSVersionRow?.isHidden = reportedOSVersion == nil
         let renaming = isRenaming
         if renaming != nameRowIsEditing {
             if renaming {

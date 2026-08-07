@@ -26,14 +26,14 @@ extension VMInstance {
         }
     }
 
-    /// The guest-reported OS version for display, or "Unknown" when no agent
-    /// has vouched for one.
+    /// The guest-reported OS version for display, or `nil` when no agent has
+    /// vouched for one and there is nothing to show.
     ///
     /// What an agent reports is peer-supplied, so it is read through
     /// `KernovaOSVersion.numericVersion(in:)` rather than shown raw.
-    var guestOSVersionDisplay: String {
+    var guestOSVersionDisplay: String? {
         guard let reported = configuration.lastSeenGuestOSVersion, !reported.isEmpty else {
-            return "Unknown"
+            return nil
         }
         return KernovaOSVersion.numericVersion(in: reported) ?? reported
     }

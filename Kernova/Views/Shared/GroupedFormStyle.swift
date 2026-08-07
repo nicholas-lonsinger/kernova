@@ -124,6 +124,32 @@ func makeGroupedFormCardRow(
     return row
 }
 
+/// A card row that can be shown and hidden after its card is built.
+///
+/// ``makeGroupedFormCard(rows:)`` draws a hairline before every row but the
+/// first, which a row hidden on its own would leave stranded against the next
+/// separator. This carries that hairline instead, so `isHidden` takes both.
+/// Never a card's first row — the hairline would have nothing above it.
+@MainActor
+final class GroupedFormCollapsibleRow: NSStackView {
+    init(row: NSView) {
+        super.init(frame: .zero)
+        orientation = .vertical
+        alignment = .leading
+        spacing = Spacing.relaxed
+        translatesAutoresizingMaskIntoConstraints = false
+        for view in [makeGroupedFormHairline(), row] {
+            addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("GroupedFormCollapsibleRow does not support NSCoder")
+    }
+}
+
 @MainActor
 func makeGroupedFormCard(rows: [NSView]) -> NSView {
     let content = NSStackView()
@@ -133,7 +159,11 @@ func makeGroupedFormCard(rows: [NSView]) -> NSView {
     content.translatesAutoresizingMaskIntoConstraints = false
 
     for (index, row) in rows.enumerated() {
-        if index > 0 { content.addArrangedSubview(makeGroupedFormHairline()) }
+        // A collapsible row carries its own hairline, so that hiding it takes
+        // the separator with it.
+        if index > 0, !(row is GroupedFormCollapsibleRow) {
+            content.addArrangedSubview(makeGroupedFormHairline())
+        }
         content.addArrangedSubview(row)
     }
 
