@@ -113,8 +113,18 @@ final class SettingsTabViewController: NSTabViewController {
     override func viewWillAppear() {
         super.viewWillAppear()
         resizeWindow(toFit: tabView.selectedTabViewItem?.viewController, animate: false)
-        // Reopening the window re-shows the pane the last session left selected
-        // without a tab switch, so this is the only hook that cues it.
+    }
+
+    /// Cues the pane the window opened on, once that window is on screen.
+    ///
+    /// Reopening the window re-shows the pane the last session left selected
+    /// without a tab switch, so this is the only hook that cues it. It has to be
+    /// `viewDidAppear`, not `viewWillAppear`: the scroller flash animates a
+    /// fade-in, and one started before the window is ordered on screen is
+    /// already spent by the time anyone can look — leaving the pane's first
+    /// visit showing a scroller that only fades out, unlike every later visit.
+    override func viewDidAppear() {
+        super.viewDidAppear()
         rearmScrollMoreCue(on: tabView.selectedTabViewItem?.viewController)
     }
 

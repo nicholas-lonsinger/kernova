@@ -143,19 +143,29 @@ final class ScrollMoreIndicator {
             setOverlaysVisible(moreBelow, animated: true)
         }
 
-        // Flash the scroller once when overflowing content first appears. Deferred to
-        // the next main-actor hop because `flashScrollers()` is a no-op before the
-        // scroll view has drawn.
-        if cues.contains(.flash), overflows, !didFlash {
+        // Flash the scroller once when overflowing content first appears, and only
+        // with a window to animate against — see `canFlash`. Deferred to the next
+        // main-actor hop because `flashScrollers()` is a no-op before the scroll
+        // view has drawn.
+        if cues.contains(.flash), overflows, !didFlash, canFlash {
             didFlash = true
             #if DEBUG
             flashCountForTesting += 1
             #endif
-            Self.logger.debug(
-                "Flashing scroller (window present: \(scrollView.window != nil, privacy: .public))")
+            Self.logger.debug("Flashing scroller")
             Task { @MainActor [weak self] in self?.scrollView?.flashScrollers() }
         }
     }
+
+    /// Whether the scroller has an on-screen window to animate against.
+    ///
+    /// `flashScrollers()` fades the scroller in, holds it, then fades it out.
+    /// Run before the window is ordered on screen, the fade-in plays where
+    /// nobody can see it and the user meets the scroller already at full alpha
+    /// with only the fade-out left — so a surface's first visit looks unlike
+    /// every later one. Staying armed until there is a visible window means the
+    /// next geometry change or ``rearmFlash()`` shows the whole animation.
+    private var canFlash: Bool { scrollView?.window?.isVisible == true }
 
     /// Adds the overlays to the scroll view's superview, pinned over its bottom
     /// edge, the first time both exist.

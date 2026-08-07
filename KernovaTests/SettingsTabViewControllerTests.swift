@@ -40,19 +40,28 @@ struct SettingsTabViewControllerTests {
     /// Builds the container plus a laid-out Reminders pane tall enough to
     /// overflow, standing in for the window the tab controller would size.
     private func makeOverflowingPane() throws -> (
-        SettingsTabViewController, RemindersSettingsViewController
+        SettingsTabViewController, RemindersSettingsViewController, NSWindow
     ) {
         let tabController = SettingsTabViewController(
             viewModel: makeViewModel(vmCount: 9), preferences: preferences)
         tabController.loadViewIfNeeded()
-        let pane = try #require(
-            tabController.tabViewItems.compactMap { $0.viewController }
-                .compactMap { $0 as? RemindersSettingsViewController }.first)
+        let item = try remindersItem(in: tabController)
+        // Select before hosting: selecting moves the pane's view into the tab
+        // view, which has no window here, and the cue only fires against a
+        // visible one. Doing it first lets `showInTestWindow` take the view back
+        // while the item stays selected, so `viewDidAppear` still targets it.
+        tabController.tabView.selectTabViewItem(item)
+        let pane = try #require(item.viewController as? RemindersSettingsViewController)
         pane.loadViewIfNeeded()
+        // Measure detached first, then give the window that size, standing in for
+        // the container's own `resizeWindow(toFit:)`.
         pane.viewWillAppear()
-        pane.view.setFrameSize(pane.preferredContentSize)
+        let window = showInTestWindow(pane.view, size: pane.preferredContentSize)
         pane.view.layoutSubtreeIfNeeded()
-        return (tabController, pane)
+        // The arrival cue: ordering a window on screen changes no geometry, so
+        // nothing re-runs the flash on its own.
+        pane.rearmScrollMoreCue()
+        return (tabController, pane, window)
     }
 
     private func remindersItem(in tabController: SettingsTabViewController) throws -> NSTabViewItem {
@@ -62,8 +71,11 @@ struct SettingsTabViewControllerTests {
 
     @Test("Every selection of an overflowing pane re-arms its scroller flash")
     func selectingOverflowingPaneFlashesEachTime() throws {
-        let (tabController, pane) = try makeOverflowingPane()
-        defer { pane.viewDidDisappear() }
+        let (tabController, pane, window) = try makeOverflowingPane()
+        defer {
+            pane.viewDidDisappear()
+            window.orderOut(nil)
+        }
         let indicator = try #require(pane.scrollMoreIndicatorForTesting)
         let item = try remindersItem(in: tabController)
 
@@ -83,23 +95,47 @@ struct SettingsTabViewControllerTests {
     /// tab switch, so the container's own appearance is the only cue hook.
     @Test("The container's appearance re-arms the selected pane")
     func containerAppearanceRearmsSelectedPane() throws {
-        let (tabController, pane) = try makeOverflowingPane()
-        defer { pane.viewDidDisappear() }
+        let (tabController, pane, window) = try makeOverflowingPane()
+        defer {
+            pane.viewDidDisappear()
+            window.orderOut(nil)
+        }
         let indicator = try #require(pane.scrollMoreIndicatorForTesting)
-        tabController.tabView.selectTabViewItem(try remindersItem(in: tabController))
+        let before = indicator.flashCountForTesting
+
+        tabController.viewDidAppear()
+
+        #expect(indicator.flashCountForTesting == before + 1)
+    }
+
+    /// The cue must be spent *after* the window is ordered on screen: the flash
+    /// animates a fade-in, so one started on the way in is already over by the
+    /// time the window appears, and the pane's first visit shows a scroller that
+    /// only fades out — unlike every visit after it.
+    @Test("The pre-appearance hook does not spend the flash")
+    func viewWillAppearDoesNotFlash() throws {
+        let (tabController, pane, window) = try makeOverflowingPane()
+        defer {
+            pane.viewDidDisappear()
+            window.orderOut(nil)
+        }
+        let indicator = try #require(pane.scrollMoreIndicatorForTesting)
         let before = indicator.flashCountForTesting
 
         tabController.viewWillAppear()
 
-        #expect(indicator.flashCountForTesting == before + 1)
+        #expect(indicator.flashCountForTesting == before)
     }
 
     /// A pane that never overflows publishes no cue, so selecting it must not
     /// reach for one — the container asks only panes that opt in.
     @Test("Selecting a pane without a cue is inert")
     func selectingNonCueingPaneIsInert() throws {
-        let (tabController, pane) = try makeOverflowingPane()
-        defer { pane.viewDidDisappear() }
+        let (tabController, pane, window) = try makeOverflowingPane()
+        defer {
+            pane.viewDidDisappear()
+            window.orderOut(nil)
+        }
         let indicator = try #require(pane.scrollMoreIndicatorForTesting)
         let general = try #require(
             tabController.tabViewItems.first {

@@ -64,6 +64,32 @@ struct RemindersSettingsViewControllerTests {
         return (controller, viewModel)
     }
 
+    /// A laid-out pane hosted in an on-screen window, for the flash assertions.
+    ///
+    /// The window has to be up before the geometry settles: the cue only fires
+    /// against a visible window, so measuring it off screen would count flashes
+    /// the app never shows.
+    private func makeShownPane(vmCount: Int) -> (
+        controller: RemindersSettingsViewController, window: NSWindow
+    ) {
+        let viewModel = makeViewModel()
+        for index in 1...vmCount {
+            viewModel.instances.append(makeInstance(name: "VM \(index)"))
+        }
+        let controller = RemindersSettingsViewController(
+            preferences: preferences, viewModel: viewModel)
+        // Measure while detached, exactly as the pane does before the tab
+        // controller sizes the window, then hand the window that measurement.
+        controller.viewWillAppear()
+        let window = showInTestWindow(controller.view, size: controller.preferredContentSize)
+        controller.view.layoutSubtreeIfNeeded()
+        // Stands in for the tab container's `viewDidAppear`. Ordering a window on
+        // screen changes no geometry, so nothing re-runs the cue on its own — the
+        // arrival hook is what spends the flash once there is something to see.
+        controller.rearmScrollMoreCue()
+        return (controller, window)
+    }
+
     /// Every switch in the pane wired to `action`, in row order.
     private func switches(action name: String, in controller: RemindersSettingsViewController)
         -> [NSSwitch]
@@ -220,8 +246,11 @@ struct RemindersSettingsViewControllerTests {
     /// flash again.
     @Test("Revealing the override caption flashes the scroller again")
     func revealingOverrideCaptionRearmsFlash() throws {
-        let controller = makeLaidOutPane(vmCount: 9).controller
-        defer { controller.viewDidDisappear() }
+        let (controller, window) = makeShownPane(vmCount: 9)
+        defer {
+            controller.viewDidDisappear()
+            window.orderOut(nil)
+        }
         let indicator = try #require(controller.scrollMoreIndicatorForTesting)
 
         // A 9-VM pane overflows the height cap, so appearing flashes — exactly
@@ -238,6 +267,30 @@ struct RemindersSettingsViewControllerTests {
         // re-arm, or an unrelated toggle would flash the scroller for nothing.
         try setAppWideInstallReminder(on: false, in: controller)
         #expect(indicator.flashCountForTesting == 2)
+    }
+
+    /// Both captions describe the per-VM switches, so with none on screen they
+    /// point at nothing — "these have no effect" directly under "No virtual
+    /// machines yet." reads as a bug.
+    @Test("Neither per-VM caption shows when there are no virtual machines")
+    func perVMCaptionsHideWithoutVMs() throws {
+        let controller = RemindersSettingsViewController(
+            preferences: preferences, viewModel: makeViewModel())
+        _ = controller.view
+        controller.viewWillAppear()
+        defer { controller.viewDidDisappear() }
+        controller.view.setFrameSize(controller.preferredContentSize)
+        controller.view.layoutSubtreeIfNeeded()
+
+        // Turning the app-wide reminder off is what would reveal the override
+        // caption; the empty state has to suppress it anyway.
+        try setAppWideInstallReminder(on: false, in: controller)
+
+        let visible = allSubviews(NSTextField.self, in: controller.view) { !$0.isHidden }
+            .map(\.stringValue)
+        #expect(visible.contains { $0.hasPrefix("No virtual machines yet") })
+        #expect(!visible.contains { $0.contains("have no effect") })
+        #expect(!visible.contains { $0.contains("Turn a virtual machine off") })
     }
 
     /// The disabled rows keep showing each VM's own setting, so turning the

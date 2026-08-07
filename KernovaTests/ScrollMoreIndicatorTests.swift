@@ -113,13 +113,43 @@ struct ScrollMoreIndicatorTests {
         #expect(hiddenOverlays.allSatisfy { $0.alphaValue == 0 })
     }
 
+    /// A scroll view already hosted in an on-screen window.
+    ///
+    /// The flash only fires against a visible window, so every flash assertion
+    /// builds its scroll view through this rather than ``makeScrollView(documentHeight:)``.
+    private func makeShownScrollView(documentHeight: CGFloat) -> (NSScrollView, NSWindow) {
+        let scrollView = makeScrollView(documentHeight: documentHeight)
+        return (scrollView, showInTestWindow(scrollView))
+    }
+
     @Test("Latches the one-time scroller flash on overflow, not when content fits")
     func flashLatch() {
-        let fits = ScrollMoreIndicator(scrollView: makeScrollView(documentHeight: 50))
+        let (fitting, fittingWindow) = makeShownScrollView(documentHeight: 50)
+        defer { fittingWindow.orderOut(nil) }
+        let fits = ScrollMoreIndicator(scrollView: fitting)
         #expect(fits.hasFlashedForTesting == false)
 
-        let overflows = ScrollMoreIndicator(scrollView: makeScrollView(documentHeight: 1000))
+        let (overflowing, overflowingWindow) = makeShownScrollView(documentHeight: 1000)
+        defer { overflowingWindow.orderOut(nil) }
+        let overflows = ScrollMoreIndicator(scrollView: overflowing)
         #expect(overflows.hasFlashedForTesting == true)
+    }
+
+    /// The latch has to survive until there is a visible window to spend it on.
+    ///
+    /// The cue is an animated fade-in, so one fired before the window is ordered
+    /// on screen is spent where nobody can see it — the pane's first visit then
+    /// shows a scroller that only fades out, unlike every later visit.
+    @Test("Holds the flash until the scroller has a visible window")
+    func flashWaitsForAVisibleWindow() {
+        let scrollView = makeScrollView(documentHeight: 1000)
+        let indicator = ScrollMoreIndicator(scrollView: scrollView, cues: .flash)
+        #expect(indicator.hasFlashedForTesting == false)
+
+        let window = showInTestWindow(scrollView)
+        defer { window.orderOut(nil) }
+        indicator.rearmFlash()
+        #expect(indicator.hasFlashedForTesting == true)
     }
 
     @Test("Flash-only cue flashes the scroller but inserts no overlays, even once mounted")
@@ -127,14 +157,13 @@ struct ScrollMoreIndicatorTests {
         // The settings pane opts into `.flash` alone: it should still latch the
         // one-time scroller flash on overflow, but never build or host the
         // chevron/fade overlays (its root is an NSStackView).
-        let scrollView = makeScrollView(documentHeight: 1000)
+        let (scrollView, window) = makeShownScrollView(documentHeight: 1000)
+        defer { window.orderOut(nil) }
         let indicator = ScrollMoreIndicator(scrollView: scrollView, cues: .flash)
         #expect(indicator.hasFlashedForTesting == true)
 
-        // Mount + a geometry notification would normally lazily insert overlays;
-        // with `.flash` only they must stay absent.
-        let host = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.viewportHeight))
-        host.addSubview(scrollView)
+        // Mounted (the window's content view) + a geometry notification would
+        // normally lazily insert overlays; with `.flash` only they must stay absent.
         scrollView.contentView.scroll(to: NSPoint(x: 0, y: 1))
         scrollView.reflectScrolledClipView(scrollView.contentView)
         #expect(indicator.overlaysForTesting.isEmpty)
@@ -156,7 +185,8 @@ struct ScrollMoreIndicatorTests {
     @Test("rearmFlash re-arms the one-time flash for a reused indicator")
     func rearmFlashReevaluates() {
         // Mirrors the settings pane reusing one indicator across VM switches.
-        let scrollView = makeScrollView(documentHeight: 1000)
+        let (scrollView, window) = makeShownScrollView(documentHeight: 1000)
+        defer { window.orderOut(nil) }
         let indicator = ScrollMoreIndicator(scrollView: scrollView, cues: .flash)
         #expect(indicator.hasFlashedForTesting == true)  // flashed on first overflow
 

@@ -44,6 +44,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     /// The label is grayed in step with a disabled switch.
     private var vmSwitches: [(instance: VMInstance, control: NSSwitch, label: NSTextField)] = []
     /// Explains the disabled per-VM rows while the app-wide switch is off.
+    private var vmCaption = NSTextField()
     private var vmOverrideCaption = NSTextField()
     /// Flashes the pane's scroller when its content overflows the viewport,
     /// signaling there's more below.
@@ -99,7 +100,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         vmSection.orientation = .vertical
         vmSection.alignment = .leading
         vmSection.spacing = Spacing.none
-        let vmCaption = makeGroupedFormCaption(
+        vmCaption = makeGroupedFormCaption(
             "Turn a virtual machine off to stop its own reminder. This has no effect once the "
                 + "agent is installed.")
         vmOverrideCaption = makeGroupedFormCaption(
@@ -325,8 +326,14 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         let overridden = viewModel.agentInstallPromptDisabled
         agentInstallSwitch.state = overridden ? .off : .on
 
+        // Both captions talk about the per-VM switches. With no VMs the section
+        // is a lone "No virtual machines yet." row, so they would be describing
+        // controls that aren't on screen.
+        let hasVMs = !vmSwitches.isEmpty
+        vmCaption.isHidden = !hasVMs
+        let showOverrideCaption = overridden && hasVMs
         let wasShowingOverrideCaption = !vmOverrideCaption.isHidden
-        vmOverrideCaption.isHidden = !overridden
+        vmOverrideCaption.isHidden = !showOverrideCaption
 
         for (instance, toggle, label) in vmSwitches {
             toggle.state = instance.configuration.agentInstallNudgeDismissed ? .off : .on
@@ -336,7 +343,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
             label.textColor = overridden ? .disabledControlTextColor : .labelColor
         }
 
-        if wasShowingOverrideCaption != overridden { rearmScrollFlash() }
+        if wasShowingOverrideCaption != showOverrideCaption { rearmScrollFlash() }
     }
 
     @objc private func menuBarQuitToggled() {
