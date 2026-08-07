@@ -161,25 +161,20 @@ final class ClipboardPassthroughCoordinator {
         switch ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: allowsBinary) {
         case .content(let content, let note):
             offer(content, note: note, to: service)
-        case .pendingFiles(let urls):
-            resolveAndForward(urls, allowsBinary: allowsBinary)
-        case .rejected:
-            // Every rejection here is a verdict that the pasteboard holds
-            // nothing shareable — an empty clipboard, a privacy marker, a
-            // text-only transport — so there is no failure to report. The
-            // rejection in `resolveAndForward` is the other kind: items were
-            // there and could not be read.
-            break
+        case .pendingFiles(let urls, let unresolved):
+            resolveAndForward(urls, unresolved: unresolved, allowsBinary: allowsBinary)
+        case .rejected(let message, let unreadable):
+            report(rejection: message, unreadable: unreadable, to: service)
         }
     }
 
     /// Resolves copied files/folders off the main actor (the stat and folder
     /// estimate walk are I/O), then offers them to the current service on the
     /// way back.
-    private func resolveAndForward(_ urls: [URL], allowsBinary: Bool) {
+    private func resolveAndForward(_ urls: [URL], unresolved: Int, allowsBinary: Bool) {
         Task { @MainActor [weak self] in
             let resolved = await ClipboardPasteboardIntake.read(
-                filesAt: urls, allowsBinary: allowsBinary)
+                filesAt: urls, unresolved: unresolved, allowsBinary: allowsBinary)
             guard let self else { return }
             #if DEBUG
             defer { self.onForwardResolvedForTesting?() }
@@ -189,17 +184,25 @@ final class ClipboardPassthroughCoordinator {
             switch resolved {
             case .content(let content, let note):
                 self.offer(content, note: note, to: service)
-            case .rejected(let message):
-                // Every copied item failed, so nothing is forwarded — the total
-                // of the partial case below, and owed the same report. A
-                // text-only transport is exempt: it rejects *every* file copy by
-                // design, so reporting here would fire on each one.
-                guard allowsBinary else { return }
-                self.reportUnforwarded(message, to: service)
+            case .rejected(let message, let unreadable):
+                self.report(rejection: message, unreadable: unreadable, to: service)
             case .pendingFiles:
                 break
             }
         }
+    }
+
+    /// Raises a rejection only when it means content was there and could not be
+    /// read.
+    ///
+    /// A policy verdict — an empty clipboard, a privacy marker, a text-only
+    /// transport refusing a file copy — leaves nothing to report, and the
+    /// text-only one would otherwise fire on every file the user copies.
+    private func report(
+        rejection message: String, unreadable: Bool, to service: any ClipboardServicing
+    ) {
+        guard unreadable else { return }
+        reportUnforwarded(message, to: service)
     }
 
     /// Offers intake output to the guest, raising the intake's skip note when it

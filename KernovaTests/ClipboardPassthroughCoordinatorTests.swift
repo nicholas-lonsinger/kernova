@@ -247,6 +247,61 @@ struct ClipboardPassthroughCoordinatorTests {
         )
     }
 
+    @Test("a file deleted before the poll reads the pasteboard is reported too")
+    func pollSurfacesPrePollLoss() async throws {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+
+        let directory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let kept = directory.appendingPathComponent("kept.txt")
+        let doomed = directory.appendingPathComponent("doomed.txt")
+        try Data("kept".utf8).write(to: kept)
+        try Data("doomed".utf8).write(to: doomed)
+        writeFileURLs([kept, doomed], to: h.pasteboard)
+
+        // The mirror of `pollSurfacesIntakeSkipNote`: deleting *before* the poll
+        // means the intake's existence check drops the item, not the off-actor
+        // stat. The user-visible loss is identical, so the report must be too.
+        try FileManager.default.removeItem(at: doomed)
+        h.coordinator.pollHostClipboard()
+
+        try await h.service.issueReported.wait { h.service.lastTransferIssue != nil }
+        #expect(h.service.grabbed.last?.representations.map(\.filename) == ["kept.txt"])
+        #expect(
+            h.service.lastTransferIssue?.kind
+                == .localFailure(
+                    code: ClipboardErrorCode.forwardItemsSkipped.rawValue,
+                    message: "Skipped 1 unreadable item")
+        )
+    }
+
+    @Test("a copy whose every file vanished before the poll surfaces the rejection")
+    func pollSurfacesPrePollWholeCopyLoss() async throws {
+        let h = makeHarness()
+        defer { h.pasteboard.releaseGlobally() }
+
+        let directory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let doomed = directory.appendingPathComponent("doomed.txt")
+        try Data("doomed".utf8).write(to: doomed)
+        writeFileURLs([doomed], to: h.pasteboard)
+
+        // A stale clipboard — the copy's file already gone when passthrough
+        // connects and forwards the current clipboard whatever its age.
+        try FileManager.default.removeItem(at: doomed)
+        h.coordinator.pollHostClipboard()
+
+        try await h.service.issueReported.wait { h.service.lastTransferIssue != nil }
+        #expect(h.service.grabbed.isEmpty)
+        #expect(
+            h.service.lastTransferIssue?.kind
+                == .localFailure(
+                    code: ClipboardErrorCode.forwardItemsSkipped.rawValue,
+                    message: "Couldn't read the dropped item")
+        )
+    }
+
     @Test("a text-only transport's blanket file rejection is not reported")
     func pollStaysQuietForTextOnlyTransport() async throws {
         let h = makeHarness()

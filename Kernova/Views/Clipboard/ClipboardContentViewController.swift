@@ -718,8 +718,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         guard let service = instance.clipboardService else { return }
         let allowsBinary = service.supportsBinaryRepresentations
         let result = ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: allowsBinary)
-        if case .pendingFiles(let urls) = result {
-            resolveAndApply(pendingFiles: urls, allowsBinary: allowsBinary)
+        if case .pendingFiles(let urls, let unresolved) = result {
+            resolveAndApply(pendingFiles: urls, unresolved: unresolved, allowsBinary: allowsBinary)
         } else {
             _ = apply(intake: result)
         }
@@ -727,10 +727,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     /// Resolves `.pendingFiles` URLs off the main actor and applies the result
     /// on the way back.
-    private func resolveAndApply(pendingFiles urls: [URL], allowsBinary: Bool) {
+    private func resolveAndApply(pendingFiles urls: [URL], unresolved: Int, allowsBinary: Bool) {
         Task { @MainActor [weak self] in
             let resolved = await ClipboardPasteboardIntake.read(
-                filesAt: urls, allowsBinary: allowsBinary)
+                filesAt: urls, unresolved: unresolved, allowsBinary: allowsBinary)
             _ = self?.apply(intake: resolved)
         }
     }
@@ -749,7 +749,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 "Took in pasteboard content (\(content.representations.count, privacy: .public) reps, \(content.totalByteCount, privacy: .public) bytes)"
             )
             return true
-        case .rejected(let message):
+        case .rejected(let message, _):
             indicatorView.showTransientMessage(message, style: .warning)
             Self.logger.info("Pasteboard intake rejected: \(message, privacy: .public)")
             return false
@@ -783,10 +783,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         switch result {
         case .content:
             return apply(intake: result)
-        case .pendingFiles(let urls):
+        case .pendingFiles(let urls, let unresolved):
             // Accept the drop now; resolve the files/folders off the main actor
             // (the dragging pasteboard was already consumed synchronously above).
-            resolveAndApply(pendingFiles: urls, allowsBinary: allowsBinary)
+            resolveAndApply(pendingFiles: urls, unresolved: unresolved, allowsBinary: allowsBinary)
             return true
         case .rejected:
             if let receiver = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self])?
