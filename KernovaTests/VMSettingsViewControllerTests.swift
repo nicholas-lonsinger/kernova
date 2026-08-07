@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMSettingsViewController Tests")
+@Suite("VMSettingsViewController Tests", .serialized)
 @MainActor
 struct VMSettingsViewControllerTests {
     // MARK: - Fixtures
@@ -465,6 +465,46 @@ struct VMSettingsViewControllerTests {
         confirmed = false
         alert.buttons.last?.action()
         #expect(cancelled && !confirmed)
+    }
+
+    // MARK: - Guest agent install reminder
+
+    @Test("The install-reminder switch is live while the prompt is on app-wide")
+    func installReminderEnabledByDefault() throws {
+        let (vc, instance, _) = makeController(guestOS: .macOS, isReadOnly: false)
+
+        let toggle = try #require(firstSwitch(action: "installReminderToggled", in: vc.view))
+        #expect(toggle.isEnabled)
+        #expect(!visibleLabel(VMSettingsViewController.installPromptDisabledCaption, in: vc.view))
+
+        toggle.state = .off
+        toggle.sendAction(toggle.action, to: toggle.target)
+        #expect(instance.configuration.agentInstallNudgeDismissed == true)
+    }
+
+    /// The app-wide preference is not overridable per VM, so the switch goes
+    /// inert — and says where the preference that made it inert lives, or the
+    /// disabled state reads as broken.
+    @Test("The app-wide preference disables the install-reminder switch and says why")
+    func installReminderDisabledByAppWidePreference() throws {
+        let (vc, instance, viewModel) = makeController(guestOS: .macOS, isReadOnly: false)
+
+        viewModel.agentInstallPromptDisabled = true
+        // Stands in for the observation pass a Settings-window toggle triggers.
+        vc.viewDidAppear()
+
+        let toggle = try #require(firstSwitch(action: "installReminderToggled", in: vc.view))
+        #expect(!toggle.isEnabled)
+        #expect(visibleLabel(VMSettingsViewController.installPromptDisabledCaption, in: vc.view))
+        // Overridden, not rewritten: the row still shows this VM's own choice.
+        #expect(instance.configuration.agentInstallNudgeDismissed == false)
+        #expect(toggle.state == .on)
+
+        viewModel.agentInstallPromptDisabled = false
+        vc.viewDidAppear()
+
+        #expect(toggle.isEnabled)
+        #expect(!visibleLabel(VMSettingsViewController.installPromptDisabledCaption, in: vc.view))
     }
 
     // MARK: - Display section

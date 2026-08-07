@@ -28,6 +28,23 @@ final class VMLibraryViewModel {
         }
     }
 
+    /// Whether the sidebar's guest-agent install nudge is turned off for every
+    /// VM, overriding each VM's own `agentInstallNudgeDismissed` flag without
+    /// touching it.
+    ///
+    /// The single write path for `AppPreferences.agentInstallPromptDisabled`,
+    /// mirrored here because the sidebar and the VM Settings pane refresh from
+    /// `withObservationTracking`, which a bare `UserDefaults` read never wakes.
+    var agentInstallPromptDisabled: Bool {
+        didSet {
+            guard agentInstallPromptDisabled != oldValue else { return }
+            Self.logger.notice(
+                "Setting app-wide agent install prompt disabled=\(self.agentInstallPromptDisabled, privacy: .public)"
+            )
+            preferences.agentInstallPromptDisabled = agentInstallPromptDisabled
+        }
+    }
+
     /// Presentation delegate for alerts, sheets, and the creation wizard.
     ///
     /// Errors raised before a presenter is attached (e.g. the initial `loadVMs()`
@@ -114,6 +131,7 @@ final class VMLibraryViewModel {
         self.diskImageService = diskImageService
         self.fileSystem = fileSystem
         self.preferences = preferences
+        self.agentInstallPromptDisabled = preferences.agentInstallPromptDisabled
         self.lifecycle = VMLifecycleCoordinator(
             virtualizationService: virtualizationService,
             installService: installService,
@@ -1575,12 +1593,14 @@ final class VMLibraryViewModel {
         updateConfiguration(of: instance) { $0.agentInstallNudgeDismissed = dismissed }
     }
 
-    /// Re-arms the agent-install nudge for every VM by clearing its dismissed
-    /// flag, so each VM's `.waiting` nudge can surface again.
+    /// Re-arms the agent-install nudge everywhere: clears the app-wide
+    /// suppression *and* every VM's dismissed flag, so each VM's `.waiting`
+    /// nudge can surface again.
     ///
     /// Each VM's flag lives in its own bundle configuration and is persisted
     /// individually; VMs already armed no-op.
     func resetAllAgentInstallNudges() {
+        agentInstallPromptDisabled = false
         for instance in instances {
             setAgentInstallNudgeDismissed(false, for: instance)
         }

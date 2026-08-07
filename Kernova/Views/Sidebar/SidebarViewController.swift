@@ -119,8 +119,15 @@ final class SidebarViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         startObservations()
-        applySelectionFromModel()
-        applyRenameState()
+        // Everything the observations watch can change while they are torn down,
+        // and re-arming them fires nothing — a `withObservationTracking`
+        // registration only reports changes made *after* it. Rows are stale on
+        // arrival, most visibly for the app-wide install-prompt preference each
+        // cell snapshots at configure time: toggled in the Settings window while
+        // the sidebar is collapsed, its badges would otherwise keep the old
+        // answer until some unrelated change reloaded them. `reloadInstances()`
+        // ends with the selection and rename passes, so it subsumes both.
+        reloadInstances()
     }
 
     override func viewWillDisappear() {
@@ -142,6 +149,10 @@ final class SidebarViewController: NSViewController {
                     // later without any id-list change; tracking this too routes
                     // that settle through `reloadInstances()`.
                     _ = self.viewModel.instances.map(\.isPreparing)
+                    // The install-prompt preference is snapshotted into each cell
+                    // at configure time, so a Settings-window toggle only reaches
+                    // the badges through a reload.
+                    _ = self.viewModel.agentInstallPromptDisabled
                 },
                 apply: { [weak self] in self?.reloadInstances() }
             )
@@ -378,7 +389,9 @@ final class SidebarViewController: NSViewController {
             instances.map { instance in
                 SidebarVMRowCellView.contentWidth(
                     forName: instance.name,
-                    showsAgentAccessory: SidebarVMRowCellView.visibleAgentStatus(for: instance) != nil
+                    showsAgentAccessory: SidebarVMRowCellView.visibleAgentStatus(
+                        for: instance,
+                        installPromptDisabled: viewModel.agentInstallPromptDisabled) != nil
                 )
             }.max() ?? 0
 
@@ -555,6 +568,7 @@ extension SidebarViewController: NSOutlineViewDelegate {
         cell.configure(
             instance: instance,
             isRenaming: viewModel.activeRename == .sidebar(instance.id),
+            installPromptDisabled: viewModel.agentInstallPromptDisabled,
             // Capture `instance` weakly: the cell stores these closures, so a
             // strong capture would keep a deleted VM alive until the cell is
             // recycled.

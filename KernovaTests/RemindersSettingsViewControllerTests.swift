@@ -43,6 +43,14 @@ struct RemindersSettingsViewControllerTests {
     /// way NSTabViewController does: it reads `preferredContentSize` at switch
     /// time and sizes the pane's view to exactly that.
     private func makeLaidOutController(vmCount: Int) -> RemindersSettingsViewController {
+        makeLaidOutPane(vmCount: vmCount).controller
+    }
+
+    /// As ``makeLaidOutController(vmCount:)``, also handing back the view model
+    /// so a test can drive the app-wide install-prompt preference.
+    private func makeLaidOutPane(vmCount: Int) -> (
+        controller: RemindersSettingsViewController, viewModel: VMLibraryViewModel
+    ) {
         let viewModel = makeViewModel()
         for index in 1...vmCount {
             viewModel.instances.append(makeInstance(name: "VM \(index)"))
@@ -53,7 +61,76 @@ struct RemindersSettingsViewControllerTests {
         controller.viewWillAppear()
         controller.view.setFrameSize(controller.preferredContentSize)
         controller.view.layoutSubtreeIfNeeded()
-        return controller
+        return (controller, viewModel)
+    }
+
+    /// A laid-out pane hosted in an on-screen window, for the flash assertions.
+    ///
+    /// The window has to be up before the geometry settles: the cue only fires
+    /// against a visible window, so measuring it off screen would count flashes
+    /// the app never shows.
+    private func makeShownPane(vmCount: Int) -> (
+        controller: RemindersSettingsViewController, window: NSWindow
+    ) {
+        let viewModel = makeViewModel()
+        for index in 1...vmCount {
+            viewModel.instances.append(makeInstance(name: "VM \(index)"))
+        }
+        let controller = RemindersSettingsViewController(
+            preferences: preferences, viewModel: viewModel)
+        // Measure while detached, exactly as the pane does before the tab
+        // controller sizes the window, then hand the window that measurement.
+        controller.viewWillAppear()
+        let window = showInTestWindow(controller.view, size: controller.preferredContentSize)
+        controller.view.layoutSubtreeIfNeeded()
+        // Stands in for the tab container's `viewDidAppear`. Ordering a window on
+        // screen changes no geometry, so nothing re-runs the cue on its own — the
+        // arrival hook is what spends the flash once there is something to see.
+        controller.rearmScrollMoreCue()
+        return (controller, window)
+    }
+
+    /// Every switch in the pane wired to `action`, in row order.
+    private func switches(action name: String, in controller: RemindersSettingsViewController)
+        -> [NSSwitch]
+    {
+        allSubviews(NSSwitch.self, in: controller.view) {
+            $0.action.map(NSStringFromSelector) == name
+        }
+    }
+
+    private func vmSwitches(in controller: RemindersSettingsViewController) -> [NSSwitch] {
+        switches(action: "vmReminderToggled:", in: controller)
+    }
+
+    /// The grouped-form card `control` sits in — the nearest ancestor carrying
+    /// the card's rounded `NSBox` background.
+    ///
+    /// Keyed on the corner radius, not on `NSBox` alone: a multi-row card's
+    /// inter-row hairlines are `NSBox`es too, so the looser test stops at the
+    /// card's inner stack and reports an edge inset by the card's padding.
+    private func card(containing control: NSView) -> NSView? {
+        var candidate = control.superview
+        while let view = candidate {
+            if view.subviews.contains(where: { ($0 as? NSBox)?.cornerRadius ?? 0 > 0 }) {
+                return view
+            }
+            candidate = view.superview
+        }
+        return nil
+    }
+
+    /// Flips the app-wide install-reminder switch the way a click does, so the
+    /// pane's own action wiring is what drives the change.
+    private func setAppWideInstallReminder(
+        on: Bool, in controller: RemindersSettingsViewController
+    ) throws {
+        let toggle = try #require(
+            switches(action: "agentInstallToggled", in: controller).first)
+        let action = try #require(toggle.action)
+        toggle.state = on ? .on : .off
+        let delivered = NSApp.sendAction(action, to: toggle.target, from: toggle)
+        #expect(delivered)
     }
 
     private func expectHeadersAndCaptionsVisible(in root: NSView) {
@@ -65,8 +142,9 @@ struct RemindersSettingsViewControllerTests {
             }
         }
         for fragment in [
-            "Menu Bar Quit Reminder appears",
-            "stop its sidebar reminder",
+            "Appears when you quit",
+            "sidebar prompt to install",
+            "stop its own reminder",
             "Turns every reminder above back on",
         ] {
             let caption = findLabel(containing: fragment, in: root)
@@ -93,15 +171,142 @@ struct RemindersSettingsViewControllerTests {
         #expect(documentView.frame.height > scrollView.frame.height)
     }
 
-    @Test("The app card carries the lone Menu Bar Quit row")
-    func appCardHasOneRow() throws {
+    /// Each governing switch owns a card, so its caption sits directly under it
+    /// and needs no "The <name> reminder…" prefix to say what it describes.
+    @Test("Each reminder switch is its own single-row card")
+    func remindersAreSeparateCards() throws {
         let controller = makeLaidOutController(vmCount: 2)
         defer { controller.viewDidDisappear() }
 
         #expect(findLabel(withText: "Menu Bar Quit Reminder", in: controller.view) != nil)
-        // One app-wide switch plus one per VM: an extra would mean a second row
-        // crept back into the app card.
-        #expect(allSubviews(NSSwitch.self, in: controller.view).count == 3)
+        #expect(findLabel(withText: "Guest Agent Install Reminder", in: controller.view) != nil)
+        // Two app-wide switches plus one per VM.
+        #expect(allSubviews(NSSwitch.self, in: controller.view).count == 4)
+
+        let menuBarToggle = try #require(
+            switches(action: "menuBarQuitToggled", in: controller).first)
+        let agentToggle = try #require(
+            switches(action: "agentInstallToggled", in: controller).first)
+        let menuBarCard = try #require(card(containing: menuBarToggle))
+        let agentCard = try #require(card(containing: agentToggle))
+        #expect(menuBarCard !== agentCard)
+        #expect(allSubviews(NSSwitch.self, in: menuBarCard).count == 1)
+        #expect(allSubviews(NSSwitch.self, in: agentCard).count == 1)
+    }
+
+    /// Apple's guidance for showing that one control governs others is to indent
+    /// the subordinates beneath it.
+    ///
+    /// The greying only speaks while the governing switch is off; the indent
+    /// states the relationship at all times.
+    @Test("The per-VM rows are indented beneath the switch that governs them")
+    func perVMRowsIndentUnderGoverningSwitch() throws {
+        let controller = makeLaidOutController(vmCount: 2)
+        defer { controller.viewDidDisappear() }
+
+        let agentToggle = try #require(
+            switches(action: "agentInstallToggled", in: controller).first)
+        let governingCard = try #require(card(containing: agentToggle))
+        let vmToggle = try #require(vmSwitches(in: controller).first)
+        let vmCard = try #require(card(containing: vmToggle))
+
+        let root = controller.view
+        let governingLeading = governingCard.convert(governingCard.bounds, to: root).minX
+        let subordinateLeading = vmCard.convert(vmCard.bounds, to: root).minX
+        #expect(subordinateLeading - governingLeading == groupedFormSubOptionIndent)
+    }
+
+    @Test("Turning the app-wide install reminder off disables and explains the per-VM rows")
+    func appWideDisableGreysPerVMRows() throws {
+        let (controller, viewModel) = makeLaidOutPane(vmCount: 2)
+        defer { controller.viewDidDisappear() }
+
+        #expect(vmSwitches(in: controller).allSatisfy { $0.isEnabled })
+        let explanation = try #require(
+            findLabel(containing: "so these have no effect", in: controller.view))
+        #expect(explanation.isHidden)
+
+        try setAppWideInstallReminder(on: false, in: controller)
+
+        #expect(viewModel.agentInstallPromptDisabled == true)
+        #expect(vmSwitches(in: controller).allSatisfy { !$0.isEnabled })
+        #expect(!explanation.isHidden)
+
+        try setAppWideInstallReminder(on: true, in: controller)
+
+        #expect(viewModel.agentInstallPromptDisabled == false)
+        #expect(vmSwitches(in: controller).allSatisfy { $0.isEnabled })
+        #expect(explanation.isHidden)
+    }
+
+    /// The window is sized once per tab selection.
+    ///
+    /// So the caption appearing grows the content in place with nothing to say
+    /// the pane now overflows; re-arming the indicator is what lets the scroller
+    /// flash again.
+    @Test("Revealing the override caption flashes the scroller again")
+    func revealingOverrideCaptionRearmsFlash() throws {
+        let (controller, window) = makeShownPane(vmCount: 9)
+        defer {
+            controller.viewDidDisappear()
+            window.orderOut(nil)
+        }
+        let indicator = try #require(controller.scrollMoreIndicatorForTesting)
+
+        // A 9-VM pane overflows the height cap, so appearing flashes — exactly
+        // once, against the pane's settled geometry rather than the zero-height
+        // frame the first row build runs under.
+        #expect(indicator.flashCountForTesting == 1)
+
+        // The latch is one-shot, so without a re-arm the caption could grow the
+        // content with no cue at all.
+        try setAppWideInstallReminder(on: false, in: controller)
+        #expect(indicator.flashCountForTesting == 2)
+
+        // A refresh that moves neither the row count nor the caption must not
+        // re-arm, or an unrelated toggle would flash the scroller for nothing.
+        try setAppWideInstallReminder(on: false, in: controller)
+        #expect(indicator.flashCountForTesting == 2)
+    }
+
+    /// Both captions describe the per-VM switches, so with none on screen they
+    /// point at nothing — "these have no effect" directly under "No virtual
+    /// machines yet." reads as a bug.
+    @Test("Neither per-VM caption shows when there are no virtual machines")
+    func perVMCaptionsHideWithoutVMs() throws {
+        let controller = RemindersSettingsViewController(
+            preferences: preferences, viewModel: makeViewModel())
+        _ = controller.view
+        controller.viewWillAppear()
+        defer { controller.viewDidDisappear() }
+        controller.view.setFrameSize(controller.preferredContentSize)
+        controller.view.layoutSubtreeIfNeeded()
+
+        // Turning the app-wide reminder off is what would reveal the override
+        // caption; the empty state has to suppress it anyway.
+        try setAppWideInstallReminder(on: false, in: controller)
+
+        let visible = allSubviews(NSTextField.self, in: controller.view) { !$0.isHidden }
+            .map(\.stringValue)
+        #expect(visible.contains { $0.hasPrefix("No virtual machines yet") })
+        #expect(!visible.contains { $0.contains("have no effect") })
+        #expect(!visible.contains { $0.contains("Turn a virtual machine off") })
+    }
+
+    /// The disabled rows keep showing each VM's own setting, so turning the
+    /// app-wide reminder back on restores what the user had chosen.
+    @Test("A disabled per-VM row still reflects its VM's dismissed flag")
+    func disabledPerVMRowKeepsItsState() throws {
+        let (controller, viewModel) = makeLaidOutPane(vmCount: 2)
+        defer { controller.viewDidDisappear() }
+        viewModel.instances[0].configuration.agentInstallNudgeDismissed = true
+        viewModel.agentInstallPromptDisabled = true
+        controller.viewWillAppear()
+
+        let switches = vmSwitches(in: controller)
+        #expect(switches.count == 2)
+        #expect(switches[0].state == .off)
+        #expect(switches[1].state == .on)
     }
 
     @Test("A short VM list hugs the content with the text laid out")

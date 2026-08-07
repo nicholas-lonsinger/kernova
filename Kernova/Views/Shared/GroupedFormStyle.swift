@@ -91,19 +91,23 @@ func makeGroupedFormHairline() -> NSView {
 ///
 /// By default the control is pushed to the trailing edge (for steppers, switches,
 /// popups, and read-only values). Pass `fillsControl: true` for an input that
-/// should stretch to fill the row (a text field).
+/// should stretch to fill the row (a text field). `titleLabel` hands the
+/// freshly-built label back to the caller, for rows whose text has to be
+/// restyled later.
 @MainActor
 func makeGroupedFormCardRow(
     _ labelText: String,
     control: NSView,
     alignment: NSLayoutConstraint.Attribute = .centerY,
-    fillsControl: Bool = false
+    fillsControl: Bool = false,
+    titleLabel: ((NSTextField) -> Void)? = nil
 ) -> NSView {
     let label = NSTextField(labelWithString: labelText)
     label.font = Typography.body
     label.isSelectable = false
     label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
     label.setContentCompressionResistancePriority(.required, for: .horizontal)
+    titleLabel?(label)
 
     let views: [NSView]
     if fillsControl {

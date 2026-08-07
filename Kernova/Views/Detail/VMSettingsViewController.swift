@@ -166,6 +166,12 @@ final class VMSettingsViewController: NSViewController {
     // Guest Agent
     private var logForwardingSwitch = NSSwitch()
     private var installReminderSwitch = NSSwitch()
+    /// The install-reminder row's title label, retained so `refreshGuestAgent`
+    /// can gray it in step with the switch.
+    private var installReminderLabel = NSTextField()
+    /// Explains the disabled install-reminder row while the prompt is off
+    /// app-wide; hidden otherwise.
+    private var installReminderOverrideCaption = NSView()
 
     // Clipboard
     private var clipboardSwitch = NSSwitch()
@@ -314,6 +320,7 @@ final class VMSettingsViewController: NSViewController {
                 _ = self.instance.configuration
                 _ = self.instance.status
                 _ = self.viewModel.activeRename
+                _ = self.viewModel.agentInstallPromptDisabled
             },
             apply: { [weak self] in self?.apply() }
         )
@@ -936,6 +943,11 @@ extension VMSettingsViewController {
     static let agentDependencyCaption =
         "Clipboard sharing and log forwarding require the Kernova guest agent. Kernova offers to install or update it from the clipboard window."
 
+    /// Shown under the Guest Agent card while the app-wide preference turns the
+    /// install prompt off, so the greyed row reads as controlled elsewhere.
+    static let installPromptDisabledCaption =
+        "The install reminder is turned off for all virtual machines in Settings → Reminders."
+
     /// Info-popover copy for the "Automatic Clipboard Passthrough" toggle, shared
     /// by the macOS and Linux clipboard sections.
     static let passthroughInfoParagraphs: [InfoPopoverParagraph] = [
@@ -981,10 +993,15 @@ extension VMSettingsViewController {
                     .body(
                         "Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected."
                     )
-                ]),
+                ],
+                titleLabel: { [weak self] in self?.installReminderLabel = $0 }),
         ])
+        let overrideCaption = makeGroupedFormCaption(Self.installPromptDisabledCaption)
+        overrideCaption.isHidden = true
+        installReminderOverrideCaption = overrideCaption
         return makeSection([
             makeHeader("Guest Agent"), card, makeGroupedFormCaption(Self.agentDependencyCaption),
+            overrideCaption,
         ])
     }
 
@@ -1470,7 +1487,16 @@ extension VMSettingsViewController {
     private func refreshGuestAgent() {
         guard isGuestAgentSectionVisible(guestOS: instance.configuration.guestOS) else { return }
         logForwardingSwitch.state = instance.configuration.agentLogForwardingEnabled ? .on : .off
+        // The per-VM flag keeps its value while the app-wide preference overrides
+        // it, so the switch still shows what this VM reverts to when the
+        // preference is turned back on — it just can't be changed from here.
         installReminderSwitch.state = instance.configuration.agentInstallNudgeDismissed ? .off : .on
+        let overridden = viewModel.agentInstallPromptDisabled
+        installReminderSwitch.isEnabled = !overridden
+        // AppKit fades the disabled switch but not its label, which leaves the
+        // row half-lit; gray the text in step so the row reads as inert.
+        installReminderLabel.textColor = overridden ? .disabledControlTextColor : .labelColor
+        installReminderOverrideCaption.isHidden = !overridden
     }
 
     private func refreshClipboard() {

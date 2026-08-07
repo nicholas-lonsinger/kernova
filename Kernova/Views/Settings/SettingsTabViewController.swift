@@ -1,6 +1,18 @@
 import AppKit
 import os
 
+/// A Settings pane that can outgrow the window and shows a scroller flash to
+/// say there is more below.
+///
+/// The flash latches after firing once, so a pane that lives as long as the
+/// Settings window would cue only its first visit. The tab container re-arms
+/// every pane it selects, which is what makes the cue greet each arrival.
+@MainActor
+protocol SettingsPaneScrollCueing: AnyObject {
+    /// Re-arms the pane's "more below" flash for a fresh appearance.
+    func rearmScrollMoreCue()
+}
+
 /// Layout tokens shared by every pane of the Settings window.
 ///
 /// Surface-specific, so they live here (next to the tab container that owns the
@@ -28,9 +40,11 @@ final class SettingsTabViewController: NSTabViewController {
     private static let logger = Logger(subsystem: "app.kernova", category: "SettingsTabViewController")
 
     private let viewModel: VMLibraryViewModel
+    private let preferences: AppPreferences
 
-    init(viewModel: VMLibraryViewModel) {
+    init(viewModel: VMLibraryViewModel, preferences: AppPreferences = .shared) {
         self.viewModel = viewModel
+        self.preferences = preferences
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -43,24 +57,28 @@ final class SettingsTabViewController: NSTabViewController {
         super.viewDidLoad()
         tabStyle = .toolbar
 
-        let general = NSTabViewItem(viewController: GeneralSettingsViewController())
+        let general = NSTabViewItem(
+            viewController: GeneralSettingsViewController(preferences: preferences))
         general.label = "General"
         general.image = Self.symbol("gearshape")
         addTabViewItem(general)
 
         let reminders = NSTabViewItem(
-            viewController: RemindersSettingsViewController(viewModel: viewModel))
+            viewController: RemindersSettingsViewController(
+                preferences: preferences, viewModel: viewModel))
         reminders.label = "Reminders"
         reminders.image = Self.symbol("bell")
         addTabViewItem(reminders)
 
         let clipboard = NSTabViewItem(
-            viewController: ClipboardSettingsViewController(viewModel: viewModel))
+            viewController: ClipboardSettingsViewController(
+                preferences: preferences, viewModel: viewModel))
         clipboard.label = "Clipboard"
         clipboard.image = Self.symbol("clipboard")
         addTabViewItem(clipboard)
 
-        let advanced = NSTabViewItem(viewController: AdvancedSettingsViewController())
+        let advanced = NSTabViewItem(
+            viewController: AdvancedSettingsViewController(preferences: preferences))
         advanced.label = "Advanced"
         advanced.image = Self.symbol("gearshape.2")
         addTabViewItem(advanced)
@@ -77,6 +95,10 @@ final class SettingsTabViewController: NSTabViewController {
     override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
         super.tabView(tabView, didSelect: tabViewItem)
         resizeWindow(toFit: tabViewItem?.viewController, animate: true)
+        // After the resize, never before: the cue is a statement about the pane
+        // overflowing the window it just got, and re-arming against the outgoing
+        // tab's height would answer for the wrong geometry.
+        rearmScrollMoreCue(on: tabViewItem?.viewController)
     }
 
     /// Sizes the window to the pane that is about to become visible.
@@ -91,6 +113,24 @@ final class SettingsTabViewController: NSTabViewController {
     override func viewWillAppear() {
         super.viewWillAppear()
         resizeWindow(toFit: tabView.selectedTabViewItem?.viewController, animate: false)
+    }
+
+    /// Cues the pane the window opened on, once that window is on screen.
+    ///
+    /// Reopening the window re-shows the pane the last session left selected
+    /// without a tab switch, so this is the only hook that cues it. It has to be
+    /// `viewDidAppear`, not `viewWillAppear`: the scroller flash animates a
+    /// fade-in, and one started before the window is ordered on screen is
+    /// already spent by the time anyone can look — leaving the pane's first
+    /// visit showing a scroller that only fades out, unlike every later visit.
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        rearmScrollMoreCue(on: tabView.selectedTabViewItem?.viewController)
+    }
+
+    /// Re-arms `pane`'s "more below" flash, for panes that publish one.
+    private func rearmScrollMoreCue(on pane: NSViewController?) {
+        (pane as? any SettingsPaneScrollCueing)?.rearmScrollMoreCue()
     }
 
     /// Resizes the window so its content area matches the content size of `pane`.
