@@ -2,6 +2,7 @@ import Testing
 import Foundation
 import Darwin
 import KernovaKit
+import KernovaTestSupport
 
 /// Tests that seed the ring directly call `bufferFrameUnlessDisabled` on a
 /// fresh connection, whose policy is `.undecided` — the state that buffers, so
@@ -386,7 +387,7 @@ struct VsockHostConnectionTests {
         #expect(conn.isLogForwardingEnabled == false)
     }
 
-    @Test("setEnabled is idempotent — repeat calls with same value are no-ops")
+    @Test("A repeated setEnabled leaves the policy and the buffer alone")
     func setEnabledIsIdempotent() {
         let conn = VsockHostConnection()
 
@@ -398,8 +399,73 @@ struct VsockHostConnectionTests {
         conn.setEnabled(true)
         #expect(conn.isLogForwardingEnabled == true)
 
-        // Buffering still works after a no-op repeat enable.
+        // Buffering still works after a repeat enable.
         conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "x")
         #expect(pendingLogCount(conn) == 1)
+    }
+
+    // MARK: - Reconnect
+
+    /// The restated enable is the only wake the parked loop gets.
+    ///
+    /// The resume-from-saved-state ordering: the log channel redials while the
+    /// host's control handshake is still in flight, the host refuses it, and the
+    /// policy update that follows the handshake restates the enable the agent
+    /// already applied.
+    @Test("A policy update restating 'enabled' reconnects and flushes what was buffered")
+    func restatedEnablePolicyReconnects() async throws {
+        let (agentFd0, remoteFd0) = try makeRawSocketPair()
+        let (agentFd1, remoteFd1) = try makeRawSocketPair()
+        let host0 = VsockChannel(fileDescriptor: remoteFd0)
+        let host1 = VsockChannel(fileDescriptor: remoteFd1)
+        host0.start()
+        host1.start()
+        defer { host0.close(); host1.close() }
+
+        let fds = [agentFd0, agentFd1]
+        let provideCount = AtomicInt()
+        // A retry interval far past `testWaitBackstop`, so the second connect can
+        // only land inside the test because the policy update woke the loop.
+        let client = VsockGuestClient(
+            port: 49153,
+            label: "log-restated-policy-test",
+            clock: MonotonicEngineClock(),
+            retryInterval: 600
+        ) { _, _ in
+            let n = provideCount.increment()
+            guard n <= fds.count else { return .failure(.transient("test: no fd for attempt \(n)")) }
+            return .success(fds[n - 1])
+        }
+        let conn = VsockHostConnection(client: client)
+        defer { conn.stop() }
+
+        conn.start()
+        conn.setEnabled(true)
+        // The record's arrival is the signal that the first channel is up.
+        conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "first")
+        #expect(try await message(from: host0) == "first")
+
+        // The host hangs up, as a refused feature channel does; the record
+        // written while the loop is parked has nowhere to go but the buffer.
+        host0.close()
+        // RATIONALE: sanctioned no-signal poll (docs/TESTING.md "Async waits in
+        // tests") — `liveChannel` is lock-protected client state with no signal
+        // to await.
+        try await waitUntil { client.liveChannel == nil }
+        conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "buffered")
+
+        // Same policy, second delivery — the enable the agent already applied.
+        conn.setEnabled(true)
+        #expect(try await message(from: host1) == "buffered")
+        #expect(provideCount.value == 2)
+    }
+
+    /// The message of the next `LogRecord` frame on `channel`.
+    private func message(from channel: VsockChannel) async throws -> String {
+        let frame = try await nextFrame(from: channel)
+        guard case .logRecord(let record) = frame.payload else {
+            throw TestFailure("Expected a LogRecord frame, got \(String(describing: frame.payload))")
+        }
+        return record.message
     }
 }

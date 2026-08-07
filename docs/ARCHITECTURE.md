@@ -134,7 +134,7 @@ The vsock stack (macOS guests only):
   mirrors the same assignments guest-side.
 - `VsockListenerHost` — one `VZVirtioSocketListener` per port, bridging an accepted connection to a
   `VsockChannel`. Its `shouldAdmit` predicate refuses a connection before any channel is built;
-  `VMInstance` wires the log and clipboard listeners to `admitsFeatureChannel`, so no feature
+  `VMInstance` wires the log and clipboard listeners to `featureChannelAdmission`, so no feature
   channel is accepted before the control handshake completes. Socket-buffer sizing and its
   measurements: [research/2026-07-13-vsock-transport-throughput.md](research/2026-07-13-vsock-transport-throughput.md).
 - `VsockControlService` — `@MainActor` `@Observable` owner of the always-on control channel:

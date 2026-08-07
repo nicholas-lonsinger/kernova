@@ -3,6 +3,20 @@ import KernovaKit
 import os
 import Virtualization
 
+/// A listener owner's verdict on one accepted connection.
+///
+/// The two refusals differ only in what they say about the peer, which is what
+/// picks the log level: a channel that arrived before the handshake gating it
+/// is the guest agent's own reconnect racing that handshake, while one refused
+/// after it is a peer that should not have connected.
+enum VsockAdmission: Equatable, Sendable {
+    case admit
+    /// The handshake this port is gated on has not completed yet.
+    case notReady(reason: String)
+    /// The handshake completed and it does not entitle this peer to this port.
+    case denied(reason: String)
+}
+
 /// Hosts a single `VZVirtioSocketListener` on a given vsock port and hands
 /// each accepted connection to a callback as a `VsockChannel`.
 ///
@@ -14,9 +28,9 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
 
     /// Owner-supplied admission predicate, evaluated per accepted connection.
     ///
-    /// Returning `false` refuses the connection at the VZ level — no channel is
-    /// built and `onConnect` never fires. `nil` admits every connection.
-    typealias ShouldAdmit = @MainActor () -> Bool
+    /// Anything but `.admit` refuses the connection at the VZ level — no channel
+    /// is built and `onConnect` never fires. `nil` admits every connection.
+    typealias ShouldAdmit = @MainActor () -> VsockAdmission
 
     private static let logger = Logger(subsystem: "app.kernova", category: "VsockListenerHost")
 
@@ -77,10 +91,20 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
 
         // Refusing here — before any channel exists — means the peer sees the
         // connection reset; a conformant guest agent's reconnect loop retries,
-        // by which time the control handshake has normally landed.
-        if let shouldAdmit, !shouldAdmit() {
+        // and the policy update that follows the handshake wakes it to do so at
+        // once (`VsockGuestClient.resume()`).
+        switch shouldAdmit?() ?? .admit {
+        case .admit:
+            break
+        case .notReady(let reason):
+            Self.logger.info(
+                "Refusing vsock connection on port \(self.port, privacy: .public) — \(reason, privacy: .public)"
+            )
+            close(fd)
+            return false
+        case .denied(let reason):
             Self.logger.warning(
-                "Refusing vsock connection on port \(self.port, privacy: .public) — admission check failed"
+                "Refusing vsock connection on port \(self.port, privacy: .public) — \(reason, privacy: .public)"
             )
             close(fd)
             return false

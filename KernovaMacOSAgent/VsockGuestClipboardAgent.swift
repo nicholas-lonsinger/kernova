@@ -312,10 +312,12 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     }
 
     private func applyEnabledOnMain(_ enabled: Bool) {
+        // Ahead of the no-change guard, so an update that only restates
+        // "enabled" still reaches `resume()` — see its doc comment.
+        if enabled { client.resume() }
         guard self.enabled != enabled else { return }
         self.enabled = enabled
         if enabled {
-            client.resume()
             startPolling()
             clipboardActivityStorage = .enabled
             Self.logger.notice("Clipboard sharing enabled by host policy")

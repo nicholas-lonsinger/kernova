@@ -705,9 +705,17 @@ final class VMInstance {
     /// `clipboard.stream.v1`.
     ///
     /// Evaluated at accept time so it tracks reconnects.
-    func admitsFeatureChannel(requiringClipboardStreaming: Bool) -> Bool {
-        guard let control = vsockControlService, control.isConnected else { return false }
-        return !requiringClipboardStreaming || control.guestSupportsClipboardStreaming
+    func featureChannelAdmission(requiringClipboardStreaming: Bool) -> VsockAdmission {
+        guard let control = vsockControlService, control.isConnected else {
+            return .notReady(reason: "no control channel has completed its handshake")
+        }
+        guard !requiringClipboardStreaming || control.guestSupportsClipboardStreaming else {
+            return .denied(
+                reason:
+                    "the connected guest agent does not advertise \(KernovaCapability.clipboardStreamV1)"
+            )
+        }
+        return .admit
     }
 
     // MARK: - Agent Policy
@@ -794,7 +802,8 @@ final class VMInstance {
         VsockListenerHost(
             port: KernovaVsockPort.log,
             shouldAdmit: { [weak self] in
-                self?.admitsFeatureChannel(requiringClipboardStreaming: false) ?? false
+                self?.featureChannelAdmission(requiringClipboardStreaming: false)
+                    ?? .notReady(reason: "the VM instance is gone")
             }
         ) { [weak self] channel in
             guard let self else {
@@ -814,7 +823,8 @@ final class VMInstance {
         VsockListenerHost(
             port: KernovaVsockPort.clipboard,
             shouldAdmit: { [weak self] in
-                self?.admitsFeatureChannel(requiringClipboardStreaming: true) ?? false
+                self?.featureChannelAdmission(requiringClipboardStreaming: true)
+                    ?? .notReady(reason: "the VM instance is gone")
             }
         ) { [weak self] channel in
             guard let self else {
@@ -1016,25 +1026,35 @@ final class VMInstance {
             oldConfig.clipboardSharingEnabled != newConfig.clipboardSharingEnabled
         guard logChanged || clipboardChanged else { return }
 
-        // Push the policy snapshot to the guest BEFORE manipulating host
-        // listeners. On a disable transition this lets the guest pause its
-        // reconnect loop first; tearing the listener down first would make it
-        // see EOF and pound the host with reconnects until the policy frame
-        // arrives. The control service is nil in the window between accepting a
+        let logEnabled = newConfig.agentLogForwardingEnabled
+        let clipboardEnabled = newConfig.clipboardSharingEnabled
+        let clipboardApplies = clipboardChanged && newConfig.guestOS == .macOS
+
+        // A listener the guest is about to be told about goes up first: the
+        // policy frame wakes the guest's parked reconnect loop at once
+        // (`VsockGuestClient.resume()`), and a redial that beats the listener is
+        // refused and costs the guest a full retry interval.
+        if logChanged && logEnabled {
+            applyLiveLogPolicy(enabled: true, on: socketDevice)
+        }
+        if clipboardApplies && clipboardEnabled {
+            applyLiveClipboardPolicy(enabled: true, on: socketDevice)
+        }
+
+        // The control service is nil in the window between accepting a
         // connection and the guest's Hello — the next Hello-driven send catches
         // that up.
         vsockControlService?.sendPolicyUpdate(agentPolicySnapshot(for: newConfig))
 
-        if logChanged {
-            applyLiveLogPolicy(enabled: newConfig.agentLogForwardingEnabled, on: socketDevice)
+        // A listener being withdrawn comes down after, so the frame pauses the
+        // guest's loop first: tearing it down while the guest still thinks the
+        // feature is on makes the guest see EOF and pound the host with
+        // reconnects until the policy arrives.
+        if logChanged && !logEnabled {
+            applyLiveLogPolicy(enabled: false, on: socketDevice)
         }
-
-        let isMacOSGuest = newConfig.guestOS == .macOS
-        if clipboardChanged && isMacOSGuest {
-            applyLiveClipboardPolicy(
-                enabled: newConfig.clipboardSharingEnabled,
-                on: socketDevice
-            )
+        if clipboardApplies && !clipboardEnabled {
+            applyLiveClipboardPolicy(enabled: false, on: socketDevice)
         }
 
         Self.logger.notice(

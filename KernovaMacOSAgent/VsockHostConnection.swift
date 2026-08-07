@@ -39,8 +39,14 @@ final class VsockHostConnection: @unchecked Sendable {
         lock.withLock { policy == .enabled }
     }
 
-    init() {
-        self.client = VsockGuestClient(port: KernovaVsockPort.log, label: "log")
+    /// Production init — forwards on `KernovaVsockPort.log`.
+    convenience init() {
+        self.init(client: VsockGuestClient(port: KernovaVsockPort.log, label: "log"))
+    }
+
+    /// Designated init; tests inject a socketpair-backed client.
+    init(client: VsockGuestClient) {
+        self.client = client
         // Default-disabled: no connect attempts until the host's first
         // `PolicyUpdate(logForwardingEnabled: true)`.
         self.client.pause()
@@ -63,8 +69,10 @@ final class VsockHostConnection: @unchecked Sendable {
     /// Applies a host policy update for log forwarding.
     ///
     /// Enabling resumes the loop, flushing whatever was buffered while the policy
-    /// was undecided. Disabling closes the channel and discards the buffer — an
-    /// explicit "off" ships nothing retroactively. Idempotent.
+    /// was undecided; an update that only restates "enabled" still reaches
+    /// `VsockGuestClient.resume()`. Disabling closes the channel and discards the
+    /// buffer — an explicit "off" ships nothing retroactively, and repeating it
+    /// does nothing.
     func setEnabled(_ enabled: Bool) {
         let target: ForwardingPolicy = enabled ? .enabled : .disabled
         let needsTransition: Bool = lock.withLock {
@@ -72,9 +80,10 @@ final class VsockHostConnection: @unchecked Sendable {
             policy = target
             return was != target
         }
+        // Ahead of the no-change guard — see `VsockGuestClient.resume()`.
+        if enabled { client.resume() }
         guard needsTransition else { return }
         if enabled {
-            client.resume()
             Self.logger.notice("Log forwarding enabled by host policy")
         } else {
             client.pause()
