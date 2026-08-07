@@ -39,13 +39,34 @@ struct VMInstanceVsockAdmissionTests {
         return frame
     }
 
+    /// The verdict as the listener acts on it, for the assertions that only care
+    /// whether the channel gets in.
+    private func admits(_ instance: VMInstance, clipboard: Bool) -> Bool {
+        instance.featureChannelAdmission(requiringClipboardStreaming: clipboard) == .admit
+    }
+
+    /// Whether the refusal is the routine "handshake hasn't landed" one, which
+    /// the listener logs below `.warning`.
+    ///
+    /// The reason text is not a contract.
+    private func isNotReady(_ verdict: VsockAdmission) -> Bool {
+        if case .notReady = verdict { return true }
+        return false
+    }
+
+    /// Whether the refusal is the one that names the peer.
+    private func isDenied(_ verdict: VsockAdmission) -> Bool {
+        if case .denied = verdict { return true }
+        return false
+    }
+
     // MARK: - Tests
 
-    @Test("Nothing is admitted without a control service")
-    func refusedWithoutControlService() {
+    @Test("Nothing is admitted without a control service", arguments: [false, true])
+    func refusedWithoutControlService(clipboard: Bool) {
         let instance = makeInstance()
-        #expect(!instance.admitsFeatureChannel(requiringClipboardStreaming: false))
-        #expect(!instance.admitsFeatureChannel(requiringClipboardStreaming: true))
+        #expect(
+            isNotReady(instance.featureChannelAdmission(requiringClipboardStreaming: clipboard)))
     }
 
     @Test("Admission follows the control Hello handshake and its capabilities")
@@ -63,22 +84,20 @@ struct VMInstanceVsockAdmissionTests {
         control.start()
         defer { control.stop() }
 
-        // Channel accepted but no guest Hello yet — still refused.
-        #expect(!instance.admitsFeatureChannel(requiringClipboardStreaming: false))
+        // Channel accepted but no guest Hello yet — still refused, and as the
+        // routine "too early" verdict rather than a peer that overstepped.
+        #expect(isNotReady(instance.featureChannelAdmission(requiringClipboardStreaming: false)))
 
-        // A Hello without the streaming capability admits the log channel but
-        // not the clipboard channel.
+        // A Hello without the streaming capability admits the log channel; the
+        // clipboard channel is refused against a *completed* handshake, so that
+        // refusal names the peer.
         try guest.send(makeGuestHello(streamingCapable: false))
-        try await waitForChange {
-            instance.admitsFeatureChannel(requiringClipboardStreaming: false)
-        }
-        #expect(!instance.admitsFeatureChannel(requiringClipboardStreaming: true))
+        try await waitForChange { admits(instance, clipboard: false) }
+        #expect(isDenied(instance.featureChannelAdmission(requiringClipboardStreaming: true)))
 
         // A Hello advertising streaming flips clipboard admission too.
         try guest.send(makeGuestHello(streamingCapable: true))
-        try await waitForChange {
-            instance.admitsFeatureChannel(requiringClipboardStreaming: true)
-        }
+        try await waitForChange { admits(instance, clipboard: true) }
     }
 
     @Test("Stopping the control service withdraws admission")
@@ -96,15 +115,13 @@ struct VMInstanceVsockAdmissionTests {
         control.start()
 
         try guest.send(makeGuestHello(streamingCapable: true))
-        try await waitForChange {
-            instance.admitsFeatureChannel(requiringClipboardStreaming: true)
-        }
+        try await waitForChange { admits(instance, clipboard: true) }
 
         // stop() resets the handshake state — admission drops with it, so a
         // feature connection racing a control teardown is refused.
         control.stop()
-        #expect(!instance.admitsFeatureChannel(requiringClipboardStreaming: false))
-        #expect(!instance.admitsFeatureChannel(requiringClipboardStreaming: true))
+        #expect(!admits(instance, clipboard: false))
+        #expect(!admits(instance, clipboard: true))
     }
 
     @Test("A dead control channel withdraws admission, and a reconnect restores it")
@@ -122,18 +139,14 @@ struct VMInstanceVsockAdmissionTests {
         first.start()
 
         try firstGuest.send(makeGuestHello(streamingCapable: true))
-        try await waitForChange {
-            instance.admitsFeatureChannel(requiringClipboardStreaming: true)
-        }
+        try await waitForChange { admits(instance, clipboard: true) }
 
         // Nobody calls stop() when a guest agent simply disappears — the
         // service settles itself, and admission drops with it rather than
         // keeping log and clipboard channels admitted onto a dead channel.
         firstGuest.close()
-        try await waitForChange {
-            !instance.admitsFeatureChannel(requiringClipboardStreaming: false)
-        }
-        #expect(!instance.admitsFeatureChannel(requiringClipboardStreaming: true))
+        try await waitForChange { !admits(instance, clipboard: false) }
+        #expect(!admits(instance, clipboard: true))
 
         // The accept path, as `startVsockServices()` runs it: stop whatever is
         // installed (a no-op on an already-settled service) and install a fresh
@@ -152,9 +165,7 @@ struct VMInstanceVsockAdmissionTests {
         defer { second.stop() }
 
         try secondGuest.send(makeGuestHello(streamingCapable: true))
-        try await waitForChange {
-            instance.admitsFeatureChannel(requiringClipboardStreaming: true)
-        }
+        try await waitForChange { admits(instance, clipboard: true) }
         #expect(instance.vsockControlService !== first)
     }
 }

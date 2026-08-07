@@ -191,6 +191,17 @@ final class VsockGuestClient: @unchecked Sendable {
     /// `resume()`; reversible, unlike `stopped`.
     private var paused = false
 
+    /// A `resume()` the loop has not acted on yet.
+    ///
+    /// Latched rather than edge-triggered: `resume()` routinely lands while the
+    /// loop is mid-attempt rather than parked, and the wake must survive to the
+    /// next park.
+    private var wakeRequested = false
+
+    /// The task holding the current between-attempts sleep; cancelling it is
+    /// what wakes the loop early.
+    private var retryWaiter: Task<Void, Never>?
+
     // MARK: - Init
 
     init(
@@ -238,10 +249,22 @@ final class VsockGuestClient: @unchecked Sendable {
         ch?.close()
     }
 
-    /// Resumes the reconnect loop after `pause()`, reconnecting within
-    /// `retryInterval`.
+    /// Resumes the reconnect loop after `pause()` and has it connect now rather
+    /// than at the end of the interval it is sleeping through.
+    ///
+    /// Idempotent, and meaningful on a client that was never paused: there it
+    /// means "reconnect at the next opportunity". The agent calls it for every
+    /// host policy update that says enabled, including one that changes
+    /// nothing, because that update is also the host's word that its control
+    /// handshake has landed — the thing the host's feature-channel admission
+    /// gate refuses connections ahead of.
     func resume() {
-        lock.withLock { paused = false }
+        let waiter: Task<Void, Never>? = lock.withLock {
+            paused = false
+            wakeRequested = true
+            return retryWaiter
+        }
+        waiter?.cancel()
     }
 
     /// Stops the loop and tears down any active channel; later `start` calls are
@@ -269,7 +292,14 @@ final class VsockGuestClient: @unchecked Sendable {
 
     private func runReconnectLoop(serve: @Sendable @escaping (VsockChannel) async -> Void) async {
         while !Task.isCancelled {
-            let isPaused = lock.withLock { paused }
+            let isPaused: Bool = lock.withLock {
+                // A wake latched before this attempt is satisfied by the attempt
+                // itself, so it must not also skip the park that follows. A
+                // `resume()` arriving mid-attempt is a fresh signal instead, and
+                // the next `waitBeforeRetry()` consumes it.
+                if !paused { wakeRequested = false }
+                return paused
+            }
             if !isPaused {
                 let outcome = await connectAndServe(serve: serve)
                 switch outcome {
@@ -281,8 +311,39 @@ final class VsockGuestClient: @unchecked Sendable {
                 }
             }
             guard !Task.isCancelled else { break }
+            await waitBeforeRetry()
+        }
+    }
+
+    /// Suspends between connect attempts until `retryInterval` elapses,
+    /// `resume()` wakes the loop, or the loop task is cancelled.
+    ///
+    /// The sleep runs in its own task so `resume()` can cancel it without
+    /// cancelling the loop, and one lock hold both consumes a pending wake and
+    /// publishes the sleeper, so a `resume()` racing this call either finds the
+    /// sleeper to cancel or leaves the flag that skips the park.
+    private func waitBeforeRetry() async {
+        let waiter = Task<Void, Never> { [clock, retryInterval] in
             try? await clock.sleep(for: retryInterval)
         }
+        let parked: Bool = lock.withLock {
+            if wakeRequested {
+                wakeRequested = false
+                return false
+            }
+            retryWaiter = waiter
+            return true
+        }
+        guard parked else {
+            waiter.cancel()
+            return
+        }
+        await withTaskCancellationHandler {
+            await waiter.value
+        } onCancel: {
+            waiter.cancel()
+        }
+        lock.withLock { retryWaiter = nil }
     }
 
     private func connectAndServe(

@@ -483,6 +483,81 @@ struct ClassifySocketErrnoTests {
         _ = try await awaitFirst(servedStream)
         #expect(calls.value >= 1)
     }
+
+    /// The interval is far past `testWaitBackstop`, so the connect can only
+    /// arrive because `resume()` cut the sleep short — a loop that waits its
+    /// interval out fails the test rather than passing slowly.
+    @Test(
+        "resume() cuts short the sleep a parked loop is in",
+        arguments: EngineClockKind.allCases)
+    func resumeWakesAParkedLoop(kind: EngineClockKind) async throws {
+        let (localFd, remoteFd) = try makeRawSocketPair()
+        let remote = VsockChannel(fileDescriptor: remoteFd)
+        remote.start()
+        defer { remote.close() }
+
+        let client = makeTestClient(
+            kind: kind, port: 12345, label: "test", retryInterval: 600
+        ) { _, _ in .success(localFd) }
+        defer { client.stop() }
+
+        let (servedStream, continuation) = AsyncStream<Void>.makeStream()
+        client.pause()
+        client.start { channel in
+            continuation.yield(())
+            do { for try await _ in channel.incoming {} } catch {}
+        }
+
+        client.resume()
+        _ = try await awaitFirst(servedStream)
+    }
+
+    /// A wake dropped on the floor here costs a whole retry interval.
+    ///
+    /// The ordering a VM resume produces: the host refuses the feature channel
+    /// while its control handshake is still in flight, and the policy update
+    /// that clears the refusal lands before the loop reaches its next sleep.
+    @Test("A resume() landing mid-attempt is what the next park consumes")
+    func resumeMidAttemptSkipsTheNextPark() async throws {
+        let (localFd, remoteFd) = try makeRawSocketPair()
+        let remote = VsockChannel(fileDescriptor: remoteFd)
+        remote.start()
+        defer { remote.close() }
+
+        let attempts = AtomicInt()
+        let firstAttemptEntered = DispatchSemaphore(value: 0)
+        let firstAttemptRelease = DispatchSemaphore(value: 0)
+
+        let client = makeTestClient(
+            kind: .monotonic, port: 12345, label: "test", retryInterval: 600
+        ) { _, _ in
+            // The provider runs synchronously on the loop's own task, so the
+            // loop is provably mid-attempt — not parked — while it blocks here.
+            guard attempts.increment() == 1 else { return .success(localFd) }
+            firstAttemptEntered.signal()
+            firstAttemptRelease.wait()
+            return .failure(.transient("test: first attempt refused"))
+        }
+        defer { client.stop() }
+
+        let (servedStream, continuation) = AsyncStream<Void>.makeStream()
+        client.start { channel in
+            continuation.yield(())
+            do { for try await _ in channel.incoming {} } catch {}
+        }
+
+        // Blocking waits go to GCD so the cooperative pool keeps its threads
+        // (docs/TESTING.md, "Blocking bridge calls").
+        let entered = await offCooperativePool {
+            firstAttemptEntered.wait(timeout: .now() + testWaitBackstop) == .success
+        }
+        try #require(entered)
+        client.resume()
+        firstAttemptRelease.signal()
+
+        _ = try await awaitFirst(servedStream)
+        #expect(attempts.value == 2)
+    }
 }
 
 @Suite("Bounded blocking connect: socket ownership and the one-per-label gate")

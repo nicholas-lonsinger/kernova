@@ -2731,6 +2731,61 @@ struct VsockGuestClipboardAgentTests {
         #expect(offer2.generation > offer1.generation)
     }
 
+    /// A no-change guard that swallows the restated enable costs a full retry
+    /// interval.
+    ///
+    /// The resume-from-saved-state ordering: the clipboard channel redials while
+    /// the host's control handshake is still in flight, the host refuses it, and
+    /// the policy update that follows the handshake restates a value the agent
+    /// already holds — the only wake the parked loop gets.
+    @Test("a policy update restating 'enabled' reconnects a refused clipboard channel")
+    func restatedEnablePolicyReconnects() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd0, remoteFd0) = try makeRawSocketPair()
+        let (agentFd1, remoteFd1) = try makeRawSocketPair()
+        let host0 = VsockChannel(fileDescriptor: remoteFd0)
+        let host1 = VsockChannel(fileDescriptor: remoteFd1)
+        host0.start()
+        host1.start()
+        defer { host0.close(); host1.close() }
+
+        let fdBox = FdBox(fds: [agentFd0, agentFd1])
+        let provideCount = AtomicInt()
+        // A retry interval far past `testWaitBackstop`, so the second connect can
+        // only land inside the test because the policy update woke the loop.
+        let client = VsockGuestClient(
+            port: 49152,
+            label: "clipboard-restated-policy-test",
+            clock: MonotonicEngineClock(),
+            retryInterval: 600
+        ) { _, _ in
+            let n = provideCount.increment()
+            guard let fd = fdBox.fd(at: n - 1) else {
+                return .failure(.transient("test: no fd at index \(n - 1)"))
+            }
+            return .success(fd)
+        }
+
+        let agent = VsockGuestClipboardAgent(pasteboard: pasteboard, client: client)
+        defer { agent.stop() }
+
+        agent.start()
+        agent.applyPolicy(enabled: true, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
+        // RATIONALE: sanctioned no-signal polls (docs/TESTING.md "Async waits in
+        // tests") — `liveChannelForTesting` is SUT-internal state, as in
+        // `startAgentAndWaitForLiveChannel`.
+        try await waitUntil { agent.liveChannelForTesting != nil }
+
+        // The host hangs up, as a refused feature channel does.
+        host0.close()
+        try await waitUntil { agent.liveChannelForTesting == nil }
+
+        // Same policy, second delivery — the enable the guest already applied.
+        agent.applyPolicy(enabled: true, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
+        try await waitUntil { agent.liveChannelForTesting != nil }
+        #expect(provideCount.value == 2)
+    }
+
     // MARK: - Teardown identity (Guard #1)
 
     // The serve() teardown re-checks `liveChannel === channel` before tearing the

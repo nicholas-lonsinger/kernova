@@ -36,13 +36,18 @@ struct VsockListenerHostTests {
 
     // MARK: - Admission (#145)
 
-    @Test("A failing admission check refuses the connection and closes the fd")
-    func admissionRefusalClosesFd() throws {
+    @Test(
+        "Either refusal verdict refuses the connection and closes the fd",
+        arguments: [
+            VsockAdmission.notReady(reason: "test: handshake pending"),
+            .denied(reason: "test: peer not entitled"),
+        ])
+    func admissionRefusalClosesFd(verdict: VsockAdmission) throws {
         let (a, b) = try makeRawSocketPair()
         defer { close(b) }  // `a` is owned — and must be closed — by the listener.
 
         var connected = false
-        let host = VsockListenerHost(port: 49_153, shouldAdmit: { false }) { _ in
+        let host = VsockListenerHost(port: 49_153, shouldAdmit: { verdict }) { _ in
             connected = true
         }
 
@@ -65,7 +70,7 @@ struct VsockListenerHostTests {
         defer { close(b) }
 
         var received: VsockChannel?
-        let host = VsockListenerHost(port: 49_153, shouldAdmit: { true }) { channel in
+        let host = VsockListenerHost(port: 49_153, shouldAdmit: { .admit }) { channel in
             received = channel
         }
 
