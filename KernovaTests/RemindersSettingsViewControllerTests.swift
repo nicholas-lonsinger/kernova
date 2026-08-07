@@ -78,11 +78,17 @@ struct RemindersSettingsViewControllerTests {
     }
 
     /// The grouped-form card `control` sits in — the nearest ancestor carrying
-    /// the card's `NSBox` background.
+    /// the card's rounded `NSBox` background.
+    ///
+    /// Keyed on the corner radius, not on `NSBox` alone: a multi-row card's
+    /// inter-row hairlines are `NSBox`es too, so the looser test stops at the
+    /// card's inner stack and reports an edge inset by the card's padding.
     private func card(containing control: NSView) -> NSView? {
         var candidate = control.superview
         while let view = candidate {
-            if view.subviews.contains(where: { $0 is NSBox }) { return view }
+            if view.subviews.contains(where: { ($0 as? NSBox)?.cornerRadius ?? 0 > 0 }) {
+                return view
+            }
             candidate = view.superview
         }
         return nil
@@ -112,7 +118,7 @@ struct RemindersSettingsViewControllerTests {
         for fragment in [
             "Appears when you quit",
             "sidebar prompt to install",
-            "stop its sidebar reminder",
+            "stop its own reminder",
             "Turns every reminder above back on",
         ] {
             let caption = findLabel(containing: fragment, in: root)
@@ -139,8 +145,10 @@ struct RemindersSettingsViewControllerTests {
         #expect(documentView.frame.height > scrollView.frame.height)
     }
 
-    @Test("Each app-wide reminder is its own single-row card")
-    func appRemindersAreSeparateCards() throws {
+    /// Each governing switch owns a card, so its caption sits directly under it
+    /// and needs no "The <name> reminder…" prefix to say what it describes.
+    @Test("Each reminder switch is its own single-row card")
+    func remindersAreSeparateCards() throws {
         let controller = makeLaidOutController(vmCount: 2)
         defer { controller.viewDidDisappear() }
 
@@ -149,8 +157,6 @@ struct RemindersSettingsViewControllerTests {
         // Two app-wide switches plus one per VM.
         #expect(allSubviews(NSSwitch.self, in: controller.view).count == 4)
 
-        // Each app-wide switch sits in a card of its own, so its caption needs
-        // no "The <name> reminder…" prefix to say which switch it describes.
         let menuBarToggle = try #require(
             switches(action: "menuBarQuitToggled", in: controller).first)
         let agentToggle = try #require(
@@ -160,6 +166,28 @@ struct RemindersSettingsViewControllerTests {
         #expect(menuBarCard !== agentCard)
         #expect(allSubviews(NSSwitch.self, in: menuBarCard).count == 1)
         #expect(allSubviews(NSSwitch.self, in: agentCard).count == 1)
+    }
+
+    /// Apple's guidance for showing that one control governs others is to indent
+    /// the subordinates beneath it.
+    ///
+    /// The greying only speaks while the governing switch is off; the indent
+    /// states the relationship at all times.
+    @Test("The per-VM rows are indented beneath the switch that governs them")
+    func perVMRowsIndentUnderGoverningSwitch() throws {
+        let controller = makeLaidOutController(vmCount: 2)
+        defer { controller.viewDidDisappear() }
+
+        let agentToggle = try #require(
+            switches(action: "agentInstallToggled", in: controller).first)
+        let governingCard = try #require(card(containing: agentToggle))
+        let vmToggle = try #require(vmSwitches(in: controller).first)
+        let vmCard = try #require(card(containing: vmToggle))
+
+        let root = controller.view
+        let governingLeading = governingCard.convert(governingCard.bounds, to: root).minX
+        let subordinateLeading = vmCard.convert(vmCard.bounds, to: root).minX
+        #expect(subordinateLeading - governingLeading == groupedFormSubOptionIndent)
     }
 
     @Test("Turning the app-wide install reminder off disables and explains the per-VM rows")

@@ -77,8 +77,8 @@ final class RemindersSettingsViewController: NSViewController {
         agentInstallSwitch.target = self
         agentInstallSwitch.action = #selector(agentInstallToggled)
 
-        // App-wide reminders: one card per reminder, each with its own caption,
-        // so neither description has to name which switch it belongs to.
+        // One card per reminder, each with its own caption, so no description has
+        // to name the switch it belongs to.
         let menuBarCard = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow("Menu Bar Quit Reminder", control: menuBarQuitSwitch)
         ])
@@ -86,24 +86,50 @@ final class RemindersSettingsViewController: NSViewController {
             "Appears when you quit (⌘Q) and Kernova keeps running in the menu bar, reminding you "
                 + "it — and your virtual machines — are still going.")
 
+        // The governing control of the Virtual Machine Reminders section, so it
+        // heads that section rather than sitting with the app reminder above.
         let agentInstallCard = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow("Guest Agent Install Reminder", control: agentInstallSwitch)
         ])
         let agentInstallCaption = makeGroupedFormCaption(
             "The sidebar prompt to install the Kernova guest agent on a running macOS virtual "
-                + "machine. Turning it off silences it for every virtual machine.")
+                + "machine.")
 
         // Per-VM reminders: rebuilt on every appear (VMs may be added or removed).
         vmSection.orientation = .vertical
         vmSection.alignment = .leading
         vmSection.spacing = Spacing.none
         let vmCaption = makeGroupedFormCaption(
-            "Turn a virtual machine off to stop its sidebar reminder to install the Kernova guest "
-                + "agent. This has no effect once the agent is installed.")
+            "Turn a virtual machine off to stop its own reminder. This has no effect once the "
+                + "agent is installed.")
         vmOverrideCaption = makeGroupedFormCaption(
-            "The Guest Agent Install Reminder above is off, so these have no effect. Turn it back "
-                + "on to choose per virtual machine.")
+            "The reminder above is off, so these have no effect. Turn it back on to choose per "
+                + "virtual machine.")
         vmOverrideCaption.isHidden = true
+
+        // Indented beneath the switch that governs them, the alignment Apple's
+        // guidance uses to show a control's subordinates.
+        let vmSubordinates = NSStackView(views: [vmSection, vmCaption, vmOverrideCaption])
+        vmSubordinates.orientation = .vertical
+        vmSubordinates.alignment = .leading
+        vmSubordinates.spacing = Spacing.small
+        vmSubordinates.translatesAutoresizingMaskIntoConstraints = false
+        // A plain container, not an arranged subview of `content` directly: the
+        // content stack pins its members' leading edges to its own, which an
+        // inset applied out there would fight. Holding the inset inside keeps
+        // the container full-width and the stack's alignment satisfied.
+        let vmGroup = NSView()
+        vmGroup.addSubview(vmSubordinates)
+        NSLayoutConstraint.activate([
+            vmSubordinates.topAnchor.constraint(equalTo: vmGroup.topAnchor),
+            vmSubordinates.bottomAnchor.constraint(equalTo: vmGroup.bottomAnchor),
+            vmSubordinates.leadingAnchor.constraint(
+                equalTo: vmGroup.leadingAnchor, constant: groupedFormSubOptionIndent),
+            vmSubordinates.trailingAnchor.constraint(equalTo: vmGroup.trailingAnchor),
+        ])
+        for member in [vmSection, vmCaption, vmOverrideCaption] {
+            member.widthAnchor.constraint(equalTo: vmSubordinates.widthAnchor).isActive = true
+        }
 
         let resetButton = NSButton(
             title: "Reset All Reminders", target: self, action: #selector(resetAllReminders))
@@ -117,12 +143,10 @@ final class RemindersSettingsViewController: NSViewController {
             makeGroupedFormSectionHeader("App Reminders"),
             menuBarCard,
             menuBarCaption,
+            makeGroupedFormSectionHeader("Virtual Machine Reminders"),
             agentInstallCard,
             agentInstallCaption,
-            makeGroupedFormSectionHeader("Virtual Machine Reminders"),
-            vmSection,
-            vmCaption,
-            vmOverrideCaption,
+            vmGroup,
             resetButton,
             resetCaption,
         ])
@@ -130,20 +154,17 @@ final class RemindersSettingsViewController: NSViewController {
         content.alignment = .leading
         content.spacing = Spacing.small
         // A caption closes its group, so the gap after one is what separates
-        // blocks: the wider `section` step where a section ends, a `large` step
-        // between the two cards within App Reminders. `vmOverrideCaption` follows
-        // `vmCaption` directly, so both carry the section step and whichever ends
-        // up last-visible supplies the gap above the reset button.
-        content.setCustomSpacing(Spacing.large, after: menuBarCaption)
-        content.setCustomSpacing(Spacing.section, after: agentInstallCaption)
-        content.setCustomSpacing(Spacing.section, after: vmCaption)
-        content.setCustomSpacing(Spacing.section, after: vmOverrideCaption)
+        // blocks. The governing switch's caption keeps the tighter step, so its
+        // subordinates read as continuing the same group rather than opening a
+        // new one.
+        content.setCustomSpacing(Spacing.section, after: menuBarCaption)
+        content.setCustomSpacing(Spacing.section, after: vmGroup)
 
         // Full-width members (cards and wrapping captions). The reset button is
         // intentionally excluded so it hugs its intrinsic width at the leading edge.
         for member in [
             menuBarCard, menuBarCaption, agentInstallCard, agentInstallCaption,
-            vmSection, vmCaption, vmOverrideCaption, resetCaption,
+            vmGroup, resetCaption,
         ] {
             member.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         }
