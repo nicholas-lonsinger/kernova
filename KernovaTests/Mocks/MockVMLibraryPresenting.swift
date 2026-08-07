@@ -25,6 +25,9 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     private(set) var cancelPreparingInstances: [VMInstance] = []
     private(set) var installerMountedNames: [String] = []
     private(set) var installerMountedPurposes: [GuestAgentInstallerPurpose] = []
+    /// Parallel to `installerMountedNames`: how each request said the disk
+    /// reaches the guest.
+    private(set) var installerMountedDeliveries: [GuestAgentDiskDelivery] = []
     private(set) var creationWizardCount = 0
     private(set) var focusGuestDisplayInstances: [VMInstance] = []
 
@@ -44,9 +47,12 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     func presentRecoveryBoot(for instance: VMInstance) { recoveryBootInstances.append(instance) }
     func presentStopPaused(for instance: VMInstance) { stopPausedInstances.append(instance) }
     func presentCancelPreparing(for instance: VMInstance) { cancelPreparingInstances.append(instance) }
-    func presentInstallerMounted(vmName: String, purpose: GuestAgentInstallerPurpose) {
+    func presentInstallerMounted(
+        vmName: String, purpose: GuestAgentInstallerPurpose, delivery: GuestAgentDiskDelivery
+    ) {
         installerMountedNames.append(vmName)
         installerMountedPurposes.append(purpose)
+        installerMountedDeliveries.append(delivery)
     }
     func presentCreationWizard() { creationWizardCount += 1 }
     func focusGuestDisplay(for instance: VMInstance) {
@@ -73,6 +79,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     var showInstallerMountedAlert: Bool { !installerMountedNames.isEmpty }
     var installerMountedVMName: String? { installerMountedNames.last }
     var installerMountedPurpose: GuestAgentInstallerPurpose? { installerMountedPurposes.last }
+    var installerMountedDelivery: GuestAgentDiskDelivery? { installerMountedDeliveries.last }
     var showCreationWizard: Bool { creationWizardCount > 0 }
 
     /// Clears all recorded requests (mirrors resetting the former flags).
@@ -89,6 +96,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
         cancelPreparingInstances.removeAll()
         installerMountedNames.removeAll()
         installerMountedPurposes.removeAll()
+        installerMountedDeliveries.removeAll()
         creationWizardCount = 0
         focusGuestDisplayInstances.removeAll()
     }

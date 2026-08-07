@@ -187,8 +187,10 @@ final class DetailAlertsPresenter: NSObject {
         enqueue { $0.present($0.cancelPreparingConfig(instance)) }
     }
 
-    func presentInstallerMounted(vmName: String, purpose: GuestAgentInstallerPurpose) {
-        enqueue { $0.present($0.installerMountedConfig(vmName, purpose: purpose)) }
+    func presentInstallerMounted(
+        vmName: String, purpose: GuestAgentInstallerPurpose, delivery: GuestAgentDiskDelivery
+    ) {
+        enqueue { $0.present($0.installerMountedConfig(vmName, purpose: purpose, delivery: delivery)) }
     }
 
     // MARK: - Serialization queue
@@ -354,23 +356,34 @@ final class DetailAlertsPresenter: NSObject {
     }
 
     private func installerMountedConfig(
-        _ vmName: String, purpose: GuestAgentInstallerPurpose
+        _ vmName: String, purpose: GuestAgentInstallerPurpose, delivery: GuestAgentDiskDelivery
     ) -> AlertConfiguration {
-        let title: String
         let nextStep: String
         switch purpose {
         case .install:
-            title = "Installer Mounted"
             nextStep = "run install.command to complete setup."
         case .manage:
-            title = "Guest Agent Disk Attached"
             nextStep =
                 "run install.command to reinstall, or uninstall.command to remove the agent."
         }
+
+        let title: String
+        let lead: String
+        switch delivery {
+        case .usb:
+            title = purpose == .install ? "Installer Mounted" : "Guest Agent Disk Attached"
+            lead = "The Kernova guest agent disk has been attached to \(vmName) as a USB disk."
+        case .virtio:
+            // Nothing was attached just now — the disk is there for the whole
+            // session, so the alert describes where it already is.
+            title = "Guest Agent Disk Attached"
+            lead = "The Kernova guest agent disk stays attached to \(vmName) whenever it runs."
+        }
+
         return AlertConfiguration(
             title: title,
             message:
-                "The Kernova guest agent disk has been attached to \(vmName) as a USB disk. Inside the VM, open the “Kernova Guest Agent” disk in Finder and \(nextStep)",
+                "\(lead) Inside the VM, open the “\(KernovaMacOSAgentInfo.diskLabel)” disk in Finder and \(nextStep)",
             buttons: [AlertButton("OK", role: .cancel)])
     }
 }

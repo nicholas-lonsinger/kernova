@@ -1250,4 +1250,147 @@ struct ConfigurationBuilderTests {
             attachedPath == realCanonical,
             "Attachment URL should be the symlink target. Got: \(attachedPath), expected: \(realCanonical)")
     }
+
+    // MARK: - Guest Agent Disk
+
+    /// A macOS-guest config carrying `installedVersion` as its install record.
+    ///
+    /// `bootMode: .efi` rather than `.macOS`: the delivery decision reads
+    /// `guestOS`, while the Mac boot path needs hardware-model data that only a
+    /// real restore image can produce.
+    private func makeAgentDiskConfig(installedVersion: String?) -> VMConfiguration {
+        var config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .efi)
+        if let installedVersion {
+            config.installedImage = .macOSRestoreImage(version: installedVersion, build: "21A559")
+        }
+        return config
+    }
+
+    /// Writes a stand-in for the bundled installer image.
+    ///
+    /// `Bundle.main` in a test run is the test host, not the app, so the real
+    /// resource is never found — every guest-agent-disk test injects its own.
+    ///
+    /// Caller must `defer` removal of the returned URL.
+    private func makeAgentDiskImage() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString).dmg")
+        try Data(count: 1_048_576).write(to: url)
+        return url
+    }
+
+    @Test("A guest below the USB floor gets the agent disk on virtio, attached last")
+    func subFloorGuestGetsVirtioAgentDisk() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let agentURL = try makeAgentDiskImage()
+        defer { try? FileManager.default.removeItem(at: agentURL) }
+
+        let builder = ConfigurationBuilder(guestAgentDiskURL: agentURL)
+        let result = try builder.assemble(
+            from: makeAgentDiskConfig(installedVersion: "12.0.1"), bundleURL: bundleURL,
+            validate: false)
+        let vz = result.configuration
+
+        #expect(vz.storageDevices.count == 2)
+        let agentDevice = try #require(vz.storageDevices.last as? VZVirtioBlockDeviceConfiguration)
+        let attachment = try #require(agentDevice.attachment as? VZDiskImageStorageDeviceAttachment)
+        #expect(attachment.isReadOnly)
+        #expect(
+            attachment.url.standardizedFileURL.path(percentEncoded: false)
+                == agentURL.standardizedFileURL.path(percentEncoded: false))
+        // The whole point of the virtio path: nothing lands on the USB bus.
+        #expect(vz.usbControllers.first?.usbDevices.isEmpty == true)
+    }
+
+    @Test(
+        "A guest at or above the USB floor gets no agent disk",
+        arguments: ["12.3", "12.3.1", "13.0", "26.0"])
+    func atFloorGuestGetsNoAgentDisk(installedVersion: String) throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let agentURL = try makeAgentDiskImage()
+        defer { try? FileManager.default.removeItem(at: agentURL) }
+
+        let builder = ConfigurationBuilder(guestAgentDiskURL: agentURL)
+        let result = try builder.assemble(
+            from: makeAgentDiskConfig(installedVersion: installedVersion), bundleURL: bundleURL,
+            validate: false)
+        #expect(result.configuration.storageDevices.count == 1)
+    }
+
+    @Test("A guest of unknown version gets no agent disk")
+    func unknownVersionGuestGetsNoAgentDisk() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let agentURL = try makeAgentDiskImage()
+        defer { try? FileManager.default.removeItem(at: agentURL) }
+
+        let builder = ConfigurationBuilder(guestAgentDiskURL: agentURL)
+        let result = try builder.assemble(
+            from: makeAgentDiskConfig(installedVersion: nil), bundleURL: bundleURL, validate: false)
+        #expect(result.configuration.storageDevices.count == 1)
+    }
+
+    @Test("A Linux guest gets no agent disk")
+    func linuxGuestGetsNoAgentDisk() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let agentURL = try makeAgentDiskImage()
+        defer { try? FileManager.default.removeItem(at: agentURL) }
+
+        var config = makeLinuxConfig()
+        config.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
+        let builder = ConfigurationBuilder(guestAgentDiskURL: agentURL)
+        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
+        #expect(result.configuration.storageDevices.count == 1)
+    }
+
+    @Test("A missing installer image leaves the VM bootable")
+    func missingAgentDiskStillBuilds() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString).dmg")
+        let builder = ConfigurationBuilder(guestAgentDiskURL: missing)
+        let result = try builder.assemble(
+            from: makeAgentDiskConfig(installedVersion: "12.0.1"), bundleURL: bundleURL,
+            validate: false)
+        #expect(result.configuration.storageDevices.count == 1)
+    }
+
+    @Test("A build carrying no installer image leaves the VM bootable")
+    func absentAgentDiskStillBuilds() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let builder = ConfigurationBuilder(guestAgentDiskURL: nil)
+        let result = try builder.assemble(
+            from: makeAgentDiskConfig(installedVersion: "12.0.1"), bundleURL: bundleURL,
+            validate: false)
+        #expect(result.configuration.storageDevices.count == 1)
+    }
+
+    @Test("The agent disk's identity is fixed by the bundle and distinct from the main disk's")
+    func agentDiskIDIsStableAndDistinct() throws {
+        let bundleURL = try makeTempBundle()
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let otherBundleURL = try makeTempBundle()
+        defer { try? FileManager.default.removeItem(at: otherBundleURL) }
+
+        let disk = ConfigurationBuilder.guestAgentDisk(installerPath: "/tmp/a.dmg", bundleURL: bundleURL)
+        let again = ConfigurationBuilder.guestAgentDisk(installerPath: "/tmp/a.dmg", bundleURL: bundleURL)
+        let other = ConfigurationBuilder.guestAgentDisk(
+            installerPath: "/tmp/a.dmg", bundleURL: otherBundleURL)
+        let mainDisk = ConfigurationBuilder.defaultMainDisk(layout: VMBundleLayout(bundleURL: bundleURL))
+
+        #expect(disk.id == again.id)
+        #expect(disk.id != other.id)
+        #expect(disk.id != mainDisk.id)
+        // `.dmg` would otherwise default to the USB bus this delivery avoids.
+        #expect(disk.kind == .virtio)
+        #expect(disk.readOnly)
+        #expect(!disk.isInternal)
+    }
 }

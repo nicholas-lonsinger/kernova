@@ -65,7 +65,8 @@ band.
 matches `VZUSBDeviceConfiguration.uuid` against the saved-state file's recorded device list, so
 `RemovableMediaItem.id` is written to `config.json` and reused as the device UUID, and the
 synthesized main disk derives its own from the bundle path
-(`ConfigurationBuilder.stableMainDiskID(forBundleAt:)`). Fresh UUIDs break restore.
+(`ConfigurationBuilder.stableMainDiskID(forBundleAt:)`), as does the guest-agent disk from a
+salted variant of it. Fresh UUIDs break restore.
 `clonedForNewInstance` regenerates them so two bundles never share device identity.
 
 ### Services
@@ -362,10 +363,13 @@ kernel resources until relaunch — hence one owner (`RuntimeFileAccess`) and on
   signature when the DMG is baked — export-time re-signing cannot reach inside a DMG resource
   ([RELEASING.md](RELEASING.md)); version bumps are in [BUILD.md](BUILD.md).
 
-  The host's `toggleGuestAgentDisk` menu item attaches that DMG to a running VM as USB mass storage;
-  the guest user runs its `install.command`, which stages the bundle into `~/Applications` and
-  registers a user LaunchAgent; the host auto-ejects once the agent handshakes a current version
-  (`VMInstance.onAgentBecameCurrent`). The agent runs `NSApplication.run()`, **not** `dispatchMain()`
+  That DMG reaches a guest on one of two buses, and `GuestAgentDiskDelivery` owns the choice:
+  the host's `toggleGuestAgentDisk` menu item hot-plugs it as USB mass storage, while a guest too
+  old to bind a driver to one ([VERSION-FLOORS.md](VERSION-FLOORS.md)) instead gets it on
+  `vzConfig.storageDevices` at every boot, appended by `ConfigurationBuilder` and never persisted
+  into `config.storageDisks`. Either way the guest user runs its `install.command`, which stages
+  the bundle into `~/Applications` and registers a user LaunchAgent; the host auto-ejects the USB
+  attachment once the agent handshakes a current version (`VMInstance.onAgentBecameCurrent`). The agent runs `NSApplication.run()`, **not** `dispatchMain()`
   — pasteboard promise callbacks (`provideDataForType`) are delivered by CFRunLoop and never fire
   under a GCD-only main queue. Its executable and Swift module stay `KernovaMacOSAgent` while the
   product is `Kernova Guest Agent`, because the LaunchAgent's `ProgramArguments` path and

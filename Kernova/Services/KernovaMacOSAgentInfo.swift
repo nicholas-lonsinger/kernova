@@ -14,6 +14,12 @@ enum KernovaMacOSAgentInfo {
     private static let dmgResourceName = "KernovaMacOSAgent"
     private static let dmgResourceExtension = "dmg"
 
+    /// Label every attachment of the installer image carries, matching the
+    /// volume name the "Package Guest Agent DMG" build phase gives it — so the
+    /// name Kernova shows for the attachment is the name the guest shows for
+    /// the mounted volume.
+    static let diskLabel = "Kernova Guest Agent"
+
     /// The version of the guest agent embedded in this build of the host.
     ///
     /// Read from `KernovaMacOSAgentVersion.txt`, written by the "Package Guest
