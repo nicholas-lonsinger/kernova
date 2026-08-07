@@ -320,6 +320,15 @@ final class ResolveStubURLProtocol: URLProtocol, @unchecked Sendable {
         else {
             preconditionFailure("ResolveStubURLProtocol: could not build a response")
         }
+        // A 3xx carrying a `Location` goes back as a redirect rather than as a
+        // body, which is what puts the session's redirect policy in the loop.
+        if (300..<400).contains(reply.statusCode), let location = headers["Location"],
+            let target = URL(string: location, relativeTo: url)?.absoluteURL
+        {
+            client?.urlProtocol(
+                self, wasRedirectedTo: URLRequest(url: target), redirectResponse: response)
+            return
+        }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         if !reply.body.isEmpty { client?.urlProtocol(self, didLoad: reply.body) }
         client?.urlProtocolDidFinishLoading(self)
@@ -355,6 +364,8 @@ struct LinuxImageResolveServiceTests {
             directoryURLString:
                 "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/aarch64/iso/",
             isoPattern: "Fedora-Workstation-Live-44-*.aarch64.iso",
+            manifestDirectoryURLString:
+                "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/aarch64/iso/",
             checksumManifest: "Fedora-Workstation-44-1.7-aarch64-CHECKSUM"
         )
     }
@@ -378,12 +389,14 @@ struct LinuxImageResolveServiceTests {
     private func editedEntry(
         directoryURLString: String = "https://cdimage.ubuntu.com/ubuntu/releases/noble/release/",
         isoPattern: String = "ubuntu-24.04*-desktop-arm64.iso",
+        manifestDirectoryURLString: String? = nil,
         checksumManifest: String = "SHA256SUMS"
     ) -> LinuxImageCatalogEntry {
         makeLinuxCatalogEntry(
             id: "ubuntu-desktop-24.04",
             directoryURLString: directoryURLString,
             isoPattern: isoPattern,
+            manifestDirectoryURLString: manifestDirectoryURLString,
             checksumManifest: checksumManifest
         )
     }
@@ -410,6 +423,21 @@ struct LinuxImageResolveServiceTests {
             throws: LinuxImageResolveError.invalidISOPattern(pattern: "../*.iso")
         ) {
             _ = try await makeService().resolve(editedEntry(isoPattern: "../*.iso"))
+        }
+        #expect(ResolveStubURLProtocol.requestedURLs.isEmpty)
+    }
+
+    @Test("A manifest directory that is not HTTPS is refused before anything is requested")
+    func refusesInsecureManifestDirectory() async throws {
+        serve(manifest: ubuntuManifest)
+        defer { ResolveStubURLProtocol.reset() }
+        let entry = editedEntry(
+            manifestDirectoryURLString: "http://dl.fedoraproject.org/pub/fedora/")
+
+        await #expect(
+            throws: LinuxImageResolveError.insecureDirectory(url: entry.manifestDirectory)
+        ) {
+            _ = try await makeService().resolve(entry)
         }
         #expect(ResolveStubURLProtocol.requestedURLs.isEmpty)
     }
@@ -465,6 +493,73 @@ struct LinuxImageResolveServiceTests {
         #expect(
             image.sha256 == "66c07e7355db5e92faef680599a1789184a31c4dbaa5e02a19d050cc4e9279d2")
         #expect(image.sizeBytes == 2_689_781_760)
+    }
+
+    @Test("The manifest is read from the entry's manifest host, the ISO from its download host")
+    func readsManifestFromItsPinnedHost() async throws {
+        serve(manifest: fedoraManifest, isoSize: 2_689_781_760)
+        defer { ResolveStubURLProtocol.reset() }
+
+        let image = try await makeService().resolve(fedoraEntry)
+
+        #expect(
+            ResolveStubURLProtocol.requestedURLs.first?.absoluteString
+                == "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/aarch64/iso/Fedora-Workstation-44-1.7-aarch64-CHECKSUM"
+        )
+        #expect(image.isoURL.host() == "download.fedoraproject.org")
+    }
+
+    @Test("A redirect off the manifest's host is refused, and its target never requested")
+    func refusesOffHostManifestRedirect() async {
+        ResolveStubURLProtocol.reset()
+        ResolveStubURLProtocol.handler = { request in
+            guard request.url?.host() == "cdimage.ubuntu.com" else {
+                return ResolveStubURLProtocol.Reply(
+                    statusCode: 200, body: Data(ubuntuManifest.utf8))
+            }
+            return ResolveStubURLProtocol.Reply(
+                statusCode: 302, body: Data(),
+                headers: ["Location": "https://mirror.example/noble/SHA256SUMS"])
+        }
+        defer { ResolveStubURLProtocol.reset() }
+
+        await #expect(
+            throws: LinuxImageResolveError.manifestRedirected(
+                manifest: "SHA256SUMS", host: "mirror.example")
+        ) {
+            _ = try await makeService().resolve(ubuntuEntry)
+        }
+        // The digest would have come from whatever answered, so the mirror is
+        // not asked at all rather than asked and disbelieved.
+        #expect(
+            ResolveStubURLProtocol.requestedURLs.allSatisfy { $0.host() == "cdimage.ubuntu.com" })
+    }
+
+    @Test("A redirect staying on the manifest's host is followed")
+    func followsSameHostManifestRedirect() async throws {
+        let moved = "https://cdimage.ubuntu.com/ubuntu/releases/noble/release/SHA256SUMS.txt"
+        ResolveStubURLProtocol.reset()
+        ResolveStubURLProtocol.handler = { request in
+            guard let url = request.url else {
+                return ResolveStubURLProtocol.Reply(statusCode: 500, body: Data())
+            }
+            guard !url.lastPathComponent.hasSuffix(".iso") else {
+                return ResolveStubURLProtocol.Reply(
+                    statusCode: 200, body: Data(), headers: ["Content-Length": "3540299776"])
+            }
+            guard url.lastPathComponent == "SHA256SUMS" else {
+                return ResolveStubURLProtocol.Reply(
+                    statusCode: 200, body: Data(ubuntuManifest.utf8))
+            }
+            return ResolveStubURLProtocol.Reply(
+                statusCode: 302, body: Data(), headers: ["Location": moved])
+        }
+        defer { ResolveStubURLProtocol.reset() }
+
+        let image = try await makeService().resolve(ubuntuEntry)
+
+        #expect(image.filename == "ubuntu-24.04.4-desktop-arm64.iso")
+        #expect(ResolveStubURLProtocol.requestedURLs.map(\.absoluteString).contains(moved))
     }
 
     @Test("A manifest the mirror does not serve is reported with its status")

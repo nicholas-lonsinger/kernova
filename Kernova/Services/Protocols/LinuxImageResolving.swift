@@ -11,6 +11,9 @@ enum LinuxImageResolveError: LocalizedError, Equatable {
     /// The checksum manifest was not served. `statusCode` is `nil` when nothing
     /// HTTP came back at all.
     case manifestUnreachable(manifest: String, statusCode: Int?)
+    /// The manifest's host answered with a redirect to `host`, which the fetch
+    /// refused rather than followed.
+    case manifestRedirected(manifest: String, host: String)
     /// The manifest's body ran past the size a manifest can honestly be.
     case manifestTooLarge(manifest: String)
     /// The manifest was served but stated no checksum at all.
@@ -31,13 +34,15 @@ enum LinuxImageResolveError: LocalizedError, Equatable {
         case .invalidManifestName(let manifest):
             "The saved image source doesn't name a checksum list to read ('\(manifest)')."
         case .manifestUnreachable(let manifest, let statusCode?):
-            "The mirror didn't serve this distribution's checksum list, \(manifest) (HTTP \(statusCode))."
+            "This distribution's site didn't serve its checksum list, \(manifest) (HTTP \(statusCode))."
         case .manifestUnreachable(let manifest, nil):
             "Couldn't reach this distribution's checksum list, \(manifest). Check your connection and try again."
+        case .manifestRedirected(let manifest, let host):
+            "This distribution's checksum list, \(manifest), was redirected to \(host) instead of served, so this image can't be verified."
         case .manifestTooLarge(let manifest):
-            "The mirror answered with far more than a checksum list can hold, so \(manifest) wasn't read."
+            "The answer for \(manifest) held far more than a checksum list can, so it wasn't read."
         case .manifestUnparseable(let manifest):
-            "The mirror's \(manifest) listed no checksums, so this image can't be verified."
+            "\(manifest) listed no checksums, so this image can't be verified."
         case .noMatchingImage(let pattern):
             "The mirror no longer lists an image named like '\(pattern)'."
         case .unusableFilename(let filename):

@@ -20,10 +20,10 @@
 //
 // ## How an entry resolves
 //
-// Each entry names a directory, a checksum manifest inside it, and a glob for
-// the ISO filename. The manifest is the index — no directory listing is
-// parsed, and no filename is guessed. Three grammars appear across these
-// mirrors, and all three are read here:
+// Each entry names a directory, a checksum manifest, and a glob for the ISO
+// filename. The manifest is the index — no directory listing is parsed, and no
+// filename is guessed. Three grammars appear across these mirrors, and all
+// three are read here:
 //
 //   <hash>  <file>            GNU text mode (Debian, Kali)
 //   <hash> *<file>            GNU binary mode (Ubuntu)
@@ -32,9 +32,19 @@
 // Among the filenames the glob matches, the highest version wins — Ubuntu
 // keeps several point releases of one series side by side.
 //
+// ## Where a manifest is read from
+//
+// An entry's ISO comes off whichever mirror the distribution's redirector
+// picks, because the manifest's digest binds it. Nothing binds the manifest in
+// turn, so it is read from a host the distribution runs — `manifestDirectoryURL`
+// where that differs from `directoryURL` — and a redirect leaving that host
+// fails the entry here, the same refusal the app makes at download time.
+//
 // A run that cannot resolve every entry writes nothing and exits non-zero. A
 // mirror reorganising its layout is the failure this catches, and a shipped
-// catalog naming a file nobody serves is worse than a stale one.
+// catalog naming a file nobody serves is worse than a stale one. A manifest
+// host that has started redirecting is the same kind of signal: the pin has
+// gone stale and wants a new host, by hand.
 
 import Foundation
 
@@ -70,8 +80,12 @@ struct CatalogEntry: Codable {
     var version: String
     var directoryURL: String
     var isoPattern: String
+    var manifestDirectoryURL: String?
     var checksumManifest: String
     var approxSizeBytes: UInt64
+
+    /// Directory `checksumManifest` is read from.
+    var manifestDirectory: String { manifestDirectoryURL ?? directoryURL }
 }
 
 struct Catalog: Codable {
@@ -109,13 +123,75 @@ let session: URLSession = {
     return URLSession(configuration: configuration)
 }()
 
-/// Fetches a URL, following the geo-redirects Debian, Fedora and Kali answer
-/// with (`URLSession` follows them by default; Ubuntu serves directly).
+/// Fetches a URL, following the geo-redirects a distribution's download
+/// redirector answers with (`URLSession` follows them by default).
 func get(_ url: URL) async -> Data? {
     guard let (data, response) = try? await session.data(from: url),
         let http = response as? HTTPURLResponse, http.statusCode == 200
     else { return nil }
     return data
+}
+
+/// Refuses a redirect that would take a fetch off the host it was aimed at,
+/// mirroring the app's `ManifestOriginPolicy`.
+final class OriginPolicy: NSObject, URLSessionTaskDelegate {
+    private let host: String?
+    private let lock = NSLock()
+    private var refusedStorage: URL?
+
+    /// Where a redirect tried to move the fetch, once one was refused.
+    var refused: URL? { lock.withLock { refusedStorage } }
+
+    init(url: URL) {
+        self.host = url.host()?.lowercased()
+        super.init()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard let target = request.url, let host,
+            target.scheme?.lowercased() == "https", target.host()?.lowercased() == host
+        else {
+            lock.withLock { refusedStorage = request.url ?? response.url }
+            completionHandler(nil)
+            task.cancel()
+            return
+        }
+        completionHandler(request)
+    }
+}
+
+/// What a fetch held to its own host came back with.
+enum OriginFetch {
+    case fetched(Data)
+    case refused(reason: String)
+}
+
+/// Fetches a URL that must be served by the host it names, stating why instead
+/// of the body when it is not.
+func getFromOrigin(_ url: URL) async -> OriginFetch {
+    let policy = OriginPolicy(url: url)
+    let answer = try? await session.data(from: url, delegate: policy)
+    if let refused = policy.refused {
+        return .refused(
+            reason: "\(url.absoluteString) redirected to "
+                + "\(refused.host() ?? refused.absoluteString) rather than serving the manifest "
+                + "— the manifest host has to be one the distribution runs, so repoint "
+                + "manifestDirectoryURL by hand")
+    }
+    guard let (data, response) = answer, let http = response as? HTTPURLResponse,
+        http.statusCode == 200
+    else {
+        return .refused(
+            reason: "no checksum manifest at \(url.absoluteString) — a respin renames the "
+                + "manifest, so check the directory and update checksumManifest")
+    }
+    return .fetched(data)
 }
 
 /// The byte size a mirror reports for a file.
@@ -371,6 +447,15 @@ func newerPinnedEntry(for entry: CatalogEntry) async -> (entry: CatalogEntry, no
         bumped[keyPath: field] = rolled
         notes.append("\(name) '\(stated)' → '\(rolled)'")
     }
+    // The pinned manifest directory names the same release the ISO directory
+    // does, so it rolls with it rather than being left on the old one.
+    if let stated = bumped.manifestDirectoryURL {
+        let rolled = stated.replacingOccurrences(of: pinned.version, with: newest)
+        if rolled != stated {
+            bumped.manifestDirectoryURL = rolled
+            notes.append("manifestDirectoryURL '\(stated)' → '\(rolled)'")
+        }
+    }
     return (bumped, notes)
 }
 
@@ -403,14 +488,19 @@ for original in catalog.images {
         failures.append((entry.id, notes, "'\(entry.directoryURL)' is not an HTTPS URL"))
         continue
     }
-    let manifestURL = directory.appendingPathComponent(entry.checksumManifest)
-    guard let manifestData = await get(manifestURL) else {
-        failures.append(
-            (
-                entry.id, notes,
-                "no checksum manifest at \(manifestURL.absoluteString) — a respin renames the "
-                    + "manifest, so check the directory and update checksumManifest"
-            ))
+    guard let manifestDirectory = URL(string: entry.manifestDirectory),
+        manifestDirectory.scheme == "https"
+    else {
+        failures.append((entry.id, notes, "'\(entry.manifestDirectory)' is not an HTTPS URL"))
+        continue
+    }
+    let manifestURL = manifestDirectory.appendingPathComponent(entry.checksumManifest)
+    let manifestData: Data
+    switch await getFromOrigin(manifestURL) {
+    case .fetched(let data):
+        manifestData = data
+    case .refused(let reason):
+        failures.append((entry.id, notes, reason))
         continue
     }
 
@@ -484,7 +574,7 @@ let stamp = ISO8601DateFormatter().string(from: Date()).prefix(10)
 let payload: [String: Any] = [
     "generatedAt": String(stamp),
     "images": resolutions.map { resolution -> [String: Any] in
-        [
+        var image: [String: Any] = [
             "id": resolution.entry.id,
             "distribution": resolution.entry.distribution,
             "version": resolution.entry.version,
@@ -493,6 +583,12 @@ let payload: [String: Any] = [
             "checksumManifest": resolution.entry.checksumManifest,
             "approxSizeBytes": resolution.entry.approxSizeBytes,
         ]
+        // Absent where the distribution serves the manifest from the directory
+        // the ISO is in, which is the shape the app defaults to.
+        if let manifestDirectory = resolution.entry.manifestDirectoryURL {
+            image["manifestDirectoryURL"] = manifestDirectory
+        }
+        return image
     },
 ]
 

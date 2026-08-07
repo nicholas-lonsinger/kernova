@@ -62,7 +62,7 @@ struct LinuxImageCatalogService: LinuxImageCatalogProviding {
             case .undecodableEntry(let index):
                 "entry at index \(index) did not decode"
             case .insecureURL(let id, let url):
-                "\(id) has a non-HTTPS directory URL (\(url))"
+                "\(id) has a non-HTTPS URL (\(url))"
             case .invalidPattern(let id, let pattern):
                 "\(id) has an ISO pattern that is not a wildcard .iso filename ('\(pattern)')"
             case .invalidManifestName(let id, let manifest):
@@ -87,11 +87,11 @@ struct LinuxImageCatalogService: LinuxImageCatalogProviding {
     /// *shipped* resource is a build-time mistake.
     ///
     /// There is no host allowlist to check the way the macOS catalog checks for
-    /// Apple: these images come from each distribution's own mirrors, and a
-    /// list of them written here would go stale without anything noticing.
-    /// HTTPS authenticates whichever mirror a redirect landed on, and
-    /// ``ChecksumManifest`` covers what the SHA-256 on top of that does and
-    /// does not establish.
+    /// Apple: an ISO is fetched from whatever address a distribution publishes
+    /// for downloads, mirror network included, and a list of those written here
+    /// would go stale without anything noticing. What the entry pins instead is
+    /// the host its *manifest* is read from — see
+    /// ``LinuxImageCatalogEntry/manifestDirectoryURL``.
     static func parse(_ data: Data) -> ParseResult {
         guard let document = try? JSONDecoder().decode(LenientCatalog.self, from: data) else {
             return ParseResult(catalog: nil, rejections: [.undecodableDocument])
@@ -106,6 +106,10 @@ struct LinuxImageCatalogService: LinuxImageCatalogProviding {
         for entry in document.decodedImages {
             guard entry.directoryURL.scheme?.lowercased() == "https" else {
                 rejections.append(.insecureURL(id: entry.id, url: entry.directoryURL))
+                continue
+            }
+            guard entry.manifestDirectory.scheme?.lowercased() == "https" else {
+                rejections.append(.insecureURL(id: entry.id, url: entry.manifestDirectory))
                 continue
             }
             guard isFilenameGlob(entry.isoPattern) else {
