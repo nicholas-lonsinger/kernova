@@ -335,6 +335,15 @@ final class VMInstance {
         (status == .running || status == .paused) && hasLiveVirtualMachine
     }
 
+    /// `true` when the bundled guest-agent installer disk can be attached to or
+    /// ejected from this VM.
+    ///
+    /// macOS guests only: the disk carries a `.app` and an `install.command`
+    /// that stages a user LaunchAgent, neither of which a Linux guest can run.
+    var canManageGuestAgentDisk: Bool {
+        canAttachUSBDevices && configuration.guestOS == .macOS
+    }
+
     /// `true` when the VM is paused-to-disk but has no live `VZVirtualMachine` in memory.
     var isColdPaused: Bool {
         status == .paused && !hasLiveVirtualMachine

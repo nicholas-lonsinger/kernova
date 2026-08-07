@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import Kernova
@@ -68,5 +69,43 @@ struct GuestAgentDiskMenuTests {
             GuestAgentDiskMenuItem.model(
                 status: .connecting(expected: "0.9.2"), isInstallerMounted: false)
                 == .init(title: "Install Guest Agent…", isEnabled: false, action: .mount(.install)))
+    }
+}
+
+/// Unit tests for `VMInstance.canManageGuestAgentDisk` — the hard gate
+/// `AppDelegate.validateMenuItem` applies before consulting the model above.
+@Suite("VMInstance.canManageGuestAgentDisk")
+@MainActor
+struct GuestAgentDiskEligibilityTests {
+    private func makeInstance(guestOS: VMGuestOS, status: VMStatus, isLive: Bool) -> VMInstance {
+        let config = VMConfiguration(
+            name: "Test VM", guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(config.id.uuidString, isDirectory: true)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: status)
+        instance.hasLiveVirtualMachineOverrideForTesting = isLive
+        return instance
+    }
+
+    @Test("A live macOS guest can manage the disk", arguments: [VMStatus.running, .paused])
+    func liveMacOSIsEligible(status: VMStatus) {
+        #expect(makeInstance(guestOS: .macOS, status: status, isLive: true).canManageGuestAgentDisk)
+    }
+
+    @Test(
+        "A live Linux guest cannot — the disk installs a macOS agent",
+        arguments: [VMStatus.running, .paused])
+    func liveLinuxIsNotEligible(status: VMStatus) {
+        #expect(!makeInstance(guestOS: .linux, status: status, isLive: true).canManageGuestAgentDisk)
+    }
+
+    @Test("A macOS guest with no live VM cannot — USB hot-plug needs one")
+    func macOSWithoutLiveVMIsNotEligible() {
+        #expect(!makeInstance(guestOS: .macOS, status: .running, isLive: false).canManageGuestAgentDisk)
+    }
+
+    @Test("A stopped macOS guest cannot", arguments: [VMStatus.stopped, .starting, .error])
+    func stoppedMacOSIsNotEligible(status: VMStatus) {
+        #expect(!makeInstance(guestOS: .macOS, status: status, isLive: true).canManageGuestAgentDisk)
     }
 }
