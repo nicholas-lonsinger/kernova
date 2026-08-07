@@ -164,6 +164,58 @@ exe_of_pid() {
     lsof -a -p "$1" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -1
 }
 
+# Whether the app itself is among an arena's holders. Asked with one grep
+# rather than by resolving every PID, because the display list below is capped
+# and can leave the app out — and its quit is the line a reader most needs.
+arena_holds_app() {
+    # shellcheck disable=SC2009
+    ps -axo args= 2>/dev/null | grep -F "$1/" | grep -qF '/Kernova.app/Contents/MacOS/Kernova'
+}
+
+# The in-use refusal: what is holding the arena, and how to clear it. Naming
+# the PID is what makes the refusal actionable — the arena path says which
+# folder is stuck, never which running thing to go quit.
+#
+# Two kinds of holder, labelled apart because the wrong one sends the reader
+# after the wrong process: a binary that lives inside the arena is running
+# from it and dies with the eviction, while a build tool or a log tail merely
+# carries the path in its argv. arena_pids matches argv text, so both land here.
+#
+# Capped: `make clean` evicts the arena Xcode builds into, so a build in flight
+# routes every swift-frontend and ld output path through this — uncapped, the
+# refusal is a screenful and each line costs an lsof. The full count still
+# prints, so a long tail is never silently dropped.
+#
+# Callers check arena_in_use first; with no holder left this prints the tail
+# lines alone, the harmless read on a process that exited in between.
+arena_blocked_lines() {
+    local dir=$1 pid exe shown=0 total=0 max=5
+    while IFS= read -r pid; do
+        [ -z "$pid" ] && continue
+        total=$((total + 1))
+        [ "$shown" -ge "$max" ] && continue
+        shown=$((shown + 1))
+        exe=$(exe_of_pid "$pid")
+        if [ -n "$exe" ] && [ "${exe#"$dir"/}" != "$exe" ]; then
+            printf 'running from inside: PID %s (%s)\n' "$pid" "${exe##*/}"
+        else
+            printf 'holding it open: PID %s%s\n' "$pid" "${exe:+ (${exe##*/})}"
+        fi
+    done < <(arena_pids "$dir")
+    [ "$total" -gt "$shown" ] && printf 'and %s more\n' "$((total - shown))"
+    if [ "$total" -gt 1 ]; then
+        printf 'quit them (or reboot), then re-run\n'
+    else
+        printf 'quit it (or reboot), then re-run\n'
+    fi
+    # Additive, never instead of the line above: with a mixed set, quitting the
+    # app alone leaves the arena held and the next run refusing identically.
+    if arena_holds_app "$dir"; then
+        printf 'Kernova quits cleanly with: %s (save-suspends running VMs)\n' \
+            "osascript -e 'quit app \"Kernova\"'"
+    fi
+}
+
 # Unregister every bundle inside the arena, then delete the folder outright.
 # Unregister first, so no dead registration lingers until the next sweep.
 # `rm -rf`, not `trash` (the exception to the trash-first file-operations
@@ -188,8 +240,10 @@ evict_dd_arena() {
 # failed sweep can never fail the checkout that triggered it, skips anything
 # a process is still running from, and skips the fix path's re-dump
 # verification — `make ghosts` still reports anything left behind. Unlike
-# --fix it never terminates a process blocking an arena: the sweep runs
-# unattended from a git hook, and the next worktree creation sweeps again.
+# --fix it terminates nothing: --fix kills processes whose own binary is
+# already deleted, while an arena's live blocker is the user's to quit under
+# either flag. The sweep runs unattended from a git hook, and the next
+# worktree creation sweeps again.
 if [ "$SWEEP" = 1 ]; then
     while IFS= read -r path; do
         [ -z "$path" ] && continue
@@ -238,8 +292,10 @@ if [ "$EVICT" = 1 ]; then
     # Clear the in-use guard before announcing anything, so a refusal never
     # follows a "Removing…" line that turned out to be false.
     if arena_in_use "$EVICT_DIR"; then
-        printf 'ghosts.sh: a running process is still executing from inside %s — quit it, then re-run\n' \
-            "$(labeled_path "$EVICT_DIR")" >&2
+        printf 'ghosts.sh: cannot remove %s\n' "$(labeled_path "$EVICT_DIR")" >&2
+        while IFS= read -r blocked; do
+            printf 'ghosts.sh: %s\n' "$blocked" >&2
+        done < <(arena_blocked_lines "$EVICT_DIR")
         exit 1
     fi
     # Size on the way out: on a default-location machine this is the arena the
@@ -375,7 +431,9 @@ else
         dir_label=$(labeled_path "$dir")
         ghost "Orphaned arena: $dir_label — $(du -sh "$dir" 2>/dev/null | cut -f1)"
         if arena_in_use "$dir"; then
-            detail 'a running process is still executing from inside — quit it (or reboot), then re-run'
+            while IFS= read -r blocked; do
+                detail "$blocked"
+            done < <(arena_blocked_lines "$dir")
             continue
         fi
         if [ "$FIX" = 1 ]; then
