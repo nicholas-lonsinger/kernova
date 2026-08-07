@@ -22,7 +22,7 @@ import os
 /// VMs can be created or deleted — and the same nudge dismissed from the sidebar
 /// popover or VM Settings — while this pane is visible.
 @MainActor
-final class RemindersSettingsViewController: NSViewController {
+final class RemindersSettingsViewController: NSViewController, SettingsPaneScrollCueing {
     private static let logger = Logger(subsystem: "app.kernova", category: "RemindersSettingsViewController")
 
     /// Height at which the pane stops growing and starts scrolling — keeps a
@@ -255,6 +255,12 @@ final class RemindersSettingsViewController: NSViewController {
         rebuildVMRows()
         refreshSwitches()
         if previousRowCount != vmSwitches.count { rearmScrollFlash() }
+    }
+
+    /// Re-arms the flash for a fresh appearance, so arriving at an overflowing
+    /// pane cues every visit rather than only the first.
+    func rearmScrollMoreCue() {
+        rearmScrollFlash()
     }
 
     /// Re-arms the "more below" scroller flash after the pane's content height
