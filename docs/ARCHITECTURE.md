@@ -112,9 +112,10 @@ substitute mocks. Services split by concurrency: those that touch
   and a checksum manifest rather than a fixed URL.
 - `LinuxImageResolveService` (a `final class`, for `URLSession` lifetime) — turns a Linux image
   source into the file to fetch, returning its URL, SHA-256, and size. A catalog entry resolves
-  against its mirror's manifest; a user-supplied URL names its own file and carries only the
-  digest the user typed, so all that is read is its length. The wizard's "Image URL…" check and
-  the install pipeline both go through it, so one set of admission rules governs both.
+  against the manifest its distribution serves; a user-supplied URL names its own file and
+  carries only the digest the user typed, so all that is read is its length. The wizard's
+  "Image URL…" check and the install pipeline both go through it, so one set of admission rules
+  governs both.
 
 `ConfigurationBuilder` translates a `VMConfiguration` into a `VZVirtualMachineConfiguration` — the
 single VZ-facing translation point, covering boot loader, CPU, memory, storage, network, display,

@@ -8,9 +8,9 @@ import os
 /// For a catalog entry the manifest is the index: it is fetched, parsed,
 /// matched against the entry's glob, and the newest match is the image — no
 /// directory listing is scraped and no filename is guessed. What comes back
-/// carries the mirror's own SHA-256, which is what the download is verified
-/// against. A pasted URL names its file outright and carries only the digest
-/// the user typed, so all that is read is the file's length.
+/// carries the distribution's own SHA-256, which is what the download is
+/// verified against. A pasted URL names its file outright and carries only the
+/// digest the user typed, so all that is read is the file's length.
 ///
 /// A class rather than a struct so `deinit` can invalidate the `URLSession`, the
 /// same reason `DownloadService` is one.
@@ -48,6 +48,9 @@ final class LinuxImageResolveService: LinuxImageResolving {
         guard entry.directoryURL.scheme?.lowercased() == "https" else {
             throw LinuxImageResolveError.insecureDirectory(url: entry.directoryURL)
         }
+        guard entry.manifestDirectory.scheme?.lowercased() == "https" else {
+            throw LinuxImageResolveError.insecureDirectory(url: entry.manifestDirectory)
+        }
         guard LinuxImageCatalogService.isFilenameGlob(entry.isoPattern) else {
             throw LinuxImageResolveError.invalidISOPattern(pattern: entry.isoPattern)
         }
@@ -55,7 +58,7 @@ final class LinuxImageResolveService: LinuxImageResolving {
             throw LinuxImageResolveError.invalidManifestName(manifest: entry.checksumManifest)
         }
 
-        let manifestURL = entry.directoryURL.appendingPathComponent(entry.checksumManifest)
+        let manifestURL = entry.manifestDirectory.appendingPathComponent(entry.checksumManifest)
         let text = try await manifestText(at: manifestURL, named: entry.checksumManifest)
         let rows = ChecksumManifest.parse(text)
         guard !rows.isEmpty else {
@@ -123,24 +126,37 @@ final class LinuxImageResolveService: LinuxImageResolving {
 
     // MARK: - HTTP
 
-    /// The checksum manifest at `url`, read up to ``maximumManifestBytes``.
+    /// The checksum manifest at `url`, read from that host and no other.
     ///
-    /// Redirects are followed, which is how the fetch lands anywhere useful:
-    /// Debian, Fedora and Kali answer even a manifest request with a redirect to
-    /// a geographically close mirror, and Ubuntu serves it directly. The body is
-    /// streamed rather than buffered whole so a mirror answering with something
-    /// enormous is stopped at the cap instead of being read into memory.
+    /// The digest a manifest states is what binds the ISO, and nothing binds the
+    /// manifest in turn, so whichever host answers here is the trust anchor. The
+    /// catalog points that at the distribution rather than at a mirror network,
+    /// and a redirect leaving the host is refused rather than followed. The body
+    /// is streamed rather than buffered whole, up to ``maximumManifestBytes``,
+    /// so a host answering with something enormous is stopped at the cap instead
+    /// of being read into memory.
     private func manifestText(at url: URL, named manifest: String) async throws -> String {
+        let origin = ManifestOriginPolicy(url: url)
         let stream: URLSession.AsyncBytes
         let response: URLResponse
         do {
-            (stream, response) = try await session.bytes(from: url)
+            (stream, response) = try await session.bytes(from: url, delegate: origin)
         } catch {
             try Task.checkCancellation()
+            if let refused = origin.refusedRedirect {
+                throw Self.redirectRefusal(of: manifest, to: refused)
+            }
             Self.logger.error(
                 "Checksum manifest at '\(DownloadService.loggableURL(url), privacy: .public)' is unreachable: \(error.localizedDescription, privacy: .public)"
             )
             throw LinuxImageResolveError.manifestUnreachable(manifest: manifest, statusCode: nil)
+        }
+        // A refused redirect completes the task with the redirect's own response,
+        // so this is checked ahead of the status: "302" states nothing about why
+        // the manifest went unread.
+        if let refused = origin.refusedRedirect {
+            stream.task.cancel()
+            throw Self.redirectRefusal(of: manifest, to: refused)
         }
         guard let http = response as? HTTPURLResponse else {
             stream.task.cancel()
@@ -174,5 +190,63 @@ final class LinuxImageResolveService: LinuxImageResolving {
             throw LinuxImageResolveError.manifestTooLarge(manifest: manifest)
         }
         return String(decoding: body, as: UTF8.self)
+    }
+
+    /// States a redirect the manifest fetch would not follow.
+    private static func redirectRefusal(of manifest: String, to url: URL)
+        -> LinuxImageResolveError
+    {
+        let host = url.host() ?? url.absoluteString
+        logger.error(
+            "Checksum manifest \(manifest, privacy: .public) redirected to '\(host, privacy: .public)' — not following it off the host the catalog names"
+        )
+        return .manifestRedirected(manifest: manifest, host: host)
+    }
+}
+
+/// Holds one checksum-manifest fetch to the host it was aimed at.
+///
+/// `URLSession` follows a redirect on its own, and following one here would move
+/// the digest's trust anchor onto whatever answered. A hop staying on the host
+/// over HTTPS — a path normalisation — is followed; any other is refused, and
+/// ``refusedRedirect`` is what the fetch reports in place of a status code.
+private final class ManifestOriginPolicy: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    /// The host the fetch may stay on, lowercased. `nil` for a URL naming none,
+    /// which no redirect target can then match.
+    private let host: String?
+    private let lock = NSLock()
+    private var refused: URL?
+
+    /// Where a redirect tried to move the fetch, once one was refused.
+    ///
+    /// Read from the awaiting task rather than from the session's delegate
+    /// queue, which is what the lock is for.
+    var refusedRedirect: URL? { lock.withLock { refused } }
+
+    init(url: URL) {
+        self.host = url.host()?.lowercased()
+        super.init()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard let target = request.url, let host,
+            target.scheme?.lowercased() == "https", target.host()?.lowercased() == host
+        else {
+            lock.withLock { refused = request.url ?? response.url }
+            // Declining leaves the task holding the redirect's own response — a
+            // body nobody here reads, and one that can sit unfinished until the
+            // request times out. Cancelling ends the fetch at the refusal;
+            // ``refusedRedirect`` is what the caller reads either way.
+            completionHandler(nil)
+            task.cancel()
+            return
+        }
+        completionHandler(request)
     }
 }

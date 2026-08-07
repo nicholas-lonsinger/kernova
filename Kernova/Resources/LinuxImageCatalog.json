@@ -1,5 +1,5 @@
 {
-  "generatedAt" : "2026-08-06",
+  "generatedAt" : "2026-08-07",
   "images" : [
     {
       "approxSizeBytes" : 4161089536,
@@ -62,6 +62,7 @@
       "distribution" : "Fedora Workstation",
       "id" : "fedora-workstation-44",
       "isoPattern" : "Fedora-Workstation-Live-44-*.aarch64.iso",
+      "manifestDirectoryURL" : "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/aarch64/iso/",
       "version" : "44"
     },
     {
@@ -71,6 +72,7 @@
       "distribution" : "Fedora Workstation",
       "id" : "fedora-workstation-43",
       "isoPattern" : "Fedora-Workstation-Live-43-*.aarch64.iso",
+      "manifestDirectoryURL" : "https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Workstation/aarch64/iso/",
       "version" : "43"
     },
     {
@@ -80,6 +82,7 @@
       "distribution" : "Kali Linux",
       "id" : "kali-current",
       "isoPattern" : "kali-linux-2026.2*-installer-arm64.iso",
+      "manifestDirectoryURL" : "https://kali.download/base-images/kali-2026.2/",
       "version" : "2026.2"
     }
   ]

@@ -13,14 +13,25 @@ struct LinuxImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
     var distribution: String
     /// Version as shown to the user (`"26.04 LTS"`), not necessarily numeric.
     var version: String
-    /// Directory holding both the ISO and ``checksumManifest``, written with a
-    /// trailing slash.
+    /// Directory the ISO is fetched from, written with a trailing slash.
+    ///
+    /// Pointed at whichever address the distribution publishes for downloads,
+    /// redirector included: the digest ``checksumManifest`` states is what binds
+    /// the bytes, so the ISO can come off any mirror in the network.
     var directoryURL: URL
     /// Glob matching the ISO's filename inside ``directoryURL``, anchored at
     /// both ends, where each `*` matches a run of characters within the one
     /// filename (`"ubuntu-26.04*-desktop-arm64.iso"`).
     var isoPattern: String
-    /// Filename of the checksum manifest inside ``directoryURL``.
+    /// Directory the checksum manifest is fetched from, present only where the
+    /// distribution serves it somewhere other than ``directoryURL``.
+    ///
+    /// Nothing binds the manifest the way the manifest binds the ISO, so
+    /// whichever host answers for it is the trust anchor. This names a host the
+    /// distribution runs itself, and ``LinuxImageResolveService`` refuses a
+    /// redirect that would leave it.
+    var manifestDirectoryURL: URL?
+    /// Filename of the checksum manifest inside ``manifestDirectory``.
     var checksumManifest: String
     /// Size of the ISO the catalog was generated against, for the picker's size
     /// column.
@@ -28,6 +39,9 @@ struct LinuxImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
     /// The file resolved at download time is a near neighbour of it, never the
     /// same byte count twice.
     var approxSizeBytes: UInt64
+
+    /// Directory ``checksumManifest`` is read from.
+    var manifestDirectory: URL { manifestDirectoryURL ?? directoryURL }
 
     /// The order distributions are offered in, which is neither alphabetical
     /// nor derivable from the entries.

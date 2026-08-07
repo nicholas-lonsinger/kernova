@@ -1,8 +1,8 @@
 import Foundation
 
-/// The `(filename, SHA-256)` pairs a mirror publishes beside its images.
+/// The `(filename, SHA-256)` pairs a distribution publishes beside its images.
 ///
-/// Three grammars appear across the mirrors the Linux catalog names, and a
+/// Three grammars appear across the distributions the Linux catalog names, and a
 /// manifest is read in all three:
 ///
 ///     <hash>  <file>            GNU text mode (Debian, Kali)
@@ -11,14 +11,13 @@ import Foundation
 ///
 /// A line in none of them is skipped rather than refused. Fedora's manifest is
 /// a clearsigned document, so armor delimiters, the `Hash:` header, comments
-/// and the base64 signature are all lines that are not checksums, and a mirror
-/// that lists SHA-512 alongside SHA-256 lists both in the one file. Only the
-/// SHA-256 pairs come back.
+/// and the base64 signature are all lines that are not checksums, and a
+/// distribution that lists SHA-512 alongside SHA-256 lists both in the one file.
+/// Only the SHA-256 pairs come back.
 ///
-/// The signature is read past, never checked, and the manifest and the ISO are
-/// two independent requests, each following its own redirect. So a digest from
-/// here binds the ISO to whatever the manifest said — enough to catch a
-/// corrupted or wrong file, not a hostile manifest naming a hostile ISO.
+/// The clearsign signature is read past rather than checked. What a digest from
+/// here binds the ISO to is therefore the host that served the manifest, which
+/// ``LinuxImageResolveService`` holds to the one the catalog names.
 enum ChecksumManifest {
     /// One `(filename, digest)` pair a manifest states.
     struct Row: Sendable, Equatable {

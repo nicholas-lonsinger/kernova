@@ -150,6 +150,45 @@ struct LinuxImageCatalogServiceTests {
         }
     }
 
+    @Test("A manifest directory decodes when stated and falls back to the ISO directory when not")
+    func decodesManifestDirectory() throws {
+        let plain = try #require(LinuxImageCatalogService.parse(json(images: goodEntry)).catalog)
+        #expect(plain.images.first?.manifestDirectoryURL == nil)
+        #expect(
+            plain.images.first?.manifestDirectory
+                == URL(string: "https://cdimage.debian.org/debian-cd/current/arm64/iso-cd/"))
+
+        let pinned = goodEntry.replacingOccurrences(
+            of: "\"checksumManifest\"",
+            with:
+                "\"manifestDirectoryURL\": \"https://kali.download/base-images/kali-2026.2/\", \"checksumManifest\""
+        )
+        let result = LinuxImageCatalogService.parse(json(images: pinned))
+        let catalog = try #require(result.catalog)
+        #expect(result.rejections.isEmpty)
+        #expect(
+            catalog.images.first?.manifestDirectory
+                == URL(string: "https://kali.download/base-images/kali-2026.2/"))
+    }
+
+    @Test("A non-HTTPS manifest directory is rejected")
+    func rejectsInsecureManifestDirectory() throws {
+        let insecure = goodEntry.replacingOccurrences(
+            of: "\"checksumManifest\"",
+            with:
+                "\"manifestDirectoryURL\": \"http://kali.download/base-images/kali-2026.2/\", \"checksumManifest\""
+        )
+        let result = LinuxImageCatalogService.parse(json(images: insecure))
+        let catalog = try #require(result.catalog)
+        #expect(catalog.images.isEmpty)
+        #expect(
+            result.rejections == [
+                .insecureURL(
+                    id: "debian-13",
+                    url: URL(string: "http://kali.download/base-images/kali-2026.2/")!)
+            ])
+    }
+
     @Test("An ISO pattern with no wildcard, no .iso, or a path separator is rejected")
     func rejectsBadPattern() throws {
         let patterns = [
@@ -221,6 +260,8 @@ struct LinuxImageCatalogServiceTests {
             // Written with a trailing slash throughout, which is what the
             // picker shows; the resolver appends to it either way.
             #expect(entry.directoryURL.absoluteString.hasSuffix("/"))
+            #expect(entry.manifestDirectory.scheme == "https")
+            #expect(entry.manifestDirectory.absoluteString.hasSuffix("/"))
             #expect(LinuxImageCatalogService.isFilenameGlob(entry.isoPattern))
             #expect(LinuxImageCatalogService.isFilename(entry.checksumManifest))
             #expect(entry.approxSizeBytes > 0)
