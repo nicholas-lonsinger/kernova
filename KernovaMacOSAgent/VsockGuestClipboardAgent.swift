@@ -79,7 +79,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// One paste gesture fires one data provider per promised item, so its
     /// refusals arrive as a burst and are worth one message; a paste made after
     /// the window is a second gesture and is owed its own answer.
-    static let defaultRefusalBurstWindow: TimeInterval = 2
+    static let refusalBurstWindow: TimeInterval = 2
 
     /// What the paste progress readout calls the machine the bytes come from —
     /// the guest can't learn the host's actual computer name over the control
@@ -89,8 +89,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     private let client: any VsockReconnecting
     private let pasteboard: Pasteboard
 
-    /// How long one reported refusal silences the rest of its burst.
-    private let refusalBurstWindow: TimeInterval
+    /// Measures the refusal-burst window.
+    private let refusalStopwatch: EngineStopwatch
 
     /// Aggregates what this side streams to the host into the status item's
     /// readout.
@@ -229,9 +229,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         /// index, so a repeated `.fileURL` pull returns the same staged file
         /// instead of re-staging a duplicate.
         var stagedInlineURLs: [Int: URL] = [:]
-        /// When this offer's last refusal was reported, opening the burst window
-        /// that keeps the rest of one paste's provider fires quiet.
-        var lastRefusalReportedAt: MonotonicEngineClock.Instant?
+        /// The `refusalStopwatch` reading when this offer's last refusal was
+        /// reported, opening the burst window that keeps the rest of one paste's
+        /// provider fires quiet.
+        var lastRefusalReportedAt: TimeInterval?
 
         init(generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo]) {
             self.generation = generation
@@ -260,23 +261,23 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// client, and optionally a `freeSpaceProvider` to simulate a full disk, a
     /// `stagingTempRoot` to isolate the staging directory between parallel tests,
     /// an `onProgress` sink to observe the readout the status item renders, an
-    /// `onClipboardNotice` sink to observe refusals, a shortened
-    /// `refusalBurstWindow` so a second paste re-reports without a real-time
-    /// wait, and zeroed reveal/linger delays so a test transfer surfaces while in
-    /// flight.
+    /// `onClipboardNotice` sink to observe refusals, a manually advanced
+    /// `refusalStopwatch` so a second paste crosses the refusal-burst window
+    /// without a real-time wait, and zeroed reveal/linger delays so a test
+    /// transfer surfaces while in flight.
     init(
         pasteboard: Pasteboard, client: any VsockReconnecting,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         stagingTempRoot: URL = FileManager.default.temporaryDirectory,
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
-        refusalBurstWindow: TimeInterval = VsockGuestClipboardAgent.defaultRefusalBurstWindow,
+        refusalStopwatch: EngineStopwatch = .platform(),
         onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void = { _ in },
         onClipboardNotice: @escaping @Sendable () -> Void = {}
     ) {
         self.pasteboard = pasteboard
         self.client = client
-        self.refusalBurstWindow = refusalBurstWindow
+        self.refusalStopwatch = refusalStopwatch
         self.onClipboardNotice = onClipboardNotice
         self.progressTracker = ClipboardProgressTracker(
             revealDelay: progressRevealDelay, idleLinger: progressIdleLinger, emit: onProgress)
@@ -1221,9 +1222,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// Whether a refusal for `promise` may be reported now, opening the burst
     /// window when it may.
     private func allowsRefusalReport(for promise: InboundPromise) -> Bool {
-        let clock = MonotonicEngineClock()
-        let now = clock.now
-        if let last = promise.lastRefusalReportedAt, clock.seconds(from: last, to: now) < refusalBurstWindow {
+        let now = refusalStopwatch.elapsed
+        if let last = promise.lastRefusalReportedAt, now - last < Self.refusalBurstWindow {
             return false
         }
         promise.lastRefusalReportedAt = now

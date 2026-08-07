@@ -40,6 +40,32 @@ public func makePlatformEngineClock() -> any EngineClock {
     return MonotonicEngineClock()
 }
 
+/// An `EngineClock` erased to a running seconds reading, for a holder that only
+/// stamps and measures elapsed time.
+///
+/// Carrying no `Instant` type is what makes it storable: holding a clock
+/// otherwise means a generic parameter, which a macOS 12 holder cannot
+/// instantiate on `ContinuousEngineClock` — the constraint the clock-free facade
+/// protocols answer for holders that need a whole clock.
+public struct EngineStopwatch: Sendable {
+    private let read: @Sendable () -> TimeInterval
+
+    /// Starts a stopwatch on `clock`, reading zero at this call.
+    public init<Clock: EngineClock>(_ clock: Clock) {
+        let start = clock.now
+        read = { clock.seconds(from: start, to: clock.now) }
+    }
+
+    /// A stopwatch on the platform-default engine clock.
+    public static func platform() -> EngineStopwatch {
+        func build<C: EngineClock>(_ clock: C) -> EngineStopwatch { EngineStopwatch(clock) }
+        return build(makePlatformEngineClock())
+    }
+
+    /// Seconds elapsed since this stopwatch started.
+    public var elapsed: TimeInterval { read() }
+}
+
 /// `ContinuousClock` as an `EngineClock` — the conformance every macOS 13+
 /// system runs, storing genuine `ContinuousClock.Instant`s.
 @available(macOS 13.0, *)
