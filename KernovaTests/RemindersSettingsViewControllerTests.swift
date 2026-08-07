@@ -77,6 +77,17 @@ struct RemindersSettingsViewControllerTests {
         switches(action: "vmReminderToggled:", in: controller)
     }
 
+    /// The grouped-form card `control` sits in — the nearest ancestor carrying
+    /// the card's `NSBox` background.
+    private func card(containing control: NSView) -> NSView? {
+        var candidate = control.superview
+        while let view = candidate {
+            if view.subviews.contains(where: { $0 is NSBox }) { return view }
+            candidate = view.superview
+        }
+        return nil
+    }
+
     /// Flips the app-wide install-reminder switch the way a click does, so the
     /// pane's own action wiring is what drives the change.
     private func setAppWideInstallReminder(
@@ -99,7 +110,8 @@ struct RemindersSettingsViewControllerTests {
             }
         }
         for fragment in [
-            "Menu Bar Quit Reminder appears",
+            "Appears when you quit",
+            "sidebar prompt to install",
             "stop its sidebar reminder",
             "Turns every reminder above back on",
         ] {
@@ -127,16 +139,27 @@ struct RemindersSettingsViewControllerTests {
         #expect(documentView.frame.height > scrollView.frame.height)
     }
 
-    @Test("The app card carries the Menu Bar Quit and Guest Agent Install rows")
-    func appCardHasBothRows() throws {
+    @Test("Each app-wide reminder is its own single-row card")
+    func appRemindersAreSeparateCards() throws {
         let controller = makeLaidOutController(vmCount: 2)
         defer { controller.viewDidDisappear() }
 
         #expect(findLabel(withText: "Menu Bar Quit Reminder", in: controller.view) != nil)
         #expect(findLabel(withText: "Guest Agent Install Reminder", in: controller.view) != nil)
-        // Two app-wide switches plus one per VM: an extra would mean a third row
-        // crept into the app card.
+        // Two app-wide switches plus one per VM.
         #expect(allSubviews(NSSwitch.self, in: controller.view).count == 4)
+
+        // Each app-wide switch sits in a card of its own, so its caption needs
+        // no "The <name> reminder…" prefix to say which switch it describes.
+        let menuBarToggle = try #require(
+            switches(action: "menuBarQuitToggled", in: controller).first)
+        let agentToggle = try #require(
+            switches(action: "agentInstallToggled", in: controller).first)
+        let menuBarCard = try #require(card(containing: menuBarToggle))
+        let agentCard = try #require(card(containing: agentToggle))
+        #expect(menuBarCard !== agentCard)
+        #expect(allSubviews(NSSwitch.self, in: menuBarCard).count == 1)
+        #expect(allSubviews(NSSwitch.self, in: agentCard).count == 1)
     }
 
     @Test("Turning the app-wide install reminder off disables and explains the per-VM rows")
@@ -160,6 +183,33 @@ struct RemindersSettingsViewControllerTests {
         #expect(viewModel.agentInstallPromptDisabled == false)
         #expect(vmSwitches(in: controller).allSatisfy { $0.isEnabled })
         #expect(explanation.isHidden)
+    }
+
+    /// The window is sized once per tab selection.
+    ///
+    /// So the caption appearing grows the content in place with nothing to say
+    /// the pane now overflows; re-arming the indicator is what lets the scroller
+    /// flash again.
+    @Test("Revealing the override caption flashes the scroller again")
+    func revealingOverrideCaptionRearmsFlash() throws {
+        let controller = makeLaidOutPane(vmCount: 9).controller
+        defer { controller.viewDidDisappear() }
+        let indicator = try #require(controller.scrollMoreIndicatorForTesting)
+
+        // A 9-VM pane overflows the height cap, so appearing flashes — exactly
+        // once, against the pane's settled geometry rather than the zero-height
+        // frame the first row build runs under.
+        #expect(indicator.flashCountForTesting == 1)
+
+        // The latch is one-shot, so without a re-arm the caption could grow the
+        // content with no cue at all.
+        try setAppWideInstallReminder(on: false, in: controller)
+        #expect(indicator.flashCountForTesting == 2)
+
+        // A refresh that moves neither the row count nor the caption must not
+        // re-arm, or an unrelated toggle would flash the scroller for nothing.
+        try setAppWideInstallReminder(on: false, in: controller)
+        #expect(indicator.flashCountForTesting == 2)
     }
 
     /// The disabled rows keep showing each VM's own setting, so turning the

@@ -196,6 +196,31 @@ struct SidebarViewControllerTests {
                 == .expectedMissing(expected: "1.2.3"))
     }
 
+    /// Re-arming an observation reports only changes made *after* it registers.
+    ///
+    /// So anything that moved while the sidebar was off screen — a collapsed
+    /// split item, a closed main window — arrives unobserved. The install-prompt
+    /// preference is the sharpest case: each cell snapshots it at configure
+    /// time, so without a reload on appear the badges keep answering from the
+    /// value the preference held before the user changed it in Settings.
+    @Test("Appearing reloads rows so state changed while off screen isn't stale")
+    func appearingReloadsAfterOffScreenChange() {
+        let viewModel = makeViewModel()
+        viewModel.instances.append(makeInstance(guestOS: .macOS, status: .running))
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        controller.loadViewIfNeeded()
+        controller.viewDidAppear()
+
+        controller.viewWillDisappear()
+        let reloadsWhileOffScreen = controller.reloadInstancesCallCountForTesting
+        viewModel.agentInstallPromptDisabled = true
+        #expect(controller.reloadInstancesCallCountForTesting == reloadsWhileOffScreen)
+
+        controller.viewDidAppear()
+
+        #expect(controller.reloadInstancesCallCountForTesting > reloadsWhileOffScreen)
+    }
+
     // MARK: - Reorder index math
 
     @Test("reorderTarget maps drops and skips no-ops")

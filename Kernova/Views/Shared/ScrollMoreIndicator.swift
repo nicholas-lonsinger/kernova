@@ -54,6 +54,13 @@ final class ScrollMoreIndicator {
 
     /// Whether the one-time scroller flash has latched.
     var hasFlashedForTesting: Bool { didFlash }
+
+    /// How many times the flash has fired.
+    ///
+    /// A re-arm over still-overflowing content re-latches immediately, so
+    /// ``hasFlashedForTesting`` reads `true` both before and after — only the
+    /// count separates a fresh flash from the one that already happened.
+    private(set) var flashCountForTesting = 0
     #endif
 
     /// Creates an indicator for `scrollView`, showing the cues named by `cues`.
@@ -141,6 +148,9 @@ final class ScrollMoreIndicator {
         // scroll view has drawn.
         if cues.contains(.flash), overflows, !didFlash {
             didFlash = true
+            #if DEBUG
+            flashCountForTesting += 1
+            #endif
             Self.logger.debug(
                 "Flashing scroller (window present: \(scrollView.window != nil, privacy: .public))")
             Task { @MainActor [weak self] in self?.scrollView?.flashScrollers() }

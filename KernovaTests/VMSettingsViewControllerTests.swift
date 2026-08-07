@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMSettingsViewController Tests")
+@Suite("VMSettingsViewController Tests", .serialized)
 @MainActor
 struct VMSettingsViewControllerTests {
     // MARK: - Fixtures

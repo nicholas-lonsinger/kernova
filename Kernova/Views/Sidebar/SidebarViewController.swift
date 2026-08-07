@@ -119,8 +119,15 @@ final class SidebarViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         startObservations()
-        applySelectionFromModel()
-        applyRenameState()
+        // Everything the observations watch can change while they are torn down,
+        // and re-arming them fires nothing — a `withObservationTracking`
+        // registration only reports changes made *after* it. Rows are stale on
+        // arrival, most visibly for the app-wide install-prompt preference each
+        // cell snapshots at configure time: toggled in the Settings window while
+        // the sidebar is collapsed, its badges would otherwise keep the old
+        // answer until some unrelated change reloaded them. `reloadInstances()`
+        // ends with the selection and rename passes, so it subsumes both.
+        reloadInstances()
     }
 
     override func viewWillDisappear() {

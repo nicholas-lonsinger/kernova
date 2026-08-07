@@ -45,6 +45,15 @@ final class RemindersSettingsViewController: NSViewController {
     private var vmSwitches: [(instance: VMInstance, control: NSSwitch, label: NSTextField)] = []
     /// Explains the disabled per-VM rows while the app-wide switch is off.
     private var vmOverrideCaption = NSTextField()
+    /// Flashes the pane's scroller when its content overflows the viewport,
+    /// signaling there's more below.
+    private var scrollMoreIndicator: ScrollMoreIndicator?
+
+    #if DEBUG
+    /// The more-below indicator, so a test can assert the flash re-arms when
+    /// the pane's content grows and stays latched when it doesn't.
+    var scrollMoreIndicatorForTesting: ScrollMoreIndicator? { scrollMoreIndicator }
+    #endif
     /// Keeps the per-VM rows in sync with the library while the pane is visible.
     private var vmObservation: ObservationLoop?
 
@@ -68,16 +77,21 @@ final class RemindersSettingsViewController: NSViewController {
         agentInstallSwitch.target = self
         agentInstallSwitch.action = #selector(agentInstallToggled)
 
-        // App-wide reminders.
-        let appCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Menu Bar Quit Reminder", control: menuBarQuitSwitch),
-            makeGroupedFormCardRow("Guest Agent Install Reminder", control: agentInstallSwitch),
+        // App-wide reminders: one card per reminder, each with its own caption,
+        // so neither description has to name which switch it belongs to.
+        let menuBarCard = makeGroupedFormCard(rows: [
+            makeGroupedFormCardRow("Menu Bar Quit Reminder", control: menuBarQuitSwitch)
         ])
-        let appMenuCaption = makeGroupedFormCaption(
-            "The Menu Bar Quit Reminder appears when you quit (⌘Q) and Kernova keeps running in the "
-                + "menu bar, reminding you it — and your virtual machines — are still going. The "
-                + "Guest Agent Install Reminder is the sidebar prompt to install the Kernova guest "
-                + "agent; turning it off silences it for every virtual machine.")
+        let menuBarCaption = makeGroupedFormCaption(
+            "Appears when you quit (⌘Q) and Kernova keeps running in the menu bar, reminding you "
+                + "it — and your virtual machines — are still going.")
+
+        let agentInstallCard = makeGroupedFormCard(rows: [
+            makeGroupedFormCardRow("Guest Agent Install Reminder", control: agentInstallSwitch)
+        ])
+        let agentInstallCaption = makeGroupedFormCaption(
+            "The sidebar prompt to install the Kernova guest agent on a running macOS virtual "
+                + "machine. Turning it off silences it for every virtual machine.")
 
         // Per-VM reminders: rebuilt on every appear (VMs may be added or removed).
         vmSection.orientation = .vertical
@@ -101,8 +115,10 @@ final class RemindersSettingsViewController: NSViewController {
 
         let content = NSStackView(views: [
             makeGroupedFormSectionHeader("App Reminders"),
-            appCard,
-            appMenuCaption,
+            menuBarCard,
+            menuBarCaption,
+            agentInstallCard,
+            agentInstallCaption,
             makeGroupedFormSectionHeader("Virtual Machine Reminders"),
             vmSection,
             vmCaption,
@@ -113,16 +129,22 @@ final class RemindersSettingsViewController: NSViewController {
         content.orientation = .vertical
         content.alignment = .leading
         content.spacing = Spacing.small
-        // Separate each logical group so they read as distinct blocks, matching
-        // the General pane's rhythm. The override caption sits between the two,
-        // so the spacing follows whichever of the pair is visible.
-        content.setCustomSpacing(Spacing.section, after: appMenuCaption)
+        // A caption closes its group, so the gap after one is what separates
+        // blocks: the wider `section` step where a section ends, a `large` step
+        // between the two cards within App Reminders. `vmOverrideCaption` follows
+        // `vmCaption` directly, so both carry the section step and whichever ends
+        // up last-visible supplies the gap above the reset button.
+        content.setCustomSpacing(Spacing.large, after: menuBarCaption)
+        content.setCustomSpacing(Spacing.section, after: agentInstallCaption)
         content.setCustomSpacing(Spacing.section, after: vmCaption)
         content.setCustomSpacing(Spacing.section, after: vmOverrideCaption)
 
         // Full-width members (cards and wrapping captions). The reset button is
         // intentionally excluded so it hugs its intrinsic width at the leading edge.
-        for member in [appCard, appMenuCaption, vmSection, vmCaption, vmOverrideCaption, resetCaption] {
+        for member in [
+            menuBarCard, menuBarCaption, agentInstallCard, agentInstallCaption,
+            vmSection, vmCaption, vmOverrideCaption, resetCaption,
+        ] {
             member.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         }
 
@@ -132,6 +154,13 @@ final class RemindersSettingsViewController: NSViewController {
         // Let the pane's size flow from its content (see the General/Advanced
         // panes for why the root must not use autoresizing-mask constraints).
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        // Flash-only (no chevron/fade overlays): this scroll view *is* the pane's
+        // root, so it has no superview of its own to host them until the tab view
+        // adopts it. The window is sized once per tab selection, so content that
+        // grows while the pane is on screen — a VM added or removed, the override
+        // caption appearing — overflows in place; the flash is what says so.
+        scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView, cues: .flash)
 
         // The hug must stay weaker than every subview's compression resistance:
         // once the tab controller fixes the window height at the cap, a
@@ -201,8 +230,28 @@ final class RemindersSettingsViewController: NSViewController {
 
     /// Rebuilds the per-VM rows and mirrors every switch to current state.
     private func refreshVMRows() {
+        let previousRowCount = vmSwitches.count
         rebuildVMRows()
         refreshSwitches()
+        if previousRowCount != vmSwitches.count { rearmScrollFlash() }
+    }
+
+    /// Re-arms the "more below" scroller flash after the pane's content height
+    /// changes while it is on screen.
+    ///
+    /// The window is sized once per tab selection, so content that grows
+    /// afterwards overflows in place with nothing to say so. Layout has to
+    /// settle first: overflow is measured against the document's real height,
+    /// and an un-laid-out subtree still reports the old one.
+    ///
+    /// Skipped before the pane has a height, which is where the first row build
+    /// runs: every content height beats a zero-height viewport, so re-arming
+    /// there would latch the flash against geometry the user never sees and
+    /// spend the cue the pane's actual appearance needs.
+    private func rearmScrollFlash() {
+        guard view.frame.height > 0 else { return }
+        view.layoutSubtreeIfNeeded()
+        scrollMoreIndicator?.rearmFlash()
     }
 
     /// Rebuilds the per-VM section from `viewModel.instances`: one switch row per
@@ -248,7 +297,10 @@ final class RemindersSettingsViewController: NSViewController {
         menuBarQuitSwitch.state = preferences.menuBarQuitReminderDismissed ? .off : .on
         let overridden = viewModel.agentInstallPromptDisabled
         agentInstallSwitch.state = overridden ? .off : .on
+
+        let wasShowingOverrideCaption = !vmOverrideCaption.isHidden
         vmOverrideCaption.isHidden = !overridden
+
         for (instance, toggle, label) in vmSwitches {
             toggle.state = instance.configuration.agentInstallNudgeDismissed ? .off : .on
             toggle.isEnabled = !overridden
@@ -256,6 +308,8 @@ final class RemindersSettingsViewController: NSViewController {
             // the row half-lit; gray the text in step so the row reads as inert.
             label.textColor = overridden ? .disabledControlTextColor : .labelColor
         }
+
+        if wasShowingOverrideCaption != overridden { rearmScrollFlash() }
     }
 
     @objc private func menuBarQuitToggled() {
