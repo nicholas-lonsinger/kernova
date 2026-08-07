@@ -1295,13 +1295,13 @@ struct VMInstanceTests {
         #expect(instance.guestOSVersionDisplay == "macOS")
     }
 
-    @Test("guestOSVersionDisplay reads Unknown for nil and empty values")
+    @Test("guestOSVersionDisplay is nil for nil and empty values, so the row hides")
     func guestOSVersionDisplayUnknown() {
-        #expect(makeMacOSInstanceWithAgentInstalled().guestOSVersionDisplay == "Unknown")
+        #expect(makeMacOSInstanceWithAgentInstalled().guestOSVersionDisplay == nil)
         // "" can only come from a hand-edited config.json (the service and
-        // recorder both normalize it to nil) but must not render as blank.
+        // recorder both normalize it to nil) but must not render as a blank row.
         #expect(
             makeMacOSInstanceWithAgentInstalled(lastSeenGuestOSVersion: "").guestOSVersionDisplay
-                == "Unknown")
+                == nil)
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import Virtualization
 import os
 
@@ -17,13 +18,15 @@ final class MacOSInstallService {
     ///
     /// `progressHandler` receives installation progress in 0.0–1.0.
     ///
+    /// - Returns: The image's own version and build, read off the loaded
+    ///   `VZMacOSRestoreImage` rather than the install intent that named it.
     /// - Throws: ``MacOSInstallError`` if the restore image is missing or
     ///   incompatible with this host, or any error rethrown from `VZMacOSInstaller`.
     func install(
         into instance: VMInstance,
         restoreImageURL: URL,
         progressHandler: @MainActor @Sendable @escaping (Double) -> Void
-    ) async throws {
+    ) async throws -> InstalledImage {
         instance.status = .installing
 
         Self.logger.info("Starting macOS installation for '\(instance.name, privacy: .public)'")
@@ -124,6 +127,10 @@ final class MacOSInstallService {
         instance.setupState?.progress = .fraction(1.0)
 
         Self.logger.info("macOS installation completed for '\(instance.name, privacy: .public)'")
+
+        return .macOSRestoreImage(
+            version: KernovaOSVersion.displayString(restoreImage.operatingSystemVersion),
+            build: restoreImage.buildVersion)
     }
 
     /// Waits for `vm.state` to reach `.stopped`, the timeout to elapse, or the

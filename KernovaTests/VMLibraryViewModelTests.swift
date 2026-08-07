@@ -5184,7 +5184,7 @@ private final class CancelRaceInstallService: MacOSInstallProviding {
         into instance: VMInstance,
         restoreImageURL: URL,
         progressHandler: @MainActor @Sendable @escaping (Double) -> Void
-    ) async throws {
+    ) async throws -> InstalledImage {
         installStartedContinuation.yield(())
         installStartedContinuation.finish()
         // Park until the surrounding Task is cancelled. `try? await

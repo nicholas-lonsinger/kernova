@@ -365,7 +365,7 @@ final class VMLifecycleCoordinator {
                     instance.status = .installing
                 }
 
-                try await installService.install(
+                let installedImage = try await installService.install(
                     into: instance,
                     restoreImageURL: ipswURL
                 ) { @MainActor progress in
@@ -373,9 +373,13 @@ final class VMLifecycleCoordinator {
                 }
 
                 // Clear the persisted install intent so subsequent Starts take the
-                // normal boot path, and clear `setupState` so the progress UI
-                // tears down before the caller chains an auto-boot.
-                instance.performConfigurationMutation { $0.installContext = nil }
+                // normal boot path, record the image this VM now carries, and
+                // clear `setupState` so the progress UI tears down before the
+                // caller chains an auto-boot.
+                instance.performConfigurationMutation {
+                    $0.installContext = nil
+                    $0.installedImage = installedImage
+                }
                 instance.setupState = nil
             } catch is CancellationError {
                 Self.logger.info("macOS installation cancelled for '\(instance.name, privacy: .public)'")
@@ -529,7 +533,8 @@ final class VMLifecycleCoordinator {
                 }
 
                 attachInstallerImage(
-                    at: downloadDestination, named: image.filename, to: instance)
+                    at: downloadDestination, named: image.filename,
+                    from: InstalledImage(linuxSource: context.source), to: instance)
                 instance.setupState = nil
                 // The VM entered `.installing` for the pipeline and nothing
                 // else takes it out — unlike a macOS install, no VZ session ran
@@ -580,8 +585,9 @@ final class VMLifecycleCoordinator {
         downloadService.discardResumeData(at: destination, permanently: false)
     }
 
-    /// Attaches the fetched installer image ahead of the VM's main disk and
-    /// clears the pending download intent.
+    /// Attaches the fetched installer image ahead of the VM's main disk,
+    /// records `installedImage` as what the VM was set up from, and clears the
+    /// pending download intent.
     ///
     /// `filename` is the name the source gave the ISO, which is what the disk
     /// is labelled with — the file it was written to carries a discriminator
@@ -592,7 +598,8 @@ final class VMLifecycleCoordinator {
     /// consumed by an install, this attachment outlives the setup and has to
     /// track the file if the user later moves it.
     private func attachInstallerImage(
-        at destination: URL, named filename: String, to instance: VMInstance
+        at destination: URL, named filename: String, from installedImage: InstalledImage?,
+        to instance: VMInstance
     ) {
         let installer = StorageDisk(
             path: destination.path(percentEncoded: false),
@@ -608,6 +615,7 @@ final class VMLifecycleCoordinator {
                 [installer]
                 + (config.storageDisks ?? [ConfigurationBuilder.defaultMainDisk(layout: layout)])
             config.linuxInstallContext = nil
+            config.installedImage = installedImage
         }
         Self.logger.notice(
             "Attached installer image '\(destination.lastPathComponent, privacy: .public)' to '\(instance.name, privacy: .public)'"

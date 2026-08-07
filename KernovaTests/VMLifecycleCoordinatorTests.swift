@@ -558,6 +558,34 @@ struct VMLifecycleCoordinatorTests {
         #expect(instance.setupState == nil)
     }
 
+    @Test("installMacOS records the image the install ran from")
+    func installMacOSRecordsTheInstalledImage() async throws {
+        let (coordinator, _, installService, _, _) = makeCoordinator()
+        let instance = makeInstance()
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+        installService.installedImage = .macOSRestoreImage(version: "15.6.1", build: "24G90")
+        let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
+
+        try await coordinator.installMacOS(on: instance, context: context)
+
+        #expect(
+            instance.configuration.installedImage
+                == .macOSRestoreImage(version: "15.6.1", build: "24G90"))
+    }
+
+    @Test("A failed install records no image")
+    func installMacOSFailureRecordsNoImage() async {
+        let (coordinator, _, installService, _, _) = makeCoordinator()
+        let instance = makeInstance()
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+        installService.installError = MacOSInstallError.unsupportedRestoreImage
+        let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
+
+        _ = try? await coordinator.installMacOS(on: instance, context: context)
+
+        #expect(instance.configuration.installedImage == nil)
+    }
+
     @Test("installMacOS throws CancellationError on cancel and preserves installContext")
     func installMacOSCancelPreservesContext() async {
         let downloads = FileManager.default.temporaryDirectory
@@ -968,6 +996,48 @@ struct VMLifecycleCoordinatorTests {
         // The pipeline put the VM in `.installing`; it has to come to rest in a
         // status the auto-boot chained off this return can start from.
         #expect(instance.status == .stopped)
+    }
+
+    @Test("downloadLinuxImage records the catalog image the ISO came from")
+    func downloadLinuxImageRecordsTheCatalogImage() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        let context = LinuxInstallContext(
+            source: .catalogEntry(
+                makeLinuxCatalogEntry(distribution: "Ubuntu Desktop", version: "26.04 LTS")))
+        let instance = makeLinuxInstance(context: context)
+
+        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+
+        #expect(
+            instance.configuration.installedImage
+                == .linuxCatalogImage(distribution: "Ubuntu Desktop", version: "26.04 LTS"))
+    }
+
+    @Test("downloadLinuxImage records nothing for a user-supplied URL")
+    func downloadLinuxImageRecordsNothingForAURL() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        let context = makeCustomURLContext(fixture: fixture, verified: true)
+        let instance = makeLinuxInstance(context: context)
+
+        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+
+        #expect(instance.configuration.installedImage == nil)
+    }
+
+    @Test("A failed Linux download records no image")
+    func downloadLinuxImageFailureRecordsNoImage() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        fixture.downloadService.downloadError = DownloadError.downloadFailed(
+            URLError(.notConnectedToInternet))
+        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
+        let instance = makeLinuxInstance(context: context)
+
+        _ = try? await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+
+        #expect(instance.configuration.installedImage == nil)
     }
 
     @Test("downloadLinuxImage keeps a pre-existing main disk and puts the ISO in front of it")
