@@ -194,24 +194,28 @@ struct VMSettingsViewControllerTests {
         #expect(!visibleLabel("OS Version", in: vc.view))
     }
 
-    @Test("A Linux VM shows the image it was installed from and never an OS Version row")
+    @Test("A Linux VM names the attached media and never an OS Version row")
     func osRowsLinuxCatalogImage() {
         let (vc, _, _) = makeOSRowsController(
             guestOS: .linux,
             installedImage: .linuxCatalogImage(
                 distribution: "Ubuntu Desktop", version: "26.04 LTS"))
 
-        #expect(visibleLabel("Installed From", in: vc.view))
+        #expect(visibleLabel("Installer Image", in: vc.view))
         #expect(visibleLabel("Ubuntu Desktop 26.04 LTS", in: vc.view))
+        // Booting that ISO is not installing from it — the guest's own
+        // installer can write another distribution, or nothing at all — so the
+        // row must never claim the install happened.
+        #expect(!containsLabel("Installed From", in: vc.view))
         // Linux guests have no Kernova agent, so the row is never even built.
         #expect(!containsLabel("OS Version", in: vc.view))
     }
 
-    @Test("A Linux VM installed from a URL shows no OS rows at all")
+    @Test("A Linux VM set up from a URL shows no OS rows at all")
     func osRowsLinuxWithoutRecord() {
         let (vc, _, _) = makeOSRowsController(guestOS: .linux)
 
-        #expect(!visibleLabel("Installed From", in: vc.view))
+        #expect(!visibleLabel("Installer Image", in: vc.view))
         #expect(!containsLabel("OS Version", in: vc.view))
     }
 

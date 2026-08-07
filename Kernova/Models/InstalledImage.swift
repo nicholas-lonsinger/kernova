@@ -16,8 +16,9 @@ enum InstalledImage: Sendable, Equatable {
     /// and version the catalog names.
     ///
     /// Attaching an ISO is not a completed install — the distribution's own
-    /// installer runs inside the guest, and the user can have it write
-    /// something else — so this names what the VM was installed *from*.
+    /// installer runs inside the guest, and can write another distribution or
+    /// nothing at all — so this names the media the VM was set up with, and
+    /// the settings row it feeds is labelled for the media too.
     case linuxCatalogImage(distribution: String, version: String)
 
     /// The record a pending Linux download supports: a catalog entry publishes

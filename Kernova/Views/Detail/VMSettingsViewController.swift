@@ -535,6 +535,17 @@ extension VMSettingsViewController {
 
     // MARK: General
 
+    /// What the install-record row is called for `guestOS`.
+    ///
+    /// A macOS install ran to completion under Kernova, so its row names what
+    /// the VM was installed from. A Linux ISO is only attached for the
+    /// distribution's own installer to use — which can install something else,
+    /// or nothing — so that row names the media and claims nothing about the
+    /// outcome.
+    static func installedImageRowLabel(guestOS: VMGuestOS) -> String {
+        guestOS == .macOS ? "Installed From" : "Installer Image"
+    }
+
     private func buildGeneralSection() -> NSView {
         nameButton = NSButton(title: instance.name, target: self, action: #selector(startRename))
         nameButton.isBordered = false
@@ -587,7 +598,9 @@ extension VMSettingsViewController {
         let installedLabel = makeGroupedFormValueLabel(installedImage ?? "")
         installedImageValueLabel = installedLabel
         let installedRow = GroupedFormCollapsibleRow(
-            row: makeGroupedFormCardRow("Installed From", control: installedLabel))
+            row: makeGroupedFormCardRow(
+                Self.installedImageRowLabel(guestOS: instance.configuration.guestOS),
+                control: installedLabel))
         installedRow.isHidden = installedImage == nil
         installedImageRow = installedRow
         rows.append(installedRow)
