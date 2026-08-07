@@ -112,17 +112,27 @@ func isSeed(_ build: String) -> Bool {
     return parsed.series == 5 && !parsed.revision.isEmpty
 }
 
+let imageNamePrefix = "UniversalMac_"
+let imageNameSuffix = "_Restore.ipsw"
+
 /// Splits `UniversalMac_<version>_<build>_Restore.ipsw` into its two parts.
 ///
 /// A URL is all steps 3 and 3b have — neither reads a feed entry stating the
 /// version and build, so both take them from the file name Apple assigns.
+/// The affixes are matched at the ends rather than replaced wherever they
+/// occur, so a name carrying anything beyond them yields no version and build
+/// instead of a plausible-looking pair spliced out of the surplus.
 func parseImageName(_ url: URL) -> (version: String, build: String)? {
-    let parts = url.lastPathComponent
-        .replacingOccurrences(of: "UniversalMac_", with: "")
-        .replacingOccurrences(of: "_Restore.ipsw", with: "")
+    let name = url.lastPathComponent
+    guard name.hasPrefix(imageNamePrefix), name.hasSuffix(imageNameSuffix) else { return nil }
+    let parts = name.dropFirst(imageNamePrefix.count).dropLast(imageNameSuffix.count)
         .split(separator: "_")
     guard parts.count == 2 else { return nil }
-    return (String(parts[0]), String(parts[1]))
+    // The crawl index also holds links someone mistyped by hand, such as
+    // `UniversalMac_l3.0_22A380_Restore.ipsw`. A version is digits and dots.
+    let version = String(parts[0])
+    guard !version.isEmpty, version.allSatisfy({ $0.isNumber || $0 == "." }) else { return nil }
+    return (version, String(parts[1]))
 }
 
 let repoRoot = URL(
@@ -432,7 +442,14 @@ if let data = await get(indexURL),
     let rows = try? JSONSerialization.jsonObject(with: data) as? [[String]]
 {
     for row in rows.dropFirst() {
-        guard let raw = row.first, let url = URL(string: raw),
+        // A crawler that lifted this URL out of a page can carry the markup
+        // that followed it into the indexed string, as `…_Restore.ipsw%3Cspan`
+        // and `…_Restore.ipsw&quot;` both show. The image URL is the prefix
+        // through the file name; anything past it belongs to the page, and
+        // keeping it both spoils the build number the name is read for and
+        // asks Apple about an address it never served.
+        guard let raw = row.first, let end = raw.range(of: imageNameSuffix),
+            let url = URL(string: String(raw[..<end.upperBound])),
             url.host == "updates.cdn-apple.com"
         else { continue }
         guard let (version, build) = parseImageName(url) else { continue }
