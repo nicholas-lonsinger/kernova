@@ -18,6 +18,8 @@ Pick the seam by what produces the state. `AsyncGate`/`waitUntil`/`TestFailure` 
 
 If the condition is driven by a *single* event a starved scheduler can miss (e.g. one heartbeat that latches a terminal state), drive it *continuously* — a wait conversion alone won't fix that.
 
+**To cross a production time window, inject `TestEngineClock` and advance it — never sleep through it.** A subject that measures elapsed time (a burst window, a backoff, a liveness deadline) takes `any EngineClock`; the manually advanced conformance in `KernovaTestSupport` moves its reading in one call, so no wall-clock wait and no shortened production window are needed.
+
 Polling (`waitUntil` / `pollUntil`) is acceptable **only** for a genuine no-signal predicate: a negative assertion ("prove nothing arrived"), a filesystem-appearance poll, or an exception-catch predicate. There, use a generous cadence, assert end-state not per-iteration, and add a one-line `RATIONALE:` naming **which** of those three categories applies. That is the local fact a reader cannot derive; the general rule is this document, so cite it rather than restating it at the call site.
 
 **Blocking bridge calls run on GCD via `offCooperativePool`, never `Task.detached`.** The synchronous pull bridges (`copyToMacFileURL`/`copyToMacData`, and the guest's `provideData` pasteboard-promise callback) park their calling thread until the transfer resolves. `Task.detached` parks one of the cooperative pool's few threads (CI runners have 3-4); enough parked pulls exhaust the pool, the `@MainActor` responders they wait on starve, and the whole bundle freezes — the 2026-07-19 mass CI failures. `offCooperativePool` (in `KernovaTestSupport`) dispatches to an overcommitting GCD global queue instead.

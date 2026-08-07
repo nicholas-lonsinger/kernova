@@ -2,40 +2,6 @@ import Foundation
 import KernovaKit
 import os
 
-/// The clock-independent surface of `VsockGuestControlAgent`, for holders that
-/// must run below macOS 13 and so cannot store a concrete clock instantiation.
-protocol VsockGuestControlling: AnyObject, Sendable {
-    /// Begins the connect/serve/reconnect loop (idempotent).
-    func start()
-    /// Stops the loop and tears down any active channel.
-    func stop()
-    /// Thread-safe host-connection state for the menu-bar UI to pull on open.
-    var connectionState: HostConnectionState { get }
-    /// Thread-safe read of the host's bundled agent version; empty when unknown.
-    var hostBundledAgentVersion: String { get }
-}
-
-/// Builds a control agent on the platform-default clock — `ContinuousClock` on
-/// macOS 13+, `CLOCK_MONOTONIC` below — erased for holders that run on 12.
-func makeVsockGuestControlAgent(
-    onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
-    onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil
-) -> any VsockGuestControlling {
-    func build<C: EngineClock>(_ clock: C) -> any VsockGuestControlling {
-        VsockGuestControlAgent(
-            clock: clock,
-            client: VsockGuestClient(port: KernovaVsockPort.control, label: "control", clock: clock),
-            onPolicy: onPolicy,
-            onStateChange: onStateChange
-        )
-    }
-    return build(makePlatformEngineClock())
-}
-
-// File-scope stand-in for a `static let`, which a generic type cannot hold.
-private let controlAgentLogger = Logger(
-    subsystem: "app.kernova.macosagent", category: "VsockGuestControlAgent")
-
 /// Guest-side control-channel agent that talks to the host's
 /// `VsockControlService` on `KernovaVsockPort.control`.
 ///
@@ -44,11 +10,12 @@ private let controlAgentLogger = Logger(
 /// carries the version handshake, a recurring heartbeat, and a watchdog that
 /// closes the channel once inbound traffic stops for `terminateAfter`, leaving
 /// `VsockGuestClient` to rebuild it.
-final class VsockGuestControlAgent<Clock: EngineClock>: VsockGuestControlling, @unchecked Sendable {
-    private static var logger: Logger { controlAgentLogger }
+final class VsockGuestControlAgent: @unchecked Sendable {
+    private static let logger = Logger(
+        subsystem: "app.kernova.macosagent", category: "VsockGuestControlAgent")
 
-    private let clock: Clock
-    private let client: any VsockReconnecting
+    private let clock: any EngineClock
+    private let client: VsockGuestClient
     private let heartbeatInterval: TimeInterval
     private let unresponsiveAfter: TimeInterval
     private let terminateAfter: TimeInterval
@@ -63,7 +30,7 @@ final class VsockGuestControlAgent<Clock: EngineClock>: VsockGuestControlling, @
     private let onStateChange: (@Sendable (HostConnectionState) -> Void)?
 
     private let lock = NSLock()
-    private var lastInboundFrame: Clock.Instant?
+    private var lastInboundFrame: EngineInstant?
     private var unresponsiveLogged: Bool = false
     private var nextHeartbeatNonce: UInt64 = 1
 
@@ -84,11 +51,12 @@ final class VsockGuestControlAgent<Clock: EngineClock>: VsockGuestControlling, @
     /// every inbound `PolicyUpdate`, symmetric with the host's own gate.
     private var hostSupportsClipboardStreaming = false
 
-    /// Designated init; production goes through `makeVsockGuestControlAgent`,
-    /// tests inject a socketpair-backed client and small cadences.
+    /// Creates the control agent; tests inject a socketpair-backed client and
+    /// small cadences.
     init(
-        clock: Clock,
-        client: any VsockReconnecting,
+        clock: any EngineClock = makePlatformEngineClock(),
+        client: VsockGuestClient = VsockGuestClient(
+            port: KernovaVsockPort.control, label: "control"),
         heartbeatInterval: TimeInterval = 5,
         unresponsiveAfter: TimeInterval = 15,
         terminateAfter: TimeInterval = 30,
@@ -314,7 +282,7 @@ final class VsockGuestControlAgent<Clock: EngineClock>: VsockGuestControlling, @
     // MARK: - Liveness
 
     private func checkLiveness(channel: VsockChannel) {
-        let snapshot: (last: Clock.Instant?, alreadyLogged: Bool) = lock.withLock {
+        let snapshot: (last: EngineInstant?, alreadyLogged: Bool) = lock.withLock {
             (lastInboundFrame, unresponsiveLogged)
         }
         guard let last = snapshot.last else {

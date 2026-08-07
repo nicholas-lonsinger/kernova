@@ -99,7 +99,7 @@ public final class AsyncGate: @unchecked Sendable {
     // periphery:ignore:parameters isolation
     private func armOnce(
         clock: MonotonicEngineClock,
-        start: MonotonicEngineClock.Instant,
+        start: EngineInstant,
         timeout: TimeInterval,
         isolation: isolated (any Actor)?,
         predicate: () -> Bool

@@ -115,7 +115,7 @@ final class VsockClipboardService: ClipboardServicing {
     private let lazyCoordinator = LazyPullCoordinator()
 
     private var sender: ClipboardStreamSender?
-    private var receiver: (any ClipboardStreamReceiving)?
+    private var receiver: ClipboardStreamReceiver?
     private var consumeTask: Task<Void, Never>?
 
     /// Counter for outbound offer generations.
@@ -285,7 +285,7 @@ final class VsockClipboardService: ClipboardServicing {
         isConnected = true
 
         let sender = ClipboardStreamSender(channel: channel)
-        let receiver = makeClipboardStreamReceiver(
+        let receiver = ClipboardStreamReceiver(
             channel: channel, staging: staging,
             onTransferTimed: { [label = self.label, tag = self.connectionTag] metrics in
                 Self.logger.notice(
@@ -541,7 +541,7 @@ final class VsockClipboardService: ClipboardServicing {
         label: String,
         connectionTag: ClipboardConnectionTag,
         sender: ClipboardStreamSender,
-        receiver: any ClipboardStreamReceiving,
+        receiver: ClipboardStreamReceiver,
         onControlFrame: @Sendable @escaping (Frame) -> Void
     ) async {
         do {
@@ -1291,7 +1291,7 @@ final class VsockClipboardService: ClipboardServicing {
         /// The offer's paste-bound (non-inline) byte total, for the `.fileURL`
         /// path's deadline-safe cap check in `pasteBoundSnapshot`.
         let pasteBoundTotal: UInt64
-        let receiver: any ClipboardStreamReceiving
+        let receiver: ClipboardStreamReceiver
         let channel: VsockChannel
         let staging: ClipboardFileStaging
         let timeout: TimeInterval

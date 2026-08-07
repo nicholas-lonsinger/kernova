@@ -242,9 +242,9 @@ final class StreamCollector: @unchecked Sendable {
 /// (channel B) over a socketpair, with two routing tasks standing in for the
 /// owning services: A's inbound acks/aborts feed the sender; B's inbound
 /// begin/chunk/end/abort feed the receiver.
-final class StreamHarness<Clock: EngineClock>: @unchecked Sendable {
+final class StreamHarness: @unchecked Sendable {
     let sender: ClipboardStreamSender
-    let receiver: ClipboardStreamReceiver<Clock>
+    let receiver: ClipboardStreamReceiver
     let staging: ClipboardFileStaging
     /// Parent of the staging root; tests scan it for materialized temp files.
     let stagingTempRoot: URL
@@ -255,7 +255,7 @@ final class StreamHarness<Clock: EngineClock>: @unchecked Sendable {
     private var routeTasks: [Task<Void, Never>] = []
 
     init(
-        clock: Clock,
+        clock: any EngineClock = makePlatformEngineClock(),
         chunkSize: Int,
         windowBytes: Int,
         noAckTimeout: TimeInterval = 10,
@@ -329,34 +329,5 @@ final class StreamHarness<Clock: EngineClock>: @unchecked Sendable {
         a.close()
         b.close()
         staging.sweep()
-    }
-}
-
-extension StreamHarness where Clock == MonotonicEngineClock {
-    /// Harness on the macOS 12 fallback clock — the default for tests that
-    /// don't parameterize over clocks.
-    convenience init(
-        chunkSize: Int,
-        windowBytes: Int,
-        noAckTimeout: TimeInterval = 10,
-        ackLatencyBound: TimeInterval = ClipboardStreamTuning.ackLatencyBound,
-        stallTimeout: TimeInterval = ClipboardStreamTuning.inboundStallTimeout,
-        maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
-        suppressAcks: Bool = false,
-        freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
-        sinkFactory: ClipboardSinkFactory? = nil
-    ) throws {
-        try self.init(
-            clock: MonotonicEngineClock(),
-            chunkSize: chunkSize,
-            windowBytes: windowBytes,
-            noAckTimeout: noAckTimeout,
-            ackLatencyBound: ackLatencyBound,
-            stallTimeout: stallTimeout,
-            maxResidentInlineBytes: maxResidentInlineBytes,
-            suppressAcks: suppressAcks,
-            freeSpaceProvider: freeSpaceProvider,
-            sinkFactory: sinkFactory
-        )
     }
 }

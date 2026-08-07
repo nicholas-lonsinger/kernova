@@ -319,7 +319,7 @@ struct VsockGuestClientTests {
 struct ClassifySocketErrnoTests {
     @Test("EAFNOSUPPORT classifies as permanent")
     func eafnosupportIsPermanent() {
-        let result = classifySocketErrno(EAFNOSUPPORT, label: "test")
+        let result = VsockGuestClient.classifySocketErrno(EAFNOSUPPORT, label: "test")
         if case .permanent = result {
         } else {
             Issue.record("Expected .permanent for EAFNOSUPPORT, got \(result)")
@@ -328,7 +328,7 @@ struct ClassifySocketErrnoTests {
 
     @Test("EPROTONOSUPPORT classifies as permanent")
     func eprotonosupportIsPermanent() {
-        let result = classifySocketErrno(EPROTONOSUPPORT, label: "test")
+        let result = VsockGuestClient.classifySocketErrno(EPROTONOSUPPORT, label: "test")
         if case .permanent = result {
         } else {
             Issue.record("Expected .permanent for EPROTONOSUPPORT, got \(result)")
@@ -337,7 +337,7 @@ struct ClassifySocketErrnoTests {
 
     @Test("EMFILE (resource exhaustion) classifies as transient")
     func emfileIsTransient() {
-        let result = classifySocketErrno(EMFILE, label: "test")
+        let result = VsockGuestClient.classifySocketErrno(EMFILE, label: "test")
         if case .transient = result {
         } else {
             Issue.record("Expected .transient for EMFILE, got \(result)")
@@ -346,7 +346,7 @@ struct ClassifySocketErrnoTests {
 
     @Test("EACCES (access control) classifies as transient — sandbox may clear")
     func eaccesIsTransient() {
-        let result = classifySocketErrno(EACCES, label: "test")
+        let result = VsockGuestClient.classifySocketErrno(EACCES, label: "test")
         if case .transient = result {
         } else {
             Issue.record("Expected .transient for EACCES, got \(result)")
@@ -355,7 +355,7 @@ struct ClassifySocketErrnoTests {
 
     @Test("errno 0 (unknown/default) classifies as transient")
     func zeroErrnoIsTransient() {
-        let result = classifySocketErrno(0, label: "test")
+        let result = VsockGuestClient.classifySocketErrno(0, label: "test")
         if case .transient = result {
         } else {
             Issue.record("Expected .transient for errno=0, got \(result)")
@@ -516,8 +516,8 @@ struct BlockingConnectTests {
 
     @Test("Past the prompt cap, admission waits out a doubling backoff")
     func gateBacksOffPastPromptCap() {
-        let clock = TickClock()
-        let gate = BlockingConnectGate { clock.nanoseconds }
+        let clock = TestEngineClock()
+        let gate = BlockingConnectGate(clock: clock)
 
         for _ in 0..<BlockingConnectGate.maxPromptSlots {
             #expect(gate.claim("control"))
@@ -538,8 +538,8 @@ struct BlockingConnectTests {
 
     @Test("The backoff never exceeds its ceiling however many slots are parked")
     func gateBackoffStopsAtCeiling() {
-        let clock = TickClock()
-        let gate = BlockingConnectGate { clock.nanoseconds }
+        let clock = TestEngineClock()
+        let gate = BlockingConnectGate(clock: clock)
 
         for _ in 0..<BlockingConnectGate.maxPromptSlots {
             #expect(gate.claim("control"))
@@ -562,8 +562,8 @@ struct BlockingConnectTests {
 
     @Test("A release below the cap restores prompt admission")
     func gateRestoresPromptAdmissionOnRelease() {
-        let clock = TickClock()
-        let gate = BlockingConnectGate { clock.nanoseconds }
+        let clock = TestEngineClock()
+        let gate = BlockingConnectGate(clock: clock)
 
         for _ in 0..<BlockingConnectGate.maxPromptSlots {
             #expect(gate.claim("control"))
@@ -588,8 +588,8 @@ struct BlockingConnectTests {
 
     @Test("Labels hold their slots independently")
     func gateSeparatesLabels() {
-        let clock = TickClock()
-        let gate = BlockingConnectGate { clock.nanoseconds }
+        let clock = TestEngineClock()
+        let gate = BlockingConnectGate(clock: clock)
 
         for _ in 0..<BlockingConnectGate.maxPromptSlots {
             #expect(gate.claim("control"))
@@ -615,8 +615,8 @@ struct BlockingConnectTests {
 
     @Test("Concurrent claims on one label admit exactly the prompt cap")
     func gateAdmitsExactlyTheCapUnderContention() async {
-        let clock = TickClock()
-        let gate = BlockingConnectGate { clock.nanoseconds }
+        let clock = TestEngineClock()
+        let gate = BlockingConnectGate(clock: clock)
         let winners = CallCounter()
 
         await withTaskGroup(of: Void.self) { group in
@@ -631,23 +631,8 @@ struct BlockingConnectTests {
     }
 }
 
-/// Manually advanced nanosecond source for gate-backoff tests.
-private final class TickClock: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored: UInt64 = 0
-
-    var nanoseconds: UInt64 { lock.withLock { stored } }
-
-    /// Advances the reading by `seconds`.
-    func advance(seconds: TimeInterval) {
-        lock.withLock { stored += UInt64(seconds * 1_000_000_000) }
-    }
-}
-
 @Suite("boundedBlockingConnect: outcome arms over real descriptors")
 struct BoundedBlockingConnectTests {
-    private typealias Client = VsockGuestClient<MonotonicEngineClock>
-
     @Test("A prompt success hands the open fd to the caller and frees the gate")
     func promptSuccessKeepsCallerOwnership() throws {
         var fds: [Int32] = [0, 0]
@@ -658,7 +643,7 @@ struct BoundedBlockingConnectTests {
         }
         let gate = BlockingConnectGate()
 
-        let outcome = Client.boundedBlockingConnect(
+        let outcome = VsockGuestClient.boundedBlockingConnect(
             fd: fds[0], label: "test", port: 0, gate: gate
         ) { 0 }
 
@@ -677,7 +662,7 @@ struct BoundedBlockingConnectTests {
         }
         let gate = BlockingConnectGate()
 
-        let outcome = Client.boundedBlockingConnect(
+        let outcome = VsockGuestClient.boundedBlockingConnect(
             fd: fds[0], label: "test", port: 0, gate: gate
         ) { ECONNREFUSED }
 
@@ -695,7 +680,7 @@ struct BoundedBlockingConnectTests {
         let gate = BlockingConnectGate()
         let parked = DispatchSemaphore(value: 0)
 
-        let outcome = Client.boundedBlockingConnect(
+        let outcome = VsockGuestClient.boundedBlockingConnect(
             fd: fd, label: "test", port: 0, gate: gate, deadline: 0.05
         ) {
             parked.wait()
@@ -723,14 +708,14 @@ struct BoundedBlockingConnectTests {
             close(fds[0])
             close(fds[1])
         }
-        let clock = TickClock()
-        let gate = BlockingConnectGate { clock.nanoseconds }
+        let clock = TestEngineClock()
+        let gate = BlockingConnectGate(clock: clock)
         for _ in 0..<BlockingConnectGate.maxPromptSlots {
             #expect(gate.claim("test"))
         }
         let calls = AtomicInt()
 
-        let outcome = Client.boundedBlockingConnect(
+        let outcome = VsockGuestClient.boundedBlockingConnect(
             fd: fds[0], label: "test", port: 0, gate: gate
         ) {
             calls.increment()
@@ -759,7 +744,7 @@ struct AwaitConnectCompletionTests {
         close(fds[1])
         defer { close(fds[0]) }
         #expect(
-            VsockGuestClient<MonotonicEngineClock>.awaitConnectCompletion(
+            VsockGuestClient.awaitConnectCompletion(
                 fd: fds[0], label: "test", port: 0, clock: MonotonicEngineClock()))
     }
 
@@ -770,7 +755,7 @@ struct AwaitConnectCompletionTests {
         // poll() reports POLLNVAL with no fd-reuse window.
         let fd = getdtablesize()
         #expect(
-            !VsockGuestClient<MonotonicEngineClock>.awaitConnectCompletion(
+            !VsockGuestClient.awaitConnectCompletion(
                 fd: fd, label: "test", port: 0, clock: MonotonicEngineClock()))
     }
 }
