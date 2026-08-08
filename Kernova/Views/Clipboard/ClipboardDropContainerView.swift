@@ -38,7 +38,7 @@ final class ClipboardDropContainerView: NSView {
     /// `copy(_:)` when the text editor is hidden or unfocused — AppKit inserts a
     /// view controller after its view, but only if some view in the window can
     /// take first-responder status.
-    override var acceptsFirstResponder: Bool { true }
+    nonisolated override var acceptsFirstResponder: Bool { true }
 
     // MARK: - NSDraggingDestination
 

@@ -57,7 +57,7 @@ final class ClipboardRichTextPreviewView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    override var wantsUpdateLayer: Bool { true }
+    nonisolated override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
         layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
