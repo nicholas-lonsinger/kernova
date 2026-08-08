@@ -161,7 +161,7 @@ struct VMSettingsViewControllerTests {
             installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84"),
             lastSeenGuestOSVersion: "Version 26.6 (Build 25G12)")
 
-        #expect(visibleLabel("Installed From", in: vc.view))
+        #expect(visibleLabel("Installed Version", in: vc.view))
         #expect(visibleLabel("macOS 26.5.2 (25F84)", in: vc.view))
         #expect(visibleLabel("OS Version", in: vc.view))
         #expect(visibleLabel("26.6", in: vc.view))
@@ -173,7 +173,7 @@ struct VMSettingsViewControllerTests {
             guestOS: .macOS,
             installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84"))
 
-        #expect(visibleLabel("Installed From", in: vc.view))
+        #expect(visibleLabel("Installed Version", in: vc.view))
         #expect(!visibleLabel("OS Version", in: vc.view))
     }
 
@@ -182,7 +182,7 @@ struct VMSettingsViewControllerTests {
         let (vc, _, _) = makeOSRowsController(
             guestOS: .macOS, lastSeenGuestOSVersion: "26.6")
 
-        #expect(!visibleLabel("Installed From", in: vc.view))
+        #expect(!visibleLabel("Installed Version", in: vc.view))
         #expect(visibleLabel("OS Version", in: vc.view))
     }
 
@@ -190,7 +190,7 @@ struct VMSettingsViewControllerTests {
     func osRowsNeitherKnown() {
         let (vc, _, _) = makeOSRowsController(guestOS: .macOS)
 
-        #expect(!visibleLabel("Installed From", in: vc.view))
+        #expect(!visibleLabel("Installed Version", in: vc.view))
         #expect(!visibleLabel("OS Version", in: vc.view))
     }
 
@@ -206,7 +206,7 @@ struct VMSettingsViewControllerTests {
         // Booting that ISO is not installing from it — the guest's own
         // installer can write another distribution, or nothing at all — so the
         // row must never claim the install happened.
-        #expect(!containsLabel("Installed From", in: vc.view))
+        #expect(!containsLabel("Installed Version", in: vc.view))
         // Linux guests have no Kernova agent, so the row is never even built.
         #expect(!containsLabel("OS Version", in: vc.view))
     }
