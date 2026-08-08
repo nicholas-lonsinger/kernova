@@ -129,6 +129,9 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         )
 
         self.vsockConnection = vsockConnection
+        clipboardAgent.hostStreamsDirectories = { [weak controlAgent] in
+            controlAgent?.hostSupportsDirectoryStreaming ?? false
+        }
         self.clipboardAgent = clipboardAgent
         self.controlAgent = controlAgent
 

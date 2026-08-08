@@ -13,7 +13,9 @@ public typealias ClipboardSinkFactory =
 /// and an inline one past `maxResidentInlineBytes` — streams to a temp file
 /// under the free-space guard, never resident whole. A spilled inline rep is
 /// mmapped back at End and delivered as a resident `.inMemory` payload, so
-/// inline content has no Kernova-imposed size cap.
+/// inline content has no Kernova-imposed size cap. A transfer primed as a folder
+/// (`awaitTransfer(_:extractsDirectoryNamed:…)`) streams into an extract pipeline
+/// instead, so the tree grows as the archive arrives and no archive is staged.
 ///
 /// One receiver drives all inbound transfers on a channel, keyed by
 /// `transfer_id`: the owning service routes `ClipboardStreamBegin` /
@@ -101,6 +103,10 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     /// Begins an inbound transfer: free-space check, sink open, and the initial
     /// ack that tells the sender to go.
     public func handleBegin(_ begin: Kernova_V1_ClipboardStreamBegin) {
+        // Directory-ness rides the offer, not the wire: the side that registered
+        // this pull is the same side that sent the `ClipboardRequest`, so it
+        // primes the expectation here rather than the sender re-declaring it.
+        let directoryName = lock.withLock { awaiters[begin.transferID]?.extractsDirectoryNamed }
         let transfer = Transfer(
             transferID: begin.transferID,
             generation: begin.generation,
@@ -114,6 +120,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             totalBytes: Int(
                 clamping: min(begin.totalBytes, ClipboardOfferBounds.maxDeclaredByteCount)),
             maxResidentInlineBytes: maxResidentInlineBytes,
+            extractsDirectoryNamed: directoryName,
             now: self.clock.now
         )
         // Ignore a duplicate transfer_id rather than overwrite an in-flight
@@ -132,7 +139,28 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             // than open a sink nobody will close and start a stall timer that
             // outlives a transfer no longer reachable through the table. [L4]
             guard !transfer.isFinished else { return }
-            if transfer.streamsToDisk {
+            if let folderName = transfer.extractsDirectoryNamed {
+                // A streamed directory archive declares no total (its compressed
+                // size isn't known until the last byte is encoded), so the
+                // free-space gate is the requester's pre-flight against the
+                // offer's uncompressed estimate plus the mid-extract re-check in
+                // `performWrite`. Only the margin is worth asserting up front.
+                guard self.staging.hasCapacity(forByteCount: 0) else {
+                    self.failDiskFull(transfer)
+                    return
+                }
+                do {
+                    let destination = try self.staging.reserveDirectory(
+                        generation: transfer.generation, name: folderName)
+                    transfer.sink = ClipboardDirectoryExtractSink(
+                        destinationURL: destination, label: "\(transfer.transferID)",
+                        capacityBytes: self.windowBytes)
+                } catch {
+                    self.fail(
+                        transfer, code: "stage.error", message: "Cannot open the extract folder")
+                    return
+                }
+            } else if transfer.streamsToDisk {
                 // The disk free-space guard, not a heap ceiling, bounds a
                 // misbehaving peer's declared size: create no temp file when it
                 // can't fit. [H1]
@@ -198,8 +226,13 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                 return
             }
             // Reject a peer streaming past its declared total — bounds both the
-            // inline RAM buffer and the file sink to total_bytes. [H1]
-            guard transfer.receivedBytes + chunk.data.count <= transfer.totalBytes else {
+            // inline RAM buffer and the file sink to total_bytes. [H1] A streamed
+            // directory archive declares none, and is bounded instead by the
+            // free-space re-check on its write lane.
+            guard
+                transfer.extractsDirectoryNamed != nil
+                    || transfer.receivedBytes + chunk.data.count <= transfer.totalBytes
+            else {
                 self.fail(
                     transfer, code: "size.overrun",
                     message: "Chunk exceeds declared total of \(transfer.totalBytes)")
@@ -295,8 +328,9 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             byteCount: transfer.receivedBytes)
     }
 
-    /// Commits a disk-streamed transfer's staging file and completes it, on the
-    /// write lane behind the transfer's whole write backlog.
+    /// Commits a disk-streamed transfer's staging file — or the tree its extract
+    /// pipeline has been writing — and completes it, on the write lane behind the
+    /// transfer's whole write backlog.
     private func finishStaged(_ transfer: Transfer, byteCount: Int, digest: Data) {
         // Final ack: every byte is durably written now, so this closes the
         // sender's cumulative credit ledger even if the tail sat below one
@@ -306,6 +340,28 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         }
         guard let sink = transfer.sink else {
             fail(transfer, code: "stage.error", message: "Missing staging sink at End")
+            return
+        }
+        if transfer.extractsDirectoryNamed != nil {
+            // Committing is what drains the extract pipeline, so this is where a
+            // truncated or corrupt archive surfaces — and it takes the partial
+            // tree with it. There is no staged file to stat afterwards: the
+            // payload's size lives in the tree, not in one file.
+            let url: URL
+            do {
+                url = try sink.commit()
+            } catch {
+                fail(
+                    transfer, code: "extract.error",
+                    message: "Unpacking the folder failed: \(error.localizedDescription)")
+                return
+            }
+            deliver(
+                transfer,
+                ClipboardContent.Representation(
+                    uti: transfer.uti, fileURL: url, byteCount: byteCount, sha256: digest,
+                    filename: transfer.filename, isDirectory: true),
+                byteCount: byteCount)
             return
         }
         let url: URL
@@ -442,14 +498,22 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     /// of the transfer's own lanes **in place of** the channel-wide
     /// `onComplete`/`onAbort`, and is one-shot — removed when it fires, or via
     /// `cancelAwait`.
+    ///
+    /// `extractsDirectoryNamed` primes the transfer: the bytes are a folder
+    /// archive to extract into a folder of that name as they stream, rather than
+    /// a file to stage. Directory-ness rides the `ClipboardOffer`, and this
+    /// registration happens on the same side that read the offer and sent the
+    /// request, so the stream layer never needs it on the wire.
     public func awaitTransfer(
         _ transferID: UInt64,
+        extractsDirectoryNamed: String? = nil,
         onComplete: @escaping @Sendable (ClipboardContent.Representation) -> Void,
         onAbort: @escaping @Sendable (ClipboardStreamAbortInfo) -> Void,
         onProgress: (@Sendable (_ bytesReceived: Int, _ totalBytes: Int) -> Void)? = nil
     ) {
         lock.withLock {
             awaiters[transferID] = Awaiter(
+                extractsDirectoryNamed: extractsDirectoryNamed,
                 onComplete: onComplete, onAbort: onAbort, onProgress: onProgress)
         }
     }
@@ -585,8 +649,11 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         do {
             try sink.write(data)
         } catch {
+            // A directory sink's write only fails once its extract pipeline has
+            // already given up, so name that rather than a disk write.
             fail(
-                transfer, code: "write.error",
+                transfer,
+                code: transfer.extractsDirectoryNamed == nil ? "write.error" : "extract.error",
                 message: "Chunk write failed: \(error.localizedDescription)")
             return
         }
@@ -598,10 +665,22 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         transfer.bytesSinceCheck += data.count
         if transfer.bytesSinceCheck >= windowBytes {
             transfer.bytesSinceCheck = 0
-            let remaining = transfer.totalBytes - transfer.writtenBytes
-            if remaining > 0 && !staging.hasCapacity(forByteCount: remaining) {
-                failDiskFull(transfer)
-                return
+            if transfer.extractsDirectoryNamed != nil {
+                // A streamed directory archive has no remaining count to check
+                // against — what it expands to isn't knowable — so the guard
+                // becomes "is the margin still free", on the same cadence.
+                // Running the volume out anyway fails the extract itself, which
+                // is what removes the partial tree.
+                if !staging.hasCapacity(forByteCount: 0) {
+                    failDiskFull(transfer)
+                    return
+                }
+            } else {
+                let remaining = transfer.totalBytes - transfer.writtenBytes
+                if remaining > 0 && !staging.hasCapacity(forByteCount: remaining) {
+                    failDiskFull(transfer)
+                    return
+                }
             }
         }
         ackIfDue(transfer, upTo: transfer.writtenBytes, now: clock.now)
@@ -663,7 +742,10 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             info: ClipboardStreamAbortInfo(
                 transferID: transfer.transferID, code: "disk.full",
                 message: "Not enough disk space",
-                neededBytes: transfer.totalBytes, availableBytes: available))
+                // A streamed directory archive declares no total, so there is no
+                // honest figure to report as "needed".
+                neededBytes: transfer.extractsDirectoryNamed == nil ? transfer.totalBytes : nil,
+                availableBytes: available))
     }
 
     /// Fails a transfer from **either** lane: sends the abort frame and tears
@@ -698,6 +780,10 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     /// sink and nothing to clean up.
     private func abortSink(_ transfer: Transfer) {
         guard let writeQueue = transfer.writeQueue else { return }
+        // Wake the write lane first: a sink that consumes asynchronously parks it
+        // inside `write`, and the teardown below would then sit in line behind
+        // the very write it is aborting.
+        transfer.sink?.cancel()
         writeQueue.async { transfer.sink?.abort() }
     }
 
@@ -795,6 +881,9 @@ public struct ClipboardStreamAbortInfo: Sendable, Equatable {
 
 /// Off-actor delivery handlers for a single awaited transfer.
 private struct Awaiter {
+    /// The folder name a streamed directory archive extracts into, or `nil` for
+    /// an ordinary file/inline transfer.
+    let extractsDirectoryNamed: String?
     let onComplete: @Sendable (ClipboardContent.Representation) -> Void
     let onAbort: @Sendable (ClipboardStreamAbortInfo) -> Void
     /// Fired (off the owning actor) on each accepted chunk with the cumulative
@@ -821,6 +910,14 @@ private final class InboundTransfer: @unchecked Sendable {
     let filename: String
     let isInline: Bool
     let totalBytes: Int
+    /// The folder name this transfer's archive extracts into, or `nil` when the
+    /// payload is an ordinary file or inline rep.
+    ///
+    /// Set from the pull's own registration, never from the wire. When set, the
+    /// transfer declares no total (`total_bytes = 0` means unknown), so the
+    /// overrun bound and the remaining-space check are replaced by the extract
+    /// pipeline's own failure and a margin check.
+    let extractsDirectoryNamed: String?
     /// Receive lane: validation, hashing, the stall anchor, progress delivery.
     let queue: DispatchQueue
     /// Write lane: staging appends and the acks that open credit for them.
@@ -908,7 +1005,8 @@ private final class InboundTransfer: @unchecked Sendable {
 
     init(
         transferID: UInt64, generation: UInt64, uti: String, filename: String, isInline: Bool,
-        totalBytes: Int, maxResidentInlineBytes: Int, now: EngineInstant
+        totalBytes: Int, maxResidentInlineBytes: Int, extractsDirectoryNamed: String?,
+        now: EngineInstant
     ) {
         self.transferID = transferID
         self.generation = generation
@@ -916,13 +1014,17 @@ private final class InboundTransfer: @unchecked Sendable {
         self.filename = filename
         self.isInline = isInline
         self.totalBytes = totalBytes
+        self.extractsDirectoryNamed = extractsDirectoryNamed
         self.beganAt = now
         self.lastAckAt = now
         self.lastChunkAt = now
         self.queue = DispatchQueue(
             label: "app.kernova.clipboard.stream-recv.\(transferID)", qos: .userInitiated)
+        // A primed directory transfer always takes the write lane: its sink is
+        // the extract pipeline, so a peer claiming `is_inline` must not divert it
+        // into the RAM buffer, where nothing would ever unpack it.
         self.writeQueue =
-            (!isInline || totalBytes > maxResidentInlineBytes)
+            (extractsDirectoryNamed != nil || !isInline || totalBytes > maxResidentInlineBytes)
             ? DispatchQueue(
                 label: "app.kernova.clipboard.stream-recv.write.\(transferID)", qos: .userInitiated)
             : nil

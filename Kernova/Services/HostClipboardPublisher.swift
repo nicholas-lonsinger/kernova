@@ -315,21 +315,15 @@ final class HostClipboardPublisher {
 
     /// Returns the pasteboard `public.file-url` for a resolved file payload.
     ///
-    /// A directory payload is extracted from its streamed `.aar` into a real
-    /// folder under the launch-swept root so a Finder paste recreates the tree. An
-    /// inline-and-named payload (image file) is written to a fresh sink so its
+    /// An inline-and-named payload (image file) is written to a fresh sink so its
     /// `.fileURL` outlives the VM teardown.
     nonisolated private static func stagedFileURL(
         for representation: ClipboardContent.Representation, generation: UInt64,
         staging: ClipboardFileStaging
     ) -> URL? {
-        if representation.isDirectory {
-            return ClipboardDirectoryArchive.extractedDirectoryURL(
-                for: representation, into: staging, generation: generation)
-        }
         if let existing = representation.fileURL {
-            // Already staged to disk (a pulled file rep, or a rare spilled inline
-            // payload) — serve that path.
+            // Already on disk — a pulled file rep, a folder whose tree its
+            // transfer extracted, or a rare spilled inline payload.
             return existing
         }
         guard let data = representation.inMemoryData,

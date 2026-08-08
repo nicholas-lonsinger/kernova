@@ -179,6 +179,16 @@ final class VsockControlService {
     /// clipboard-channel admission check requires.
     var guestSupportsClipboardStreaming: Bool { guestSupportsClipboardStreamingStorage }
 
+    /// Whether the connected guest agent advertised
+    /// `clipboard.stream.directory.v1` in its `Hello`.
+    ///
+    /// Set on Hello, reset on stop. An agent without it cannot receive a folder
+    /// streamed with an undeclared size, so the host does not offer one.
+    private var guestSupportsDirectoryStreamingStorage = false
+
+    /// Whether the guest can receive a folder archived straight onto the wire.
+    var guestSupportsDirectoryStreaming: Bool { guestSupportsDirectoryStreamingStorage }
+
     /// Whether the connected guest agent advertised `clipboard.paste.limit.v1`
     /// in its `Hello`.
     ///
@@ -307,6 +317,7 @@ final class VsockControlService {
         isUnresponsive = false
         lastInboundFrame = nil
         guestSupportsClipboardStreamingStorage = false
+        guestSupportsDirectoryStreamingStorage = false
         guestSupportsPasteLimitStorage = false
         Self.logger.info("Vsock control service stopped for '\(self.label, privacy: .public)'")
         // Last, so the owner observes fully-settled state — notably a nil
@@ -508,6 +519,8 @@ final class VsockControlService {
             let reportedOSVersion = ObservedAgentInfo.boundedField(hello.agentInfo.osVersion)
             guestSupportsClipboardStreamingStorage = hello.capabilities.contains(
                 KernovaCapability.clipboardStreamV1)
+            guestSupportsDirectoryStreamingStorage = hello.capabilities.contains(
+                KernovaCapability.clipboardStreamDirectoryV1)
             guestSupportsPasteLimitStorage = hello.capabilities.contains(
                 KernovaCapability.clipboardPasteLimitV1)
             // Every peer-supplied piece of this line is filtered first — the

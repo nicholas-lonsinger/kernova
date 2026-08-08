@@ -152,27 +152,22 @@ struct ClipboardHostPasteboardItemsTests {
         let staging = makeStaging()
         defer { staging.sweep() }
 
-        // Build a source tree, archive it (mirroring what the receiver staged),
-        // and point a directory rep at the `.aar`.
-        let src = fm.temporaryDirectory
+        // A folder rep arrives already unpacked: its transfer extracted the tree
+        // as the archive streamed, so the rep points at the tree itself.
+        let tree = fm.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
             .appendingPathComponent("Project", isDirectory: true)
         try fm.createDirectory(
-            at: src.appendingPathComponent("sub"), withIntermediateDirectories: true)
+            at: tree.appendingPathComponent("sub"), withIntermediateDirectories: true)
         try "readme".write(
-            to: src.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+            to: tree.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
         try "nested".write(
-            to: src.appendingPathComponent("sub/n.txt"), atomically: true, encoding: .utf8)
-        defer { try? fm.removeItem(at: src.deletingLastPathComponent()) }
-
-        let archive = fm.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).aar")
-        try ClipboardDirectoryArchive.archive(directoryAt: src, to: archive)
-        defer { try? fm.removeItem(at: archive) }
-        let size = try #require(fm.attributesOfItem(atPath: archive.path)[.size] as? Int)
+            to: tree.appendingPathComponent("sub/n.txt"), atomically: true, encoding: .utf8)
+        defer { try? fm.removeItem(at: tree.deletingLastPathComponent()) }
 
         let content = ClipboardContent(representations: [
             .init(
-                uti: UTType.folder.identifier, fileURL: archive, byteCount: size,
+                uti: UTType.folder.identifier, fileURL: tree, byteCount: 1024,
                 filename: "Project", isDirectory: true)
         ])
         let specs = await HostClipboardPublisher.hostPasteboardItems(
@@ -184,7 +179,9 @@ struct ClipboardHostPasteboardItemsTests {
         let dirURL = try #require(fileURL(in: specs[0]))
         var isDir: ObjCBool = false
         #expect(fm.fileExists(atPath: dirURL.path, isDirectory: &isDir) && isDir.boolValue)
-        // The pasted folder keeps its exact name and contains the extracted tree.
+        // The pasted folder is served as-is, with no extract step inside the
+        // paste deadline.
+        #expect(dirURL == tree)
         #expect(dirURL.lastPathComponent == "Project")
         #expect(
             try String(contentsOf: dirURL.appendingPathComponent("README.md"), encoding: .utf8)
@@ -282,25 +279,5 @@ struct ClipboardHostPasteboardItemsTests {
         // A type the item never promised serves nothing and fires nothing.
         #expect(spec.provide(.init("public.rtf")) == nil)
         #expect(provider.totalCallCount == 2)
-    }
-
-    @Test("a directory payload whose archive can't be extracted is dropped (no item)")
-    func directoryExtractionFailureDropsItem() async throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
-
-        // A directory rep pointing at a non-existent `.aar` — extraction fails, so
-        // no spec is produced. copyToMac counts this shortfall as a dropped
-        // payload and warns instead of claiming success.
-        let missing = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString)-missing.aar")
-        let content = ClipboardContent(representations: [
-            .init(
-                uti: UTType.folder.identifier, fileURL: missing, byteCount: 100, filename: "Gone",
-                isDirectory: true)
-        ])
-        let specs = await HostClipboardPublisher.hostPasteboardItems(
-            for: content, generation: 1, staging: staging)
-        #expect(specs.isEmpty)
     }
 }

@@ -10,16 +10,20 @@ struct VsockGuestControlAgentTests {
 
     /// Builds a host-side Hello frame for the agent to consume.
     private func makeHostHelloFrame(
-        streamingCapable: Bool = true, bundledAgentVersion: String = ""
+        streamingCapable: Bool = true, directoryStreamCapable: Bool = true,
+        bundledAgentVersion: String = ""
     ) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.hello = Kernova_V1_Hello.with {
             $0.serviceVersion = 1
             $0.capabilities =
-                streamingCapable
+                (streamingCapable
                 ? KernovaCapability.controlChannelDefaults
-                : [KernovaCapability.controlV1, KernovaCapability.controlHeartbeatV1]
+                : [KernovaCapability.controlV1, KernovaCapability.controlHeartbeatV1])
+                .filter {
+                    directoryStreamCapable || $0 != KernovaCapability.clipboardStreamDirectoryV1
+                }
             $0.bundledAgentVersion = bundledAgentVersion
             $0.agentInfo = Kernova_V1_AgentInfo.with {
                 $0.os = "macOS"
@@ -445,6 +449,41 @@ struct VsockGuestControlAgentTests {
         }
 
         try await counts.changed.wait { counts.value >= 3 }
+    }
+
+    /// Whether the agent recorded the host's streamed-folder capability from a
+    /// Hello advertising `directoryStreamCapable`.
+    private func observeHostDirectoryStreaming(directoryStreamCapable: Bool) async throws -> Bool {
+        let (agentFd, hostFd) = try makeRawSocketPair()
+        let host = VsockChannel(fileDescriptor: hostFd)
+        host.start()
+        defer { host.close() }
+
+        let received = PolicyBox()
+        let agent = makeAgent(agentFd: agentFd, onPolicy: { policy in received.set(policy) })
+        agent.start()
+        defer { agent.stop() }
+
+        _ = try await nextFrame(from: host)  // drain outbound Hello
+        try host.send(makeHostHelloFrame(directoryStreamCapable: directoryStreamCapable))
+        // The Hello has no observable of its own; a policy that follows it is
+        // handled after it on the same channel, so it pins the read.
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.policyUpdate = Kernova_V1_PolicyUpdate.with { $0.clipboardSharingEnabled = true }
+        try host.send(frame)
+        try await received.changed.wait { received.value != nil }
+        return agent.hostSupportsDirectoryStreaming
+    }
+
+    @Test("a host advertising the streamed-folder capability is recorded as supporting it")
+    func hostDirectoryStreamingObservedFromHello() async throws {
+        #expect(try await observeHostDirectoryStreaming(directoryStreamCapable: true))
+    }
+
+    @Test("a host without the streamed-folder capability is recorded as lacking it")
+    func hostDirectoryStreamingAbsentFromHello() async throws {
+        #expect(try await observeHostDirectoryStreaming(directoryStreamCapable: false) == false)
     }
 
     @Test("clipboard enable is forwarded only when the host advertised streaming")

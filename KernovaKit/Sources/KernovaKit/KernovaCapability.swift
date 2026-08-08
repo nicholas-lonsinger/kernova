@@ -18,6 +18,15 @@ public enum KernovaCapability {
     /// Required on both sides for clipboard sharing to be enabled.
     public static let clipboardStreamV1 = "clipboard.stream.v1"
 
+    /// Receiving a folder as an archive streamed straight into the destination
+    /// tree, announced with `ClipboardStreamBegin.total_bytes = 0` because the
+    /// compressed size is not known when the transfer starts.
+    ///
+    /// A peer without it bounds arriving bytes by that declared total and aborts
+    /// the transfer on the first chunk, so a folder is simply not offered to one
+    /// — every other representation is unaffected.
+    public static let clipboardStreamDirectoryV1 = "clipboard.stream.directory.v1"
+
     /// Honoring `PolicyUpdate.clipboard_max_paste_bytes` — the user-selected
     /// ceiling on a paste's file-representation total.
     ///
@@ -29,7 +38,8 @@ public enum KernovaCapability {
     /// The capabilities advertised by both the host control service and the
     /// guest control agent today.
     public static let controlChannelDefaults = [
-        controlV1, controlHeartbeatV1, clipboardStreamV1, clipboardPasteLimitV1,
+        controlV1, controlHeartbeatV1, clipboardStreamV1, clipboardStreamDirectoryV1,
+        clipboardPasteLimitV1,
     ]
 
     /// Every capability tag this build recognizes — the allowlist for

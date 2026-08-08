@@ -861,6 +861,9 @@ final class VMInstance {
                 channel: channel, label: self.name,
                 maxPasteBytes: { [weak self] in
                     self?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes
+                },
+                peerStreamsDirectories: { [weak self] in
+                    self?.vsockControlService?.guestSupportsDirectoryStreaming ?? false
                 })
             let publisher = self.hostClipboardPublisher
             service.hostPasteboardHoldsOurWrite = { publisher.pasteboardHoldsLastWrite }

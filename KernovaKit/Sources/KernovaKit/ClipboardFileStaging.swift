@@ -13,6 +13,19 @@ public protocol StagingSink: Sendable {
 
     /// Closes the file and deletes the partial. Idempotent.
     func abort()
+
+    /// Wakes a writer parked inside `write(_:)`, without waiting for the sink to
+    /// finish tearing itself down.
+    ///
+    /// A sink that consumes bytes asynchronously applies backpressure by parking
+    /// its writer, which would otherwise put an abort in line *behind* the very
+    /// write it is aborting. Idempotent; `abort()` still does the teardown.
+    func cancel()
+}
+
+extension StagingSink {
+    /// A sink whose `write(_:)` never parks has no writer to wake.
+    public func cancel() {}
 }
 
 /// Materializes streamed file representations to real local temp files so a
@@ -206,7 +219,7 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// generation directory, for the receiver to extract a directory tree into.
     ///
     /// Nested under a fresh UUID parent so the folder keeps its *exact* name: a
-    /// sibling staged `.aar` of the same name would otherwise force a
+    /// same-named sibling in the generation directory would otherwise force a
     /// Finder-style ` (n)` suffix onto it. `name` is sanitized to one path
     /// component so a crafted offer can't escape the generation directory.
     ///
@@ -232,23 +245,6 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         let url = try directory(for: generation)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
-
-    /// Reserves a unique destination URL under the generation directory for the
-    /// sender's directory archive before it is offered.
-    ///
-    /// Unlike `makeSink`, no `Sink` is returned: the caller writes the bytes
-    /// itself. An empty placeholder claims the name so a later
-    /// reserve/sink/adopt in the same generation can't collide on it.
-    ///
-    /// - Throws: a filesystem error if the directory can't be created.
-    public func reserveURL(generation: UInt64, filename: String) throws -> URL {
-        lock.lock()
-        defer { lock.unlock() }
-        let dir = try directory(for: generation)
-        let url = Self.uniqueDestination(in: dir, filename: filename)
-        FileManager.default.createFile(atPath: url.path, contents: nil)
         return url
     }
 

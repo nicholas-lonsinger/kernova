@@ -357,12 +357,11 @@ public nonisolated struct Kernova_V1_ClipboardRepresentationInfo: Sendable {
   /// Size of the representation's bytes. For a copied file this is the file's
   /// size from a stat — the bytes themselves are never read to build the offer.
   /// For a directory rep (`is_directory`) it is the producer's stat-walk size
-  /// ESTIMATE of the source tree: no archive exists at offer time, so the
-  /// receiver's paste cap and free-space preflight gate on this estimate. The
-  /// wire-exact archive size arrives later as the reply's
-  /// `ClipboardStreamBegin.total_bytes`, and the stream layer re-enforces
-  /// reality: `max_accept_byte_count` on the request, a per-chunk disk check,
-  /// and the End frame's size + SHA-256 verification.
+  /// ESTIMATE of the *uncompressed* source tree, which is what a streamed
+  /// extract writes, so the receiver's paste cap and free-space preflight gate
+  /// on it. The stream layer re-enforces reality: `max_accept_byte_count` on the
+  /// request, a per-chunk disk check, and the End frame's size + SHA-256
+  /// verification.
   public var byteCount: UInt64 = 0
 
   /// Suggested filename when this representation is a file payload (e.g. a
@@ -386,17 +385,19 @@ public nonisolated struct Kernova_V1_ClipboardRepresentationInfo: Sendable {
   /// package such as .app/.rtfd). Implies a non-empty `filename` (the folder
   /// name, without an archive suffix) and `is_inline = false`.
   ///
-  /// A directory rep rides the plain-file stream path: the producer packs the
-  /// source tree into an in-process AppleArchive (.aar, LZFSE) when the
-  /// representation is *requested* — never at copy time — and the receiver
-  /// extracts the streamed archive back into a real directory. `byte_count`
-  /// is the producer's stat-walk estimate; the archive's exact size rides in
-  /// the reply's `ClipboardStreamBegin.total_bytes`.
+  /// A directory rep rides the plain-file stream path, carrying an in-process
+  /// AppleArchive (LZFSE) of the tree. The producer encodes the source tree
+  /// straight onto the wire when the representation is *requested* — never at
+  /// copy time, and never through an archive file — and the receiver extracts
+  /// the arriving bytes straight into a real directory. Its compressed size is
+  /// therefore unknown when the transfer starts, so the reply's
+  /// `ClipboardStreamBegin.total_bytes` is 0 and the End frame carries the true
+  /// count.
   ///
-  /// The stream layer is offer-agnostic, so this flag is re-applied to the
-  /// delivered representation by the offer-aware layer on the receiver. Excluded
-  /// from the content digest — the archive's SHA-256 and the folded filename
-  /// already identify it.
+  /// The stream layer is offer-agnostic: the requester tells its own receiver
+  /// that a transfer carries a directory when it sends the `ClipboardRequest`,
+  /// so nothing on the wire repeats this flag. Excluded from the content digest
+  /// — the archive's SHA-256 and the folded filename already identify it.
   public var isDirectory: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -499,9 +500,13 @@ public nonisolated struct Kernova_V1_ClipboardStreamBegin: Sendable {
   /// The representation's UTI.
   public var uti: String = String()
 
-  /// Total payload size in bytes; the receiver verifies the reassembled byte
-  /// count against this at `ClipboardStreamEnd`, and sizes its free-space
-  /// pre-flight check from it for a file rep.
+  /// Total payload size in bytes, or 0 for a payload whose size is only known
+  /// once it has been produced — a directory archived onto the wire. When
+  /// declared, the receiver bounds the arriving bytes by it and sizes its
+  /// free-space pre-flight check from it for a file rep. When 0, the requester's
+  /// free-space pre-flight against the offer's uncompressed estimate and a
+  /// per-window disk re-check stand in, and `ClipboardStreamEnd` carries the
+  /// authoritative count.
   public var totalBytes: UInt64 = 0
 
   /// Suggested filename for a file rep (see `ClipboardRepresentationInfo`);
@@ -548,7 +553,8 @@ public nonisolated struct Kernova_V1_ClipboardStreamEnd: Sendable {
 
   public var transferID: UInt64 = 0
 
-  /// Total bytes the sender streamed; must equal the Begin's `total_bytes`.
+  /// Total bytes the sender streamed — the authoritative count, and the Begin's
+  /// `total_bytes` whenever that declared one.
   public var totalBytes: UInt64 = 0
 
   /// SHA-256 over the streamed bytes, computed incrementally as the sender read

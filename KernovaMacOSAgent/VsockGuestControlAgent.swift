@@ -51,6 +51,13 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     /// every inbound `PolicyUpdate`, symmetric with the host's own gate.
     private var hostSupportsClipboardStreaming = false
 
+    /// Whether the host advertised the streamed-folder capability.
+    ///
+    /// Guarded by `lock` and reset per connection; a host without it cannot
+    /// receive a folder streamed with an undeclared size, so the guest does not
+    /// offer one.
+    private var hostSupportsDirectoryStreamingStorage = false
+
     /// Creates the control agent; tests inject a socketpair-backed client and
     /// small cadences.
     init(
@@ -91,6 +98,12 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         lock.withLock { hostBundledAgentVersionStorage }
     }
 
+    /// Thread-safe read of whether the host can receive a folder archived
+    /// straight onto the wire.
+    var hostSupportsDirectoryStreaming: Bool {
+        lock.withLock { hostSupportsDirectoryStreamingStorage }
+    }
+
     /// Transitions `connectionState`, firing `onStateChange` only on a real
     /// change.
     ///
@@ -129,6 +142,7 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             lastInboundFrame = nil
             unresponsiveLogged = false
             hostSupportsClipboardStreaming = false
+            hostSupportsDirectoryStreamingStorage = false
         }
         updateConnectionState(.connected)
 
@@ -197,8 +211,11 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         switch frame.payload {
         case .hello(let hello):
             let hostStreams = hello.capabilities.contains(KernovaCapability.clipboardStreamV1)
+            let hostStreamsDirectories = hello.capabilities.contains(
+                KernovaCapability.clipboardStreamDirectoryV1)
             lock.withLock {
                 hostSupportsClipboardStreaming = hostStreams
+                hostSupportsDirectoryStreamingStorage = hostStreamsDirectories
                 hostBundledAgentVersionStorage = hello.bundledAgentVersion
             }
             // `logDescription` bounds the peer-supplied capability strings; these

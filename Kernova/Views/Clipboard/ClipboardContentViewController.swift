@@ -604,12 +604,15 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private func message(for issue: ClipboardTransferIssue) -> String {
         switch issue.kind {
         case .diskFull(let needed, let available):
-            if let available {
-                return
-                    "Not enough disk space to receive the clipboard file (\(DataFormatters.formatBytes(UInt64(needed))) needed, \(DataFormatters.formatBytes(UInt64(available))) free)"
-            }
-            return
-                "Not enough disk space to receive the clipboard file (\(DataFormatters.formatBytes(UInt64(needed))) needed)"
+            let detail =
+                [
+                    needed.map { "\(DataFormatters.formatBytes(UInt64($0))) needed" },
+                    available.map { "\(DataFormatters.formatBytes(UInt64($0))) free" },
+                ]
+                .compactMap { $0 }
+                .joined(separator: ", ")
+            let base = "Not enough disk space to receive the clipboard payload"
+            return detail.isEmpty ? base : "\(base) (\(detail))"
         case .peerReportedError(let code, _):
             switch ClipboardErrorCode(rawValue: code) {
             case .pasteDiskFull:

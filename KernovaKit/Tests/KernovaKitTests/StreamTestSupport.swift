@@ -42,19 +42,6 @@ func makeStartedChannelPair() throws -> (a: VsockChannel, b: VsockChannel) {
     return (a, b)
 }
 
-// MARK: - File helpers
-
-/// Every regular file anywhere under `directory` (recursive).
-func materializedFiles(under directory: URL) -> [URL] {
-    guard
-        let enumerator = FileManager.default.enumerator(
-            at: directory, includingPropertiesForKeys: [.isRegularFileKey])
-    else { return [] }
-    return enumerator.compactMap { $0 as? URL }.filter {
-        (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
-    }
-}
-
 // MARK: - Staging sink doubles
 
 /// A `StagingSink` that parks every `write` until the test allows it through,

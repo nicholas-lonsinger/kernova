@@ -388,7 +388,7 @@ kernel resources until relaunch — hence one owner (`RuntimeFileAccess`) and on
 | **AppKit** | All UI |
 | **Observation** | `@Observable` models and view models |
 | **ServiceManagement** | `SMAppService.mainApp` — Open at Login |
-| **AppleArchive** | In-process `.aar` archiving for clipboard directory transfers |
+| **AppleArchive** | In-process archiving for clipboard folder transfers, encoded onto the wire |
 | **UniformTypeIdentifiers** | The `.kernova` bundle's `UTType` |
 | **AVFoundation** | Microphone permission status |
 | **ImageIO** | Thumbnail-only decoding for clipboard previews |

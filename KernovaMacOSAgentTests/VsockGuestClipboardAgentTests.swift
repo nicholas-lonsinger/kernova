@@ -261,6 +261,8 @@ struct VsockGuestClipboardAgentTests {
     private func makeAgent(
         pasteboard: FakePasteboard, agentFd: Int32,
         clock: any EngineClock = MonotonicEngineClock(),
+        stagingTempRoot: URL? = nil,
+        hostStreamsDirectories: Bool = true,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
@@ -276,13 +278,18 @@ struct VsockGuestClipboardAgentTests {
         ) { _, _ in
             provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
         }
-        return VsockGuestClipboardAgent(
+        let agent = VsockGuestClipboardAgent(
             pasteboard: pasteboard, client: client, clock: clock,
             freeSpaceProvider: freeSpaceProvider,
-            stagingTempRoot: FileManager.default.temporaryDirectory.appendingPathComponent(
-                UUID().uuidString, isDirectory: true),
+            stagingTempRoot: stagingTempRoot
+                ?? FileManager.default.temporaryDirectory.appendingPathComponent(
+                    UUID().uuidString, isDirectory: true),
             progressRevealDelay: progressRevealDelay, progressIdleLinger: progressIdleLinger,
             onProgress: onProgress, onClipboardNotice: onClipboardNotice)
+        // Production reads this from the control agent's `Hello`; a test host is
+        // current unless it says otherwise.
+        agent.hostStreamsDirectories = { hostStreamsDirectories }
+        return agent
     }
 
     /// Starts the agent, enables it (production agents are default-disabled
@@ -622,7 +629,7 @@ struct VsockGuestClipboardAgentTests {
     // MARK: - Folders
 
     @Test(
-        "outbound copied folder: offered on a stat-walk estimate, archived at request time, streamed as a valid archive"
+        "outbound copied folder: offered on a stat-walk estimate, streamed as an archive with no total"
     )
     func outboundCopiedFolderOfferAndStream() async throws {
         let pasteboard = FakePasteboard()
@@ -631,7 +638,11 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let agentStagingRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: agentStagingRoot) }
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, stagingTempRoot: agentStagingRoot)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -664,18 +675,16 @@ struct VsockGuestClipboardAgentTests {
             transferID: transferID, from: hostChannel)
         #expect(!transfer.begin.isInline)
         #expect(transfer.begin.filename == "Project")
-        // The Begin carries the archive's wire-exact size, superseding the
-        // offer's estimate.
-        #expect(transfer.begin.totalBytes == UInt64(transfer.bytes.count))
+        // The tree is compressed straight onto the wire, so its size is unknown
+        // at Begin; End carries the authoritative count.
+        #expect(transfer.begin.totalBytes == 0)
+        #expect(transfer.end.totalBytes == UInt64(transfer.bytes.count))
         #expect(transfer.end.sha256 == Data(SHA256.hash(data: transfer.bytes)))
+        // The tree was compressed onto the wire, so nothing was staged to send it.
+        #expect(materializedFiles(under: agentStagingRoot).isEmpty)
 
-        let aar = try writeTempFile(name: "got.aar", data: transfer.bytes)
-        defer { try? FileManager.default.removeItem(at: aar.deletingLastPathComponent()) }
-        let dest = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dest) }
-        try ClipboardDirectoryArchive.extract(archiveAt: aar, to: dest)
+        let dest = try extractedClipboardArchive(transfer.bytes)
+        defer { try? FileManager.default.removeItem(at: dest.deletingLastPathComponent()) }
         #expect(
             try String(contentsOf: dest.appendingPathComponent("README.md"), encoding: .utf8)
                 == "readme")
@@ -685,7 +694,7 @@ struct VsockGuestClipboardAgentTests {
     }
 
     @Test(
-        "outbound: a folder carrying no file bytes is offered at 0 bytes and still archives on request"
+        "outbound: a folder carrying no file bytes is offered at 0 bytes and still streams its tree"
     )
     func outboundByteFreeFolderOfferAndStream() async throws {
         let pasteboard = FakePasteboard()
@@ -715,23 +724,51 @@ struct VsockGuestClipboardAgentTests {
         #expect(offer.repInfo.map(\.isDirectory) == [true, true])
         #expect(offer.repInfo.map(\.byteCount) == [0, 0])
 
-        // The zero estimate gates nothing: each rep archives at request time and
-        // the streamed `.aar` rebuilds its tree.
+        // The zero estimate gates nothing: each rep streams its tree on request
+        // and the arriving archive bytes rebuild it.
         let emptyTransfer = try await requestOutboundRep(
             offer: offer, repIndex: 0, from: hostChannel)
         #expect(emptyTransfer.begin.filename == "Empty")
-        let emptyOut = try extractArchiveBytes(emptyTransfer.bytes)
+        let emptyOut = try extractedClipboardArchive(emptyTransfer.bytes)
         defer { try? FileManager.default.removeItem(at: emptyOut.deletingLastPathComponent()) }
         #expect(try FileManager.default.contentsOfDirectory(atPath: emptyOut.path).isEmpty)
 
         let scaffoldTransfer = try await requestOutboundRep(
             offer: offer, repIndex: 1, from: hostChannel)
         #expect(scaffoldTransfer.begin.filename == "Scaffold")
-        let scaffoldOut = try extractArchiveBytes(scaffoldTransfer.bytes)
+        let scaffoldOut = try extractedClipboardArchive(scaffoldTransfer.bytes)
         defer { try? FileManager.default.removeItem(at: scaffoldOut.deletingLastPathComponent()) }
         #expect(
             FileManager.default.fileExists(
                 atPath: scaffoldOut.appendingPathComponent("sub/.keep").path))
+    }
+
+    @Test("outbound: a copied folder is left out of the offer for a host that can't receive one")
+    func outboundFolderDroppedForAnOlderHost() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, hostStreamsDirectories: false)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let folder = try writeTempFolder(name: "Project", files: [("f.txt", Data("x".utf8))])
+        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
+        let file = try writeTempFile(name: "note.txt", data: Data("hi".utf8))
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        pasteboard.setItems([
+            [(type: .fileURL, data: Data(folder.absoluteString.utf8))],
+            [(type: .fileURL, data: Data(file.absoluteString.utf8))],
+        ])
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let offer = try await awaitOffer(on: hostChannel)
+        #expect(offer.repInfo.map(\.filename) == ["note.txt"])
+        #expect(offer.repInfo.allSatisfy { !$0.isDirectory })
     }
 
     /// Requests representation `repIndex` of `offer` and collects its stream.
@@ -744,16 +781,6 @@ struct VsockGuestClipboardAgentTests {
                 generation: offer.generation, transferID: transferID,
                 uti: offer.repInfo[Int(repIndex)].uti))
         return try await collectOutboundTransfer(transferID: transferID, from: channel)
-    }
-
-    /// Writes `bytes` as an `.aar` and extracts it into a fresh directory, which
-    /// it returns.
-    private func extractArchiveBytes(_ bytes: Data) throws -> URL {
-        let aar = try writeTempFile(name: "got.aar", data: bytes)
-        let dest = aar.deletingLastPathComponent().appendingPathComponent("out", isDirectory: true)
-        try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
-        try ClipboardDirectoryArchive.extract(archiveAt: aar, to: dest)
-        return dest
     }
 
     @Test("inbound directory offer: promises only .fileURL and extracts into a real folder")
@@ -773,13 +800,7 @@ struct VsockGuestClipboardAgentTests {
             name: "Shared",
             files: [("hello.txt", Data("hi".utf8)), ("d/inner.txt", Data("deep".utf8))])
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
-        let aarDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: aarDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: aarDir) }
-        let aar = aarDir.appendingPathComponent("Shared.aar")
-        try ClipboardDirectoryArchive.archive(directoryAt: src, to: aar)
-        let aarBytes = try Data(contentsOf: aar)
+        let aarBytes = try clipboardArchiveBytes(ofDirectoryAt: src)
 
         // The host offers one directory rep.
         try hostChannel.send(
@@ -835,14 +856,8 @@ struct VsockGuestClipboardAgentTests {
         defer { try? FileManager.default.removeItem(at: empty.deletingLastPathComponent()) }
         let scaffold = try writeTempFolder(name: "Scaffold", files: [("sub/.keep", Data())])
         defer { try? FileManager.default.removeItem(at: scaffold.deletingLastPathComponent()) }
-        let aarDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: aarDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: aarDir) }
-        let emptyAAR = aarDir.appendingPathComponent("Empty.aar")
-        let scaffoldAAR = aarDir.appendingPathComponent("Scaffold.aar")
-        try ClipboardDirectoryArchive.archive(directoryAt: empty, to: emptyAAR)
-        try ClipboardDirectoryArchive.archive(directoryAt: scaffold, to: scaffoldAAR)
+        let emptyBytes = try clipboardArchiveBytes(ofDirectoryAt: empty)
+        let scaffoldBytes = try clipboardArchiveBytes(ofDirectoryAt: scaffold)
 
         // Both reps declare the estimate the wire carries — 0 — and must still be
         // promised rather than mistaken for empty payloads.
@@ -863,7 +878,7 @@ struct VsockGuestClipboardAgentTests {
         let emptyPull = lazyPull(pasteboard, forType: .fileURL, itemIndex: 0)
         try await driveInboundStream(
             generation: 13, uti: UTType.folder.identifier, filename: "Empty",
-            payload: try Data(contentsOf: emptyAAR), isInline: false, on: hostChannel)
+            payload: emptyBytes, isInline: false, on: hostChannel)
         let emptyURL = try #require(
             (await emptyPull.value).flatMap { String(data: $0, encoding: .utf8) }
                 .flatMap(URL.init(string:)))
@@ -877,7 +892,7 @@ struct VsockGuestClipboardAgentTests {
         let scaffoldPull = lazyPull(pasteboard, forType: .fileURL, itemIndex: 1)
         try await driveInboundStream(
             generation: 13, uti: UTType.folder.identifier, filename: "Scaffold",
-            payload: try Data(contentsOf: scaffoldAAR), isInline: false, on: hostChannel)
+            payload: scaffoldBytes, isInline: false, on: hostChannel)
         let scaffoldURL = try #require(
             (await scaffoldPull.value).flatMap { String(data: $0, encoding: .utf8) }
                 .flatMap(URL.init(string:)))
@@ -902,13 +917,7 @@ struct VsockGuestClipboardAgentTests {
         // A valid archive whose stream will nonetheless end with a wrong digest.
         let src = try writeTempFolder(name: "Broken", files: [("f.txt", Data("x".utf8))])
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
-        let aarDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: aarDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: aarDir) }
-        let aar = aarDir.appendingPathComponent("Broken.aar")
-        try ClipboardDirectoryArchive.archive(directoryAt: src, to: aar)
-        let aarBytes = try Data(contentsOf: aar)
+        let aarBytes = try clipboardArchiveBytes(ofDirectoryAt: src)
 
         try hostChannel.send(
             makeOfferFrame(
@@ -3213,6 +3222,7 @@ struct VsockGuestClipboardAgentTests {
     /// frames and let it reassemble.
     private func driveInboundStream(
         generation: UInt64, uti: String, filename: String, payload: Data, isInline: Bool,
+        declaredTotalBytes: Int? = nil,
         chunkSize: Int = 64 * 1024, on channel: VsockChannel,
         validate: (Kernova_V1_ClipboardRequest) -> Void = { _ in }
     ) async throws {
@@ -3220,7 +3230,8 @@ struct VsockGuestClipboardAgentTests {
         validate(req)
         try streamInbound(
             generation: generation, transferID: req.transferID, uti: uti, filename: filename,
-            payload: payload, isInline: isInline, chunkSize: chunkSize, on: channel)
+            payload: payload, isInline: isInline, declaredTotalBytes: declaredTotalBytes,
+            chunkSize: chunkSize, on: channel)
     }
 
     /// Streams `Begin`/`Chunk`(s)/`End` for one inbound transfer to the agent.
@@ -3230,12 +3241,14 @@ struct VsockGuestClipboardAgentTests {
     /// reason.
     private func streamInbound(
         generation: UInt64, transferID: UInt64, uti: String, filename: String = "", payload: Data,
-        isInline: Bool, chunkSize: Int = 64 * 1024, on channel: VsockChannel
+        isInline: Bool, declaredTotalBytes: Int? = nil, chunkSize: Int = 64 * 1024,
+        on channel: VsockChannel
     ) throws {
         try channel.send(
             makeBeginFrame(
                 generation: generation, transferID: transferID, uti: uti,
-                totalBytes: payload.count, filename: filename, isInline: isInline))
+                totalBytes: declaredTotalBytes ?? payload.count, filename: filename,
+                isInline: isInline))
         var offset = 0
         while offset < payload.count {
             let end = min(offset + chunkSize, payload.count)

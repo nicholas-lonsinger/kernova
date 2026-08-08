@@ -128,29 +128,31 @@ struct ClipboardFileStagingTests {
         #expect(sink.url.path.hasPrefix(labelRoot.path + "/"))
     }
 
-    @Test("same-generation send and receive roots never share a directory; one sweep leaves the other")
-    func sendAndReceiveRootsAreDisjoint() throws {
-        // The send/receive split: both counters start at 1, so the same
-        // generation number must land in different roots.
+    @Test("same-generation roots of two labels never share a directory; one sweep leaves the other")
+    func perLabelRootsAreDisjoint() throws {
+        // Every label's counter starts at 1, so the same generation number must
+        // land in different roots.
         let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
             UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tempRoot) }
         let receive = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
-        let send = ClipboardFileStaging(label: "host-send-vm", tempRoot: tempRoot)
+        let drops = ClipboardFileStaging(label: "host-drops-vm", tempRoot: tempRoot)
 
         let received = try receive.makeSink(generation: 1, filename: "in.bin")
         try received.write(Data("in".utf8))
         try received.commit()
-        let sent = try send.reserveURL(generation: 1, filename: "out.aar")
+        let dropped = try drops.makeSink(generation: 1, filename: "out.bin")
+        try dropped.write(Data("out".utf8))
+        try dropped.commit()
 
         #expect(
-            received.url.deletingLastPathComponent() != sent.deletingLastPathComponent())
+            received.url.deletingLastPathComponent() != dropped.url.deletingLastPathComponent())
         // A sibling label extending this one is not "inside" this root.
-        #expect(!receive.isInStagingRoot(sent))
+        #expect(!receive.isInStagingRoot(dropped.url))
 
-        // Sweeping the send root leaves the receive root's file intact.
-        send.sweep()
-        #expect(!FileManager.default.fileExists(atPath: sent.path))
+        // Sweeping one root leaves the other's file intact.
+        drops.sweep()
+        #expect(!FileManager.default.fileExists(atPath: dropped.url.path))
         #expect(FileManager.default.fileExists(atPath: received.url.path))
     }
 
@@ -277,21 +279,6 @@ struct ClipboardFileStagingTests {
 
     // MARK: - Directory / tree reservations (Phase 2)
 
-    @Test("reserveURL claims a placeholder; same-named reserves get distinct paths")
-    func reserveURLClaimsAndDedups() throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
-
-        let a = try staging.reserveURL(generation: 1, filename: "Folder.aar")
-        // An empty placeholder claims the name so a later reserve can't collide.
-        #expect(FileManager.default.fileExists(atPath: a.path))
-        #expect(a.lastPathComponent == "Folder.aar")
-
-        let b = try staging.reserveURL(generation: 1, filename: "Folder.aar")
-        #expect(a != b)
-        #expect(b.lastPathComponent == "Folder (2).aar")
-    }
-
     @Test("reserveDirectory creates an empty directory named exactly `name`")
     func reserveDirectoryKeepsName() throws {
         let staging = makeStaging()
@@ -305,17 +292,19 @@ struct ClipboardFileStagingTests {
         #expect(dir.lastPathComponent == "MyFolder")
     }
 
-    @Test("reserveDirectory keeps the exact name despite a sibling archive of the same base")
-    func reserveDirectoryNameSurvivesSiblingArchive() throws {
-        // The receive path stages the streamed `.aar` (named after the folder)
-        // beside the extracted tree. Nesting the directory under a fresh UUID
-        // parent keeps its name exact instead of degrading to "MyFolder (2)".
+    @Test("two same-named folders in one generation both keep the exact name")
+    func reserveDirectoryNameSurvivesSameNamedSibling() throws {
+        // One copy can carry two folders of the same name. Nesting each under a
+        // fresh UUID parent keeps both names exact instead of degrading the
+        // second to "MyFolder (2)".
         let staging = makeStaging()
         defer { staging.sweep() }
 
-        _ = try staging.reserveURL(generation: 5, filename: "MyFolder")  // the staged archive
-        let dir = try staging.reserveDirectory(generation: 5, name: "MyFolder")
-        #expect(dir.lastPathComponent == "MyFolder")
+        let first = try staging.reserveDirectory(generation: 5, name: "MyFolder")
+        let second = try staging.reserveDirectory(generation: 5, name: "MyFolder")
+        #expect(first != second)
+        #expect(first.lastPathComponent == "MyFolder")
+        #expect(second.lastPathComponent == "MyFolder")
     }
 
     @Test("reserveDirectory sanitizes a path-traversal name")
