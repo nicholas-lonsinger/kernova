@@ -547,7 +547,9 @@ struct ClassifySocketErrnoTests {
         }
 
         // Blocking waits go to GCD so the cooperative pool keeps its threads
-        // (docs/TESTING.md, "Blocking bridge calls").
+        // (docs/TESTING.md, "Blocking bridge calls"). A raw semaphore wait
+        // bypasses the stopwatch helpers, so arm the session activity itself.
+        armTestSessionActivity()
         let entered = await offCooperativePool {
             firstAttemptEntered.wait(timeout: .now() + testWaitBackstop) == .success
         }

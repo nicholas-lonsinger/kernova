@@ -91,11 +91,12 @@ func nextFrame(from channel: VsockChannel) async throws -> Frame {
         var iterator = channel.incoming.makeAsyncIterator()
         return try await iterator.next()
     }
-    // `receiver` is not cancelled in `defer` because every exit path
-    // already awaits `receiver.value` (success, EOF, or timeout-induced
-    // CancellationError). By the time the function returns, the receiver task
-    // has completed; a redundant cancel would be a no-op and obscures intent.
-    // Cancelling the timeoutTask is necessary on the success path.
+    // `receiver` is not cancelled in `defer` because every exit path already
+    // awaits `receiver.value` — success, EOF, or the timeout task's cancel,
+    // which surfaces as a nil from `next()`. By the time the function returns,
+    // the receiver task has completed; a redundant cancel would be a no-op and
+    // obscures intent. Cancelling the timeoutTask is necessary on the success
+    // path.
     let timeoutTask = Task<Void, Never> {
         try? await Task.sleep(for: timeout)
         receiver.cancel()
@@ -104,13 +105,21 @@ func nextFrame(from channel: VsockChannel) async throws -> Frame {
 
     do {
         guard let frame = try await receiver.value else {
+            // Cancelling the task suspended in `AsyncThrowingStream.next()`
+            // makes it return nil rather than throw, so the timeout lands here
+            // too, distinguishable from a genuine EOF only by the clock.
+            if stopwatch.elapsed >= testWaitBackstop {
+                throw TestFailure.backstop(
+                    "Timed out waiting for a frame after \(timeout)",
+                    stopwatch: stopwatch, timeout: timeout)
+            }
             throw TestFailure("Channel finished without producing a frame (EOF)")
         }
         return frame
     } catch is CancellationError {
-        throw TestFailure(
-            "Timed out waiting for a frame after \(timeout)"
-                + stopwatch.diagnosis(timeout: timeout))
+        throw TestFailure.backstop(
+            "Timed out waiting for a frame after \(timeout)",
+            stopwatch: stopwatch, timeout: timeout)
     }
 }
 
@@ -168,9 +177,9 @@ func waitForChange(
     let deadline = ContinuousClock.now.advanced(by: timeout)
     while !predicate() {
         if ContinuousClock.now >= deadline {
-            throw TestFailure(
-                "Observed condition not met within \(timeout)"
-                    + stopwatch.diagnosis(timeout: timeout))
+            throw TestFailure.backstop(
+                "Observed condition not met within \(timeout)",
+                stopwatch: stopwatch, timeout: timeout)
         }
         await armObservationOnce(deadline: deadline, predicate: predicate)
     }
