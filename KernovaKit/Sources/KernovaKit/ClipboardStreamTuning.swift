@@ -64,6 +64,18 @@ public enum ClipboardStreamTuning {
     /// bounds what a misbehaving peer can apply between disk re-checks.
     public static let maxChunkBytes = 16 * 1024 * 1024
 
+    /// The most a receiver lets arrive ahead of what it has written: one credit
+    /// window plus one maximum-size chunk.
+    ///
+    /// A sender honoring the window it was advertised can never reach this — its
+    /// in-flight bytes are bounded by that window — so it bounds only a peer that
+    /// ignores the protocol, whose chunks would otherwise queue on the write lane
+    /// without limit. A declared payload is bounded by its own size; one that
+    /// declares none (a folder archived onto the wire) has only this.
+    public static func maxBacklogBytes(forWindowBytes windowBytes: Int) -> Int {
+        windowBytes + maxChunkBytes
+    }
+
     /// How long an inbound transfer waits for its next chunk before aborting a
     /// silent sender: 30 s.
     ///

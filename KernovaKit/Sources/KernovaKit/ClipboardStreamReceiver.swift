@@ -41,6 +41,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     private let ackQuantum: Int
     private let ackLatencyBound: TimeInterval
     private let stallTimeout: TimeInterval
+    private let maxBacklogBytes: Int
 
     /// Inline payloads at/below this size reassemble in RAM; larger ones spill to
     /// the staging file and are mmapped back (so there is no inline size cap).
@@ -92,6 +93,8 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             }
         self.windowBytes = min(max(windowBytes, 1), ClipboardStreamTuning.maxWindowBytes)
         self.ackQuantum = ClipboardStreamTuning.ackQuantum(forWindowBytes: self.windowBytes)
+        self.maxBacklogBytes = ClipboardStreamTuning.maxBacklogBytes(
+            forWindowBytes: self.windowBytes)
         self.ackLatencyBound = ackLatencyBound
         self.stallTimeout = stallTimeout
         self.maxResidentInlineBytes = max(maxResidentInlineBytes, 0)
@@ -227,8 +230,8 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             }
             // Reject a peer streaming past its declared total — bounds both the
             // inline RAM buffer and the file sink to total_bytes. [H1] A streamed
-            // directory archive declares none, and is bounded instead by the
-            // free-space re-check on its write lane.
+            // directory archive declares none; the backlog bound below is what
+            // stands in for it.
             guard
                 transfer.extractsDirectoryNamed != nil
                     || transfer.receivedBytes + chunk.data.count <= transfer.totalBytes
@@ -246,8 +249,18 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             if let writeQueue {
                 // Hand the bytes to the write lane and keep going. `Data` is
                 // copy-on-write, so the hand-off retains the buffer rather than
-                // copying it, and the sender's credit window bounds how far the
-                // backlog can run ahead of the writes.
+                // copying it. This lane never blocks, so the credit window is
+                // *enforced* here rather than trusted: a peer that ignores it
+                // would otherwise queue chunks on a parked write lane until the
+                // heap ran out.
+                guard transfer.addBacklog(chunk.data.count) <= self.maxBacklogBytes else {
+                    self.fail(
+                        transfer, code: "flow.overrun",
+                        message:
+                            "Peer streamed more than \(self.maxBacklogBytes) bytes past its credit window"
+                    )
+                    return
+                }
                 let data = chunk.data
                 writeQueue.async { [weak self] in
                     self?.performWrite(transfer, data)
@@ -637,6 +650,9 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     /// transfer, so `writtenBytes` is always a true durable *prefix* of the
     /// payload — which is what lets its ack carry credit.
     private func performWrite(_ transfer: Transfer, _ data: Data) {
+        // Paired with the receive lane's `addBacklog`, so the bound tracks bytes
+        // still waiting to be written rather than bytes ever received.
+        defer { transfer.drainBacklog(data.count) }
         guard !transfer.isFinished else { return }
         guard let sink = transfer.sink else {
             // Fail loudly rather than drop the bytes: the receive lane has
@@ -980,6 +996,27 @@ private final class InboundTransfer: @unchecked Sendable {
     /// `queue` that checks `lastChunkAt` — started once per transfer, cancelled
     /// on finish, never re-armed per chunk.
     var stallTimer: DispatchSourceTimer?
+
+    /// Bytes handed to the write lane that it has not finished writing — the
+    /// receive lane's view of how far ahead the peer is running.
+    ///
+    /// The one counter both lanes touch, so it carries its own lock rather than
+    /// belonging to either.
+    private let backlogLock = NSLock()
+    private var backlogBytes = 0
+
+    /// Records `count` bytes as handed over, returning the new backlog.
+    func addBacklog(_ count: Int) -> Int {
+        backlogLock.withLock {
+            backlogBytes += count
+            return backlogBytes
+        }
+    }
+
+    /// Records `count` bytes as written, releasing their share of the backlog.
+    func drainBacklog(_ count: Int) {
+        backlogLock.withLock { backlogBytes -= count }
+    }
 
     private let finishLock = NSLock()
     private var finished = false

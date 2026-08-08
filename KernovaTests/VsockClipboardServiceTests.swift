@@ -1609,6 +1609,40 @@ struct VsockClipboardServiceTests {
         #expect(responder.requests.count == 1)
     }
 
+    @Test("a folders-only copy sends no offer at all to a guest that can't receive one")
+    func foldersOnlyCopySendsNoOfferToAnOlderGuest() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        let recorder = FrameRecorder(channel: guest)
+        defer { recorder.cancel() }
+
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let folder = parent.appendingPathComponent("OnlyFolder", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+
+        service.clipboardContent = ClipboardContent(representations: [
+            ClipboardContent.Representation(
+                directorySourceURL: folder, estimatedByteCount: 0, filename: "OnlyFolder",
+                uti: "public.folder")
+        ])
+        let snapshot = recorder.frames.count
+        service.grabIfChanged()
+
+        // An offer with no representations would retire whatever the guest is
+        // holding and leave it a pasteboard item nothing can serve; sending
+        // nothing leaves the previous, still-working clipboard in place.
+        try await expectNoNewFrames(on: recorder, sinceCount: snapshot)
+    }
+
     @Test("a folder is left out of the offer for a guest that can't receive one")
     func offerDropsFoldersForAnOlderGuest() async throws {
         let (guest, host) = try makePair()

@@ -792,6 +792,37 @@ struct ClipboardStreamTests {
         #expect(harness.collector.representation(id) == nil)
     }
 
+    @Test("a peer that ignores the credit window is cut off before its backlog can grow")
+    func backlogOverrunAborts() async throws {
+        // The receive lane never blocks — it hands each chunk to the write lane
+        // and returns — so a peer that ignores the window would otherwise queue
+        // chunks on a parked lane until the heap ran out.
+        let (harness, sinkBox) = try gatedHarness()
+        defer { harness.tearDown() }
+        let id: UInt64 = 707
+        let ceiling = ClipboardStreamTuning.maxBacklogBytes(forWindowBytes: Self.window)
+        // Declared far past the ceiling, so the overrun guard can't fire first.
+        try await beginFileTransfer(
+            harness, id: id, totalBytes: ceiling * 4, filename: "flood.bin")
+
+        // The gated sink parks the write lane, so nothing drains the backlog.
+        let flood = Data(repeating: 0x11, count: ClipboardStreamTuning.maxChunkBytes / 2)
+        var offset = 0
+        while offset <= ceiling {
+            harness.receiver.handleChunk(
+                .with {
+                    $0.transferID = id
+                    $0.offset = UInt64(offset)
+                    $0.data = flood
+                })
+            offset += flood.count
+        }
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.abortInfos.first?.code == "flow.overrun")
+        try #require(sinkBox.value).allowAll()
+    }
+
     @Test("a volume that fills mid-stream aborts from the write lane with disk.full")
     func midStreamDiskFullOnWriteLane() async throws {
         // Roomy at Begin, then nearly full: the write lane's once-per-window

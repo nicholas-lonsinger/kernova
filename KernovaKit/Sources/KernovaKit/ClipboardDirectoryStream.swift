@@ -364,6 +364,10 @@ public final class ClipboardDirectoryArchiveReader: @unchecked Sendable {
     /// failed archive: AppleArchive reports a failed write from `close()` and not
     /// from `writeDirectoryContents`, so swallowing one hands out a silently
     /// truncated archive.
+    ///
+    /// The `defer`s belong to the `do` block, not to this function, so every
+    /// close has already run and recorded itself by the time the result below is
+    /// computed.
     private static func encode(directoryAt directoryURL: URL, into pipe: ClipboardArchiveBytePipe)
         -> Error?
     {
@@ -511,8 +515,9 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
 
     /// Runs the extract pipeline, returning the failure that ended it.
     ///
-    /// Same close discipline as the encode side: streams close in reverse
-    /// creation order and a close failure is a failed extract.
+    /// Same close discipline, and same scoping, as the encode side: streams close
+    /// in reverse creation order when the `do` block exits, so a close failure is
+    /// recorded before the result below is computed.
     private static func extract(from pipe: ClipboardArchiveBytePipe, into destinationURL: URL)
         -> Error?
     {

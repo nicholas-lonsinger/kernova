@@ -490,6 +490,16 @@ final class VsockClipboardService: ClipboardServicing {
             )
         }
         let content = capped.content
+        // Filtering can empty the list. Send nothing rather than an offer with no
+        // representations: the peer would drop its promise and be left with a
+        // pasteboard item nothing can serve, where leaving the previous offer
+        // standing keeps a working clipboard. The digest still advances, so this
+        // buffer isn't re-examined every poll; a reconnect builds a fresh service
+        // and re-offers under whatever the peer advertises then.
+        guard !content.representations.isEmpty else {
+            lastGrabbedDigest = clipboardContent.digest
+            return
+        }
 
         var offer = Frame()
         offer.protocolVersion = 1
@@ -1170,6 +1180,10 @@ final class VsockClipboardService: ClipboardServicing {
                     // above covers the up-front case. Fires off the main actor.
                     if info.code == "disk.full" {
                         Task { @MainActor [weak self] in self?.recordPullDiskFull(info) }
+                    } else if info.code == "extract.error" {
+                        Task { @MainActor [weak self] in
+                            self?.lastTransferIssue = .pasteFolderUnpackFailed()
+                        }
                     }
                     pull.resume(nil)
                 },
