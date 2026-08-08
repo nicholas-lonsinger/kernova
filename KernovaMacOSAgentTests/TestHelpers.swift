@@ -43,6 +43,7 @@ func makeChannelPair() throws -> (VsockChannel, VsockChannel) {
 ///   producing a frame (EOF), so the two failure shapes are identifiable.
 func nextFrame(from channel: VsockChannel) async throws -> Frame {
     let timeout = testWaitBackstop
+    let stopwatch = BackstopStopwatch()
     let receiver = Task<Frame?, Error> {
         var iterator = channel.incoming.makeAsyncIterator()
         return try await iterator.next()
@@ -55,11 +56,21 @@ func nextFrame(from channel: VsockChannel) async throws -> Frame {
 
     do {
         guard let frame = try await receiver.value else {
+            // Cancelling the task suspended in `AsyncThrowingStream.next()`
+            // makes it return nil rather than throw, so the timeout lands here
+            // too, distinguishable from a genuine EOF only by the clock.
+            if stopwatch.elapsed >= timeout {
+                throw TestFailure.backstop(
+                    "Timed out waiting for a frame after \(timeout) s",
+                    stopwatch: stopwatch, timeout: timeout)
+            }
             throw TestFailure("Channel finished without producing a frame (EOF)")
         }
         return frame
     } catch is CancellationError {
-        throw TestFailure("Timed out waiting for a frame after \(timeout) s")
+        throw TestFailure.backstop(
+            "Timed out waiting for a frame after \(timeout) s",
+            stopwatch: stopwatch, timeout: timeout)
     }
 }
 
@@ -69,8 +80,11 @@ func nextFrame(from channel: VsockChannel) async throws -> Frame {
 /// deadline.
 ///
 /// - Throws: `TestFailure("Timed out…")` if no value arrives in time.
+/// - Throws: `TestFailure("Stream finished…")` when the stream ends without
+///   ever producing a value, so the two failure shapes are identifiable.
 func awaitFirst<T: Sendable>(_ stream: AsyncStream<T>) async throws -> T {
     let timeout = testWaitBackstop
+    let stopwatch = BackstopStopwatch()
     let task = Task<T?, Never> {
         var iterator = stream.makeAsyncIterator()
         return await iterator.next()
@@ -81,7 +95,12 @@ func awaitFirst<T: Sendable>(_ stream: AsyncStream<T>) async throws -> T {
     }
     defer { timeoutTask.cancel() }
     guard let value = await task.value else {
-        throw TestFailure("Timed out waiting for stream value after \(timeout) s")
+        if stopwatch.elapsed >= timeout {
+            throw TestFailure.backstop(
+                "Timed out waiting for stream value after \(timeout) s",
+                stopwatch: stopwatch, timeout: timeout)
+        }
+        throw TestFailure("Stream finished without producing a value")
     }
     return value
 }

@@ -280,6 +280,9 @@ final class ProbeStubURLProtocol: URLProtocol, @unchecked Sendable {
         // The primer belongs here rather than above because nothing handed to
         // the client reaches it until `startLoading` has returned.
         DispatchQueue.global().async { [self] in
+            // A raw semaphore wait bypasses the stopwatch helpers, so arm the
+            // session activity itself.
+            armTestSessionActivity()
             deliver(reply.body.prefix(Self.bodyPrimerBytes), finishing: false)
             let backstop =
                 DispatchTime.now() + .seconds(Int(testWaitBackstop))
