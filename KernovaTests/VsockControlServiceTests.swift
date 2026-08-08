@@ -1297,6 +1297,28 @@ struct VsockControlServiceTests {
         #expect(bounded.utf8.count <= ObservedAgentInfo.maxFieldBytes)
     }
 
+    @Test("Newlines are stripped, so a version cannot forge a host log line")
+    func boundedFieldStripsNewlines() {
+        let forged = "1.0\nGuest agent connected for 'other-vm'"
+        #expect(
+            ObservedAgentInfo.boundedField(forged)
+                == "1.0Guest agent connected for 'other-vm'")
+    }
+
+    @Test("Format characters are stripped, so a version cannot rewrite its label")
+    func boundedFieldStripsFormatCharacters() {
+        // U+202E is Cf, not Cc: a bidi override reverses the run that follows
+        // it in every label the host renders the version into.
+        #expect(ObservedAgentInfo.boundedField("26.\u{202E}0") == "26.0")
+        #expect(ObservedAgentInfo.boundedField("2\u{200D}6.0") == "26.0")
+        #expect(ObservedAgentInfo.boundedField("26.0\u{0000}") == "26.0")
+    }
+
+    @Test("A field of nothing but control characters normalizes to nil")
+    func boundedFieldAllControlIsNil() {
+        #expect(ObservedAgentInfo.boundedField(String(repeating: "\n", count: 128)) == nil)
+    }
+
     @Test("The cut lands on a scalar boundary, never mid-scalar")
     func boundedFieldCutsWholeScalars() throws {
         // 3 bytes each: 21 fit in the bound and the 22nd does not, so the

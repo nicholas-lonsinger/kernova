@@ -25,30 +25,39 @@ struct ObservedAgentInfo: Equatable, Sendable {
     ///
     /// `Hello.agent_info` is peer-supplied and bounded on the wire only by
     /// `VsockFrame.maxPayloadSize`, while the host persists both fields to
-    /// `config.json`, interpolates them into its log, and scans `os_version`
-    /// with an `NSRegularExpression` on the main actor. A dotted-decimal
-    /// version — with room for a build suffix — needs nothing like this much.
+    /// `config.json`, renders them in its UI, interpolates them into its log,
+    /// and scans `os_version` with an `NSRegularExpression` on the main actor.
+    /// A dotted-decimal version — with room for a build suffix — needs nothing
+    /// like this much.
     static let maxFieldBytes = 64
 
-    /// `reported` clipped to ``maxFieldBytes``, or `nil` when it is empty.
+    /// `reported` stripped of control and format characters and clipped to
+    /// ``maxFieldBytes``, or `nil` when nothing printable survives.
     ///
     /// The single intake normalization for both fields, so every downstream
-    /// consumer inherits the bound instead of defending itself. Cutting by
-    /// UTF-8 length rather than by `Character` is what makes the bound hold: a
-    /// single grapheme cluster can carry unboundedly many combining scalars.
+    /// consumer inherits it instead of defending itself. Both halves earn their
+    /// place: cutting by UTF-8 length rather than by `Character` is what makes
+    /// the bound hold, since one grapheme cluster can carry unboundedly many
+    /// combining scalars; and length alone leaves the host logging, persisting
+    /// and rendering 64 arbitrary bytes, where a newline forges a log line and
+    /// a bidi override rewrites the label the string appears in. A version
+    /// string has legitimate use for neither.
     static func boundedField(_ reported: String) -> String? {
-        guard !reported.isEmpty else { return nil }
-        guard reported.utf8.count > maxFieldBytes else { return reported }
         var bounded = String.UnicodeScalarView()
         var byteCount = 0
-        // Whole scalars only — a cut landing mid-scalar would have to be
-        // repaired with U+FFFD, which is wider than the bytes it replaces.
-        for scalar in reported.unicodeScalars {
+        // Bounded scan: nothing past `maxFieldBytes` scalars can widen the
+        // result, and this runs on the main actor against a payload the peer
+        // sizes. `controlCharacters` covers Unicode Cc and Cf both — the
+        // newlines and the bidi overrides.
+        for scalar in reported.unicodeScalars.prefix(maxFieldBytes)
+        where !CharacterSet.controlCharacters.contains(scalar) {
             byteCount += UTF8.width(scalar)
+            // Whole scalars only — a cut landing mid-scalar would have to be
+            // repaired with U+FFFD, which is wider than the bytes it replaces.
             guard byteCount <= maxFieldBytes else { break }
             bounded.append(scalar)
         }
-        return String(bounded)
+        return bounded.isEmpty ? nil : String(bounded)
     }
 }
 
@@ -492,9 +501,8 @@ final class VsockControlService {
         case .hello(let hello):
             isConnected = true
             isUnresponsive = false
-            // Both version fields are peer-supplied: bound them here so the
-            // log line below, `config.json` and the version parser inherit one
-            // ceiling.
+            // Both version fields are peer-supplied — `boundedField` is the one
+            // intake every downstream consumer inherits.
             let reportedVersion = ObservedAgentInfo.boundedField(hello.agentInfo.agentVersion)
             agentVersion = reportedVersion
             let reportedOSVersion = ObservedAgentInfo.boundedField(hello.agentInfo.osVersion)
@@ -502,8 +510,10 @@ final class VsockControlService {
                 KernovaCapability.clipboardStreamV1)
             guestSupportsPasteLimitStorage = hello.capabilities.contains(
                 KernovaCapability.clipboardPasteLimitV1)
-            // `logDescription` bounds the peer-supplied capability strings so a
-            // malicious peer can't write arbitrary content into the host log.
+            // Every peer-supplied piece of this line is filtered first — the
+            // version by `boundedField`, the capability tags by
+            // `logDescription` — so none of them can write arbitrary content
+            // into the host log.
             Self.logger.notice(
                 "Guest agent connected for '\(self.label, privacy: .public)' (service=\(hello.serviceVersion, privacy: .public), agent=\(reportedVersion ?? "?", privacy: .public), caps=\(KernovaCapability.logDescription(of: hello.capabilities), privacy: .public))"
             )
