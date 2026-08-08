@@ -18,6 +18,8 @@ public final class ClipboardStreamSender: @unchecked Sendable {
     private let windowBytes: Int
     private let noAckTimeout: TimeInterval
 
+    private let directorySource: ClipboardDirectorySourceFactory
+
     private let lock = NSLock()
     private var transfers: [UInt64: OutboundTransfer] = [:]
 
@@ -28,16 +30,37 @@ public final class ClipboardStreamSender: @unchecked Sendable {
     ///     chunk so a transfer can always make progress.
     ///   - noAckTimeout: how long a transfer waits for credit to advance before
     ///     aborting a hung peer.
-    public init(
+    public convenience init(
         channel: VsockChannel,
         chunkSize: Int = ClipboardStreamTuning.defaultChunkPayloadSize,
         windowBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
         noAckTimeout: TimeInterval = 10
     ) {
+        self.init(
+            channel: channel, chunkSize: chunkSize, windowBytes: windowBytes,
+            noAckTimeout: noAckTimeout,
+            directorySource: { url, label, capacity in
+                DirectoryArchiveChunkReader(
+                    directoryURL: url, label: label, capacityBytes: capacity)
+            })
+    }
+
+    /// Creates a sender whose folder transfers read through `directorySource`.
+    ///
+    /// A test stands in a source that parks, which is the only way to exercise
+    /// an abort landing while the transfer thread is inside a read.
+    init(
+        channel: VsockChannel,
+        chunkSize: Int = ClipboardStreamTuning.defaultChunkPayloadSize,
+        windowBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
+        noAckTimeout: TimeInterval = 10,
+        directorySource: @escaping ClipboardDirectorySourceFactory
+    ) {
         self.channel = channel
         self.chunkSize = max(1, chunkSize)
         self.windowBytes = max(windowBytes, max(1, chunkSize))
         self.noAckTimeout = noAckTimeout
+        self.directorySource = directorySource
     }
 
     /// Begins streaming `representation` in reply to a request.
@@ -144,13 +167,29 @@ public final class ClipboardStreamSender: @unchecked Sendable {
             defer { onComplete?(didComplete) }
             defer { self.remove(transfer.transferID) }
 
-            let reader = DirectoryArchiveChunkReader(
-                directoryURL: sourceDirectoryURL, label: "\(transferID)",
-                capacityBytes: self.windowBytes)
+            // Opening the source starts the walk-and-compress, so check for a
+            // retirement that landed between registration and here before paying
+            // for a tree nobody is waiting on.
+            let retirement = transfer.retirement()
+            if retirement.retired {
+                self.notifyPeerOfRetirement(transfer, reason: retirement.reason)
+                return
+            }
+            let reader = self.directorySource(
+                sourceDirectoryURL, "\(transferID)", self.windowBytes)
             // Covers every exit below — abort, supersession, credit timeout, a
             // dead channel — by unblocking the encode pipeline so its worker
             // unwinds instead of parking in a callback that has no timeout.
             defer { reader.close() }
+            // An archive source parks this thread inside `read` when the encoder
+            // has produced nothing yet, and no abort path signals the transfer's
+            // own condition into *that* wait. Route retirement to the source too,
+            // or a stalled encode outlives every abort, supersession and channel
+            // teardown — and, because a transfer id is derivable, silently
+            // swallows the peer's retry as a duplicate.
+            if transfer.setAbortHook({ [weak reader] in reader?.close() }) {
+                reader.close()
+            }
 
             didComplete = self.stream(
                 transfer: transfer, reader: reader, declaredByteCount: nil, uti: uti,
@@ -342,6 +381,13 @@ public final class ClipboardStreamSender: @unchecked Sendable {
             // credit for either would park the sender on credit for bytes it is
             // never going to send, which nothing else can then unblock.
             guard var chunk = reader.read(upTo: nextChunkSize) else {
+                // A retirement is what woke this read when it was parked, so it
+                // is the peer's news rather than a source failure.
+                let retirement = transfer.retirement()
+                if retirement.retired {
+                    notifyPeerOfRetirement(transfer, reason: retirement.reason)
+                    return false
+                }
                 sendAbort(transfer: transfer, code: "read.error", message: "Source read failed at offset \(offset)")
                 return false
             }
@@ -419,8 +465,10 @@ public final class ClipboardStreamSender: @unchecked Sendable {
             offset += chunk.count
             // Report bytes handed to the socket (not yet acked) so the owner can
             // surface outbound progress. A `0` total leaves the tracker on the
-            // expectation the unit was opened with — the offer's estimate.
-            onProgress?(offset, declaredByteCount ?? 0)
+            // expectation the unit was opened with — the offer's estimate — so
+            // the numerator has to be in that unit too, which for a folder is
+            // what the source has encoded, not what the wire has carried.
+            onProgress?(reader.offerUnitProgress ?? offset, declaredByteCount ?? 0)
         }
 
         let digest = Data(hasher.finalize())
@@ -498,6 +546,11 @@ private final class OutboundTransfer: @unchecked Sendable {
     var started = false
     /// Set on inbound abort / supersession / teardown.
     var aborted = false
+    /// Wakes a source parked outside `awaitCredit`, run once retirement is
+    /// claimed.
+    ///
+    /// Idempotent by contract, so a duplicate abort is harmless.
+    var abortHook: (@Sendable () -> Void)?
     /// Why the transfer was aborted (decides whether to notify the peer).
     var abortReason: AbortReason?
 
@@ -563,8 +616,22 @@ private final class OutboundTransfer: @unchecked Sendable {
             aborted = true
             abortReason = reason
         }
+        let hook = abortHook
         condition.signal()
         condition.unlock()
+        // Outside the lock: the hook takes the source's own lock, and nothing
+        // should hold two.
+        hook?()
+    }
+
+    /// Registers the retirement hook, reporting whether retirement already
+    /// happened — in which case the caller runs it itself, since `markAborted`
+    /// has been and gone.
+    func setAbortHook(_ hook: @escaping @Sendable () -> Void) -> Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        abortHook = hook
+        return aborted
     }
 }
 
@@ -575,12 +642,32 @@ private final class OutboundTransfer: @unchecked Sendable {
 /// `read(upTo:)` returns `nil` on error and an empty `Data` at the end of the
 /// source — which is the end of the payload for a source whose size was never
 /// declared, and a short read for one that was.
-private protocol ChunkReader {
+///
+/// `close()` must be safe to call from another thread while a read is in
+/// flight, and must make that read return: it is how an abort reaches a source
+/// that parks.
+protocol ChunkReader: AnyObject {
     func read(upTo count: Int) -> Data?
     func close()
+    /// Bytes of the *payload the offer described* produced so far, when the
+    /// source can say — a folder's wire bytes are compressed and so are in a
+    /// different unit from every readout's denominator. `nil` leaves the caller
+    /// to report wire bytes.
+    var offerUnitProgress: Int? { get }
 }
 
-private final class InMemoryChunkReader: ChunkReader {
+extension ChunkReader {
+    /// A source whose wire bytes *are* the payload needs no translation.
+    var offerUnitProgress: Int? { nil }
+}
+
+/// Opens the archive source for a folder transfer.
+typealias ClipboardDirectorySourceFactory =
+    @Sendable (
+        _ directoryURL: URL, _ label: String, _ capacityBytes: Int
+    ) -> ChunkReader
+
+final class InMemoryChunkReader: ChunkReader {
     private let data: Data
     private var offset: Int
     init(data: Data) {
@@ -606,7 +693,7 @@ private final class InMemoryChunkReader: ChunkReader {
 /// The empty result that ends the stream is reached only once the encode
 /// pipeline has closed cleanly; a failure anywhere in it surfaces as `nil`, the
 /// transfer's `read.error` abort.
-private final class DirectoryArchiveChunkReader: ChunkReader {
+final class DirectoryArchiveChunkReader: ChunkReader {
     private let reader: ClipboardDirectoryArchiveReader
 
     init(directoryURL: URL, label: String, capacityBytes: Int) {
@@ -618,12 +705,16 @@ private final class DirectoryArchiveChunkReader: ChunkReader {
         try? reader.read(upTo: count)
     }
 
+    /// Uncompressed archive bytes, which is the unit the folder's offer estimate
+    /// is in — the compressed wire count would read as a stalled transfer.
+    var offerUnitProgress: Int? { reader.uncompressedByteCount }
+
     func close() {
         reader.cancel()
     }
 }
 
-private final class FileChunkReader: ChunkReader {
+final class FileChunkReader: ChunkReader {
     private let handle: FileHandle
     init?(url: URL) {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }

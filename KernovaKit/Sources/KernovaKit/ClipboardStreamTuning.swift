@@ -64,6 +64,15 @@ public enum ClipboardStreamTuning {
     /// bounds what a misbehaving peer can apply between disk re-checks.
     public static let maxChunkBytes = 16 * 1024 * 1024
 
+    /// Floor on how much tree a streamed folder may extract regardless of the
+    /// size its offer advertised: 64 MiB.
+    ///
+    /// A folder's estimate sums file bytes only, so a tree of directories and
+    /// empty files advertises zero while its archive still carries a header per
+    /// entry. This is the allowance that keeps such a tree extractable while
+    /// still bounding one whose advertised size is a fabrication.
+    public static let minimumExtractAllowance = 64 * 1024 * 1024
+
     /// The most a receiver lets arrive ahead of what it has written: one credit
     /// window plus one maximum-size chunk.
     ///

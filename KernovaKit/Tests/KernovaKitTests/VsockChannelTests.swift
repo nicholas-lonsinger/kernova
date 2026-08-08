@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import Darwin
+import KernovaTestSupport
 @testable import KernovaKit
 
 @Suite("VsockChannel")

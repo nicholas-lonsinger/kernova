@@ -76,6 +76,10 @@ final class VsockClipboardService: ClipboardServicing {
     /// check rather than captured, so a Settings change reaches a live session.
     private let maxPasteBytes: @MainActor () -> Int
 
+    /// The buffer digest whose offer was last skipped for lacking anything the
+    /// peer can take, so the skip is reported once rather than every poll tick.
+    @ObservationIgnored private var skippedOfferDigest: Data?
+
     /// Whether the connected guest can receive a folder archived straight onto
     /// the wire (`clipboard.stream.directory.v1`).
     ///
@@ -493,13 +497,23 @@ final class VsockClipboardService: ClipboardServicing {
         // Filtering can empty the list. Send nothing rather than an offer with no
         // representations: the peer would drop its promise and be left with a
         // pasteboard item nothing can serve, where leaving the previous offer
-        // standing keeps a working clipboard. The digest still advances, so this
-        // buffer isn't re-examined every poll; a reconnect builds a fresh service
-        // and re-offers under whatever the peer advertises then.
+        // standing keeps a working clipboard.
         guard !content.representations.isEmpty else {
-            lastGrabbedDigest = clipboardContent.digest
+            // Deliberately *not* latched into `lastGrabbedDigest`: the capability
+            // is re-read from every `Hello`, and a control-channel blip alone
+            // clears it, so latching would strand this buffer for the rest of the
+            // session even once the guest advertises it again. Reported once per
+            // buffer instead, since the poll re-enters here every tick.
+            if skippedOfferDigest != clipboardContent.digest {
+                skippedOfferDigest = clipboardContent.digest
+                lastTransferIssue = .folderSkippedForOutdatedGuest()
+                Self.logger.notice(
+                    "Offering nothing to '\(self.label, privacy: .public)' — every representation is a folder and the guest agent lacks \(KernovaCapability.clipboardStreamDirectoryV1, privacy: .public) (agent needs updating)"
+                )
+            }
             return
         }
+        skippedOfferDigest = nil
 
         var offer = Frame()
         offer.protocolVersion = 1
@@ -541,9 +555,11 @@ final class VsockClipboardService: ClipboardServicing {
         guard !peerStreamsDirectories() else { return clipboardContent }
         let kept = clipboardContent.representations.filter { !$0.isDirectory }
         guard kept.count != clipboardContent.representations.count else { return clipboardContent }
-        Self.logger.notice(
-            "Dropping \(self.clipboardContent.representations.count - kept.count, privacy: .public) folder representation(s) from the clipboard offer to '\(self.label, privacy: .public)' — the guest agent lacks \(KernovaCapability.clipboardStreamDirectoryV1, privacy: .public) (agent needs updating)"
-        )
+        if skippedOfferDigest != clipboardContent.digest {
+            Self.logger.notice(
+                "Dropping \(self.clipboardContent.representations.count - kept.count, privacy: .public) folder representation(s) from the clipboard offer to '\(self.label, privacy: .public)' — the guest agent lacks \(KernovaCapability.clipboardStreamDirectoryV1, privacy: .public) (agent needs updating)"
+            )
+        }
         return ClipboardContent(representations: kept, isConcealed: clipboardContent.isConcealed)
     }
 
@@ -1172,8 +1188,10 @@ final class VsockClipboardService: ClipboardServicing {
                 transferID,
                 // A folder's bytes are an archive of its tree, extracted as they
                 // arrive: the stream layer learns that here, from the offer this
-                // side already read, rather than from the wire.
+                // side already read, rather than from the wire — including the
+                // size the extract is held to.
                 extractsDirectoryNamed: info.isDirectory ? info.filename : nil,
+                advertisedByteCount: Int(clamping: info.byteCount),
                 onComplete: { pull.resume($0) },
                 onAbort: { [weak self] info in
                     // A volume that fills *during* the transfer; the pre-flight
@@ -1376,8 +1394,10 @@ final class VsockClipboardService: ClipboardServicing {
             transferID,
             // A folder's bytes are an archive of its tree, extracted as they
             // arrive: the stream layer learns that here, from the offer this side
-            // already read, rather than from the wire.
+            // already read, rather than from the wire — including the size the
+            // extract is held to.
             extractsDirectoryNamed: snapshot.isDirectory ? snapshot.filename : nil,
+            advertisedByteCount: Int(clamping: snapshot.byteCount),
             onComplete: { rep in coordinator.deliver(transferID, rep) },
             onAbort: { abort in coordinator.abort(transferID, abort) },
             // Re-arm the inactivity backstop on each chunk so a large still-

@@ -13,11 +13,29 @@ struct ClipboardDirectoryTransferTests {
     private static let window = 16384  // 4 chunks
 
     private func harness(
-        windowBytes: Int = window, freeSpace: Int64 = 100 * 1024 * 1024 * 1024
+        windowBytes: Int = window, freeSpace: @escaping @Sendable () -> Int64 = { 100 << 30 },
+        minimumExtractAllowance: Int = ClipboardStreamTuning.minimumExtractAllowance,
+        directorySource: ClipboardDirectorySourceFactory? = nil
     ) throws -> StreamHarness {
         try StreamHarness(
             chunkSize: Self.chunk, windowBytes: windowBytes,
-            freeSpaceProvider: { _ in freeSpace })
+            minimumExtractAllowance: minimumExtractAllowance,
+            freeSpaceProvider: { _ in freeSpace() },
+            directorySource: directorySource)
+    }
+
+    /// A tree whose archive is far smaller than the tree it unpacks to — the
+    /// shape every compressed-vs-decompressed accounting bug hides in.
+    private func makeCompressibleTree(uncompressedBytes: Int = 512 * 1024) throws -> (
+        scratch: URL, source: URL
+    ) {
+        let fm = FileManager.default
+        let scratch = makeScratch()
+        let source = scratch.appendingPathComponent("Logs", isDirectory: true)
+        try fm.createDirectory(at: source, withIntermediateDirectories: true)
+        try Data(repeating: 0x20, count: uncompressedBytes)
+            .write(to: source.appendingPathComponent("big.log"))
+        return (scratch, source)
     }
 
     private func makeScratch() -> URL {
@@ -324,9 +342,100 @@ struct ClipboardDirectoryTransferTests {
         try await waitUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
     }
 
+    @Test("an abort reaches a transfer parked reading its source, and frees its id")
+    func abortUnwindsAParkedSourceRead() async throws {
+        // Nothing signals the transfer's own condition into a park that happens
+        // *inside* the source, so before this the receiver's stall abort,
+        // supersession and channel teardown all woke the wrong object — the
+        // transfer stayed registered, and the peer's retry (transfer ids are
+        // derivable, so it reuses this one) was dropped as a duplicate.
+        let source = ParkingChunkReader()
+        let first = try harness(directorySource: { _, _, _ in source })
+        defer { first.tearDown() }
+        let fm = FileManager.default
+        let (scratch, tree) = try makeSourceTree()
+        defer { try? fm.removeItem(at: scratch) }
+
+        let id: UInt64 = 51
+        let firstOutcome = Box<Bool?>(nil)
+        let firstGate = AsyncGate()
+        prime(first, id: id, named: "Project")
+        first.sender.startDirectoryTransfer(
+            transferID: id, generation: 1, sourceDirectoryURL: tree, folderName: "Project",
+            uti: ClipboardDirectoryArchive.directoryUTI, maxAcceptByteCount: .max,
+            isCurrent: { _ in true },
+            onComplete: { success in
+                firstOutcome.value = success
+                firstGate.notify()
+            })
+        try await source.parked.wait { source.parkedReads > 0 }
+
+        first.sender.cancel(generation: 1)
+        // Unwinds promptly rather than sitting until the source happens to
+        // produce something, which for a stalled encoder is never.
+        try await firstGate.wait { firstOutcome.value != nil }
+        #expect(firstOutcome.value == false)
+
+        // The id is free again, so the peer's retry is served rather than
+        // swallowed by the duplicate-transfer guard.
+        let retry = ParkingChunkReader()
+        let retryHarness = try self.harness(directorySource: { _, _, _ in retry })
+        defer { retryHarness.tearDown() }
+        prime(retryHarness, id: id, named: "Project")
+        retryHarness.sender.startDirectoryTransfer(
+            transferID: id, generation: 1, sourceDirectoryURL: tree, folderName: "Project",
+            uti: ClipboardDirectoryArchive.directoryUTI, maxAcceptByteCount: .max,
+            isCurrent: { _ in true })
+        try await retry.parked.wait { retry.parkedReads > 0 }
+        retry.close()
+    }
+
+    @Test("a second transfer for a freed id is accepted by the same sender")
+    func abortedTransferFreesItsIdOnTheSameSender() async throws {
+        let source = ParkingChunkReader()
+        let second = ParkingChunkReader()
+        let sources = Box<[ParkingChunkReader]>([second, source])
+        let rig = try harness(directorySource: { _, _, _ in
+            var remaining = sources.value
+            let next = remaining.removeLast()
+            sources.value = remaining
+            return next
+        })
+        defer { rig.tearDown() }
+        let fm = FileManager.default
+        let (scratch, tree) = try makeSourceTree()
+        defer { try? fm.removeItem(at: scratch) }
+
+        let id: UInt64 = 52
+        let done = AsyncGate()
+        let outcome = Box<Bool?>(nil)
+        prime(rig, id: id, named: "Project")
+        rig.sender.startDirectoryTransfer(
+            transferID: id, generation: 1, sourceDirectoryURL: tree, folderName: "Project",
+            uti: ClipboardDirectoryArchive.directoryUTI, maxAcceptByteCount: .max,
+            isCurrent: { _ in true },
+            onComplete: { success in
+                outcome.value = success
+                done.notify()
+            })
+        try await source.parked.wait { source.parkedReads > 0 }
+        rig.sender.handleAbort(transferID: id)
+        try await done.wait { outcome.value != nil }
+
+        // Same sender, same id: the table entry has to be gone, or this call is
+        // silently dropped and the peer waits for a Begin that never comes.
+        prime(rig, id: id, named: "Project")
+        rig.sender.startDirectoryTransfer(
+            transferID: id, generation: 1, sourceDirectoryURL: tree, folderName: "Project",
+            uti: ClipboardDirectoryArchive.directoryUTI, maxAcceptByteCount: .max,
+            isCurrent: { _ in true })
+        try await second.parked.wait { second.parkedReads > 0 }
+        second.close()
+    }
+
     @Test("a volume below the free-space margin refuses a folder at Begin")
     func refusedWhenVolumeIsFull() async throws {
-        let harness = try harness(freeSpace: 1024)
+        let harness = try harness(freeSpace: { 1024 })
         defer { harness.tearDown() }
         let id: UInt64 = 49
         prime(harness, id: id, named: "Project")

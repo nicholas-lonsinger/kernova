@@ -2,6 +2,14 @@ import AppleArchive
 import Foundation
 import System
 
+/// Why an extract was stopped by the consumer rather than by the archive.
+public enum ClipboardArchiveOutputRefusal: Equatable, Sendable {
+    /// The staging volume no longer has room for the tree being written.
+    case diskFull
+    /// The tree outgrew the size the offer advertised for it.
+    case overAdvertisedSize
+}
+
 /// Why a streamed directory archive stopped.
 public enum ClipboardArchiveStreamError: Error, Equatable {
     /// A seek or random-access operation on a purely sequential stream.
@@ -14,6 +22,9 @@ public enum ClipboardArchiveStreamError: Error, Equatable {
     case streamClosed
     /// The transfer was torn down — superseded, aborted, or the channel closed.
     case cancelled
+    /// The consumer stopped the extract: what it was about to write is more than
+    /// it agreed to take.
+    case outputRefused(ClipboardArchiveOutputRefusal)
 }
 
 // MARK: - Byte pipe
@@ -83,32 +94,13 @@ final class ClipboardArchiveBytePipe: @unchecked Sendable {
     ///
     /// - Throws: the failure that ended the pipe.
     func read(into buffer: UnsafeMutableRawBufferPointer) throws -> Int {
-        guard let base = buffer.baseAddress, !buffer.isEmpty else { return 0 }
-        condition.lock()
-        defer { condition.unlock() }
-        while pendingBytes == 0, failure == nil, !finished {
-            condition.wait()
-        }
-        if let failure { throw failure }
-        guard pendingBytes > 0 else { return 0 }
+        guard let destination = buffer.baseAddress else { return 0 }
         var copied = 0
-        while copied < buffer.count, let head = chunks.first {
-            let take = min(head.count - headOffset, buffer.count - copied)
-            head.withUnsafeBytes { raw in
-                guard let source = raw.baseAddress else { return }
-                base.advanced(by: copied).copyMemory(
-                    from: source.advanced(by: headOffset), byteCount: take)
-            }
-            copied += take
-            headOffset += take
-            if headOffset == head.count {
-                chunks.removeFirst()
-                headOffset = 0
-            }
+        return try drain(upTo: buffer.count) { run in
+            guard let source = run.baseAddress else { return }
+            destination.advanced(by: copied).copyMemory(from: source, byteCount: run.count)
+            copied += run.count
         }
-        pendingBytes -= copied
-        condition.broadcast()
-        return copied
     }
 
     /// Removes up to `count` bytes, parking while the pipe is empty.
@@ -117,29 +109,51 @@ final class ClipboardArchiveBytePipe: @unchecked Sendable {
     ///
     /// - Throws: the failure that ended the pipe.
     func read(upTo count: Int) throws -> Data {
-        guard count > 0 else { return Data() }
+        var result = Data()
+        result.reserveCapacity(count)
+        _ = try drain(upTo: count) { run in
+            guard let source = run.baseAddress else { return }
+            result.append(source.assumingMemoryBound(to: UInt8.self), count: run.count)
+        }
+        return result
+    }
+
+    /// Hands each contiguous run of up to `count` buffered bytes to `consume`,
+    /// parking while the pipe is empty.
+    ///
+    /// The one place the chunk-consumption arithmetic lives: an off-by-one here
+    /// silently corrupts archive bytes, so both readers share it and differ only
+    /// in where they put the run.
+    ///
+    /// - Returns: bytes drained; 0 means end of stream.
+    private func drain(upTo count: Int, into consume: (UnsafeRawBufferPointer) -> Void) throws
+        -> Int
+    {
+        guard count > 0 else { return 0 }
         condition.lock()
         defer { condition.unlock() }
         while pendingBytes == 0, failure == nil, !finished {
             condition.wait()
         }
         if let failure { throw failure }
-        guard pendingBytes > 0 else { return Data() }
-        var result = Data()
-        result.reserveCapacity(min(count, pendingBytes))
-        while result.count < count, let head = chunks.first {
-            let take = min(head.count - headOffset, count - result.count)
-            let start = head.index(head.startIndex, offsetBy: headOffset)
-            result.append(head[start..<head.index(start, offsetBy: take)])
+        guard pendingBytes > 0 else { return 0 }
+        var drained = 0
+        while drained < count, let head = chunks.first {
+            let take = min(head.count - headOffset, count - drained)
+            head.withUnsafeBytes { raw in
+                guard let base = raw.baseAddress else { return }
+                consume(UnsafeRawBufferPointer(start: base.advanced(by: headOffset), count: take))
+            }
+            drained += take
             headOffset += take
             if headOffset == head.count {
                 chunks.removeFirst()
                 headOffset = 0
             }
         }
-        pendingBytes -= result.count
+        pendingBytes -= drained
         condition.broadcast()
-        return result
+        return drained
     }
 
     /// Ends the stream cleanly: the reader drains what is left and then sees end
@@ -176,20 +190,57 @@ final class ClipboardArchiveBytePipe: @unchecked Sendable {
 
 // MARK: - AppleArchive stream adapters
 
-/// Write-only sequential `ArchiveByteStreamProtocol` handing every encoded byte
-/// to a ``ClipboardArchiveBytePipe``.
+/// An AppleArchive stream that moves bytes in one direction only.
 ///
-/// `write` accepts the **whole** buffer before returning `buffer.count`:
-/// AppleArchive never re-offers a tail a short write left behind, so a partial
-/// accept silently truncates the archive. The pipe's write is all-or-nothing,
-/// which is what makes that hold.
+/// The defaults below are what keep each adapter to the single method it really
+/// implements; everything else is a hard error, because a codec asking a chunk
+/// transport to seek cannot be served.
 ///
 /// `close()` deliberately does **not** end the pipe. AppleArchive surfaces an
 /// encode failure only from the stream closes, so end of stream has to be
 /// declared by the driver *after* every close has been checked — otherwise the
 /// reader can see a clean end of stream for an archive whose final flush failed.
-final class ClipboardArchivePipeSink: ArchiveByteStreamProtocol, @unchecked Sendable {
-    private let pipe: ClipboardArchiveBytePipe
+protocol ClipboardSequentialArchiveStream: ArchiveByteStreamProtocol, AnyObject {
+    /// The pipe this adapter reads from or writes to.
+    var pipe: ClipboardArchiveBytePipe { get }
+}
+
+extension ClipboardSequentialArchiveStream {
+    func read(into buffer: UnsafeMutableRawBufferPointer) throws -> Int {
+        throw ClipboardArchiveStreamError.unsupportedOperation
+    }
+
+    func write(from buffer: UnsafeRawBufferPointer) throws -> Int {
+        throw ClipboardArchiveStreamError.unsupportedOperation
+    }
+
+    func read(into buffer: UnsafeMutableRawBufferPointer, atOffset offset: Int64) throws -> Int {
+        throw ClipboardArchiveStreamError.unsupportedOperation
+    }
+
+    func write(from buffer: UnsafeRawBufferPointer, atOffset offset: Int64) throws -> Int {
+        throw ClipboardArchiveStreamError.unsupportedOperation
+    }
+
+    func seek(toOffset offset: Int64, relativeTo origin: FileDescriptor.SeekOrigin) throws -> Int64 {
+        throw ClipboardArchiveStreamError.unsupportedOperation
+    }
+
+    func close() throws {}
+
+    func cancel() {
+        pipe.fail(ClipboardArchiveStreamError.cancelled)
+    }
+}
+
+/// Write-only adapter handing every encoded byte to the pipe.
+///
+/// `write` accepts the **whole** buffer before returning `buffer.count`:
+/// AppleArchive never re-offers a tail a short write left behind, so a partial
+/// accept silently truncates the archive. The pipe's write is all-or-nothing,
+/// which is what makes that hold.
+final class ClipboardArchivePipeSink: ClipboardSequentialArchiveStream, @unchecked Sendable {
+    let pipe: ClipboardArchiveBytePipe
 
     init(pipe: ClipboardArchiveBytePipe) {
         self.pipe = pipe
@@ -199,37 +250,11 @@ final class ClipboardArchivePipeSink: ArchiveByteStreamProtocol, @unchecked Send
         try pipe.write(buffer)
         return buffer.count
     }
-
-    func close() throws {}
-
-    func cancel() {
-        pipe.fail(ClipboardArchiveStreamError.cancelled)
-    }
-
-    func read(into buffer: UnsafeMutableRawBufferPointer) throws -> Int {
-        throw ClipboardArchiveStreamError.unsupportedOperation
-    }
-
-    func read(into buffer: UnsafeMutableRawBufferPointer, atOffset offset: Int64) throws -> Int {
-        throw ClipboardArchiveStreamError.unsupportedOperation
-    }
-
-    func write(from buffer: UnsafeRawBufferPointer, atOffset offset: Int64) throws -> Int {
-        throw ClipboardArchiveStreamError.unsupportedOperation
-    }
-
-    func seek(toOffset offset: Int64, relativeTo origin: FileDescriptor.SeekOrigin) throws -> Int64 {
-        throw ClipboardArchiveStreamError.unsupportedOperation
-    }
 }
 
-/// Read-only sequential `ArchiveByteStreamProtocol` pulling archive bytes out of
-/// a ``ClipboardArchiveBytePipe``.
-///
-/// `close()` is a no-op for the same reason as the sink's: the pipe's ends are
-/// declared by the driver, not by the codec tearing its streams down.
-final class ClipboardArchivePipeSource: ArchiveByteStreamProtocol, @unchecked Sendable {
-    private let pipe: ClipboardArchiveBytePipe
+/// Read-only adapter pulling archive bytes out of the pipe.
+final class ClipboardArchivePipeSource: ClipboardSequentialArchiveStream, @unchecked Sendable {
+    let pipe: ClipboardArchiveBytePipe
 
     init(pipe: ClipboardArchiveBytePipe) {
         self.pipe = pipe
@@ -238,31 +263,137 @@ final class ClipboardArchivePipeSource: ArchiveByteStreamProtocol, @unchecked Se
     func read(into buffer: UnsafeMutableRawBufferPointer) throws -> Int {
         try pipe.read(into: buffer)
     }
+}
 
-    func close() throws {}
+/// A transparent stage that forwards to `upstream` and counts the bytes crossing
+/// it.
+///
+/// Interposed between the encode/decode stage and the compression stage, so what
+/// it counts is **uncompressed** archive bytes — the unit the offer's stat-walk
+/// estimate, the paste ceiling and the free-space guard are all expressed in.
+/// Compressed wire bytes answer none of those questions: LZFSE reaches ~100:1 on
+/// text, so a guard paced by them admits ~100× the tree it thinks it does.
+///
+/// Every operation forwards, including the random-access ones: staying
+/// transparent means an unexpected seek from the codec still works and only
+/// makes the count approximate, instead of failing a transfer.
+final class ClipboardArchiveCountingStream: ArchiveByteStreamProtocol, @unchecked Sendable {
+    private let upstream: ArchiveByteStream
+    /// Called once the running total has advanced by at least `pacingBytes`.
+    ///
+    /// Throwing from it stops the pipeline.
+    private let onAdvance: ((Int) throws -> Void)?
+    private let pacingBytes: Int
 
-    func cancel() {
-        pipe.fail(ClipboardArchiveStreamError.cancelled)
+    private let lock = NSLock()
+    private var total = 0
+    private var reportedAt = 0
+
+    /// Total bytes forwarded so far.
+    var byteCount: Int { lock.withLock { total } }
+
+    init(
+        upstream: ArchiveByteStream, pacingBytes: Int = 1 << 20,
+        onAdvance: ((Int) throws -> Void)? = nil
+    ) {
+        self.upstream = upstream
+        self.pacingBytes = max(1, pacingBytes)
+        self.onAdvance = onAdvance
+    }
+
+    private func advance(_ count: Int) throws {
+        let due: Int? = lock.withLock {
+            total += count
+            guard total - reportedAt >= pacingBytes else { return nil }
+            reportedAt = total
+            return total
+        }
+        if let due { try onAdvance?(due) }
+    }
+
+    func read(into buffer: UnsafeMutableRawBufferPointer) throws -> Int {
+        let count = try upstream.read(into: buffer)
+        try advance(count)
+        return count
     }
 
     func write(from buffer: UnsafeRawBufferPointer) throws -> Int {
-        throw ClipboardArchiveStreamError.unsupportedOperation
+        // Forward the whole buffer: a short write here would truncate the archive
+        // exactly as one to the pipe would.
+        var written = 0
+        while written < buffer.count {
+            let slice = UnsafeRawBufferPointer(rebasing: buffer[written...])
+            let count = try upstream.write(from: slice)
+            guard count > 0 else { throw ClipboardArchiveStreamError.streamClosed }
+            written += count
+        }
+        try advance(written)
+        return written
     }
 
     func read(into buffer: UnsafeMutableRawBufferPointer, atOffset offset: Int64) throws -> Int {
-        throw ClipboardArchiveStreamError.unsupportedOperation
+        try upstream.read(into: buffer, atOffset: offset)
     }
 
     func write(from buffer: UnsafeRawBufferPointer, atOffset offset: Int64) throws -> Int {
-        throw ClipboardArchiveStreamError.unsupportedOperation
+        try upstream.write(from: buffer, atOffset: offset)
     }
 
     func seek(toOffset offset: Int64, relativeTo origin: FileDescriptor.SeekOrigin) throws -> Int64 {
-        throw ClipboardArchiveStreamError.unsupportedOperation
+        try upstream.seek(toOffset: offset, relativeTo: origin)
+    }
+
+    func cancel() { upstream.cancel() }
+
+    /// A no-op for the same reason the pipe adapters' is: the driver owns when
+    /// the stack is torn down and in what order.
+    func close() throws {}
+}
+
+// MARK: - Pipeline scaffolding
+
+/// A lock-guarded counter shared between an archive pipeline's worker thread and
+/// whoever reads its progress.
+private final class ArchiveByteCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = 0
+    var value: Int {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
     }
 }
 
-// MARK: - Pipeline outcome
+/// The consumer's own reason for stopping a pipeline, kept apart from whatever
+/// the archive reports.
+///
+/// AppleArchive wraps an error thrown out of a stream callback in one of its
+/// own, so the reason the *consumer* refused would otherwise reach the caller as
+/// a generic archive failure — and a refusal has to be reported as what it is.
+private final class ArchiveRefusalBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Error?
+    var value: Error? {
+        get { lock.withLock { stored } }
+        set { lock.withLock { if stored == nil { stored = newValue } } }
+    }
+}
+
+/// Collects the first failure raised while closing a stack of archive streams.
+///
+/// A close failure **is** a failed archive: AppleArchive reports a failed write
+/// from `close()` and not from the write call, so swallowing one hands out a
+/// silently truncated archive.
+private struct ArchiveCloseTracker {
+    private(set) var failure: Error?
+
+    mutating func close(_ body: () throws -> Void) {
+        do {
+            try body()
+        } catch {
+            if failure == nil { failure = error }
+        }
+    }
+}
 
 /// The terminal state of one archive pipeline, published by its worker and
 /// awaited by whoever tears the transfer down.
@@ -311,6 +442,15 @@ private final class ClipboardArchivePipelineOutcome: @unchecked Sendable {
 public final class ClipboardDirectoryArchiveReader: @unchecked Sendable {
     private let pipe: ClipboardArchiveBytePipe
     private let outcome = ClipboardArchivePipelineOutcome()
+    /// Counts uncompressed archive bytes, so a caller reporting progress has a
+    /// figure in the same unit as the offer's stat-walk estimate.
+    private let counted = ArchiveByteCounter()
+
+    /// Uncompressed archive bytes encoded so far.
+    ///
+    /// The honest progress numerator: compressed wire bytes are in a different
+    /// unit from the estimate every readout's denominator comes from.
+    public var uncompressedByteCount: Int { counted.value }
 
     /// Starts archiving `directoryURL` immediately.
     ///
@@ -326,10 +466,11 @@ public final class ClipboardDirectoryArchiveReader: @unchecked Sendable {
         let pipe = ClipboardArchiveBytePipe(capacity: capacityBytes)
         self.pipe = pipe
         let outcome = self.outcome
+        let counted = self.counted
         let queue = DispatchQueue(
             label: "app.kernova.clipboard.archive-encode.\(label)", qos: .userInitiated)
         queue.async {
-            let failure = Self.encode(directoryAt: directoryURL, into: pipe)
+            let failure = Self.encode(directoryAt: directoryURL, into: pipe, counted: counted)
             // Declare the end of stream only after every close has been checked,
             // so the reader's end of stream means "complete and flushed".
             if let failure {
@@ -352,50 +493,51 @@ public final class ClipboardDirectoryArchiveReader: @unchecked Sendable {
 
     /// Abandons the archive, unblocking the encode pipeline so its worker unwinds.
     ///
-    /// Idempotent, and safe to call from any thread — including after the archive
-    /// has already been read to its end.
+    /// Idempotent, and safe to call from any thread — including from an abort
+    /// while another thread is parked in `read(upTo:)`, which is what makes that
+    /// park cancellable.
     public func cancel() {
         pipe.fail(ClipboardArchiveStreamError.cancelled)
     }
 
     /// Runs the encode pipeline, returning the failure that ended it.
     ///
-    /// Streams close in reverse creation order, and a close failure **is** a
-    /// failed archive: AppleArchive reports a failed write from `close()` and not
-    /// from `writeDirectoryContents`, so swallowing one hands out a silently
-    /// truncated archive.
-    ///
-    /// The `defer`s belong to the `do` block, not to this function, so every
-    /// close has already run and recorded itself by the time the result below is
-    /// computed.
-    private static func encode(directoryAt directoryURL: URL, into pipe: ClipboardArchiveBytePipe)
-        -> Error?
-    {
-        var closeFailure: Error?
+    /// Streams close in reverse creation order. The `defer`s belong to the `do`
+    /// block, not to this function, so every close has already run and recorded
+    /// itself by the time the result below is computed.
+    private static func encode(
+        directoryAt directoryURL: URL, into pipe: ClipboardArchiveBytePipe, counted: ArchiveByteCounter
+    ) -> Error? {
+        var closes = ArchiveCloseTracker()
         var failure: Error?
-        func recordClose(_ close: () throws -> Void) {
-            do {
-                try close()
-            } catch {
-                if closeFailure == nil { closeFailure = error }
-            }
-        }
         do {
             guard
                 let writeStream = ArchiveByteStream.customStream(
                     instance: ClipboardArchivePipeSink(pipe: pipe))
             else { throw ClipboardDirectoryArchive.ArchiveError.openWriteStream }
-            defer { recordClose { try writeStream.close() } }
+            defer { closes.close { try writeStream.close() } }
 
             guard
                 let compressStream = ArchiveByteStream.compressionStream(
                     using: .lzfse, writingTo: writeStream)
             else { throw ClipboardDirectoryArchive.ArchiveError.openCompressionStream }
-            defer { recordClose { try compressStream.close() } }
+            defer { closes.close { try compressStream.close() } }
 
-            guard let encodeStream = ArchiveStream.encodeStream(writingTo: compressStream)
+            // Above the compressor, so what it sees is the uncompressed archive.
+            let counter = ClipboardArchiveCountingStream(upstream: compressStream) { total in
+                counted.value = total
+            }
+            guard let countedStream = ArchiveByteStream.customStream(instance: counter) else {
+                throw ClipboardDirectoryArchive.ArchiveError.openWriteStream
+            }
+            defer {
+                closes.close { try countedStream.close() }
+                counted.value = counter.byteCount
+            }
+
+            guard let encodeStream = ArchiveStream.encodeStream(writingTo: countedStream)
             else { throw ClipboardDirectoryArchive.ArchiveError.openEncodeStream }
-            defer { recordClose { try encodeStream.close() } }
+            defer { closes.close { try encodeStream.close() } }
 
             guard let keySet = ArchiveHeader.FieldKeySet(ClipboardDirectoryArchive.fieldKeys)
             else { throw ClipboardDirectoryArchive.ArchiveError.invalidFieldKeySet }
@@ -408,7 +550,7 @@ public final class ClipboardDirectoryArchiveReader: @unchecked Sendable {
         // The pipe's own failure outranks a pipeline that returned normally: a
         // transport that died mid-archive can leave `writeDirectoryContents`
         // looking successful.
-        return failure ?? closeFailure ?? pipe.failureError
+        return failure ?? closes.failure ?? pipe.failureError
     }
 }
 
@@ -434,6 +576,18 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
     private let outcome = ClipboardArchivePipelineOutcome()
     private let terminalLock = NSLock()
     private var terminal = false
+    /// Set when this side stopped the extract, so the reason survives
+    /// AppleArchive rewrapping it.
+    private let refusal = ArchiveRefusalBox()
+    /// Uncompressed archive bytes consumed — what the extract has written, near
+    /// enough for a guard and a readout, and in the same unit as the estimate.
+    private let counted = ArchiveByteCounter()
+
+    /// Uncompressed archive bytes extracted so far.
+    public var uncompressedByteCount: Int { counted.value }
+
+    /// An extract failure names the extract, not a disk write.
+    public var writeErrorCode: String { "extract.error" }
 
     /// Opens the extract pipeline, which begins consuming as soon as bytes are
     /// written.
@@ -442,18 +596,43 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
     ///   - destinationURL: an existing empty directory to extract into.
     ///   - label: distinguishes this transfer's worker queue in a stack trace.
     ///   - capacityBytes: how far arriving bytes may run ahead of extraction.
+    ///   - pacingBytes: how much output accumulates between `onOutputAdvanced`
+    ///     calls.
+    ///   - onOutputAdvanced: consulted with the running uncompressed total;
+    ///     throwing from it stops the extract and removes the tree. Runs on the
+    ///     pipeline's own thread, so it must not touch a lane's state.
     public init(
         destinationURL: URL, label: String,
-        capacityBytes: Int = ClipboardStreamTuning.defaultWindowBytes
+        capacityBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
+        pacingBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
+        onOutputAdvanced: (@Sendable (Int) throws -> Void)? = nil
     ) {
         self.destinationURL = destinationURL
         let pipe = ClipboardArchiveBytePipe(capacity: capacityBytes)
         self.pipe = pipe
         let outcome = self.outcome
+        let counted = self.counted
+        let refusal = self.refusal
+        // Remember a refusal on the way out: the archive will rewrap it, and the
+        // caller needs to know the volume filled or the tree outgrew its offer,
+        // not merely that the extract failed.
+        var guarded: (@Sendable (Int) throws -> Void)?
+        if let onOutputAdvanced {
+            guarded = { total in
+                do {
+                    try onOutputAdvanced(total)
+                } catch {
+                    refusal.value = error
+                    throw error
+                }
+            }
+        }
         let queue = DispatchQueue(
             label: "app.kernova.clipboard.archive-extract.\(label)", qos: .userInitiated)
         queue.async {
-            let failure = Self.extract(from: pipe, into: destinationURL)
+            let failure = Self.extract(
+                from: pipe, into: destinationURL, counted: counted, pacingBytes: pacingBytes,
+                onOutputAdvanced: guarded)
             // Wake a writer parked on a pipeline that has stopped consuming,
             // rather than let it block until the transfer's own watchdog fires.
             pipe.fail(failure ?? ClipboardArchiveStreamError.streamClosed)
@@ -467,7 +646,11 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
     ///   receiver's own write lane instead of running to completion over a tree
     ///   that was never written.
     public func write(_ data: Data) throws {
-        try pipe.write(data)
+        do {
+            try pipe.write(data)
+        } catch {
+            throw refusal.value ?? error
+        }
     }
 
     /// Ends the stream, waits for the pipeline to drain, and returns the
@@ -481,7 +664,7 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
         pipe.finish()
         if let failure = outcome.wait() {
             try? FileManager.default.removeItem(at: destinationURL)
-            throw failure
+            throw refusal.value ?? failure
         }
         return destinationURL
     }
@@ -518,45 +701,55 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
     /// Same close discipline, and same scoping, as the encode side: streams close
     /// in reverse creation order when the `do` block exits, so a close failure is
     /// recorded before the result below is computed.
-    private static func extract(from pipe: ClipboardArchiveBytePipe, into destinationURL: URL)
-        -> Error?
-    {
-        var closeFailure: Error?
+    private static func extract(
+        from pipe: ClipboardArchiveBytePipe, into destinationURL: URL, counted: ArchiveByteCounter,
+        pacingBytes: Int, onOutputAdvanced: (@Sendable (Int) throws -> Void)?
+    ) -> Error? {
+        var closes = ArchiveCloseTracker()
         var failure: Error?
-        func recordClose(_ close: () throws -> Void) {
-            do {
-                try close()
-            } catch {
-                if closeFailure == nil { closeFailure = error }
-            }
-        }
         do {
             guard
                 let readStream = ArchiveByteStream.customStream(
                     instance: ClipboardArchivePipeSource(pipe: pipe))
             else { throw ClipboardDirectoryArchive.ArchiveError.openReadStream }
-            defer { recordClose { try readStream.close() } }
+            defer { closes.close { try readStream.close() } }
 
             guard
                 let decompressStream = ArchiveByteStream.decompressionStream(
                     readingFrom: readStream)
             else { throw ClipboardDirectoryArchive.ArchiveError.openDecompressionStream }
-            defer { recordClose { try decompressStream.close() } }
+            defer { closes.close { try decompressStream.close() } }
 
-            guard let decodeStream = ArchiveStream.decodeStream(readingFrom: decompressStream)
+            // Below the decompressor, so what it sees — and what the guard is
+            // paced by — is the uncompressed tree about to be written.
+            let counter = ClipboardArchiveCountingStream(
+                upstream: decompressStream, pacingBytes: pacingBytes
+            ) { total in
+                counted.value = total
+                try onOutputAdvanced?(total)
+            }
+            guard let countedStream = ArchiveByteStream.customStream(instance: counter) else {
+                throw ClipboardDirectoryArchive.ArchiveError.openReadStream
+            }
+            defer {
+                closes.close { try countedStream.close() }
+                counted.value = counter.byteCount
+            }
+
+            guard let decodeStream = ArchiveStream.decodeStream(readingFrom: countedStream)
             else { throw ClipboardDirectoryArchive.ArchiveError.openDecodeStream }
-            defer { recordClose { try decodeStream.close() } }
+            defer { closes.close { try decodeStream.close() } }
 
             guard
                 let extractStream = ArchiveStream.extractStream(
                     extractingTo: FilePath(destinationURL.path))
             else { throw ClipboardDirectoryArchive.ArchiveError.openExtractStream }
-            defer { recordClose { try extractStream.close() } }
+            defer { closes.close { try extractStream.close() } }
 
             _ = try ArchiveStream.process(readingFrom: decodeStream, writingTo: extractStream)
         } catch {
             failure = error
         }
-        return failure ?? closeFailure
+        return failure ?? closes.failure
     }
 }

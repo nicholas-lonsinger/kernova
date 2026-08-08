@@ -21,11 +21,20 @@ public protocol StagingSink: Sendable {
     /// its writer, which would otherwise put an abort in line *behind* the very
     /// write it is aborting. Idempotent; `abort()` still does the teardown.
     func cancel()
+
+    /// The abort code a caller reports when `write(_:)` or `commit()` fails.
+    ///
+    /// The sink names its own failure, so a caller need not know which kind it
+    /// holds to describe what went wrong.
+    var writeErrorCode: String { get }
 }
 
 extension StagingSink {
     /// A sink whose `write(_:)` never parks has no writer to wake.
     public func cancel() {}
+
+    /// A sink that writes bytes to a file fails as a write.
+    public var writeErrorCode: String { "write.error" }
 }
 
 /// Materializes streamed file representations to real local temp files so a

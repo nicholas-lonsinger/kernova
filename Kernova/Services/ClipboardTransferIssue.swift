@@ -116,6 +116,20 @@ extension ClipboardTransferIssue {
             date: Date())
     }
 
+    /// Raised when a copied folder is left out of the offer because the guest
+    /// agent predates streamed folders.
+    ///
+    /// The copy itself is fine — nothing else about it changed — so the message
+    /// names the one thing the user can act on.
+    static func folderSkippedForOutdatedGuest() -> ClipboardTransferIssue {
+        ClipboardTransferIssue(
+            kind: .localFailure(
+                code: ClipboardErrorCode.folderPeerOutdated.rawValue,
+                message:
+                    "The guest agent needs updating before a folder can be copied to this VM."),
+            date: Date())
+    }
+
     /// Raised when a copied folder's archive arrived but could not be unpacked
     /// into a real folder for the paste to create.
     static func pasteFolderUnpackFailed() -> ClipboardTransferIssue {

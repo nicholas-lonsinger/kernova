@@ -1616,7 +1616,10 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let capable = Box(false)
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)",
+            peerStreamsDirectories: { capable.value })
         service.start()
         defer { service.stop() }
 
@@ -1641,6 +1644,33 @@ struct VsockClipboardServiceTests {
         // holding and leave it a pasteboard item nothing can serve; sending
         // nothing leaves the previous, still-working clipboard in place.
         try await expectNoNewFrames(on: recorder, sinceCount: snapshot)
+        // The window is the only surface that can explain why the copy did
+        // nothing, so the skip has to reach it.
+        #expect(
+            service.lastTransferIssue?.kind
+                == ClipboardTransferIssue.folderSkippedForOutdatedGuest().kind)
+
+        // The capability is re-read from every `Hello`, and a control-channel
+        // blip alone clears it — so latching the buffer's digest here would
+        // strand this copy for the rest of the session.
+        capable.value = true
+        service.grabIfChanged()
+        try await waitForFrames(recorder) {
+            recorder.first {
+                if case .clipboardOffer = $0.payload { return true }
+                return false
+            } != nil
+        }
+        let offerFrame = try #require(
+            recorder.first {
+                if case .clipboardOffer = $0.payload { return true }
+                return false
+            })
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            Issue.record("Expected clipboardOffer, got \(String(describing: offerFrame.payload))")
+            return
+        }
+        #expect(offer.repInfo.map(\.filename) == ["OnlyFolder"])
     }
 
     @Test("a folder is left out of the offer for a guest that can't receive one")

@@ -743,6 +743,46 @@ struct VsockGuestClipboardAgentTests {
                 atPath: scaffoldOut.appendingPathComponent("sub/.keep").path))
     }
 
+    @Test("outbound: a folder-only copy offers nothing rather than the pasteboard's leftovers")
+    func outboundFolderOnlyCopyOffersNothingToAnOlderHost() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, hostStreamsDirectories: false)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let folder = try writeTempFolder(name: "Project", files: [("f.txt", Data("x".utf8))])
+        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
+        // A Finder folder copy leaves a file URL *plus* Finder's own private
+        // flavors. With the folder filtered out there is no file candidate left,
+        // and falling through to the raw snapshot would ship those leftovers to
+        // the host as if they were the copy.
+        pasteboard.setItems([
+            [
+                (type: .fileURL, data: Data(folder.absoluteString.utf8)),
+                (type: .init("com.apple.finder.node"), data: Data([0xDE, 0xAD])),
+            ]
+        ])
+        await MainActor.run { agent.checkClipboardChange() }
+
+        // A later, offerable copy: the first offer to reach the host proves what
+        // the folder-only snapshot did — anything it had sent would be sitting
+        // ahead of this one on the channel.
+        pasteboard.setItems([
+            [(type: .string, data: Data("plain".utf8))]
+        ])
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let offer = try await awaitOffer(on: hostChannel)
+        #expect(offer.repInfo.map(\.uti) == [ClipboardContent.utf8TextUTI])
+        #expect(offer.repInfo.allSatisfy { !$0.isDirectory })
+    }
+
     @Test("outbound: a copied folder is left out of the offer for a host that can't receive one")
     func outboundFolderDroppedForAnOlderHost() async throws {
         let pasteboard = FakePasteboard()

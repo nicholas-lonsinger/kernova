@@ -190,6 +190,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// `allowsFileURLPull` gate inside it — runs on the agent's main thread.
     private var maxPasteBytes: Int = ClipboardPasteLimit.defaultBytes
 
+    /// The pasteboard change count whose snapshot was last skipped for holding
+    /// only folders the host cannot take, so the skip is logged once rather than
+    /// every poll tick.
+    private var skippedFolderChangeCount: Int?
+
     /// Whether the connected host can receive a folder archived straight onto the
     /// wire (`clipboard.stream.directory.v1`).
     ///
@@ -528,7 +533,26 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // Copied *files* (Finder ⌘C) leave one file URL per pasteboard item —
         // build a disk-backed rep from each (a stat, no read, no size cap); the
         // bytes stream later when the host requests them.
-        let fileCandidates = fileExpansionCandidates()
+        let expansion = fileExpansionCandidates()
+        let fileCandidates = expansion.candidates
+        if fileCandidates.isEmpty, expansion.unsupportedFolders > 0 {
+            // Every copied item was a folder this host cannot receive. Falling
+            // through would offer the pasteboard's leftover non-file flavors —
+            // Finder's `com.apple.finder.node` and friends — so the host would
+            // get guest-local junk for what the user copied as a folder.
+            //
+            // The change count is deliberately *not* advanced: the capability is
+            // re-read from every `Hello`, so this copy becomes offerable the
+            // moment the host advertises it. Reported once per snapshot, since
+            // the poll re-enters here every tick.
+            if skippedFolderChangeCount != currentCount {
+                skippedFolderChangeCount = currentCount
+                Self.logger.notice(
+                    "Offering nothing — all \(expansion.unsupportedFolders, privacy: .public) copied item(s) are folders and the host lacks \(KernovaCapability.clipboardStreamDirectoryV1, privacy: .public)"
+                )
+            }
+            return
+        }
         if !fileCandidates.isEmpty {
             if fileCandidates.contains(where: { $0.isDirectory }) {
                 // A folder's stat-walk size estimate runs off the main queue
@@ -642,7 +666,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// staging root (materialized from a prior inbound paste) is skipped so it
     /// can't be offered back to the host — that one is by design, so only the
     /// unreadable items below are counted and logged.
-    private func fileExpansionCandidates() -> [FileCandidate] {
+    private func fileExpansionCandidates() -> (
+        candidates: [FileCandidate], unsupportedFolders: Int
+    ) {
         var candidates: [FileCandidate] = []
         var unreadable = 0
         var unsupportedFolders = 0
@@ -684,12 +710,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 "Skipped \(unreadable, privacy: .public) unreadable copied item(s) — not offered to the host"
             )
         }
-        if unsupportedFolders > 0 {
-            Self.logger.notice(
-                "Skipped \(unsupportedFolders, privacy: .public) copied folder(s) — the host lacks \(KernovaCapability.clipboardStreamDirectoryV1, privacy: .public)"
-            )
-        }
-        return candidates
+        return (candidates, unsupportedFolders)
     }
 
     /// Sizes any folder candidate off the main queue — a stat-walk estimate, no
@@ -1002,13 +1023,14 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// holds.
     private func awaitPull(
         transferID: UInt64, receiver: ClipboardStreamReceiver,
-        extractsDirectoryNamed: String? = nil,
+        extractsDirectoryNamed: String? = nil, advertisedByteCount: Int = 0,
         sendRequest: @escaping () throws -> Void
     ) -> LazyPullOutcome {
         let coordinator = lazyCoordinator
         receiver.awaitTransfer(
             transferID,
             extractsDirectoryNamed: extractsDirectoryNamed,
+            advertisedByteCount: advertisedByteCount,
             onComplete: { rep in coordinator.deliver(transferID, rep) },
             onAbort: { abort in coordinator.abort(transferID, abort) },
             // Re-arm the pull's inactivity backstop on every chunk so a large
@@ -1092,10 +1114,12 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         let uti = info.uti
         // A folder's bytes are an archive of its tree, extracted as they arrive:
         // the stream layer learns that here, from the offer this side already
-        // read, rather than from the wire.
+        // read, rather than from the wire — including the size the extract is
+        // held to.
         let outcome = awaitPull(
             transferID: transferID, receiver: receiver,
-            extractsDirectoryNamed: info.isDirectory ? info.filename : nil
+            extractsDirectoryNamed: info.isDirectory ? info.filename : nil,
+            advertisedByteCount: Int(clamping: info.byteCount)
         ) {
             var request = Frame()
             request.protocolVersion = 1
