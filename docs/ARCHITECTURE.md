@@ -65,8 +65,7 @@ band.
 matches `VZUSBDeviceConfiguration.uuid` against the saved-state file's recorded device list, so
 `RemovableMediaItem.id` is written to `config.json` and reused as the device UUID, and the
 synthesized main disk derives its own from the bundle path
-(`ConfigurationBuilder.stableMainDiskID(forBundleAt:)`), as does the guest-agent disk from a
-salted variant of it. Fresh UUIDs break restore.
+(`ConfigurationBuilder.stableMainDiskID(forBundleAt:)`). Fresh UUIDs break restore.
 `clonedForNewInstance` regenerates them so two bundles never share device identity.
 
 ### Services
