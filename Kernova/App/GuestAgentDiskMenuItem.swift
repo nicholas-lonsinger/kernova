@@ -24,6 +24,15 @@ enum GuestAgentDiskMenuItem {
         let action: Action
     }
 
+    /// The title the item carries whenever a hard gate withholds the command,
+    /// and the placeholder it is built with.
+    ///
+    /// A rejected item keeps whatever title the last accepted validation left
+    /// on it, so the reject path has to retitle too: switching from a macOS
+    /// guest with the disk attached to a Linux guest would otherwise strand
+    /// "Eject Guest Agent Media" on a VM that can never have it.
+    static let unavailableTitle = "Install Guest Agent…"
+
     /// Resolves the menu item for the given state.
     ///
     /// `isInstallerMounted` takes precedence (eject mode) over `status`: once the

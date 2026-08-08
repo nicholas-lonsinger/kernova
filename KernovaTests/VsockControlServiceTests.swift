@@ -1067,6 +1067,32 @@ struct VsockControlServiceTests {
         #expect(observed.values == [ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil)])
     }
 
+    @Test("Over-long version fields are clipped before they reach the callback")
+    func oversizedAgentInfoFieldsAreBounded() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let observed = ObservedRecorder()
+        let service = makeService(
+            channel: host,
+            onAgentInfoObserved: { observed.append($0) }
+        )
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)  // host hello
+        let flood = String(repeating: "9", count: 4096)
+        try guest.send(makeGuestHello(agentVersion: flood, osVersion: flood))
+        try await waitForChange { service.isConnected }
+
+        let bound = ObservedAgentInfo.maxFieldBytes
+        let expected = String(repeating: "9", count: bound)
+        #expect(service.agentVersion == expected)
+        #expect(observed.values == [ObservedAgentInfo(agentVersion: expected, osVersion: expected)])
+    }
+
     @Test("sendPolicyUpdate emits a PolicyUpdate frame with the supplied snapshot")
     func sendPolicyUpdateEmitsFrame() async throws {
         let (guest, host) = try makePair()
@@ -1239,6 +1265,69 @@ struct VsockControlServiceTests {
         #expect(result.pushedBytes == UInt64(ClipboardPasteLimit.defaultBytes))
         #expect(result.guestSupportsPasteLimit == false)
         #expect(result.guestWillEnforce == ClipboardPasteLimit.defaultBytes)
+    }
+
+    // MARK: - ObservedAgentInfo.boundedField
+
+    @Test("An empty field normalizes to nil")
+    func boundedFieldEmptyIsNil() {
+        #expect(ObservedAgentInfo.boundedField("") == nil)
+    }
+
+    @Test("A field within the bound passes through verbatim")
+    func boundedFieldWithinBoundIsVerbatim() {
+        #expect(ObservedAgentInfo.boundedField("26.0.1") == "26.0.1")
+        let atLimit = String(repeating: "a", count: ObservedAgentInfo.maxFieldBytes)
+        #expect(ObservedAgentInfo.boundedField(atLimit) == atLimit)
+    }
+
+    @Test("An over-long field is clipped to the bound")
+    func boundedFieldOverBoundIsClipped() {
+        let bound = ObservedAgentInfo.maxFieldBytes
+        let bounded = ObservedAgentInfo.boundedField(String(repeating: "a", count: bound + 1))
+        #expect(bounded == String(repeating: "a", count: bound))
+    }
+
+    @Test("A single grapheme cluster of many scalars is still bounded")
+    func boundedFieldBoundsOneLongCharacter() throws {
+        // A `Character`-based prefix would let this through whole — it is one
+        // Character however many combining marks it carries.
+        let combining = "e" + String(repeating: "\u{0301}", count: 100_000)
+        let bounded = try #require(ObservedAgentInfo.boundedField(combining))
+        #expect(bounded.utf8.count <= ObservedAgentInfo.maxFieldBytes)
+    }
+
+    @Test("Newlines are stripped, so a version cannot forge a host log line")
+    func boundedFieldStripsNewlines() {
+        let forged = "1.0\nGuest agent connected for 'other-vm'"
+        #expect(
+            ObservedAgentInfo.boundedField(forged)
+                == "1.0Guest agent connected for 'other-vm'")
+    }
+
+    @Test("Format characters are stripped, so a version cannot rewrite its label")
+    func boundedFieldStripsFormatCharacters() {
+        // U+202E is Cf, not Cc: a bidi override reverses the run that follows
+        // it in every label the host renders the version into.
+        #expect(ObservedAgentInfo.boundedField("26.\u{202E}0") == "26.0")
+        #expect(ObservedAgentInfo.boundedField("2\u{200D}6.0") == "26.0")
+        #expect(ObservedAgentInfo.boundedField("26.0\u{0000}") == "26.0")
+    }
+
+    @Test("A field of nothing but control characters normalizes to nil")
+    func boundedFieldAllControlIsNil() {
+        #expect(ObservedAgentInfo.boundedField(String(repeating: "\n", count: 128)) == nil)
+    }
+
+    @Test("The cut lands on a scalar boundary, never mid-scalar")
+    func boundedFieldCutsWholeScalars() throws {
+        // 3 bytes each: 21 fit in the bound and the 22nd does not, so the
+        // result stops one byte short rather than splitting a scalar — which
+        // would need a 3-byte U+FFFD to repair and overshoot the bound.
+        let euros = String(repeating: "€", count: 100)
+        let bounded = try #require(ObservedAgentInfo.boundedField(euros))
+        #expect(bounded == String(repeating: "€", count: 21))
+        #expect(!bounded.unicodeScalars.contains("\u{FFFD}"))
     }
 }
 

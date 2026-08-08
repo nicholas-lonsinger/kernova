@@ -12,14 +12,53 @@ struct AgentPolicySnapshot: Equatable, Sendable {
     var clipboardMaxPasteBytes: Int
 }
 
-/// Guest-reported identity from one `Hello.agent_info`, with an empty
-/// `os_version` normalized to `nil`.
+/// Guest-reported identity from one `Hello.agent_info`, with each version field
+/// bounded and an empty one normalized to `nil`.
 ///
 /// No default on `osVersion`: a `nil` overwrites the persisted value, so every
 /// construction site must say it means "clear", not omit it and mean "keep".
 struct ObservedAgentInfo: Equatable, Sendable {
     var agentVersion: String
     var osVersion: String?
+
+    /// Ceiling, in UTF-8 bytes, on either version field.
+    ///
+    /// `Hello.agent_info` is peer-supplied and bounded on the wire only by
+    /// `VsockFrame.maxPayloadSize`, while the host persists both fields to
+    /// `config.json`, renders them in its UI, interpolates them into its log,
+    /// and scans `os_version` with an `NSRegularExpression` on the main actor.
+    /// A dotted-decimal version — with room for a build suffix — needs nothing
+    /// like this much.
+    static let maxFieldBytes = 64
+
+    /// `reported` stripped of control and format characters and clipped to
+    /// ``maxFieldBytes``, or `nil` when nothing printable survives.
+    ///
+    /// The single intake normalization for both fields, so every downstream
+    /// consumer inherits it instead of defending itself. Both halves earn their
+    /// place: cutting by UTF-8 length rather than by `Character` is what makes
+    /// the bound hold, since one grapheme cluster can carry unboundedly many
+    /// combining scalars; and length alone leaves the host logging, persisting
+    /// and rendering 64 arbitrary bytes, where a newline forges a log line and
+    /// a bidi override rewrites the label the string appears in. A version
+    /// string has legitimate use for neither.
+    static func boundedField(_ reported: String) -> String? {
+        var bounded = String.UnicodeScalarView()
+        var byteCount = 0
+        // Bounded scan: nothing past `maxFieldBytes` scalars can widen the
+        // result, and this runs on the main actor against a payload the peer
+        // sizes. `controlCharacters` covers Unicode Cc and Cf both — the
+        // newlines and the bidi overrides.
+        for scalar in reported.unicodeScalars.prefix(maxFieldBytes)
+        where !CharacterSet.controlCharacters.contains(scalar) {
+            byteCount += UTF8.width(scalar)
+            // Whole scalars only — a cut landing mid-scalar would have to be
+            // repaired with U+FFFD, which is wider than the bytes it replaces.
+            guard byteCount <= maxFieldBytes else { break }
+            bounded.append(scalar)
+        }
+        return bounded.isEmpty ? nil : String(bounded)
+    }
 }
 
 /// Drives the always-on control channel between the host and the macOS guest
@@ -462,25 +501,28 @@ final class VsockControlService {
         case .hello(let hello):
             isConnected = true
             isUnresponsive = false
-            let reportedVersion = hello.agentInfo.agentVersion
-            agentVersion = reportedVersion.isEmpty ? nil : reportedVersion
-            let reportedOSVersion = hello.agentInfo.osVersion
+            // Both version fields are peer-supplied — `boundedField` is the one
+            // intake every downstream consumer inherits.
+            let reportedVersion = ObservedAgentInfo.boundedField(hello.agentInfo.agentVersion)
+            agentVersion = reportedVersion
+            let reportedOSVersion = ObservedAgentInfo.boundedField(hello.agentInfo.osVersion)
             guestSupportsClipboardStreamingStorage = hello.capabilities.contains(
                 KernovaCapability.clipboardStreamV1)
             guestSupportsPasteLimitStorage = hello.capabilities.contains(
                 KernovaCapability.clipboardPasteLimitV1)
-            // `logDescription` bounds the peer-supplied capability strings so a
-            // malicious peer can't write arbitrary content into the host log.
+            // Every peer-supplied piece of this line is filtered first — the
+            // version by `boundedField`, the capability tags by
+            // `logDescription` — so none of them can write arbitrary content
+            // into the host log.
             Self.logger.notice(
-                "Guest agent connected for '\(self.label, privacy: .public)' (service=\(hello.serviceVersion, privacy: .public), agent=\(reportedVersion, privacy: .public), caps=\(KernovaCapability.logDescription(of: hello.capabilities), privacy: .public))"
+                "Guest agent connected for '\(self.label, privacy: .public)' (service=\(hello.serviceVersion, privacy: .public), agent=\(reportedVersion ?? "?", privacy: .public), caps=\(KernovaCapability.logDescription(of: hello.capabilities), privacy: .public))"
             )
             // An empty agent version means the agent didn't populate the field
             // — skip those so the host doesn't persist a meaningless value.
-            if !reportedVersion.isEmpty {
+            if let reportedVersion {
                 onAgentInfoObserved?(
                     ObservedAgentInfo(
-                        agentVersion: reportedVersion,
-                        osVersion: reportedOSVersion.isEmpty ? nil : reportedOSVersion))
+                        agentVersion: reportedVersion, osVersion: reportedOSVersion))
             }
             // Push the current policy to the freshly connected guest so it
             // doesn't run on assumed defaults.
