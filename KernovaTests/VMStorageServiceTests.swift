@@ -109,6 +109,25 @@ struct VMStorageServiceTests {
         #expect(!FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)))
     }
 
+    @Test("Permanently deleting a suspended VM's bundle takes its saved state with it")
+    func permanentlyDeleteBundleRemovesSaveFile() throws {
+        let config = VMConfiguration(
+            name: "Suspended Delete VM",
+            guestOS: .linux,
+            bootMode: .efi
+        )
+
+        let bundleURL = try service.createVMBundle(for: config)
+        let saveFileURL = VMBundleLayout(bundleURL: bundleURL).saveFileURL
+        try Data("saved state".utf8).write(to: saveFileURL)
+        #expect(FileManager.default.fileExists(atPath: saveFileURL.path(percentEncoded: false)))
+
+        try service.permanentlyDeleteVMBundle(at: bundleURL)
+
+        #expect(!FileManager.default.fileExists(atPath: saveFileURL.path(percentEncoded: false)))
+        #expect(!FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)))
+    }
+
     @Test("Permanently deleting non-existent bundle throws error")
     func permanentlyDeleteNonExistentThrows() {
         let fakeURL = FileManager.default.temporaryDirectory

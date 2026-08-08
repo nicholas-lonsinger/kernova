@@ -32,6 +32,30 @@ struct DeleteVMSheetContentViewControllerTests {
         #expect(vc.checkboxes.isEmpty)
     }
 
+    @Test("a suspended VM's saved state is listed alongside the in-bundle disks")
+    func savedStateRowRendered() {
+        let vc = make(
+            vmName: "MyVM",
+            bundledDisks: [makeDisk(label: "Main Disk", path: "Disk.asif")],
+            hasSavedState: true)
+        vc.loadViewIfNeeded()
+        let labels = collectLabels(in: vc.view).map(\.stringValue)
+        #expect(labels.contains("Removed with the VM"))
+        #expect(labels.contains("Saved State"))
+        #expect(labels.contains("In-bundle machine state"))
+        // Read-only like the disk rows — the saved state can't be kept behind.
+        #expect(vc.checkboxes.isEmpty)
+    }
+
+    @Test("no saved-state row for a VM with nothing suspended")
+    func savedStateRowAbsentWithoutSavedState() {
+        let vc = make(
+            vmName: "MyVM", bundledDisks: [makeDisk(label: "Main Disk", path: "Disk.asif")])
+        vc.loadViewIfNeeded()
+        let labels = collectLabels(in: vc.view).map(\.stringValue)
+        #expect(!labels.contains("Saved State"))
+    }
+
     @Test("one row rendered per external attachment, in order")
     func rowsRendered() {
         let externals = [
@@ -359,6 +383,25 @@ struct DeleteVMSheetContentViewControllerTests {
         #expect(!labels.contains { $0.contains("external files you select") })
     }
 
+    @Test("immediate mode body names the saved state alongside the disks")
+    func immediateModeBodyNamesSavedState() {
+        let vc = make(vmName: "MyVM", hasSavedState: true, mode: .immediate)
+        vc.loadViewIfNeeded()
+        let labels = collectLabels(in: vc.view).map(\.stringValue)
+        // The sentence enumerates what is destroyed, so omitting the saved state
+        // would understate what deleting a suspended VM costs.
+        #expect(labels.contains { $0.contains("its saved state") && $0.contains("can't undo") })
+    }
+
+    @Test("immediate mode body omits the saved state when the bundle holds none")
+    func immediateModeBodyOmitsSavedState() {
+        let vc = make(vmName: "MyVM", mode: .immediate)
+        vc.loadViewIfNeeded()
+        let labels = collectLabels(in: vc.view).map(\.stringValue)
+        #expect(labels.contains { $0.contains("This VM and its disks") })
+        #expect(!labels.contains { $0.contains("saved state") })
+    }
+
     @Test("immediate mode confirm button reads Delete Immediately and is not the Return default")
     func immediateModeConfirmButton() {
         let vc = make(vmName: "MyVM", mode: .immediate)
@@ -479,10 +522,12 @@ struct DeleteVMSheetContentViewControllerTests {
         vmName: String,
         bundledDisks: [StorageDisk] = [],
         externals: [ExternalAttachment] = [],
+        hasSavedState: Bool = false,
         mode: DeleteVMSheetContentViewController.Mode = .trash
     ) -> DeleteVMSheetContentViewController {
         DeleteVMSheetContentViewController(
-            vmName: vmName, bundledDisks: bundledDisks, externals: externals, mode: mode
+            vmName: vmName, bundledDisks: bundledDisks, externals: externals,
+            hasSavedState: hasSavedState, mode: mode
         )
     }
 

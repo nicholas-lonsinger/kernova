@@ -788,12 +788,12 @@ extension SidebarViewController {
         // "Move to Trash…" gathers input (which externals to delete), so the
         // ellipsis is correct here.
         let trash = item("Move to Trash…", #selector(menuMoveToTrash(_:)), instance)
-        trash.isEnabled = status.canEditSettings
+        trash.isEnabled = instance.canDelete
         menu.addItem(trash)
         // An ⌥-alternate of "Move to Trash…". This pair sits at the menu's end, so
         // collapsing the primary can't shift the menu; no anchor item is needed.
         let deleteImmediately = item("Delete Immediately…", #selector(menuDeleteImmediately(_:)), instance)
-        deleteImmediately.isEnabled = status.canEditSettings
+        deleteImmediately.isEnabled = instance.canDelete
         if !preferences.alwaysShowAdvancedOptions {
             trash.keyEquivalentModifierMask = []
             deleteImmediately.keyEquivalentModifierMask = [.option]

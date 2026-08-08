@@ -376,6 +376,20 @@ final class VMInstance {
         status.canForceStop && !isColdPaused
     }
 
+    /// `true` when the VM can be deleted — nothing live in memory, no
+    /// transitional status, and no import or clone writing into the bundle.
+    ///
+    /// Cold-paused VMs are included: the saved state is a file inside the
+    /// bundle and is removed along with it, so no discard step is needed first.
+    ///
+    /// Enablement only. A cold resume holds `.paused` with no live VM while it
+    /// builds its configuration, so this stays `true` after one starts;
+    /// ``VMLibraryViewModel/deleteConfirmed(_:deletingExternalIDs:permanently:)``
+    /// revalidates against the lifecycle lock at confirm time.
+    var canDelete: Bool {
+        !isPreparing && (status.canEditSettings || isColdPaused)
+    }
+
     /// `true` when the VM can be cold-booted into macOS Recovery.
     ///
     /// Stopped macOS guests only — Virtualization.framework has no recovery

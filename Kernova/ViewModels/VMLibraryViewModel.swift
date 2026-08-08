@@ -751,6 +751,18 @@ final class VMLibraryViewModel {
             )
             return []
         }
+        // The sheet is window-modal but leaves the menu key equivalents live, so
+        // a Start or Resume can land between opening it and confirming — and a
+        // cold resume holds `.paused` with no live VM while it builds its
+        // configuration, which `canDelete` alone still reads as deletable.
+        // Trashing the bundle then pulls the disk image out from under a guest
+        // that is running or about to.
+        guard instance.canDelete, !lifecycle.hasActiveOperation(for: instance.id) else {
+            Self.logger.notice(
+                "Refusing delete of '\(instance.name, privacy: .public)': no longer deletable (status '\(instance.status.displayName, privacy: .public)')"
+            )
+            return []
+        }
         instance.tearDownSession()
         let toDelete =
             deletingExternalIDs.isEmpty

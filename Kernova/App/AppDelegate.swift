@@ -1425,7 +1425,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return instance.status.canEditSettings && !viewModel.hasPreparing
         case #selector(deleteVM(_:)), #selector(deleteImmediatelyVM(_:)):
             // Same gate for both the primary and its ⌥-alternate.
-            return activeInstance?.status.canEditSettings ?? false
+            return activeInstance?.canDelete ?? false
         case #selector(showVMInFinder(_:)):
             return activeInstance != nil
         // AppKit bypasses NSMenuItemValidation for windowsMenu items, so
