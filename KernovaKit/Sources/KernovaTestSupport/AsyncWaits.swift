@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import KernovaKit
 
@@ -11,6 +12,21 @@ import KernovaKit
 /// (docs/TESTING.md, "Async waits in tests").
 public let testWaitBackstop: TimeInterval = 60
 
+// MARK: - Test-session OS activity
+
+/// OS activity held from the first wait for the rest of the process's life,
+/// exempting the test host from App Nap and idle timer throttling.
+///
+/// On an idle, display-off machine the OS can hold a windowless process's
+/// timers past the 60 s backstop, then release every armed wait at one
+/// instant, mass-failing whatever cases are in flight (observed 2026-08-06,
+/// #759). Test runs are user-initiated work even when the display is off.
+// The token is write-once and never read — retention is its entire job.
+nonisolated(unsafe) private let testSessionActivity: NSObjectProtocol =
+    ProcessInfo.processInfo.beginActivity(
+        options: [.userInitiated, .latencyCritical],
+        reason: "Test waits measure real time and must not be throttled")
+
 // MARK: - TestFailure
 
 /// A test failure with a diagnostic message, thrown by the wait helpers below.
@@ -23,6 +39,33 @@ public struct TestFailure: Error, CustomStringConvertible {
 
     /// The failure's diagnostic message.
     public var description: String { message }
+}
+
+// MARK: - Backstop self-diagnosis
+
+/// Renders the parenthetical a fired backstop appends to its `TestFailure`
+/// message: how far past its deadline it fired (continuous time) and how much
+/// of that the process spent suspended (continuous minus uptime elapsed), with
+/// a machine-state warning once either exceeds honest-scheduling bounds.
+func backstopDiagnosis(
+    timeout: TimeInterval, continuousElapsed: TimeInterval, uptimeElapsed: TimeInterval
+) -> String {
+    let late = continuousElapsed - timeout
+    let suspended = max(0, continuousElapsed - uptimeElapsed)
+    var text = String(
+        format: " (backstop fired %.2f s past its deadline, %.2f s of it process-suspended",
+        late, suspended)
+    // Scheduler noise keeps an honest backstop within a few seconds of its
+    // deadline and never suspends the process; past these bounds the wait did
+    // not get its full timeout of normal scheduling, so the numbers name the
+    // machine, not the condition under test.
+    if late >= 10 || suspended >= 1 {
+        text +=
+            " — the OS throttled this process's timers or suspended it;"
+            + " suspect machine state (sleep, display-off idle throttling)"
+            + " rather than a stuck condition"
+    }
+    return text + ")"
 }
 
 // MARK: - ResumeOnce
@@ -79,11 +122,19 @@ public final class AsyncGate: @unchecked Sendable {
         isolation: isolated (any Actor)? = #isolation,
         until predicate: () -> Bool
     ) async throws {
+        _ = testSessionActivity
         let clock = MonotonicEngineClock()
         let start = clock.now
+        let uptimeStart = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         while !predicate() {
-            if clock.seconds(since: start) >= timeout {
-                throw TestFailure("Condition not met within \(timeout) s")
+            let elapsed = clock.seconds(since: start)
+            if elapsed >= timeout {
+                let uptimeElapsed =
+                    Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - uptimeStart) / 1_000_000_000
+                throw TestFailure(
+                    "Condition not met within \(timeout) s"
+                        + backstopDiagnosis(
+                            timeout: timeout, continuousElapsed: elapsed, uptimeElapsed: uptimeElapsed))
             }
             await armOnce(
                 clock: clock, start: start, timeout: timeout,
@@ -149,13 +200,22 @@ public func waitUntil(
     isolation: isolated (any Actor)? = #isolation,
     _ predicate: () -> Bool
 ) async throws {
+    _ = testSessionActivity
     let clock = MonotonicEngineClock()
     let start = clock.now
+    let uptimeStart = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
     while !predicate() && clock.seconds(since: start) < timeout {
         try await Task.sleep(nanoseconds: 50_000_000)
     }
     guard predicate() else {
-        throw TestFailure("Predicate did not become true within \(timeout) s")
+        let uptimeElapsed =
+            Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - uptimeStart) / 1_000_000_000
+        throw TestFailure(
+            "Predicate did not become true within \(timeout) s"
+                + backstopDiagnosis(
+                    timeout: timeout,
+                    continuousElapsed: clock.seconds(since: start),
+                    uptimeElapsed: uptimeElapsed))
     }
 }
 
