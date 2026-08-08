@@ -182,7 +182,12 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         // adopts it. The window is sized once per tab selection, so content that
         // grows while the pane is on screen — a VM added or removed, the override
         // caption appearing — overflows in place; the flash is what says so.
-        scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView, cues: .flash)
+        // Not armed at birth: the tab container cues every arrival explicitly,
+        // and a born-armed flash fires from `viewWillAppear`'s layout churn — in
+        // the already-visible window, behind the tab transition — so the first
+        // visit would meet a scroller already at full alpha.
+        scrollMoreIndicator = ScrollMoreIndicator(
+            scrollView: scrollView, cues: .flash, flashOnFirstOverflow: false)
 
         // The hug must stay weaker than every subview's compression resistance:
         // once the tab controller fixes the window height at the cap, a
