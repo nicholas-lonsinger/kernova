@@ -86,6 +86,7 @@ func makeRawSocketPair() throws -> (Int32, Int32) {
 @MainActor
 func nextFrame(from channel: VsockChannel) async throws -> Frame {
     let timeout: Duration = .seconds(testWaitBackstop)
+    let stopwatch = BackstopStopwatch()
     let receiver = Task<Frame?, Error> {
         var iterator = channel.incoming.makeAsyncIterator()
         return try await iterator.next()
@@ -107,7 +108,9 @@ func nextFrame(from channel: VsockChannel) async throws -> Frame {
         }
         return frame
     } catch is CancellationError {
-        throw TestFailure("Timed out waiting for a frame after \(timeout)")
+        throw TestFailure(
+            "Timed out waiting for a frame after \(timeout)"
+                + stopwatch.diagnosis(timeout: timeout))
     }
 }
 
@@ -161,10 +164,13 @@ func waitForChange(
     timeout: Duration = .seconds(testWaitBackstop),
     until predicate: @escaping @MainActor () -> Bool
 ) async throws {
+    let stopwatch = BackstopStopwatch()
     let deadline = ContinuousClock.now.advanced(by: timeout)
     while !predicate() {
         if ContinuousClock.now >= deadline {
-            throw TestFailure("Observed condition not met within \(timeout)")
+            throw TestFailure(
+                "Observed condition not met within \(timeout)"
+                    + stopwatch.diagnosis(timeout: timeout))
         }
         await armObservationOnce(deadline: deadline, predicate: predicate)
     }

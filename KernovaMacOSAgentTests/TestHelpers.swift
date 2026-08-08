@@ -43,6 +43,7 @@ func makeChannelPair() throws -> (VsockChannel, VsockChannel) {
 ///   producing a frame (EOF), so the two failure shapes are identifiable.
 func nextFrame(from channel: VsockChannel) async throws -> Frame {
     let timeout = testWaitBackstop
+    let stopwatch = BackstopStopwatch()
     let receiver = Task<Frame?, Error> {
         var iterator = channel.incoming.makeAsyncIterator()
         return try await iterator.next()
@@ -59,7 +60,9 @@ func nextFrame(from channel: VsockChannel) async throws -> Frame {
         }
         return frame
     } catch is CancellationError {
-        throw TestFailure("Timed out waiting for a frame after \(timeout) s")
+        throw TestFailure(
+            "Timed out waiting for a frame after \(timeout) s"
+                + stopwatch.diagnosis(timeout: timeout))
     }
 }
 
@@ -71,6 +74,7 @@ func nextFrame(from channel: VsockChannel) async throws -> Frame {
 /// - Throws: `TestFailure("Timed out…")` if no value arrives in time.
 func awaitFirst<T: Sendable>(_ stream: AsyncStream<T>) async throws -> T {
     let timeout = testWaitBackstop
+    let stopwatch = BackstopStopwatch()
     let task = Task<T?, Never> {
         var iterator = stream.makeAsyncIterator()
         return await iterator.next()
@@ -81,7 +85,9 @@ func awaitFirst<T: Sendable>(_ stream: AsyncStream<T>) async throws -> T {
     }
     defer { timeoutTask.cancel() }
     guard let value = await task.value else {
-        throw TestFailure("Timed out waiting for stream value after \(timeout) s")
+        throw TestFailure(
+            "Timed out waiting for stream value after \(timeout) s"
+                + stopwatch.diagnosis(timeout: timeout))
     }
     return value
 }
