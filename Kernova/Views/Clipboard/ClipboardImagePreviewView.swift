@@ -56,7 +56,7 @@ final class ClipboardImagePreviewView: NSView {
 
     /// Matches the text editor's background so switching preview modes doesn't
     /// shift the window's tone.
-    override var wantsUpdateLayer: Bool { true }
+    nonisolated override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
         layer?.backgroundColor = NSColor.textBackgroundColor.cgColor

@@ -83,7 +83,7 @@ private final class TransferBarView: NSView {
 
     /// Decoration only: hands every event through to the button underneath, so
     /// the bar can't swallow hits over the bottom of the circle.
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    nonisolated override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func draw(_ dirtyRect: NSRect) {
         let radius = bounds.height / 2

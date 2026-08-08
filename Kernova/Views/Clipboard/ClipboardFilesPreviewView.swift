@@ -12,7 +12,7 @@ final class ClipboardFilesPreviewView: NSView {
     /// to the top of the scroll area (an unflipped doc view would stick the rows
     /// to the bottom).
     private final class FlippedView: NSView {
-        override var isFlipped: Bool { true }
+        nonisolated override var isFlipped: Bool { true }
     }
 
     private let headerLabel: NSTextField
@@ -93,7 +93,7 @@ final class ClipboardFilesPreviewView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    override var wantsUpdateLayer: Bool { true }
+    nonisolated override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
         layer?.backgroundColor = NSColor.textBackgroundColor.cgColor

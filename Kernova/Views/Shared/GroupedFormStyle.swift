@@ -23,7 +23,7 @@ enum GroupedFormStyle {
 /// the viewport, the initial scroll position shows the bottom, clipping the top
 /// out of view.
 final class FlippedClipView: NSClipView {
-    override var isFlipped: Bool { true }
+    nonisolated override var isFlipped: Bool { true }
 }
 
 /// Wraps `content` in a borderless vertical scroll view.

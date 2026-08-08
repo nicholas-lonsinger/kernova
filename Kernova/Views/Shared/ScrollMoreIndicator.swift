@@ -265,11 +265,11 @@ final class ScrollMoreIndicator {
 ///
 /// Hit-transparent, so it never blocks scrolling.
 private final class ScrollMoreFadeView: NSView {
-    override var isOpaque: Bool { false }
+    nonisolated override var isOpaque: Bool { false }
 
     // nil from hitTest drops the view from event routing so the scroll view
     // beneath still scrolls under the cursor.
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    nonisolated override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -290,7 +290,7 @@ private final class ScrollMoreFadeView: NSView {
 /// A passive overlay container that lets clicks and scroll-wheel events fall
 /// through to the content beneath.
 private final class ScrollMoreHitTransparentView: NSView {
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    nonisolated override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 /// Builds the chevron disc: a `chevron.down` on a small adaptive grey disc.
