@@ -54,8 +54,10 @@ protocol VMLibraryPresenting: AnyObject {
     /// Show the cancel-preparing (clone/import) confirmation.
     func presentCancelPreparing(for instance: VMInstance)
     /// Show the "guest agent disk attached, here are the next steps" alert,
-    /// worded for `purpose` (install vs. install-or-uninstall).
-    func presentInstallerMounted(vmName: String, purpose: GuestAgentInstallerPurpose)
+    /// worded for `purpose` (install vs. install-or-uninstall) and for how
+    /// `delivery` put the disk in front of the guest.
+    func presentInstallerMounted(
+        vmName: String, purpose: GuestAgentInstallerPurpose, delivery: GuestAgentDiskDelivery)
     /// Present the VM creation wizard sheet.
     func presentCreationWizard()
     /// Move keyboard focus into `instance`'s inline guest display, called at

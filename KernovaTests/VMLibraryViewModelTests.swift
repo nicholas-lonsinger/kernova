@@ -4281,6 +4281,54 @@ struct VMLibraryViewModelTests {
         viewModel.mountGuestAgentInstaller(on: instance, purpose: .manage)
 
         #expect(presenter.installerMountedPurpose == .manage)
+        #expect(presenter.installerMountedDelivery == .usb)
+    }
+
+    @Test("mountGuestAgentInstaller attaches nothing for a guest that takes the disk on virtio")
+    func mountGuestAgentInstallerVirtioAttachesNothing() async throws {
+        _ = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
+        let mock = MockUSBDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance(guestOS: .macOS)
+        instance.configuration.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
+        instance.status = .running
+        viewModel.instances.append(instance)
+
+        viewModel.mountGuestAgentInstaller(on: instance)
+        await Task.yield()
+
+        #expect(presenter.showInstallerMountedAlert == true)
+        #expect(presenter.installerMountedDelivery == .virtio)
+        // The disk rides in on `storageDevices` at boot, so neither the
+        // removable-media list nor the persisted disk list may grow.
+        #expect(instance.configuration.removableMedia == nil)
+        #expect(instance.configuration.storageDisks == nil)
+        #expect(mock.attachCallCount == 0)
+        #expect(!viewModel.isGuestAgentInstallerMounted(on: instance))
+    }
+
+    @Test("A virtio-delivery guest still ejects a USB disk left over from an earlier session")
+    func virtioGuestStillEjectsStaleUSBDisk() async throws {
+        let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
+        let mock = MockUSBDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance(guestOS: .macOS)
+        instance.configuration.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
+        instance.status = .running
+        let installerItem = RemovableMediaItem(
+            path: installerURL.path(percentEncoded: false), readOnly: true)
+        instance.configuration.removableMedia = [installerItem]
+        instance.liveRemovableMedia = [
+            USBDeviceInfo(id: installerItem.id, path: installerItem.path, readOnly: installerItem.readOnly)
+        ]
+        viewModel.instances.append(instance)
+
+        viewModel.unmountGuestAgentInstaller(from: instance)
+
+        while !instance.liveRemovableMedia.isEmpty { await Task.yield() }
+
+        #expect(mock.detachCallCount == 1)
+        #expect(instance.configuration.removableMedia == nil)
     }
 
     @Test("isGuestAgentInstallerMounted reflects whether the bundled DMG is attached")

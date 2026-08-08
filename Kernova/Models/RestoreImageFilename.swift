@@ -57,6 +57,21 @@ struct MacOSVersion: Sendable, Equatable {
         self.components = Array(components.prefix(3))
     }
 
+    /// A version fixed at compile time, for thresholds no string has to parse
+    /// into.
+    init(major: Int, minor: Int, patch: Int = 0) {
+        components = [major, minor, patch]
+    }
+
+    /// Whether this version is `other` or newer, compared component by component
+    /// as numbers — so 12.10 outranks 12.3, which comparing the text does not.
+    func isAtLeast(_ other: MacOSVersion) -> Bool {
+        for (mine, theirs) in zip(components, other.components) where mine != theirs {
+            return mine > theirs
+        }
+        return true
+    }
+
     /// Whether a guest at this version can run on the given host.
     ///
     /// Virtualization refuses a guest newer than the host, and the framework's

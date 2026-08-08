@@ -1434,9 +1434,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         case #selector(showClipboard(_:)):
             return activeInstance?.canShowClipboard ?? false
         case #selector(toggleGuestAgentDisk(_:)):
-            // Hard gates (not status-derived): a macOS guest with a live VM for
-            // USB hot-plug, and a bundled DMG to attach. Retitling on the way
-            // out matters as much as enabling — see `unavailableTitle`.
+            // Hard gates (not status-derived): a macOS guest with a live session
+            // to look inside, and a bundled DMG for it to hold. Retitling on the
+            // way out matters as much as enabling — see `unavailableTitle`.
             guard let instance = activeInstance, instance.canManageGuestAgentDisk,
                 Self.guestAgentDiskPath != nil
             else {

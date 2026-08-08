@@ -544,13 +544,14 @@ extension VMSettingsViewController {
 
     /// What the install-record row is called for `guestOS`.
     ///
-    /// A macOS install ran to completion under Kernova, so its row names what
-    /// the VM was installed from. A Linux ISO is only attached for the
+    /// A macOS install ran to completion under Kernova, so its row names the
+    /// version the VM started life at, sitting beside the "OS Version" row that
+    /// names what the guest reports today. A Linux ISO is only attached for the
     /// distribution's own installer to use — which can install something else,
     /// or nothing — so that row names the media and claims nothing about the
     /// outcome.
     static func installedImageRowLabel(guestOS: VMGuestOS) -> String {
-        guestOS == .macOS ? "Installed From" : "Installer Image"
+        guestOS == .macOS ? "Installed Version" : "Installer Image"
     }
 
     private func buildGeneralSection() -> NSView {

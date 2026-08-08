@@ -355,8 +355,10 @@ extension DetailContainerViewController: VMLibraryPresenting {
         alertsPresenter.presentCancelPreparing(for: instance)
     }
 
-    func presentInstallerMounted(vmName: String, purpose: GuestAgentInstallerPurpose) {
-        alertsPresenter.presentInstallerMounted(vmName: vmName, purpose: purpose)
+    func presentInstallerMounted(
+        vmName: String, purpose: GuestAgentInstallerPurpose, delivery: GuestAgentDiskDelivery
+    ) {
+        alertsPresenter.presentInstallerMounted(vmName: vmName, purpose: purpose, delivery: delivery)
     }
 
     func focusGuestDisplay(for instance: VMInstance) {

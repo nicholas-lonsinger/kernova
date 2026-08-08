@@ -1556,6 +1556,9 @@ final class VMLibraryViewModel {
     /// On mount — and when the disk is already mounted — asks the presenter to show
     /// the next-step alert, so every entry point gives the user feedback. The mount
     /// itself is a no-op when the DMG is already in this VM's `removableMedia` list.
+    ///
+    /// A guest taking the disk over virtio already has it, attached for the whole
+    /// session, so there the alert is the entire action.
     func mountGuestAgentInstaller(
         on instance: VMInstance, purpose: GuestAgentInstallerPurpose = .install
     ) {
@@ -1564,9 +1567,16 @@ final class VMLibraryViewModel {
             assertionFailure("KernovaMacOSAgent.dmg missing — check 'Package Guest Agent DMG' build phase outputs")
             return
         }
+        let delivery = GuestAgentDiskDelivery.mode(for: instance.configuration)
+        guard delivery == .usb else {
+            Self.logger.debug(
+                "Guest agent disk reaches '\(instance.name, privacy: .public)' over virtio; showing next steps only")
+            presenter?.presentInstallerMounted(vmName: instance.name, purpose: purpose, delivery: delivery)
+            return
+        }
         if isGuestAgentInstallerMounted(on: instance) {
             Self.logger.debug("Guest agent installer already mounted on '\(instance.name, privacy: .public)'")
-            presenter?.presentInstallerMounted(vmName: instance.name, purpose: purpose)
+            presenter?.presentInstallerMounted(vmName: instance.name, purpose: purpose, delivery: delivery)
             return
         }
         let path = url.path(percentEncoded: false)
@@ -1577,11 +1587,11 @@ final class VMLibraryViewModel {
                     RemovableMediaItem(
                         path: path,
                         readOnly: true,
-                        label: "Kernova Guest Agent"
+                        label: KernovaMacOSAgentInfo.diskLabel
                     )
                 ]
         }
-        presenter?.presentInstallerMounted(vmName: instance.name, purpose: purpose)
+        presenter?.presentInstallerMounted(vmName: instance.name, purpose: purpose, delivery: delivery)
     }
 
     /// Marks this VM's `.waiting` install nudge as dismissed and persists the choice.

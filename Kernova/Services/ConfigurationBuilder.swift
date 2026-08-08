@@ -24,6 +24,10 @@ struct ConfigurationBuilder: Sendable {
 
     private static let logger = Logger(subsystem: "app.kernova", category: "ConfigurationBuilder")
 
+    /// The guest-agent installer image to attach to a guest that takes it over
+    /// virtio, `nil` when this build carries none.
+    var guestAgentDiskURL: URL? = KernovaMacOSAgentInfo.installerDiskImageURL
+
     /// Builds a validated `VZVirtualMachineConfiguration` from the given VM configuration and bundle URL.
     func build(from config: VMConfiguration, bundleURL: URL) throws -> BuildResult {
         try assemble(from: config, bundleURL: bundleURL, validate: true)
@@ -60,6 +64,7 @@ struct ConfigurationBuilder: Sendable {
         // XHCI controller exists for items to attach to.
         configureUSBControllers(vzConfig)
         try configureStorageDisks(vzConfig, config: config, bundleURL: bundleURL)
+        let guestAgentDiskAttached = configureGuestAgentDisk(vzConfig, config: config, bundleURL: bundleURL)
         let coldRemovableMedia = try configureRemovableMedia(vzConfig, config: config)
         configureNetwork(vzConfig, config: config)
         configureEntropy(vzConfig)
@@ -77,7 +82,8 @@ struct ConfigurationBuilder: Sendable {
         }
 
         if validate {
-            try vzConfig.validate()
+            try validateConfiguration(
+                vzConfig, guestAgentDiskAttached: guestAgentDiskAttached, config: config)
         }
 
         Self.logger.info(
@@ -373,6 +379,73 @@ struct ConfigurationBuilder: Sendable {
         vzConfig.storageDevices = built
     }
 
+    /// Appends the guest-agent installer image for a guest that takes it over
+    /// virtio, and reports whether it did.
+    ///
+    /// Never throws: a guest that boots without the agent disk is a degraded
+    /// session, while a guest that refuses to boot is a broken VM. The disk goes
+    /// last so every configured disk keeps its index — guests name block devices
+    /// by attachment order, and a VM the user never touched must not see its own
+    /// disks renamed.
+    private func configureGuestAgentDisk(
+        _ vzConfig: VZVirtualMachineConfiguration,
+        config: VMConfiguration,
+        bundleURL: URL
+    ) -> Bool {
+        guard GuestAgentDiskDelivery.mode(for: config) == .virtio else { return false }
+        guard let installerURL = guestAgentDiskURL else {
+            Self.logger.warning(
+                "No guest agent installer image to attach to '\(config.name, privacy: .public)'")
+            return false
+        }
+
+        let disk = Self.guestAgentDisk(
+            installerPath: installerURL.path(percentEncoded: false), bundleURL: bundleURL)
+        do {
+            let resolved = try Self.resolveFile(
+                at: disk.path, context: "Guest agent disk",
+                notFound: .storageDiskNotFound(disk.path, disk.label),
+                isDirectory: .storageDiskPathIsDirectory(disk.path, disk.label))
+            let attachment = try VZDiskImageStorageDeviceAttachment(
+                url: resolved.url, readOnly: disk.readOnly)
+            let blockDevice = VZVirtioBlockDeviceConfiguration(attachment: attachment)
+            blockDevice.blockDeviceIdentifier = disk.blockDeviceIdentifier
+            vzConfig.storageDevices.append(blockDevice)
+        } catch {
+            Self.logger.warning(
+                "Couldn't attach the guest agent disk to '\(config.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
+
+        Self.logger.info(
+            "Attached the guest agent disk to '\(config.name, privacy: .public)' as a virtio block device"
+        )
+        return true
+    }
+
+    /// Runs `vzConfig.validate()`, retrying once without the guest-agent disk.
+    ///
+    /// The retry keeps this feature from turning a VM that used to boot into one
+    /// that doesn't — whatever ceiling or collision the extra device crossed,
+    /// the configuration the user had before it existed still validates.
+    private func validateConfiguration(
+        _ vzConfig: VZVirtualMachineConfiguration,
+        guestAgentDiskAttached: Bool,
+        config: VMConfiguration
+    ) throws {
+        do {
+            try vzConfig.validate()
+        } catch {
+            guard guestAgentDiskAttached else { throw error }
+            Self.logger.warning(
+                "Dropping the guest agent disk from '\(config.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            vzConfig.storageDevices.removeLast()
+            try vzConfig.validate()
+        }
+    }
+
     /// Attaches every `removableMedia` item to the XHCI controller's
     /// `usbDevices` list and returns the matching `USBDeviceInfo`s for
     /// runtime tracking in `instance.liveRemovableMedia`.
@@ -437,13 +510,46 @@ struct ConfigurationBuilder: Sendable {
         )
     }
 
+    /// Synthesizes the guest-agent installer's disk entry.
+    ///
+    /// The entry is built per boot and never written to `config.storageDisks`:
+    /// persisting it would put the app's own bundled resource into the Settings
+    /// disk list, the boot-order sheet, and the delete sheet's offer to trash
+    /// external files.
+    static func guestAgentDisk(installerPath: String, bundleURL: URL) -> StorageDisk {
+        StorageDisk(
+            id: stableGuestAgentDiskID(forBundleAt: bundleURL),
+            path: installerPath,
+            readOnly: true,
+            label: KernovaMacOSAgentInfo.diskLabel,
+            // The path is absolute and outside the bundle, and `.dmg` would
+            // otherwise default to the USB bus this delivery exists to avoid.
+            isInternal: false,
+            kind: .virtio
+        )
+    }
+
     /// Deterministic UUID for the synthesized main disk, derived from the bundle path.
     ///
     /// Without stable identity, `removeStorageDisk`'s lookup-by-id would miss the
     /// row the user just clicked — silently no-op'ing the entry removal while
     /// still trashing the underlying file.
     private static func stableMainDiskID(forBundleAt bundleURL: URL) -> UUID {
-        let digest = SHA256.hash(data: Data(bundleURL.path.utf8))
+        stableDiskID(seed: bundleURL.path)
+    }
+
+    /// Deterministic UUID for the guest-agent disk, salted so it can never
+    /// collide with the main disk's on the same bundle.
+    ///
+    /// It reaches the guest as `blockDeviceIdentifier`, so a fresh UUID per
+    /// launch would vary the disk's guest-side name from one boot to the next.
+    private static func stableGuestAgentDiskID(forBundleAt bundleURL: URL) -> UUID {
+        stableDiskID(seed: bundleURL.path + "\u{0}guest-agent")
+    }
+
+    /// A UUID fixed by `seed`.
+    private static func stableDiskID(seed: String) -> UUID {
+        let digest = SHA256.hash(data: Data(seed.utf8))
         let bytes = Array(digest.prefix(16))
         return UUID(
             uuid: (
