@@ -56,14 +56,11 @@ final class ScrollMoreIndicator {
     /// else empty.
     var overlaysForTesting: [NSView] { didInsertOverlays ? [fade, chevron] : [] }
 
-    /// Whether the one-time scroller flash has latched.
-    var hasFlashedForTesting: Bool { didFlash }
-
     /// How many times the flash has fired.
     ///
-    /// A re-arm over still-overflowing content re-latches immediately, so
-    /// ``hasFlashedForTesting`` reads `true` both before and after — only the
-    /// count separates a fresh flash from the one that already happened.
+    /// The only signal that separates a flash from a spent latch: `didFlash` also
+    /// reads spent for one held at birth by `flashOnFirstOverflow: false`, and a
+    /// re-arm over still-overflowing content re-latches before a test can look.
     private(set) var flashCountForTesting = 0
     #endif
 
@@ -90,9 +87,11 @@ final class ScrollMoreIndicator {
         // alpha from here so that first frame carries no scroller at all; the
         // first flash to execute animates it in (see `recompute`).
         //
-        // Overlay scrollers only: a legacy scroller is a persistent control, and
-        // veiling it would hide a scrollbar meant to stay on screen.
-        if !flashOnFirstOverflow, scrollView.scrollerStyle == .overlay {
+        // A flash is the only thing that lifts the veil, so an indicator without
+        // that cue applies none. Overlay scrollers only: a legacy scroller is a
+        // persistent control, and veiling it would hide a scrollbar meant to stay
+        // on screen.
+        if !flashOnFirstOverflow, cues.contains(.flash), scrollView.scrollerStyle == .overlay {
             scrollView.verticalScroller?.alphaValue = 0
         }
 
