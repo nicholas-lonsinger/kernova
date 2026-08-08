@@ -1435,9 +1435,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return activeInstance?.canShowClipboard ?? false
         case #selector(toggleGuestAgentDisk(_:)):
             // Hard gates (not status-derived): a macOS guest with a live VM for
-            // USB hot-plug, and a bundled DMG to attach.
-            guard let instance = activeInstance, instance.canManageGuestAgentDisk else { return false }
-            guard Self.guestAgentDiskPath != nil else { return false }
+            // USB hot-plug, and a bundled DMG to attach. Retitling on the way
+            // out matters as much as enabling — see `unavailableTitle`.
+            guard let instance = activeInstance, instance.canManageGuestAgentDisk,
+                Self.guestAgentDiskPath != nil
+            else {
+                menuItem.title = GuestAgentDiskMenuItem.unavailableTitle
+                return false
+            }
             let model = GuestAgentDiskMenuItem.model(
                 status: instance.agentStatus,
                 isInstallerMounted: viewModel.isGuestAgentInstallerMounted(on: instance))
@@ -1656,7 +1661,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // and attach state on every menu open.
         vmMenu.addItem(
             NSMenuItem(
-                title: "Install Guest Agent…",
+                title: GuestAgentDiskMenuItem.unavailableTitle,
                 action: #selector(toggleGuestAgentDisk(_:)),
                 keyEquivalent: ""
             ))

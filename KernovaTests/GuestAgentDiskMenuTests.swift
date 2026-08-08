@@ -70,6 +70,16 @@ struct GuestAgentDiskMenuTests {
                 status: .connecting(expected: "0.9.2"), isInstallerMounted: false)
                 == .init(title: "Install Guest Agent…", isEnabled: false, action: .mount(.install)))
     }
+
+    @Test("The withheld title matches the nothing-installed-yet title")
+    func unavailableTitleMatchesWaiting() {
+        // The item is built with this title and falls back to it whenever a
+        // hard gate rejects it, so it has to read as a neutral resting state
+        // rather than as a claim about the selected VM.
+        #expect(
+            GuestAgentDiskMenuItem.unavailableTitle
+                == GuestAgentDiskMenuItem.model(status: .waiting, isInstallerMounted: false).title)
+    }
 }
 
 /// Unit tests for `VMInstance.canManageGuestAgentDisk` — the hard gate
