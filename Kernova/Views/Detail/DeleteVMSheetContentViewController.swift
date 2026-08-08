@@ -36,6 +36,9 @@ final class DeleteVMSheetContentViewController: NSViewController {
     private let vmName: String
     private let bundledDisks: [StorageDisk]
     private let externals: [ExternalAttachment]
+    /// Whether the bundle holds a suspended VM's saved state, listed alongside
+    /// the disks so the user sees it going with the bundle.
+    private let hasSavedState: Bool
     private let mode: Mode
 
     /// Per-row checkboxes for the *selectable* (non-shared) externals, keyed
@@ -80,11 +83,13 @@ final class DeleteVMSheetContentViewController: NSViewController {
         vmName: String,
         bundledDisks: [StorageDisk],
         externals: [ExternalAttachment],
+        hasSavedState: Bool,
         mode: Mode = .trash
     ) {
         self.vmName = vmName
         self.bundledDisks = bundledDisks
         self.externals = externals
+        self.hasSavedState = hasSavedState
         self.mode = mode
         super.init(nibName: nil, bundle: nil)
     }
@@ -165,13 +170,18 @@ final class DeleteVMSheetContentViewController: NSViewController {
                 "The VM moves to the Trash. Restore it with Finder's Put Back, or empty the Trash to delete it permanently."
         case .immediate:
             titleText = "Delete \u{201C}\(vmName)\u{201D} Immediately?"
-            // Name the external files only when at least one is selectable — a
-            // list of only locked-off rows offers no choice, so the plain
-            // VM-only wording stays accurate.
-            bodyText =
+            // This sentence enumerates what is destroyed, so it names the saved
+            // state too. External files are named only when at least one is
+            // selectable — a list of only locked-off rows offers no choice, so
+            // the plain wording stays accurate.
+            let removed =
+                hasSavedState
+                ? "This VM, its disks, and its saved state" : "This VM and its disks"
+            let externalsClause =
                 externals.contains(where: \.isSelectable)
-                ? "This VM and its disks, plus any external files you select below, will be deleted immediately. You can't undo this action."
-                : "This VM and its disks will be deleted immediately. You can't undo this action."
+                ? ", plus any external files you select below," : ""
+            bodyText =
+                "\(removed)\(externalsClause) will be deleted immediately. You can't undo this action."
         }
 
         let title = NSTextField(labelWithString: titleText)
@@ -244,10 +254,21 @@ final class DeleteVMSheetContentViewController: NSViewController {
         )
         listStack.translatesAutoresizingMaskIntoConstraints = false
 
-        // Section 1 — in-bundle disks removed along with the VM.
+        // Section 1 — in-bundle files removed along with the VM.
         listStack.addArrangedSubview(makeGroupedFormSectionHeader("Removed with the VM"))
         for disk in bundledDisks {
-            listStack.addArrangedSubview(makeBundledRow(disk))
+            listStack.addArrangedSubview(
+                makeBundledRow(
+                    symbolName: diskIconSystemName(for: disk),
+                    label: disk.label,
+                    detail: disk.displayPath))
+        }
+        if hasSavedState {
+            listStack.addArrangedSubview(
+                makeBundledRow(
+                    symbolName: "pause.circle",
+                    label: "Saved State",
+                    detail: "In-bundle machine state"))
         }
 
         // Section 2 — external files the user can individually trash.
@@ -335,11 +356,11 @@ final class DeleteVMSheetContentViewController: NSViewController {
         return height
     }
 
-    /// Read-only row for an in-bundle disk (no checkbox; it rides along with
+    /// Read-only row for an in-bundle file (no checkbox; it rides along with
     /// the bundle).
-    private func makeBundledRow(_ disk: StorageDisk) -> NSView {
+    private func makeBundledRow(symbolName: String, label labelText: String, detail: String) -> NSView {
         let icon = NSImageView(
-            image: .systemSymbol(diskIconSystemName(for: disk), accessibilityDescription: "")
+            image: .systemSymbol(symbolName, accessibilityDescription: "")
         )
         icon.contentTintColor = .secondaryLabelColor
         icon.translatesAutoresizingMaskIntoConstraints = false
@@ -348,14 +369,14 @@ final class DeleteVMSheetContentViewController: NSViewController {
         icon.setContentCompressionResistancePriority(.required, for: .horizontal)
         icon.widthAnchor.constraint(equalToConstant: Self.iconColumnWidth).isActive = true
 
-        let label = NSTextField(labelWithString: disk.label)
+        let label = NSTextField(labelWithString: labelText)
         label.font = Typography.body
         label.lineBreakMode = .byWordWrapping
         label.maximumNumberOfLines = 0
         label.isSelectable = false
         label.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let subtitle = NSTextField(labelWithString: disk.displayPath)
+        let subtitle = NSTextField(labelWithString: detail)
         subtitle.font = .preferredFont(forTextStyle: .caption1)
         subtitle.textColor = .secondaryLabelColor
         subtitle.lineBreakMode = .byTruncatingMiddle

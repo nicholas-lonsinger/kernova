@@ -233,6 +233,7 @@ final class DetailAlertsPresenter: NSObject {
             vmName: request.instance.name,
             bundledDisks: viewModel.bundledDisks(for: request.instance),
             externals: resolved.externals,
+            hasSavedState: request.instance.hasSaveFile,
             mode: request.permanently ? .immediate : .trash
         )
         content.delegate = self

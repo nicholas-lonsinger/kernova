@@ -279,6 +279,82 @@ struct VMLibraryViewModelTests {
         #expect(presenter.lastDeleteSheetPermanently == true)
     }
 
+    @Test("deleteConfirmed removes a cold-paused VM without a discard-saved-state pass")
+    func deleteConfirmedColdPaused() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        instance.status = .paused  // no live VM ⇒ cold-paused ("Suspended")
+        viewModel.instances.append(instance)
+        viewModel.selectedID = instance.id
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        #expect(instance.isColdPaused)
+        #expect(instance.canDelete)
+        viewModel.deleteConfirmed(instance)
+
+        // The whole bundle goes, saved state included — no separate discard.
+        #expect(viewModel.instances.isEmpty)
+        #expect(viewModel.selectedID == nil)
+        #expect(storage.deleteVMBundleCallCount == 1)
+    }
+
+    @Test("deleteConfirmed refuses a VM that stopped being deletable while the sheet was open")
+    func deleteConfirmedRefusesWhenNoLongerDeletable() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        instance.status = .paused  // Suspended when the sheet opened…
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        // …but a Resume landed via its still-live menu key equivalent before the
+        // user clicked Move to Trash.
+        instance.status = .running
+
+        viewModel.deleteConfirmed(instance)
+
+        #expect(viewModel.instances.count == 1)
+        #expect(storage.deleteVMBundleCallCount == 0)
+    }
+
+    @Test("deleteConfirmed refuses a cold-paused VM whose resume is still in flight")
+    func deleteConfirmedRefusesDuringInFlightResume() async throws {
+        let storage = MockVMStorageService()
+        let suspending = SuspendingMockVirtualizationService()
+        suspending.shouldSuspendOnResume = true
+        let viewModel = VMLibraryViewModel(
+            storageService: storage,
+            diskImageService: MockDiskImageService(),
+            virtualizationService: suspending,
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            usbDeviceService: MockUSBDeviceService(),
+            fileSystem: fileSystem,
+            preferences: preferences
+        )
+        viewModel.presenter = presenter
+        let instance = makeInstance()
+        instance.status = .paused
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        let resume = Task { @MainActor in try await viewModel.lifecycle.resume(instance) }
+        await suspending.waitUntilSuspended()
+
+        // A real cold resume holds `.paused` with no live VM while it builds its
+        // configuration, so the enablement predicate still reads deletable — only
+        // the lifecycle lock can refuse here.
+        #expect(instance.isColdPaused)
+        #expect(instance.canDelete)
+
+        viewModel.deleteConfirmed(instance)
+
+        #expect(viewModel.instances.count == 1)
+        #expect(storage.deleteVMBundleCallCount == 0)
+
+        suspending.resumeSuspended()
+        try await resume.value
+    }
+
     @Test("deleteConfirmed permanently hard-deletes the bundle, bypassing the Trash")
     func deleteConfirmedPermanentlyUsesHardDelete() {
         let (viewModel, storage, _, _, _) = makeViewModel()

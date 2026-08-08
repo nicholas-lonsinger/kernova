@@ -238,6 +238,38 @@ struct SidebarViewControllerTests {
         #expect(!menuTitles.contains("Suspend"))
     }
 
+    @Test("Context menu enables delete for a cold-paused VM but keeps Clone disabled")
+    func contextMenuColdPausedEnablesDelete() {
+        let viewModel = makeViewModel()
+        let instance = makeInstance(status: .paused)  // no live VM ⇒ cold-paused
+        viewModel.instances.append(instance)
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+
+        let menu = controller.buildContextMenu(for: instance)
+
+        // The saved state is a file inside the bundle, so deleting takes no
+        // Discard Saved State pass first.
+        #expect(menuItem("Move to Trash…", in: menu)?.isEnabled == true)
+        #expect(menuItem("Delete Immediately…", in: menu)?.isEnabled == true)
+        // Clone still needs a settled bundle, so it stays on `canEditSettings`.
+        #expect(menuItem("Clone", in: menu)?.isEnabled == false)
+    }
+
+    @Test("Context menu disables delete for a live-paused VM")
+    func contextMenuLivePausedDisablesDelete() {
+        let viewModel = makeViewModel()
+        let instance = makeInstance(status: .paused)
+        instance.hasLiveVirtualMachineOverrideForTesting = true
+        viewModel.instances.append(instance)
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+
+        let menu = controller.buildContextMenu(for: instance)
+
+        #expect(instance.isLivePaused)
+        #expect(menuItem("Move to Trash…", in: menu)?.isEnabled == false)
+        #expect(menuItem("Delete Immediately…", in: menu)?.isEnabled == false)
+    }
+
     @Test("Force Stop is the Option-alternate of Stop on a running VM (advanced options off)")
     func contextMenuForceStopIsOptionAlternate() {
         preferences.alwaysShowAdvancedOptions = false

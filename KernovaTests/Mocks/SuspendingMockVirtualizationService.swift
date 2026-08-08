@@ -21,6 +21,13 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     /// Set to `false` to allow subsequent calls through immediately.
     var shouldSuspendOnPause = true
 
+    /// When `true`, `resume` will suspend *before* touching `status`, standing in
+    /// for the window a real cold resume spends building its configuration while
+    /// the VM still reads as cold-paused.
+    ///
+    /// Defaults to `false` so existing callers keep the immediate behavior.
+    var shouldSuspendOnResume = false
+
     // MARK: - Suspension Mechanism
 
     /// Continuation that, when resumed, unblocks the suspended operation.
@@ -87,6 +94,9 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     }
 
     func resume(_ instance: VMInstance) async throws {
+        if shouldSuspendOnResume {
+            await suspendIfNeeded()
+        }
         instance.status = .running
     }
 

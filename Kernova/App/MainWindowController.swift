@@ -436,7 +436,7 @@ extension MainWindowController: NSToolbarItemValidation {
             guard let instance else { return false }
             return instance.status.canEditSettings && !viewModel.hasPreparing
         case Self.toolbarMoveToTrash:
-            return instance?.status.canEditSettings ?? false
+            return instance?.canDelete ?? false
         default:
             guard let instance, !instance.isPreparing else { return false }
 

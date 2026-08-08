@@ -319,6 +319,51 @@ struct VMInstanceTests {
         }
     }
 
+    // MARK: - canDelete
+
+    @Test("canDelete is true when stopped, in error, or awaiting initial boot")
+    func canDeleteInertStatuses() {
+        for status in [VMStatus.stopped, .error, .initialBoot] {
+            let instance = makeInstance(status: status)
+            #expect(instance.canDelete == true)
+        }
+    }
+
+    @Test("canDelete is true for a cold-paused VM (the saved state goes with the bundle)")
+    func canDeleteColdPaused() {
+        let instance = makeInstance(status: .paused)
+        #expect(instance.isColdPaused == true)
+        #expect(instance.canDelete == true)
+    }
+
+    @Test("canDelete is false for a live-paused VM (its VZVirtualMachine is still in memory)")
+    func canDeleteLivePaused() {
+        let instance = makeInstance(status: .paused)
+        instance.hasLiveVirtualMachineOverrideForTesting = true
+        #expect(instance.isLivePaused == true)
+        #expect(instance.canDelete == false)
+    }
+
+    @Test("canDelete is false while running or transitioning")
+    func canDeleteRunningAndTransitions() {
+        for status in [VMStatus.running, .starting, .saving, .restoring, .installing] {
+            let instance = makeInstance(status: status)
+            #expect(instance.canDelete == false)
+        }
+    }
+
+    @Test("canDelete is false while an import or clone is writing into the bundle")
+    func canDeletePreparing() {
+        // The toolbar's Move to Trash reads this predicate without a preparing
+        // guard of its own, so the check has to live here to hold on every surface.
+        let instance = makeInstance(status: .stopped)
+        let task = Task {}
+        defer { task.cancel() }
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        #expect(instance.isPreparing == true)
+        #expect(instance.canDelete == false)
+    }
+
     // MARK: - Bundle Paths
 
     @Test("Bundle path URLs are correctly derived from bundleURL")
