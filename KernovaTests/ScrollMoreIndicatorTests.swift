@@ -182,6 +182,73 @@ struct ScrollMoreIndicatorTests {
         #expect(indicator.overlaysForTesting.count == 2)
     }
 
+    /// A surface whose arrivals are cued by an explicit `rearmFlash()` opts out
+    /// of the born-armed flash: fired from pre-appearance layout churn, it would
+    /// spend the fade-in off screen and leave the arrival cue a scroller already
+    /// at full alpha.
+    @Test("An indicator born spent holds the flash for an explicit rearm")
+    func bornSpentFlashWaitsForRearm() {
+        let (scrollView, window) = makeShownScrollView(documentHeight: 1000)
+        defer { window.orderOut(nil) }
+        let indicator = ScrollMoreIndicator(
+            scrollView: scrollView, cues: .flash, flashOnFirstOverflow: false)
+        // Overflowing content against a visible window — the born-armed
+        // configuration flashes here; born spent must not.
+        #expect(indicator.flashCountForTesting == 0)
+
+        // Nor from later geometry churn (a pane laying out before it is shown).
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: 1))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        #expect(indicator.flashCountForTesting == 0)
+
+        // The arrival cue is the first flash anyone gets.
+        indicator.rearmFlash()
+        #expect(indicator.flashCountForTesting == 1)
+    }
+
+    /// A scroll view with an explicit scroller style, so the veil assertions do
+    /// not depend on the host's "Show scroll bars" setting.
+    private func makeScrollView(documentHeight: CGFloat, scrollerStyle: NSScroller.Style)
+        -> NSScrollView
+    {
+        let scrollView = makeScrollView(documentHeight: documentHeight)
+        scrollView.hasVerticalScroller = true
+        scrollView.scrollerStyle = scrollerStyle
+        return scrollView
+    }
+
+    /// AppKit presents a virgin overlay scroller already shown, so an
+    /// arrival-cued surface would meet a solid scroller on its first-ever frame.
+    ///
+    /// The reveal can't animate on a never-presented layer. The indicator veils
+    /// the scroller behind zero view alpha at init; the first executed flash
+    /// animates it off.
+    @Test("Born-spent init veils an overlay scroller; born-armed leaves it alone")
+    func bornSpentVeilsOverlayScroller() throws {
+        let veiled = makeScrollView(documentHeight: 1000, scrollerStyle: .overlay)
+        let veiledScroller = try #require(veiled.verticalScroller)
+        _ = ScrollMoreIndicator(scrollView: veiled, cues: .flash, flashOnFirstOverflow: false)
+        #expect(veiledScroller.alphaValue == 0)
+
+        // The born-armed default serves surfaces whose first presentation is a
+        // brand-new window, where the system reveal reads fine — no veil.
+        let stock = makeScrollView(documentHeight: 1000, scrollerStyle: .overlay)
+        let stockScroller = try #require(stock.verticalScroller)
+        _ = ScrollMoreIndicator(scrollView: stock, cues: .flash)
+        #expect(stockScroller.alphaValue == 1)
+    }
+
+    /// A legacy scroller is a persistent control rather than a transient
+    /// overlay, so veiling one would hide a scrollbar meant to stay on screen —
+    /// what a reader with "Show scroll bars: Always" would see.
+    @Test("A legacy scroller is never veiled")
+    func legacyScrollerIsNotVeiled() throws {
+        let scrollView = makeScrollView(documentHeight: 1000, scrollerStyle: .legacy)
+        let scroller = try #require(scrollView.verticalScroller)
+        _ = ScrollMoreIndicator(scrollView: scrollView, cues: .flash, flashOnFirstOverflow: false)
+        #expect(scroller.alphaValue == 1)
+    }
+
     @Test("rearmFlash re-arms the one-time flash for a reused indicator")
     func rearmFlashReevaluates() {
         // Mirrors the settings pane reusing one indicator across VM switches.

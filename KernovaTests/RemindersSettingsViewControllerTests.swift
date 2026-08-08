@@ -269,6 +269,49 @@ struct RemindersSettingsViewControllerTests {
         #expect(indicator.flashCountForTesting == 2)
     }
 
+    /// A tab switch adopts the pane into the already-visible Settings window
+    /// before its appearance pass runs.
+    ///
+    /// The appearance pass's layout churn therefore recomputes overflow against
+    /// a window the flash may fire in — while the tab transition still hides the
+    /// pane. The first visit must hold the cue for the container's arrival hook:
+    /// one spent here plays its fade-in where nobody can see, and the arrival
+    /// re-arm then meets a scroller already at full alpha — solid, then a bare
+    /// fade-out, unlike every later visit.
+    @Test("The first visit holds the flash for the arrival cue")
+    func firstVisitHoldsFlashForArrivalCue() throws {
+        let viewModel = makeViewModel()
+        for index in 1...9 {
+            viewModel.instances.append(makeInstance(name: "VM \(index)"))
+        }
+        let controller = RemindersSettingsViewController(
+            preferences: preferences, viewModel: viewModel)
+        _ = controller.view
+
+        // Host the pane in an on-screen window first, as the tab view does — and
+        // sized, because the tab view pins the adopted view to its own bounds
+        // (the outgoing pane's height) before any appearance callback runs. The
+        // pre-appearance row build and measurement layout therefore both run
+        // against real, overflowing geometry in a visible window.
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 400))
+        let window = showInTestWindow(host)
+        defer {
+            controller.viewDidDisappear()
+            window.orderOut(nil)
+        }
+        controller.view.setFrameSize(NSSize(width: 520, height: 400))
+        host.addSubview(controller.view)
+        controller.viewWillAppear()
+        controller.view.layoutSubtreeIfNeeded()
+
+        let indicator = try #require(controller.scrollMoreIndicatorForTesting)
+        #expect(indicator.flashCountForTesting == 0)
+
+        // The container's arrival hook spends it — the first flash anyone sees.
+        controller.rearmScrollMoreCue()
+        #expect(indicator.flashCountForTesting == 1)
+    }
+
     /// Both captions describe the per-VM switches, so with none on screen they
     /// point at nothing — "these have no effect" directly under "No virtual
     /// machines yet." reads as a bug.

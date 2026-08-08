@@ -36,6 +36,10 @@ final class ScrollMoreIndicator {
     /// Height of the bottom fade strip.
     private static let fadeHeight: CGFloat = 36
 
+    /// How long the veiled scroller takes to fade in, matching the system
+    /// scroller reveal it stands in for.
+    private static let unveilDuration: TimeInterval = 0.3
+
     private weak var scrollView: NSScrollView?
     private let cues: ScrollMoreCues
     private let fade = ScrollMoreFadeView()
@@ -64,9 +68,33 @@ final class ScrollMoreIndicator {
     #endif
 
     /// Creates an indicator for `scrollView`, showing the cues named by `cues`.
-    init(scrollView: NSScrollView, cues: ScrollMoreCues = .all) {
+    ///
+    /// `flashOnFirstOverflow` arms the one-time flash at birth, which suits a
+    /// surface built fresh per appearance (a wizard step, a sheet) where the
+    /// first overflow against a visible window *is* the arrival. Pass `false`
+    /// for a surface whose arrivals are cued by an explicit ``rearmFlash()``:
+    /// the flash then waits for that cue, and an overlay scroller is held at
+    /// zero alpha until the first one executes.
+    init(
+        scrollView: NSScrollView, cues: ScrollMoreCues = .all, flashOnFirstOverflow: Bool = true
+    ) {
         self.scrollView = scrollView
         self.cues = cues
+        self.didFlash = !flashOnFirstOverflow
+
+        // AppKit reveals an overlay scroller when content first fills it, and a
+        // reveal applied to a layer that has never been presented takes effect
+        // instantly rather than animating. A surface reaching the screen for the
+        // first time therefore draws its scroller already solid, and the arriving
+        // flash has only its fade-out left to play. Hold the scroller at zero
+        // alpha from here so that first frame carries no scroller at all; the
+        // first flash to execute animates it in (see `recompute`).
+        //
+        // Overlay scrollers only: a legacy scroller is a persistent control, and
+        // veiling it would hide a scrollbar meant to stay on screen.
+        if !flashOnFirstOverflow, scrollView.scrollerStyle == .overlay {
+            scrollView.verticalScroller?.alphaValue = 0
+        }
 
         assert(
             scrollView.contentView.isFlipped,
@@ -120,6 +148,19 @@ final class ScrollMoreIndicator {
         recompute()
     }
 
+    /// Animates off the zero-alpha veil the initializer may have put on the
+    /// scroller, so the flash that follows reads as a fade-in.
+    ///
+    /// A no-op once the veil is gone, which is every flash after the first: from
+    /// then on the scroller rests hidden and AppKit's own reveal animates it.
+    private func unveilScroller() {
+        guard let scroller = scrollView?.verticalScroller, scroller.alphaValue < 1 else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.unveilDuration
+            scroller.animator().alphaValue = 1
+        }
+    }
+
     @objc private func geometryChanged() {
         recompute()
     }
@@ -153,7 +194,11 @@ final class ScrollMoreIndicator {
             flashCountForTesting += 1
             #endif
             Self.logger.debug("Flashing scroller")
-            Task { @MainActor [weak self] in self?.scrollView?.flashScrollers() }
+            Task { @MainActor [weak self] in
+                guard let scrollView = self?.scrollView else { return }
+                self?.unveilScroller()
+                scrollView.flashScrollers()
+            }
         }
     }
 
