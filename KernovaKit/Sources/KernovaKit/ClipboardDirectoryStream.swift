@@ -654,7 +654,7 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
         // Remember a refusal on the way out: the archive will rewrap it, and the
         // caller needs to know the volume filled or the tree outgrew its offer,
         // not merely that the extract failed.
-        var guarded: (@Sendable (Int) throws -> Void)?
+        let guarded: (@Sendable (Int) throws -> Void)?
         if let onOutputAdvanced {
             guarded = { total in
                 do {
@@ -664,6 +664,8 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
                     throw error
                 }
             }
+        } else {
+            guarded = nil
         }
         let queue = DispatchQueue(
             label: "app.kernova.clipboard.archive-extract.\(label)", qos: .userInitiated)

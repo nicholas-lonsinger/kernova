@@ -668,11 +668,25 @@ extension ChunkReader {
     var offerUnitProgress: Int? { nil }
 }
 
+/// A `ChunkReader` whose `close()` is safe to call from another thread while a
+/// `read(upTo:)` is parked on it, and whose reads and closes may therefore be
+/// interleaved across threads.
+///
+/// A source that produces its bytes on its own schedule parks its caller inside
+/// `read(upTo:)`, and nothing else can reach that park — so retirement runs
+/// `close()` from whichever thread claimed it. Conforming is the promise that
+/// this is sound; `ChunkReader` alone does not carry it, and the readers backed
+/// by an unguarded cursor or a `FileHandle` cannot make it.
+protocol CancellableChunkReader: ChunkReader, Sendable {}
+
 /// Opens the archive source for a folder transfer.
+///
+/// The result is cancellable because a folder's encode runs ahead of the
+/// transport and parks the transfer thread, which only `close()` can release.
 typealias ClipboardDirectorySourceFactory =
     @Sendable (
         _ directoryURL: URL, _ label: String, _ capacityBytes: Int
-    ) -> ChunkReader
+    ) -> CancellableChunkReader
 
 final class InMemoryChunkReader: ChunkReader {
     private let data: Data
@@ -700,7 +714,7 @@ final class InMemoryChunkReader: ChunkReader {
 /// The empty result that ends the stream is reached only once the encode
 /// pipeline has closed cleanly; a failure anywhere in it surfaces as `nil`, the
 /// transfer's `read.error` abort.
-final class DirectoryArchiveChunkReader: ChunkReader {
+final class DirectoryArchiveChunkReader: CancellableChunkReader {
     private let reader: ClipboardDirectoryArchiveReader
 
     init(directoryURL: URL, label: String, capacityBytes: Int) {
