@@ -90,8 +90,9 @@ public struct ClipboardContent: Equatable, Sendable {
         ///
         /// `sha256` is the byte digest once a transfer has computed it — reused as
         /// the content digest so a multi-GB file is never re-hashed — and `nil`
-        /// when the file is only named. For `isDirectory`, the URL points at the
-        /// `.aar`, not the original folder.
+        /// when the file is only named. For `isDirectory` the URL is the folder
+        /// itself and `byteCount` its tree, while `sha256` stays the digest of
+        /// the archive that carried it over the wire.
         public init(
             uti: String, fileURL: URL, byteCount: Int, sha256: Data? = nil, filename: String,
             isDirectory: Bool = false

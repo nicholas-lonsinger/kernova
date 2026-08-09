@@ -38,10 +38,12 @@ public enum ClipboardArchiveStreamError: Error, Equatable {
 /// than the credit window allows, and on the receiving side an ack is only sent
 /// once the extract pipeline has taken the bytes.
 ///
-/// Either side ends the pipe — `finish()` for a clean end of stream, `fail(_:)`
-/// to abandon it — and both endings wake the other side at once, which is what
-/// lets an abort unwind an archive pipeline parked in a callback that has no
-/// timeout of its own.
+/// Three endings wake the other side at once, which is what lets an abort unwind
+/// an archive pipeline parked in a callback that has no timeout of its own:
+/// `finish()` declares a clean end of stream from the writing side, `fail(_:)`
+/// abandons the pipe, and `complete()` reports that the reading side has finished
+/// its work — after which further writes are accepted and dropped rather than
+/// refused, since there is no longer anything they could break.
 ///
 /// `@unchecked Sendable`: every field is guarded by `condition`.
 final class ClipboardArchiveBytePipe: @unchecked Sendable {
@@ -53,6 +55,11 @@ final class ClipboardArchiveBytePipe: @unchecked Sendable {
     private var headOffset = 0
     private var pendingBytes = 0
     private var finished = false
+    /// Whether the reader finished its work successfully, so a later write has
+    /// nothing left to feed.
+    ///
+    /// Implies `finished`.
+    private var completed = false
     private var failure: Error?
 
     /// - Parameter capacity: how many undelivered bytes park the writer. A single
@@ -65,6 +72,8 @@ final class ClipboardArchiveBytePipe: @unchecked Sendable {
 
     /// Appends `data`, parking while the pipe is at capacity.
     ///
+    /// Accepted and discarded once `complete()` has been called.
+    ///
     /// - Throws: the failure that ended the pipe, or
     ///   ``ClipboardArchiveStreamError/streamClosed`` after `finish()`.
     func write(_ data: Data) throws {
@@ -75,6 +84,7 @@ final class ClipboardArchiveBytePipe: @unchecked Sendable {
             condition.wait()
         }
         if let failure { throw failure }
+        guard !completed else { return }
         guard !finished else { throw ClipboardArchiveStreamError.streamClosed }
         chunks.append(data)
         pendingBytes += data.count
@@ -161,6 +171,23 @@ final class ClipboardArchiveBytePipe: @unchecked Sendable {
     func finish() {
         condition.lock()
         finished = true
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    /// Ends the stream from the *reading* side, which has finished successfully:
+    /// a parked writer wakes, and every write from here on is accepted and
+    /// dropped instead of refused.
+    ///
+    /// Distinct from `fail(_:)`, which reports that the pipeline gave up and so
+    /// must keep refusing writes.
+    func complete() {
+        condition.lock()
+        completed = true
+        finished = true
+        chunks.removeAll()
+        headOffset = 0
+        pendingBytes = 0
         condition.broadcast()
         condition.unlock()
     }
@@ -524,7 +551,12 @@ public final class ClipboardDirectoryArchiveReader: @unchecked Sendable {
             defer { closes.close { try compressStream.close() } }
 
             // Above the compressor, so what it sees is the uncompressed archive.
-            let counter = ClipboardArchiveCountingStream(upstream: compressStream) { total in
+            // Unpaced, because the closure is a store and the count is read as a
+            // live figure — the sender's ceiling is enforced against it, and a
+            // paced snapshot would sit a whole quantum of tree behind.
+            let counter = ClipboardArchiveCountingStream(
+                upstream: compressStream, pacingBytes: 1
+            ) { total in
                 counted.value = total
             }
             guard let countedStream = ArchiveByteStream.customStream(instance: counter) else {
@@ -572,10 +604,16 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
     /// The folder the tree is extracted into — the URL a paste is served.
     public let destinationURL: URL
 
+    /// Which of the two mutually exclusive endings a caller claimed.
+    private enum Terminal {
+        case committed
+        case aborted
+    }
+
     private let pipe: ClipboardArchiveBytePipe
     private let outcome = ClipboardArchivePipelineOutcome()
     private let terminalLock = NSLock()
-    private var terminal = false
+    private var terminal: Terminal?
     /// Set when this side stopped the extract, so the reason survives
     /// AppleArchive rewrapping it.
     private let refusal = ArchiveRefusalBox()
@@ -633,14 +671,26 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
             let failure = Self.extract(
                 from: pipe, into: destinationURL, counted: counted, pacingBytes: pacingBytes,
                 onOutputAdvanced: guarded)
-            // Wake a writer parked on a pipeline that has stopped consuming,
-            // rather than let it block until the transfer's own watchdog fires.
-            pipe.fail(failure ?? ClipboardArchiveStreamError.streamClosed)
+            // Both endings wake a writer parked on a pipeline that has stopped
+            // consuming, and differ in what a *later* write means: after a
+            // failure it must be refused, but after a complete extract the
+            // archive is already unpacked, so trailing bytes are dropped rather
+            // than made to fail a good transfer. Dropping them loses no integrity
+            // check — the receiver takes the digest over what arrives on the
+            // wire, outside this sink.
+            if let failure {
+                pipe.fail(failure)
+            } else {
+                pipe.complete()
+            }
             outcome.complete(failure)
         }
     }
 
     /// Hands `data` to the extract pipeline, parking while it is a window behind.
+    ///
+    /// Bytes offered after the pipeline has unpacked the whole archive are
+    /// accepted and dropped, not refused.
     ///
     /// - Throws: whatever failed the pipeline, so the transfer aborts on the
     ///   receiver's own write lane instead of running to completion over a tree
@@ -656,11 +706,22 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
     /// Ends the stream, waits for the pipeline to drain, and returns the
     /// extracted folder.
     ///
+    /// Idempotent: a repeat commit reports the same outcome the first one did.
+    ///
     /// - Throws: whatever failed the pipeline — a truncated or corrupt archive, or
     ///   the volume filling mid-extract. The partial tree is removed first.
+    ///   ``ClipboardArchiveStreamError/cancelled`` when `abort()` got there
+    ///   first, since the folder this would otherwise name has been deleted.
     @discardableResult
     public func commit() throws -> URL {
-        guard claimTerminal() else { return destinationURL }
+        if let claimed = claimTerminal(.committed) {
+            guard claimed == .committed else { throw ClipboardArchiveStreamError.cancelled }
+            // Re-read the latched outcome rather than assume success: a first
+            // commit that failed took the tree with it, so handing back its URL
+            // would name a folder that is gone.
+            if let failure = outcome.wait() { throw refusal.value ?? failure }
+            return destinationURL
+        }
         pipe.finish()
         if let failure = outcome.wait() {
             try? FileManager.default.removeItem(at: destinationURL)
@@ -682,17 +743,23 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
     ///
     /// Idempotent, and a no-op once `commit()` has succeeded.
     public func abort() {
-        guard claimTerminal() else { return }
+        guard claimTerminal(.aborted) == nil else { return }
         pipe.fail(ClipboardArchiveStreamError.cancelled)
         _ = outcome.wait()
         try? FileManager.default.removeItem(at: destinationURL)
     }
 
-    private func claimTerminal() -> Bool {
+    /// Claims the terminal transition for `kind`, or reports which one was
+    /// already claimed.
+    ///
+    /// The two endings are mutually exclusive rather than merely once-only:
+    /// `abort()` deletes the tree `commit()` would hand back, so a `commit()`
+    /// that lost the race must not read as success.
+    private func claimTerminal(_ kind: Terminal) -> Terminal? {
         terminalLock.withLock {
-            if terminal { return false }
-            terminal = true
-            return true
+            if let terminal { return terminal }
+            terminal = kind
+            return nil
         }
     }
 

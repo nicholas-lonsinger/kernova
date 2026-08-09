@@ -237,11 +237,93 @@ struct ClipboardDirectoryAccountingTests {
         // The readout's denominator is the offer's uncompressed estimate, so a
         // numerator counting compressed wire bytes crawls to a fraction and then
         // snaps — which reads as a hung paste. Both ends must exceed what
-        // actually crossed the wire.
-        let wireBytes = try #require(harness.collector.representation(id)?.byteCount)
+        // actually crossed the wire, which the transfer metrics report.
+        let wireBytes = try #require(
+            harness.collector.timedMetrics.first { $0.transferID == id }?.byteCount)
         #expect(wireBytes < 4 * 1024 * 1024)
         #expect(sent.value > wireBytes)
         #expect(received.value > wireBytes)
+    }
+
+    @Test("the delivered folder is sized by its tree, not by the archive that carried it")
+    func deliveredFolderCarriesTheTreesSize() async throws {
+        let fm = FileManager.default
+        let harness = try harness()
+        defer { harness.tearDown() }
+        let (scratch, source) = try makeCompressibleTree(uncompressedBytes: 512 * 1024)
+        defer { try? fm.removeItem(at: scratch) }
+        let bytes = try archiveBytes(of: source)
+
+        let id: UInt64 = 68
+        prime(harness, id: id, named: "Logs", advertised: 512 * 1024)
+        begin(harness, id: id, named: "Logs")
+        feed(harness, id: id, bytes: bytes)
+        harness.receiver.handleEnd(
+            .with {
+                $0.transferID = id
+                $0.totalBytes = UInt64(bytes.count)
+                $0.sha256 = Data(SHA256.hash(data: bytes))
+            })
+
+        try await harness.collector.gate.wait { harness.collector.representation(id) != nil }
+        let rep = try #require(harness.collector.representation(id))
+        // The rep's bytes are the tree at its URL, and the offer advertised that
+        // figure too — the compressed count is a different unit and, here, ~100×
+        // smaller.
+        #expect(rep.byteCount >= 512 * 1024)
+        #expect(rep.byteCount > bytes.count)
+        // The digest still covers the wire bytes: it is the transfer's integrity
+        // gate, and re-hashing the tree would prove nothing about what arrived.
+        guard case .file(_, _, let sha256) = rep.source else {
+            Issue.record("Expected a file-backed representation, got \(rep.source)")
+            return
+        }
+        #expect(sha256 == Data(SHA256.hash(data: bytes)))
+    }
+
+    @Test("the requester's ceiling stops a folder by the tree it unpacks to, not by the wire")
+    func senderCeilingIsMeasuredInTheTreesUnit() async throws {
+        let fm = FileManager.default
+        let harness = try harness()
+        defer { harness.tearDown() }
+        let (scratch, source) = try makeCompressibleTree(uncompressedBytes: 512 * 1024)
+        defer { try? fm.removeItem(at: scratch) }
+        // A ceiling the wire never comes close to: the whole archive is a couple
+        // of KiB, so a guard counting wire bytes lets the half-megabyte tree
+        // through to a requester that said it had room for 64 KiB.
+        let ceiling = 64 * 1024
+        #expect(try archiveBytes(of: source).count < ceiling)
+
+        let id: UInt64 = 69
+        prime(harness, id: id, named: "Logs", advertised: 512 * 1024)
+        harness.sender.startDirectoryTransfer(
+            transferID: id, generation: 1, sourceDirectoryURL: source, folderName: "Logs",
+            uti: ClipboardDirectoryArchive.directoryUTI, maxAcceptByteCount: UInt64(ceiling),
+            isCurrent: { _ in true })
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.abortInfos.first?.code == "disk.full")
+        #expect(harness.collector.representation(id) == nil)
+    }
+
+    @Test("a folder whose tree fits the requester's ceiling still arrives")
+    func senderCeilingPassesATreeThatFits() async throws {
+        let fm = FileManager.default
+        let harness = try harness()
+        defer { harness.tearDown() }
+        let (scratch, source) = try makeCompressibleTree(uncompressedBytes: 512 * 1024)
+        defer { try? fm.removeItem(at: scratch) }
+
+        let id: UInt64 = 70
+        prime(harness, id: id, named: "Logs", advertised: 512 * 1024)
+        harness.sender.startDirectoryTransfer(
+            transferID: id, generation: 1, sourceDirectoryURL: source, folderName: "Logs",
+            uti: ClipboardDirectoryArchive.directoryUTI, maxAcceptByteCount: 4 * 1024 * 1024,
+            isCurrent: { _ in true })
+
+        try await harness.collector.gate.wait { harness.collector.representation(id) != nil }
+        let tree = try #require(harness.collector.representation(id)?.fileURL)
+        #expect(try Data(contentsOf: tree.appendingPathComponent("big.log")).count == 512 * 1024)
     }
 
     @Test("a fresh pull reusing an abandoned transfer id is served, not refused")

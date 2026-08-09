@@ -791,8 +791,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(
-            pasteboard: pasteboard, agentFd: agentFd, hostStreamsDirectories: false)
+        let capable = Box(false)
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        agent.hostStreamsDirectories = { capable.value }
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -809,6 +810,16 @@ struct VsockGuestClipboardAgentTests {
         let offer = try await awaitOffer(on: hostChannel)
         #expect(offer.repInfo.map(\.filename) == ["note.txt"])
         #expect(offer.repInfo.allSatisfy { !$0.isDirectory })
+
+        // Both dedup keys describe what was offered — the change count and the
+        // offered content's digest — so neither notices the host catching up.
+        // The dropped folder has to be re-offered once it can be received.
+        capable.value = true
+        await MainActor.run { agent.checkClipboardChange() }
+        let second = try await awaitOffer(on: hostChannel)
+        #expect(second.repInfo.map(\.filename) == ["Project", "note.txt"])
+        #expect(second.repInfo.map(\.isDirectory) == [true, false])
+        #expect(second.generation > offer.generation)
     }
 
     /// Requests representation `repIndex` of `offer` and collects its stream.

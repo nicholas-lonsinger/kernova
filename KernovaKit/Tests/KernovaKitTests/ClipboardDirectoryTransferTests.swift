@@ -135,7 +135,8 @@ struct ClipboardDirectoryTransferTests {
         let rep = try #require(harness.collector.representation(id))
         #expect(rep.isDirectory)
         #expect(rep.filename == "Project")
-        // The streamed archive's size, which End declared and the digest covered.
+        // The tree the rep names, not the archive that carried it
+        // (ClipboardDirectoryAccounting pins the two apart).
         #expect(rep.byteCount > 0)
 
         let tree = try #require(rep.fileURL)
@@ -179,7 +180,7 @@ struct ClipboardDirectoryTransferTests {
 
         try await harness.collector.gate.wait { harness.collector.representation(id) != nil }
         let rep = try #require(harness.collector.representation(id))
-        // Archive-header bytes, so `End.total_bytes` is never legitimately zero.
+        // Archive-container bytes, so even an empty folder is never sized zero.
         #expect(rep.byteCount > 0)
         #expect(try fm.contentsOfDirectory(atPath: #require(rep.fileURL).path).isEmpty)
     }

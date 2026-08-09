@@ -344,6 +344,74 @@ struct ClipboardDirectoryStreamTests {
         #expect(throws: (any Error).self) { try sink.write(Data([0])) }
     }
 
+    @Test("a write landing after the archive is unpacked is dropped, and commit stays idempotent")
+    func writeAfterASuccessfulExtractIsDropped() throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+
+        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        try fm.createDirectory(
+            at: source.appendingPathComponent("sub", isDirectory: true),
+            withIntermediateDirectories: true)
+        try "hello".write(
+            to: source.appendingPathComponent("sub/a.txt"), atomically: true, encoding: .utf8)
+
+        let dest = try makeDestination(in: scratch)
+        let sink = ClipboardDirectoryExtractSink(destinationURL: dest, label: "test")
+        try sink.write(try archiveBytes(of: source))
+        let url = try sink.commit()
+
+        // Whatever the wire still carries once the tree is out is surplus to the
+        // decoder — accepting and dropping it is what keeps a straggling chunk
+        // from turning a good folder into an `extract.error`.
+        try sink.write(Data([0x00]))
+        #expect(try sink.commit() == url)
+        #expect(
+            try String(contentsOf: url.appendingPathComponent("sub/a.txt"), encoding: .utf8)
+                == "hello")
+    }
+
+    @Test("a write after the pipeline failed is still refused")
+    func writeAfterAFailedExtractStillThrows() throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+        let dest = try makeDestination(in: scratch)
+
+        let sink = ClipboardDirectoryExtractSink(destinationURL: dest, label: "test")
+        try sink.write(Data("not a valid archive".utf8))
+        #expect(throws: (any Error).self) { _ = try sink.commit() }
+        // A failed pipeline has nothing to feed, so the refusal has to stand.
+        #expect(throws: (any Error).self) { try sink.write(Data([0])) }
+        // And a repeat commit reports the same failure rather than handing back
+        // the folder the first one deleted.
+        #expect(throws: (any Error).self) { _ = try sink.commit() }
+        #expect(!fm.fileExists(atPath: dest.path))
+    }
+
+    @Test("committing after an abort throws rather than naming a folder that was deleted")
+    func commitAfterAbortThrows() throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+
+        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        try fm.createDirectory(at: source, withIntermediateDirectories: true)
+        try Data(repeating: 0xCD, count: 256 * 1024)
+            .write(to: source.appendingPathComponent("big.bin"))
+        let bytes = try archiveBytes(of: source)
+
+        let dest = try makeDestination(in: scratch)
+        let sink = ClipboardDirectoryExtractSink(destinationURL: dest, label: "test")
+        try sink.write(bytes.prefix(bytes.count / 2))
+        sink.abort()
+        #expect(!fm.fileExists(atPath: dest.path))
+        // The two endings are mutually exclusive: the tree a commit would hand
+        // back is gone, so reporting success would hand out a dead URL.
+        #expect(throws: ClipboardArchiveStreamError.cancelled) { _ = try sink.commit() }
+    }
+
     @Test("cancelling the extract sink refuses further writes and fails the commit")
     func cancelRefusesFurtherWrites() throws {
         let fm = FileManager.default
@@ -376,6 +444,34 @@ struct ClipboardDirectoryStreamTests {
         }
         pipe.fail(ClipboardArchiveStreamError.cancelled)
         try await released.wait { threw.value }
+    }
+
+    @Test("completing the byte pipe releases a writer it will never read from")
+    func completingThePipeReleasesTheWriter() async throws {
+        // Filled past capacity with nothing draining it, so the write below can
+        // only end when the pipe does.
+        let pipe = ClipboardArchiveBytePipe(capacity: 16)
+        try pipe.write(Data(repeating: 0, count: 64))
+        let released = AsyncGate()
+        let threw = Box(false)
+        let returned = Box(false)
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try pipe.write(Data([1]))
+            } catch {
+                threw.value = true
+            }
+            returned.value = true
+            released.notify()
+        }
+        pipe.complete()
+        try await released.wait { returned.value }
+        // Woken, like a failure — but the reader succeeded, so nothing is wrong
+        // and the writer must not be told otherwise.
+        #expect(!threw.value)
+        // Later bytes are taken and dropped; the reader is finished with them.
+        try pipe.write(Data([2]))
+        #expect(try pipe.read(upTo: 8).isEmpty)
     }
 
     @Test("the byte pipe drains what it holds before reporting end of stream")

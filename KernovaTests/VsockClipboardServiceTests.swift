@@ -1680,8 +1680,10 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        // The default: no capability information, so no folder is offered.
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let capable = Box(false)
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)",
+            peerStreamsDirectories: { capable.value })
         service.start()
         defer { service.stop() }
 
@@ -1709,6 +1711,12 @@ struct VsockClipboardServiceTests {
         }
         #expect(offer.repInfo.map(\.filename) == ["note.txt"])
         #expect(offer.repInfo.allSatisfy { !$0.isDirectory })
+        // Losing the folder is the same news to the user whether it emptied the
+        // offer or only shortened it — a copy that quietly arrives short is the
+        // one thing the window has to say.
+        #expect(
+            service.lastTransferIssue?.kind
+                == ClipboardTransferIssue.folderSkippedForOutdatedGuest().kind)
 
         // The surviving rep keeps the index the offer gave it, so the request's
         // low 16 bits still address it.
@@ -1733,6 +1741,43 @@ struct VsockClipboardServiceTests {
         }
         #expect(begin.filename == "note.txt")
         #expect(begin.totalBytes == 2)
+
+        // The buffer's own digest is the send-dedup key and it was latched by the
+        // shortened offer, so nothing else can notice the guest catching up. The
+        // dropped folder has to be re-offered once it can be received.
+        capable.value = true
+        service.grabIfChanged()
+        try await waitForFrames(recorder) {
+            recorder.first {
+                if case .clipboardOffer = $0.payload { return true }
+                return false
+            } != nil
+        }
+        let secondFrame = try #require(
+            recorder.first {
+                if case .clipboardOffer = $0.payload { return true }
+                return false
+            })
+        guard case .clipboardOffer(let second) = secondFrame.payload else {
+            Issue.record("Expected clipboardOffer, got \(String(describing: secondFrame.payload))")
+            return
+        }
+        #expect(second.repInfo.map(\.filename) == ["Project", "note.txt"])
+        #expect(second.generation > offer.generation)
+        // The re-offer retires the generation whose `note.txt` transfer is still
+        // parked on credit, so its abort is on the way; let that land before the
+        // observation window below, which would otherwise catch it.
+        try await waitForFrames(recorder) {
+            recorder.first {
+                if case .clipboardStreamAbort = $0.payload { return true }
+                return false
+            } != nil
+        }
+
+        // ...and once, not on every poll tick that follows.
+        let snapshot = recorder.frames.count
+        service.grabIfChanged()
+        try await expectNoNewFrames(on: recorder, sinceCount: snapshot)
     }
 
     @Test("a folder streamed with a declared total still extracts, so an older peer interoperates")

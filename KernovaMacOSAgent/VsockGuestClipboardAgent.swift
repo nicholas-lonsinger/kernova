@@ -190,10 +190,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// `allowsFileURLPull` gate inside it — runs on the agent's main thread.
     private var maxPasteBytes: Int = ClipboardPasteLimit.defaultBytes
 
-    /// The pasteboard change count whose snapshot was last skipped for holding
-    /// only folders the host cannot take, so the skip is logged once rather than
-    /// every poll tick.
-    private var skippedFolderChangeCount: Int?
+    /// The pasteboard change count whose copied folders the host could not take —
+    /// whether that left nothing to offer or only shortened the offer.
+    ///
+    /// Two jobs: the skip is logged once rather than every poll tick, and the
+    /// snapshot is re-offered once the host advertises the capability it lacked,
+    /// which neither `lastPasteboardChangeCount` nor `lastSeenDigest` can notice.
+    private var folderSkippedChangeCount: Int?
 
     /// Whether the connected host can receive a folder archived straight onto the
     /// wire (`clipboard.stream.directory.v1`).
@@ -445,6 +448,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             // A brand-new host has no record of prior offers; re-announce.
             self.lastSeenDigest = nil
             self.lastPasteboardChangeCount = -1
+            self.folderSkippedChangeCount = nil
         }
         Self.logger.notice(
             "Vsock clipboard connected to host (conn=\(connectionTag, privacy: .public))")
@@ -512,7 +516,15 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     func checkClipboardChange() {
         guard let channel = liveChannel else { return }
         let currentCount = pasteboard.changeCount
-        guard currentCount != lastPasteboardChangeCount else { return }
+        if currentCount == lastPasteboardChangeCount {
+            // Both dedup keys above describe what was *offered*, so neither can
+            // tell that the offer went out short of this snapshot's folders.
+            // Re-enter for exactly that case, once the host advertises the
+            // capability it lacked.
+            guard folderSkippedChangeCount == currentCount, hostStreamsDirectories() else {
+                return
+            }
+        }
 
         // `org.nspasteboard.*` marker handling, from the unfiltered first-item
         // type list: a transient/auto-generated snapshot is never offered; a
@@ -535,6 +547,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // bytes stream later when the host requests them.
         let expansion = fileExpansionCandidates()
         let fileCandidates = expansion.candidates
+        if expansion.unsupportedFolders > 0 {
+            noteFoldersSkipped(
+                count: expansion.unsupportedFolders, offeringAnything: !fileCandidates.isEmpty,
+                changeCount: currentCount)
+        }
         if fileCandidates.isEmpty, expansion.unsupportedFolders > 0 {
             // Every copied item was a folder this host cannot receive. Falling
             // through would offer the pasteboard's leftover non-file flavors —
@@ -543,14 +560,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             //
             // The change count is deliberately *not* advanced: the capability is
             // re-read from every `Hello`, so this copy becomes offerable the
-            // moment the host advertises it. Reported once per snapshot, since
-            // the poll re-enters here every tick.
-            if skippedFolderChangeCount != currentCount {
-                skippedFolderChangeCount = currentCount
-                Self.logger.notice(
-                    "Offering nothing — all \(expansion.unsupportedFolders, privacy: .public) copied item(s) are folders and the host lacks \(KernovaCapability.clipboardStreamDirectoryV1, privacy: .public)"
-                )
-            }
+            // moment the host advertises it.
             return
         }
         if !fileCandidates.isEmpty {
@@ -593,6 +603,26 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // marker called for it.
         let content = outcome.content.withConcealed(isConcealed)
         sendOfferIfNeeded(content, channel: channel, changeCount: currentCount)
+    }
+
+    /// Records, once per snapshot, that `count` copied folders were left out
+    /// because the host cannot receive one.
+    ///
+    /// The user's copy came up short whether that emptied the offer or only
+    /// shortened it, so both latch here — and the latch is what lets
+    /// `checkClipboardChange` re-offer the snapshot when the capability appears.
+    private func noteFoldersSkipped(count: Int, offeringAnything: Bool, changeCount: Int) {
+        guard folderSkippedChangeCount != changeCount else { return }
+        folderSkippedChangeCount = changeCount
+        if offeringAnything {
+            Self.logger.notice(
+                "Leaving \(count, privacy: .public) copied folder(s) out of the offer — the host lacks \(KernovaCapability.clipboardStreamDirectoryV1, privacy: .public)"
+            )
+        } else {
+            Self.logger.notice(
+                "Offering nothing — all \(count, privacy: .public) copied item(s) are folders and the host lacks \(KernovaCapability.clipboardStreamDirectoryV1, privacy: .public)"
+            )
+        }
     }
 
     /// Announces `content` to the host when it's non-empty and not an echo of
@@ -724,6 +754,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     ) {
         guard !estimateInFlight else { return }
         estimateInFlight = true
+        // A folder candidate reaching here means the host takes folders, so
+        // nothing is being left out of this snapshot any more. Cleared only once
+        // the walk is actually under way: clearing it earlier would strand a
+        // re-offer the guard above turned back.
+        folderSkippedChangeCount = nil
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let reps: [ClipboardContent.Representation] = candidates.map { candidate in
                 if candidate.isDirectory {

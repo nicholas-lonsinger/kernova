@@ -134,8 +134,9 @@ public final class ClipboardStreamSender: @unchecked Sendable {
     ///   - folderName: the folder's own name, mirrored into
     ///     `ClipboardStreamBegin.filename`.
     ///   - uti: the folder's content type (a package UTI for a bundle).
-    ///   - maxAcceptByteCount: the requester's payload ceiling; exceeding it
-    ///     mid-stream aborts with `Abort{disk.full}`.
+    ///   - maxAcceptByteCount: the requester's payload ceiling, measured against
+    ///     the tree the archive expands to rather than the compressed bytes on
+    ///     the wire; exceeding it mid-stream aborts with `Abort{disk.full}`.
     ///   - isCurrent: supersession check, evaluated between chunks off the
     ///     caller's actor.
     ///   - onProgress: cumulative `(bytesSent, 0)` — a streamed transfer has no
@@ -440,13 +441,19 @@ public final class ClipboardStreamSender: @unchecked Sendable {
 
             // The requester's ceiling, enforced as bytes are produced. A declared
             // payload was already refused up front, so this only ever fires for a
-            // stream whose size wasn't knowable then.
+            // stream whose size wasn't knowable then — and it is measured in the
+            // unit the ceiling is stated in: the tree the requester will write,
+            // not the archive on the wire, which LZFSE can make ~100× smaller. A
+            // source whose wire bytes are its payload reports no offer-unit count.
+            let producedBytes = reader.offerUnitProgress ?? (offset + chunk.count)
             if maxAcceptByteCount != ClipboardStreamTuning.unlimitedAcceptByteCount,
-                UInt64(offset) + UInt64(chunk.count) > maxAcceptByteCount
+                UInt64(producedBytes) > maxAcceptByteCount
             {
                 sendAbort(
                     transfer: transfer, code: "disk.full",
-                    message: "Requester cannot accept more than \(maxAcceptByteCount) bytes")
+                    message:
+                        "Requester cannot accept more than \(maxAcceptByteCount) bytes; the payload has produced \(producedBytes)"
+                )
                 return false
             }
             hasher.update(data: chunk)

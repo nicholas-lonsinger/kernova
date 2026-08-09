@@ -76,9 +76,13 @@ final class VsockClipboardService: ClipboardServicing {
     /// check rather than captured, so a Settings change reaches a live session.
     private let maxPasteBytes: @MainActor () -> Int
 
-    /// The buffer digest whose offer was last skipped for lacking anything the
-    /// peer can take, so the skip is reported once rather than every poll tick.
-    @ObservationIgnored private var skippedOfferDigest: Data?
+    /// The buffer digest whose folders were last left out of what this peer was
+    /// offered — whether that emptied the offer or only shortened it.
+    ///
+    /// Two jobs: the skip is reported once rather than every poll tick, and the
+    /// buffer is re-offered once the peer advertises the capability it lacked,
+    /// which `lastGrabbedDigest` alone cannot notice.
+    @ObservationIgnored private var folderSkippedDigest: Data?
 
     /// Whether the connected guest can receive a folder archived straight onto
     /// the wire (`clipboard.stream.directory.v1`).
@@ -413,6 +417,7 @@ final class VsockClipboardService: ClipboardServicing {
     func clearBuffer() {
         clipboardContent = .empty
         lastGrabbedDigest = nil
+        folderSkippedDigest = nil
         // The user emptied the buffer — any guest offer it was showing is stale.
         dropInboundPromise()
         retireUnreferencedDropDirectories()
@@ -482,12 +487,22 @@ final class VsockClipboardService: ClipboardServicing {
         guard !clipboardContent.representations.contains(where: { $0.isPendingRemote }) else {
             return
         }
-        guard clipboardContent.digest != lastGrabbedDigest else { return }
+        if clipboardContent.digest == lastGrabbedDigest {
+            // The dedup key above is the *whole* buffer's digest, so it cannot
+            // tell that the last offer went out short of this buffer's folders.
+            // Re-enter for exactly that case, once the peer advertises the
+            // capability it lacked — the same stranding the emptied-offer branch
+            // below avoids by never latching.
+            guard folderSkippedDigest == clipboardContent.digest, peerStreamsDirectories() else {
+                return
+            }
+        }
 
         let generation = nextLocalGeneration
         // Cap to the 16-bit rep-index limit; the buffer's own (uncapped) digest
         // stays the dedup key so an unchanged buffer isn't re-offered.
-        let capped = offerableContent().cappedToOfferLimit()
+        let offerable = offerableContent()
+        let capped = offerable.content.cappedToOfferLimit()
         if let originalCount = capped.truncatedFrom {
             Self.logger.warning(
                 "Clipboard offer truncated from \(originalCount, privacy: .public) to \(ClipboardContent.maxOfferableRepresentations, privacy: .public) representations (16-bit transfer-id limit)"
@@ -504,16 +519,11 @@ final class VsockClipboardService: ClipboardServicing {
             // clears it, so latching would strand this buffer for the rest of the
             // session even once the guest advertises it again. Reported once per
             // buffer instead, since the poll re-enters here every tick.
-            if skippedOfferDigest != clipboardContent.digest {
-                skippedOfferDigest = clipboardContent.digest
-                lastTransferIssue = .folderSkippedForOutdatedGuest()
-                Self.logger.notice(
-                    "Offering nothing to '\(self.label, privacy: .public)' — every representation is a folder and the guest agent lacks \(KernovaCapability.clipboardStreamDirectoryV1, privacy: .public) (agent needs updating)"
-                )
-            }
+            noteFoldersSkipped(
+                "Offering nothing to '\(label)' — every representation is a folder and the guest agent lacks \(KernovaCapability.clipboardStreamDirectoryV1) (agent needs updating)"
+            )
             return
         }
-        skippedOfferDigest = nil
 
         var offer = Frame()
         offer.protocolVersion = 1
@@ -531,6 +541,14 @@ final class VsockClipboardService: ClipboardServicing {
             currentOutboundGeneration.set(generation)
             lastGrabbedDigest = clipboardContent.digest
             lastTransferIssue = nil
+            if offerable.droppedFolders > 0 {
+                // Ordered after the clear above, which would otherwise wipe it.
+                noteFoldersSkipped(
+                    "Dropped \(offerable.droppedFolders) folder representation(s) from the clipboard offer to '\(label)' — the guest agent lacks \(KernovaCapability.clipboardStreamDirectoryV1) (agent needs updating)"
+                )
+            } else {
+                folderSkippedDigest = nil
+            }
             // The offer just replaced supersedes whatever drop it was reading
             // from, so that drop's files can go.
             retireUnreferencedDropDirectories()
@@ -544,23 +562,36 @@ final class VsockClipboardService: ClipboardServicing {
         }
     }
 
-    /// The buffer's content as this peer can consume it: folder representations
-    /// are dropped for a guest agent that predates
-    /// `clipboard.stream.directory.v1`, which cannot receive one.
+    /// The buffer's content as this peer can consume it, and how many folder
+    /// representations that cost: a guest agent predating
+    /// `clipboard.stream.directory.v1` cannot receive one.
     ///
     /// Filtering here rather than at the wire keeps `pendingOutbound` and the
     /// offer built from the same list, so a `transfer_id`'s low 16 bits keep
     /// addressing the representation the guest asked for.
-    private func offerableContent() -> ClipboardContent {
-        guard !peerStreamsDirectories() else { return clipboardContent }
+    private func offerableContent() -> (content: ClipboardContent, droppedFolders: Int) {
+        guard !peerStreamsDirectories() else { return (clipboardContent, 0) }
         let kept = clipboardContent.representations.filter { !$0.isDirectory }
-        guard kept.count != clipboardContent.representations.count else { return clipboardContent }
-        if skippedOfferDigest != clipboardContent.digest {
-            Self.logger.notice(
-                "Dropping \(self.clipboardContent.representations.count - kept.count, privacy: .public) folder representation(s) from the clipboard offer to '\(self.label, privacy: .public)' — the guest agent lacks \(KernovaCapability.clipboardStreamDirectoryV1, privacy: .public) (agent needs updating)"
-            )
-        }
-        return ClipboardContent(representations: kept, isConcealed: clipboardContent.isConcealed)
+        let dropped = clipboardContent.representations.count - kept.count
+        guard dropped > 0 else { return (clipboardContent, 0) }
+        return (
+            ClipboardContent(representations: kept, isConcealed: clipboardContent.isConcealed),
+            dropped
+        )
+    }
+
+    /// Reports, once per buffer, that folders were left out of what this peer was
+    /// offered.
+    ///
+    /// The user's copy came up short whether the filter emptied the offer or only
+    /// shortened it, so both raise the same notice — and the latch is what lets
+    /// `grabIfChanged` re-offer the buffer when the capability appears.
+    private func noteFoldersSkipped(_ message: @autoclosure () -> String) {
+        guard folderSkippedDigest != clipboardContent.digest else { return }
+        folderSkippedDigest = clipboardContent.digest
+        lastTransferIssue = .folderSkippedForOutdatedGuest()
+        let text = message()
+        Self.logger.notice("\(text, privacy: .public)")
     }
 
     // MARK: - Frame consumer
@@ -869,6 +900,8 @@ final class VsockClipboardService: ClipboardServicing {
         clipboardContent = content
         lastGrabbedDigest = content.digest
         lastInboundPublishedDigest = content.digest
+        // The buffer this described has been replaced wholesale.
+        folderSkippedDigest = nil
     }
 
     /// Drops the current inbound promise and its per-generation lazy-pull state.

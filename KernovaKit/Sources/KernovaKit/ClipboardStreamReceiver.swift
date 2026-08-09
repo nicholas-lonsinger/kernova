@@ -419,10 +419,16 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                 failSinkError(transfer, sink: sink, error: error)
                 return
             }
+            // The rep's bytes are the tree at `url`, so its size is the tree's,
+            // not the compressed count the wire carried — which can be ~100×
+            // lower and disagrees with the uncompressed estimate the offer
+            // advertised for the same folder. `sha256` stays the wire digest:
+            // it is the transfer's integrity gate, already verified above.
+            let treeByteCount = transfer.extractedByteCount ?? byteCount
             deliver(
                 transfer,
                 ClipboardContent.Representation(
-                    uti: transfer.uti, fileURL: url, byteCount: byteCount, sha256: digest,
+                    uti: transfer.uti, fileURL: url, byteCount: treeByteCount, sha256: digest,
                     filename: transfer.filename, isDirectory: true),
                 byteCount: byteCount)
             return
