@@ -780,11 +780,8 @@ final class VMLibraryViewModel {
             cleanupSetupResumeData(for: instance, permanently: permanently)
             lifecycle.clearActiveOperation(for: instance.id)
             sleepPausedInstanceIDs.remove(instance.id)
-            instances.removeAll { $0.id == instance.id }
+            evict(instance)
             persistOrder()
-            if selectedID == instance.id {
-                selectedID = instances.first?.id
-            }
             if permanently {
                 Self.logger.notice("Permanently deleted VM '\(instance.name, privacy: .public)'")
             } else {
@@ -2240,10 +2237,7 @@ final class VMLibraryViewModel {
                 // Cancel any in-flight setup task before evicting — otherwise it keeps
                 // mutating an orphan instance the view model no longer knows about.
                 instance.setupTask?.cancel()
-                instances.removeAll { $0.id == instance.id }
-                if selectedID == instance.id {
-                    selectedID = instances.first?.id
-                }
+                evict(instance)
                 Self.logger.info("VM '\(instance.name, privacy: .public)' no longer on disk — removed from library")
                 didChange = true
             }
@@ -2306,13 +2300,23 @@ final class VMLibraryViewModel {
 
     /// Removes a phantom instance from the library, clears its preparing state, and trashes its partial bundle.
     private func cleanupPhantomInstance(_ phantom: VMInstance) {
-        instances.removeAll { $0.id == phantom.id }
+        evict(phantom)
         persistOrder()
-        if selectedID == phantom.id {
-            selectedID = instances.first?.id
-        }
         phantom.preparingState = nil
         Self.trashPartialBundle(at: phantom.bundleURL, fileSystem: fileSystem)
+    }
+
+    /// Drops `instance` from the library, moving the selection off it and
+    /// releasing the app-level state keyed on it.
+    ///
+    /// The single removal path: a clipboard problem left in the issue center
+    /// would otherwise keep drawing a menu line for a VM that no longer exists.
+    private func evict(_ instance: VMInstance) {
+        instances.removeAll { $0.id == instance.id }
+        if selectedID == instance.id {
+            selectedID = instances.first?.id
+        }
+        ClipboardIssueCenter.shared.clear(instanceID: instance.instanceID)
     }
 
     // MARK: - Reorder

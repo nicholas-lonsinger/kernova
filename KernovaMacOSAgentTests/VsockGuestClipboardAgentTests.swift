@@ -792,7 +792,9 @@ struct VsockGuestClipboardAgentTests {
         defer { hostChannel.close() }
 
         let capable = Box(false)
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let notices = AtomicInt()
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
         agent.hostStreamsDirectories = { capable.value }
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -811,15 +813,64 @@ struct VsockGuestClipboardAgentTests {
         #expect(offer.repInfo.map(\.filename) == ["note.txt"])
         #expect(offer.repInfo.allSatisfy { !$0.isDirectory })
 
+        // The copy was made in this guest, so its own menu says what was left
+        // out — and outranks the `.offeredToHost` the shortened offer records,
+        // which would otherwise read as a copy that fully crossed.
+        try await notices.changed.wait { notices.value == 1 }
+        #expect(
+            await MainActor.run { agent.clipboardActivity }
+                == .copyShortened(offeringAnything: true))
+
+        // A re-check of the same snapshot is not a second copy, so it is not
+        // owed a second interruption.
+        await MainActor.run { agent.checkClipboardChange() }
+        pasteboard.setItems([[(type: .string, data: Data("plain".utf8))]])
+        await MainActor.run { agent.checkClipboardChange() }
+        let plain = try await awaitOffer(on: hostChannel)
+        #expect(plain.repInfo.map(\.uti) == [ClipboardContent.utf8TextUTI])
+        #expect(notices.value == 1)
+
         // Both dedup keys describe what was offered — the change count and the
         // offered content's digest — so neither notices the host catching up.
         // The dropped folder has to be re-offered once it can be received.
+        pasteboard.setItems([
+            [(type: .fileURL, data: Data(folder.absoluteString.utf8))],
+            [(type: .fileURL, data: Data(file.absoluteString.utf8))],
+        ])
         capable.value = true
         await MainActor.run { agent.checkClipboardChange() }
         let second = try await awaitOffer(on: hostChannel)
         #expect(second.repInfo.map(\.filename) == ["Project", "note.txt"])
         #expect(second.repInfo.map(\.isDirectory) == [true, false])
         #expect(second.generation > offer.generation)
+    }
+
+    @Test("outbound: a folder-only copy tells the guest's own menu nothing crossed")
+    func outboundFolderOnlyCopyRaisesTheGuestNotice() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let notices = AtomicInt()
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, hostStreamsDirectories: false,
+            onClipboardNotice: { notices.increment() })
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let folder = try writeTempFolder(name: "Project", files: [("f.txt", Data("x".utf8))])
+        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
+        pasteboard.setItems([[(type: .fileURL, data: Data(folder.absoluteString.utf8))]])
+        await MainActor.run { agent.checkClipboardChange() }
+
+        // Nothing goes to the host, so the guest's menu is the only account of a
+        // copy that produced no offer at all.
+        try await notices.changed.wait { notices.value == 1 }
+        #expect(
+            await MainActor.run { agent.clipboardActivity }
+                == .copyShortened(offeringAnything: false))
     }
 
     /// Requests representation `repIndex` of `offer` and collects its stream.

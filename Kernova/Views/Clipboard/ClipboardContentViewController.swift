@@ -602,35 +602,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     }
 
     private func message(for issue: ClipboardTransferIssue) -> String {
-        switch issue.kind {
-        case .diskFull(let needed, let available):
-            let detail =
-                [
-                    needed.map { "\(DataFormatters.formatBytes(UInt64($0))) needed" },
-                    available.map { "\(DataFormatters.formatBytes(UInt64($0))) free" },
-                ]
-                .compactMap { $0 }
-                .joined(separator: ", ")
-            let base = "Not enough disk space to receive the clipboard payload"
-            return detail.isEmpty ? base : "\(base) (\(detail))"
-        case .peerReportedError(let code, _):
-            switch ClipboardErrorCode(rawValue: code) {
-            case .pasteDiskFull:
-                return "The guest ran out of disk space receiving the clipboard file"
-            case .pasteTooLarge:
-                return
-                    "Too large to paste into the guest — over the \(ClipboardPasteLimit.displayLimit(instance.effectiveClipboardMaxPasteBytes)) clipboard transfer limit"
-            case .pasteTimeout:
-                return "The clipboard transfer to the guest timed out"
-            case .pasteFailed, .copyTooLarge, .pasteIncompleteSet, .forwardItemsSkipped,
-                .folderPeerOutdated, .none:
-                return "Clipboard transfer failed on the guest side"
-            }
-        case .localFailure(_, let message):
-            return message
-        case .staleCopyRetracted(let message):
-            return message
-        }
+        issue.displayMessage(pasteLimitBytes: instance.effectiveClipboardMaxPasteBytes)
     }
 
     /// The message shown when "Copy to Mac" placed nothing on the pasteboard.

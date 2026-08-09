@@ -68,6 +68,13 @@ final class VsockClipboardService: ClipboardServicing {
     /// shows one progress readout across every live VM.
     private let progressCenter: ClipboardProgressCenter
 
+    /// App-level aggregate this VM's transfer problems feed, so a refusal raised
+    /// with no clipboard window open still reaches a surface.
+    private let issueCenter: ClipboardIssueCenter
+
+    /// The VM this service belongs to, as the issue center keys its notices.
+    private let instanceID: UUID
+
     /// Backstop for a lazy pull the peer never answers while the channel stays
     /// open.
     private let lazyPullTimeout: TimeInterval
@@ -238,7 +245,7 @@ final class VsockClipboardService: ClipboardServicing {
     /// Tests pass `stagingTempRoot` to isolate the staging directory between
     /// parallel runs.
     init(
-        channel: VsockChannel, label: String,
+        channel: VsockChannel, label: String, instanceID: UUID,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         maxPasteBytes: @escaping @MainActor () -> Int = { ClipboardPasteLimit.defaultBytes },
         peerStreamsDirectories: @escaping @MainActor () -> Bool = { false },
@@ -246,7 +253,8 @@ final class VsockClipboardService: ClipboardServicing {
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
         stagingTempRoot: URL = FileManager.default.temporaryDirectory,
-        progressCenter: ClipboardProgressCenter = .shared
+        progressCenter: ClipboardProgressCenter = .shared,
+        issueCenter: ClipboardIssueCenter = .shared
     ) {
         self.channel = channel
         self.label = label
@@ -254,6 +262,8 @@ final class VsockClipboardService: ClipboardServicing {
         self.peerStreamsDirectories = peerStreamsDirectories
         self.lazyPullTimeout = lazyPullTimeout
         self.progressCenter = progressCenter
+        self.issueCenter = issueCenter
+        self.instanceID = instanceID
         self.staging = ClipboardFileStaging(
             label: "host-\(label)", tempRoot: stagingTempRoot,
             freeSpaceProvider: freeSpaceProvider)
@@ -277,6 +287,11 @@ final class VsockClipboardService: ClipboardServicing {
 
     func start() {
         guard consumeTask == nil else { return }
+        // A fresh connection retires whatever the last one left standing: that
+        // problem described a transfer of a session that is over, and this
+        // service's own `lastTransferIssue` starts empty, so leaving it up would
+        // put the two surfaces in disagreement.
+        clearIssue()
         // Earlier sessions' receive and drop roots may still be serving the
         // pasteboard's current write (a stopped session's materialized reps stay
         // servable, and a dropped file's URL is copied as-is), so they are
@@ -412,6 +427,26 @@ final class VsockClipboardService: ClipboardServicing {
         return token
     }
 
+    // MARK: - Transfer issues
+
+    /// Publishes a user-visible transfer problem to this service's own readout
+    /// and to the app-level center that drives the menu-bar surfaces.
+    ///
+    /// The single write path for `lastTransferIssue`: the clipboard window is
+    /// optional, so an issue that reached only the property would have no surface
+    /// on the passthrough flows that raise most of them.
+    private func raiseIssue(_ issue: ClipboardTransferIssue) {
+        lastTransferIssue = issue
+        issueCenter.report(
+            issue, instanceID: instanceID, vmName: label, pasteLimitBytes: maxPasteBytes())
+    }
+
+    /// Retires the current problem from both surfaces.
+    private func clearIssue() {
+        lastTransferIssue = nil
+        issueCenter.clear(instanceID: instanceID)
+    }
+
     // MARK: - Public API
 
     func clearBuffer() {
@@ -424,7 +459,7 @@ final class VsockClipboardService: ClipboardServicing {
     }
 
     func reportIssue(_ issue: ClipboardTransferIssue) {
-        lastTransferIssue = issue
+        raiseIssue(issue)
     }
 
     func reserveDropDestination() -> URL? {
@@ -541,7 +576,7 @@ final class VsockClipboardService: ClipboardServicing {
             pendingOutbound = (generation: generation, content: content)
             currentOutboundGeneration.set(generation)
             lastGrabbedDigest = clipboardContent.digest
-            lastTransferIssue = nil
+            clearIssue()
             if offerable.droppedFolders > 0 {
                 // Ordered after the clear above, which would otherwise wipe it.
                 noteFoldersSkipped(
@@ -590,7 +625,7 @@ final class VsockClipboardService: ClipboardServicing {
     private func noteFoldersSkipped(_ message: @autoclosure () -> String) {
         guard folderSkippedDigest != clipboardContent.digest else { return }
         folderSkippedDigest = clipboardContent.digest
-        lastTransferIssue = .folderSkippedForOutdatedGuest()
+        raiseIssue(.folderSkippedForOutdatedGuest())
         let text = message()
         Self.logger.notice("\(text, privacy: .public)")
     }
@@ -668,9 +703,10 @@ final class VsockClipboardService: ClipboardServicing {
                 "Guest clipboard error for '\(self.label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
             if error.code.hasPrefix("clipboard.") {
-                lastTransferIssue = ClipboardTransferIssue(
-                    kind: .peerReportedError(code: error.code, message: error.message),
-                    date: Date())
+                raiseIssue(
+                    ClipboardTransferIssue(
+                        kind: .peerReportedError(code: error.code, message: error.message),
+                        date: Date()))
             }
         case .clipboardStreamAbort(let abort):
             // Only a sender-bound abort reaches here; see the routing in `consume`.
@@ -800,7 +836,7 @@ final class VsockClipboardService: ClipboardServicing {
         // silently serves nothing, and tell the user how to get the new copy.
         let retracted = retractStaleHostWrite?() ?? false
         if retracted {
-            lastTransferIssue = .staleCopyRetracted()
+            raiseIssue(.staleCopyRetracted())
             // With the write retracted, no earlier session's staging can be
             // backing a live pasteboard item any more.
             staging.reclaimSiblingRoots()
@@ -850,7 +886,7 @@ final class VsockClipboardService: ClipboardServicing {
         inboundPromise = promise
         previewMaterializationStarted = 0
         // A retraction's issue is the new offer's own explainer — keep it.
-        if !retracted { lastTransferIssue = nil }
+        if !retracted { clearIssue() }
         // Bumped after the promise is live, so the passthrough coordinator's
         // `materializeForCopy` sees it.
         inboundOfferSeq &+= 1
@@ -1028,7 +1064,7 @@ final class VsockClipboardService: ClipboardServicing {
             )
             // The click reports its own outcome, but an automatic passthrough
             // publish has no return path — the issue is the only surface it has.
-            lastTransferIssue = .overCopyBudget(limitBytes: limit)
+            raiseIssue(.overCopyBudget(limitBytes: limit))
         }
 
         var items: [CopyToMacItem] = []
@@ -1104,7 +1140,7 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.warning(
                 "Clipboard paste fired for gen=\(generation, privacy: .public) of '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) after the service stopped with the file set partially materialized — \(ClipboardErrorCode.pasteIncompleteSet.rawValue, privacy: .public); serving nothing"
             )
-            lastTransferIssue = .partialFileSetUnservable()
+            raiseIssue(.partialFileSetUnservable())
         }
         return true
     }
@@ -1122,7 +1158,7 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.warning(
                 "Paste refused: \(ClipboardErrorCode.copyTooLarge.rawValue, privacy: .public) — paste-bound reps total \(snapshot.pasteBoundTotal, privacy: .public) bytes, over the \(limit, privacy: .public)-byte cap"
             )
-            lastTransferIssue = .overCopyBudget(limitBytes: limit)
+            raiseIssue(.overCopyBudget(limitBytes: limit))
             return nil
         }
         return snapshot
@@ -1189,8 +1225,8 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.warning(
                 "Not enough disk space to receive clipboard rep '\(info.uti, privacy: .public)' (\(info.byteCount, privacy: .public) bytes)"
             )
-            lastTransferIssue = .diskFull(
-                needed: info.byteCount, available: staging.availableCapacity())
+            raiseIssue(
+                .diskFull(needed: info.byteCount, available: staging.availableCapacity()))
             return nil
         }
         // The host is the receiver here, so it sets the direction bit. [H3]
@@ -1234,7 +1270,7 @@ final class VsockClipboardService: ClipboardServicing {
                         Task { @MainActor [weak self] in self?.recordPullDiskFull(info) }
                     } else if info.code == "extract.error" {
                         Task { @MainActor [weak self] in
-                            self?.lastTransferIssue = .pasteFolderUnpackFailed()
+                            self?.raiseIssue(.pasteFolderUnpackFailed())
                         }
                     }
                     pull.resume(nil)
@@ -1289,7 +1325,7 @@ final class VsockClipboardService: ClipboardServicing {
             // inline rep pulls fine).
             switch lastTransferIssue?.kind {
             case .diskFull, .localFailure: break
-            case .peerReportedError, .staleCopyRetracted, .none: lastTransferIssue = nil
+            case .peerReportedError, .staleCopyRetracted, .none: clearIssue()
             }
         }
         return rep
@@ -1298,7 +1334,7 @@ final class VsockClipboardService: ClipboardServicing {
     /// Records a disk-full transfer issue for a pull that aborted mid-stream
     /// because the staging volume filled (the up-front case is set in `pull`).
     private func recordPullDiskFull(_ info: ClipboardStreamAbortInfo) {
-        lastTransferIssue = .diskFull(from: info)
+        raiseIssue(.diskFull(from: info))
     }
 
     // MARK: - Synchronous blocking pull (paste-time provider)
@@ -1385,7 +1421,7 @@ final class VsockClipboardService: ClipboardServicing {
     /// clipboard window renders is the only host-side account of why a paste
     /// produced nothing.
     nonisolated private func recordPasteIssue(_ issue: ClipboardTransferIssue) {
-        onMain { self.lastTransferIssue = issue }
+        onMain { self.raiseIssue(issue) }
     }
 
     /// Synchronously pulls one file rep, blocking the calling thread until the
@@ -1546,7 +1582,7 @@ final class VsockClipboardService: ClipboardServicing {
         // files ride the grace window rather than being swept (docs/CLIPBOARD.md
         // §3), so a paste mid-copy survives.
         if retractStaleHostWrite?() == true {
-            lastTransferIssue = .staleCopyRetracted()
+            raiseIssue(.staleCopyRetracted())
             staging.reclaimSiblingRoots()
             Self.logger.notice(
                 "Retracted the stale host-pasteboard promise for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) after the guest released gen=\(release.generation, privacy: .public)"

@@ -250,6 +250,24 @@ struct VMLibraryViewModelTests {
         #expect(storage.deleteVMBundleCallCount == 1)
     }
 
+    @Test("deleteConfirmed retires the VM's clipboard issue from the app-level center")
+    func deleteConfirmedClearsClipboardIssue() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+        // The process-wide center is what the production seam clears; the entry
+        // is keyed on this test's own VM id, so no other test can see it.
+        ClipboardIssueCenter.shared.report(
+            .pasteTimedOut(), instanceID: instance.instanceID, vmName: instance.name,
+            pasteLimitBytes: 1024)
+
+        viewModel.deleteConfirmed(instance)
+
+        #expect(ClipboardIssueCenter.shared.latestByInstance[instance.instanceID] == nil)
+        #expect(ClipboardIssueCenter.shared.pendingNotice == nil)
+    }
+
     @Test("deleteConfirmed selects first remaining instance when deleting selected")
     func deleteConfirmedUpdatesSelection() {
         let (viewModel, storage, _, _, _) = makeViewModel()

@@ -71,17 +71,16 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
 
     // MARK: - Clipboard notice
 
-    /// Opens the dropdown on the clipboard refusal the agent just recorded.
+    /// Opens the dropdown on the clipboard notice the agent just recorded.
     ///
-    /// The refusal ends a gesture the user made in this guest and produces no
-    /// other signal — the paste simply yields nothing — so the line is revealed
-    /// rather than left for whenever the menu is next opened. The agent records
-    /// the activity before raising this, so `menuNeedsUpdate` builds the refusal
-    /// line into the dropdown this opens.
+    /// The notice ends a gesture the user made in this guest and produces no
+    /// other signal — the paste simply yields nothing, the copy simply crosses
+    /// short — so the line is revealed rather than left for whenever the menu is
+    /// next opened. The agent records the activity before raising this, so
+    /// `menuNeedsUpdate` builds the line into the dropdown this opens.
     func clipboardNoticeRaised() {
         pasteProgressPresenter.revealDropdown(while: { [weak self] in
-            guard let self, case .pasteRefused = self.clipboardActivity() else { return false }
-            return true
+            self?.clipboardActivity().isNotice ?? false
         })
     }
 
@@ -131,9 +130,9 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         }
 
         let activity = clipboardActivity()
-        // A refusal is what the auto-open is revealing, so it reads at the top
+        // A notice is what the auto-open is revealing, so it reads at the top
         // level; every other activity is state the Status submenu holds.
-        if case .pasteRefused = activity {
+        if activity.isNotice {
             addInfoItem(AgentMenuText.clipboardLine(activity))
             menu.addItem(.separator())
         }

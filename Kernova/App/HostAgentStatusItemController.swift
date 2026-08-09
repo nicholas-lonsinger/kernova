@@ -25,8 +25,11 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     private let viewModel: VMLibraryViewModel
     private let preferences: AppPreferences
+    private let issueCenter: ClipboardIssueCenter
     /// Summons the GUI — `nil` opens the library, a VM id opens just that VM.
     private let onOpen: (UUID?) -> Void
+    /// Opens the clipboard window of the VM a notice names.
+    private let onOpenClipboard: (UUID) -> Void
     private let onQuit: () -> Void
 
     /// Keeps the tooltip — and, while the dropdown is open, its VM rows — in
@@ -34,33 +37,50 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private var runningObservation: ObservationLoop?
     /// Keeps the paste readout in sync with the materializing transfer.
     private var pasteProgressObservation: ObservationLoop?
+    /// Fires when a clipboard refusal is queued for an interrupting surface.
+    private var clipboardNoticeObservation: ObservationLoop?
 
     /// The dropdown readout, its one-shot automatic open, and the shared menu
     /// wiring for a materializing paste.
     ///
-    /// Dismisses the soft-quit reminder before an automatic open, so the click
-    /// reaches the menu rather than the reminder's dismissal handler.
+    /// Dismisses any transient popover before an automatic open, so the click
+    /// reaches the reattached menu rather than the popover's dismissal handler.
     private lazy var pasteProgressPresenter = ClipboardProgressStatusItemPresenter(
         statusItem: statusItem, menu: menu,
-        willAutoOpen: { [weak self] in self?.dismissSoftQuitReminder() })
+        willAutoOpen: { [weak self] in self?.transientPopover.dismiss() })
 
-    /// Manages the transient "still running in the menu bar" soft-quit reminder
-    /// popover.
-    private let softQuitReminder = PopoverPresenter()
-    /// Auto-dismiss timer for the soft-quit reminder; cancelled if it closes
-    /// earlier (opt-out tap, opening the status menu, or a second soft quit).
-    private var softQuitReminderDismissTask: Task<Void, Never>?
+    /// The status item's one transient-popover slot, shared by the soft-quit
+    /// reminder and the clipboard notice.
+    private lazy var transientPopover = TransientStatusItemPopover(
+        statusItem: statusItem, menu: menu,
+        isDropdownOpen: { [weak self] in self?.isMenuOpen ?? false })
+
+    /// The notice currently shown, or the last one declined.
+    ///
+    /// One refusal is presented once. A repeat of the same kind is a new notice,
+    /// since the issue's `date` is its identity.
+    private var lastPresentedNotice: ClipboardIssueCenter.Notice?
+
+    /// How long a clipboard notice stays up unattended.
+    private static let clipboardNoticeDuration: Duration = .seconds(6)
+
+    /// How long the soft-quit reminder stays up unattended.
+    private static let softQuitReminderDuration: Duration = .seconds(4.5)
 
     init(
         viewModel: VMLibraryViewModel,
         preferences: AppPreferences = .shared,
+        issueCenter: ClipboardIssueCenter = .shared,
         onOpen: @escaping (UUID?) -> Void,
+        onOpenClipboard: @escaping (UUID) -> Void,
         onQuit: @escaping () -> Void
     ) {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.viewModel = viewModel
         self.preferences = preferences
+        self.issueCenter = issueCenter
         self.onOpen = onOpen
+        self.onOpenClipboard = onOpenClipboard
         self.onQuit = onQuit
         super.init()
 
@@ -76,7 +96,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
                 // Evaluating the row model registers every property the rows
                 // (and the tooltip's running count) render, so the tracked set
                 // can't drift from the rendered set.
-                _ = StatusMenuVMSection.rows(for: self.viewModel.instances)
+                _ = self.currentRows()
             },
             apply: { [weak self] in
                 guard let self else { return }
@@ -89,6 +109,17 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             track: { _ = ClipboardProgressCenter.shared.materializationProgress },
             apply: { [weak self] in self?.pasteProgressChanged() }
         )
+
+        clipboardNoticeObservation = observeRecurring(
+            track: { [weak self] in _ = self?.issueCenter.pendingNotice },
+            apply: { [weak self] in self?.pendingClipboardNoticeChanged() }
+        )
+    }
+
+    /// The dropdown's VM rows for the current library and clipboard issues.
+    private func currentRows() -> [StatusMenuVMRow] {
+        StatusMenuVMSection.rows(
+            for: viewModel.instances, issues: issueCenter.latestByInstance)
     }
 
     // MARK: - Paste progress
@@ -99,88 +130,50 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         updateTooltip()
     }
 
+    // MARK: - Clipboard notice
+
+    /// Presents the clipboard refusal the issue center just queued, if the status
+    /// item can carry a popover right now.
+    ///
+    /// A notice that can't be shown is dropped rather than deferred: the
+    /// dropdown's own line is the fallback, and a refusal replayed later would
+    /// interrupt for something the user has moved past.
+    private func pendingClipboardNoticeChanged() {
+        guard let notice = issueCenter.pendingNotice, notice != lastPresentedNotice else { return }
+        lastPresentedNotice = notice
+        issueCenter.consumePendingNotice()
+
+        let content = ClipboardNoticeViewController(notice: notice) { [weak self] in
+            guard let self else { return }
+            self.transientPopover.dismiss()
+            self.onOpenClipboard(notice.instanceID)
+        }
+        guard
+            transientPopover.show(
+                content, for: Self.clipboardNoticeDuration, describedAs: "Clipboard notice")
+        else { return }
+        Self.logger.notice(
+            "Showing a clipboard notice for '\(notice.vmName, privacy: .public)'")
+    }
+
     // MARK: - Soft-quit reminder
 
     /// Shows a transient reminder popover anchored to the status item after a soft
     /// quit — unless the user has silenced it.
-    ///
-    /// Skipped when the status item isn't on screen: macOS hides status items it
-    /// can't fit in a crowded menu bar, and a popover anchored to a hidden button
-    /// would point at nothing.
     func showSoftQuitReminder() {
         guard !preferences.menuBarQuitReminderDismissed else { return }
-        guard let button = statusItem.button, statusItem.isVisible, button.window != nil else {
-            Self.logger.info(
-                "Soft-quit reminder skipped — the status item is not currently on screen")
-            return
-        }
-
-        // Re-arm cleanly if a prior reminder is still up.
-        softQuitReminderDismissTask?.cancel()
-
-        // RATIONALE: detach the dropdown while the reminder popover is anchored.
-        // With `statusItem.menu` assigned, `NSPopover.show(relativeTo:)` against
-        // the status-item button pops the assigned menu open by itself (macOS 26,
-        // observed on every soft quit with the cursor nowhere near the item), and
-        // that open dismisses the reminder via `menuNeedsUpdate` within a frame.
-        // Every dismissal path restores the menu.
-        statusItem.menu = nil
-        button.target = self
-        button.action = #selector(statusItemTappedDuringReminder)
 
         let content = MenuBarQuitReminderViewController(onStopReminding: { [weak self] in
             guard let self else { return }
             self.preferences.menuBarQuitReminderDismissed = true
             Self.logger.info("Soft-quit menu-bar reminder silenced by the user")
-            self.dismissSoftQuitReminder()
+            self.transientPopover.dismiss()
         })
-        // RATIONALE: `.applicationDefined`, not the default `.transient` — a soft
-        // quit deactivates the app moments after this shows, and a `.transient`
-        // popover auto-closes on app deactivation (see `PopoverPresenter`'s
-        // `onClose` doc), so the reminder would vanish before it could be read.
-        // Lifetime is bounded instead by the auto-dismiss timer below, the
-        // opt-out tap, and a click on the status item.
-        softQuitReminder.show(
-            content: content, from: button, preferredEdge: .minY, behavior: .applicationDefined)
+        guard
+            transientPopover.show(
+                content, for: Self.softQuitReminderDuration, describedAs: "Soft-quit reminder")
+        else { return }
         Self.logger.debug("Showing soft-quit menu-bar reminder")
-
-        softQuitReminderDismissTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(4.5))
-            guard !Task.isCancelled else { return }
-            self?.dismissSoftQuitReminder()
-        }
-    }
-
-    /// Closes the soft-quit reminder, cancels its auto-dismiss timer, and
-    /// reattaches the dropdown the reminder had detached.
-    ///
-    /// Idempotent.
-    private func dismissSoftQuitReminder() {
-        softQuitReminderDismissTask?.cancel()
-        softQuitReminderDismissTask = nil
-        softQuitReminder.close()
-        reattachStatusItemMenu()
-    }
-
-    /// Restores the dropdown after the soft-quit reminder detached it, clearing
-    /// the temporary button action.
-    private func reattachStatusItemMenu() {
-        guard statusItem.menu == nil else { return }
-        statusItem.button?.target = nil
-        statusItem.button?.action = nil
-        statusItem.menu = menu
-    }
-
-    /// Handles a click on the status item while the soft-quit reminder is up and
-    /// the dropdown is therefore detached.
-    @objc private func statusItemTappedDuringReminder() {
-        dismissSoftQuitReminder()
-        // Deferred a tick: the menu is reattached above, but popping it from
-        // inside the button-action callback the same click is still delivering
-        // re-enters menu tracking mid-event.
-        performOnMainRunLoop { [weak self] in
-            self?.statusItem.button?.performClick(nil)
-        }
     }
 
     // MARK: - Icon / tooltip
@@ -232,8 +225,8 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         // Opening the dropdown means the user found the icon — the soft-quit
-        // reminder has done its job.
-        dismissSoftQuitReminder()
+        // reminder has done its job, and the notice's line is in the menu below.
+        transientPopover.dismiss()
 
         menu.removeAllItems()
 
@@ -245,7 +238,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        vmSection.rebuild(rows: StatusMenuVMSection.rows(for: viewModel.instances))
+        vmSection.rebuild(rows: currentRows())
 
         menu.addItem(.separator())
 
@@ -268,7 +261,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// rebuilt by `menuNeedsUpdate` when it next opens.
     private func syncMenuIfOpen() {
         guard isMenuOpen else { return }
-        vmSection.sync(to: StatusMenuVMSection.rows(for: viewModel.instances))
+        vmSection.sync(to: currentRows())
     }
 
     // MARK: - Actions

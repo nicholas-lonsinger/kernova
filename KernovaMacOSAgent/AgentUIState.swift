@@ -14,8 +14,8 @@ enum HostConnectionState: Equatable, Sendable {
 
 /// Clipboard sharing state for display in the menu.
 ///
-/// `enabled` / `disabled` are the host-policy feature state; the other five
-/// record the most recent flow event, each set at the moment it starts rather
+/// `enabled` / `disabled` are the host-policy feature state; every other case
+/// records the most recent flow event, each set at the moment it starts rather
 /// than on completion. A flow event overwrites `enabled`; only host policy sets
 /// `disabled`.
 enum ClipboardActivity: Equatable, Sendable {
@@ -43,6 +43,25 @@ enum ClipboardActivity: Equatable, Sendable {
     /// open, so a ceiling raised after the refusal would otherwise rewrite the
     /// figure a past refusal names. `nil` for reasons no ceiling explains.
     case pasteRefused(ClipboardErrorCode, pasteLimitBytes: Int?)
+    /// Copied folders were left out of what the host was offered, because it
+    /// cannot receive one; `offeringAnything` is whether the rest still went.
+    ///
+    /// The copy was made in this guest, so the shortfall is reported here.
+    case copyShortened(offeringAnything: Bool)
     /// Host policy turned clipboard sharing off.
     case disabled
+
+    /// Whether the menu-bar surface reveals this activity by itself rather than
+    /// leaving it for the next time the user opens the dropdown.
+    ///
+    /// True for the outcomes of a gesture made in this guest that produces no
+    /// other signal — a paste that yields nothing, a copy that crosses short.
+    var isNotice: Bool {
+        switch self {
+        case .pasteRefused, .copyShortened:
+            return true
+        case .enabled, .offeredToHost, .offeredFromHost, .sentToHost, .receivedFromHost, .disabled:
+            return false
+        }
+    }
 }

@@ -96,6 +96,30 @@ struct AgentMenuTextTests {
                 == "Clipboard: too large to paste")
     }
 
+    @Test("a copy that crossed short names what was left out and what fixes it")
+    func clipboardCopyShortenedLines() {
+        #expect(
+            AgentMenuText.clipboardLine(.copyShortened(offeringAnything: true))
+                == "Clipboard: shared without folders — Kernova on the Mac needs updating")
+        #expect(
+            AgentMenuText.clipboardLine(.copyShortened(offeringAnything: false))
+                == "Clipboard: folders not shared — Kernova on the Mac needs updating")
+    }
+
+    // MARK: - isNotice
+
+    @Test("Only the outcomes of a gesture made in this guest reveal themselves")
+    func noticeActivities() {
+        #expect(ClipboardActivity.pasteRefused(.pasteFailed, pasteLimitBytes: nil).isNotice)
+        #expect(ClipboardActivity.copyShortened(offeringAnything: true).isNotice)
+        #expect(ClipboardActivity.copyShortened(offeringAnything: false).isNotice)
+        for activity: ClipboardActivity in [
+            .enabled, .offeredToHost, .offeredFromHost, .sentToHost, .receivedFromHost, .disabled,
+        ] {
+            #expect(!activity.isNotice, "\(activity) must not open the dropdown by itself")
+        }
+    }
+
     // MARK: - logForwardingLine / statusSubmenu
 
     @Test("logForwardingLine reflects the enabled flag")

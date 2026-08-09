@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 import Testing
 
 @testable import Kernova
@@ -23,8 +24,14 @@ struct StatusMenuVMSectionTests {
         return VMInstance(configuration: config, bundleURL: bundleURL, status: status)
     }
 
-    private func row(_ id: UUID, _ title: String) -> StatusMenuVMRow {
-        StatusMenuVMRow(instanceID: id, title: title)
+    private func row(_ id: UUID, _ title: String, notice: String? = nil) -> StatusMenuVMRow {
+        StatusMenuVMRow(instanceID: id, title: title, noticeText: notice)
+    }
+
+    private func notice(for id: UUID, _ issue: ClipboardTransferIssue) -> ClipboardIssueCenter.Notice {
+        ClipboardIssueCenter.Notice(
+            instanceID: id, vmName: "VM", issue: issue,
+            pasteLimitBytes: ClipboardPasteLimit.defaultBytes)
     }
 
     /// Builds a menu shaped like the real dropdown — items above and below the
@@ -59,6 +66,29 @@ struct StatusMenuVMSectionTests {
                 StatusMenuVMRow(instanceID: running.instanceID, title: "Build VM — Running"),
                 StatusMenuVMRow(instanceID: starting.instanceID, title: "CI VM — Starting"),
             ])
+    }
+
+    @Test("A VM with an outstanding clipboard issue carries its dropdown line")
+    func rowModelCarriesTheClipboardLine() {
+        let running = makeInstance(name: "Build VM", status: .running)
+        let quiet = makeInstance(name: "CI VM", status: .running)
+        let issue = ClipboardTransferIssue.overCopyBudget(limitBytes: ClipboardPasteLimit.defaultBytes)
+
+        let rows = StatusMenuVMSection.rows(
+            for: [running, quiet], issues: [running.instanceID: notice(for: running.instanceID, issue)])
+
+        #expect(rows.map(\.noticeText) == [issue.menuLineText, nil])
+    }
+
+    @Test("A stopped VM's issue never reaches the dropdown — it has no row to sit under")
+    func rowModelSkipsIssuesOfVMsWithoutRows() {
+        let stopped = makeInstance(name: "Idle VM", status: .stopped)
+        let issue = ClipboardTransferIssue.pasteTimedOut()
+
+        let rows = StatusMenuVMSection.rows(
+            for: [stopped], issues: [stopped.instanceID: notice(for: stopped.instanceID, issue)])
+
+        #expect(rows.isEmpty)
     }
 
     @Test("A preparing phantom's row shows its operation, not raw status")
@@ -103,6 +133,25 @@ struct StatusMenuVMSectionTests {
         #expect(menu.items[3].representedObject as? UUID == second)
         #expect(menu.items[2].target === target)
         #expect(menu.items[2].action == #selector(RowTarget.rowTapped(_:)))
+    }
+
+    @Test("Rebuild puts an indented, disabled notice line under the row it belongs to")
+    func rebuildInsertsNoticeLines() {
+        let first = UUID()
+        let second = UUID()
+        let (menu, _, _) = makeSection(rows: [
+            row(first, "One — Running", notice: "Clipboard: too large to copy to your Mac"),
+            row(second, "Two — Running"),
+        ])
+
+        #expect(
+            menu.items.map(\.title) == [
+                "Open Kernova", "", "One — Running", "Clipboard: too large to copy to your Mac",
+                "Two — Running", "", "Quit Kernova",
+            ])
+        #expect(menu.items[3].isEnabled == false)
+        #expect(menu.items[3].indentationLevel == 1)
+        #expect(menu.items[3].representedObject == nil)
     }
 
     // MARK: - Sync
@@ -200,6 +249,98 @@ struct StatusMenuVMSectionTests {
 
         #expect(menu.items[2] === secondItem)
         #expect(menu.items[3] === firstItem)
+    }
+
+    @Test("An issue arriving while the menu is open inserts its line under the row")
+    func syncInsertsNoticeLine() {
+        let id = UUID()
+        let other = UUID()
+        let (menu, section, _) = makeSection(
+            rows: [row(id, "One — Running"), row(other, "Two — Running")])
+        let rowItem = menu.items[2]
+
+        section.sync(to: [
+            row(id, "One — Running", notice: "Clipboard: paste from the guest timed out"),
+            row(other, "Two — Running"),
+        ])
+
+        #expect(
+            menu.items.map(\.title) == [
+                "Open Kernova", "", "One — Running", "Clipboard: paste from the guest timed out",
+                "Two — Running", "", "Quit Kernova",
+            ])
+        #expect(menu.items[2] === rowItem)
+        #expect(menu.items[3].indentationLevel == 1)
+    }
+
+    @Test("A cleared issue drops its line without disturbing the rows")
+    func syncRemovesNoticeLine() {
+        let id = UUID()
+        let (menu, section, _) = makeSection(rows: [
+            row(id, "VM — Running", notice: "Clipboard: paste from the guest timed out")
+        ])
+        let rowItem = menu.items[2]
+
+        section.sync(to: [row(id, "VM — Running")])
+
+        #expect(
+            menu.items.map(\.title) == [
+                "Open Kernova", "", "VM — Running", "", "Quit Kernova",
+            ])
+        #expect(menu.items[2] === rowItem)
+    }
+
+    @Test("A superseding issue retitles the existing line in place")
+    func syncRetitlesNoticeLine() {
+        let id = UUID()
+        let (menu, section, _) = makeSection(rows: [
+            row(id, "VM — Running", notice: "Clipboard: paste from the guest timed out")
+        ])
+        let noticeItem = menu.items[3]
+
+        section.sync(to: [row(id, "VM — Running", notice: "Clipboard: earlier copy was removed")])
+
+        #expect(menu.items[3] === noticeItem)
+        #expect(noticeItem.title == "Clipboard: earlier copy was removed")
+        #expect(menu.items.count == 6)
+    }
+
+    @Test("A VM stopping takes its notice line with its row")
+    func syncRemovesNoticeLineWithTheRow() {
+        let stopping = UUID()
+        let surviving = UUID()
+        let (menu, section, _) = makeSection(rows: [
+            row(stopping, "One — Running", notice: "Clipboard: earlier copy was removed"),
+            row(surviving, "Two — Running"),
+        ])
+
+        section.sync(to: [row(surviving, "Two — Running")])
+
+        #expect(
+            menu.items.map(\.title) == [
+                "Open Kernova", "", "Two — Running", "", "Quit Kernova",
+            ])
+    }
+
+    @Test("Reordering rows carries each notice line under its own row")
+    func syncReordersNoticeLinesWithRows() {
+        let first = UUID()
+        let second = UUID()
+        let (menu, section, _) = makeSection(rows: [
+            row(first, "One — Running", notice: "Clipboard: earlier copy was removed"),
+            row(second, "Two — Running", notice: "Clipboard: some items weren't forwarded"),
+        ])
+
+        section.sync(to: [
+            row(second, "Two — Running", notice: "Clipboard: some items weren't forwarded"),
+            row(first, "One — Running", notice: "Clipboard: earlier copy was removed"),
+        ])
+
+        #expect(
+            menu.items.map(\.title) == [
+                "Open Kernova", "", "Two — Running", "Clipboard: some items weren't forwarded",
+                "One — Running", "Clipboard: earlier copy was removed", "", "Quit Kernova",
+            ])
     }
 
     @Test("Rows stay anchored when items are inserted above the section")

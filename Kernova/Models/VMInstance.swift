@@ -858,7 +858,7 @@ final class VMInstance {
             // Read through `self` at each budget check, so a Settings change
             // lands on the live session without restarting the service.
             let service = VsockClipboardService(
-                channel: channel, label: self.name,
+                channel: channel, label: self.name, instanceID: self.instanceID,
                 maxPasteBytes: { [weak self] in
                     self?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes
                 },

@@ -300,7 +300,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -321,7 +321,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -331,6 +331,34 @@ struct VsockClipboardServiceTests {
         #expect(service.isConnected)
     }
 
+    @Test("A new connection retires the issue the last session left standing")
+    func startClearsThePreviousSessionsIssue() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let issues = ClipboardIssueCenter()
+        let vmID = UUID()
+        // What the previous session left on the dropdown before the VM restarted
+        // or the agent reconnected.
+        issues.report(
+            .pasteTimedOut(), instanceID: vmID, vmName: "Build VM",
+            pasteLimitBytes: ClipboardPasteLimit.defaultBytes)
+        #expect(issues.latestByInstance[vmID] != nil)
+
+        let service = VsockClipboardService(
+            channel: host, label: "Build VM", instanceID: vmID, issueCenter: issues)
+        service.start()
+        defer { service.stop() }
+
+        // Both surfaces start empty together — the service's own readout has
+        // nothing to show for a transfer that belonged to a finished session.
+        #expect(service.lastTransferIssue == nil)
+        #expect(issues.latestByInstance[vmID] == nil)
+        #expect(issues.pendingNotice == nil)
+    }
+
     @Test("A control-plane payload on the clipboard channel closes it")
     func wrongPortPayloadClosesChannel() async throws {
         let (guest, host) = try makePair()
@@ -338,7 +366,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -360,7 +388,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -383,7 +411,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -411,7 +439,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -440,7 +468,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -521,7 +549,7 @@ struct VsockClipboardServiceTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: stagingRoot) }
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)",
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
             peerStreamsDirectories: { true }, stagingTempRoot: stagingRoot)
         service.start()
         defer { service.stop() }
@@ -622,7 +650,7 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", peerStreamsDirectories: { true })
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), peerStreamsDirectories: { true })
         service.start()
         defer { service.stop() }
 
@@ -716,7 +744,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -764,7 +792,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -811,7 +839,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -881,7 +909,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -935,7 +963,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -1003,7 +1031,7 @@ struct VsockClipboardServiceTests {
         var noSigpipe: Int32 = 1
         _ = setsockopt(hostFd, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -1180,7 +1208,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -1221,7 +1249,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -1253,7 +1281,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -1293,7 +1321,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -1331,7 +1359,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -1384,7 +1412,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -1416,7 +1444,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -1456,7 +1484,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -1487,7 +1515,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -1548,7 +1576,7 @@ struct VsockClipboardServiceTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: stagingRoot) }
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", stagingTempRoot: stagingRoot)
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), stagingTempRoot: stagingRoot)
         service.start()
         defer { service.stop() }
 
@@ -1617,9 +1645,11 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         let capable = Box(false)
+        let issues = ClipboardIssueCenter()
+        let vmID = UUID()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)",
-            peerStreamsDirectories: { capable.value })
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: vmID,
+            peerStreamsDirectories: { capable.value }, issueCenter: issues)
         service.start()
         defer { service.stop() }
 
@@ -1671,6 +1701,11 @@ struct VsockClipboardServiceTests {
             return
         }
         #expect(offer.repInfo.map(\.filename) == ["OnlyFolder"])
+        // The copy now crossed whole, so the menu-bar surfaces must stop naming
+        // a shortfall that no longer exists.
+        #expect(service.lastTransferIssue == nil)
+        #expect(issues.latestByInstance[vmID] == nil)
+        #expect(issues.pendingNotice == nil)
     }
 
     @Test("a folder is left out of the offer for a guest that can't receive one")
@@ -1681,9 +1716,11 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         let capable = Box(false)
+        let issues = ClipboardIssueCenter()
+        let vmID = UUID()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)",
-            peerStreamsDirectories: { capable.value })
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: vmID,
+            peerStreamsDirectories: { capable.value }, issueCenter: issues)
         service.start()
         defer { service.stop() }
 
@@ -1717,6 +1754,10 @@ struct VsockClipboardServiceTests {
         #expect(
             service.lastTransferIssue?.kind
                 == ClipboardTransferIssue.folderSkippedForOutdatedGuest().kind)
+        // The menu-bar surfaces are the ones a passthrough user sees, so the
+        // shortfall has to reach the center too.
+        #expect(issues.latestByInstance[vmID]?.issue == service.lastTransferIssue)
+        #expect(issues.pendingNotice?.instanceID == vmID)
 
         // The surviving rep keeps the index the offer gave it, so the request's
         // low 16 bits still address it.
@@ -1787,7 +1828,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -1833,7 +1874,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -1904,7 +1945,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -1975,7 +2016,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         // The test calls stop() itself mid-flow (that is the action under test);
         // this defer is an idempotent safety net for the early-throw path.
@@ -2032,7 +2073,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -2102,7 +2143,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -2158,7 +2199,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -2214,7 +2255,7 @@ struct VsockClipboardServiceTests {
         defer { try? FileManager.default.removeItem(at: tempRoot) }
         let label = "vm-\(UUID().uuidString)"
         let service = VsockClipboardService(
-            channel: host, label: label, stagingTempRoot: tempRoot)
+            channel: host, label: label, instanceID: UUID(), stagingTempRoot: tempRoot)
 
         // An earlier session's receive root, still backing the pasteboard's
         // write at start — the retraction below is what frees it.
@@ -2259,7 +2300,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         // Nothing to retract at the offer; the release finds the stale write.
         var retractionResults: [Bool] = [false, true]
         var retractionCalls = 0
@@ -2293,7 +2334,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         var retractionCalls = 0
         service.retractStaleHostWrite = {
             retractionCalls += 1
@@ -2316,7 +2357,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
         pasteboard.clearContents()
         let publisher = HostClipboardPublisher(
@@ -2369,7 +2410,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
         pasteboard.clearContents()
         let publisher = HostClipboardPublisher(
@@ -2413,7 +2454,7 @@ struct VsockClipboardServiceTests {
         host1.start()
         defer { guest1.close() }
         let service1 = VsockClipboardService(
-            channel: host1, label: label, stagingTempRoot: tempRoot)
+            channel: host1, label: label, instanceID: UUID(), stagingTempRoot: tempRoot)
         service1.start()
         let fileBytes = Data((0..<(16 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
         let responder = FakeGuestResponder(guest: guest1)
@@ -2439,7 +2480,7 @@ struct VsockClipboardServiceTests {
         host2.start()
         defer { guest2.close() }
         let service2 = VsockClipboardService(
-            channel: host2, label: label, stagingTempRoot: tempRoot)
+            channel: host2, label: label, instanceID: UUID(), stagingTempRoot: tempRoot)
         service2.hostPasteboardHoldsOurWrite = { true }
         service2.start()
         #expect(FileManager.default.fileExists(atPath: stagedURL.path))
@@ -2451,7 +2492,7 @@ struct VsockClipboardServiceTests {
         host3.start()
         defer { guest3.close() }
         let service3 = VsockClipboardService(
-            channel: host3, label: label, stagingTempRoot: tempRoot)
+            channel: host3, label: label, instanceID: UUID(), stagingTempRoot: tempRoot)
         service3.hostPasteboardHoldsOurWrite = { false }
         service3.start()
         defer { service3.stop() }
@@ -2465,7 +2506,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -2498,7 +2539,13 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        // Its own center rather than the process-wide `.shared` default: the
+        // menu-bar surfaces render what lands *here*, so the assertions below
+        // cover the service→center hop a closed clipboard window depends on.
+        let issues = ClipboardIssueCenter()
+        let vmID = UUID()
+        let service = VsockClipboardService(
+            channel: host, label: "Build VM", instanceID: vmID, issueCenter: issues)
         service.start()
         defer { service.stop() }
 
@@ -2535,6 +2582,12 @@ struct VsockClipboardServiceTests {
                     code: ClipboardErrorCode.copyTooLarge.rawValue,
                     message: ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: ClipboardPasteLimit.defaultBytes))
         )
+        // ...and reaches the app-level center, which is what surfaces it when no
+        // clipboard window is open to render the issue.
+        #expect(issues.latestByInstance[vmID]?.issue == service.lastTransferIssue)
+        #expect(issues.latestByInstance[vmID]?.vmName == "Build VM")
+        #expect(issues.latestByInstance[vmID]?.pasteLimitBytes == ClipboardPasteLimit.defaultBytes)
+        #expect(issues.pendingNotice == issues.latestByInstance[vmID])
     }
 
     @Test("a lowered ceiling refuses a file set the default would have served")
@@ -2546,7 +2599,7 @@ struct VsockClipboardServiceTests {
 
         let lowered = 512 * 1024 * 1024
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", maxPasteBytes: { lowered })
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), maxPasteBytes: { lowered })
         service.start()
         defer { service.stop() }
 
@@ -2585,7 +2638,7 @@ struct VsockClipboardServiceTests {
 
         let raised = 16 * 1024 * 1024 * 1024
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", maxPasteBytes: { raised })
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), maxPasteBytes: { raised })
         service.start()
         defer { service.stop() }
 
@@ -2617,7 +2670,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -2669,7 +2722,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -2714,7 +2767,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -2747,7 +2800,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -2787,7 +2840,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -2850,7 +2903,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -2883,7 +2936,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -2925,7 +2978,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -2952,7 +3005,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -2981,7 +3034,8 @@ struct VsockClipboardServiceTests {
         // Reveal instantly so the mid-flight transfer surfaces (the sanctioned
         // "drive the shown path" test value; see VsockClipboardService's doc).
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: 0, progressIdleLinger: 0)
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), progressRevealDelay: 0,
+            progressIdleLinger: 0)
         service.start()
         defer { service.stop() }
 
@@ -3046,7 +3100,7 @@ struct VsockClipboardServiceTests {
         // regression the pull resolves to nothing when this fires, so the
         // test fails either way and the value's size never masks it.
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: 5)
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), lazyPullTimeout: 5)
         service.start()
         defer { service.stop() }
 
@@ -3145,7 +3199,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -3206,7 +3260,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -3275,7 +3329,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         // The test calls stop() itself mid-flow (that is the action under test);
         // this defer is an idempotent safety net for the early-throw path.
@@ -3338,7 +3392,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -3382,7 +3436,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -3418,7 +3472,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -3448,7 +3502,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -3531,7 +3585,7 @@ struct VsockClipboardServiceTests {
         // A tiny backstop so the parked pull resolves promptly instead of waiting
         // the production 120 s.
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)",
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
             lazyPullTimeout: 0.2)
         service.start()
         defer { service.stop() }
@@ -3570,7 +3624,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -3612,7 +3666,7 @@ struct VsockClipboardServiceTests {
         // failure-kind-agnostic — materializeForPreview skips the generation
         // latch on any nil pull result, timeout and abort alike.
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: 60)
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), lazyPullTimeout: 60)
         service.start()
         defer { service.stop() }
 
@@ -3658,7 +3712,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -3695,7 +3749,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -3756,7 +3810,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -3804,7 +3858,7 @@ struct VsockClipboardServiceTests {
         // A tiny backstop so the parked fire resolves promptly instead of waiting
         // the production window.
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)",
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
             lazyPullTimeout: 0.2)
         service.start()
         defer { service.stop() }
@@ -3865,9 +3919,11 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         // 1 MiB free: the rep plus the free-space margin doesn't fit.
+        let issues = ClipboardIssueCenter()
+        let vmID = UUID()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)",
-            freeSpaceProvider: { _ in 1024 * 1024 })
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: vmID,
+            freeSpaceProvider: { _ in 1024 * 1024 }, issueCenter: issues)
         service.start()
         defer { service.stop() }
 
@@ -3895,6 +3951,10 @@ struct VsockClipboardServiceTests {
         }
         #expect(needed == 4096)
         #expect(available == 1024 * 1024)
+        // A provider fire has no return path to the gesture, so the center is
+        // what carries the refusal to a surface outside the clipboard window.
+        #expect(issues.latestByInstance[vmID]?.issue == service.lastTransferIssue)
+        #expect(issues.pendingNotice?.instanceID == vmID)
     }
 
     @Test("a copied folder whose archive can't be unpacked reports the unpack failure")
@@ -3908,7 +3968,7 @@ struct VsockClipboardServiceTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: stagingRoot) }
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", stagingTempRoot: stagingRoot)
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), stagingTempRoot: stagingRoot)
         service.start()
         defer { service.stop() }
 
@@ -3965,7 +4025,7 @@ struct VsockClipboardServiceTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tempRoot) }
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", stagingTempRoot: tempRoot)
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), stagingTempRoot: tempRoot)
         service.start()
         defer { service.stop() }
 
@@ -4001,7 +4061,7 @@ struct VsockClipboardServiceTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tempRoot) }
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", stagingTempRoot: tempRoot)
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), stagingTempRoot: tempRoot)
         // A "Copy to Mac" of the dropped file put its own path on the pasteboard.
         service.hostPasteboardHoldsOurWrite = { true }
         service.start()
@@ -4036,7 +4096,7 @@ struct VsockClipboardServiceTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tempRoot) }
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", stagingTempRoot: tempRoot)
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), stagingTempRoot: tempRoot)
         service.start()
         defer { service.stop() }
 
@@ -4065,7 +4125,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -4103,7 +4163,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -4132,7 +4192,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -4160,7 +4220,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -4207,7 +4267,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
         service.start()
         defer { service.stop() }
 
@@ -4238,7 +4298,8 @@ struct VsockClipboardServiceTests {
 
         // `.zero` reveal delay → the transfer shows as soon as a chunk lands.
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: 0, progressIdleLinger: 0)
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), progressRevealDelay: 0,
+            progressIdleLinger: 0)
         service.start()
         defer { service.stop() }
 
@@ -4284,7 +4345,7 @@ struct VsockClipboardServiceTests {
         // an idle terminal firing inside it would end the very session under test.
         // Nothing waits on the linger — `stop()` clears the readout at teardown.
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: 0,
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), progressRevealDelay: 0,
             progressIdleLinger: 60)
         service.start()
         defer { service.stop() }
@@ -4375,7 +4436,7 @@ struct VsockClipboardServiceTests {
         // service→center hop the menu bar actually reads.
         let center = ClipboardProgressCenter()
         let service = VsockClipboardService(
-            channel: host, label: label, progressRevealDelay: 0, progressIdleLinger: 0,
+            channel: host, label: label, instanceID: UUID(), progressRevealDelay: 0, progressIdleLinger: 0,
             progressCenter: center)
         service.start()
         defer { service.stop() }
@@ -4444,7 +4505,8 @@ struct VsockClipboardServiceTests {
 
         // A reveal delay long enough that the fast transfer completes first.
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: 3600, progressIdleLinger: 0)
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), progressRevealDelay: 3600,
+            progressIdleLinger: 0)
         service.start()
         defer { service.stop() }
 
@@ -4474,7 +4536,8 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: 0, progressIdleLinger: 0)
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), progressRevealDelay: 0,
+            progressIdleLinger: 0)
         service.start()
 
         let responder = FakeGuestResponder(guest: guest)
