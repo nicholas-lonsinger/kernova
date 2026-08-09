@@ -4,6 +4,15 @@ import AppKit
 struct StatusMenuVMRow: Equatable {
     let instanceID: UUID
     let title: String
+    /// The clipboard-issue line to show indented under the row, or `nil` when the
+    /// VM has no outstanding issue.
+    let noticeText: String?
+
+    init(instanceID: UUID, title: String, noticeText: String? = nil) {
+        self.instanceID = instanceID
+        self.title = title
+        self.noticeText = noticeText
+    }
 }
 
 /// Owns the VM section of the status-item dropdown: one row per VM keeping the
@@ -22,6 +31,9 @@ final class StatusMenuVMSection {
 
     /// Live row items in display order; each `representedObject` is the VM's id.
     private var rowItems: [NSMenuItem] = []
+    /// The notice line under a row, keyed by VM id — present exactly for the rows
+    /// whose model carries one.
+    private var noticeItems: [UUID: NSMenuItem] = [:]
     /// The disabled placeholder, present exactly when `rowItems` is empty.
     private var placeholderItem: NSMenuItem?
 
@@ -31,11 +43,18 @@ final class StatusMenuVMSection {
         self.rowAction = rowAction
     }
 
-    /// The rows the section should show for `instances`.
-    static func rows(for instances: [VMInstance]) -> [StatusMenuVMRow] {
+    /// The rows the section should show for `instances`, each carrying the
+    /// clipboard issue `issues` holds for it.
+    ///
+    /// Only VMs with rows can carry a notice, so a stopped VM's issue never
+    /// shows.
+    static func rows(
+        for instances: [VMInstance], issues: [UUID: ClipboardIssueCenter.Notice] = [:]
+    ) -> [StatusMenuVMRow] {
         instances.filter(\.isKeepingAppAlive).map {
             StatusMenuVMRow(
-                instanceID: $0.instanceID, title: "\($0.name) — \($0.statusDisplayName)")
+                instanceID: $0.instanceID, title: "\($0.name) — \($0.statusDisplayName)",
+                noticeText: issues[$0.instanceID]?.issue.menuLineText)
         }
     }
 
@@ -43,13 +62,20 @@ final class StatusMenuVMSection {
     /// previously tracked items.
     func rebuild(rows: [StatusMenuVMRow]) {
         placeholderItem = nil
+        noticeItems = [:]
         rowItems = rows.map(makeRowItem)
-        if rowItems.isEmpty {
+        guard !rowItems.isEmpty else {
             let placeholder = Self.makePlaceholderItem()
             menu.addItem(placeholder)
             placeholderItem = placeholder
-        } else {
-            for item in rowItems { menu.addItem(item) }
+            return
+        }
+        for (row, item) in zip(rows, rowItems) {
+            menu.addItem(item)
+            guard let noticeText = row.noticeText else { continue }
+            let notice = Self.makeNoticeItem(noticeText)
+            menu.addItem(notice)
+            noticeItems[row.instanceID] = notice
         }
     }
 
@@ -70,31 +96,55 @@ final class StatusMenuVMSection {
                 menu.removeItem(item)
             }
         }
+        for (id, item) in noticeItems where !rows.contains(where: { $0.instanceID == id }) {
+            menu.removeItem(item)
+            noticeItems[id] = nil
+        }
         if let placeholderItem, !rows.isEmpty {
             menu.removeItem(placeholderItem)
             self.placeholderItem = nil
         }
 
-        rowItems = rows.enumerated().map { offset, row in
-            let target = start + offset
-            guard let existing = surviving[row.instanceID] else {
-                let item = makeRowItem(row)
-                menu.insertItem(item, at: target)
-                return item
+        var nextRowItems: [NSMenuItem] = []
+        var target = start
+        for row in rows {
+            let item = surviving[row.instanceID] ?? makeRowItem(row)
+            if item.title != row.title { item.title = row.title }
+            place(item, at: target)
+            target += 1
+            nextRowItems.append(item)
+
+            guard let noticeText = row.noticeText else {
+                if let stale = noticeItems.removeValue(forKey: row.instanceID) {
+                    menu.removeItem(stale)
+                }
+                continue
             }
-            if existing.title != row.title { existing.title = row.title }
-            if menu.index(of: existing) != target {
-                menu.removeItem(existing)
-                menu.insertItem(existing, at: target)
-            }
-            return existing
+            let notice = noticeItems[row.instanceID] ?? Self.makeNoticeItem(noticeText)
+            if notice.title != noticeText { notice.title = noticeText }
+            noticeItems[row.instanceID] = notice
+            place(notice, at: target)
+            target += 1
         }
+        rowItems = nextRowItems
 
         if rowItems.isEmpty, placeholderItem == nil {
             let placeholder = Self.makePlaceholderItem()
             menu.insertItem(placeholder, at: start)
             placeholderItem = placeholder
         }
+    }
+
+    /// Puts `item` at `index`, inserting one the menu doesn't hold yet and moving
+    /// one it holds elsewhere.
+    ///
+    /// Safe to call in ascending `index` order only: everything before `index` is
+    /// already final, so the removal can only shift items the loop hasn't placed.
+    private func place(_ item: NSMenuItem, at index: Int) {
+        let current = menu.index(of: item)
+        guard current != index else { return }
+        if current >= 0 { menu.removeItem(item) }
+        menu.insertItem(item, at: index)
     }
 
     /// The index the section's first item occupies, or `nil` when none of its
@@ -114,6 +164,12 @@ final class StatusMenuVMSection {
 
     private static func makePlaceholderItem() -> NSMenuItem {
         .statusMenuInfo(title: "No virtual machines running")
+    }
+
+    private static func makeNoticeItem(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem.statusMenuInfo(title: title)
+        item.indentationLevel = 1
+        return item
     }
 }
 

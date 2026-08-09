@@ -106,7 +106,7 @@ public final class ClipboardProgressStatusItemPresenter {
     /// open may already be gone.
     public func revealDropdown(while stillStaged: @escaping @MainActor () -> Bool) {
         let visible = statusItem.isVisible
-        let onScreen = isButtonOnScreen
+        let onScreen = statusItem.isButtonOnScreen
         guard
             Self.allowsAutomaticOpen(
                 isVisible: visible, isOnScreen: onScreen, menuIsOpen: menuIsOpen)
@@ -145,22 +145,10 @@ public final class ClipboardProgressStatusItemPresenter {
         }
     }
 
-    /// Whether the item's button is on a screen right now.
-    ///
-    /// The button's window outlives macOS dropping the item from a crowded menu
-    /// bar and a full-screen window covering the menu bar, so its existence
-    /// proves nothing: only a visible window landing on a display does. Paired
-    /// with `NSStatusItem.isVisible`, which reports the app's own preference
-    /// rather than anything about the screen.
-    private var isButtonOnScreen: Bool {
-        guard let window = statusItem.button?.window, window.isVisible else { return false }
-        return NSScreen.screens.contains { $0.frame.intersects(window.frame) }
-    }
-
     /// Runs the auto-opener's decision for the current readout.
     private func applyAutoOpen(_ readout: ClipboardProgressSnapshot?) {
         let visible = statusItem.isVisible
-        let onScreen = isButtonOnScreen
+        let onScreen = statusItem.isButtonOnScreen
         let canOpen = visible && onScreen
         let action = autoOpener.readoutChanged(readout, menuIsOpen: menuIsOpen, canOpen: canOpen)
         log(action, readout: readout, visible: visible, onScreen: onScreen)

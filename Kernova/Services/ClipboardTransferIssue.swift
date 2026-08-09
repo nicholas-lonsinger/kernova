@@ -160,3 +160,120 @@ extension ClipboardTransferIssue {
             date: Date())
     }
 }
+
+// MARK: - Display copy
+
+extension ClipboardTransferIssue {
+    /// The full sentence every surface renders for this issue — the clipboard
+    /// window's banner and the status-item notice alike.
+    ///
+    /// `pasteLimitBytes` is the ceiling in force now, which only a peer-reported
+    /// over-cap paste needs: every other message either carries its own figure or
+    /// names none.
+    func displayMessage(pasteLimitBytes: Int) -> String {
+        switch kind {
+        case .diskFull(let needed, let available):
+            let detail =
+                [
+                    needed.map { "\(DataFormatters.formatBytes(UInt64($0))) needed" },
+                    available.map { "\(DataFormatters.formatBytes(UInt64($0))) free" },
+                ]
+                .compactMap { $0 }
+                .joined(separator: ", ")
+            let base = "Not enough disk space to receive the clipboard payload"
+            return detail.isEmpty ? base : "\(base) (\(detail))"
+        case .peerReportedError(let code, _):
+            switch ClipboardErrorCode(rawValue: code) {
+            case .pasteDiskFull:
+                return "The guest ran out of disk space receiving the clipboard file"
+            case .pasteTooLarge:
+                return
+                    "Too large to paste into the guest — over the \(ClipboardPasteLimit.displayLimit(pasteLimitBytes)) clipboard transfer limit"
+            case .pasteTimeout:
+                return "The clipboard transfer to the guest timed out"
+            case .pasteFailed, .copyTooLarge, .pasteIncompleteSet, .forwardItemsSkipped,
+                .folderPeerOutdated, .none:
+                return "Clipboard transfer failed on the guest side"
+            }
+        case .localFailure(_, let message):
+            return message
+        case .staleCopyRetracted(let message):
+            return message
+        }
+    }
+
+    /// The status-item notice's bold first line, naming the VM and which
+    /// direction the clipboard failed to move in.
+    func noticeHeadline(vmName: String) -> String {
+        switch kind {
+        case .diskFull:
+            return "Clipboard not pasted from \(Self.quoted(vmName))."
+        case .peerReportedError:
+            return "Clipboard not pasted into \(Self.quoted(vmName))."
+        case .staleCopyRetracted:
+            return "Clipboard changed in \(Self.quoted(vmName))."
+        case .localFailure(let code, _):
+            switch ClipboardErrorCode(rawValue: code) {
+            case .copyTooLarge:
+                return "Clipboard not copied from \(Self.quoted(vmName))."
+            case .folderPeerOutdated, .forwardItemsSkipped:
+                return "Clipboard not copied to \(Self.quoted(vmName))."
+            case .pasteIncompleteSet, .pasteTimeout, .pasteFailed:
+                return "Clipboard not pasted from \(Self.quoted(vmName))."
+            case .pasteDiskFull, .pasteTooLarge, .none:
+                return "Clipboard issue with \(Self.quoted(vmName))."
+            }
+        }
+    }
+
+    /// Whether a surface may add that the Mac clipboard still holds what it held
+    /// before.
+    ///
+    /// True only for the over-cap copy refusal, the one outcome that refuses the
+    /// publish whole and so leaves the previous contents in place; after any
+    /// other issue the sentence would be a guess.
+    var includesStaleClipboardContext: Bool {
+        guard case .localFailure(let code, _) = kind else { return false }
+        return ClipboardErrorCode(rawValue: code) == .copyTooLarge
+    }
+
+    /// Whether a host surface that interrupts may present this issue.
+    ///
+    /// docs/CLIPBOARD.md §13 — report a refusal on the side that made the
+    /// gesture. Every kind but `.peerReportedError` refuses a gesture made on
+    /// this Mac, or has its consequence here; a `.peerReportedError` refuses the
+    /// guest user's own paste, which the guest agent's own dropdown reveals over
+    /// there, so the host records it for the menu line and interrupts nobody.
+    var warrantsInterruptingNotice: Bool {
+        switch kind {
+        case .diskFull, .localFailure, .staleCopyRetracted: return true
+        case .peerReportedError: return false
+        }
+    }
+
+    /// The compact fragment the status-item dropdown shows under the VM's row —
+    /// no trailing period, since it reads as a menu line rather than prose.
+    var menuLineText: String {
+        switch kind {
+        case .diskFull:
+            return "Clipboard: paste from the guest failed"
+        case .staleCopyRetracted:
+            return "Clipboard: earlier copy was removed"
+        case .peerReportedError(let code, _):
+            return ClipboardErrorCode(rawValue: code) == .pasteTooLarge
+                ? "Clipboard: too large to paste into the guest"
+                : "Clipboard: paste into the guest failed"
+        case .localFailure(let code, _):
+            switch ClipboardErrorCode(rawValue: code) {
+            case .copyTooLarge: return "Clipboard: too large to copy to your Mac"
+            case .pasteTimeout: return "Clipboard: paste from the guest timed out"
+            case .pasteIncompleteSet, .pasteFailed: return "Clipboard: paste from the guest failed"
+            case .folderPeerOutdated: return "Clipboard: folder copy needs a guest agent update"
+            case .forwardItemsSkipped: return "Clipboard: some items weren't forwarded"
+            case .pasteDiskFull, .pasteTooLarge, .none: return "Clipboard: transfer didn't complete"
+            }
+        }
+    }
+
+    private static func quoted(_ name: String) -> String { "\u{201C}\(name)\u{201D}" }
+}

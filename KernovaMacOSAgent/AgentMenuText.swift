@@ -33,6 +33,10 @@ enum AgentMenuText {
         case .receivedFromHost: return "Clipboard: received from host"
         case .pasteRefused(let code, let pasteLimitBytes):
             return "Clipboard: \(pasteRefusalDetail(code, pasteLimitBytes: pasteLimitBytes))"
+        case .copyShortened(let offeringAnything):
+            return offeringAnything
+                ? "Clipboard: shared without folders — Kernova on the Mac needs updating"
+                : "Clipboard: folders not shared — Kernova on the Mac needs updating"
         case .disabled: return "Clipboard: disabled"
         }
     }

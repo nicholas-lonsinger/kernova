@@ -623,6 +623,15 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 "Offering nothing — all \(count, privacy: .public) copied item(s) are folders and the host lacks \(KernovaCapability.clipboardStreamDirectoryV1, privacy: .public)"
             )
         }
+        // Deferred a turn so the shortfall outlives the offer this same snapshot
+        // still sends, which records `.offeredToHost` synchronously after this
+        // returns. The activity is written before the notice, so the dropdown it
+        // pops is rebuilt with the line already in it.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.clipboardActivityStorage = .copyShortened(offeringAnything: offeringAnything)
+            self.onClipboardNotice()
+        }
     }
 
     /// Announces `content` to the host when it's non-empty and not an echo of

@@ -311,26 +311,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         statusItemController = HostAgentStatusItemController(
             viewModel: viewModel,
             preferences: preferences,
-            onOpen: { [weak self] vmID in
+            onOpen: { [weak self] vmID in self?.summonStatusItemTarget(for: vmID) },
+            onOpenClipboard: { [weak self] vmID in
                 guard let self else { return }
                 guard
-                    let instance = vmID.flatMap({ id in
-                        self.viewModel.instances.first(where: { $0.instanceID == id })
-                    })
+                    let instance = self.viewModel.instances.first(where: { $0.instanceID == vmID }),
+                    instance.canShowClipboard
                 else {
-                    self.summonUserInterface()
+                    // The window the notice pointed at can't open — the VM has
+                    // stopped, had sharing turned off, or is gone from the
+                    // library. Land on its usual surface rather than nowhere.
+                    self.summonStatusItemTarget(for: vmID)
                     return
                 }
-                self.viewModel.selectedID = instance.instanceID
-                switch Self.statusItemOpenTarget(
-                    displayPreference: instance.configuration.displayPreference,
-                    canUseExternalDisplay: instance.canUseExternalDisplay)
-                {
-                case .displayWindow:
-                    self.summonUserInterface(showing: .display(instance))
-                case .library:
-                    self.summonUserInterface()
-                }
+                self.viewModel.selectedID = vmID
+                self.summonUserInterface(showing: .clipboard(instance))
             },
             onQuit: { [weak self] in self?.requestFullQuit() }
         )
@@ -489,6 +484,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         /// One VM's dedicated display window (pop-out or fullscreen, per its
         /// `displayPreference`), and nothing else.
         case display(VMInstance)
+        /// One VM's clipboard window, and nothing else.
+        case clipboard(VMInstance)
+    }
+
+    /// Summons the surface the status item's per-VM commands land on: the VM's
+    /// own display window when it can present one, else the library.
+    ///
+    /// A `nil` or unknown id opens the library, which is where a VM that has left
+    /// the library is looked for.
+    private func summonStatusItemTarget(for vmID: UUID?) {
+        guard
+            let instance = vmID.flatMap({ id in
+                viewModel.instances.first(where: { $0.instanceID == id })
+            })
+        else {
+            summonUserInterface()
+            return
+        }
+        viewModel.selectedID = instance.instanceID
+        switch Self.statusItemOpenTarget(
+            displayPreference: instance.configuration.displayPreference,
+            canUseExternalDisplay: instance.canUseExternalDisplay)
+        {
+        case .displayWindow:
+            summonUserInterface(showing: .display(instance))
+        case .library:
+            summonUserInterface()
+        }
     }
 
     /// Where the status item's per-VM open command lands, as decided by
@@ -537,6 +560,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 } else {
                     self.openDisplayWindow(for: instance)
                 }
+            case .clipboard(let instance):
+                self.showClipboardWindow(for: instance)
             }
             // Summoning from the status-item menu leaves the freshly-appeared menu
             // bar with its first menu highlighted: the status menu's dismissal
@@ -1124,6 +1149,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func showClipboard(_ sender: Any?) {
         guard let instance = activeInstance else { return }
+        showClipboardWindow(for: instance)
+    }
+
+    /// Shows or focuses the clipboard window for `instance`.
+    private func showClipboardWindow(for instance: VMInstance) {
         showAuxiliaryWindow(
             for: instance,
             isEligible: instance.canShowClipboard,
