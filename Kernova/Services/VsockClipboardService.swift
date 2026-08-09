@@ -517,8 +517,9 @@ final class VsockClipboardService: ClipboardServicing {
             // Deliberately *not* latched into `lastGrabbedDigest`: the capability
             // is re-read from every `Hello`, and a control-channel blip alone
             // clears it, so latching would strand this buffer for the rest of the
-            // session even once the guest advertises it again. Reported once per
-            // buffer instead, since the poll re-enters here every tick.
+            // session even once the guest advertises it again. Leaving it
+            // unlatched is also what lets a later call reach this branch again,
+            // so the report is held to once per buffer.
             noteFoldersSkipped(
                 "Offering nothing to '\(label)' — every representation is a folder and the guest agent lacks \(KernovaCapability.clipboardStreamDirectoryV1) (agent needs updating)"
             )
