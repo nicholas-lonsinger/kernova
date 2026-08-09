@@ -509,7 +509,7 @@ struct VsockClipboardServiceTests {
     }
 
     @Test(
-        "An offered folder is estimate-only until requested, then archived at request time and streamed as a valid archive"
+        "An offered folder is estimate-only until requested, then compressed straight onto the wire"
     )
     func requestArchivesFolderAtRequestTime() async throws {
         let (guest, host) = try makePair()
@@ -517,7 +517,12 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let stagingRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: stagingRoot) }
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)",
+            peerStreamsDirectories: { true }, stagingTempRoot: stagingRoot)
         service.start()
         defer { service.stop() }
 
@@ -553,8 +558,8 @@ struct VsockClipboardServiceTests {
         let recorder = FrameRecorder(channel: guest)
         defer { recorder.cancel() }
 
-        // The request triggers the off-main request-time archive, then the
-        // stream of the resulting `.aar`.
+        // The request starts the walk-and-compress, whose bytes go straight to
+        // the wire — no archive is ever staged.
         try guest.send(makeRequest(generation: offer.generation, repIndex: 0, uti: info.uti))
         try await waitForFrames(recorder) {
             recorder.first {
@@ -580,20 +585,25 @@ struct VsockClipboardServiceTests {
             } != nil
         }
         let reassembled = reassemble(recorder.chunks(for: xid))
-        // The Begin carries the archive's wire-exact size, superseding the
-        // offer's estimate.
-        #expect(begin.totalBytes == UInt64(reassembled.count))
+        // The tree is compressed straight onto the wire, so its size is unknown
+        // at Begin; the End frame carries the authoritative count.
+        #expect(begin.totalBytes == 0)
+        let endFrame = try #require(
+            recorder.first {
+                if case .clipboardStreamEnd = $0.payload { return true }
+                return false
+            })
+        guard case .clipboardStreamEnd(let end) = endFrame.payload else {
+            Issue.record("Expected clipboardStreamEnd")
+            return
+        }
+        #expect(end.totalBytes == UInt64(reassembled.count))
+        // Nothing was staged to send it.
+        #expect(materializedFiles(under: stagingRoot).isEmpty)
 
-        // The streamed bytes are an `.aar` that extracts back to the tree.
-        let aarDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: aarDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: aarDir) }
-        let aar = aarDir.appendingPathComponent("got.aar")
-        try reassembled.write(to: aar)
-        let dest = aarDir.appendingPathComponent("out", isDirectory: true)
-        try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
-        try ClipboardDirectoryArchive.extract(archiveAt: aar, to: dest)
+        // The streamed bytes are the archive, and they extract back to the tree.
+        let dest = try extractedClipboardArchive(reassembled)
+        defer { try? FileManager.default.removeItem(at: dest.deletingLastPathComponent()) }
         #expect(
             try String(contentsOf: dest.appendingPathComponent("README.md"), encoding: .utf8)
                 == "readme")
@@ -611,7 +621,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", peerStreamsDirectories: { true })
         service.start()
         defer { service.stop() }
 
@@ -695,14 +706,7 @@ struct VsockClipboardServiceTests {
                 return false
             } != nil
         }
-        let scratch = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let dest = scratch.appendingPathComponent("out", isDirectory: true)
-        try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
-        let aar = scratch.appendingPathComponent("got.aar")
-        try reassemble(recorder.chunks(for: xid)).write(to: aar)
-        try ClipboardDirectoryArchive.extract(archiveAt: aar, to: dest)
-        return dest
+        return try extractedClipboardArchive(reassemble(recorder.chunks(for: xid)))
     }
 
     @Test("A large outbound payload streams as multiple chunks that reassemble exactly")
@@ -1050,6 +1054,11 @@ struct VsockClipboardServiceTests {
             /// Used to create a live receiver-side transfer that a later
             /// supersession/release can cancel while the host's pull is parked.
             let beginOnly: Bool
+            /// What `Begin` declares as the total, or `nil` to declare the real
+            /// payload size.
+            ///
+            /// A streamed folder declares 0 — unknown.
+            let declaredTotalBytes: Int?
         }
 
         private let guest: VsockChannel
@@ -1082,12 +1091,14 @@ struct VsockClipboardServiceTests {
         /// `(generation, repIndex)`.
         func register(
             generation: UInt64, repIndex: UInt64, uti: String, bytes: Data,
-            filename: String = "", isInline: Bool, beginOnly: Bool = false
+            filename: String = "", isInline: Bool, beginOnly: Bool = false,
+            declaredTotalBytes: Int? = nil
         ) {
             let xid = ClipboardTransferID.make(
                 generation: generation, repIndex: Int(repIndex), hostMinted: true)
             replies[xid] = Reply(
-                uti: uti, bytes: bytes, filename: filename, isInline: isInline, beginOnly: beginOnly)
+                uti: uti, bytes: bytes, filename: filename, isInline: isInline,
+                beginOnly: beginOnly, declaredTotalBytes: declaredTotalBytes)
         }
 
         /// Starts draining the channel and answering requests.
@@ -1124,7 +1135,7 @@ struct VsockClipboardServiceTests {
                 $0.generation = req.generation
                 $0.transferID = req.transferID
                 $0.uti = reply.uti
-                $0.totalBytes = UInt64(reply.bytes.count)
+                $0.totalBytes = UInt64(reply.declaredTotalBytes ?? reply.bytes.count)
                 $0.filename = reply.filename
                 $0.isInline = reply.isInline
             }
@@ -1526,41 +1537,40 @@ struct VsockClipboardServiceTests {
         #expect(responder.requests.count == 2)
     }
 
-    @Test("a promised directory rep extracts into a real folder at paste time")
-    func copyReTagsDirectoryRep() async throws {
+    @Test("a promised directory rep arrives as a real folder, served unchanged on every paste")
+    func copyServesStreamedDirectoryRep() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let stagingRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: stagingRoot) }
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", stagingTempRoot: stagingRoot)
         service.start()
         defer { service.stop() }
 
-        // The bytes the "guest" streams are an `.aar` of a small tree.
+        // The bytes the "guest" streams are the archive of a small tree, sent
+        // with no declared total — the compressed size isn't knowable up front.
         let src = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
             .appendingPathComponent("MyFolder", isDirectory: true)
         try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
         try "x".write(to: src.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
-        let aarDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: aarDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: aarDir) }
-        let aar = aarDir.appendingPathComponent("MyFolder.aar")
-        try ClipboardDirectoryArchive.archive(directoryAt: src, to: aar)
-        let aarBytes = try Data(contentsOf: aar)
+        let aarBytes = try clipboardArchiveBytes(ofDirectoryAt: src)
 
         let responder = FakeGuestResponder(guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 11, repIndex: 0, uti: UTType.folder.identifier, bytes: aarBytes,
-            filename: "MyFolder", isInline: false)
+            filename: "MyFolder", isInline: false, declaredTotalBytes: 0)
         responder.start()
 
-        // The offer carries the directory flag; the offer-agnostic stream layer
-        // does not, so the service must re-tag the delivered rep from it.
+        // The offer carries the directory flag; the stream layer stays
+        // offer-agnostic, so the service primes its receiver from it.
         try guest.send(
             makeDirectoryOffer(
                 generation: 11,
@@ -1580,8 +1590,8 @@ struct VsockClipboardServiceTests {
         #expect(items.promised.first?.filename == "MyFolder")
         #expect(responder.requests.isEmpty)
 
-        // The paste-time `.fileURL` fire pulls the streamed `.aar` and extracts it
-        // into a real folder, so a Finder paste recreates the tree.
+        // The paste-time `.fileURL` fire pulls the archive, which the transfer
+        // extracted as it arrived, so a Finder paste recreates the tree.
         let url = try #require(
             await offCooperativePool { service.copyToMacFileURL(generation: 11, repIndex: 0) })
         var isDir: ObjCBool = false
@@ -1590,6 +1600,230 @@ struct VsockClipboardServiceTests {
         #expect(url.lastPathComponent == "MyFolder")
         #expect(
             try String(contentsOf: url.appendingPathComponent("f.txt"), encoding: .utf8) == "x")
+        // No archive was staged on the way in.
+        #expect(materializedFiles(under: stagingRoot).allSatisfy { $0.pathExtension != "aar" })
+        // A second paste re-serves the same tree rather than unpacking again.
+        let again = try #require(
+            await offCooperativePool { service.copyToMacFileURL(generation: 11, repIndex: 0) })
+        #expect(again == url)
+        #expect(responder.requests.count == 1)
+    }
+
+    @Test("a folders-only copy sends no offer at all to a guest that can't receive one")
+    func foldersOnlyCopySendsNoOfferToAnOlderGuest() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let capable = Box(false)
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)",
+            peerStreamsDirectories: { capable.value })
+        service.start()
+        defer { service.stop() }
+
+        let recorder = FrameRecorder(channel: guest)
+        defer { recorder.cancel() }
+
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let folder = parent.appendingPathComponent("OnlyFolder", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+
+        service.clipboardContent = ClipboardContent(representations: [
+            ClipboardContent.Representation(
+                directorySourceURL: folder, estimatedByteCount: 0, filename: "OnlyFolder",
+                uti: "public.folder")
+        ])
+        let snapshot = recorder.frames.count
+        service.grabIfChanged()
+
+        // An offer with no representations would retire whatever the guest is
+        // holding and leave it a pasteboard item nothing can serve; sending
+        // nothing leaves the previous, still-working clipboard in place.
+        try await expectNoNewFrames(on: recorder, sinceCount: snapshot)
+        // The window is the only surface that can explain why the copy did
+        // nothing, so the skip has to reach it.
+        #expect(
+            service.lastTransferIssue?.kind
+                == ClipboardTransferIssue.folderSkippedForOutdatedGuest().kind)
+
+        // The capability is re-read from every `Hello`, and a control-channel
+        // blip alone clears it — so latching the buffer's digest here would
+        // strand this copy for the rest of the session.
+        capable.value = true
+        service.grabIfChanged()
+        try await waitForFrames(recorder) {
+            recorder.first {
+                if case .clipboardOffer = $0.payload { return true }
+                return false
+            } != nil
+        }
+        let offerFrame = try #require(
+            recorder.first {
+                if case .clipboardOffer = $0.payload { return true }
+                return false
+            })
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            Issue.record("Expected clipboardOffer, got \(String(describing: offerFrame.payload))")
+            return
+        }
+        #expect(offer.repInfo.map(\.filename) == ["OnlyFolder"])
+    }
+
+    @Test("a folder is left out of the offer for a guest that can't receive one")
+    func offerDropsFoldersForAnOlderGuest() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let capable = Box(false)
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)",
+            peerStreamsDirectories: { capable.value })
+        service.start()
+        defer { service.stop() }
+
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let folder = parent.appendingPathComponent("Project", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let file = parent.appendingPathComponent("note.txt")
+        try Data("hi".utf8).write(to: file)
+
+        service.clipboardContent = ClipboardContent(representations: [
+            ClipboardContent.Representation(
+                directorySourceURL: folder, estimatedByteCount: 0, filename: "Project",
+                uti: "public.folder"),
+            ClipboardContent.Representation(
+                uti: "public.plain-text", fileURL: file, byteCount: 2, filename: "note.txt"),
+        ])
+        service.grabIfChanged()
+
+        let offerFrame = try await nextFrame(from: guest)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            Issue.record("Expected clipboardOffer, got \(String(describing: offerFrame.payload))")
+            return
+        }
+        #expect(offer.repInfo.map(\.filename) == ["note.txt"])
+        #expect(offer.repInfo.allSatisfy { !$0.isDirectory })
+        // Losing the folder is the same news to the user whether it emptied the
+        // offer or only shortened it — a copy that quietly arrives short is the
+        // one thing the window has to say.
+        #expect(
+            service.lastTransferIssue?.kind
+                == ClipboardTransferIssue.folderSkippedForOutdatedGuest().kind)
+
+        // The surviving rep keeps the index the offer gave it, so the request's
+        // low 16 bits still address it.
+        let recorder = FrameRecorder(channel: guest)
+        defer { recorder.cancel() }
+        try guest.send(
+            makeRequest(generation: offer.generation, repIndex: 0, uti: offer.repInfo[0].uti))
+        try await waitForFrames(recorder) {
+            recorder.first {
+                if case .clipboardStreamBegin = $0.payload { return true }
+                return false
+            } != nil
+        }
+        let beginFrame = try #require(
+            recorder.first {
+                if case .clipboardStreamBegin = $0.payload { return true }
+                return false
+            })
+        guard case .clipboardStreamBegin(let begin) = beginFrame.payload else {
+            Issue.record("Expected clipboardStreamBegin")
+            return
+        }
+        #expect(begin.filename == "note.txt")
+        #expect(begin.totalBytes == 2)
+
+        // The buffer's own digest is the send-dedup key and it was latched by the
+        // shortened offer, so nothing else can notice the guest catching up. The
+        // dropped folder has to be re-offered once it can be received.
+        capable.value = true
+        service.grabIfChanged()
+        try await waitForFrames(recorder) {
+            recorder.first {
+                if case .clipboardOffer = $0.payload { return true }
+                return false
+            } != nil
+        }
+        let secondFrame = try #require(
+            recorder.first {
+                if case .clipboardOffer = $0.payload { return true }
+                return false
+            })
+        guard case .clipboardOffer(let second) = secondFrame.payload else {
+            Issue.record("Expected clipboardOffer, got \(String(describing: secondFrame.payload))")
+            return
+        }
+        #expect(second.repInfo.map(\.filename) == ["Project", "note.txt"])
+        #expect(second.generation > offer.generation)
+        // The re-offer retires the generation whose `note.txt` transfer is still
+        // parked on credit, so its abort is on the way; let that land before the
+        // observation window below, which would otherwise catch it.
+        try await waitForFrames(recorder) {
+            recorder.first {
+                if case .clipboardStreamAbort = $0.payload { return true }
+                return false
+            } != nil
+        }
+
+        // ...and once, not on every poll tick that follows.
+        let snapshot = recorder.frames.count
+        service.grabIfChanged()
+        try await expectNoNewFrames(on: recorder, sinceCount: snapshot)
+    }
+
+    @Test("a folder streamed with a declared total still extracts, so an older peer interoperates")
+    func copyAcceptsDirectoryWithDeclaredTotal() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        let src = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("Legacy", isDirectory: true)
+        try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
+        try "y".write(to: src.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        let aarBytes = try clipboardArchiveBytes(ofDirectoryAt: src)
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        // A peer that spools the whole archive first knows its size and declares
+        // it. A primed receiver ignores the declared total either way.
+        responder.register(
+            generation: 12, repIndex: 0, uti: UTType.folder.identifier, bytes: aarBytes,
+            filename: "Legacy", isInline: false)
+        responder.start()
+
+        try guest.send(
+            makeDirectoryOffer(
+                generation: 12,
+                reps: [
+                    (
+                        uti: UTType.folder.identifier, byteCount: UInt64(aarBytes.count),
+                        filename: "Legacy"
+                    )
+                ]))
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
+
+        let url = try #require(
+            await offCooperativePool { service.copyToMacFileURL(generation: 12, repIndex: 0) })
+        #expect(url.lastPathComponent == "Legacy")
+        #expect(
+            try String(contentsOf: url.appendingPathComponent("f.txt"), encoding: .utf8) == "y")
     }
 
     @Test("a directory rep offered at 0 bytes is promised and pastes as a real tree")
@@ -1616,19 +1850,17 @@ struct VsockClipboardServiceTests {
             at: scaffold.appendingPathComponent("sub", isDirectory: true),
             withIntermediateDirectories: true)
         try Data().write(to: scaffold.appendingPathComponent("sub/.keep"))
-        let emptyAAR = src.appendingPathComponent("Empty.aar")
-        let scaffoldAAR = src.appendingPathComponent("Scaffold.aar")
-        try ClipboardDirectoryArchive.archive(directoryAt: empty, to: emptyAAR)
-        try ClipboardDirectoryArchive.archive(directoryAt: scaffold, to: scaffoldAAR)
+        let emptyBytes = try clipboardArchiveBytes(ofDirectoryAt: empty)
+        let scaffoldBytes = try clipboardArchiveBytes(ofDirectoryAt: scaffold)
 
         let responder = FakeGuestResponder(guest: guest)
         defer { responder.cancel() }
         responder.register(
-            generation: 12, repIndex: 0, uti: UTType.folder.identifier,
-            bytes: try Data(contentsOf: emptyAAR), filename: "Empty", isInline: false)
+            generation: 12, repIndex: 0, uti: UTType.folder.identifier, bytes: emptyBytes,
+            filename: "Empty", isInline: false, declaredTotalBytes: 0)
         responder.register(
-            generation: 12, repIndex: 1, uti: UTType.folder.identifier,
-            bytes: try Data(contentsOf: scaffoldAAR), filename: "Scaffold", isInline: false)
+            generation: 12, repIndex: 1, uti: UTType.folder.identifier, bytes: scaffoldBytes,
+            filename: "Scaffold", isInline: false, declaredTotalBytes: 0)
         responder.start()
 
         // The estimate is 0 for both, which is what the wire carries — neither rep
@@ -3672,18 +3904,22 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        let stagingRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: stagingRoot) }
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", stagingTempRoot: stagingRoot)
         service.start()
         defer { service.stop() }
 
-        // The bytes stream and stage fine; they just aren't an `.aar`, so the
-        // extract inside the paste's deadline is what fails.
+        // Size and digest both agree with what arrived, so only the extract
+        // itself can reject the payload.
         let notAnArchive = Data("not an archive".utf8)
         let responder = FakeGuestResponder(guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 23, repIndex: 0, uti: UTType.folder.identifier, bytes: notAnArchive,
-            filename: "MyFolder", isInline: false)
+            filename: "MyFolder", isInline: false, declaredTotalBytes: 0)
         responder.start()
 
         try guest.send(
@@ -3702,6 +3938,9 @@ struct VsockClipboardServiceTests {
         #expect(
             service.lastTransferIssue?.kind
                 == ClipboardTransferIssue.pasteFolderUnpackFailed().kind)
+        // A streamed extract writes as it goes, so a failed one must leave
+        // nothing behind for a later paste to pick up.
+        #expect(materializedFiles(under: stagingRoot).isEmpty)
     }
 
     // MARK: - Drop staging

@@ -40,4 +40,8 @@ public enum ClipboardErrorCode: String, CaseIterable, Sendable {
     /// Never crosses the wire: like `copyTooLarge`, the host both skips and
     /// reports it.
     case forwardItemsSkipped = "clipboard.forward.items.skipped"
+
+    /// A copied folder was not offered because the peer's agent cannot receive a
+    /// folder streamed with no declared size.
+    case folderPeerOutdated = "clipboard.folder.peer.outdated"
 }

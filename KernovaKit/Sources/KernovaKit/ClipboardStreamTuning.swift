@@ -64,6 +64,27 @@ public enum ClipboardStreamTuning {
     /// bounds what a misbehaving peer can apply between disk re-checks.
     public static let maxChunkBytes = 16 * 1024 * 1024
 
+    /// Floor on how much tree a streamed folder may extract regardless of the
+    /// size its offer advertised: 64 MiB.
+    ///
+    /// A folder's estimate sums file bytes only, so a tree of directories and
+    /// empty files advertises zero while its archive still carries a header per
+    /// entry. This is the allowance that keeps such a tree extractable while
+    /// still bounding one whose advertised size is a fabrication.
+    public static let minimumExtractAllowance = 64 * 1024 * 1024
+
+    /// The most a receiver lets arrive ahead of what it has written: one credit
+    /// window plus one maximum-size chunk.
+    ///
+    /// A sender honoring the window it was advertised can never reach this — its
+    /// in-flight bytes are bounded by that window — so it bounds only a peer that
+    /// ignores the protocol, whose chunks would otherwise queue on the write lane
+    /// without limit. A declared payload is bounded by its own size; one that
+    /// declares none (a folder archived onto the wire) has only this.
+    public static func maxBacklogBytes(forWindowBytes windowBytes: Int) -> Int {
+        windowBytes + maxChunkBytes
+    }
+
     /// How long an inbound transfer waits for its next chunk before aborting a
     /// silent sender: 30 s.
     ///

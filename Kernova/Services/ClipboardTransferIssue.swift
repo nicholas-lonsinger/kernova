@@ -9,10 +9,12 @@ import KernovaKit
 /// message it has already dismissed once.
 struct ClipboardTransferIssue: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
-        /// Not enough disk space on the receiving side to stage a streamed file.
-        /// `needed` is the transfer size; `available` is the staging volume's
-        /// free capacity when known.
-        case diskFull(needed: Int, available: Int?)
+        /// Not enough disk space on the receiving side to stage a streamed
+        /// payload. `needed` is the transfer size, `nil` when the payload
+        /// declared none — a streamed folder archive's compressed size is not
+        /// known until its last byte. `available` is the staging volume's free
+        /// capacity when known.
+        case diskFull(needed: Int?, available: Int?)
 
         /// The peer rejected a clipboard message (e.g. format unavailable,
         /// delivery failure on its side).
@@ -47,7 +49,7 @@ extension ClipboardTransferIssue {
     /// mid-stream, carrying whatever numbers the abort knew.
     static func diskFull(from info: ClipboardStreamAbortInfo) -> ClipboardTransferIssue {
         ClipboardTransferIssue(
-            kind: .diskFull(needed: info.neededBytes ?? 0, available: info.availableBytes),
+            kind: .diskFull(needed: info.neededBytes, available: info.availableBytes),
             date: Date())
     }
 
@@ -111,6 +113,20 @@ extension ClipboardTransferIssue {
             kind: .localFailure(
                 code: ClipboardErrorCode.pasteFailed.rawValue,
                 message: "The transfer from the guest failed, so nothing was pasted."),
+            date: Date())
+    }
+
+    /// Raised when a copied folder is left out of the offer because the guest
+    /// agent predates streamed folders.
+    ///
+    /// The copy itself is fine — nothing else about it changed — so the message
+    /// names the one thing the user can act on.
+    static func folderSkippedForOutdatedGuest() -> ClipboardTransferIssue {
+        ClipboardTransferIssue(
+            kind: .localFailure(
+                code: ClipboardErrorCode.folderPeerOutdated.rawValue,
+                message:
+                    "The guest agent needs updating before a folder can be copied to this VM."),
             date: Date())
     }
 

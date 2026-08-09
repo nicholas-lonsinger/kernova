@@ -11,21 +11,6 @@ struct StreamTestFailure: Error, CustomStringConvertible {
     var description: String { message }
 }
 
-/// A `@Sendable`-safe mutable cell — lets a synchronous test closure record what it
-/// observed from a concurrency-checked context.
-///
-/// Shared across the package test suites (`@testable import` visibility) so the
-/// lock-guarded cell has one source of truth.
-final class Box<T>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored: T
-    init(_ value: T) { stored = value }
-    var value: T {
-        get { lock.withLock { stored } }
-        set { lock.withLock { stored = newValue } }
-    }
-}
-
 // MARK: - Socket pair
 
 /// Two `VsockChannel`s connected by a started `socketpair(AF_UNIX, SOCK_STREAM)`.
@@ -40,19 +25,6 @@ func makeStartedChannelPair() throws -> (a: VsockChannel, b: VsockChannel) {
     a.start()
     b.start()
     return (a, b)
-}
-
-// MARK: - File helpers
-
-/// Every regular file anywhere under `directory` (recursive).
-func materializedFiles(under directory: URL) -> [URL] {
-    guard
-        let enumerator = FileManager.default.enumerator(
-            at: directory, includingPropertiesForKeys: [.isRegularFileKey])
-    else { return [] }
-    return enumerator.compactMap { $0 as? URL }.filter {
-        (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
-    }
 }
 
 // MARK: - Staging sink doubles
@@ -195,6 +167,45 @@ final class FailingSink: StagingSink, @unchecked Sendable {
     func abort() { wrapped.abort() }
 }
 
+/// A `ChunkReader` that parks every read until it is closed.
+///
+/// A real archive source parks whenever its encoder has produced nothing yet —
+/// a slow walk over a network or removable volume — and that park is only
+/// escapable because an abort reaches the source. Standing this in makes the
+/// window as wide as a test needs instead of racing a real encoder.
+final class ParkingChunkReader: CancellableChunkReader, @unchecked Sendable {
+    private let condition = NSCondition()
+    private var closed = false
+    private var reads = 0
+    /// Notified once a read has parked, so a test can abort at a known point.
+    let parked = AsyncGate()
+
+    /// Reads that have entered and not yet returned.
+    var parkedReads: Int {
+        condition.lock()
+        defer { condition.unlock() }
+        return reads
+    }
+
+    func read(upTo count: Int) -> Data? {
+        condition.lock()
+        reads += 1
+        condition.unlock()
+        parked.notify()
+        condition.lock()
+        while !closed { condition.wait() }
+        condition.unlock()
+        return nil
+    }
+
+    func close() {
+        condition.lock()
+        closed = true
+        condition.broadcast()
+        condition.unlock()
+    }
+}
+
 // MARK: - Collector
 
 /// Gathers the completed representations and aborts a receiver delivers.
@@ -262,9 +273,11 @@ final class StreamHarness: @unchecked Sendable {
         ackLatencyBound: TimeInterval = ClipboardStreamTuning.ackLatencyBound,
         stallTimeout: TimeInterval = ClipboardStreamTuning.inboundStallTimeout,
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
+        minimumExtractAllowance: Int = ClipboardStreamTuning.minimumExtractAllowance,
         suppressAcks: Bool = false,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
-        sinkFactory: ClipboardSinkFactory? = nil
+        sinkFactory: ClipboardSinkFactory? = nil,
+        directorySource: ClipboardDirectorySourceFactory? = nil
     ) throws {
         (a, b) = try makeStartedChannelPair()
         stagingTempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -273,14 +286,24 @@ final class StreamHarness: @unchecked Sendable {
             label: "harness-\(UUID().uuidString)",
             tempRoot: stagingTempRoot,
             freeSpaceProvider: freeSpaceProvider)
-        sender = ClipboardStreamSender(
-            channel: a, chunkSize: chunkSize, windowBytes: windowBytes, noAckTimeout: noAckTimeout)
+        let builtSender: ClipboardStreamSender
+        if let directorySource {
+            builtSender = ClipboardStreamSender(
+                channel: a, chunkSize: chunkSize, windowBytes: windowBytes,
+                noAckTimeout: noAckTimeout, directorySource: directorySource)
+        } else {
+            builtSender = ClipboardStreamSender(
+                channel: a, chunkSize: chunkSize, windowBytes: windowBytes,
+                noAckTimeout: noAckTimeout)
+        }
+        sender = builtSender
         let collector = self.collector
         receiver = ClipboardStreamReceiver(
             clock: clock,
             channel: b, staging: staging, windowBytes: windowBytes,
             ackLatencyBound: ackLatencyBound, stallTimeout: stallTimeout,
             maxResidentInlineBytes: maxResidentInlineBytes,
+            minimumExtractAllowance: minimumExtractAllowance,
             sinkFactory: sinkFactory,
             onTransferTimed: { metrics in collector.timed(metrics) },
             onComplete: { id, rep in collector.complete(id, rep) },
