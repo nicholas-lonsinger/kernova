@@ -914,7 +914,7 @@ struct VMLifecycleCoordinatorTests {
         let digest: String
     }
 
-    private func makeLinuxFixture(name: String = #function) throws -> LinuxFixture {
+    private func makeLinuxFixture() throws -> LinuxFixture {
         let downloads = FileManager.default.temporaryDirectory
             .appendingPathComponent("linuxImage-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
