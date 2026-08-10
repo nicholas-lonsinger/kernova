@@ -7,9 +7,13 @@ import os
 ///
 /// Clipboard services are per-VM and their window is optional, so a refusal
 /// raised while no window is open has nowhere to render. Each service reports
-/// here instead: ``latestByInstance`` feeds the menu-bar dropdown's per-VM lines,
-/// and ``pendingNotice`` carries the one refusal no open window is already
-/// showing, for a surface that can interrupt.
+/// here instead, and every surface renders this record rather than a service's
+/// own — a service superseded by a reconnect still raises the failures of the
+/// pasteboard promises it published, which no live service can account for.
+///
+/// ``latestByInstance`` feeds the clipboard window's banner and the menu-bar
+/// dropdown's per-VM lines; ``pendingNotice`` carries the one refusal no open
+/// window is already showing, for a surface that can interrupt.
 @MainActor
 @Observable
 final class ClipboardIssueCenter {
@@ -40,7 +44,8 @@ final class ClipboardIssueCenter {
     /// surface for the same news would be noise.
     private(set) var pendingNotice: Notice?
 
-    /// VMs whose clipboard window is on screen and rendering issues itself.
+    /// VMs whose clipboard window is on screen and rendering
+    /// ``latestByInstance`` itself.
     @ObservationIgnored
     private var watchedInstances: Set<UUID> = []
 

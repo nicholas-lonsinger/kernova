@@ -26,14 +26,8 @@ protocol ClipboardServicing: AnyObject {
     /// that would silently never send.
     var supportsBinaryRepresentations: Bool { get }
 
-    /// Most recent user-visible transfer problem, or `nil` when healthy.
-    ///
-    /// Set when an outbound payload exceeds the transport limit or the peer
-    /// reports a clipboard error; cleared by the next successful transfer.
-    var lastTransferIssue: ClipboardTransferIssue? { get }
-
-    /// Records a problem an *automatic* path produced, for `lastTransferIssue`
-    /// to carry.
+    /// Records a problem an *automatic* path produced, for the transport to
+    /// publish to `ClipboardIssueCenter` — the one record every surface renders.
     ///
     /// A window gesture reports its own outcome inline; a passthrough forward has
     /// no return path, so the issue is the only account it can give. Default

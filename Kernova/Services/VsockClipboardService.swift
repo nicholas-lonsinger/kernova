@@ -22,8 +22,13 @@ final class VsockClipboardService: ClipboardServicing {
     /// `true` once `start()` has been called.
     private(set) var isConnected: Bool = false
 
-    /// Most recent user-visible transfer problem; cleared by the next
-    /// successful transfer in either direction.
+    /// Most recent user-visible transfer problem *this connection* raised;
+    /// cleared by the next successful transfer in either direction.
+    ///
+    /// This service's own record, driving which kinds a healthy pull retires —
+    /// not a rendering source. A promise this connection published outlives it,
+    /// so the surfaces render `ClipboardIssueCenter`'s per-VM record, which a
+    /// superseded service can still write to.
     private(set) var lastTransferIssue: ClipboardTransferIssue?
 
     /// The clipboard operation currently being shown (most-significant in-flight

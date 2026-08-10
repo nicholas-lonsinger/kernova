@@ -189,7 +189,6 @@ struct VMToolbarManagerTests {
         var clipboardContent: ClipboardContent = .empty
         var isConnected = true
         var supportsBinaryRepresentations = true
-        var lastTransferIssue: ClipboardTransferIssue?
         var transferProgress: ClipboardProgressSnapshot?
 
         /// Builds a snapshot carrying just the fraction the bar renders.

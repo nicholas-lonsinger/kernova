@@ -80,6 +80,15 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// Quiet period before a keystroke burst commits off-actor.
     private let editDebounceInterval: Duration
 
+    /// This VM's outstanding transfer problem, whichever of its clipboard
+    /// services raised it — including one superseded by a reconnect, which still
+    /// raises the failures of the pasteboard promises it published.
+    ///
+    /// Not `clipboardService`'s own record: the center's notice stands down for
+    /// as long as this window is up, so a report this window skipped would reach
+    /// no surface at all.
+    private let issueCenter: ClipboardIssueCenter
+
     /// Last transfer issue already shown as a transient, so re-observation
     /// doesn't re-show it.
     private var lastShownIssue: ClipboardTransferIssue?
@@ -120,11 +129,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         readPasteboard: NSPasteboard = .general,
         providerRegistry: LazyClipboardProviderRegistry = .shared,
         publisher: HostClipboardPublisher? = nil,
+        issueCenter: ClipboardIssueCenter = .shared,
         editDebounceInterval: Duration = .milliseconds(200)
     ) {
         self.instance = instance
         self.viewModel = viewModel
         self.readPasteboard = readPasteboard
+        self.issueCenter = issueCenter
         self.publisher =
             publisher
             ?? HostClipboardPublisher(
@@ -418,7 +429,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 let clipService = self.instance.clipboardService
                 _ = clipService?.clipboardContent
                 _ = clipService?.isConnected
-                _ = clipService?.lastTransferIssue
+                _ = self.issueCenter.latestByInstance[self.instance.instanceID]
                 _ = self.instance.vsockControlService?.agentStatus
                 _ = self.instance.agentStatus
                 _ = self.instance.configuration.clipboardPassthroughEnabled
@@ -487,10 +498,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 apply(content: content)
                 indicatorView.setText(ClipboardContentDescriber.indicatorText(for: content))
             }
-            if let issue = service.lastTransferIssue, issue != lastShownIssue {
-                lastShownIssue = issue
-                indicatorView.showTransientMessage(message(for: issue), style: .error)
-            }
+        }
+
+        if let notice = issueCenter.latestByInstance[instance.instanceID],
+            notice.issue != lastShownIssue
+        {
+            lastShownIssue = notice.issue
+            indicatorView.showTransientMessage(message(for: notice), style: .error)
         }
 
         applyStatus(status, canInstallKernovaAgent: canInstallKernovaAgent)
@@ -601,8 +615,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
     }
 
-    private func message(for issue: ClipboardTransferIssue) -> String {
-        issue.displayMessage(pasteLimitBytes: instance.effectiveClipboardMaxPasteBytes)
+    private func message(for notice: ClipboardIssueCenter.Notice) -> String {
+        notice.issue.displayMessage(pasteLimitBytes: notice.pasteLimitBytes)
     }
 
     /// The message shown when "Copy to Mac" placed nothing on the pasteboard.
