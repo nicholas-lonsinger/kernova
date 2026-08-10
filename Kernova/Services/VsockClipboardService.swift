@@ -544,11 +544,11 @@ final class VsockClipboardService: ClipboardServicing {
             )
         }
         let content = capped.content
-        // Filtering can empty the list. Send nothing rather than an offer with no
-        // representations: the peer would drop its promise and be left with a
-        // pasteboard item nothing can serve, where leaving the previous offer
-        // standing keeps a working clipboard.
+        // Filtering can empty the list. The buffer still moved on, so the guest's
+        // previous offer is retired rather than left serving content the user has
+        // already replaced.
         guard !content.representations.isEmpty else {
+            releaseOutboundOffer("nothing in the buffer can be offered to this guest")
             // Deliberately *not* latched into `lastGrabbedDigest`: the capability
             // is re-read from every `Hello`, and a control-channel blip alone
             // clears it, so latching would strand this buffer for the rest of the
@@ -613,6 +613,39 @@ final class VsockClipboardService: ClipboardServicing {
         return (
             ClipboardContent(representations: kept, isConcealed: clipboardContent.isConcealed),
             dropped
+        )
+    }
+
+    /// Retires the offer the guest still holds, because the buffer moved on to
+    /// content with nothing left to offer it.
+    ///
+    /// `ClipboardRelease` rather than an empty offer: an offer with no
+    /// representations drops the guest's promise but leaves the pasteboard item
+    /// behind it advertising flavors nothing can serve, where a release clears
+    /// that write too. Idempotent — the released offer is forgotten, so the later
+    /// calls a still-unofferable buffer draws send nothing.
+    private func releaseOutboundOffer(_ reason: String) {
+        guard let previous = pendingOutbound else { return }
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.clipboardRelease = Kernova_V1_ClipboardRelease.with {
+            $0.generation = previous.generation
+        }
+        do {
+            try channel.send(frame)
+        } catch {
+            Self.logger.error(
+                "Failed to release clipboard offer gen=\(previous.generation, privacy: .public) for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            return
+        }
+        sender?.cancel(generation: previous.generation)
+        pendingOutbound = nil
+        currentOutboundGeneration.set(0)
+        // The released offer was a reader of whatever drop it streamed from.
+        retireUnreferencedDropDirectories()
+        Self.logger.notice(
+            "Released clipboard offer gen=\(previous.generation, privacy: .public) to '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) — \(reason, privacy: .public)"
         )
     }
 
@@ -833,10 +866,11 @@ final class VsockClipboardService: ClipboardServicing {
         // The host pasteboard may still hold this VM's own promised write for
         // the superseded offer, which the guest can no longer serve
         // (`request.stale`) — retract it rather than leave a paste that
-        // silently serves nothing, and tell the user how to get the new copy.
+        // silently serves nothing. The notice is raised at each exit below rather
+        // than here: whether it may point at Copy to Mac depends on whether this
+        // offer leaves anything to copy.
         let retracted = retractStaleHostWrite?() ?? false
         if retracted {
-            raiseIssue(.staleCopyRetracted())
             // With the write retracted, no earlier session's staging can be
             // backing a live pasteboard item any more.
             staging.reclaimSiblingRoots()
@@ -846,6 +880,7 @@ final class VsockClipboardService: ClipboardServicing {
         }
 
         guard !offer.repInfo.isEmpty else {
+            if retracted { raiseIssue(.staleCopyRetracted(hasSuccessor: false)) }
             dropInboundPromise()
             return
         }
@@ -874,6 +909,7 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.warning(
                 "Dropped the guest clipboard offer for '\(self.label, privacy: .public)' (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)): none of its \(bounded.reps.count, privacy: .public) representation(s) survived receive-side filtering"
             )
+            if retracted { raiseIssue(.staleCopyRetracted(hasSuccessor: false)) }
             dropInboundPromise()
             return
         }
@@ -885,8 +921,13 @@ final class VsockClipboardService: ClipboardServicing {
             ClipboardContent(representations: placeholders, isConcealed: promise.isConcealed))
         inboundPromise = promise
         previewMaterializationStarted = 0
-        // A retraction's issue is the new offer's own explainer — keep it.
-        if !retracted { clearIssue() }
+        // A retraction's issue is the new offer's own explainer, so it replaces
+        // whatever stood here rather than being cleared with it.
+        if retracted {
+            raiseIssue(.staleCopyRetracted(hasSuccessor: true))
+        } else {
+            clearIssue()
+        }
         // Bumped after the promise is live, so the passthrough coordinator's
         // `materializeForCopy` sees it.
         inboundOfferSeq &+= 1
@@ -1582,7 +1623,7 @@ final class VsockClipboardService: ClipboardServicing {
         // files ride the grace window rather than being swept (docs/CLIPBOARD.md
         // §3), so a paste mid-copy survives.
         if retractStaleHostWrite?() == true {
-            raiseIssue(.staleCopyRetracted())
+            raiseIssue(.staleCopyRetracted(hasSuccessor: false))
             staging.reclaimSiblingRoots()
             Self.logger.notice(
                 "Retracted the stale host-pasteboard promise for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) after the guest released gen=\(release.generation, privacy: .public)"

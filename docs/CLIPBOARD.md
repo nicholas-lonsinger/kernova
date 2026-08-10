@@ -140,6 +140,12 @@ Preserve **every** representation the source offered and choose which to hand ov
 the destination asks. Dropping one — losing an inline image when syncing rich text — is a fidelity
 defect; round-trip equality with a native copy/paste is the bar.
 
+- **Every copy replaces what the peer holds — including one that carries nothing.** A native
+  copy makes the previous pasteboard unreachable, so an offer filtering left empty — whatever
+  filtered it — *releases* the peer rather than leaving it advertising content the user has
+  already replaced. Only a release clears the peer's pasteboard write; an empty offer retires
+  the promise and leaves that write behind it unservable. A snapshot an `org.nspasteboard.*`
+  marker suppressed is not a copy and releases nothing.
 - **Directory fidelity rides the archive's field-key set.** A folder crosses as an archive of its
   tree, and what survives the round trip is exactly what `ClipboardDirectoryArchive`'s key set
   carries — entry kinds, permissions, ownership, flags, timestamps, link targets, per-entry

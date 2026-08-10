@@ -70,15 +70,19 @@ extension ClipboardTransferIssue {
             date: Date())
     }
 
-    /// Raised when a newer guest offer (or a release) supersedes a Copy to Mac
-    /// still on the host pasteboard: the stale promise is retracted rather than
-    /// left advertised but unservable.
-    static func staleCopyRetracted() -> ClipboardTransferIssue {
-        ClipboardTransferIssue(
+    /// Raised when a Copy to Mac still on the host pasteboard is superseded: the
+    /// stale promise is retracted rather than left advertised but unservable.
+    ///
+    /// `hasSuccessor` is whether a guest offer took the retracted one's place —
+    /// an offer the host could promise does, a release or an offer whose reps all
+    /// filtered out does not. Only the first leaves Copy to Mac a next step.
+    static func staleCopyRetracted(hasSuccessor: Bool) -> ClipboardTransferIssue {
+        let removal =
+            "The guest clipboard changed, so the earlier copy was removed from the Mac clipboard"
+        return ClipboardTransferIssue(
             kind: .staleCopyRetracted(
-                message:
-                    "The guest clipboard changed, so the earlier copy was removed from the Mac clipboard — use Copy to Mac to bring over the new copy."
-            ),
+                message: hasSuccessor
+                    ? "\(removal) — use Copy to Mac to bring over the new copy." : "\(removal)."),
             date: Date())
     }
 

@@ -831,7 +831,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.59.0;
+				MARKETING_VERSION = 0.60.0;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.macosagent;
 				PRODUCT_MODULE_NAME = KernovaMacOSAgent;
 				PRODUCT_NAME = "Kernova Guest Agent";
@@ -869,7 +869,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.59.0;
+				MARKETING_VERSION = 0.60.0;
 				OTHER_CODE_SIGN_FLAGS = "--timestamp";
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.macosagent;
 				PRODUCT_MODULE_NAME = KernovaMacOSAgent;

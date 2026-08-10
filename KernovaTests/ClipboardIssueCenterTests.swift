@@ -130,13 +130,13 @@ struct ClipboardIssueCenterTests {
         let center = ClipboardIssueCenter()
         report(.pasteTimedOut(), to: center)
 
-        report(.staleCopyRetracted(), to: center)
+        report(.staleCopyRetracted(hasSuccessor: true), to: center)
 
         #expect(center.latestByInstance.count == 1)
         #expect(
             center.latestByInstance[vmID]?.issue.kind
-                == ClipboardTransferIssue.staleCopyRetracted().kind)
-        #expect(center.pendingNotice?.issue.kind == ClipboardTransferIssue.staleCopyRetracted().kind)
+                == ClipboardTransferIssue.staleCopyRetracted(hasSuccessor: true).kind)
+        #expect(center.pendingNotice?.issue.kind == ClipboardTransferIssue.staleCopyRetracted(hasSuccessor: true).kind)
     }
 
     @Test("Consuming the pending notice leaves the dropdown's record standing")
