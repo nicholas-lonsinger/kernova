@@ -35,8 +35,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// Single close-side trigger for the activation-policy reconcile.
     ///
-    /// Fires `scheduleAgentActivationPolicySync()` on every window close, tracked
-    /// or not (e.g. the standard About panel). Resident app only.
+    /// Fires `scheduleAgentActivationPolicySync()` when a titled window closes,
+    /// tracked or not (e.g. the standard About panel) — the only closes that can
+    /// change `hasVisibleUserWindow` (`windowCloseAffectsActivationPolicy`).
+    /// Resident app only.
     private var globalWindowCloseObserver: Any?
 
     /// The menu-bar status item (resident app only) — the "Kernova is running"
@@ -233,7 +235,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // Start headless in `.accessory` (no Dock blip / focus steal); whether the
         // window then shows is decided by `resolveColdLaunch(from:)`. The unit-test
         // host stays a plain `.regular` foreground app.
-        if !isTestHost {
+        //
+        // RATIONALE: a debugger launch skips the demote. For a debugger-spawned
+        // process the Dock creates the ⌘-Tab switcher entry at the tail when the
+        // `.accessory` → `.regular` morph lands seconds after launch, and no
+        // programmatic activation ever promotes the entry (observed 2026-08-10,
+        // macOS 27.0; method and repro matrix in
+        // docs/research/2026-08-10-xcode-launch-switcher-tail.md). Launching
+        // `.regular` from the start sidesteps it, and costs nothing: a login-item
+        // launch — the reason the demote exists — is never debugger-traced.
+        if !isTestHost && !isDebuggerLaunched {
             app.setActivationPolicy(.accessory)
         }
 
@@ -242,6 +253,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let delegate = AppDelegate(isTestHost: isTestHost)
         app.delegate = delegate
         app.run()
+    }
+
+    /// Whether this process was spawned by a debugger (`P_TRACED`), read once at
+    /// launch — Xcode's Run is the only expected source.
+    private static var isDebuggerLaunched: Bool {
+        var info = kinfo_proc()
+        var size = MemoryLayout.stride(ofValue: info)
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+        guard sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0) == 0 else {
+            return false
+        }
+        return info.kp_proc.p_flag & P_TRACED != 0
     }
 
     init(isTestHost: Bool, preferences: AppPreferences = .shared) {
@@ -332,8 +355,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         globalWindowCloseObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.scheduleAgentActivationPolicySync() }
+        ) { [weak self] notification in
+            guard let window = notification.object as? NSWindow else { return }
+            MainActor.assumeIsolated {
+                guard Self.windowCloseAffectsActivationPolicy(window) else { return }
+                self?.scheduleAgentActivationPolicySync()
+            }
         }
 
         resolveColdLaunch(from: NSAppleEventManager.shared().currentAppleEvent)
@@ -546,6 +573,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // (the .accessory→.regular menu-bar quirk, FB7743313).
         setAgentActivationPolicy(.regular)
         Task { @MainActor in
+            Self.logger.debug("Summon: isActive=\(NSApp.isActive, privacy: .public)")
             // After a login launch the app is a background, unactivated
             // `.accessory` process: `ignoringOtherApps` is what fronts it — the
             // argument-less `activate()` does not reliably front a
@@ -567,6 +595,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             // bar with its first menu highlighted: the status menu's dismissal
             // bleeds into the menu bar the morph just installed. Clear it.
             NSApp.mainMenu?.cancelTracking()
+            await self.reassertActivationAfterSummon()
+        }
+    }
+
+    /// Re-requests activation until the summon's activation sticks.
+    ///
+    /// Cooperative activation (macOS 14+) occasionally denies the summon's
+    /// `activate`: the request lands milliseconds after the `.accessory` →
+    /// `.regular` morph, and when it loses that race the previously active app
+    /// keeps focus — the summoned window surfaces behind it and the Dock,
+    /// never seeing an activation, leaves the app at the ⌘-Tab tail. Poll and
+    /// re-assert until activation sticks, bounded to three attempts so a
+    /// denied activation isn't re-requested indefinitely.
+    private func reassertActivationAfterSummon() async {
+        for attempt in 1...3 {
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !NSApp.isActive else { return }
+            Self.logger.debug(
+                "Summon: activation denied, re-asserting (attempt \(attempt, privacy: .public))")
+            NSApp.activate(ignoringOtherApps: true)
         }
     }
 
@@ -600,6 +648,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // so a reconcile can't strip the Dock icon while one is the last visible.
         if NSApp.windows.contains(where: Self.isUntrackedUserPanel) { return true }
         return false
+    }
+
+    /// Whether closing `window` can change what `hasVisibleUserWindow` returns,
+    /// so the close must run the activation-policy reconcile.
+    ///
+    /// Every window `hasVisibleUserWindow` counts is titled, so a borderless
+    /// close (a dismissing status-item menu, a tooltip) never changes the
+    /// answer — and must not run the reconcile: the status menu dismisses
+    /// *before* its action fires, so its close otherwise lands a reconcile
+    /// between the summon's `.regular` morph and the deferred window show,
+    /// flipping the app back to `.accessory` mid-summon. The activate then
+    /// fires while the app is `.accessory`, and the re-morph re-appends it to
+    /// the ⌘-Tab switcher's tail with no activation event after it — leaving
+    /// the freshly summoned app last in ⌘-Tab.
+    static func windowCloseAffectsActivationPolicy(_ window: NSWindow) -> Bool {
+        window.styleMask.contains(.titled)
     }
 
     /// Whether `window` is an untracked, AppKit-owned top-level panel whose
