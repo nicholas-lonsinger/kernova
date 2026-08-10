@@ -1670,9 +1670,9 @@ struct VsockClipboardServiceTests {
         let snapshot = recorder.frames.count
         service.grabIfChanged()
 
-        // An offer with no representations would retire whatever the guest is
-        // holding and leave it a pasteboard item nothing can serve; sending
-        // nothing leaves the previous, still-working clipboard in place.
+        // An offer with no representations would leave the guest a pasteboard
+        // item nothing can serve, and there is no earlier offer to release, so
+        // this copy has nothing to say on the wire at all.
         try await expectNoNewFrames(on: recorder, sinceCount: snapshot)
         // The window is the only surface that can explain why the copy did
         // nothing, so the skip has to reach it.
@@ -1706,6 +1706,102 @@ struct VsockClipboardServiceTests {
         #expect(service.lastTransferIssue == nil)
         #expect(issues.latestByInstance[vmID] == nil)
         #expect(issues.pendingNotice == nil)
+    }
+
+    @Test("a folders-only copy releases the offer the guest is still holding, once")
+    func foldersOnlyCopyReleasesThePreviousOffer() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
+            peerStreamsDirectories: { false })
+        service.start()
+        defer { service.stop() }
+
+        let recorder = FrameRecorder(channel: guest)
+        defer { recorder.cancel() }
+
+        service.clipboardContent = ClipboardContent(text: "carried")
+        service.grabIfChanged()
+        try await waitForFrames(recorder) {
+            recorder.first {
+                if case .clipboardOffer = $0.payload { return true }
+                return false
+            } != nil
+        }
+        let offerFrame = try #require(
+            recorder.first {
+                if case .clipboardOffer = $0.payload { return true }
+                return false
+            })
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            Issue.record("Expected clipboardOffer, got \(String(describing: offerFrame.payload))")
+            return
+        }
+
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let folder = parent.appendingPathComponent("OnlyFolder", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+
+        // The buffer moved on to a copy with nothing this guest can take. Leaving
+        // the offer standing would keep a paste in the guest serving "carried",
+        // which the user has already replaced.
+        service.clipboardContent = ClipboardContent(representations: [
+            ClipboardContent.Representation(
+                directorySourceURL: folder, estimatedByteCount: 0, filename: "OnlyFolder",
+                uti: "public.folder")
+        ])
+        service.grabIfChanged()
+        try await waitForFrames(recorder) {
+            recorder.first {
+                if case .clipboardRelease = $0.payload { return true }
+                return false
+            } != nil
+        }
+        let releaseFrame = try #require(
+            recorder.first {
+                if case .clipboardRelease = $0.payload { return true }
+                return false
+            })
+        guard case .clipboardRelease(let release) = releaseFrame.payload else {
+            Issue.record("Expected clipboardRelease, got \(String(describing: releaseFrame.payload))")
+            return
+        }
+        #expect(release.generation == offer.generation)
+
+        // This branch is re-entered rather than latched (so the copy can still be
+        // offered once the guest advertises the capability); the release must not
+        // repeat with it.
+        let snapshot = recorder.frames.count
+        service.grabIfChanged()
+        try await expectNoNewFrames(on: recorder, sinceCount: snapshot)
+
+        // The release emptied the guest's clipboard, so re-copying the content it
+        // was holding is a copy that has to reach it — the send-dedup latch that
+        // said the guest already had it stopped being true at the release.
+        service.clipboardContent = ClipboardContent(text: "carried")
+        service.grabIfChanged()
+        try await waitForFrames(recorder) {
+            recorder.frames.dropFirst(snapshot).contains {
+                if case .clipboardOffer = $0.payload { return true }
+                return false
+            }
+        }
+        let reofferFrame = try #require(
+            recorder.frames.dropFirst(snapshot).first {
+                if case .clipboardOffer = $0.payload { return true }
+                return false
+            })
+        guard case .clipboardOffer(let reoffer) = reofferFrame.payload else {
+            Issue.record("Expected clipboardOffer, got \(String(describing: reofferFrame.payload))")
+            return
+        }
+        #expect(reoffer.generation > offer.generation)
     }
 
     @Test("a folder is left out of the offer for a guest that can't receive one")

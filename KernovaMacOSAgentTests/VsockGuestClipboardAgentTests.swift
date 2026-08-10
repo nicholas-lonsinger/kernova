@@ -873,6 +873,111 @@ struct VsockGuestClipboardAgentTests {
                 == .copyShortened(offeringAnything: false))
     }
 
+    @Test("outbound: a folder-only copy releases the offer an older host is still holding, once")
+    func outboundFolderOnlyCopyReleasesThePreviousOffer() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, hostStreamsDirectories: false)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        pasteboard.setString("carried", forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+        let offer = try await awaitOffer(on: hostChannel)
+
+        let folder = try writeTempFolder(name: "Project", files: [("f.txt", Data("x".utf8))])
+        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
+        pasteboard.setItems([[(type: .fileURL, data: Data(folder.absoluteString.utf8))]])
+        await MainActor.run { agent.checkClipboardChange() }
+
+        // Nothing about this copy can cross, but the pasteboard still moved on:
+        // leaving the offer standing would keep a paste on the Mac serving
+        // "carried", which the user has already replaced.
+        let release = try await awaitRelease(on: hostChannel)
+        #expect(release.generation == offer.generation)
+
+        // This branch is re-entered on every poll tick (its change count is
+        // deliberately not advanced, so the copy can still be offered once the
+        // host advertises the capability); the release must not repeat with it.
+        await MainActor.run { agent.checkClipboardChange() }
+        let extra = try await maybeNextFrame(from: hostChannel, skippingAcks: true)
+        #expect(extra == nil)
+    }
+
+    @Test("outbound: a copy nothing survives releases the host's previous offer")
+    func outboundUnreadableCopyReleasesThePreviousOffer() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        pasteboard.setString("carried", forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+        let offer = try await awaitOffer(on: hostChannel)
+
+        // A copied item whose resource values can't be read yields no file
+        // candidate, and the raw file-url flavor it leaves behind is filtered
+        // before reading — so this copy has nothing to offer at all.
+        pasteboard.setItem([
+            (type: .fileURL, data: Data("file:///nonexistent/\(UUID().uuidString)".utf8))
+        ])
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let release = try await awaitRelease(on: hostChannel)
+        #expect(release.generation == offer.generation)
+
+        // The release emptied the Mac's clipboard, so re-copying what it was
+        // holding is a copy that has to reach it — the send-dedup latch that said
+        // the host already had it stopped being true at the release.
+        pasteboard.setString("carried", forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+        let reoffer = try await awaitOffer(on: hostChannel)
+        #expect(reoffer.repInfo.map(\.uti) == [ClipboardContent.utf8TextUTI])
+        #expect(reoffer.generation > offer.generation)
+    }
+
+    @Test("outbound suppressed: a transient snapshot is not a copy, so it releases nothing")
+    func outboundSuppressedSnapshotLeavesTheOfferStanding() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        pasteboard.setString("carried", forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+        _ = try await awaitOffer(on: hostChannel)
+
+        // The source app restores the pasteboard within seconds and clipboard
+        // managers ignore the marker by convention, so the clipboard before it is
+        // the one that still stands — on the host as much as in the guest.
+        pasteboard.setItem([
+            (
+                type: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"),
+                data: Data([1])
+            ),
+            (type: .string, data: Data("noise".utf8)),
+        ])
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let extra = try await maybeNextFrame(from: hostChannel, skippingAcks: true)
+        #expect(extra == nil)
+    }
+
     /// Requests representation `repIndex` of `offer` and collects its stream.
     private func requestOutboundRep(
         offer: Kernova_V1_ClipboardOffer, repIndex: UInt64, from channel: VsockChannel
@@ -3312,6 +3417,24 @@ struct VsockGuestClipboardAgentTests {
             default:
                 throw TestFailure(
                     "Expected ClipboardOffer, got \(String(describing: frame.payload))")
+            }
+        }
+    }
+
+    /// Awaits the next `ClipboardRelease` on `channel`, skipping stream acks.
+    private func awaitRelease(on channel: VsockChannel) async throws
+        -> Kernova_V1_ClipboardRelease
+    {
+        while true {
+            let frame = try await nextFrame(from: channel)
+            switch frame.payload {
+            case .clipboardRelease(let release):
+                return release
+            case .clipboardStreamAck:
+                continue
+            default:
+                throw TestFailure(
+                    "Expected ClipboardRelease, got \(String(describing: frame.payload))")
             }
         }
     }

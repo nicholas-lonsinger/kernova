@@ -561,6 +561,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             // The change count is deliberately *not* advanced: the capability is
             // re-read from every `Hello`, so this copy becomes offerable the
             // moment the host advertises it.
+            releaseOutboundOffer("every copied item is a folder this host can't take")
             return
         }
         if !fileCandidates.isEmpty {
@@ -640,6 +641,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         _ content: ClipboardContent, channel: VsockChannel, changeCount: Int
     ) {
         guard !content.isEmpty else {
+            // The pasteboard still moved on, so the host's previous offer is
+            // retired rather than left serving a copy the user has replaced.
+            releaseOutboundOffer("the copy left nothing that can cross")
             lastPasteboardChangeCount = changeCount
             return
         }
@@ -683,6 +687,45 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 "Failed to send clipboard offer: \(error.localizedDescription, privacy: .public)"
             )
         }
+    }
+
+    /// Retires the offer the host still holds, because this snapshot left nothing
+    /// to replace it with.
+    ///
+    /// `ClipboardRelease` rather than an empty offer: an offer with no
+    /// representations drops the host's promise but leaves the pasteboard item
+    /// behind it advertising flavors nothing can serve, where a release clears
+    /// that write too. Idempotent — the released offer is forgotten, so the later
+    /// calls a still-unofferable snapshot draws send nothing. A snapshot an
+    /// `org.nspasteboard.*` marker suppressed never reaches here: by that
+    /// marker's convention it is not a copy, and the clipboard before it still
+    /// stands.
+    private func releaseOutboundOffer(_ reason: String) {
+        guard let channel = liveChannel, let previous = pendingOutbound else { return }
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.clipboardRelease = Kernova_V1_ClipboardRelease.with {
+            $0.generation = previous.generation
+        }
+        do {
+            try channel.send(frame)
+        } catch {
+            Self.logger.warning(
+                "Failed to release clipboard offer gen=\(previous.generation, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            return
+        }
+        sender?.cancel(generation: previous.generation)
+        pendingOutbound = nil
+        currentOutboundGeneration.set(0)
+        // The send-dedup latch means "the host already has this", which the
+        // release just made false — so re-copying the released content is a new
+        // copy to a host whose clipboard this emptied, not a redundant offer.
+        // A fresh connection clears it for the same reason.
+        lastSeenDigest = nil
+        Self.logger.notice(
+            "Released clipboard offer gen=\(previous.generation, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) — \(reason, privacy: .public)"
+        )
     }
 
     /// One on-disk pasteboard file or folder gathered for an outbound offer.

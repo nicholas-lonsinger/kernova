@@ -64,12 +64,25 @@ struct ClipboardTransferIssueTests {
             ClipboardTransferIssue.overCopyBudget(limitBytes: limit)
                 .displayMessage(pasteLimitBytes: limit)
                 == ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: limit))
-        let retracted = ClipboardTransferIssue.staleCopyRetracted()
+        let retracted = ClipboardTransferIssue.staleCopyRetracted(hasSuccessor: true)
         guard case .staleCopyRetracted(let message) = retracted.kind else {
             Issue.record("Expected a staleCopyRetracted issue, got \(retracted.kind)")
             return
         }
         #expect(retracted.displayMessage(pasteLimitBytes: limit) == message)
+    }
+
+    @Test("A retraction points at Copy to Mac only when an offer replaced the one it removed")
+    func retractionNamesCopyToMacOnlyWithASuccessor() {
+        let replaced = ClipboardTransferIssue.staleCopyRetracted(hasSuccessor: true)
+            .displayMessage(pasteLimitBytes: limit)
+        let unreplaced = ClipboardTransferIssue.staleCopyRetracted(hasSuccessor: false)
+            .displayMessage(pasteLimitBytes: limit)
+        #expect(replaced.contains("use Copy to Mac"))
+        // Without a successor the click has nothing to fetch, so the sentence
+        // stops at what happened.
+        #expect(!unreplaced.contains("use Copy to Mac"))
+        #expect(unreplaced.hasSuffix("removed from the Mac clipboard."))
     }
 
     // MARK: - noticeHeadline
@@ -101,7 +114,7 @@ struct ClipboardTransferIssueTests {
             peerError(.pasteFailed).noticeHeadline(vmName: vm)
                 == "Clipboard not pasted into \u{201C}Build VM\u{201D}.")
         #expect(
-            ClipboardTransferIssue.staleCopyRetracted().noticeHeadline(vmName: vm)
+            ClipboardTransferIssue.staleCopyRetracted(hasSuccessor: true).noticeHeadline(vmName: vm)
                 == "Clipboard changed in \u{201C}Build VM\u{201D}.")
     }
 
@@ -124,7 +137,7 @@ struct ClipboardTransferIssueTests {
             .pasteTransferFailed(),
             .folderSkippedForOutdatedGuest(),
             .forwardSkippedItems(note: "skipped"),
-            .staleCopyRetracted(),
+            .staleCopyRetracted(hasSuccessor: true),
             ClipboardTransferIssue(kind: .diskFull(needed: 1, available: 0), date: Date()),
             peerError(.pasteTooLarge),
         ] {
@@ -143,7 +156,7 @@ struct ClipboardTransferIssueTests {
             .pasteTransferFailed(),
             .folderSkippedForOutdatedGuest(),
             .forwardSkippedItems(note: "skipped"),
-            .staleCopyRetracted(),
+            .staleCopyRetracted(hasSuccessor: true),
             ClipboardTransferIssue(kind: .diskFull(needed: 1, available: 0), date: Date()),
         ] {
             #expect(issue.warrantsInterruptingNotice, "\(issue.kind) must interrupt here")
@@ -180,7 +193,7 @@ struct ClipboardTransferIssueTests {
         #expect(
             peerError(.pasteTooLarge).menuLineText == "Clipboard: too large to paste into the guest")
         #expect(
-            ClipboardTransferIssue.staleCopyRetracted().menuLineText
+            ClipboardTransferIssue.staleCopyRetracted(hasSuccessor: true).menuLineText
                 == "Clipboard: earlier copy was removed")
         #expect(
             ClipboardTransferIssue.folderSkippedForOutdatedGuest().menuLineText
@@ -196,7 +209,7 @@ struct ClipboardTransferIssueTests {
             ClipboardTransferIssue.overCopyBudget(limitBytes: limit),
             .pasteTimedOut(),
             .pasteTransferFailed(),
-            .staleCopyRetracted(),
+            .staleCopyRetracted(hasSuccessor: true),
             .folderSkippedForOutdatedGuest(),
             peerError(.pasteFailed),
         ] {
