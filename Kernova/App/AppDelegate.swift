@@ -235,7 +235,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // Start headless in `.accessory` (no Dock blip / focus steal); whether the
         // window then shows is decided by `resolveColdLaunch(from:)`. The unit-test
         // host stays a plain `.regular` foreground app.
-        if !isTestHost {
+        //
+        // RATIONALE: a debugger launch skips the demote. For a debugger-spawned
+        // process the Dock creates the ⌘-Tab switcher entry at the tail when the
+        // `.accessory` → `.regular` morph lands seconds after launch, and no
+        // programmatic activation ever promotes the entry (observed 2026-08-10,
+        // macOS 27.0; method and repro matrix in
+        // docs/research/2026-08-10-xcode-launch-switcher-tail.md). Launching
+        // `.regular` from the start sidesteps it, and costs nothing: a login-item
+        // launch — the reason the demote exists — is never debugger-traced.
+        if !isTestHost && !isDebuggerLaunched {
             app.setActivationPolicy(.accessory)
         }
 
@@ -244,6 +253,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let delegate = AppDelegate(isTestHost: isTestHost)
         app.delegate = delegate
         app.run()
+    }
+
+    /// Whether this process was spawned by a debugger (`P_TRACED`), read once at
+    /// launch — Xcode's Run is the only expected source.
+    private static var isDebuggerLaunched: Bool {
+        var info = kinfo_proc()
+        var size = MemoryLayout.stride(ofValue: info)
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+        guard sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0) == 0 else {
+            return false
+        }
+        return info.kp_proc.p_flag & P_TRACED != 0
     }
 
     init(isTestHost: Bool, preferences: AppPreferences = .shared) {
