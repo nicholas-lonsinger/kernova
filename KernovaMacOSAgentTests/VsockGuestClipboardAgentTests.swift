@@ -935,6 +935,15 @@ struct VsockGuestClipboardAgentTests {
 
         let release = try await awaitRelease(on: hostChannel)
         #expect(release.generation == offer.generation)
+
+        // The release emptied the Mac's clipboard, so re-copying what it was
+        // holding is a copy that has to reach it — the send-dedup latch that said
+        // the host already had it stopped being true at the release.
+        pasteboard.setString("carried", forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+        let reoffer = try await awaitOffer(on: hostChannel)
+        #expect(reoffer.repInfo.map(\.uti) == [ClipboardContent.utf8TextUTI])
+        #expect(reoffer.generation > offer.generation)
     }
 
     @Test("outbound suppressed: a transient snapshot is not a copy, so it releases nothing")

@@ -1780,6 +1780,28 @@ struct VsockClipboardServiceTests {
         let snapshot = recorder.frames.count
         service.grabIfChanged()
         try await expectNoNewFrames(on: recorder, sinceCount: snapshot)
+
+        // The release emptied the guest's clipboard, so re-copying the content it
+        // was holding is a copy that has to reach it — the send-dedup latch that
+        // said the guest already had it stopped being true at the release.
+        service.clipboardContent = ClipboardContent(text: "carried")
+        service.grabIfChanged()
+        try await waitForFrames(recorder) {
+            recorder.frames.dropFirst(snapshot).contains {
+                if case .clipboardOffer = $0.payload { return true }
+                return false
+            }
+        }
+        let reofferFrame = try #require(
+            recorder.frames.dropFirst(snapshot).first {
+                if case .clipboardOffer = $0.payload { return true }
+                return false
+            })
+        guard case .clipboardOffer(let reoffer) = reofferFrame.payload else {
+            Issue.record("Expected clipboardOffer, got \(String(describing: reofferFrame.payload))")
+            return
+        }
+        #expect(reoffer.generation > offer.generation)
     }
 
     @Test("a folder is left out of the offer for a guest that can't receive one")

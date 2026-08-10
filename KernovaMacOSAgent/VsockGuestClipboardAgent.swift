@@ -718,6 +718,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         sender?.cancel(generation: previous.generation)
         pendingOutbound = nil
         currentOutboundGeneration.set(0)
+        // The send-dedup latch means "the host already has this", which the
+        // release just made false — so re-copying the released content is a new
+        // copy to a host whose clipboard this emptied, not a redundant offer.
+        // A fresh connection clears it for the same reason.
+        lastSeenDigest = nil
         Self.logger.notice(
             "Released clipboard offer gen=\(previous.generation, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) — \(reason, privacy: .public)"
         )

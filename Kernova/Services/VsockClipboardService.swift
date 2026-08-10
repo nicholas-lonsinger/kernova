@@ -642,6 +642,11 @@ final class VsockClipboardService: ClipboardServicing {
         sender?.cancel(generation: previous.generation)
         pendingOutbound = nil
         currentOutboundGeneration.set(0)
+        // The send-dedup latch means "the guest already has this", which the
+        // release just made false — so re-copying the released content is a new
+        // copy to a guest whose clipboard this emptied, not a redundant offer.
+        // `clearBuffer` drops it for the same reason.
+        lastGrabbedDigest = nil
         // The released offer was a reader of whatever drop it streamed from.
         retireUnreferencedDropDirectories()
         Self.logger.notice(
