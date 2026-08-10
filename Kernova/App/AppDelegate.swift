@@ -35,8 +35,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// Single close-side trigger for the activation-policy reconcile.
     ///
-    /// Fires `scheduleAgentActivationPolicySync()` on every window close, tracked
-    /// or not (e.g. the standard About panel). Resident app only.
+    /// Fires `scheduleAgentActivationPolicySync()` when a titled window closes,
+    /// tracked or not (e.g. the standard About panel) — the only closes that can
+    /// change `hasVisibleUserWindow` (`windowCloseAffectsActivationPolicy`).
+    /// Resident app only.
     private var globalWindowCloseObserver: Any?
 
     /// The menu-bar status item (resident app only) — the "Kernova is running"
@@ -333,11 +335,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         globalWindowCloseObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: nil, queue: .main
         ) { [weak self] notification in
-            nonisolated(unsafe) let notification = notification
+            guard let window = notification.object as? NSWindow else { return }
             MainActor.assumeIsolated {
-                guard let window = notification.object as? NSWindow,
-                    Self.windowCloseAffectsActivationPolicy(window)
-                else { return }
+                guard Self.windowCloseAffectsActivationPolicy(window) else { return }
                 self?.scheduleAgentActivationPolicySync()
             }
         }
@@ -585,8 +585,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// `.regular` morph, and when it loses that race the previously active app
     /// keeps focus — the summoned window surfaces behind it and the Dock,
     /// never seeing an activation, leaves the app at the ⌘-Tab tail. Poll and
-    /// re-assert until activation sticks, bounded so a user who genuinely
-    /// switches away right after summoning isn't fought for focus.
+    /// re-assert until activation sticks, bounded to three attempts so a
+    /// denied activation isn't re-requested indefinitely.
     private func reassertActivationAfterSummon() async {
         for attempt in 1...3 {
             try? await Task.sleep(for: .milliseconds(100))
