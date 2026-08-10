@@ -981,6 +981,45 @@ struct VsockGuestClipboardAgentTests {
         #expect(notices.value == 1)
     }
 
+    @Test("outbound: the first poll of a connection re-reads a snapshot without blaming a copy")
+    func outboundFirstPollAfterConnectingReportsNoCopy() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let notices = AtomicInt()
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
+        defer { agent.stop() }
+
+        // A snapshot already standing when the channel comes up, whose flavors
+        // read as nothing. The promise this agent wrote for a host offer is the
+        // one that matters: reconnecting drops the promise behind it, so its
+        // providers stop serving and every type comes back empty — for a copy
+        // the guest user never made.
+        pasteboard.setItem([
+            (type: .fileURL, data: Data("file:///nonexistent/\(UUID().uuidString)".utf8))
+        ])
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+        await MainActor.run { agent.checkClipboardChange() }
+
+        // Re-announcing to a host that has no record of prior offers is not a
+        // gesture anyone just made, so it interrupts nobody and leaves the line
+        // where policy set it.
+        #expect(notices.value == 0)
+        #expect(await MainActor.run { agent.clipboardActivity } == .enabled)
+
+        // The copy after it is watched arriving, so that one is reported.
+        pasteboard.setItem([
+            (type: .fileURL, data: Data("file:///nonexistent/\(UUID().uuidString)".utf8))
+        ])
+        await MainActor.run { agent.checkClipboardChange() }
+        try await notices.changed.wait { notices.value == 1 }
+        #expect(await MainActor.run { agent.clipboardActivity } == .copyCarriedNothing)
+    }
+
     @Test("outbound: an emptied clipboard withdraws the offer without reading as a failed copy")
     func outboundEmptiedPasteboardReturnsTheMenuToEnabled() async throws {
         let pasteboard = FakePasteboard()
