@@ -2,14 +2,14 @@ import Foundation
 import Observation
 import os
 
-/// App-level aggregate of every live clipboard service's outstanding transfer
-/// problem.
+/// App-level aggregate, keyed by VM, of each one's outstanding clipboard
+/// transfer problem.
 ///
 /// Clipboard services are per-VM and their window is optional, so a refusal
-/// raised while no window is open has nowhere to render. Each service reports
-/// here instead, and every surface renders this record rather than a service's
-/// own — a service superseded by a reconnect still raises the failures of the
-/// pasteboard promises it published, which no live service can account for.
+/// raised while no window is open has nowhere to render. Every service reports
+/// here instead, and this is the only record — a service superseded by a
+/// reconnect still raises the failures of the pasteboard promises it published,
+/// so a problem outlives the connection that raised it and cannot be kept on one.
 ///
 /// ``latestByInstance`` feeds the clipboard window's banner and the menu-bar
 /// dropdown's per-VM lines; ``pendingNotice`` carries the one refusal no open

@@ -526,7 +526,6 @@ struct ClipboardPassthroughCoordinatorTests {
         var clipboardContent: ClipboardContent = .empty
         var isConnected = true
         var supportsBinaryRepresentations = true
-        var lastTransferIssue: ClipboardTransferIssue?
         private(set) var inboundOfferSeq: UInt64 = 0
         /// What the next `materializeForCopy` promises.
         var promises: [CopyToMacPromise] = []
