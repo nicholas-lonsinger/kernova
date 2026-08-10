@@ -67,6 +67,8 @@ public struct KernovaLogger: Sendable {
         forward(level: .warning, message: message.wireRendered)
     }
 
+    // periphery:ignore - the level ladder mirrors `os.Logger`, and the wire enum
+    // carries `.error` through to `VsockGuestLogService`, which re-logs it.
     /// Logs at `.error` and forwards the wire form.
     public func error(_ message: KernovaLogMessage) {
         osLogger.error("\(message.localRendered, privacy: .public)")

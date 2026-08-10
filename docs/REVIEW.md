@@ -97,7 +97,9 @@ Annotate freely here, unlike a `RATIONALE:` — the scan re-raises the symbol de
 - **Fix** when the finding is real — delete the symbol, or demote `public` to `internal` if only the access level is redundant.
 - **Dismiss** never applies: every annotation carries a reason, since silently retained symbols become a maintenance hazard.
 
-**Format** — put the directive **between** the doc comment and the declaration so DocC still associates the doc with the symbol, and keep the reason in the same comment block, with no blank line after the directive. `periphery:ignore:parameters <names>` scopes it to those parameters instead of the whole declaration:
+**Format** — keep the directive and its reason in one comment block, with no blank line after the directive. The block goes directly above the declaration, after the doc comment; on a `public` declaration it goes **above** the doc comment instead, since swift-format's `AllPublicDeclarationsHaveDocumentation` only credits a `///` that touches the declaration and `make lint` is a required check.
+
+`periphery:ignore:parameters <names>` scopes the directive to those parameters instead of the whole declaration:
 
 ```swift
 /// Suspends until the next `notify()`, an immediate hit, or the `deadline`

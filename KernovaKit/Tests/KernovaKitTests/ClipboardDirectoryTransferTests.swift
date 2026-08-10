@@ -24,20 +24,6 @@ struct ClipboardDirectoryTransferTests {
             directorySource: directorySource)
     }
 
-    /// A tree whose archive is far smaller than the tree it unpacks to — the
-    /// shape every compressed-vs-decompressed accounting bug hides in.
-    private func makeCompressibleTree(uncompressedBytes: Int = 512 * 1024) throws -> (
-        scratch: URL, source: URL
-    ) {
-        let fm = FileManager.default
-        let scratch = makeScratch()
-        let source = scratch.appendingPathComponent("Logs", isDirectory: true)
-        try fm.createDirectory(at: source, withIntermediateDirectories: true)
-        try Data(repeating: 0x20, count: uncompressedBytes)
-            .write(to: source.appendingPathComponent("big.log"))
-        return (scratch, source)
-    }
-
     private func makeScratch() -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent(
             "dirtransfer-\(UUID().uuidString)", isDirectory: true)

@@ -3,7 +3,7 @@ import Foundation
 import System
 
 /// Why an extract was stopped by the consumer rather than by the archive.
-public enum ClipboardArchiveOutputRefusal: Equatable, Sendable {
+enum ClipboardArchiveOutputRefusal: Equatable, Sendable {
     /// The staging volume no longer has room for the tree being written.
     case diskFull
     /// The tree outgrew the size the offer advertised for it.
@@ -11,7 +11,7 @@ public enum ClipboardArchiveOutputRefusal: Equatable, Sendable {
 }
 
 /// Why a streamed directory archive stopped.
-public enum ClipboardArchiveStreamError: Error, Equatable {
+enum ClipboardArchiveStreamError: Error, Equatable {
     /// A seek or random-access operation on a purely sequential stream.
     ///
     /// AppleArchive drives both pipelines here with sequential reads and writes
