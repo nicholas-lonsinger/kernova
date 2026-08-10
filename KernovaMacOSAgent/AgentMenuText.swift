@@ -37,6 +37,7 @@ enum AgentMenuText {
             return offeringAnything
                 ? "Clipboard: shared without folders — Kernova on the Mac needs updating"
                 : "Clipboard: folders not shared — Kernova on the Mac needs updating"
+        case .copyCarriedNothing: return "Clipboard: nothing in that copy could be shared"
         case .disabled: return "Clipboard: disabled"
         }
     }

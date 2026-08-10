@@ -946,6 +946,72 @@ struct VsockGuestClipboardAgentTests {
         #expect(reoffer.generation > offer.generation)
     }
 
+    @Test("outbound: a copy nothing survives tells the guest's own menu it didn't cross, once")
+    func outboundUnreadableCopyRaisesTheGuestNotice() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let notices = AtomicInt()
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        pasteboard.setString("carried", forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+        _ = try await awaitOffer(on: hostChannel)
+        #expect(await MainActor.run { agent.clipboardActivity } == .offeredToHost)
+
+        pasteboard.setItem([
+            (type: .fileURL, data: Data("file:///nonexistent/\(UUID().uuidString)".utf8))
+        ])
+        await MainActor.run { agent.checkClipboardChange() }
+
+        // The release emptied the Mac's clipboard, so leaving the line at the
+        // copy that crossed before it would read as the copy that just didn't.
+        try await notices.changed.wait { notices.value == 1 }
+        #expect(await MainActor.run { agent.clipboardActivity } == .copyCarriedNothing)
+
+        // A re-check of the same snapshot is not a second copy, so it is not
+        // owed a second interruption.
+        await MainActor.run { agent.checkClipboardChange() }
+        #expect(notices.value == 1)
+    }
+
+    @Test("outbound: an emptied clipboard withdraws the offer without reading as a failed copy")
+    func outboundEmptiedPasteboardReturnsTheMenuToEnabled() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let notices = AtomicInt()
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        pasteboard.setString("carried", forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+        let offer = try await awaitOffer(on: hostChannel)
+
+        pasteboard.clearContents()
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let release = try await awaitRelease(on: hostChannel)
+        #expect(release.generation == offer.generation)
+
+        // Emptying the clipboard is nobody's failed gesture: the offer it had
+        // crossed under is gone, which is all the line may still claim, and
+        // there is no outcome worth opening the dropdown over.
+        #expect(await MainActor.run { agent.clipboardActivity } == .enabled)
+        #expect(notices.value == 0)
+    }
+
     @Test("outbound suppressed: a transient snapshot is not a copy, so it releases nothing")
     func outboundSuppressedSnapshotLeavesTheOfferStanding() async throws {
         let pasteboard = FakePasteboard()

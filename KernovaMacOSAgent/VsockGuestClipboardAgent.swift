@@ -526,13 +526,18 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             }
         }
 
+        // Read once: the marker disposition, the flavors worth reading, and the
+        // account an empty result owes the menu all have to describe the same
+        // snapshot.
+        let firstItemTypes = pasteboard.firstItemTypes
+
         // `org.nspasteboard.*` marker handling, from the unfiltered first-item
         // type list: a transient/auto-generated snapshot is never offered; a
         // concealed one (a password) is offered but flagged so the host window
         // hides it. Folders are never concealed secrets, so the estimate path
         // below ignores the flag.
         let disposition = ClipboardSnapshotPolicy.disposition(
-            forTypes: pasteboard.firstItemTypes.map(\.rawValue))
+            forTypes: firstItemTypes.map(\.rawValue))
         if case .suppress(let reason) = disposition {
             Self.logger.notice(
                 "Clipboard snapshot suppressed by \(String(describing: reason), privacy: .public) marker"
@@ -577,13 +582,14 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                             uti: candidate.type.identifier, fileURL: candidate.url,
                             byteCount: candidate.byteCount, filename: candidate.filename)
                     }, isConcealed: isConcealed)
-                sendOfferIfNeeded(content, channel: channel, changeCount: currentCount)
+                sendOfferIfNeeded(
+                    content, channel: channel, changeCount: currentCount, pasteboardWasEmpty: false)
             }
             return
         }
 
         // Non-file snapshot. NSPasteboard reads run on the main queue.
-        let raw: [(uti: String, data: Data)] = pasteboard.firstItemTypes.compactMap { type in
+        let raw: [(uti: String, data: Data)] = firstItemTypes.compactMap { type in
             guard !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: type.rawValue) else {
                 return nil
             }
@@ -603,7 +609,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // `evaluate` builds non-concealed content; re-stamp the flag when the
         // marker called for it.
         let content = outcome.content.withConcealed(isConcealed)
-        sendOfferIfNeeded(content, channel: channel, changeCount: currentCount)
+        sendOfferIfNeeded(
+            content, channel: channel, changeCount: currentCount,
+            pasteboardWasEmpty: firstItemTypes.isEmpty)
     }
 
     /// Records, once per snapshot, that `count` copied folders were left out
@@ -637,14 +645,34 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     /// Announces `content` to the host when it's non-empty and not an echo of
     /// what we last wrote/sent, advancing the dedup + change-count bookkeeping.
+    ///
+    /// `pasteboardWasEmpty` separates the two ways `content` arrives empty — the
+    /// pasteboard holding nothing, and a copy whose every flavor was filtered
+    /// out — which owe the guest's menu different accounts.
     private func sendOfferIfNeeded(
-        _ content: ClipboardContent, channel: VsockChannel, changeCount: Int
+        _ content: ClipboardContent, channel: VsockChannel, changeCount: Int,
+        pasteboardWasEmpty: Bool
     ) {
         guard !content.isEmpty else {
             // The pasteboard still moved on, so the host's previous offer is
             // retired rather than left serving a copy the user has replaced.
-            releaseOutboundOffer("the copy left nothing that can cross")
+            let released = releaseOutboundOffer("the copy left nothing that can cross")
             lastPasteboardChangeCount = changeCount
+            guard !pasteboardWasEmpty else {
+                // Nothing was copied — the clipboard was emptied — so the only
+                // line the user can be left holding is one claiming the offer
+                // this just withdrew.
+                if released { clipboardActivityStorage = .enabled }
+                return
+            }
+            // A copy was made in this guest and none of it could cross. Its own
+            // menu is the only account of that (docs/CLIPBOARD.md §13), and
+            // without one the line still reads as the copy before it, which did.
+            Self.logger.notice(
+                "Copy left nothing that can be offered to the host (conn=\(self.connectionTag, privacy: .public))"
+            )
+            clipboardActivityStorage = .copyCarriedNothing
+            onClipboardNotice()
             return
         }
         // Dedup on the buffer's own (uncapped) digest — the poll rebuilds the
@@ -690,7 +718,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     }
 
     /// Retires the offer the host still holds, because this snapshot left nothing
-    /// to replace it with.
+    /// to replace it with, reporting whether one was actually withdrawn.
     ///
     /// `ClipboardRelease` rather than an empty offer: an offer with no
     /// representations drops the host's promise but leaves the pasteboard item
@@ -700,8 +728,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// `org.nspasteboard.*` marker suppressed never reaches here: by that
     /// marker's convention it is not a copy, and the clipboard before it still
     /// stands.
-    private func releaseOutboundOffer(_ reason: String) {
-        guard let channel = liveChannel, let previous = pendingOutbound else { return }
+    @discardableResult
+    private func releaseOutboundOffer(_ reason: String) -> Bool {
+        guard let channel = liveChannel, let previous = pendingOutbound else { return false }
         var frame = Frame()
         frame.protocolVersion = 1
         frame.clipboardRelease = Kernova_V1_ClipboardRelease.with {
@@ -713,7 +742,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             Self.logger.warning(
                 "Failed to release clipboard offer gen=\(previous.generation, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
-            return
+            return false
         }
         sender?.cancel(generation: previous.generation)
         pendingOutbound = nil
@@ -726,6 +755,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         Self.logger.notice(
             "Released clipboard offer gen=\(previous.generation, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) — \(reason, privacy: .public)"
         )
+        return true
     }
 
     /// One on-disk pasteboard file or folder gathered for an outbound offer.
@@ -837,7 +867,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 guard self.pasteboard.changeCount == changeCount, !reps.isEmpty else { return }
                 self.sendOfferIfNeeded(
                     ClipboardContent(representations: reps), channel: channel,
-                    changeCount: changeCount)
+                    changeCount: changeCount, pasteboardWasEmpty: false)
             }
         }
     }
