@@ -58,6 +58,23 @@ guard refuses ad-hoc `git -C <primary-checkout>` commands. After confirming
 the merge landed (`gh pr view <N> --json state -q .state` → `"MERGED"`),
 fast-forward `main` in that checkout rather than from this worktree.
 
+Then, still inside this worktree, drop the branch's now-redundant commits:
+
+```bash
+git fetch origin main && git reset --hard origin/main
+```
+
+Squash merging rewrites the work into a new commit, so the branch keeps
+commits `main` never gains and every later check reads them as unmerged work —
+which is what strands the worktree when a session ends without
+`ExitWorktree(remove)`. The reset is safe once state is `"MERGED"`: the work is
+on `main` as the squash commit, and the reset leaves this worktree matching it.
+
+Left-behind worktrees are removable the same way: verify `gh pr list --head
+<remote-branch> --state all` reports `MERGED`, then `git worktree remove <path>`
+(add `--force` if Xcode left an `xcuserstate` behind) and `git branch -D
+<worktree-branch>`.
+
 ## Matching review effort to the diff
 
 `/code-review low` for trivial/mechanical diffs; `medium` (precision-biased —
