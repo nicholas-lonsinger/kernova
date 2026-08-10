@@ -332,8 +332,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         globalWindowCloseObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.scheduleAgentActivationPolicySync() }
+        ) { [weak self] notification in
+            nonisolated(unsafe) let notification = notification
+            MainActor.assumeIsolated {
+                guard let window = notification.object as? NSWindow,
+                    Self.windowCloseAffectsActivationPolicy(window)
+                else { return }
+                self?.scheduleAgentActivationPolicySync()
+            }
         }
 
         resolveColdLaunch(from: NSAppleEventManager.shared().currentAppleEvent)
@@ -546,6 +552,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // (the .accessory→.regular menu-bar quirk, FB7743313).
         setAgentActivationPolicy(.regular)
         Task { @MainActor in
+            Self.logger.debug("Summon: isActive=\(NSApp.isActive, privacy: .public)")
             // After a login launch the app is a background, unactivated
             // `.accessory` process: `ignoringOtherApps` is what fronts it — the
             // argument-less `activate()` does not reliably front a
@@ -567,6 +574,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             // bar with its first menu highlighted: the status menu's dismissal
             // bleeds into the menu bar the morph just installed. Clear it.
             NSApp.mainMenu?.cancelTracking()
+            await self.reassertActivationAfterSummon()
+        }
+    }
+
+    /// Re-requests activation until the summon's activation sticks.
+    ///
+    /// Cooperative activation (macOS 14+) occasionally denies the summon's
+    /// `activate`: the request lands milliseconds after the `.accessory` →
+    /// `.regular` morph, and when it loses that race the previously active app
+    /// keeps focus — the summoned window surfaces behind it and the Dock,
+    /// never seeing an activation, leaves the app at the ⌘-Tab tail. Poll and
+    /// re-assert until activation sticks, bounded so a user who genuinely
+    /// switches away right after summoning isn't fought for focus.
+    private func reassertActivationAfterSummon() async {
+        for attempt in 1...3 {
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !NSApp.isActive else { return }
+            Self.logger.debug(
+                "Summon: activation denied, re-asserting (attempt \(attempt, privacy: .public))")
+            NSApp.activate(ignoringOtherApps: true)
         }
     }
 
@@ -600,6 +627,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // so a reconcile can't strip the Dock icon while one is the last visible.
         if NSApp.windows.contains(where: Self.isUntrackedUserPanel) { return true }
         return false
+    }
+
+    /// Whether closing `window` can change what `hasVisibleUserWindow` returns,
+    /// so the close must run the activation-policy reconcile.
+    ///
+    /// Every window `hasVisibleUserWindow` counts is titled, so a borderless
+    /// close (a dismissing status-item menu, a tooltip) never changes the
+    /// answer — and must not run the reconcile: the status menu dismisses
+    /// *before* its action fires, so its close otherwise lands a reconcile
+    /// between the summon's `.regular` morph and the deferred window show,
+    /// flipping the app back to `.accessory` mid-summon. The activate then
+    /// fires while the app is `.accessory`, and the re-morph re-appends it to
+    /// the ⌘-Tab switcher's tail with no activation event after it — leaving
+    /// the freshly summoned app last in ⌘-Tab.
+    static func windowCloseAffectsActivationPolicy(_ window: NSWindow) -> Bool {
+        window.styleMask.contains(.titled)
     }
 
     /// Whether `window` is an untracked, AppKit-owned top-level panel whose
