@@ -23,9 +23,6 @@ final class SpiceClipboardService: ClipboardServicing {
     /// `true` once the guest agent has completed the capabilities handshake.
     private(set) var isConnected: Bool = false
 
-    /// Always `nil` — the SPICE path keeps its log-only error handling.
-    var lastTransferIssue: ClipboardTransferIssue? { nil }
-
     var supportsBinaryRepresentations: Bool { false }
 
     /// Bumped once per inbound guest clipboard text.

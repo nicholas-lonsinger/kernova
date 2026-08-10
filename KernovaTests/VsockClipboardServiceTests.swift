@@ -2811,6 +2811,56 @@ struct VsockClipboardServiceTests {
         #expect(service.lastTransferIssue == refusal)
     }
 
+    @Test("a healthy pull leaves standing the refusal a superseded connection raised")
+    func supersededRefusalSurvivesAHealthyPull() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let vmID = UUID()
+        let issues = ClipboardIssueCenter()
+        let service = VsockClipboardService(
+            channel: host, label: "Build VM", instanceID: vmID, issueCenter: issues)
+        service.start()
+        defer { service.stop() }
+
+        let noteBytes = Data("note".utf8)
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 21, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: noteBytes,
+            isInline: true)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 21,
+                reps: [
+                    (
+                        uti: ClipboardContent.utf8TextUTI, byteCount: noteBytes.count, filename: "",
+                        isInline: true
+                    )
+                ]))
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
+
+        // The connection this one replaced: its pasteboard promise fires on a
+        // paste and fails against the dead channel, well after the reconnect.
+        // Reported under this VM, never seen by the live service.
+        let refusal = ClipboardTransferIssue.pasteTimedOut()
+        issues.report(
+            refusal, instanceID: vmID, vmName: "Build VM",
+            pasteLimitBytes: ClipboardPasteLimit.defaultBytes)
+
+        // This service's own pull succeeding says nothing about that paste, so
+        // the refusal stays up — the gate reads the record it would retire, not
+        // this connection's view of it.
+        await service.materializeForPreview()
+        #expect(service.clipboardContent.text == "note")
+        #expect(issues.latestByInstance[vmID]?.issue == refusal)
+        #expect(service.lastTransferIssue == refusal)
+    }
+
     @Test("each promised file rep pastes through its own blocking pull")
     func copyPromisedFilesPasteViaBlockingPull() async throws {
         let (guest, host) = try makePair()

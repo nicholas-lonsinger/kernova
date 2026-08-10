@@ -22,9 +22,16 @@ final class VsockClipboardService: ClipboardServicing {
     /// `true` once `start()` has been called.
     private(set) var isConnected: Bool = false
 
-    /// Most recent user-visible transfer problem; cleared by the next
+    /// This VM's outstanding user-visible transfer problem, cleared by the next
     /// successful transfer in either direction.
-    private(set) var lastTransferIssue: ClipboardTransferIssue?
+    ///
+    /// Reads through to `ClipboardIssueCenter` rather than storing a copy: a
+    /// promise this connection published outlives it, so a superseded service
+    /// still raises problems for this VM, and a per-connection record would
+    /// disagree with the one every surface renders.
+    var lastTransferIssue: ClipboardTransferIssue? {
+        issueCenter.latestByInstance[instanceID]?.issue
+    }
 
     /// The clipboard operation currently being shown (most-significant in-flight
     /// session past the reveal delay), or `nil`.
@@ -429,21 +436,18 @@ final class VsockClipboardService: ClipboardServicing {
 
     // MARK: - Transfer issues
 
-    /// Publishes a user-visible transfer problem to this service's own readout
-    /// and to the app-level center that drives the menu-bar surfaces.
+    /// Publishes a user-visible transfer problem for this VM.
     ///
-    /// The single write path for `lastTransferIssue`: the clipboard window is
-    /// optional, so an issue that reached only the property would have no surface
-    /// on the passthrough flows that raise most of them.
+    /// The single write path behind `lastTransferIssue`: the clipboard window is
+    /// optional, so an issue kept on this service would have no surface at all on
+    /// the passthrough flows that raise most of them.
     private func raiseIssue(_ issue: ClipboardTransferIssue) {
-        lastTransferIssue = issue
         issueCenter.report(
             issue, instanceID: instanceID, vmName: label, pasteLimitBytes: maxPasteBytes())
     }
 
-    /// Retires the current problem from both surfaces.
+    /// Retires this VM's current problem from every surface.
     private func clearIssue() {
-        lastTransferIssue = nil
         issueCenter.clear(instanceID: instanceID)
     }
 

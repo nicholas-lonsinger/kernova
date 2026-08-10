@@ -2,14 +2,18 @@ import Foundation
 import Observation
 import os
 
-/// App-level aggregate of every live clipboard service's outstanding transfer
-/// problem.
+/// App-level aggregate, keyed by VM, of each one's outstanding clipboard
+/// transfer problem.
 ///
 /// Clipboard services are per-VM and their window is optional, so a refusal
-/// raised while no window is open has nowhere to render. Each service reports
-/// here instead: ``latestByInstance`` feeds the menu-bar dropdown's per-VM lines,
-/// and ``pendingNotice`` carries the one refusal no open window is already
-/// showing, for a surface that can interrupt.
+/// raised while no window is open has nowhere to render. Every service reports
+/// here instead, and this is the only record — a service superseded by a
+/// reconnect still raises the failures of the pasteboard promises it published,
+/// so a problem outlives the connection that raised it and cannot be kept on one.
+///
+/// ``latestByInstance`` feeds the clipboard window's banner and the menu-bar
+/// dropdown's per-VM lines; ``pendingNotice`` carries the one refusal no open
+/// window is already showing, for a surface that can interrupt.
 @MainActor
 @Observable
 final class ClipboardIssueCenter {
@@ -40,7 +44,8 @@ final class ClipboardIssueCenter {
     /// surface for the same news would be noise.
     private(set) var pendingNotice: Notice?
 
-    /// VMs whose clipboard window is on screen and rendering issues itself.
+    /// VMs whose clipboard window is on screen and rendering
+    /// ``latestByInstance`` itself.
     @ObservationIgnored
     private var watchedInstances: Set<UUID> = []
 

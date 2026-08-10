@@ -238,7 +238,9 @@ complexity that does not move a real metric is just complexity, and is rejected.
 completion, error, abort — must clear the indicator; never leave a stuck bar. Progress UI is
 necessary but not sufficient: the OS paste deadline cannot be signaled into (§2), so a bar never
 substitutes for the cap that keeps a paste inside it. **Report a refusal on the side that made the
-gesture**, since the user owed the message is the one who acted.
+gesture**, since the user owed the message is the one who acted. **A refusal belongs to the VM, not
+to the connection that raised it** — a promise outlives the service that published it (§3), so every
+surface renders the per-VM record rather than a live service's own property.
 
 **Progress is aggregate per operation, never per file.** A session is one user-visible operation —
 a paste, a Copy to Mac, a preview fetch, one side serving a peer's pulls — and its bar climbs

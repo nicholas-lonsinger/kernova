@@ -172,10 +172,11 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
   the menu-bar status item renders one readout, so each service pushes its snapshot here and the
   center republishes the most significant.
 - `ClipboardIssueCenter` — the same shape for refusals, since a clipboard window is optional:
-  `VsockClipboardService` reports every `lastTransferIssue` write here,
-  `ClipboardWindowController` registers as a watcher for as long as its window is up, and
-  `HostAgentStatusItemController` renders what is left — a popover for the notice no window
-  claimed, and a line under each VM's dropdown row.
+  `VsockClipboardService` reports every user-visible transfer problem here, and every surface
+  reads the per-VM record back — `ClipboardContentViewController`'s banner (which is also why
+  `ClipboardWindowController` registers as a watcher for as long as its window is up) and
+  `HostAgentStatusItemController`'s popover for the notice no window claimed plus the line under
+  each VM's dropdown row.
 - `AgentStatus` — the enum driving install/update/reinstall affordances, sourced from
   `VsockControlService` (macOS) or `SpiceClipboardService` (Linux) and read through
   `VMInstance.agentStatus`.
