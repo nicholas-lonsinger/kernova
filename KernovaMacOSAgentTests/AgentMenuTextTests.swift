@@ -106,6 +106,16 @@ struct AgentMenuTextTests {
                 == "Clipboard: folders not shared — Kernova on the Mac needs updating")
     }
 
+    @Test("a copy that carried nothing says so rather than naming a cause it can't know")
+    func clipboardCopyCarriedNothingLine() {
+        // Unreadable items, an all-filtered flavor set and a pasteboard whose
+        // every item is already staged all reach this line, so it names the
+        // outcome the user can see and no reason it would have to guess at.
+        #expect(
+            AgentMenuText.clipboardLine(.copyCarriedNothing)
+                == "Clipboard: nothing in that copy could be shared")
+    }
+
     // MARK: - isNotice
 
     @Test("Only the outcomes of a gesture made in this guest reveal themselves")
@@ -113,6 +123,7 @@ struct AgentMenuTextTests {
         #expect(ClipboardActivity.pasteRefused(.pasteFailed, pasteLimitBytes: nil).isNotice)
         #expect(ClipboardActivity.copyShortened(offeringAnything: true).isNotice)
         #expect(ClipboardActivity.copyShortened(offeringAnything: false).isNotice)
+        #expect(ClipboardActivity.copyCarriedNothing.isNotice)
         for activity: ClipboardActivity in [
             .enabled, .offeredToHost, .offeredFromHost, .sentToHost, .receivedFromHost, .disabled,
         ] {

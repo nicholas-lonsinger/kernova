@@ -153,7 +153,17 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     /// Last `NSPasteboard.changeCount` we observed; set after every poll and
     /// every host write so we don't echo our own content.
+    ///
+    /// `Self.unobservedChangeCount` until a poll on this connection has seen the
+    /// pasteboard, so whatever is standing is re-evaluated for the new host.
     private var lastPasteboardChangeCount: Int
+
+    /// `lastPasteboardChangeCount` before this connection has observed anything.
+    ///
+    /// No real `changeCount` is negative, so the first poll of a connection
+    /// always re-evaluates the standing snapshot — and knows it is looking at
+    /// one it never watched arrive.
+    private static let unobservedChangeCount = -1
 
     /// Digest of the most recent content we offered the host; suppresses
     /// redundant outbound offers on an unchanged clipboard.
@@ -447,7 +457,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             self.inboundPromise = nil
             // A brand-new host has no record of prior offers; re-announce.
             self.lastSeenDigest = nil
-            self.lastPasteboardChangeCount = -1
+            self.lastPasteboardChangeCount = Self.unobservedChangeCount
             self.folderSkippedChangeCount = nil
         }
         Self.logger.notice(
@@ -526,13 +536,18 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             }
         }
 
+        // Read once: the marker disposition, the flavors worth reading, and the
+        // account an empty result owes the menu all have to describe the same
+        // snapshot.
+        let firstItemTypes = pasteboard.firstItemTypes
+
         // `org.nspasteboard.*` marker handling, from the unfiltered first-item
         // type list: a transient/auto-generated snapshot is never offered; a
         // concealed one (a password) is offered but flagged so the host window
         // hides it. Folders are never concealed secrets, so the estimate path
         // below ignores the flag.
         let disposition = ClipboardSnapshotPolicy.disposition(
-            forTypes: pasteboard.firstItemTypes.map(\.rawValue))
+            forTypes: firstItemTypes.map(\.rawValue))
         if case .suppress(let reason) = disposition {
             Self.logger.notice(
                 "Clipboard snapshot suppressed by \(String(describing: reason), privacy: .public) marker"
@@ -583,7 +598,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
 
         // Non-file snapshot. NSPasteboard reads run on the main queue.
-        let raw: [(uti: String, data: Data)] = pasteboard.firstItemTypes.compactMap { type in
+        let raw: [(uti: String, data: Data)] = firstItemTypes.compactMap { type in
             guard !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: type.rawValue) else {
                 return nil
             }
@@ -603,6 +618,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // `evaluate` builds non-concealed content; re-stamp the flag when the
         // marker called for it.
         let content = outcome.content.withConcealed(isConcealed)
+        guard !content.isEmpty else {
+            noteSnapshotOfferedNothing(
+                pasteboardHeldSomething: !firstItemTypes.isEmpty, changeCount: currentCount)
+            return
+        }
         sendOfferIfNeeded(content, channel: channel, changeCount: currentCount)
     }
 
@@ -635,16 +655,47 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
     }
 
+    /// Retires the host's offer for a snapshot that yielded nothing offerable,
+    /// and tells the guest's own menu when a copy is what came up empty.
+    ///
+    /// `pasteboardHeldSomething` separates a copy whose every flavor was
+    /// filtered out from a pasteboard emptied outright, which are not the same
+    /// news. Only a snapshot a poll on this connection watched arrive is a copy
+    /// at all: the first poll re-evaluates whatever was already standing —
+    /// including a promise this agent wrote, whose providers stop serving the
+    /// moment the promise behind them is dropped — so it re-announces silently
+    /// rather than reporting a gesture nobody just made.
+    private func noteSnapshotOfferedNothing(pasteboardHeldSomething: Bool, changeCount: Int) {
+        // The pasteboard still moved on, so the host's previous offer is retired
+        // rather than left serving a copy the user has replaced.
+        let released = releaseOutboundOffer("the copy left nothing that can cross")
+        let watchedItArrive = lastPasteboardChangeCount != Self.unobservedChangeCount
+        lastPasteboardChangeCount = changeCount
+        guard pasteboardHeldSomething, watchedItArrive else {
+            // Nobody's copy came up short here, so the only line that can be
+            // left wrong is one claiming the offer this just withdrew.
+            if released { clipboardActivityStorage = .enabled }
+            return
+        }
+        // A copy was made in this guest and none of it could cross. Its own menu
+        // is the only account of that (docs/CLIPBOARD.md §13), and without one
+        // the line still reads as the copy before it, which did.
+        Self.logger.notice(
+            "Copy left nothing that can be offered to the host (conn=\(self.connectionTag, privacy: .public))"
+        )
+        clipboardActivityStorage = .copyCarriedNothing
+        onClipboardNotice()
+    }
+
     /// Announces `content` to the host when it's non-empty and not an echo of
     /// what we last wrote/sent, advancing the dedup + change-count bookkeeping.
     private func sendOfferIfNeeded(
         _ content: ClipboardContent, channel: VsockChannel, changeCount: Int
     ) {
         guard !content.isEmpty else {
-            // The pasteboard still moved on, so the host's previous offer is
-            // retired rather than left serving a copy the user has replaced.
-            releaseOutboundOffer("the copy left nothing that can cross")
-            lastPasteboardChangeCount = changeCount
+            // A caller that can observe an empty snapshot classifies it itself;
+            // one that hasn't can't claim a copy came up short.
+            noteSnapshotOfferedNothing(pasteboardHeldSomething: false, changeCount: changeCount)
             return
         }
         // Dedup on the buffer's own (uncapped) digest — the poll rebuilds the
@@ -690,7 +741,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     }
 
     /// Retires the offer the host still holds, because this snapshot left nothing
-    /// to replace it with.
+    /// to replace it with, reporting whether one was actually withdrawn.
     ///
     /// `ClipboardRelease` rather than an empty offer: an offer with no
     /// representations drops the host's promise but leaves the pasteboard item
@@ -700,8 +751,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// `org.nspasteboard.*` marker suppressed never reaches here: by that
     /// marker's convention it is not a copy, and the clipboard before it still
     /// stands.
-    private func releaseOutboundOffer(_ reason: String) {
-        guard let channel = liveChannel, let previous = pendingOutbound else { return }
+    @discardableResult
+    private func releaseOutboundOffer(_ reason: String) -> Bool {
+        guard let channel = liveChannel, let previous = pendingOutbound else { return false }
         var frame = Frame()
         frame.protocolVersion = 1
         frame.clipboardRelease = Kernova_V1_ClipboardRelease.with {
@@ -713,7 +765,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             Self.logger.warning(
                 "Failed to release clipboard offer gen=\(previous.generation, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
-            return
+            return false
         }
         sender?.cancel(generation: previous.generation)
         pendingOutbound = nil
@@ -726,6 +778,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         Self.logger.notice(
             "Released clipboard offer gen=\(previous.generation, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) — \(reason, privacy: .public)"
         )
+        return true
     }
 
     /// One on-disk pasteboard file or folder gathered for an outbound offer.

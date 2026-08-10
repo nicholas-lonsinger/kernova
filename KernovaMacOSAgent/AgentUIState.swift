@@ -16,10 +16,12 @@ enum HostConnectionState: Equatable, Sendable {
 ///
 /// `enabled` / `disabled` are the host-policy feature state; every other case
 /// records the most recent flow event, each set at the moment it starts rather
-/// than on completion. A flow event overwrites `enabled`; only host policy sets
-/// `disabled`.
+/// than on completion. A flow event overwrites `enabled`, and withdrawing the
+/// offer one left standing returns to it; only host policy sets `disabled`.
 enum ClipboardActivity: Equatable, Sendable {
-    /// Sharing is on by host policy and nothing has crossed yet this session.
+    /// Sharing is on by host policy and no copy of this guest's stands on the
+    /// host clipboard: nothing has crossed yet this session, or the guest
+    /// clipboard was emptied and the offer it had crossed under withdrawn.
     case enabled
     /// The guest's local clipboard was offered to the host (a local copy).
     case offeredToHost
@@ -48,6 +50,10 @@ enum ClipboardActivity: Equatable, Sendable {
     ///
     /// The copy was made in this guest, so the shortfall is reported here.
     case copyShortened(offeringAnything: Bool)
+    /// A copy left nothing that could be offered to the host at all.
+    ///
+    /// The copy was made in this guest, so the outcome is reported here.
+    case copyCarriedNothing
     /// Host policy turned clipboard sharing off.
     case disabled
 
@@ -55,10 +61,11 @@ enum ClipboardActivity: Equatable, Sendable {
     /// leaving it for the next time the user opens the dropdown.
     ///
     /// True for the outcomes of a gesture made in this guest that produces no
-    /// other signal — a paste that yields nothing, a copy that crosses short.
+    /// other signal — a paste that yields nothing, a copy that crosses short or
+    /// not at all.
     var isNotice: Bool {
         switch self {
-        case .pasteRefused, .copyShortened:
+        case .pasteRefused, .copyShortened, .copyCarriedNothing:
             return true
         case .enabled, .offeredToHost, .offeredFromHost, .sentToHost, .receivedFromHost, .disabled:
             return false
