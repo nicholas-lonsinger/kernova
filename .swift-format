@@ -12,7 +12,6 @@
     "rules": {
         "AllPublicDeclarationsHaveDocumentation": true,
         "AlwaysUseLiteralForEmptyCollectionInit": true,
-        "BeginDocumentationCommentWithOneLineSummary": true,
         "NeverForceUnwrap": true,
         "NeverUseForceTry": true,
         "NeverUseImplicitlyUnwrappedOptionals": true,
