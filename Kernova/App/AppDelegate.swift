@@ -12,6 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// idle-terminates, with none of the resident-app machinery (status item,
     /// login-item registration, activation-policy switching).
     private let isTestHost: Bool
+    /// The posture `main()` read out of argv, applied once in `startResidentApp`.
+    private let posture: LaunchPosture
     /// App-wide preferences (the single DI seam for `UserDefaults`-backed state).
     private let preferences: AppPreferences
     private var mainWindowController: MainWindowController?
@@ -51,9 +53,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// affordance and the way to summon the GUI while headless.
     private var statusItemController: HostAgentStatusItemController?
 
-    /// Cold-launch resolution latch, making the resolution idempotent so later
-    /// ordinary activations don't re-trigger it.
-    private var coldLaunchResolved = false
     /// Set in `applicationWillBecomeActive` and read in `applicationShouldHandleReopen`
     /// to distinguish a dock click that activates the app from one on an already-active app.
     ///
@@ -236,45 +235,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     static func main() {
         let isTestHost = ProcessInfo.processInfo.isRunningXCTests
+        let posture = LaunchPosture(arguments: CommandLine.arguments)
+
+        if posture.yields(toRunningInstance: isAnotherInstanceRunning) {
+            logger.notice("\(LaunchPosture.loginLaunchFlag, privacy: .public) with Kernova already running — exiting")
+            exit(0)
+        }
+
         let app = NSApplication.shared
 
-        // Start headless in `.accessory` (no Dock blip / focus steal); whether the
-        // window then shows is decided by `resolveColdLaunch(from:)`. The unit-test
-        // host stays a plain `.regular` foreground app.
-        //
-        // RATIONALE: a debugger launch skips the demote. For a debugger-spawned
-        // process the Dock creates the ⌘-Tab switcher entry at the tail when the
-        // `.accessory` → `.regular` morph lands seconds after launch, and no
-        // programmatic activation ever promotes the entry (observed 2026-08-10,
-        // macOS 27.0; method and repro matrix in
-        // docs/research/2026-08-10-xcode-launch-switcher-tail.md). Launching
-        // `.regular` from the start sidesteps it, and costs nothing: a login-item
-        // launch — the reason the demote exists — is never debugger-traced.
-        if !isTestHost && !isDebuggerLaunched {
+        // A login launch starts headless in `.accessory` before checkin, so there
+        // is no Dock blip or focus steal at any launch speed. Every other launch
+        // is a `.regular` foreground app from the first instruction, including the
+        // unit-test host.
+        if !isTestHost && posture == .loginLaunch {
             app.setActivationPolicy(.accessory)
         }
 
         // `NSApplication.delegate` is weak, so the local binding retains the
         // delegate for the process lifetime (`run()` never returns).
-        let delegate = AppDelegate(isTestHost: isTestHost)
+        let delegate = AppDelegate(isTestHost: isTestHost, posture: posture)
         app.delegate = delegate
         app.run()
     }
 
-    /// Whether this process was spawned by a debugger (`P_TRACED`), read once at
-    /// launch — Xcode's Run is the only expected source.
-    private static var isDebuggerLaunched: Bool {
-        var info = kinfo_proc()
-        var size = MemoryLayout.stride(ofValue: info)
-        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
-        guard sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0) == 0 else {
+    /// Whether another process of this app bundle is already running.
+    ///
+    /// launchd `execv`s the bundle executable directly, so Launch Services never
+    /// sees the login launch and cannot fold it into a running copy the way it
+    /// folds a second `open`.
+    private static var isAnotherInstanceRunning: Bool {
+        guard let bundleID = Bundle.main.bundleIdentifier else {
+            logger.fault("CFBundleIdentifier not found in Info.plist")
+            assertionFailure("CFBundleIdentifier not found in Info.plist")
             return false
         }
-        return info.kp_proc.p_flag & P_TRACED != 0
+        let ownPID = getpid()
+        return NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .contains { $0.processIdentifier != ownPID }
     }
 
-    init(isTestHost: Bool, preferences: AppPreferences = .shared) {
+    init(isTestHost: Bool, posture: LaunchPosture, preferences: AppPreferences = .shared) {
         self.isTestHost = isTestHost
+        self.posture = posture
         self.preferences = preferences
         self.viewModel = VMLibraryViewModel()
 
@@ -341,7 +344,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     // MARK: - Resident App
 
-    /// Brings up the resident, headless app.
+    /// Brings up the resident app, staying headless or showing the library window
+    /// as `posture` decided in `main()`.
     ///
     /// VMs are **not** auto-started — they appear at their last-logout state — and
     /// idle termination is not armed: the app stays resident until an explicit
@@ -381,14 +385,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             }
         }
 
-        resolveColdLaunch(from: NSAppleEventManager.shared().currentAppleEvent)
-
         let provenance = Self.residentProvenanceLine(
             bundlePath: Bundle.main.bundlePath,
             build: Self.buildNumber,
             configuration: Self.buildConfiguration)
-        Self.logger.notice(
-            "Kernova resident app ready (headless, .accessory) — \(provenance, privacy: .public)")
+        Self.logger.notice("Kernova resident app ready — \(provenance, privacy: .public)")
+
+        switch posture {
+        case .loginLaunch:
+            Self.logger.notice("Login launch — staying headless (.accessory)")
+        case .manual:
+            Self.logger.notice("Manual launch — showing the library window")
+            summonUserInterface()
+        }
     }
 
     #if DEBUG
@@ -413,113 +422,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         bundlePath: String, build: String, configuration: String
     ) -> String {
         "bundle=\(bundlePath) build=\(build) config=\(configuration)"
-    }
-
-    // MARK: - Cold-launch resolution
-
-    /// How the process was launched, as told by the launch Apple event.
-    enum LaunchProvenance: Equatable {
-        /// The `oapp` event carries `keyAELaunchedAsLogInItem` — a login-item launch.
-        case loginItem
-        /// A plain `oapp` event without the login-item property — a manual launch.
-        case manual
-        /// No readable `oapp` event — fall back to the activation heuristic.
-        case indeterminate
-    }
-
-    /// Classifies the launch Apple event from its already-extracted event ID and
-    /// `keyAEPropData` enum code.
-    nonisolated static func launchProvenance(
-        eventID: AEEventID?, launchPropData: OSType?
-    ) -> LaunchProvenance {
-        guard eventID == AEEventID(kAEOpenApplication) else { return .indeterminate }
-        return launchPropData == OSType(keyAELaunchedAsLogInItem) ? .loginItem : .manual
-    }
-
-    /// Resolves the cold launch from the launch Apple event, falling back to the
-    /// activation-settle heuristic when the event is unreadable.
-    ///
-    /// The `oapp` event's `keyAEPropData` carries `keyAELaunchedAsLogInItem` for a
-    /// login-item launch — legacy-documented (Cocoa Scripting Guide, "may
-    /// contain") and field-proven against `SMAppService.mainApp`; there is no
-    /// modern API for launch provenance (FB10207829). Must run while the launch
-    /// event is still current, i.e. from `applicationDidFinishLaunching`.
-    private func resolveColdLaunch(from launchEvent: NSAppleEventDescriptor?) {
-        let provenance = Self.launchProvenance(
-            eventID: launchEvent?.eventID,
-            launchPropData: launchEvent?.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?
-                .enumCodeValue)
-        switch provenance {
-        case .loginItem:
-            Self.logger.notice("Launch event carries the login-item property")
-            resolveColdLaunch(showWindow: false)
-        case .manual:
-            Self.logger.notice("Launch event is a plain open (manual launch)")
-            resolveColdLaunch(showWindow: true)
-        case .indeterminate:
-            Self.logger.notice("No readable launch event — falling back to activation heuristic")
-            armColdLaunchActivationHeuristic()
-        }
-    }
-
-    /// Arms the fallback heuristic: resolve immediately if the app is already
-    /// active (a fast manual launch can activate before this runs), otherwise wait
-    /// a short settle window and assume a login launch → stay headless.
-    private func armColdLaunchActivationHeuristic() {
-        if NSApp.isActive {
-            resolveColdLaunch(showWindow: true)
-            return
-        }
-        // RATIONALE: this fallback only runs when the launch Apple event was
-        // unreadable (`launchProvenance` → `.indeterminate`), where no API-derived
-        // signal remains (FB10207829) — a fixed settle window is inherent to the
-        // heuristic, not a tunable bug. If a manual launch's activation is delayed
-        // past the window it latches headless and the window doesn't auto-show, but
-        // the always-present status item still summons the GUI. Longer would delay
-        // the correct headless outcome of a genuine login launch for no gain.
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(1.5))
-            self?.resolveColdLaunch(showWindow: false)
-        }
-    }
-
-    /// The cold-launch decision, factored out pure for unit testing.
-    enum ColdLaunchOutcome: Equatable {
-        /// First resolution, manual launch (event- or activation-signalled) →
-        /// show the window.
-        case showWindow
-        /// First resolution, login launch (event-signalled or settle-window
-        /// elapsed) → stay headless.
-        case stayHeadless
-        /// Already resolved — ignore (a later ordinary activation).
-        case alreadyResolved
-    }
-
-    /// Given the resolved show/stay signal and whether the cold launch already
-    /// resolved, returns what to do — exactly once.
-    nonisolated static func coldLaunchOutcome(
-        showWindow: Bool, alreadyResolved: Bool
-    ) -> ColdLaunchOutcome {
-        guard !alreadyResolved else { return .alreadyResolved }
-        return showWindow ? .showWindow : .stayHeadless
-    }
-
-    /// Applies `coldLaunchOutcome`, latching the resolution so later ordinary
-    /// activations don't re-trigger it.
-    private func resolveColdLaunch(showWindow: Bool) {
-        switch Self.coldLaunchOutcome(
-            showWindow: showWindow, alreadyResolved: coldLaunchResolved)
-        {
-        case .alreadyResolved:
-            return
-        case .showWindow:
-            coldLaunchResolved = true
-            Self.logger.notice("Cold launch resolved: showing window (manual launch)")
-            summonUserInterface()
-        case .stayHeadless:
-            coldLaunchResolved = true
-            Self.logger.notice("Cold launch resolved: staying headless (login launch)")
-        }
     }
 
     /// What a GUI summon puts on screen.
@@ -758,14 +660,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         Task { @MainActor [weak self] in
             self?.wasJustActivated = false
         }
-    }
-
-    func applicationDidBecomeActive(_ notification: Notification) {
-        // The fallback heuristic's positive signal: a manual launch activates the
-        // app, so its first activation resolves the cold launch by showing the
-        // window. Idempotent thereafter; no-op in the test host.
-        guard !isTestHost else { return }
-        resolveColdLaunch(showWindow: true)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
