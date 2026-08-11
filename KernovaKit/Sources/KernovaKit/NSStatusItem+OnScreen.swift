@@ -8,7 +8,7 @@ extension NSStatusItem {
     /// proves nothing: only a visible window landing on a display does. Paired
     /// with ``isVisible``, which reports the app's own preference rather than
     /// anything about the screen.
-    public var isButtonOnScreen: Bool {
+    @MainActor public var isButtonOnScreen: Bool {
         guard let window = button?.window, window.isVisible else { return false }
         return NSScreen.screens.contains { $0.frame.intersects(window.frame) }
     }
