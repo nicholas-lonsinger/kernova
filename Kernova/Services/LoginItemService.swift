@@ -28,8 +28,8 @@ struct LoginAgentRegistration: LoginItemRegistration {
     func unregister() throws { try service.unregister() }
 }
 
-/// "Open at Login" wrapper over `SMAppService`, driving the General settings
-/// toggle.
+/// "Launch into Background at Login" wrapper over `SMAppService`, driving the
+/// General settings toggle.
 ///
 /// `.status` is the source of truth and is **never persisted locally** — the
 /// toggle reads it live, so a change made in System Settings is always

@@ -85,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// Whether a pending quit should actually terminate the resident app.
     ///
-    /// While *Keep Running in Menu Bar* is on (the default), GUI-origin quits (⌘Q,
+    /// While *Continue running in Status Bar* is on (the default), GUI-origin quits (⌘Q,
     /// "Close All Windows", the Dock's Quit) only close the GUI and leave the app
     /// resident with its VMs running headless. Only consulted for the resident
     /// app, not the test host.
