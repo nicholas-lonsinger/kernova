@@ -159,7 +159,7 @@ final class VMLibraryViewModel {
     /// Fills the library from disk, then starts watching the VMs directory for
     /// changes made outside the app.
     ///
-    /// Called once, from `applicationDidFinishLaunching`. Deliberately not part
+    /// Called once, from `applicationWillFinishLaunching`. Deliberately not part
     /// of `init`: everything the initializer does runs before `NSApplication.run()`,
     /// so a library read there sits between process start and the first window.
     /// The watcher starts only after the read applies — its callback re-reads
