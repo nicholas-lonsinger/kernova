@@ -21,6 +21,15 @@ final class VMLibraryViewModel {
     // MARK: - State
 
     var instances: [VMInstance] = []
+
+    /// Whether the library's first read from disk has finished.
+    ///
+    /// `false` until then, so UI can tell "no VMs" from "not read yet" — an empty
+    /// `instances` means nothing before the first `loadVMs()` applies. Stays
+    /// `true` across later reloads, and is set even when the read fails: the
+    /// answer is then known to be empty.
+    private(set) var hasLoadedLibrary = false
+
     var selectedID: UUID? {
         didSet {
             guard selectedID != oldValue else { return }
@@ -47,8 +56,9 @@ final class VMLibraryViewModel {
 
     /// Presentation delegate for alerts, sheets, and the creation wizard.
     ///
-    /// Errors raised before a presenter is attached (e.g. the initial `loadVMs()`
-    /// in `init`) are buffered and flushed when one is set.
+    /// Errors raised before a presenter is attached (e.g. a login launch, where
+    /// the library loads with no window on screen) are buffered and flushed when
+    /// one is set.
     @ObservationIgnored weak var presenter: (any VMLibraryPresenting)? {
         didSet {
             guard presenter != nil, !bufferedErrors.isEmpty else { return }
@@ -143,9 +153,20 @@ final class VMLibraryViewModel {
             downloadsDirectory: downloadsDirectory
         )
 
-        loadVMs()
-        startDirectoryWatcher()
         startSleepWatcher()
+    }
+
+    /// Fills the library from disk, then starts watching the VMs directory for
+    /// changes made outside the app.
+    ///
+    /// Called once, from `applicationDidFinishLaunching`. Deliberately not part
+    /// of `init`: everything the initializer does runs before `NSApplication.run()`,
+    /// so a library read there sits between process start and the first window.
+    /// The watcher starts only after the read applies — its callback re-reads
+    /// every bundle on the main actor, which must not race the initial load.
+    func startLibrary() async {
+        await loadVMs()
+        startDirectoryWatcher()
     }
 
     // MARK: - Initial Status
@@ -155,7 +176,7 @@ final class VMLibraryViewModel {
     /// A surviving install context — either guest's — is the canonical signal
     /// that the VM has never completed its initial boot, so it outranks
     /// `.paused`/`.stopped`.
-    static func initialStatus(for config: VMConfiguration, layout: VMBundleLayout) -> VMStatus {
+    nonisolated static func initialStatus(for config: VMConfiguration, layout: VMBundleLayout) -> VMStatus {
         if config.installContext != nil || config.linuxInstallContext != nil {
             return .initialBoot
         }
@@ -164,58 +185,104 @@ final class VMLibraryViewModel {
 
     // MARK: - Load
 
-    func loadVMs() {
+    /// One VM bundle as read from disk, before it becomes a `VMInstance`.
+    ///
+    /// `VMInstance` is `@MainActor`, so the read and the model construction have
+    /// to be separable: this is what crosses back from the reading task.
+    private struct ScannedBundle: Sendable {
+        let configuration: VMConfiguration
+        let bundleURL: URL
+        let status: VMStatus
+    }
+
+    /// The whole library as read from disk in one pass.
+    private struct LibraryScan: Sendable {
+        var bundles: [ScannedBundle] = []
+        /// Bundle names whose configuration could not be read.
+        var failedBundleNames: [String] = []
+    }
+
+    /// Reads every bundle under the VMs directory.
+    ///
+    /// Nonisolated so the disk work can run off the main actor; it touches no
+    /// view-model state and reports failures through the returned scan.
+    private nonisolated static func scanLibrary(using storage: any VMStorageProviding) throws -> LibraryScan {
+        var scan = LibraryScan()
+        for bundleURL in try storage.listVMBundles() {
+            do {
+                let config = try storage.loadConfiguration(from: bundleURL)
+                scan.bundles.append(
+                    ScannedBundle(
+                        configuration: config,
+                        bundleURL: bundleURL,
+                        status: initialStatus(for: config, layout: VMBundleLayout(bundleURL: bundleURL))))
+            } catch {
+                logger.error(
+                    "Failed to load VM from \(bundleURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                )
+                scan.failedBundleNames.append(bundleURL.deletingPathExtension().lastPathComponent)
+            }
+        }
+        return scan
+    }
+
+    /// Replaces the library with what is on disk.
+    ///
+    /// The read runs off the main actor — a library of any size is bound by
+    /// per-bundle file reads, and blocking the main actor for them stalls
+    /// whatever window is already on screen.
+    func loadVMs() async {
         reportedFailedBundles.removeAll()
+        let storage = storageService
+        // Whatever the read returns, it is over: a listing that failed answers
+        // "no VMs" too, and UI must not go on waiting for a load that finished.
+        defer { hasLoadedLibrary = true }
         do {
-            let bundles = try storageService.listVMBundles()
-            var failedBundles: [String] = []
-            instances = bundles.compactMap { bundleURL in
-                do {
-                    let config = try storageService.loadConfiguration(from: bundleURL)
-                    let layout = VMBundleLayout(bundleURL: bundleURL)
-                    let initialStatus = Self.initialStatus(for: config, layout: layout)
-                    let instance = VMInstance(
-                        configuration: config, bundleURL: bundleURL, status: initialStatus,
-                        preferences: preferences)
-                    wirePersistence(for: instance)
-                    return instance
-                } catch {
-                    Self.logger.error(
-                        "Failed to load VM from \(bundleURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
-                    )
-                    failedBundles.append(bundleURL.deletingPathExtension().lastPathComponent)
-                    return nil
-                }
-            }
-            if !failedBundles.isEmpty {
-                reportedFailedBundles.formUnion(failedBundles)
-                presentError(LoadError.bundleLoadFailed(names: failedBundles))
-            }
-
-            if let savedOrder = preferences.vmOrder {
-                customOrder = savedOrder
-                Self.logger.debug("Loaded custom VM order: \(self.customOrder.count, privacy: .public) UUID(s)")
-            } else {
-                Self.logger.debug("No custom VM order found — using default createdAt sort")
-            }
-            sortInstances()
-            customOrder = instances.map(\.id)
-
-            if selectedID == nil || !instances.contains(where: { $0.id == selectedID }) {
-                if let savedID = preferences.lastSelectedVMID,
-                    instances.contains(where: { $0.id == savedID })
-                {
-                    selectedID = savedID
-                    Self.logger.debug("Restored last-selected VM from UserDefaults: \(savedID.uuidString)")
-                } else {
-                    selectedID = instances.first?.id
-                }
-            }
-            Self.logger.notice("Loaded \(self.instances.count, privacy: .public) VMs")
+            let scan = try await Task.detached(priority: .userInitiated) {
+                try Self.scanLibrary(using: storage)
+            }.value
+            apply(scan)
         } catch {
             Self.logger.error("Failed to load VM library: \(error.localizedDescription, privacy: .public)")
             presentError(error)
         }
+    }
+
+    /// Turns a scan into the live library: instances, order, and selection.
+    private func apply(_ scan: LibraryScan) {
+        instances = scan.bundles.map { scanned in
+            let instance = VMInstance(
+                configuration: scanned.configuration, bundleURL: scanned.bundleURL,
+                status: scanned.status, preferences: preferences)
+            wirePersistence(for: instance)
+            return instance
+        }
+
+        if !scan.failedBundleNames.isEmpty {
+            reportedFailedBundles.formUnion(scan.failedBundleNames)
+            presentError(LoadError.bundleLoadFailed(names: scan.failedBundleNames))
+        }
+
+        if let savedOrder = preferences.vmOrder {
+            customOrder = savedOrder
+            Self.logger.debug("Loaded custom VM order: \(self.customOrder.count, privacy: .public) UUID(s)")
+        } else {
+            Self.logger.debug("No custom VM order found — using default createdAt sort")
+        }
+        sortInstances()
+        customOrder = instances.map(\.id)
+
+        if selectedID == nil || !instances.contains(where: { $0.id == selectedID }) {
+            if let savedID = preferences.lastSelectedVMID,
+                instances.contains(where: { $0.id == savedID })
+            {
+                selectedID = savedID
+                Self.logger.debug("Restored last-selected VM from UserDefaults: \(savedID.uuidString)")
+            } else {
+                selectedID = instances.first?.id
+            }
+        }
+        Self.logger.notice("Loaded \(self.instances.count, privacy: .public) VMs")
     }
 
     // MARK: - Create
@@ -2408,7 +2475,7 @@ final class VMLibraryViewModel {
     }
 
     /// Routes an error message to the presenter, buffering it if none is
-    /// attached yet (e.g. during the initial `loadVMs()` in `init`).
+    /// attached yet.
     private func surfaceError(_ message: String, title: String = "Error") {
         if let presenter {
             presenter.presentError(message, title: title)

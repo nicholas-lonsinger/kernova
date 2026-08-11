@@ -9,8 +9,8 @@ import Foundation
 /// parallel/`.serialized` tests copying real bundles into it can't collide or leak state into
 /// each other.
 ///
-/// Because `vmsDirectory`/`cloneVMBundle` are real, on-disk paths, and every `VMLibraryViewModel`
-/// starts a real `VMDirectoryWatcher` against `vmsDirectory` in `init`, a test driving an async
+/// Because `vmsDirectory`/`cloneVMBundle` are real, on-disk paths, and `VMLibraryViewModel.startLibrary()`
+/// starts a real `VMDirectoryWatcher` against `vmsDirectory`, a test that calls it and drives an async
 /// clone/import to completion should register every other in-memory instance's `bundleURL` in
 /// `bundles` too (as the existing clone tests do) — otherwise a watcher-triggered
 /// `reconcileWithDisk()` racing the test could mistake an unregistered resting-state instance for a
@@ -31,6 +31,7 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
 
     // MARK: - Call Tracking
 
+    var listVMBundlesCallCount = 0
     var saveConfigurationCallCount = 0
     var deleteVMBundleCallCount = 0
     var permanentlyDeleteVMBundleCallCount = 0
@@ -70,6 +71,7 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     }
 
     func listVMBundles() throws -> [URL] {
+        listVMBundlesCallCount += 1
         if let error = listVMBundlesError { throw error }
         return Array(bundles.keys)
     }

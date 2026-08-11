@@ -16,6 +16,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private let preferences: AppPreferences
     private var mainWindowController: MainWindowController?
     private let viewModel: VMLibraryViewModel
+    /// The library's first read from disk, started once launch is complete.
+    ///
+    /// Retained so `application(_:open:)` can wait for it: a Finder open that
+    /// launched the app is delivered while the read is still in flight.
+    private var libraryLoad: Task<Void, Never>?
     private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
     private var clipboardObservers: [UUID: Any] = [:]
     private var displayWindows: [UUID: VMDisplayWindowController] = [:]
@@ -319,6 +324,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         } else {
             startResidentApp()
         }
+
+        // Last, and asynchronously: the library read is disk-bound, and every
+        // step above — the cold-launch resolution most of all — has to reach the
+        // run loop without waiting on it. The window is already on screen and
+        // fills in when the read lands.
+        libraryLoad = Task { @MainActor [viewModel] in await viewModel.startLibrary() }
     }
 
     // MARK: - Resident App
@@ -1009,13 +1020,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// Filters to `.kernova` bundles and imports the batch.
+    /// Filters to `.kernova` bundles and imports the batch, once the library is
+    /// readable.
     ///
-    /// `VMLibraryViewModel.importVMs(fromDroppedURLs:)` reserves each bundle's
-    /// destination synchronously and runs the copies concurrently, so this
-    /// synchronous delegate callback isn't blocked and the whole batch imports.
+    /// The wait is what makes a Finder open of a bundle *already in the library*
+    /// still resolve to "select the existing VM": this callback is delivered
+    /// right after `applicationDidFinishLaunching`, while the first read is in
+    /// flight, and `importVMs(fromDroppedURLs:)` dedups by UUID against
+    /// `instances` — against an empty library it would copy the bundle a second
+    /// time instead. Awaiting a finished load resumes on the next tick, so an
+    /// open arriving later is unaffected.
+    ///
+    /// `importVMs(fromDroppedURLs:)` then reserves every destination in the batch
+    /// without suspending and runs the copies concurrently, so two overlapping
+    /// triggers still see each other's phantoms.
     private func importVMs(from urls: [URL]) {
-        viewModel.importVMs(fromDroppedURLs: urls)
+        Task { @MainActor in
+            await self.libraryLoad?.value
+            self.viewModel.importVMs(fromDroppedURLs: urls)
+        }
     }
 
     // MARK: - Menu Actions

@@ -65,8 +65,9 @@ struct VMLibraryViewModelTests {
     // MARK: - Initial State
 
     @Test("ViewModel starts with empty instances when storage is empty")
-    func initialStateEmpty() {
+    func initialStateEmpty() async {
         let (viewModel, _, _, _, _) = makeViewModel()
+        await viewModel.loadVMs()
         #expect(viewModel.instances.isEmpty)
         #expect(viewModel.selectedID == nil)
         #expect(presenter.showCreationWizard == false)
@@ -75,8 +76,50 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Load
 
+    @Test("init reads nothing — the library is loaded after launch, not during construction")
+    func initDoesNotReadStorage() {
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(name: "First VM", guestOS: .linux, bootMode: .efi)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url] = config
+
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
+
+        #expect(storage.listVMBundlesCallCount == 0)
+        #expect(viewModel.instances.isEmpty)
+        #expect(viewModel.hasLoadedLibrary == false)
+    }
+
+    @Test("hasLoadedLibrary flips once the read applies, even for an empty library")
+    func hasLoadedLibraryFlipsOnEmptyLibrary() async {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        #expect(viewModel.hasLoadedLibrary == false)
+
+        await viewModel.loadVMs()
+
+        #expect(viewModel.hasLoadedLibrary == true)
+        #expect(viewModel.instances.isEmpty)
+    }
+
+    @Test("hasLoadedLibrary flips even when the bundle listing fails")
+    func hasLoadedLibraryFlipsWhenListingFails() async {
+        let storage = MockVMStorageService()
+        storage.listVMBundlesError = VMStorageError.bundleNotFound(
+            FileManager.default.temporaryDirectory)
+
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
+        await viewModel.loadVMs()
+
+        // The read is over and the answer is "no VMs" — the UI must not wait
+        // forever on a load that already failed.
+        #expect(viewModel.hasLoadedLibrary == true)
+        #expect(viewModel.instances.isEmpty)
+        #expect(presenter.showError == true)
+    }
+
     @Test("loadVMs auto-selects the first VM")
-    func loadVMsAutoSelectsFirst() {
+    func loadVMsAutoSelectsFirst() async {
         let storage = MockVMStorageService()
         let config1 = VMConfiguration(name: "First VM", guestOS: .linux, bootMode: .efi)
         let config2 = VMConfiguration(name: "Second VM", guestOS: .linux, bootMode: .efi)
@@ -88,13 +131,14 @@ struct VMLibraryViewModelTests {
         storage.bundles[url2] = config2
 
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
+        await viewModel.loadVMs()
 
         #expect(viewModel.instances.count == 2)
         #expect(viewModel.selectedID == viewModel.instances.first?.id)
     }
 
     @Test("loadVMs preserves valid selection on reload")
-    func loadVMsPreservesSelection() {
+    func loadVMsPreservesSelection() async {
         let storage = MockVMStorageService()
         let config1 = VMConfiguration(name: "First VM", guestOS: .linux, bootMode: .efi)
         let config2 = VMConfiguration(name: "Second VM", guestOS: .linux, bootMode: .efi)
@@ -106,10 +150,11 @@ struct VMLibraryViewModelTests {
         storage.bundles[url2] = config2
 
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
+        await viewModel.loadVMs()
         let secondID = viewModel.instances.last?.id
         viewModel.selectedID = secondID
 
-        viewModel.loadVMs()
+        await viewModel.loadVMs()
 
         #expect(viewModel.selectedID == secondID)
     }
@@ -140,7 +185,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("loadVMs restores selection from UserDefaults when VM still exists")
-    func loadVMsRestoresFromUserDefaults() {
+    func loadVMsRestoresFromUserDefaults() async {
         let storage = MockVMStorageService()
         let config1 = VMConfiguration(name: "First VM", guestOS: .linux, bootMode: .efi)
         let config2 = VMConfiguration(name: "Second VM", guestOS: .linux, bootMode: .efi)
@@ -151,7 +196,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[url1] = config1
         storage.bundles[url2] = config2
 
-        // Seed preferences before ViewModel init triggers loadVMs()
+        // Seed preferences before the load, which is what consults them
         preferences.lastSelectedVMID = config2.id
 
         let viewModel = VMLibraryViewModel(
@@ -163,12 +208,13 @@ struct VMLibraryViewModelTests {
             preferences: preferences
         )
         viewModel.presenter = presenter
+        await viewModel.loadVMs()
 
         #expect(viewModel.selectedID == config2.id)
     }
 
     @Test("loadVMs surfaces error when individual bundles fail to load")
-    func loadVMsSurfacesErrorForFailedBundles() {
+    func loadVMsSurfacesErrorForFailedBundles() async {
         let storage = MockVMStorageService()
         // Add a good bundle and a bad bundle
         let goodConfig = VMConfiguration(name: "Good VM", guestOS: .linux, bootMode: .efi)
@@ -183,6 +229,7 @@ struct VMLibraryViewModelTests {
         storage.loadConfigurationFailURLs = [badURL]
 
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
+        await viewModel.loadVMs()
 
         // Good VM loaded, bad VM skipped
         #expect(viewModel.instances.count == 1)
@@ -193,7 +240,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("loadVMs falls back to first VM when stored ID is invalid")
-    func loadVMsFallsBackWhenStoredIDInvalid() {
+    func loadVMsFallsBackWhenStoredIDInvalid() async {
         let storage = MockVMStorageService()
         let config = VMConfiguration(name: "Only VM", guestOS: .linux, bootMode: .efi)
         let url = FileManager.default.temporaryDirectory
@@ -212,6 +259,7 @@ struct VMLibraryViewModelTests {
             preferences: preferences
         )
         viewModel.presenter = presenter
+        await viewModel.loadVMs()
 
         #expect(viewModel.selectedID == config.id)
     }
@@ -2387,25 +2435,26 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("reconcileWithDisk suppression is maintained after full reload")
-    func reconcileSuppressionMaintainedAfterReload() {
+    func reconcileSuppressionMaintainedAfterReload() async {
         let storage = MockVMStorageService()
         let badURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("broken-vm.kernova", isDirectory: true)
         storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
         storage.loadConfigurationFailURLs.insert(badURL)
 
-        // loadVMs() in init reports the error and seeds reportedFailedBundles
+        // The initial load reports the error and seeds reportedFailedBundles
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
+        await viewModel.loadVMs()
         #expect(presenter.showError == true)
         #expect(presenter.errorMessage?.contains("broken-vm") == true)
 
-        // First reconcile after init is suppressed
+        // First reconcile after the load is suppressed
         presenter.reset()
         viewModel.reconcileWithDisk()
         #expect(presenter.showError == false)
 
         // Full reload resets suppression, then re-seeds from its own failures
-        viewModel.loadVMs()
+        await viewModel.loadVMs()
         #expect(presenter.showError == true)
         #expect(presenter.errorMessage?.contains("broken-vm") == true)
 
@@ -2416,15 +2465,16 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("reconcileWithDisk does not re-present errors already reported by loadVMs")
-    func reconcileDoesNotDuplicateLoadVMsErrors() {
+    func reconcileDoesNotDuplicateLoadVMsErrors() async {
         let storage = MockVMStorageService()
         let badURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("broken-vm.kernova", isDirectory: true)
         storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
         storage.loadConfigurationFailURLs.insert(badURL)
 
-        // loadVMs() runs in init and should report the error
+        // The initial load should report the error
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
+        await viewModel.loadVMs()
         #expect(presenter.showError == true)
         #expect(presenter.errorMessage?.contains("broken-vm") == true)
 
@@ -2477,7 +2527,7 @@ struct VMLibraryViewModelTests {
     // MARK: - Initial Boot status assignment
 
     @Test("loadVMs assigns .initialBoot when config has installContext")
-    func loadVMsAssignsInitialBoot() {
+    func loadVMsAssignsInitialBoot() async {
         let storage = MockVMStorageService()
         var config = VMConfiguration(name: "Pending VM", guestOS: .macOS, bootMode: .macOS)
         config.installContext = MacOSInstallContext(
@@ -2489,14 +2539,14 @@ struct VMLibraryViewModelTests {
         storage.bundles[url] = config
 
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
-        viewModel.loadVMs()
+        await viewModel.loadVMs()
 
         #expect(viewModel.instances.count == 1)
         #expect(viewModel.instances[0].status == .initialBoot)
     }
 
     @Test("loadVMs assigns .stopped when no installContext")
-    func loadVMsAssignsStoppedWithoutInstallContext() {
+    func loadVMsAssignsStoppedWithoutInstallContext() async {
         let storage = MockVMStorageService()
         let config = VMConfiguration(name: "Installed VM", guestOS: .linux, bootMode: .efi)
         let url = FileManager.default.temporaryDirectory
@@ -2504,7 +2554,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[url] = config
 
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
-        viewModel.loadVMs()
+        await viewModel.loadVMs()
 
         #expect(viewModel.instances.count == 1)
         #expect(viewModel.instances[0].status == .stopped)
@@ -4081,7 +4131,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("loadVMs applies custom order from UserDefaults")
-    func loadVMsAppliesCustomOrder() {
+    func loadVMsAppliesCustomOrder() async {
         let storage = MockVMStorageService()
         let config1 = VMConfiguration(
             name: "First", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
@@ -4111,12 +4161,13 @@ struct VMLibraryViewModelTests {
             preferences: preferences
         )
         viewModel.presenter = presenter
+        await viewModel.loadVMs()
 
         #expect(viewModel.instances.map(\.name) == ["Third", "First", "Second"])
     }
 
     @Test("loadVMs falls back to createdAt when no custom order exists")
-    func loadVMsFallsBackToCreatedAt() {
+    func loadVMsFallsBackToCreatedAt() async {
         let storage = MockVMStorageService()
         let config1 = VMConfiguration(
             name: "Older", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
@@ -4130,12 +4181,13 @@ struct VMLibraryViewModelTests {
         storage.bundles[url2] = config2
 
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
+        await viewModel.loadVMs()
 
         #expect(viewModel.instances.map(\.name) == ["Older", "Newer"])
     }
 
     @Test("reconcileWithDisk appends new VMs after custom-ordered ones")
-    func reconcileAppendsNewVMs() {
+    func reconcileAppendsNewVMs() async {
         let storage = MockVMStorageService()
         let config1 = VMConfiguration(
             name: "Existing", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
@@ -4144,6 +4196,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[url1] = config1
 
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
+        await viewModel.loadVMs()
         #expect(viewModel.instances.count == 1)
 
         // Simulate a new VM appearing on disk
@@ -4176,7 +4229,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("custom order ignores stale UUIDs not present in loaded VMs")
-    func customOrderIgnoresStaleUUIDs() {
+    func customOrderIgnoresStaleUUIDs() async {
         let storage = MockVMStorageService()
         let config = VMConfiguration(name: "Only VM", guestOS: .linux, bootMode: .efi)
         let url = FileManager.default.temporaryDirectory
@@ -4196,6 +4249,7 @@ struct VMLibraryViewModelTests {
             preferences: preferences
         )
         viewModel.presenter = presenter
+        await viewModel.loadVMs()
 
         #expect(viewModel.instances.count == 1)
         #expect(viewModel.instances.first?.name == "Only VM")
@@ -4371,7 +4425,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("onAgentBecameCurrent (wired by loadVMs) auto-ejects the installer disk")
-    func onAgentBecameCurrentAutoEjectsInstaller() throws {
+    func onAgentBecameCurrentAutoEjectsInstaller() async throws {
         let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let storage = MockVMStorageService()
         var config = VMConfiguration(name: "Wired VM", guestOS: .linux, bootMode: .efi)
@@ -4382,6 +4436,7 @@ struct VMLibraryViewModelTests {
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
+        await viewModel.loadVMs()
         let instance = try #require(viewModel.instances.first)
 
         #expect(viewModel.isGuestAgentInstallerMounted(on: instance))

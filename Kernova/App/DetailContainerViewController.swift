@@ -30,6 +30,9 @@ final class DetailContainerViewController: NSViewController {
     private lazy var emptyStateView = DetailEmptyStateView { [weak self] in
         self?.presentCreationWizard()
     }
+    /// Shown until the library's first read lands — a bare pane, because at that
+    /// point the app knows of no VM to show and cannot yet say there is none.
+    private let unloadedLibraryView = NSView()
     private var routerVC: VMDetailRouterViewController?
     private var currentContentView: NSView?
     private var displayedInstanceID: UUID?
@@ -102,6 +105,14 @@ final class DetailContainerViewController: NSViewController {
     // MARK: - Detail content (empty state ⇆ router)
 
     private func updateContent() {
+        // "No Virtual Machine Selected", with its New Virtual Machine button, is
+        // a claim about the library — wrong, and actionable, while the library is
+        // still being read.
+        guard viewModel.hasLoadedLibrary else {
+            displayedInstanceID = nil
+            showContentView(unloadedLibraryView)
+            return
+        }
         if let selected = viewModel.selectedInstance {
             let router: VMDetailRouterViewController
             if let existing = routerVC {
@@ -187,6 +198,10 @@ final class DetailContainerViewController: NSViewController {
         stateObservation = observeRecurring(
             track: { [weak self] in
                 guard let self else { return }
+                // Load completion is its own signal: a library that reads back
+                // empty changes nothing else, so without this the pane would
+                // never leave `unloadedLibraryView`.
+                _ = self.viewModel.hasLoadedLibrary
                 _ = self.viewModel.selectedInstance
                 _ = self.viewModel.selectedInstance?.status
                 _ = self.viewModel.selectedInstance?.displayMode
