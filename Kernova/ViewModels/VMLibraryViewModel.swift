@@ -234,6 +234,10 @@ final class VMLibraryViewModel {
     func loadVMs() async {
         reportedFailedBundles.removeAll()
         let storage = storageService
+        // The read is asynchronous, so the library can be mutated while it runs.
+        // Anything appearing in `instances` after this line is newer than
+        // whatever the read returns, and the result must not delete it.
+        let knownBeforeRead = Set(instances.map(\.id))
         // Whatever the read returns, it is over: a listing that failed answers
         // "no VMs" too, and UI must not go on waiting for a load that finished.
         defer { hasLoadedLibrary = true }
@@ -241,7 +245,7 @@ final class VMLibraryViewModel {
             let scan = try await Task.detached(priority: .userInitiated) {
                 try Self.scanLibrary(using: storage)
             }.value
-            apply(scan)
+            apply(scan, keepingInstancesAddedSince: knownBeforeRead)
         } catch {
             Self.logger.error("Failed to load VM library: \(error.localizedDescription, privacy: .public)")
             presentError(error)
@@ -249,14 +253,26 @@ final class VMLibraryViewModel {
     }
 
     /// Turns a scan into the live library: instances, order, and selection.
-    private func apply(_ scan: LibraryScan) {
-        instances = scan.bundles.map { scanned in
-            let instance = VMInstance(
-                configuration: scanned.configuration, bundleURL: scanned.bundleURL,
-                status: scanned.status, preferences: preferences)
-            wirePersistence(for: instance)
-            return instance
-        }
+    ///
+    /// Instances registered since the read began outlive it, and outrank the
+    /// read's view of the same VM. A preparing phantom is the case that matters:
+    /// its copy is uninterruptible, so dropping the row would leave the copy
+    /// running against a bundle the library has forgotten — with no row to
+    /// cancel from, and `hasPreparing` back to `false`, which is exactly the gap
+    /// `reconcileWithDisk` refuses to open.
+    private func apply(_ scan: LibraryScan, keepingInstancesAddedSince knownBeforeRead: Set<UUID>) {
+        let addedDuringRead = instances.filter { !knownBeforeRead.contains($0.id) }
+        let addedDuringReadIDs = Set(addedDuringRead.map(\.id))
+        instances =
+            scan.bundles
+            .filter { !addedDuringReadIDs.contains($0.configuration.id) }
+            .map { scanned in
+                let instance = VMInstance(
+                    configuration: scanned.configuration, bundleURL: scanned.bundleURL,
+                    status: scanned.status, preferences: preferences)
+                wirePersistence(for: instance)
+                return instance
+            } + addedDuringRead
 
         if !scan.failedBundleNames.isEmpty {
             reportedFailedBundles.formUnion(scan.failedBundleNames)

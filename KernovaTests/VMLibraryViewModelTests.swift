@@ -118,6 +118,35 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == true)
     }
 
+    @Test("A VM registered while the read is in flight survives the load")
+    func loadVMsKeepsInstancesAddedDuringTheRead() async {
+        let storage = MockVMStorageService()
+        let onDisk = VMConfiguration(name: "On Disk", guestOS: .linux, bootMode: .efi)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(onDisk.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url] = onDisk
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
+
+        let load = Task { @MainActor in await viewModel.loadVMs() }
+        // Runs behind `load`, so `loadVMs` has captured the pre-read instance
+        // list and suspended on the detached scan. The append below then lands
+        // in the read window, with no `await` before it for `apply` to slip in.
+        await Task { @MainActor in }.value
+
+        // Stands in for an import phantom or a wizard-created VM: registered
+        // after the scan started, so the scan cannot know about it.
+        let arrival = makeInstance(name: "Arrived Mid-Read")
+        viewModel.instances.append(arrival)
+
+        await load.value
+
+        // The scan's result must not delete it — its bundle copy may still be
+        // running, and nothing else would put the row back.
+        #expect(viewModel.instances.contains { $0.id == arrival.id })
+        #expect(viewModel.instances.contains { $0.id == onDisk.id })
+        #expect(viewModel.instances.count == 2)
+    }
+
     @Test("loadVMs auto-selects the first VM")
     func loadVMsAutoSelectsFirst() async {
         let storage = MockVMStorageService()
@@ -2300,10 +2329,9 @@ struct VMLibraryViewModelTests {
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[bundleURL] = config
 
+        // The library is never loaded here, so the bundle is on disk and absent
+        // from memory — exactly what reconciliation is for.
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
-        // loadVMs already ran during init, so the instance should be loaded
-        // But let's clear and reconcile manually to test the specific method
-        viewModel.instances.removeAll()
 
         viewModel.reconcileWithDisk()
 
@@ -2380,7 +2408,7 @@ struct VMLibraryViewModelTests {
         // Create viewModel first (no bad bundles yet)
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
 
-        // Introduce the bad bundle after init so it's new to reconcileWithDisk
+        // Introduce the bad bundle after construction so it is new to reconcileWithDisk
         let badURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("broken-vm.kernova", isDirectory: true)
         storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
@@ -2415,7 +2443,7 @@ struct VMLibraryViewModelTests {
         let storage = MockVMStorageService()
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
 
-        // Introduce the bad bundle after init so it's new to reconcileWithDisk
+        // Introduce the bad bundle after construction so it is new to reconcileWithDisk
         let badURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("broken-vm.kernova", isDirectory: true)
         storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
@@ -2492,7 +2520,7 @@ struct VMLibraryViewModelTests {
         let storage = MockVMStorageService()
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
 
-        // Introduce the bad bundle after init so it's new to reconcileWithDisk
+        // Introduce the bad bundle after construction so it is new to reconcileWithDisk
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("recoverable.kernova", isDirectory: true)
         let config = VMConfiguration(name: "Recoverable VM", guestOS: .linux, bootMode: .efi)

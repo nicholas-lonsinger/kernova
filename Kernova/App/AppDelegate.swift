@@ -16,7 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private let preferences: AppPreferences
     private var mainWindowController: MainWindowController?
     private let viewModel: VMLibraryViewModel
-    /// The library's first read from disk, started once launch is complete.
+    /// The library's first read from disk, started in
+    /// `applicationWillFinishLaunching`.
     ///
     /// Retained so `application(_:open:)` can wait for it: a Finder open that
     /// launched the app is delivered while the read is still in flight.
@@ -295,6 +296,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     // MARK: - NSApplicationDelegate
 
+    /// Starts the library read.
+    ///
+    /// Deliberately here and not in `applicationDidFinishLaunching`: AppKit
+    /// delivers a launch document's `application(_:open:)` *between* the two, and
+    /// that path waits on `libraryLoad` — left unset, the wait would silently
+    /// pass through and re-import a bundle already in the library. Starting the
+    /// read costs nothing here; the task body only runs once the main actor
+    /// yields, and its file I/O is off the main actor either way.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        libraryLoad = Task { @MainActor [viewModel] in await viewModel.startLibrary() }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
 
@@ -324,12 +337,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         } else {
             startResidentApp()
         }
-
-        // Last, and asynchronously: the library read is disk-bound, and every
-        // step above — the cold-launch resolution most of all — has to reach the
-        // run loop without waiting on it. The window is already on screen and
-        // fills in when the read lands.
-        libraryLoad = Task { @MainActor [viewModel] in await viewModel.startLibrary() }
     }
 
     // MARK: - Resident App
@@ -1024,12 +1031,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// readable.
     ///
     /// The wait is what makes a Finder open of a bundle *already in the library*
-    /// still resolve to "select the existing VM": this callback is delivered
-    /// right after `applicationDidFinishLaunching`, while the first read is in
-    /// flight, and `importVMs(fromDroppedURLs:)` dedups by UUID against
-    /// `instances` — against an empty library it would copy the bundle a second
-    /// time instead. Awaiting a finished load resumes on the next tick, so an
-    /// open arriving later is unaffected.
+    /// still resolve to "select the existing VM": a launch document arrives
+    /// while the first read is in flight, and `importVMs(fromDroppedURLs:)`
+    /// dedups by UUID against `instances` — against an empty library it would
+    /// copy the bundle a second time instead. Awaiting a finished load resumes
+    /// on the next tick, so an open arriving later is unaffected.
     ///
     /// `importVMs(fromDroppedURLs:)` then reserves every destination in the batch
     /// without suspending and runs the copies concurrently, so two overlapping
