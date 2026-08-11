@@ -27,7 +27,7 @@ enum SettingsPaneMetrics {
 
 /// The toolbar-style tab container for the Settings window.
 ///
-/// Holds a **General** tab (Open at Login), a **Reminders** tab (turning
+/// Holds a **General** tab (app-lifecycle toggles), a **Reminders** tab (turning
 /// suppressed reminders back on), a **Clipboard** tab (the maximum paste size),
 /// and an **Advanced** tab; the toolbar style is used so further panes can be
 /// added later as additional `NSTabViewItem`s.

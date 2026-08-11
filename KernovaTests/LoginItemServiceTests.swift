@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-/// Unit tests for `LoginItemService` — the "Open at Login" wrapper (#460).
+/// Unit tests for `LoginItemService` — the login-item wrapper.
 ///
 /// Uses an injectable `LoginItemRegistration` fake so register/unregister and
 /// status mapping are exercised without touching the real login-item database

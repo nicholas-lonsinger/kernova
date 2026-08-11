@@ -4,18 +4,18 @@ import ServiceManagement
 /// The "General" pane of the Settings window.
 ///
 /// Hosts two app-lifecycle toggles:
-/// - *Open at Login*, backed by the embedded LaunchAgent through
+/// - *Launch into Background at Login*, backed by the embedded LaunchAgent through
 ///   `LoginItemService`. `.status` is the source of truth (never persisted): the
 ///   switch is synced from it on appear and whenever the app regains focus, so a
 ///   change made in System Settings → Login Items is reflected without a restart.
-/// - *Keep Running in Menu Bar* (#624), backed by `AppPreferences`. Governs
+/// - *Continue running in Status Bar*, backed by `AppPreferences`. Governs
 ///   whether a GUI-origin quit (⌘Q) closes Kernova's windows but leaves it
 ///   resident in the menu bar, or quits the app outright.
 @MainActor
 final class GeneralSettingsViewController: NSViewController {
     private let loginItem: LoginItemService
     private let preferences: AppPreferences
-    private let openAtLoginSwitch = NSSwitch()
+    private let launchAtLoginSwitch = NSSwitch()
     private let keepInMenuBarSwitch = NSSwitch()
     private var focusObserver: (any NSObjectProtocol)?
 
@@ -32,20 +32,19 @@ final class GeneralSettingsViewController: NSViewController {
     }
 
     override func loadView() {
-        openAtLoginSwitch.controlSize = .small
-        openAtLoginSwitch.target = self
-        openAtLoginSwitch.action = #selector(openAtLoginToggled)
+        launchAtLoginSwitch.controlSize = .small
+        launchAtLoginSwitch.target = self
+        launchAtLoginSwitch.action = #selector(launchAtLoginToggled)
 
         keepInMenuBarSwitch.controlSize = .small
         keepInMenuBarSwitch.target = self
         keepInMenuBarSwitch.action = #selector(keepInMenuBarToggled)
 
         let loginCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Open at Login", control: openAtLoginSwitch)
+            makeGroupedFormCardRow("Launch into Background at Login", control: launchAtLoginSwitch)
         ])
         let loginCaption = makeGroupedFormCaption(
-            "Start Kernova automatically when you log in, so its virtual machines and clipboard "
-                + "sharing are ready without opening a window.")
+            "Start Kernova automatically when you log in.")
         let openLoginItemsButton = NSButton(
             title: "Open Login Items Settings…", target: self,
             action: #selector(openLoginItemsSettings))
@@ -54,12 +53,12 @@ final class GeneralSettingsViewController: NSViewController {
         openLoginItemsButton.setContentHuggingPriority(.required, for: .horizontal)
 
         let menuBarCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Keep Running in Menu Bar", control: keepInMenuBarSwitch)
+            makeGroupedFormCardRow("Continue running in Status Bar", control: keepInMenuBarSwitch)
         ])
         let menuBarCaption = makeGroupedFormCaption(
-            "Quitting (⌘Q) closes Kernova's windows but keeps it running in the menu bar, so your "
-                + "virtual machines keep running. Quit fully from the menu bar icon, or with Quit "
-                + "Kernova (⌥⌘Q).")
+            "Quitting (⌘Q) or closing all windows will keep Kernova running in the Status Bar. To "
+                + "fully quit, either Quit directly from the Status Icon or with Quit Kernova "
+                + "(⌥⌘Q).")
 
         let section = NSStackView(views: [
             makeGroupedFormSectionHeader("General"),
@@ -131,11 +130,11 @@ final class GeneralSettingsViewController: NSViewController {
 
     /// Mirrors the switch to the live `SMAppService` status (the source of truth).
     private func refreshFromStatus() {
-        openAtLoginSwitch.state = loginItem.isEnabled ? .on : .off
+        launchAtLoginSwitch.state = loginItem.isEnabled ? .on : .off
     }
 
-    @objc private func openAtLoginToggled() {
-        let enable = openAtLoginSwitch.state == .on
+    @objc private func launchAtLoginToggled() {
+        let enable = launchAtLoginSwitch.state == .on
         let status = loginItem.setEnabled(enable)
         // `.requiresApproval` means the user must flip Kernova on in System
         // Settings; deep-link there. `refreshFromStatus` then reflects the true

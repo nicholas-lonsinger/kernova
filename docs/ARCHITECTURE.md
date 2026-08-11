@@ -184,7 +184,7 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
   version comes from a build-phase-written sidecar so it cannot drift from the shipped binary
   ([BUILD.md](BUILD.md)).
 
-Also here: `LoginItemService` (the `SMAppService.agent` wrapper behind the Open at Login toggle),
+Also here: `LoginItemService` (the `SMAppService.agent` wrapper behind the login-item toggle),
 `AttachmentFileMonitor` (existence watching for the settings attachment rows), `RuntimeFileAccess`
 (per-boot security-scoped access, released once in `tearDownSession`), and `SerialSocketRelay`
 (below).
@@ -393,7 +393,7 @@ kernel resources until relaunch — hence one owner (`RuntimeFileAccess`) and on
 | **Virtualization** | VM lifecycle |
 | **AppKit** | All UI |
 | **Observation** | `@Observable` models and view models |
-| **ServiceManagement** | `SMAppService.agent` — the embedded login LaunchAgent behind Open at Login |
+| **ServiceManagement** | `SMAppService.agent` — the embedded login LaunchAgent behind Launch into Background at Login |
 | **AppleArchive** | In-process archiving for clipboard folder transfers, encoded onto the wire |
 | **UniformTypeIdentifiers** | The `.kernova` bundle's `UTType` |
 | **AVFoundation** | Microphone permission status |
