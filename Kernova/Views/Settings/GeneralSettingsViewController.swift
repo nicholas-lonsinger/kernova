@@ -4,10 +4,10 @@ import ServiceManagement
 /// The "General" pane of the Settings window.
 ///
 /// Hosts two app-lifecycle toggles:
-/// - *Open at Login*, backed by `SMAppService.mainApp` through `LoginItemService`.
-///   `.status` is the source of truth (never persisted): the switch is synced
-///   from it on appear and whenever the app regains focus, so a change made in
-///   System Settings → Login Items is reflected without a restart.
+/// - *Open at Login*, backed by the embedded LaunchAgent through
+///   `LoginItemService`. `.status` is the source of truth (never persisted): the
+///   switch is synced from it on appear and whenever the app regains focus, so a
+///   change made in System Settings → Login Items is reflected without a restart.
 /// - *Keep Running in Menu Bar* (#624), backed by `AppPreferences`. Governs
 ///   whether a GUI-origin quit (⌘Q) closes Kernova's windows but leaves it
 ///   resident in the menu bar, or quits the app outright.
@@ -45,8 +45,13 @@ final class GeneralSettingsViewController: NSViewController {
         ])
         let loginCaption = makeGroupedFormCaption(
             "Start Kernova automatically when you log in, so its virtual machines and clipboard "
-                + "sharing are ready without opening a window. You can also manage this in System "
-                + "Settings → General → Login Items & Extensions.")
+                + "sharing are ready without opening a window.")
+        let openLoginItemsButton = NSButton(
+            title: "Open Login Items Settings…", target: self,
+            action: #selector(openLoginItemsSettings))
+        openLoginItemsButton.bezelStyle = .push
+        openLoginItemsButton.controlSize = .small
+        openLoginItemsButton.setContentHuggingPriority(.required, for: .horizontal)
 
         let menuBarCard = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow("Keep Running in Menu Bar", control: keepInMenuBarSwitch)
@@ -60,6 +65,7 @@ final class GeneralSettingsViewController: NSViewController {
             makeGroupedFormSectionHeader("General"),
             loginCard,
             loginCaption,
+            openLoginItemsButton,
             menuBarCard,
             menuBarCaption,
         ])
@@ -68,7 +74,7 @@ final class GeneralSettingsViewController: NSViewController {
         section.spacing = Spacing.small
         // Keep each caption tight to its card, but separate the two card+caption
         // groups so they read as distinct settings.
-        section.setCustomSpacing(Spacing.section, after: loginCaption)
+        section.setCustomSpacing(Spacing.section, after: openLoginItemsButton)
         section.translatesAutoresizingMaskIntoConstraints = false
 
         let root = NSView()
@@ -138,6 +144,10 @@ final class GeneralSettingsViewController: NSViewController {
             loginItem.openLoginItemsSettings()
         }
         refreshFromStatus()
+    }
+
+    @objc private func openLoginItemsSettings() {
+        loginItem.openLoginItemsSettings()
     }
 
     @objc private func keepInMenuBarToggled() {
