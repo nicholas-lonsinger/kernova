@@ -45,8 +45,7 @@ final class GeneralSettingsViewController: NSViewController {
         ])
         let loginCaption = makeGroupedFormCaption(
             "Start Kernova automatically when you log in, so its virtual machines and clipboard "
-                + "sharing are ready without opening a window. Kernova is listed under Allow in "
-                + "the Background in Login Items & Extensions.")
+                + "sharing are ready without opening a window.")
         let openLoginItemsButton = NSButton(
             title: "Open Login Items Settings…", target: self,
             action: #selector(openLoginItemsSettings))

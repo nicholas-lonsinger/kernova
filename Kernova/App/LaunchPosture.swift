@@ -25,8 +25,10 @@ enum LaunchPosture: Equatable {
     /// One-sided deliberately: a manual launch never yields, because Launch
     /// Services routes a second open to the live instance instead of spawning
     /// one. Only launchd's direct `execv` of the bundle executable bypasses
-    /// that, so only a login launch can arrive as a duplicate process.
-    func yields(toRunningInstance otherInstanceRunning: Bool) -> Bool {
-        self == .loginLaunch && otherInstanceRunning
+    /// that, so only a login launch can arrive as a duplicate process. The
+    /// autoclosure keeps the running-instance lookup off the manual path, which
+    /// can never use its answer.
+    func yields(toRunningInstance otherInstanceRunning: @autoclosure () -> Bool) -> Bool {
+        self == .loginLaunch && otherInstanceRunning()
     }
 }
