@@ -196,6 +196,36 @@ struct SidebarViewControllerTests {
                 == .expectedMissing(expected: "1.2.3"))
     }
 
+    // MARK: - Row busy state
+
+    private func makeBusyStateRow(isBusy: Bool) -> SidebarVMRowCellView {
+        let cell = SidebarVMRowCellView()
+        cell.configure(
+            instance: makeInstance(status: .running),
+            isRenaming: false,
+            installPromptDisabled: false,
+            isBusy: { isBusy },
+            onCommitRename: { _, _ in },
+            onCancelRename: {},
+            onMountAgent: {},
+            onDismissAgentNudge: {})
+        return cell
+    }
+
+    /// The row is the only surface that can show a settling pause or resume, so
+    /// its spinner follows the view model's busy read rather than the status —
+    /// which stays `.running` (pause) or `.paused` (resume) throughout.
+    @Test("The row swaps its OS icon for the spinner while busy")
+    func rowSpinsWhileBusy() {
+        let busy = makeBusyStateRow(isBusy: true)
+        #expect(firstSubview(NSProgressIndicator.self, in: busy)?.isHidden == false)
+        #expect(firstSubview(NSImageView.self, in: busy)?.isHidden == true)
+
+        let idle = makeBusyStateRow(isBusy: false)
+        #expect(firstSubview(NSProgressIndicator.self, in: idle)?.isHidden == true)
+        #expect(firstSubview(NSImageView.self, in: idle)?.isHidden == false)
+    }
+
     /// Re-arming an observation reports only changes made *after* it registers.
     ///
     /// So anything that moved while the sidebar was off screen — a collapsed

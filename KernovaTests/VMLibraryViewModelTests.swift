@@ -51,6 +51,26 @@ struct VMLibraryViewModelTests {
         return (vm, storageService, diskImageService, virtualizationService, usbDeviceService)
     }
 
+    /// A view model whose virtualization service holds one lifecycle call
+    /// suspended, standing in for the window where a VZ call is still in flight.
+    private func makeSuspendingViewModel(
+        storage: MockVMStorageService = MockVMStorageService()
+    ) -> (VMLibraryViewModel, SuspendingMockVirtualizationService) {
+        let suspending = SuspendingMockVirtualizationService()
+        let vm = VMLibraryViewModel(
+            storageService: storage,
+            diskImageService: MockDiskImageService(),
+            virtualizationService: suspending,
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            usbDeviceService: MockUSBDeviceService(),
+            fileSystem: fileSystem,
+            preferences: preferences
+        )
+        vm.presenter = presenter
+        return (vm, suspending)
+    }
+
     private func makeInstance(name: String = "Test VM", guestOS: VMGuestOS = .linux) -> VMInstance {
         let config = VMConfiguration(
             name: name,
@@ -414,19 +434,8 @@ struct VMLibraryViewModelTests {
     @Test("deleteConfirmed refuses a cold-paused VM whose resume is still in flight")
     func deleteConfirmedRefusesDuringInFlightResume() async throws {
         let storage = MockVMStorageService()
-        let suspending = SuspendingMockVirtualizationService()
+        let (viewModel, suspending) = makeSuspendingViewModel(storage: storage)
         suspending.shouldSuspendOnResume = true
-        let viewModel = VMLibraryViewModel(
-            storageService: storage,
-            diskImageService: MockDiskImageService(),
-            virtualizationService: suspending,
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
-            fileSystem: fileSystem,
-            preferences: preferences
-        )
-        viewModel.presenter = presenter
         let instance = makeInstance()
         instance.status = .paused
         viewModel.instances.append(instance)
@@ -3109,6 +3118,75 @@ struct VMLibraryViewModelTests {
     func hasSaveInFlightIsFalseWhenEmpty() {
         let (viewModel, _, _, _, _) = makeViewModel()
         #expect(!viewModel.hasSaveInFlight)
+    }
+
+    @Test("isBusy is false for a settled VM")
+    func isBusyIsFalseWhenSettled() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances = [instance]
+
+        for status in [VMStatus.stopped, .running, .paused] {
+            instance.status = status
+            #expect(!viewModel.isBusy(instance))
+        }
+    }
+
+    @Test("isBusy covers a preparing row and every transitioning status")
+    func isBusyCoversPreparingAndTransitions() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances = [instance]
+
+        for status in [VMStatus.starting, .saving, .restoring, .installing] {
+            instance.status = status
+            #expect(viewModel.isBusy(instance))
+        }
+
+        instance.status = .stopped
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: Task {})
+        #expect(viewModel.isBusy(instance))
+    }
+
+    /// The state that motivates the lifecycle term: a pause holds `.running`
+    /// until the VZ call returns, so no status-driven surface can render it —
+    /// and a call that never returns stays invisible.
+    @Test("isBusy reads true through a settling pause whose status still says running")
+    func isBusyCoversSettlingPause() async throws {
+        let (viewModel, suspending) = makeSuspendingViewModel()
+        let instance = makeInstance()
+        instance.status = .running
+        viewModel.instances = [instance]
+
+        let pause = Task { @MainActor in try await viewModel.lifecycle.pause(instance) }
+        await suspending.waitUntilSuspended()
+
+        #expect(instance.status == .running)
+        #expect(!instance.status.isTransitioning)
+        #expect(viewModel.isBusy(instance))
+
+        suspending.resumeSuspended()
+        try await pause.value
+        #expect(!viewModel.isBusy(instance))
+    }
+
+    @Test("An isBusy wait resolves by observation when a settling pause ends")
+    func isBusyWakesAnObservedWait() async throws {
+        let (viewModel, suspending) = makeSuspendingViewModel()
+        let instance = makeInstance()
+        instance.status = .running
+        viewModel.instances = [instance]
+
+        let pause = Task { @MainActor in try await viewModel.lifecycle.pause(instance) }
+        await suspending.waitUntilSuspended()
+        #expect(viewModel.isBusy(instance))
+
+        // Released from a separate task so the wait below arms first, making the
+        // resolution an observation wake rather than an already-true predicate.
+        Task { @MainActor in suspending.resumeSuspended() }
+        try await waitForChange { !viewModel.isBusy(instance) }
+
+        try await pause.value
     }
 
     @Test("keepInMenuBarOnQuit defaults on and persists in both directions")
