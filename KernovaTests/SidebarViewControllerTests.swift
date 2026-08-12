@@ -198,10 +198,13 @@ struct SidebarViewControllerTests {
 
     // MARK: - Row busy state
 
-    private func makeBusyStateRow(isBusy: Bool) -> SidebarVMRowCellView {
+    /// The cell holds its instance weakly, so the caller keeps `instance` alive:
+    /// binding a temporary would leave the row on a deallocated VM, and its
+    /// observation loop registering nothing.
+    private func makeBusyStateRow(instance: VMInstance, isBusy: Bool) -> SidebarVMRowCellView {
         let cell = SidebarVMRowCellView()
         cell.configure(
-            instance: makeInstance(status: .running),
+            instance: instance,
             isRenaming: false,
             installPromptDisabled: false,
             isBusy: { isBusy },
@@ -217,11 +220,13 @@ struct SidebarViewControllerTests {
     /// which stays `.running` (pause) or `.paused` (resume) throughout.
     @Test("The row swaps its OS icon for the spinner while busy")
     func rowSpinsWhileBusy() {
-        let busy = makeBusyStateRow(isBusy: true)
+        let busyInstance = makeInstance(status: .running)
+        let busy = makeBusyStateRow(instance: busyInstance, isBusy: true)
         #expect(firstSubview(NSProgressIndicator.self, in: busy)?.isHidden == false)
         #expect(firstSubview(NSImageView.self, in: busy)?.isHidden == true)
 
-        let idle = makeBusyStateRow(isBusy: false)
+        let idleInstance = makeInstance(status: .running)
+        let idle = makeBusyStateRow(instance: idleInstance, isBusy: false)
         #expect(firstSubview(NSProgressIndicator.self, in: idle)?.isHidden == true)
         #expect(firstSubview(NSImageView.self, in: idle)?.isHidden == false)
     }
