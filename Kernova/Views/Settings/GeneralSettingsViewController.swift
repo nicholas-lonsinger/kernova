@@ -4,8 +4,8 @@ import ServiceManagement
 /// The "General" pane of the Settings window.
 ///
 /// Hosts two app-lifecycle toggles:
-/// - *Launch into Background at Login*, backed by the embedded LaunchAgent through
-///   `LoginItemService`. `.status` is the source of truth (never persisted): the
+/// - *Launch into Background at Login*, backed by the embedded login-item helper
+///   through `LoginItemService`. `.status` is the source of truth (never persisted): the
 ///   switch is synced from it on appear and whenever the app regains focus, so a
 ///   change made in System Settings → Login Items is reflected without a restart.
 /// - *Continue running in Status Bar*, backed by `AppPreferences`. Governs

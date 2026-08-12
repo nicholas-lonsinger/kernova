@@ -184,7 +184,7 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
   version comes from a build-phase-written sidecar so it cannot drift from the shipped binary
   ([BUILD.md](BUILD.md)).
 
-Also here: `LoginItemService` (the `SMAppService.agent` wrapper behind the login-item toggle),
+Also here: `LoginItemService` (the `SMAppService.loginItem` wrapper behind the login-item toggle),
 `AttachmentFileMonitor` (existence watching for the settings attachment rows), `RuntimeFileAccess`
 (per-boot security-scoped access, released once in `tearDownSession`), and `SerialSocketRelay`
 (below).
@@ -361,6 +361,14 @@ kernel resources until relaunch — hence one owner (`RuntimeFileAccess`) and on
   during a quit that followed a TCC revocation. It watches the app's PID and relaunches through
   `NSWorkspace`. Sandboxed with `app-sandbox` + `inherit`.
 
+- **KernovaLoginHelper** — the login item embedded at `Contents/Library/LoginItems`, registered by
+  `LoginItemService` through `SMAppService.loginItem`. Launch Services starts it at login; it opens
+  the enclosing app with `LaunchPosture.loginLaunchFlag` in
+  `NSWorkspace.OpenConfiguration.arguments` and exits, so the app is never itself a launchd job.
+  Sandboxed with `app-sandbox` alone — the system starts it, so there is no parent to `inherit`
+  from. Its versions track the app's, which nested-bundle validation requires
+  ([BUILD.md](BUILD.md)).
+
 - **KernovaMacOSAgent** — `Kernova Guest Agent.app`, the `.accessory` menu-bar app that runs inside
   macOS guests, holding three independent vsock connections to the host (control, log forwarding,
   clipboard). It is not embedded as a bundle: the `Package Guest Agent DMG` build phase produces
@@ -393,7 +401,7 @@ kernel resources until relaunch — hence one owner (`RuntimeFileAccess`) and on
 | **Virtualization** | VM lifecycle |
 | **AppKit** | All UI |
 | **Observation** | `@Observable` models and view models |
-| **ServiceManagement** | `SMAppService.agent` — the embedded login LaunchAgent behind Launch into Background at Login |
+| **ServiceManagement** | `SMAppService.loginItem` — the embedded login-item helper behind Launch into Background at Login |
 | **AppleArchive** | In-process archiving for clipboard folder transfers, encoded onto the wire |
 | **UniformTypeIdentifiers** | The `.kernova` bundle's `UTType` |
 | **AVFoundation** | Microphone permission status |

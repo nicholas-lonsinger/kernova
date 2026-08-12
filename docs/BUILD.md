@@ -74,7 +74,7 @@ A feature branch therefore reads its post-merge number and holds it steady acros
 
 `Tools/set-build-number.sh <app|agent>` owns this logic, and every target's `Set Build Number from Git` build phase calls it. It writes `#define KERNOVA_BUILD_NUMBER N` (app mode) or `#define AGENT_BUILD_NUMBER N` (agent mode) into `DERIVED_FILE_DIR`; the source `Info.plist` references the symbol directly, substituted via `INFOPLIST_PREPROCESS` inside `ProcessInfoPlistFile` so build-graph reordering cannot clobber it.
 
-**App mode** serves the `Kernova` app. **Agent mode** serves `KernovaMacOSAgent`, and scopes both the count and the squash `+1` to `KernovaGuestAgent/ KernovaMacOSAgent/` — both path spellings, so the count stays monotonic across the directory rename and a branch that doesn't touch agent sources leaves its number unchanged.
+**App mode** serves the `Kernova` app and its embedded `KernovaLoginHelper`, whose nested bundle must carry the host app's versions to pass validation. **Agent mode** serves `KernovaMacOSAgent`, and scopes both the count and the squash `+1` to `KernovaGuestAgent/ KernovaMacOSAgent/` — both path spellings, so the count stays monotonic across the directory rename and a branch that doesn't touch agent sources leaves its number unchanged.
 
 ## Guest agent versioning
 

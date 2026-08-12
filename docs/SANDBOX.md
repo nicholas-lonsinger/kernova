@@ -28,4 +28,6 @@ The only executable the app spawns is its own bundled `KernovaRelaunchHelper`, s
 
 ## Launch model
 
-Kernova is a resident menu-bar app, with no Mach service anywhere in the design. "Launch into Background at Login" is an opt-in General-settings toggle that registers a per-user LaunchAgent embedded at `Contents/Library/LaunchAgents` through `SMAppService.agent` (`LoginItemService`), which is MAS- and sandbox-compatible. The agent re-execs the app itself with `LaunchPosture.loginLaunchFlag`, so the sandbox rule that a sandboxed app's agent must itself be sandboxed is satisfied by the app's own entitlements — the agent needs none of its own.
+Kernova is a resident menu-bar app, with no Mach service anywhere in the design. "Launch into Background at Login" is an opt-in General-settings toggle that registers the bootstrap helper embedded at `Contents/Library/LoginItems` through `SMAppService.loginItem` (`LoginItemService`), which is MAS- and sandbox-compatible. The helper opens the app through Launch Services with `LaunchPosture.loginLaunchFlag` and exits.
+
+The helper carries `app-sandbox` alone. `inherit` describes a process the sandboxed app exec'd, and the system launches this one; opening another application through Launch Services is brokered, so it needs no entitlement of its own.

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- App-sandbox alone, and deliberately not the app-sandbox + inherit pair
+	     KernovaRelaunchHelper carries: `inherit` describes a process the
+	     sandboxed app exec'd, and this one is started by the system at login
+	     with no parent to inherit from. Opening another application through
+	     Launch Services is brokered and needs no entitlement of its own, which
+	     is the helper's only capability. Mac App Store review requires every
+	     executable embedded in the app bundle to be sandboxed. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+</dict>
+</plist>

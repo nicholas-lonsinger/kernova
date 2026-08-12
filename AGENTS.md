@@ -54,7 +54,7 @@ Every type that logs declares its own `private static let logger = Logger(subsys
 
 | Subsystem | Who logs there |
 |-----------|----------------|
-| `app.kernova` | The host app and all `KernovaKit` code, including KernovaKit types running *inside* the agent process |
+| `app.kernova` | The host app, the helpers it embeds, and all `KernovaKit` code, including KernovaKit types running *inside* the agent process |
 | `app.kernova.macosagent` | The guest agent's own components |
 | `app.kernova.guest` | Host-side re-logging of forwarded guest records (category = VM name) |
 

@@ -10,18 +10,22 @@ protocol LoginItemRegistration {
     func unregister() throws
 }
 
-/// Registers the app *itself* to open at login through the LaunchAgent embedded
-/// at `Contents/Library/LaunchAgents`, not a helper `.loginItem` bundle — the VM
-/// runs in-process, so the background process must be the app.
+/// Registers the bootstrap helper embedded at `Contents/Library/LoginItems`,
+/// which opens the app through Launch Services carrying
+/// `LaunchPosture.loginLaunchFlag` and then exits.
 ///
-/// The agent's `ProgramArguments` carry `LaunchPosture.loginLaunchFlag`, which is
-/// what lets `main()` pick its activation policy before AppKit checkin.
-struct LoginAgentRegistration: LoginItemRegistration {
-    /// The plist's name in `Contents/Library/LaunchAgents`, where
-    /// `SMAppService.agent(plistName:)` looks for it.
-    static let plistName = "app.kernova.loginlaunch.plist"
+/// The registered service is deliberately *not* the app: `SMAppService`
+/// documents `unregister` as killing a running registered service, and scopes
+/// its re-register-after-update requirement to LaunchAgents and LaunchDaemons —
+/// both of which would land on the VM-hosting process if it were registered
+/// itself (#801).
+struct LoginHelperRegistration: LoginItemRegistration {
+    /// The helper's bundle identifier, which is what
+    /// `SMAppService.loginItem(identifier:)` resolves against the bundles in
+    /// `Contents/Library/LoginItems`.
+    static let helperBundleIdentifier = "app.kernova.loginhelper"
 
-    private var service: SMAppService { .agent(plistName: Self.plistName) }
+    private var service: SMAppService { .loginItem(identifier: Self.helperBundleIdentifier) }
 
     var status: SMAppService.Status { service.status }
     func register() throws { try service.register() }
@@ -37,17 +41,17 @@ struct LoginAgentRegistration: LoginItemRegistration {
 struct LoginItemService {
     private let registration: LoginItemRegistration
 
-    /// The process-wide instance over the real `SMAppService` agent.
+    /// The process-wide instance over the real `SMAppService` registration.
     @MainActor static let shared = LoginItemService()
 
-    init(registration: LoginItemRegistration = LoginAgentRegistration()) {
+    init(registration: LoginItemRegistration = LoginHelperRegistration()) {
         self.registration = registration
     }
 
     private static let logger = Logger(subsystem: "app.kernova", category: "LoginItem")
 
-    /// The live registration status. `.notFound` means the LaunchAgent plist is
-    /// missing from the running bundle.
+    /// The live registration status. `.notFound` means the helper is missing
+    /// from the running bundle.
     var status: SMAppService.Status { registration.status }
 
     var isEnabled: Bool { registration.status == .enabled }

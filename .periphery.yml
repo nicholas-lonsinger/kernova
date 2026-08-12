@@ -6,6 +6,7 @@
 project: Kernova.xcodeproj
 schemes:
   - Kernova
+  - KernovaLoginHelper
   - KernovaMacOSAgent
   - KernovaRelaunchHelper
 

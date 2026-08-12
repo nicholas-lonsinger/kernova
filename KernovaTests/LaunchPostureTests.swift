@@ -10,11 +10,19 @@ struct LaunchPostureTests {
 
     // MARK: - init(arguments:)
 
-    @Test("the LaunchAgent's argv — flag after argv[0] — is a login launch")
-    func launchAgentArgumentsAreLoginLaunch() {
+    @Test("the helper's argv — flag after argv[0] — is a login launch")
+    func helperArgumentsAreLoginLaunch() {
         #expect(
             LaunchPosture(arguments: [Self.executable, LaunchPosture.loginLaunchFlag])
                 == .loginLaunch)
+    }
+
+    @Test("the flag is the literal the login helper passes")
+    func flagValueIsStable() {
+        // KernovaLoginHelper/main.swift carries its own copy of this literal —
+        // a synchronized root group spans one folder, so the two targets cannot
+        // share the declaration.
+        #expect(LaunchPosture.loginLaunchFlag == "--login-launch")
     }
 
     @Test("the flag is matched at any index, not a fixed one")

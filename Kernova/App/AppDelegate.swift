@@ -261,9 +261,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// Whether another process of this app bundle is already running.
     ///
-    /// launchd `execv`s the bundle executable directly, so Launch Services never
-    /// sees the login launch and cannot fold it into a running copy the way it
-    /// folds a second `open`.
+    /// Read before `NSApplication.shared`, which is what makes it a useful
+    /// backstop to Launch Services' own folding of concurrent opens: this
+    /// process has not registered with Launch Services yet either, so the check
+    /// covers a peer already running that Launch Services could not fold.
     private static var isAnotherInstanceRunning: Bool {
         guard let bundleID = Bundle.main.bundleIdentifier else {
             logger.fault("CFBundleIdentifier not found in Info.plist")
