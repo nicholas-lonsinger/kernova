@@ -12,8 +12,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// idle-terminates, with none of the resident-app machinery (status item,
     /// login-item registration, activation-policy switching).
     private let isTestHost: Bool
-    /// The posture `main()` read out of argv, applied once in `startResidentApp`.
-    private let posture: LaunchPosture
     /// App-wide preferences (the single DI seam for `UserDefaults`-backed state).
     private let preferences: AppPreferences
     private var mainWindowController: MainWindowController?
@@ -29,6 +27,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var displayWindows: [UUID: VMDisplayWindowController] = [:]
     private var displayWindowObservers: [UUID: Any] = [:]
     private var terminationObservation: ObservationLoop?
+    /// Watches the residency toggle so the status item and the reconcile follow it
+    /// live. Resident app only.
+    private var residencyObservation: ObservationLoop?
+    /// Latched once the reconcile has asked to terminate, so a window closing
+    /// during the async save can't request a second termination.
+    private var isQuittingOnLastWindowClose = false
     private let clipboardMenuItem: NSMenuItem
     private var settingsWindowController: SettingsWindowController?
 
@@ -49,8 +53,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Resident app only.
     private var globalWindowCloseObserver: Any?
 
-    /// The menu-bar status item (resident app only) — the "Kernova is running"
-    /// affordance and the way to summon the GUI while headless.
+    /// The menu-bar status item — the "Kernova is running" affordance and the way
+    /// to summon the GUI while headless.
+    ///
+    /// Resident app only, and present exactly while *Continue running in Status
+    /// Bar* is on (`syncStatusItem`).
     private var statusItemController: HostAgentStatusItemController?
 
     /// Set in `applicationWillBecomeActive` and read in `applicationShouldHandleReopen`
@@ -235,49 +242,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     static func main() {
         let isTestHost = ProcessInfo.processInfo.isRunningXCTests
-        let posture = LaunchPosture(arguments: CommandLine.arguments)
-
-        if posture.yields(toRunningInstance: isAnotherInstanceRunning) {
-            logger.notice("\(LaunchPosture.loginLaunchFlag, privacy: .public) with Kernova already running — exiting")
-            exit(0)
-        }
-
         let app = NSApplication.shared
-
-        // A login launch starts headless in `.accessory` before checkin, so there
-        // is no Dock blip or focus steal at any launch speed. Every other launch
-        // is a `.regular` foreground app from the first instruction, including the
-        // unit-test host.
-        if !isTestHost && posture == .loginLaunch {
-            app.setActivationPolicy(.accessory)
-        }
 
         // `NSApplication.delegate` is weak, so the local binding retains the
         // delegate for the process lifetime (`run()` never returns).
-        let delegate = AppDelegate(isTestHost: isTestHost, posture: posture)
+        let delegate = AppDelegate(isTestHost: isTestHost)
         app.delegate = delegate
         app.run()
     }
 
-    /// Whether another process of this app bundle is already running.
-    ///
-    /// launchd `execv`s the bundle executable directly, so Launch Services never
-    /// sees the login launch and cannot fold it into a running copy the way it
-    /// folds a second `open`.
-    private static var isAnotherInstanceRunning: Bool {
-        guard let bundleID = Bundle.main.bundleIdentifier else {
-            logger.fault("CFBundleIdentifier not found in Info.plist")
-            assertionFailure("CFBundleIdentifier not found in Info.plist")
-            return false
-        }
-        let ownPID = getpid()
-        return NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-            .contains { $0.processIdentifier != ownPID }
-    }
-
-    init(isTestHost: Bool, posture: LaunchPosture, preferences: AppPreferences = .shared) {
+    init(isTestHost: Bool, preferences: AppPreferences = .shared) {
         self.isTestHost = isTestHost
-        self.posture = posture
         self.preferences = preferences
         self.viewModel = VMLibraryViewModel()
 
@@ -344,16 +319,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     // MARK: - Resident App
 
-    /// Brings up the resident app, staying headless or showing the library window
-    /// as `posture` decided in `main()`.
+    /// Brings up the resident app with its library window on screen.
     ///
     /// VMs are **not** auto-started — they appear at their last-logout state — and
-    /// idle termination is not armed: the app stays resident until an explicit
-    /// Quit, with any running VMs executing headless.
+    /// idle termination is not armed: while *Continue running in Status Bar* is
+    /// on the app stays resident until an explicit Quit, with any running VMs
+    /// executing headless.
     private func startResidentApp() {
-        // The app has no Dock icon while headless, so the status item is how the
-        // user sees it's running and summons the GUI.
-        statusItemController = HostAgentStatusItemController(
+        syncStatusItem()
+        observeResidencyPreference()
+
+        globalWindowCloseObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let window = notification.object as? NSWindow else { return }
+            MainActor.assumeIsolated {
+                guard Self.windowCloseAffectsActivationPolicy(window) else { return }
+                self?.scheduleAgentActivationPolicySync()
+            }
+        }
+
+        let provenance = Self.residentProvenanceLine(
+            bundlePath: Bundle.main.bundlePath,
+            build: Self.buildNumber,
+            configuration: Self.buildConfiguration)
+        Self.logger.notice("Kernova resident app ready — \(provenance, privacy: .public)")
+
+        summonUserInterface()
+    }
+
+    /// Builds the menu-bar status item.
+    ///
+    /// Extracted from `startResidentApp` so `syncStatusItem` can rebuild it when
+    /// the residency toggle flips back on.
+    private func makeStatusItemController() -> HostAgentStatusItemController {
+        HostAgentStatusItemController(
             viewModel: viewModel,
             preferences: preferences,
             onOpen: { [weak self] vmID in self?.summonStatusItemTarget(for: vmID) },
@@ -374,30 +374,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             },
             onQuit: { [weak self] in self?.requestFullQuit() }
         )
+    }
 
-        globalWindowCloseObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification, object: nil, queue: .main
-        ) { [weak self] notification in
-            guard let window = notification.object as? NSWindow else { return }
-            MainActor.assumeIsolated {
-                guard Self.windowCloseAffectsActivationPolicy(window) else { return }
-                self?.scheduleAgentActivationPolicySync()
+    /// Creates or removes the status item so it exists exactly while
+    /// *Continue running in Status Bar* is on.
+    ///
+    /// Idempotent, so the observation loop can call it on every wake.
+    private func syncStatusItem() {
+        guard !isTestHost else { return }
+        if viewModel.keepInMenuBarOnQuit {
+            guard statusItemController == nil else { return }
+            statusItemController = makeStatusItemController()
+        } else {
+            statusItemController?.tearDown()
+            statusItemController = nil
+        }
+    }
+
+    /// Reacts to the residency toggle: the status item appears and disappears
+    /// with it, and the reconcile re-runs because the toggle changes what a
+    /// windowless app should do.
+    private func observeResidencyPreference() {
+        residencyObservation = observeRecurring(
+            track: { [weak self] in
+                guard let self else { return }
+                _ = self.viewModel.keepInMenuBarOnQuit
+                // An import finishing lifts the veto in `residencyOutcome`, so the
+                // reconcile has to re-run when the last one clears.
+                _ = self.viewModel.instances.contains(where: \.isPreparing)
+            },
+            apply: { [weak self] in
+                self?.syncStatusItem()
+                self?.syncAgentActivationPolicy()
             }
-        }
-
-        let provenance = Self.residentProvenanceLine(
-            bundlePath: Bundle.main.bundlePath,
-            build: Self.buildNumber,
-            configuration: Self.buildConfiguration)
-        Self.logger.notice("Kernova resident app ready — \(provenance, privacy: .public)")
-
-        switch posture {
-        case .loginLaunch:
-            Self.logger.notice("Login launch — staying headless (.accessory)")
-        case .manual:
-            Self.logger.notice("Manual launch — showing the library window")
-            summonUserInterface()
-        }
+        )
     }
 
     #if DEBUG
@@ -494,10 +504,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         setAgentActivationPolicy(.regular)
         Task { @MainActor in
             Self.logger.debug("Summon: isActive=\(NSApp.isActive, privacy: .public)")
-            // After a login launch the app is a background, unactivated
-            // `.accessory` process: `ignoringOtherApps` is what fronts it — the
-            // argument-less `activate()` does not reliably front a
-            // background-launched process. A no-op on the manual-launch path.
+            // A summon out of the headless `.accessory` state fronts an
+            // unactivated background process, and `ignoringOtherApps` is what
+            // does that — the argument-less `activate()` is unreliable there. A
+            // no-op when the app is already frontmost.
             NSApp.activate(ignoringOtherApps: true)
             switch target {
             case .library:
@@ -599,15 +609,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             && window.styleMask.contains(.titled)
     }
 
-    /// Reconciles the resident app's activation policy with its open windows:
-    /// `.regular` (Dock icon) while any user window is on screen, `.accessory`
-    /// (status-item only) when none are.
+    /// What the window reconcile does with the resident app.
+    enum ResidencyOutcome: Equatable {
+        /// Show the Dock icon — a user window is on screen.
+        case showDockIcon
+        /// Drop to a status-item-only app; running VMs keep executing.
+        case goHeadless
+        /// Quit through `applicationShouldTerminate`, save-suspending running VMs.
+        case quit
+    }
+
+    /// Decides the reconcile's outcome.
+    ///
+    /// With *Continue running in Status Bar* off there is neither a Dock icon nor
+    /// a status item, so a headless app would be unreachable — the last window
+    /// close quits instead of demoting.
+    ///
+    /// A preparing instance vetoes that quit, because the quit path trashes
+    /// partial bundles (`cancelAndCleanupPreparingInstances`) — an ordinary window
+    /// close must not destroy an in-flight import. A *running* VM does not veto:
+    /// save-suspending it is the point.
+    nonisolated static func residencyOutcome(
+        hasVisibleUserWindow: Bool,
+        keepInMenuBar: Bool,
+        hasPreparingInstance: Bool
+    ) -> ResidencyOutcome {
+        if hasVisibleUserWindow { return .showDockIcon }
+        if keepInMenuBar || hasPreparingInstance { return .goHeadless }
+        return .quit
+    }
+
+    /// Reconciles the resident app with its open windows: `.regular` (Dock icon)
+    /// while any user window is on screen, and when none are, either `.accessory`
+    /// (status-item only) or a quit — see `residencyOutcome`.
     ///
     /// Re-run on every window open and close so a partial close can never strand
     /// the policy. No-op in the test host.
     private func syncAgentActivationPolicy() {
         guard !isTestHost else { return }
-        setAgentActivationPolicy(hasVisibleUserWindow ? .regular : .accessory)
+        switch Self.residencyOutcome(
+            hasVisibleUserWindow: hasVisibleUserWindow,
+            keepInMenuBar: viewModel.keepInMenuBarOnQuit,
+            hasPreparingInstance: viewModel.instances.contains(where: \.isPreparing)
+        ) {
+        case .showDockIcon:
+            setAgentActivationPolicy(.regular)
+        case .goHeadless:
+            setAgentActivationPolicy(.accessory)
+        case .quit:
+            // Latched: `applicationShouldTerminate` replies `.terminateLater` while
+            // VMs save, and a window closing during that window would otherwise
+            // re-enter with a reply already outstanding.
+            guard !isQuittingOnLastWindowClose else { return }
+            isQuittingOnLastWindowClose = true
+            Self.logger.notice("Last window closed with the app set to quit — terminating")
+            NSApp.terminate(nil)
+        }
     }
 
     /// Re-runs `syncAgentActivationPolicy` on the next runloop tick — after a
@@ -630,11 +687,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        // Resident app: closing the last window drops back to a headless
-        // `.accessory` app; any running VMs keep executing until an explicit Quit.
+        // Resident app: the global `willClose` observer's reconcile decides
+        // between the Dock icon, a headless status-item app, and quitting. It
+        // keys on `hasVisibleUserWindow`, which counts miniaturized windows and
+        // untracked panels that AppKit's own last-window rule does not, so
+        // letting AppKit terminate too would double-fire on a different
+        // predicate.
         if !isTestHost {
-            // The global `willClose` observer already schedules the Dock-presence
-            // reconcile for this same window close.
             return false
         }
 

@@ -4,24 +4,25 @@ import ServiceManagement
 /// The "General" pane of the Settings window.
 ///
 /// Hosts two app-lifecycle toggles:
-/// - *Launch into Background at Login*, backed by the embedded LaunchAgent through
+/// - *Open at Login*, backed by `SMAppService.mainApp` through
 ///   `LoginItemService`. `.status` is the source of truth (never persisted): the
 ///   switch is synced from it on appear and whenever the app regains focus, so a
 ///   change made in System Settings → Login Items is reflected without a restart.
-/// - *Continue running in Status Bar*, backed by `AppPreferences`. Governs
-///   whether a GUI-origin quit (⌘Q) closes Kernova's windows but leaves it
-///   resident in the menu bar, or quits the app outright.
+/// - *Continue running in Status Bar*, backed by `AppPreferences` through the
+///   view model's observable mirror. Governs whether a GUI-origin quit (⌘Q) or a
+///   last-window close leaves Kernova resident in the status bar, or quits the
+///   app outright.
 @MainActor
 final class GeneralSettingsViewController: NSViewController {
     private let loginItem: LoginItemService
-    private let preferences: AppPreferences
-    private let launchAtLoginSwitch = NSSwitch()
+    private let viewModel: VMLibraryViewModel
+    private let openAtLoginSwitch = NSSwitch()
     private let keepInMenuBarSwitch = NSSwitch()
     private var focusObserver: (any NSObjectProtocol)?
 
-    init(loginItem: LoginItemService = .shared, preferences: AppPreferences = .shared) {
+    init(loginItem: LoginItemService = .shared, viewModel: VMLibraryViewModel) {
         self.loginItem = loginItem
-        self.preferences = preferences
+        self.viewModel = viewModel
         super.init(nibName: nil, bundle: nil)
         title = "General"
     }
@@ -32,19 +33,19 @@ final class GeneralSettingsViewController: NSViewController {
     }
 
     override func loadView() {
-        launchAtLoginSwitch.controlSize = .small
-        launchAtLoginSwitch.target = self
-        launchAtLoginSwitch.action = #selector(launchAtLoginToggled)
+        openAtLoginSwitch.controlSize = .small
+        openAtLoginSwitch.target = self
+        openAtLoginSwitch.action = #selector(openAtLoginToggled)
 
         keepInMenuBarSwitch.controlSize = .small
         keepInMenuBarSwitch.target = self
         keepInMenuBarSwitch.action = #selector(keepInMenuBarToggled)
 
         let loginCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Launch into Background at Login", control: launchAtLoginSwitch)
+            makeGroupedFormCardRow("Open at Login", control: openAtLoginSwitch)
         ])
         let loginCaption = makeGroupedFormCaption(
-            "Start Kernova automatically when you log in.")
+            "Open Kernova automatically when you log in.")
         let openLoginItemsButton = NSButton(
             title: "Open Login Items Settings…", target: self,
             action: #selector(openLoginItemsSettings))
@@ -58,7 +59,8 @@ final class GeneralSettingsViewController: NSViewController {
         let menuBarCaption = makeGroupedFormCaption(
             "Quitting (⌘Q) or closing all windows will keep Kernova running in the Status Bar. To "
                 + "fully quit, either Quit directly from the Status Icon or with Quit Kernova "
-                + "(⌥⌘Q).")
+                + "(⌥⌘Q). With this off, Kernova has no Status Bar icon and quits when you close "
+                + "its last window.")
 
         let section = NSStackView(views: [
             makeGroupedFormSectionHeader("General"),
@@ -106,7 +108,7 @@ final class GeneralSettingsViewController: NSViewController {
         // already has (e.g. a stale tall autosaved frame), and the four-edge
         // section pin stretches the cards over the excess.
         preferredContentSize = view.fittingSize
-        keepInMenuBarSwitch.state = preferences.keepInMenuBarOnQuit ? .on : .off
+        keepInMenuBarSwitch.state = viewModel.keepInMenuBarOnQuit ? .on : .off
         refreshFromStatus()
         // Refresh when the app regains focus — e.g. returning from System Settings
         // after approving/toggling the login item there.
@@ -130,11 +132,11 @@ final class GeneralSettingsViewController: NSViewController {
 
     /// Mirrors the switch to the live `SMAppService` status (the source of truth).
     private func refreshFromStatus() {
-        launchAtLoginSwitch.state = loginItem.isEnabled ? .on : .off
+        openAtLoginSwitch.state = loginItem.isEnabled ? .on : .off
     }
 
-    @objc private func launchAtLoginToggled() {
-        let enable = launchAtLoginSwitch.state == .on
+    @objc private func openAtLoginToggled() {
+        let enable = openAtLoginSwitch.state == .on
         let status = loginItem.setEnabled(enable)
         // `.requiresApproval` means the user must flip Kernova on in System
         // Settings; deep-link there. `refreshFromStatus` then reflects the true
@@ -150,9 +152,10 @@ final class GeneralSettingsViewController: NSViewController {
     }
 
     @objc private func keepInMenuBarToggled() {
-        // The menu-bar quit items re-read the preference each time the app menu
-        // opens (`AppDelegate.rebuildAppMenuQuitItems`), so no change notification
-        // is needed here.
-        preferences.keepInMenuBarOnQuit = (keepInMenuBarSwitch.state == .on)
+        // Through the view model's observable mirror, not `AppPreferences`
+        // directly: `AppDelegate` creates and tears down the status item from an
+        // observation of this property, which a bare `UserDefaults` write would
+        // never wake.
+        viewModel.keepInMenuBarOnQuit = (keepInMenuBarSwitch.state == .on)
     }
 }

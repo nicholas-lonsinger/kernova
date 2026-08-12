@@ -10,26 +10,24 @@ protocol LoginItemRegistration {
     func unregister() throws
 }
 
-/// Registers the app *itself* to open at login through the LaunchAgent embedded
-/// at `Contents/Library/LaunchAgents`, not a helper `.loginItem` bundle — the VM
-/// runs in-process, so the background process must be the app.
+/// Registers the app itself to open at login through `SMAppService.mainApp`.
 ///
-/// The agent's `ProgramArguments` carry `LaunchPosture.loginLaunchFlag`, which is
-/// what lets `main()` pick its activation policy before AppKit checkin.
-struct LoginAgentRegistration: LoginItemRegistration {
-    /// The plist's name in `Contents/Library/LaunchAgents`, where
-    /// `SMAppService.agent(plistName:)` looks for it.
-    static let plistName = "app.kernova.loginlaunch.plist"
-
-    private var service: SMAppService { .agent(plistName: Self.plistName) }
+/// A login launch is then an ordinary Launch Services open — the app comes up
+/// `.regular` with its library window, the same as a double-click. Registering
+/// the *main app* rather than a LaunchAgent is also what keeps the toggle away
+/// from this process's own lifecycle: `SMAppService.h` scopes both the
+/// kill-on-unregister behavior and the re-register-after-update requirement to
+/// LaunchItems, LaunchAgents, and LaunchDaemons (#801).
+struct MainAppRegistration: LoginItemRegistration {
+    private var service: SMAppService { .mainApp }
 
     var status: SMAppService.Status { service.status }
     func register() throws { try service.register() }
     func unregister() throws { try service.unregister() }
 }
 
-/// "Launch into Background at Login" wrapper over `SMAppService`, driving the
-/// General settings toggle.
+/// "Open at Login" wrapper over `SMAppService`, driving the General settings
+/// toggle.
 ///
 /// `.status` is the source of truth and is **never persisted locally** — the
 /// toggle reads it live, so a change made in System Settings is always
@@ -37,17 +35,16 @@ struct LoginAgentRegistration: LoginItemRegistration {
 struct LoginItemService {
     private let registration: LoginItemRegistration
 
-    /// The process-wide instance over the real `SMAppService` agent.
+    /// The process-wide instance over the real `SMAppService` registration.
     @MainActor static let shared = LoginItemService()
 
-    init(registration: LoginItemRegistration = LoginAgentRegistration()) {
+    init(registration: LoginItemRegistration = MainAppRegistration()) {
         self.registration = registration
     }
 
     private static let logger = Logger(subsystem: "app.kernova", category: "LoginItem")
 
-    /// The live registration status. `.notFound` means the LaunchAgent plist is
-    /// missing from the running bundle.
+    /// The live registration status.
     var status: SMAppService.Status { registration.status }
 
     var isEnabled: Bool { registration.status == .enabled }

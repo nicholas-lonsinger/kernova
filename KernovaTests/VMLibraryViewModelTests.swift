@@ -3055,6 +3055,45 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.agentInstallPromptDisabled == true)
     }
 
+    @Test("keepInMenuBarOnQuit defaults on and persists in both directions")
+    func keepInMenuBarOnQuitPersistsBothDirections() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        #expect(viewModel.keepInMenuBarOnQuit == true)
+
+        viewModel.keepInMenuBarOnQuit = false
+        #expect(preferences.keepInMenuBarOnQuit == false)
+
+        viewModel.keepInMenuBarOnQuit = true
+        #expect(preferences.keepInMenuBarOnQuit == true)
+    }
+
+    @Test("keepInMenuBarOnQuit is seeded from the stored preference")
+    func keepInMenuBarOnQuitSeededFromPreferences() {
+        preferences.keepInMenuBarOnQuit = false
+
+        let (viewModel, _, _, _, _) = makeViewModel()
+
+        #expect(viewModel.keepInMenuBarOnQuit == false)
+    }
+
+    @Test("a keepInMenuBarOnQuit change wakes an observer")
+    func keepInMenuBarOnQuitWakesObservers() async {
+        // The whole reason the preference is mirrored here: `AppDelegate` creates
+        // and tears down the status item from an observation, which a bare
+        // `UserDefaults` write never wakes.
+        let (viewModel, _, _, _, _) = makeViewModel()
+        var wakeCount = 0
+        let loop = observeRecurring(
+            track: { _ = viewModel.keepInMenuBarOnQuit },
+            apply: { wakeCount += 1 })
+
+        viewModel.keepInMenuBarOnQuit = false
+        for _ in 0..<5 { await Task.yield() }
+
+        #expect(wakeCount == 1)
+        loop.cancel()
+    }
+
     /// The app-wide preference overrides the per-VM flag rather than rewriting
     /// it, so each VM reverts to its own choice when the preference goes off.
     @Test("Toggling agentInstallPromptDisabled leaves every per-VM flag alone")

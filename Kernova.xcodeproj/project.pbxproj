@@ -77,7 +77,6 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				App/Info.plist,
-				App/app.kernova.loginlaunch.plist,
 			);
 			target = A1000003 /* Kernova */;
 		};
@@ -231,7 +230,6 @@
 				A1000010 /* Frameworks */,
 				A1000050 /* Resources */,
 				A100010A /* Embed Helpers */,
-				A10000D1 /* Embed Login LaunchAgent */,
 				A100020A /* Package Guest Agent DMG */,
 			);
 			buildRules = (
@@ -451,26 +449,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${SRCROOT}/Tools/set-build-number.sh\" app\n";
-		};
-		A10000D1 /* Embed Login LaunchAgent */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-				"$(SRCROOT)/Kernova/App/app.kernova.loginlaunch.plist",
-			);
-			name = "Embed Login LaunchAgent";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-				"$(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/Library/LaunchAgents/app.kernova.loginlaunch.plist",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/bash;
-			shellScript = "set -euo pipefail\n\n# SMAppService.agent(plistName:) reads the job description from\n# Contents/Library/LaunchAgents, which no Copy Files phase can target for a\n# file inside a synchronized root group.\nDEST_DIR=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Library/LaunchAgents\"\nmkdir -p \"${DEST_DIR}\"\ncp \"${SCRIPT_INPUT_FILE_0}\" \"${DEST_DIR}/\"\n";
 		};
 		A100020A /* Package Guest Agent DMG */ = {
 			isa = PBXShellScriptBuildPhase;
