@@ -26,6 +26,13 @@ struct AppDelegateTerminationOutcomeTests {
         #expect(outcome(shouldTerminateAgent: false, hasInstancesToSave: true) == .closeGUI)
     }
 
+    @Test("a system quit during the save pass is deferred, never vetoed")
+    func systemQuitDuringSavePassIsNotVetoed() {
+        // `.deferToSavePass` replies `.terminateLater`; a `.terminateCancel` would
+        // reach loginwindow as Kernova refusing the logout or shut down.
+        #expect(outcome(isSavePassRunning: true) == .deferToSavePass)
+    }
+
     @Test("an idle library terminates immediately")
     func idleLibraryTerminatesNow() {
         #expect(outcome() == .terminateNow)
@@ -56,16 +63,18 @@ struct AppDelegateTerminationOutcomeTests {
     @Test(
         "a quit arriving during the save pass defers to it",
         arguments: [true, false])
-    func quitDuringSavePassIsDropped(hasInstancesToSave: Bool) {
-        // The first request's `.terminateLater` reply still terminates the app. A
-        // second pass would hit `operationInProgress` on the VM already saving and
-        // force-stop it mid-write.
+    func quitDuringSavePassDefersToIt(hasInstancesToSave: Bool) {
+        // A second pass would hit `operationInProgress` on the VM already saving
+        // and force-stop it mid-write.
         #expect(
-            outcome(isSavePassRunning: true, hasInstancesToSave: hasInstancesToSave) == .duplicate)
+            outcome(isSavePassRunning: true, hasInstancesToSave: hasInstancesToSave)
+                == .deferToSavePass)
     }
 
-    @Test("a soft quit during the save pass still just closes the GUI")
-    func softQuitDuringSavePassClosesTheGUI() {
-        #expect(outcome(shouldTerminateAgent: false, isSavePassRunning: true) == .closeGUI)
+    @Test("a soft quit during the save pass defers to it rather than closing the GUI")
+    func softQuitDuringSavePassDefersToIt() {
+        // Closing the windows would pop the "still running in the menu bar"
+        // reminder seconds before the pass's reply exits the process.
+        #expect(outcome(shouldTerminateAgent: false, isSavePassRunning: true) == .deferToSavePass)
     }
 }

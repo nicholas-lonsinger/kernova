@@ -36,6 +36,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Latched once the termination gate has replied `.terminateLater`, so a
     /// second quit can't start a second save pass: its `trySave` would come back
     /// as `operationInProgress` and the catch would force-stop a VM mid-save.
+    ///
+    /// Never reset, matching the quit flags below: every later quit defers to the
+    /// pass, which always replies and terminates the app.
     private var isRunningTerminationSavePass = false
     private let clipboardMenuItem: NSMenuItem
     private var settingsWindowController: SettingsWindowController?
@@ -673,8 +676,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     enum TerminationOutcome: Equatable {
         /// Downgrade the quit to a GUI close; the app stays resident.
         case closeGUI
-        /// A quit is already in flight with its reply outstanding — drop this one.
-        case duplicate
+        /// Wait on the save pass already running, without starting a second one.
+        case deferToSavePass
         /// Nothing to save and nothing to wait out.
         case terminateNow
         /// Reply later: wait out every in-flight save, then save-suspend whatever
@@ -691,14 +694,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// `hasUninterruptibleWork` — it may defer a quit nobody asked for
     /// indefinitely, where an explicit quit may only wait out what termination
     /// would corrupt.
+    ///
+    /// A running save pass outranks the soft-quit downgrade: the app is already
+    /// on its way out, so closing the GUI and telling the user it stays resident
+    /// would be false.
     nonisolated static func terminationOutcome(
         shouldTerminateAgent: Bool,
         isSavePassRunning: Bool,
         hasSaveInFlight: Bool,
         hasInstancesToSave: Bool
     ) -> TerminationOutcome {
+        if isSavePassRunning { return .deferToSavePass }
         guard shouldTerminateAgent else { return .closeGUI }
-        if isSavePassRunning { return .duplicate }
         if hasSaveInFlight || hasInstancesToSave { return .saveThenTerminate }
         return .terminateNow
     }
@@ -857,14 +864,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             }
             return .terminateCancel
 
-        case .duplicate:
-            // The first request's pass still replies, so the app terminates either
-            // way; cancelling here keeps a second save pass from racing it.
+        case .deferToSavePass:
+            // Deferred, never cancelled: a `.terminateCancel` here would report a
+            // veto to whoever asked, and loginwindow reads that as the app
+            // refusing a logout, restart, or shut down. `.terminateLater` runs a
+            // nested wait instead, which the pass's single
+            // `reply(toApplicationShouldTerminate:)` resolves.
             if terminationIsTCCRevocation {
                 relaunchAfterTermination = true
             }
             Self.logger.notice("Quit requested while the termination save pass is running — deferring to it")
-            return .terminateCancel
+            return .terminateLater
 
         case .terminateNow:
             cancelAndCleanupPreparingInstances()
@@ -928,12 +938,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Save-suspends one VM for termination, force-stopping it when the save
     /// fails so a half-live VM can't outlive the process.
     ///
+    /// A save rejected because the VM already holds a lifecycle operation (a
+    /// pause or resume still settling) is left alone: force-stopping there would
+    /// abort an operation that is about to finish and discard the very guest
+    /// state the pass exists to save, where letting the process exit costs the
+    /// same RAM and nothing more.
+    ///
     /// - Returns: `true` when the state was saved.
     private func saveForTermination(_ instance: VMInstance) async -> Bool {
         do {
             try await viewModel.trySave(instance)
             viewModel.saveConfiguration(for: instance)
             return true
+        } catch VMLifecycleCoordinator.LifecycleError.operationInProgress {
+            Self.logger.warning(
+                "Skipped saving '\(instance.name, privacy: .public)' during termination: another lifecycle operation holds it"
+            )
+            return false
         } catch {
             Self.logger.error(
                 "Failed to save '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
