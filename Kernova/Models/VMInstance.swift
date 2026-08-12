@@ -331,8 +331,18 @@ final class VMInstance {
         return virtualMachine != nil
     }
 
+    /// Whether a live `VZVirtualMachine` is attached and settled at a state VZ
+    /// can act on — the VMs a termination save-suspends, and the ones a device
+    /// can be attached to.
+    ///
+    /// A cold-paused VM is excluded: its state is already on disk, with nothing
+    /// live to act on.
+    var hasLiveSession: Bool {
+        status.canSave && hasLiveVirtualMachine
+    }
+
     var canAttachUSBDevices: Bool {
-        (status == .running || status == .paused) && hasLiveVirtualMachine
+        hasLiveSession
     }
 
     /// `true` when the bundled guest-agent installer disk can be attached to or

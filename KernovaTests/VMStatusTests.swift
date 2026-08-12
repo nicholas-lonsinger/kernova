@@ -154,6 +154,33 @@ struct VMStatusTests {
         #expect(VMStatus.error.isTransitioning == false)
     }
 
+    @Test("terminationMustWaitOut covers saving alone")
+    func terminationMustWaitOut() {
+        #expect(VMStatus.saving.terminationMustWaitOut == true)
+        // A restore keeps the save file until its resume succeeds, and a start or
+        // install writes nothing a relaunch cannot redo, so an explicit quit is
+        // free to terminate through them.
+        #expect(VMStatus.starting.terminationMustWaitOut == false)
+        #expect(VMStatus.restoring.terminationMustWaitOut == false)
+        #expect(VMStatus.installing.terminationMustWaitOut == false)
+        #expect(VMStatus.running.terminationMustWaitOut == false)
+        #expect(VMStatus.paused.terminationMustWaitOut == false)
+        #expect(VMStatus.stopped.terminationMustWaitOut == false)
+        #expect(VMStatus.initialBoot.terminationMustWaitOut == false)
+        #expect(VMStatus.error.terminationMustWaitOut == false)
+    }
+
+    @Test(
+        "terminationMustWaitOut stays a subset of isTransitioning",
+        arguments: [
+            VMStatus.stopped, .starting, .running, .paused, .saving, .restoring, .installing, .initialBoot, .error,
+        ])
+    func terminationWaitIsSubsetOfTransitioning(status: VMStatus) {
+        // The window reconcile holds a quit for anything transitioning; the
+        // explicit gate waits out a strict subset of that.
+        #expect(!status.terminationMustWaitOut || status.isTransitioning)
+    }
+
     // MARK: - Transition Label
 
     @Test("transitionLabel returns label for saving and restoring, nil otherwise")

@@ -160,6 +160,36 @@ struct VMInstanceTests {
         #expect(instance.isColdPaused == false)
     }
 
+    // MARK: - hasLiveSession
+
+    @Test(
+        "hasLiveSession is true for a running or live-paused VM",
+        arguments: [VMStatus.running, .paused])
+    func hasLiveSessionWithLiveVM(status: VMStatus) {
+        let instance = makeInstance(status: status)
+        instance.hasLiveVirtualMachineOverrideForTesting = true
+        #expect(instance.hasLiveSession == true)
+    }
+
+    @Test(
+        "hasLiveSession is false without a live virtual machine",
+        arguments: [VMStatus.running, .paused, .stopped, .error])
+    func hasLiveSessionWithoutLiveVM(status: VMStatus) {
+        let instance = makeInstance(status: status)
+        #expect(instance.hasLiveSession == false)
+    }
+
+    @Test(
+        "hasLiveSession is false mid-transition even with a live virtual machine",
+        arguments: [VMStatus.saving, .restoring, .starting, .installing, .initialBoot])
+    func hasLiveSessionIsFalseWhileTransitioning(status: VMStatus) {
+        // A VM that has not settled at `.running`/`.paused` is not something the
+        // termination pass can snapshot.
+        let instance = makeInstance(status: status)
+        instance.hasLiveVirtualMachineOverrideForTesting = true
+        #expect(instance.hasLiveSession == false)
+    }
+
     // MARK: - effectiveMachineIdentifierData
 
     @Test("effectiveMachineIdentifierData prefers the configuration field")

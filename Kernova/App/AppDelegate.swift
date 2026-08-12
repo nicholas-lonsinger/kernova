@@ -33,6 +33,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Latched once the reconcile has asked to terminate, so a window closing
     /// during the async save can't request a second termination.
     private var isQuittingOnLastWindowClose = false
+    /// Latched once the termination gate has replied `.terminateLater`, so a
+    /// second quit can't start a second save pass: its `trySave` would come back
+    /// as `operationInProgress` and the catch would force-stop a VM mid-save.
+    ///
+    /// Never reset, matching the quit flags below: every later quit defers to the
+    /// pass, which always replies and terminates the app.
+    private var isRunningTerminationSavePass = false
     private let clipboardMenuItem: NSMenuItem
     private var settingsWindowController: SettingsWindowController?
 
@@ -665,6 +672,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return .quit
     }
 
+    /// What the termination gate does with a quit request.
+    enum TerminationOutcome: Equatable {
+        /// Downgrade the quit to a GUI close; the app stays resident.
+        case closeGUI
+        /// Wait on the save pass already running, without starting a second one.
+        case deferToSavePass
+        /// Nothing to save and nothing to wait out.
+        case terminateNow
+        /// Reply later: wait out every in-flight save, then save-suspend whatever
+        /// is still live.
+        case saveThenTerminate
+    }
+
+    /// Decides the termination gate's reply.
+    ///
+    /// A save already in flight forces the deferred reply even when the gate has
+    /// nothing of its own to save: `VZVirtualMachine.saveMachineStateTo` writes
+    /// the save file in place, so exiting through it truncates the file. The
+    /// window reconcile answers a different question with
+    /// `hasUninterruptibleWork` — it may defer a quit nobody asked for
+    /// indefinitely, where an explicit quit may only wait out what termination
+    /// would corrupt.
+    ///
+    /// A running save pass outranks the soft-quit downgrade: the app is already
+    /// on its way out, so closing the GUI and telling the user it stays resident
+    /// would be false.
+    nonisolated static func terminationOutcome(
+        shouldTerminateAgent: Bool,
+        isSavePassRunning: Bool,
+        hasSaveInFlight: Bool,
+        hasInstancesToSave: Bool
+    ) -> TerminationOutcome {
+        if isSavePassRunning { return .deferToSavePass }
+        guard shouldTerminateAgent else { return .closeGUI }
+        if hasSaveInFlight || hasInstancesToSave { return .saveThenTerminate }
+        return .terminateNow
+    }
+
     /// Reconciles the resident app with its open windows: `.regular` (Dock icon)
     /// while any user window is on screen, and when none are, either `.accessory`
     /// (status-item only) or a quit — see `residencyOutcome`.
@@ -797,7 +842,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // Every quit path funnels through `terminate:` and thus this method, so
         // this single gate covers them all — see `quitShouldTerminateAgent`.
-        if !isTestHost && !quitShouldTerminateAgent {
+        switch Self.terminationOutcome(
+            shouldTerminateAgent: isTestHost || quitShouldTerminateAgent,
+            isSavePassRunning: isRunningTerminationSavePass,
+            hasSaveInFlight: viewModel.hasSaveInFlight,
+            hasInstancesToSave: viewModel.instances.contains(where: \.hasLiveSession)
+        ) {
+        case .closeGUI:
             Self.logger.notice("GUI-origin quit — closing the GUI; app stays resident")
             // Defer so the close runs after this termination request is fully cancelled.
             Task { @MainActor in
@@ -812,59 +863,111 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 self.statusItemController?.showSoftQuitReminder()
             }
             return .terminateCancel
-        }
 
-        cancelAndCleanupPreparingInstances()
-
-        // Save VMs that have a live virtual machine; cold-paused VMs already have state on disk
-        let runningInstances = viewModel.instances.filter {
-            ($0.status == .running || $0.status == .paused) && $0.virtualMachine != nil
-        }
-
-        guard !runningInstances.isEmpty else {
-            return .terminateNow
-        }
-
-        // macOS quits and relaunches the app when a TCC permission is revoked, and
-        // its built-in relaunch times out while VMs are saving. Mark for relaunch
-        // so `applicationWillTerminate` launches the helper after saves complete.
-        if terminationIsTCCRevocation {
-            relaunchAfterTermination = true
-        }
-
-        Task { @MainActor in
-            var savedCount = 0
-            var failedCount = 0
-            for instance in runningInstances {
-                do {
-                    try await viewModel.trySave(instance)
-                    viewModel.saveConfiguration(for: instance)
-                    savedCount += 1
-                } catch {
-                    Self.logger.error(
-                        "Failed to save '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
-                    )
-                    failedCount += 1
-                    do {
-                        try await viewModel.tryForceStop(instance)
-                    } catch {
-                        Self.logger.error(
-                            "Failed to force-stop '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
-                        )
-                    }
-                }
+        case .deferToSavePass:
+            // Deferred, never cancelled: a `.terminateCancel` here would report a
+            // veto to whoever asked, and loginwindow reads that as the app
+            // refusing a logout, restart, or shut down. `.terminateLater` runs a
+            // nested wait instead, which the pass's single
+            // `reply(toApplicationShouldTerminate:)` resolves.
+            if terminationIsTCCRevocation {
+                relaunchAfterTermination = true
             }
-            Self.logger.notice(
-                "Termination save complete: \(savedCount, privacy: .public) saved, \(failedCount, privacy: .public) failed of \(runningInstances.count, privacy: .public) total"
-            )
-            // A drop/odoc delivered during the async save window above can register
-            // a fresh phantom, so sweep again right before the deferred reply or
-            // that bundle is orphaned on disk.
-            self.cancelAndCleanupPreparingInstances()
-            NSApplication.shared.reply(toApplicationShouldTerminate: true)
-        }
+            Self.logger.notice("Quit requested while the termination save pass is running — deferring to it")
+            return .terminateLater
 
-        return .terminateLater
+        case .terminateNow:
+            cancelAndCleanupPreparingInstances()
+            return .terminateNow
+
+        case .saveThenTerminate:
+            cancelAndCleanupPreparingInstances()
+            // macOS quits and relaunches the app when a TCC permission is revoked, and
+            // its built-in relaunch times out while VMs are saving. Mark for relaunch
+            // so `applicationWillTerminate` launches the helper after saves complete.
+            if terminationIsTCCRevocation {
+                relaunchAfterTermination = true
+            }
+            isRunningTerminationSavePass = true
+            Task { @MainActor in
+                await self.runTerminationSavePass()
+                // A drop/odoc delivered during the async save window above can register
+                // a fresh phantom, so sweep again right before the deferred reply or
+                // that bundle is orphaned on disk.
+                self.cancelAndCleanupPreparingInstances()
+                NSApplication.shared.reply(toApplicationShouldTerminate: true)
+            }
+            return .terminateLater
+        }
+    }
+
+    /// Waits out every in-flight save, then save-suspends whatever is still live.
+    ///
+    /// One instance per iteration, tracked by id: a failed force-stop leaves the
+    /// VM live, so re-selecting on state alone would loop forever. The wait at the
+    /// top of each iteration also covers a save the user starts while the pass
+    /// runs — reaching a `.saving` VM through `trySave` comes back as
+    /// `operationInProgress`, and the failure path below would force-stop it
+    /// mid-write.
+    private func runTerminationSavePass() async {
+        var handled: Set<UUID> = []
+        var savedCount = 0
+        var failedCount = 0
+        while true {
+            if viewModel.hasSaveInFlight {
+                Self.logger.notice("Termination waiting on an in-flight save to settle")
+                await waitForObservedChange { [viewModel] in !viewModel.hasSaveInFlight }
+            }
+            guard
+                let instance = viewModel.instances.first(where: {
+                    $0.hasLiveSession && !handled.contains($0.id)
+                })
+            else { break }
+            handled.insert(instance.id)
+            if await saveForTermination(instance) {
+                savedCount += 1
+            } else {
+                failedCount += 1
+            }
+        }
+        Self.logger.notice(
+            "Termination save complete: \(savedCount, privacy: .public) saved, \(failedCount, privacy: .public) failed of \(handled.count, privacy: .public) total"
+        )
+    }
+
+    /// Save-suspends one VM for termination, force-stopping it when the save
+    /// fails so a half-live VM can't outlive the process.
+    ///
+    /// A save rejected because the VM already holds a lifecycle operation (a
+    /// pause or resume still settling) is left alone: force-stopping there would
+    /// abort an operation that is about to finish and discard the very guest
+    /// state the pass exists to save, where letting the process exit costs the
+    /// same RAM and nothing more.
+    ///
+    /// - Returns: `true` when the state was saved.
+    private func saveForTermination(_ instance: VMInstance) async -> Bool {
+        do {
+            try await viewModel.trySave(instance)
+            viewModel.saveConfiguration(for: instance)
+            return true
+        } catch VMLifecycleCoordinator.LifecycleError.operationInProgress {
+            Self.logger.warning(
+                "Skipped saving '\(instance.name, privacy: .public)' during termination: another lifecycle operation holds it"
+            )
+            return false
+        } catch {
+            Self.logger.error(
+                "Failed to save '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
+            )
+            do {
+                try await viewModel.tryForceStop(instance)
+            } catch {
+                Self.logger.error(
+                    "Failed to force-stop '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+            return false
+        }
     }
 
     /// Cancels every preparing instance's task and trashes its partial bundle.
