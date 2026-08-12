@@ -85,11 +85,11 @@ struct AppDelegateTerminationOutcomeTests {
 struct AppDelegateTerminationSaveStepTests {
     private func step(
         hasLiveSession: Bool = true,
-        hasActiveOperation: Bool = false
+        hasUnsettledOperation: Bool = false
     ) -> AppDelegate.TerminationSaveStep {
         AppDelegate.terminationSaveStep(
             hasLiveSession: hasLiveSession,
-            hasActiveOperation: hasActiveOperation)
+            hasUnsettledOperation: hasUnsettledOperation)
     }
 
     @Test("a settled live VM is saved")
@@ -103,7 +103,7 @@ struct AppDelegateTerminationSaveStepTests {
         // for the whole VZ await, so the pass reached `trySave` on a VM the
         // coordinator had locked, took `operationInProgress`, and exited with the
         // guest live — an unclean power loss instead of a suspend.
-        #expect(step(hasActiveOperation: true) == .waitForOperation)
+        #expect(step(hasUnsettledOperation: true) == .waitForOperation)
     }
 
     @Test("a VM with no live session is skipped whatever it is doing")
@@ -111,6 +111,6 @@ struct AppDelegateTerminationSaveStepTests {
         // `.installing`, `.starting` and `.restoring` all fail `hasLiveSession`,
         // which is what keeps an install — tens of minutes — from holding a quit.
         #expect(step(hasLiveSession: false) == .skip)
-        #expect(step(hasLiveSession: false, hasActiveOperation: true) == .skip)
+        #expect(step(hasLiveSession: false, hasUnsettledOperation: true) == .skip)
     }
 }

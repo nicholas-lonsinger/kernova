@@ -728,15 +728,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// and a save issued against a held VM comes back as
     /// ``VMLifecycleCoordinator/LifecycleError/operationInProgress``.
     ///
+    /// The signal is ``VMLifecycleCoordinator/hasUnsettledOperation(for:)``
+    /// rather than the claim: a Stop arriving mid-wait releases the claim while
+    /// the pause it interrupted is still inside VZ, and saving there would issue
+    /// a second VZ operation on a busy VM.
+    ///
     /// `hasLiveSession` is what bounds the wait: `.installing`, `.starting` and
     /// `.restoring` all fail it, so the operations that run for minutes are
     /// skipped rather than waited on and can never hold a quit.
     nonisolated static func terminationSaveStep(
         hasLiveSession: Bool,
-        hasActiveOperation: Bool
+        hasUnsettledOperation: Bool
     ) -> TerminationSaveStep {
         guard hasLiveSession else { return .skip }
-        return hasActiveOperation ? .waitForOperation : .save
+        return hasUnsettledOperation ? .waitForOperation : .save
     }
 
     /// Reconciles the resident app with its open windows: `.regular` (Dock icon)
@@ -965,11 +970,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     "Termination waiting on a lifecycle operation for '\(instance.name, privacy: .public)' to settle"
                 )
                 // The liveness escape ends the wait when the operation leaves the
-                // VM unsaveable — a failed pause landing on `.error`, or a
-                // Force Stop that bypassed serialization and cleared the token it
-                // never took.
+                // VM unsaveable — a failed pause landing on `.error`, or a Force
+                // Stop whose `vm.stop()` tears the session down while the
+                // interrupted operation is still inside VZ.
                 await waitForObservedChange { [viewModel] in
-                    !viewModel.lifecycle.hasActiveOperation(for: instance.id)
+                    !viewModel.lifecycle.hasUnsettledOperation(for: instance.id)
                         || !instance.hasLiveSession
                 }
             }
@@ -1006,7 +1011,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private func step(for instance: VMInstance) -> TerminationSaveStep {
         Self.terminationSaveStep(
             hasLiveSession: instance.hasLiveSession,
-            hasActiveOperation: viewModel.lifecycle.hasActiveOperation(for: instance.id)
+            hasUnsettledOperation: viewModel.lifecycle.hasUnsettledOperation(for: instance.id)
         )
     }
 

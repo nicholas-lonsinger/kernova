@@ -194,8 +194,8 @@ struct VMLifecycleCoordinatorTests {
         try await task.value
     }
 
-    @Test("an observed wait on hasActiveOperation wakes when the operation ends")
-    func hasActiveOperationWakesAnObservedWait() async throws {
+    @Test("an observed wait on hasUnsettledOperation wakes when the operation ends")
+    func hasUnsettledOperationWakesAnObservedWait() async throws {
         // What the termination save pass holds a quit on: a pause or resume
         // settles without changing `VMStatus`, so the pass waits on this read
         // through `withObservationTracking`. Were it not observable the wait
@@ -208,26 +208,51 @@ struct VMLifecycleCoordinatorTests {
             try await coordinator.start(instance)
         }
         await suspendingService.waitUntilSuspended()
-        #expect(coordinator.hasActiveOperation(for: instanceID))
+        #expect(coordinator.hasUnsettledOperation(for: instanceID))
 
+        // The wait is on the *fire*, not on the read it guards: a coordinator
+        // publishing no change would let the read settle anyway, so only the
+        // fire separates a wait that woke from one that outlived its backstop.
         let gate = AsyncGate()
         let fired = ObservationFireRecorder()
         withObservationTracking {
-            _ = coordinator.hasActiveOperation(for: instanceID)
+            _ = coordinator.hasUnsettledOperation(for: instanceID)
         } onChange: {
             fired.record()
             gate.notify()
         }
 
-        // Runs once the wait below suspends, so tracking is armed before the
-        // operation releases the lock. The wait is on the *fire*, not on the
-        // read it guards: a coordinator publishing no change would let the read
-        // settle anyway, and only the fire distinguishes a wait that woke from
-        // one that merely outlived its backstop.
+        // Deferred so the operation ends after tracking is armed, which is the
+        // ordering the pass sees.
         Task { @MainActor in suspendingService.resumeSuspended() }
         try await gate.wait { fired.didFire }
-        #expect(!coordinator.hasActiveOperation(for: instanceID))
+        #expect(!coordinator.hasUnsettledOperation(for: instanceID))
         try await task.value
+    }
+
+    @Test("a stop taking the claim mid-operation leaves the operation unsettled")
+    func stopDoesNotSettleTheOperationItInterrupts() async throws {
+        // The pass waits before saving. `stop` and `forceStop` release the claim
+        // so a user can always break in, but the operation they interrupt is
+        // still inside VZ — resolving the wait there would issue the save as a
+        // second concurrent VZ operation.
+        let (coordinator, suspendingService) = makeSuspendingCoordinator()
+        let instance = makeInstance()
+        instance.status = .running
+
+        let task = Task { @MainActor in
+            try await coordinator.start(instance)
+        }
+        await suspendingService.waitUntilSuspended()
+
+        try coordinator.stop(instance)
+
+        #expect(!coordinator.hasActiveOperation(for: instance.id))
+        #expect(coordinator.hasUnsettledOperation(for: instance.id))
+
+        suspendingService.resumeSuspended()
+        try await task.value
+        #expect(!coordinator.hasUnsettledOperation(for: instance.id))
     }
 
     @Test("concurrent operation on the same VM throws operationInProgress")
