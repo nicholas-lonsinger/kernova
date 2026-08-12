@@ -43,6 +43,25 @@ enum VMStatus: Sendable {
         }
     }
 
+    /// Whether terminating during this state would leave a half-written file
+    /// where a complete one belongs, so a quit must wait the operation out
+    /// instead of exiting through it.
+    ///
+    /// The subset of ``isTransitioning`` an *explicit* quit is obliged to honor:
+    /// `VZVirtualMachine.saveMachineStateTo` writes the save file in place, so an
+    /// exit mid-write truncates the file a later restore reads. A restore keeps
+    /// that file until its resume succeeds, and a start or install writes nothing
+    /// a relaunch cannot redo. Exhaustive rather than `default`, so a new state
+    /// has to choose a side.
+    var terminationMustWaitOut: Bool {
+        switch self {
+        case .saving:
+            true
+        case .starting, .restoring, .installing, .running, .paused, .stopped, .error, .initialBoot:
+            false
+        }
+    }
+
     /// Overlay label for save/restore transitions, or `nil` for all other states.
     var transitionLabel: String? {
         switch self {

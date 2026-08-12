@@ -147,6 +147,71 @@ struct ObservationLoopTests {
         #expect(counter.count == 0)
     }
 
+    // MARK: - waitForObservedChange
+
+    @Test("waitForObservedChange returns without suspending when the predicate already holds")
+    func waitReturnsImmediatelyWhenSatisfied() async {
+        let subject = Subject()
+        subject.value = 7
+
+        await waitForObservedChange { subject.value == 7 }
+    }
+
+    @Test("waitForObservedChange resumes on the change that satisfies the predicate")
+    func waitResumesOnSatisfyingChange() async {
+        let subject = Subject()
+        let task = Task { @MainActor in await waitForObservedChange { subject.value == 2 } }
+        await drain()
+
+        subject.value = 2
+
+        // Awaiting the task *is* the wait — it returns only once the production
+        // helper has resumed.
+        await task.value
+    }
+
+    @Test("waitForObservedChange stays suspended through a change that does not satisfy it")
+    func waitIgnoresUnsatisfyingChange() async {
+        let subject = Subject()
+        let counter = Counter()
+        let task = Task { @MainActor in
+            await waitForObservedChange { subject.value == 2 }
+            counter.increment()
+        }
+        await drain()
+
+        subject.value = 1
+        await drain()
+        #expect(counter.count == 0)
+
+        subject.value = 2
+        await task.value
+        #expect(counter.count == 1)
+    }
+
+    @Test("waitForObservedChange stops observing once it resumes")
+    func waitStopsObservingAfterResuming() async {
+        let subject = Subject()
+        let evaluations = Counter()
+        let task = Task { @MainActor in
+            await waitForObservedChange {
+                evaluations.increment()
+                return subject.value == 1
+            }
+        }
+        await drain()
+        subject.value = 1
+        await task.value
+
+        let afterResume = evaluations.count
+        subject.value = 2
+        await drain()
+
+        // A loop left armed would re-evaluate the predicate — and could resume a
+        // continuation that has already fired.
+        #expect(evaluations.count == afterResume)
+    }
+
     @Test("multiple independent loops can observe the same subject")
     func independentLoops() async {
         let subject = Subject()

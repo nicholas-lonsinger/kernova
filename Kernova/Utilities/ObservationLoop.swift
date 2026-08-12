@@ -57,3 +57,36 @@ func observeRecurring(
 ) -> ObservationLoop {
     ObservationLoop(track: track, apply: apply)
 }
+
+/// Holds the loop so the `apply` closure can cancel the very loop it belongs to.
+@MainActor
+private final class ObservationLoopBox {
+    var loop: ObservationLoop?
+}
+
+/// Suspends until `predicate` holds, waking on each change to an `@Observable`
+/// property the predicate reads.
+///
+/// Resumes only when `predicate` holds — including for a cancelled caller — so
+/// use it to wait out an operation that completes or fails on its own.
+/// `predicate` must be side-effect-free and must read every value it inspects
+/// through an `@Observable` getter, or nothing wakes the wait.
+@MainActor
+func waitForObservedChange(until predicate: @escaping @MainActor () -> Bool) async {
+    guard !predicate() else { return }
+    let box = ObservationLoopBox()
+    // The pre-arm check above and `observeRecurring` both run without suspending,
+    // so no change can slip between them, and cancelling inside `apply` stops any
+    // further fire — the continuation resumes exactly once.
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        box.loop = observeRecurring(
+            track: { _ = predicate() },
+            apply: {
+                guard predicate() else { return }
+                box.loop?.cancel()
+                box.loop = nil
+                continuation.resume()
+            }
+        )
+    }
+}

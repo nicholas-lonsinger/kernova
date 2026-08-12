@@ -117,6 +117,15 @@ final class VMLibraryViewModel {
         instances.contains { $0.isPreparing || $0.status.isTransitioning }
     }
 
+    /// Whether any VM is mid-save — the one operation an explicit quit has to
+    /// wait out rather than terminate through.
+    ///
+    /// Narrower than ``hasUninterruptibleWork``, which the window reconcile uses
+    /// to hold back a quit nobody asked for.
+    var hasSaveInFlight: Bool {
+        instances.contains { $0.status.terminationMustWaitOut }
+    }
+
     private var customOrder: [UUID] = []
 
     /// Bundle names whose load failures have already been reported to the user.

@@ -3078,6 +3078,39 @@ struct VMLibraryViewModelTests {
         #expect(!viewModel.hasUninterruptibleWork)
     }
 
+    @Test("hasSaveInFlight covers a saving VM alone")
+    func hasSaveInFlightCoversSavingOnly() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances = [instance]
+
+        instance.status = .saving
+        #expect(viewModel.hasSaveInFlight)
+        // Every other transition is one an explicit quit may terminate through.
+        for status in [VMStatus.starting, .restoring, .installing, .running, .paused, .stopped] {
+            instance.status = status
+            #expect(!viewModel.hasSaveInFlight)
+        }
+    }
+
+    @Test("hasSaveInFlight finds a saving VM among settled ones")
+    func hasSaveInFlightFindsAnyInstance() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let running = makeInstance()
+        running.status = .running
+        let saving = makeInstance()
+        saving.status = .saving
+        viewModel.instances = [running, saving]
+
+        #expect(viewModel.hasSaveInFlight)
+    }
+
+    @Test("hasSaveInFlight is false for an empty library")
+    func hasSaveInFlightIsFalseWhenEmpty() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        #expect(!viewModel.hasSaveInFlight)
+    }
+
     @Test("keepInMenuBarOnQuit defaults on and persists in both directions")
     func keepInMenuBarOnQuitPersistsBothDirections() {
         let (viewModel, _, _, _, _) = makeViewModel()
