@@ -126,6 +126,17 @@ final class VMLibraryViewModel {
         instances.contains { $0.status.terminationMustWaitOut }
     }
 
+    /// Whether `instance` has work in flight that its sidebar row renders as busy.
+    ///
+    /// The lifecycle term is the one a pause or resume shows up in: both hold a
+    /// status that reads as resting — `.running` for a pause, `.paused` for a
+    /// resume — for the whole VZ await, so ``VMStatus`` alone renders nothing
+    /// while one is settling.
+    func isBusy(_ instance: VMInstance) -> Bool {
+        instance.isPreparing || instance.status.isTransitioning
+            || lifecycle.hasUnsettledOperation(for: instance.id)
+    }
+
     private var customOrder: [UUID] = []
 
     /// Bundle names whose load failures have already been reported to the user.

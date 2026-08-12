@@ -33,6 +33,10 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     /// which decides whether the controller restores sidebar focus.
     private var onCommitRename: ((String, Bool) -> Void)?
     private var onCancelRename: (() -> Void)?
+    /// Reads this row's busy state, live: the cell's own observation loop calls
+    /// it, so every observable read inside it wakes the row — including the
+    /// lifecycle operation no ``VMStatus`` case represents.
+    private var isBusy: (() -> Bool)?
 
     /// `true` while the name field is in its editable rename state.
     private(set) var isRenaming = false
@@ -151,6 +155,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         instance: VMInstance,
         isRenaming: Bool,
         installPromptDisabled: Bool,
+        isBusy: @escaping () -> Bool,
         onCommitRename: @escaping (String, Bool) -> Void,
         onCancelRename: @escaping () -> Void,
         onMountAgent: @escaping () -> Void,
@@ -159,6 +164,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         let isRebindToDifferentVM = self.instance !== instance
         self.instance = instance
         self.installPromptDisabled = installPromptDisabled
+        self.isBusy = isBusy
         self.onCommitRename = onCommitRename
         self.onCancelRename = onCancelRename
 
@@ -179,6 +185,10 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
                 _ = instance.configuration.guestOS
                 _ = instance.status
                 _ = instance.isPreparing
+                // Keeps the two reads above as well: `isBusy` short-circuits, so
+                // it registers the lifecycle term only while the others are
+                // false, and the tooltip and icon color need `status` anyway.
+                _ = self.isBusy?()
                 _ = instance.virtualMachine
                 _ = instance.statusToolTip
                 _ = instance.statusDisplayNSColor
@@ -201,7 +211,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
             nameField.stringValue = instance.name
         }
 
-        let busy = instance.isPreparing || instance.status.isTransitioning
+        let busy = isBusy?() ?? false
         if busy {
             iconView.isHidden = true
             spinner.isHidden = false
@@ -377,6 +387,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         instance = nil
         onCommitRename = nil
         onCancelRename = nil
+        isBusy = nil
         spinner.stopAnimation(nil)
         // Close any popover, stop the agent spinner, and drop the closures —
         // they capture the bound VMInstance and would otherwise keep it alive.
