@@ -36,15 +36,27 @@ func openHostApp() async {
     configuration.addsToRecentItems = false
     configuration.arguments = [loginLaunchFlag]
 
-    do {
-        try await NSWorkspace.shared.openApplication(at: hostAppURL, configuration: configuration)
-        logger.notice("Opened the host app for login launch")
-        exit(0)
-    } catch {
-        logger.error(
-            "Could not open the host app: \(error.localizedDescription, privacy: .public)")
-        exit(1)
+    // Retried on the same schedule as KernovaRelaunchHelper, which documents
+    // this call failing transiently while Launch Services state is in flux.
+    // Login is that state at its busiest, and a single failure here means the
+    // app simply never starts for the session.
+    for attempt in 1...4 {
+        do {
+            try await NSWorkspace.shared.openApplication(at: hostAppURL, configuration: configuration)
+            logger.notice("Opened the host app for login launch (attempt \(attempt, privacy: .public))")
+            exit(0)
+        } catch {
+            logger.warning(
+                "Open attempt \(attempt, privacy: .public) failed: \(error.localizedDescription, privacy: .public)"
+            )
+            if attempt < 4 {
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
     }
+
+    logger.error("Could not open the host app after 4 attempts, giving up")
+    exit(1)
 }
 
 Task { @MainActor in await openHostApp() }
