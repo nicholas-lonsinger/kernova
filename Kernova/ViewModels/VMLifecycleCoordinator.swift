@@ -12,6 +12,7 @@ import os
 /// ``LifecycleError/operationInProgress``. `stop` and `forceStop` bypass that
 /// serialization entirely, so a hung operation can always be interrupted.
 @MainActor
+@Observable
 final class VMLifecycleCoordinator {
     private static let logger = Logger(subsystem: "app.kernova", category: "VMLifecycleCoordinator")
 
@@ -35,6 +36,13 @@ final class VMLifecycleCoordinator {
     ///
     /// The token allows `defer` blocks to avoid clobbering entries inserted by a later operation.
     private var activeOperations: [UUID: UUID] = [:]
+
+    /// Maps VM ID → the number of ``serialized`` bodies still executing for it.
+    ///
+    /// Counted rather than flagged: `stop` and `forceStop` clear a claim without
+    /// stopping the body that held it, so a second operation can acquire the
+    /// claim and run alongside the first. Each body clears its own entry.
+    private var unsettledOperations: [UUID: Int] = [:]
 
     init(
         virtualizationService: any VirtualizationProviding,
@@ -73,8 +81,27 @@ final class VMLifecycleCoordinator {
 
     // MARK: - Operation Serialization
 
+    /// Whether a serialized operation currently *claims* this VM — the read that
+    /// decides whether a new request is rejected.
     func hasActiveOperation(for instanceID: UUID) -> Bool {
         activeOperations[instanceID] != nil
+    }
+
+    /// Whether any serialized operation for this VM is still running its body,
+    /// and so may still have a VZ call in flight.
+    ///
+    /// Distinct from ``hasActiveOperation(for:)``, which tracks the claim:
+    /// `stop` and `forceStop` release another operation's claim so a user can
+    /// always interrupt, but the interrupted body keeps running. A caller
+    /// deciding whether it may issue its *own* VZ operation therefore asks this,
+    /// not the claim, or it acts while VZ is still busy.
+    ///
+    /// Observable, so a `withObservationTracking` wait on it wakes when the
+    /// operation ends — which is what lets a caller hold for an operation whose
+    /// ``VMStatus`` never changes (a pause settles at `.running`, a resume at
+    /// `.paused`).
+    func hasUnsettledOperation(for instanceID: UUID) -> Bool {
+        unsettledOperations[instanceID] != nil
     }
 
     /// Removes any active-operation tracking for the given VM.
@@ -86,9 +113,10 @@ final class VMLifecycleCoordinator {
 
     /// Executes `body` only if no other operation is already in flight for this VM.
     ///
-    /// The `defer` removes the entry only if its token still matches, so a stale
+    /// The `defer` removes the claim only if its token still matches, so a stale
     /// removal cannot clobber a token written by `stop`/`forceStop` or by a
-    /// subsequent operation.
+    /// subsequent operation. The unsettled count is dropped unconditionally,
+    /// because it tracks *this* body and nothing else can end it.
     private func serialized<T>(
         _ instance: VMInstance,
         action: String,
@@ -103,10 +131,13 @@ final class VMLifecycleCoordinator {
 
         let token = UUID()
         activeOperations[instance.id] = token
+        unsettledOperations[instance.id, default: 0] += 1
         defer {
             if activeOperations[instance.id] == token {
                 activeOperations.removeValue(forKey: instance.id)
             }
+            let remaining = (unsettledOperations[instance.id] ?? 1) - 1
+            unsettledOperations[instance.id] = remaining > 0 ? remaining : nil
         }
 
         Self.logger.debug(

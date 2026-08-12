@@ -78,3 +78,39 @@ struct AppDelegateTerminationOutcomeTests {
         #expect(outcome(shouldTerminateAgent: false, isSavePassRunning: true) == .deferToSavePass)
     }
 }
+
+/// Unit tests for `AppDelegate.terminationSaveStep` — what the termination save
+/// pass does with one VM it has selected (#807).
+@Suite("AppDelegate termination save step")
+struct AppDelegateTerminationSaveStepTests {
+    private func step(
+        hasLiveSession: Bool = true,
+        hasUnsettledOperation: Bool = false
+    ) -> AppDelegate.TerminationSaveStep {
+        AppDelegate.terminationSaveStep(
+            hasLiveSession: hasLiveSession,
+            hasUnsettledOperation: hasUnsettledOperation)
+    }
+
+    @Test("a settled live VM is saved")
+    func settledLiveVMIsSaved() {
+        #expect(step() == .save)
+    }
+
+    @Test("a live VM holding a lifecycle operation is waited out, not skipped")
+    func settlingLiveVMIsWaitedOut() {
+        // The regression: a pause holds `.running` and a resume holds `.paused`
+        // for the whole VZ await, so the pass reached `trySave` on a VM the
+        // coordinator had locked, took `operationInProgress`, and exited with the
+        // guest live — an unclean power loss instead of a suspend.
+        #expect(step(hasUnsettledOperation: true) == .waitForOperation)
+    }
+
+    @Test("a VM with no live session is skipped whatever it is doing")
+    func nonLiveVMIsSkipped() {
+        // `.installing`, `.starting` and `.restoring` all fail `hasLiveSession`,
+        // which is what keeps an install — tens of minutes — from holding a quit.
+        #expect(step(hasLiveSession: false) == .skip)
+        #expect(step(hasLiveSession: false, hasUnsettledOperation: true) == .skip)
+    }
+}
