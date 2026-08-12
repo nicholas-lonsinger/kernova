@@ -12,8 +12,10 @@ import os
 /// ``LifecycleError/operationInProgress``. `stop` and `forceStop` bypass that
 /// serialization entirely, so a hung operation can always be interrupted.
 @MainActor
+@Observable
 final class VMLifecycleCoordinator {
-    private static let logger = Logger(subsystem: "app.kernova", category: "VMLifecycleCoordinator")
+    nonisolated private static let logger = Logger(
+        subsystem: "app.kernova", category: "VMLifecycleCoordinator")
 
     let virtualizationService: any VirtualizationProviding
     let installService: any MacOSInstallProviding
@@ -73,6 +75,12 @@ final class VMLifecycleCoordinator {
 
     // MARK: - Operation Serialization
 
+    /// Whether a serialized operation currently holds this VM.
+    ///
+    /// Observable, so a `withObservationTracking` wait on it wakes when the
+    /// operation ends — which is what lets a caller hold for an operation whose
+    /// ``VMStatus`` never changes (a pause settles at `.running`, a resume at
+    /// `.paused`).
     func hasActiveOperation(for instanceID: UUID) -> Bool {
         activeOperations[instanceID] != nil
     }

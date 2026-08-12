@@ -1,5 +1,7 @@
 import CryptoKit
 import Foundation
+import KernovaTestSupport
+import Observation
 import Testing
 
 @testable import Kernova
@@ -189,6 +191,42 @@ struct VMLifecycleCoordinatorTests {
 
         // Let the operation complete
         suspendingService.resumeSuspended()
+        try await task.value
+    }
+
+    @Test("an observed wait on hasActiveOperation wakes when the operation ends")
+    func hasActiveOperationWakesAnObservedWait() async throws {
+        // What the termination save pass holds a quit on: a pause or resume
+        // settles without changing `VMStatus`, so the pass waits on this read
+        // through `withObservationTracking`. Were it not observable the wait
+        // would have nothing to wake on and the quit would hang.
+        let (coordinator, suspendingService) = makeSuspendingCoordinator()
+        let instance = makeInstance()
+        let instanceID = instance.id
+
+        let task = Task { @MainActor in
+            try await coordinator.start(instance)
+        }
+        await suspendingService.waitUntilSuspended()
+        #expect(coordinator.hasActiveOperation(for: instanceID))
+
+        let gate = AsyncGate()
+        let fired = ObservationFireRecorder()
+        withObservationTracking {
+            _ = coordinator.hasActiveOperation(for: instanceID)
+        } onChange: {
+            fired.record()
+            gate.notify()
+        }
+
+        // Runs once the wait below suspends, so tracking is armed before the
+        // operation releases the lock. The wait is on the *fire*, not on the
+        // read it guards: a coordinator publishing no change would let the read
+        // settle anyway, and only the fire distinguishes a wait that woke from
+        // one that merely outlived its backstop.
+        Task { @MainActor in suspendingService.resumeSuspended() }
+        try await gate.wait { fired.didFire }
+        #expect(!coordinator.hasActiveOperation(for: instanceID))
         try await task.value
     }
 
@@ -1647,4 +1685,16 @@ struct VMLifecycleCoordinatorTests {
         guard path.count > 1, path.hasSuffix("/") else { return path }
         return String(path.dropLast())
     }
+}
+
+/// Records that a `withObservationTracking` `onChange` fired, from the
+/// `@Sendable` closure the API hands it — which no actor-isolated state can be
+/// written from.
+private final class ObservationFireRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    var didFire: Bool { lock.withLock { value } }
+
+    func record() { lock.withLock { value = true } }
 }

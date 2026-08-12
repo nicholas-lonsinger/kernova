@@ -710,6 +710,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return .terminateNow
     }
 
+    /// What the termination save pass does with one VM it has selected.
+    enum TerminationSaveStep: Equatable {
+        /// Hold until the lifecycle operation on this VM finishes, then re-decide.
+        case waitForOperation
+        /// Save-suspend it now.
+        case save
+        /// Leave it alone.
+        case skip
+    }
+
+    /// Decides the pass's next move for one VM.
+    ///
+    /// ``VMStatus`` cannot tell a settling pause or resume from a settled VM —
+    /// both hold `.running` / `.paused` for the whole `vm.pause()` /
+    /// `vm.resume()` await — so the operation's own lifetime is what decides,
+    /// and a save issued against a held VM comes back as
+    /// ``VMLifecycleCoordinator/LifecycleError/operationInProgress``.
+    ///
+    /// `hasLiveSession` is what bounds the wait: `.installing`, `.starting` and
+    /// `.restoring` all fail it, so the operations that run for minutes are
+    /// skipped rather than waited on and can never hold a quit.
+    nonisolated static func terminationSaveStep(
+        hasLiveSession: Bool,
+        hasActiveOperation: Bool
+    ) -> TerminationSaveStep {
+        guard hasLiveSession else { return .skip }
+        return hasActiveOperation ? .waitForOperation : .save
+    }
+
     /// Reconciles the resident app with its open windows: `.regular` (Dock icon)
     /// while any user window is on screen, and when none are, either `.accessory`
     /// (status-item only) or a quit — see `residencyOutcome`.
@@ -904,15 +933,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Waits out every in-flight save, then save-suspends whatever is still live.
     ///
     /// One instance per iteration, tracked by id: a failed force-stop leaves the
-    /// VM live, so re-selecting on state alone would loop forever. The wait at the
-    /// top of each iteration also covers a save the user starts while the pass
-    /// runs — reaching a `.saving` VM through `trySave` comes back as
-    /// `operationInProgress`, and the failure path below would force-stop it
-    /// mid-write.
+    /// VM live, so re-selecting on state alone would loop forever, and marking a
+    /// VM handled *before* its wait keeps that guarantee when a user-initiated
+    /// operation keeps re-taking the lock.
+    ///
+    /// The wait at the top of each iteration covers a save the user starts on
+    /// another VM while the pass runs — a `.saving` VM is never selected here
+    /// (`.saving` fails `hasLiveSession`), so nothing else would stop the loop
+    /// from breaking out and letting the process exit mid-write. The per-VM wait
+    /// below covers the selected VM's own settling operation, per
+    /// ``terminationSaveStep(hasLiveSession:hasActiveOperation:)``.
     private func runTerminationSavePass() async {
         var handled: Set<UUID> = []
         var savedCount = 0
         var failedCount = 0
+        var skippedCount = 0
         while true {
             if viewModel.hasSaveInFlight {
                 Self.logger.notice("Termination waiting on an in-flight save to settle")
@@ -924,25 +959,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 })
             else { break }
             handled.insert(instance.id)
-            if await saveForTermination(instance) {
-                savedCount += 1
-            } else {
-                failedCount += 1
+
+            if step(for: instance) == .waitForOperation {
+                Self.logger.notice(
+                    "Termination waiting on a lifecycle operation for '\(instance.name, privacy: .public)' to settle"
+                )
+                // The liveness escape ends the wait when the operation leaves the
+                // VM unsaveable — a failed pause landing on `.error`, or a
+                // Force Stop that bypassed serialization and cleared the token it
+                // never took.
+                await waitForObservedChange { [viewModel] in
+                    !viewModel.lifecycle.hasActiveOperation(for: instance.id)
+                        || !instance.hasLiveSession
+                }
+            }
+
+            // Re-decided after the wait: a VM that is no longer live must not
+            // reach `trySave`, whose generic failure path force-stops.
+            switch step(for: instance) {
+            case .save:
+                if await saveForTermination(instance) {
+                    savedCount += 1
+                } else {
+                    failedCount += 1
+                }
+            case .skip:
+                Self.logger.notice(
+                    "Termination skipping '\(instance.name, privacy: .public)': it is no longer a live session this pass can save"
+                )
+                skippedCount += 1
+            case .waitForOperation:
+                // A second operation took the lock while the first was being
+                // waited out. One attempt per VM, so this one is not re-waited.
+                Self.logger.warning(
+                    "Termination skipping '\(instance.name, privacy: .public)': another lifecycle operation took it"
+                )
+                skippedCount += 1
             }
         }
         Self.logger.notice(
-            "Termination save complete: \(savedCount, privacy: .public) saved, \(failedCount, privacy: .public) failed of \(handled.count, privacy: .public) total"
+            "Termination save complete: \(savedCount, privacy: .public) saved, \(failedCount, privacy: .public) failed, \(skippedCount, privacy: .public) skipped"
+        )
+    }
+
+    /// The pass's move for `instance`, read from live state.
+    private func step(for instance: VMInstance) -> TerminationSaveStep {
+        Self.terminationSaveStep(
+            hasLiveSession: instance.hasLiveSession,
+            hasActiveOperation: viewModel.lifecycle.hasActiveOperation(for: instance.id)
         )
     }
 
     /// Save-suspends one VM for termination, force-stopping it when the save
     /// fails so a half-live VM can't outlive the process.
     ///
-    /// A save rejected because the VM already holds a lifecycle operation (a
-    /// pause or resume still settling) is left alone: force-stopping there would
-    /// abort an operation that is about to finish and discard the very guest
-    /// state the pass exists to save, where letting the process exit costs the
-    /// same RAM and nothing more.
+    /// The pass waits an in-flight lifecycle operation out before calling this,
+    /// so a rejection here is the residual race where a user-initiated operation
+    /// takes the lock in between. It is left alone rather than force-stopped:
+    /// force-stopping would abort an operation that is about to finish and
+    /// discard the very guest state the pass exists to save, where letting the
+    /// process exit costs the same RAM and nothing more.
     ///
     /// - Returns: `true` when the state was saved.
     private func saveForTermination(_ instance: VMInstance) async -> Bool {
