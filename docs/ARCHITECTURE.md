@@ -24,6 +24,9 @@ Clipboard rules are in [CLIPBOARD.md](CLIPBOARD.md), sandbox/launch model in
 - `HostAgentStatusItemController` — the menu-bar status item. Kernova runs as a resident
   `.accessory` app whose VMs keep running with no window open, so this is the only affordance while
   headless; under XCTest (`isTestHost`) the same binary is instead a plain foreground test host.
+  Present exactly while *Continue running in Status Bar* is on, created and torn down live as the
+  toggle flips (`AppDelegate.syncStatusItem`). With it off there is no headless state to reach: the
+  last window close quits through the same gate a full quit uses.
 - `MainWindowController` — the library window: a `SnapToFitSplitViewController` holding the
   `SidebarViewController` source list and `DetailContainerViewController`, plus an `NSToolbar`.
 - `VMToolbarManager` — the toolbar items shared between the library window and the pop-out display
@@ -184,7 +187,7 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
   version comes from a build-phase-written sidecar so it cannot drift from the shipped binary
   ([BUILD.md](BUILD.md)).
 
-Also here: `LoginItemService` (the `SMAppService.agent` wrapper behind the login-item toggle),
+Also here: `LoginItemService` (the `SMAppService.mainApp` wrapper behind the login-item toggle),
 `AttachmentFileMonitor` (existence watching for the settings attachment rows), `RuntimeFileAccess`
 (per-boot security-scoped access, released once in `tearDownSession`), and `SerialSocketRelay`
 (below).
@@ -393,7 +396,7 @@ kernel resources until relaunch — hence one owner (`RuntimeFileAccess`) and on
 | **Virtualization** | VM lifecycle |
 | **AppKit** | All UI |
 | **Observation** | `@Observable` models and view models |
-| **ServiceManagement** | `SMAppService.agent` — the embedded login LaunchAgent behind Launch into Background at Login |
+| **ServiceManagement** | `SMAppService.mainApp` — the login-item registration behind Open at Login |
 | **AppleArchive** | In-process archiving for clipboard folder transfers, encoded onto the wire |
 | **UniformTypeIdentifiers** | The `.kernova` bundle's `UTType` |
 | **AVFoundation** | Microphone permission status |

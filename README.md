@@ -23,7 +23,7 @@ Requires macOS 26 (Tahoe) or later on Apple Silicon to run the app. macOS guests
 - **macOS and Linux guests** — a step-by-step creation wizard, including IPSW download for macOS; EFI/UEFI or direct kernel boot for Linux
 - **Full lifecycle** — start, stop, pause, resume, suspend, and restore, plus Force Stop for a hung VM and a one-shot Start in Recovery Mode for macOS guests
 - **Cloning and import** — clone a VM with freshly regenerated identifiers; import `.kernova` bundles by double-click or drag-and-drop, which is also how you bring existing VMs into the sandboxed library (on the same volume it's an APFS clone: near-instant, no double disk usage)
-- **Keeps running in the background** — a resident menu-bar app with an opt-in Launch into Background at Login toggle, so closing the window leaves VMs running headless. Quitting save-suspends them; system sleep auto-pauses and wake resumes
+- **Keeps running in the background** — a resident menu-bar app with opt-in Open at Login and Continue running in Status Bar toggles, so closing the window can leave VMs running headless. Quitting save-suspends them; system sleep auto-pauses and wake resumes
 
 <p align="center">
   <picture>

@@ -58,7 +58,7 @@ final class SettingsTabViewController: NSTabViewController {
         tabStyle = .toolbar
 
         let general = NSTabViewItem(
-            viewController: GeneralSettingsViewController(preferences: preferences))
+            viewController: GeneralSettingsViewController(viewModel: viewModel))
         general.label = "General"
         general.image = Self.symbol("gearshape")
         addTabViewItem(general)

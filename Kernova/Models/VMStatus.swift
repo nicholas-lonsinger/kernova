@@ -28,10 +28,18 @@ enum VMStatus: Sendable {
         }
     }
 
+    /// Whether the VM is mid-operation, so terminating would interrupt the work
+    /// rather than suspend a settled VM.
+    ///
+    /// `.running` and `.paused` are excluded deliberately: termination
+    /// save-suspends those, which is their intended shutdown path. Exhaustive
+    /// rather than `default`, so a new state has to choose a side.
     var isTransitioning: Bool {
         switch self {
-        case .starting, .saving, .restoring, .installing: true
-        default: false
+        case .starting, .saving, .restoring, .installing:
+            true
+        case .running, .paused, .stopped, .error, .initialBoot:
+            false
         }
     }
 

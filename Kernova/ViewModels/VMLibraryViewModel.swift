@@ -54,11 +54,28 @@ final class VMLibraryViewModel {
         }
     }
 
+    /// Whether closing the last window (or a GUI-origin quit) leaves Kernova
+    /// resident in the status bar instead of quitting it.
+    ///
+    /// The single write path for `AppPreferences.keepInMenuBarOnQuit`, mirrored
+    /// here because `AppDelegate` reconciles the status item and the activation
+    /// policy from `withObservationTracking`, which a bare `UserDefaults` read
+    /// never wakes.
+    var keepInMenuBarOnQuit: Bool {
+        didSet {
+            guard keepInMenuBarOnQuit != oldValue else { return }
+            Self.logger.notice(
+                "Setting keep in status bar=\(self.keepInMenuBarOnQuit, privacy: .public)"
+            )
+            preferences.keepInMenuBarOnQuit = keepInMenuBarOnQuit
+        }
+    }
+
     /// Presentation delegate for alerts, sheets, and the creation wizard.
     ///
-    /// Errors raised before a presenter is attached (e.g. a login launch, where
-    /// the library loads with no window on screen) are buffered and flushed when
-    /// one is set.
+    /// Errors raised before a presenter is attached — the library read starts in
+    /// `applicationWillFinishLaunching`, ahead of any window — are buffered and
+    /// flushed when one is set.
     @ObservationIgnored weak var presenter: (any VMLibraryPresenting)? {
         didSet {
             guard presenter != nil, !bufferedErrors.isEmpty else { return }
@@ -90,6 +107,15 @@ final class VMLibraryViewModel {
     // whose uninterruptible copy is still settling. A wedged `FileManager.copyItem`
     // therefore holds the gate until relaunch.
     var hasPreparing: Bool { instances.contains(where: \.isPreparing) }
+
+    /// Whether any VM is doing work that terminating would destroy rather than
+    /// suspend — an import mid-copy, or a VM mid-save/restore/start/install.
+    ///
+    /// Excludes settled `.running` and `.paused` VMs, which termination
+    /// save-suspends.
+    var hasUninterruptibleWork: Bool {
+        instances.contains { $0.isPreparing || $0.status.isTransitioning }
+    }
 
     private var customOrder: [UUID] = []
 
@@ -142,6 +168,7 @@ final class VMLibraryViewModel {
         self.fileSystem = fileSystem
         self.preferences = preferences
         self.agentInstallPromptDisabled = preferences.agentInstallPromptDisabled
+        self.keepInMenuBarOnQuit = preferences.keepInMenuBarOnQuit
         self.lifecycle = VMLifecycleCoordinator(
             virtualizationService: virtualizationService,
             installService: installService,

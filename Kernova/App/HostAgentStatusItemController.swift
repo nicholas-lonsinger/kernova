@@ -116,6 +116,20 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         )
     }
 
+    /// Removes the status item from the menu bar and stops every observation.
+    ///
+    /// Explicit rather than left to deallocation: `NSStatusBar` holds its own
+    /// reference to a status item until it is removed, and a popover still up
+    /// owns a live auto-dismiss task.
+    func tearDown() {
+        runningObservation?.cancel()
+        pasteProgressObservation?.cancel()
+        clipboardNoticeObservation?.cancel()
+        transientPopover.dismiss()
+        statusItem.menu = nil
+        NSStatusBar.system.removeStatusItem(statusItem)
+    }
+
     /// The dropdown's VM rows for the current library and clipboard issues.
     private func currentRows() -> [StatusMenuVMRow] {
         StatusMenuVMSection.rows(
