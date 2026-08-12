@@ -108,6 +108,15 @@ final class VMLibraryViewModel {
     // therefore holds the gate until relaunch.
     var hasPreparing: Bool { instances.contains(where: \.isPreparing) }
 
+    /// Whether any VM is doing work that terminating would destroy rather than
+    /// suspend — an import mid-copy, or a VM mid-save/restore/start/install.
+    ///
+    /// Excludes settled `.running` and `.paused` VMs, which termination
+    /// save-suspends.
+    var hasUninterruptibleWork: Bool {
+        instances.contains { $0.isPreparing || $0.status.isTransitioning }
+    }
+
     private var customOrder: [UUID] = []
 
     /// Bundle names whose load failures have already been reported to the user.

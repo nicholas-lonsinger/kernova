@@ -3,53 +3,58 @@ import Testing
 @testable import Kernova
 
 /// Unit tests for `AppDelegate.residencyOutcome` — what the window reconcile does
-/// once the last window closes (#793).
+/// once no window is on screen (#793).
 @Suite("AppDelegate residency outcome")
 struct AppDelegateResidencyOutcomeTests {
+    private func outcome(
+        hasVisibleUserWindow: Bool = false,
+        isHidden: Bool = false,
+        keepInMenuBar: Bool = false,
+        hasUninterruptibleWork: Bool = false
+    ) -> AppDelegate.ResidencyOutcome {
+        AppDelegate.residencyOutcome(
+            hasVisibleUserWindow: hasVisibleUserWindow,
+            isHidden: isHidden,
+            keepInMenuBar: keepInMenuBar,
+            hasUninterruptibleWork: hasUninterruptibleWork)
+    }
+
     @Test("a window on screen always keeps the Dock icon", arguments: [true, false])
     func windowOnScreenShowsDockIcon(keepInMenuBar: Bool) {
-        #expect(
-            AppDelegate.residencyOutcome(
-                hasVisibleUserWindow: true,
-                keepInMenuBar: keepInMenuBar,
-                hasPreparingInstance: false) == .showDockIcon)
+        #expect(outcome(hasVisibleUserWindow: true, keepInMenuBar: keepInMenuBar) == .showDockIcon)
     }
 
     @Test("the last window closing with the toggle on goes headless")
     func lastWindowWithKeepOnGoesHeadless() {
-        #expect(
-            AppDelegate.residencyOutcome(
-                hasVisibleUserWindow: false,
-                keepInMenuBar: true,
-                hasPreparingInstance: false) == .goHeadless)
+        #expect(outcome(keepInMenuBar: true) == .goHeadless)
     }
 
     @Test("the last window closing with the toggle off quits")
     func lastWindowWithKeepOffQuits() {
-        #expect(
-            AppDelegate.residencyOutcome(
-                hasVisibleUserWindow: false,
-                keepInMenuBar: false,
-                hasPreparingInstance: false) == .quit)
+        #expect(outcome() == .quit)
     }
 
-    @Test("a preparing instance vetoes the quit")
-    func preparingInstanceBlocksTheQuit() {
-        // The quit path trashes partial bundles, so an ordinary window close must
-        // not destroy an in-flight import.
-        #expect(
-            AppDelegate.residencyOutcome(
-                hasVisibleUserWindow: false,
-                keepInMenuBar: false,
-                hasPreparingInstance: true) == .goHeadless)
+    // MARK: - Hiding
+
+    @Test("a hidden app never quits, whatever the toggle says", arguments: [true, false])
+    func hiddenAppNeverQuits(keepInMenuBar: Bool) {
+        // ⌘H makes every window report `isVisible == false` without closing any,
+        // so a background close landing mid-hide must not read as "no windows
+        // left" and discard windows the user never closed.
+        #expect(outcome(isHidden: true, keepInMenuBar: keepInMenuBar) == .goHeadless)
     }
 
-    @Test("a preparing instance changes nothing while the toggle is on")
-    func preparingInstanceIsIrrelevantWhenKeepingInMenuBar() {
-        #expect(
-            AppDelegate.residencyOutcome(
-                hasVisibleUserWindow: false,
-                keepInMenuBar: true,
-                hasPreparingInstance: true) == .goHeadless)
+    // MARK: - Work in flight
+
+    @Test("work in flight holds the quit and keeps the app reachable")
+    func uninterruptibleWorkKeepsTheDockIcon() {
+        // Not `.goHeadless`: with the toggle off there is no status item, so
+        // demoting would hide the progress the hold exists to protect.
+        #expect(outcome(hasUninterruptibleWork: true) == .showDockIcon)
+    }
+
+    @Test("work in flight changes nothing while the toggle is on")
+    func uninterruptibleWorkIsIrrelevantWhenKeepingInMenuBar() {
+        #expect(outcome(keepInMenuBar: true, hasUninterruptibleWork: true) == .goHeadless)
     }
 }

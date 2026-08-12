@@ -3055,6 +3055,29 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.agentInstallPromptDisabled == true)
     }
 
+    @Test("hasUninterruptibleWork covers transitioning VMs but not settled ones")
+    func hasUninterruptibleWorkCoversTransitions() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances = [instance]
+
+        for status in [VMStatus.starting, .saving, .restoring, .installing] {
+            instance.status = status
+            #expect(viewModel.hasUninterruptibleWork)
+        }
+        // Termination save-suspends these, so they must not hold a quit back.
+        for status in [VMStatus.running, .paused, .stopped] {
+            instance.status = status
+            #expect(!viewModel.hasUninterruptibleWork)
+        }
+    }
+
+    @Test("hasUninterruptibleWork is false for an empty library")
+    func hasUninterruptibleWorkIsFalseWhenEmpty() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        #expect(!viewModel.hasUninterruptibleWork)
+    }
+
     @Test("keepInMenuBarOnQuit defaults on and persists in both directions")
     func keepInMenuBarOnQuitPersistsBothDirections() {
         let (viewModel, _, _, _, _) = makeViewModel()

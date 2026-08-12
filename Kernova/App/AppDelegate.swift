@@ -98,7 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// app, not the test host.
     private var quitShouldTerminateAgent: Bool {
         userRequestedAgentQuit || externalQuitRequiresTermination || terminationIsTCCRevocation
-            || !preferences.keepInMenuBarOnQuit
+            || !viewModel.keepInMenuBarOnQuit
     }
 
     /// Bundle identifiers that indicate a TCC-initiated quit.
@@ -334,8 +334,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ) { [weak self] notification in
             guard let window = notification.object as? NSWindow else { return }
             MainActor.assumeIsolated {
-                guard Self.windowCloseAffectsActivationPolicy(window) else { return }
-                self?.scheduleAgentActivationPolicySync()
+                guard let self, Self.windowCloseAffectsActivationPolicy(window) else { return }
+                // A pop-in restores the library as part of the same close and
+                // reconciles itself afterwards. A second reconcile scheduled here
+                // runs before that restore, sees no window on screen, and would
+                // quit the app instead of popping the display back in.
+                guard !self.isPoppingIn(window) else { return }
+                self.scheduleAgentActivationPolicySync()
             }
         }
 
@@ -399,9 +404,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             track: { [weak self] in
                 guard let self else { return }
                 _ = self.viewModel.keepInMenuBarOnQuit
-                // An import finishing lifts the veto in `residencyOutcome`, so the
-                // reconcile has to re-run when the last one clears.
-                _ = self.viewModel.instances.contains(where: \.isPreparing)
+                // Work settling lifts the hold in `residencyOutcome`, so the
+                // reconcile has to re-run when the last of it clears.
+                _ = self.viewModel.hasUninterruptibleWork
             },
             apply: { [weak self] in
                 self?.syncStatusItem()
@@ -580,6 +585,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return false
     }
 
+    /// Whether `window` is a display window closing because the user popped it
+    /// back into the library, which owns the reconcile for that close.
+    private func isPoppingIn(_ window: NSWindow) -> Bool {
+        displayWindows.values.contains { $0.window === window && $0.closeReason == .popIn }
+    }
+
     /// Whether closing `window` can change what `hasVisibleUserWindow` returns,
     /// so the close must run the activation-policy reconcile.
     ///
@@ -625,17 +636,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// a status item, so a headless app would be unreachable — the last window
     /// close quits instead of demoting.
     ///
-    /// A preparing instance vetoes that quit, because the quit path trashes
-    /// partial bundles (`cancelAndCleanupPreparingInstances`) — an ordinary window
-    /// close must not destroy an in-flight import. A *running* VM does not veto:
-    /// save-suspending it is the point.
+    /// Two things hold that quit back:
+    ///
+    /// - **Hiding.** ⌘H makes every window report `isVisible == false` without
+    ///   closing any of them, so a background close landing mid-hide (a VM
+    ///   shutting down empties its display window) reads as "no windows" while
+    ///   the library is still open. Quitting there would discard windows the user
+    ///   never closed.
+    /// - **Work in flight.** Termination trashes partial bundles
+    ///   (`cancelAndCleanupPreparingInstances`) and hard-aborts a VM that is
+    ///   mid-save, mid-restore, mid-start or mid-install — `applicationShouldTerminate`
+    ///   only save-suspends VMs already settled at `.running` or `.paused`. An
+    ///   ordinary window close must not destroy that work, so it keeps the Dock
+    ///   icon (not headless — the app has to stay reachable to show progress)
+    ///   until the work settles and the observation re-runs this.
+    ///
+    /// A settled `.running` VM deliberately does *not* hold the quit back:
+    /// save-suspending it is the decided behavior.
     nonisolated static func residencyOutcome(
         hasVisibleUserWindow: Bool,
+        isHidden: Bool,
         keepInMenuBar: Bool,
-        hasPreparingInstance: Bool
+        hasUninterruptibleWork: Bool
     ) -> ResidencyOutcome {
         if hasVisibleUserWindow { return .showDockIcon }
-        if keepInMenuBar || hasPreparingInstance { return .goHeadless }
+        if keepInMenuBar || isHidden { return .goHeadless }
+        if hasUninterruptibleWork { return .showDockIcon }
         return .quit
     }
 
@@ -649,8 +675,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard !isTestHost else { return }
         switch Self.residencyOutcome(
             hasVisibleUserWindow: hasVisibleUserWindow,
+            isHidden: NSApp.isHidden,
             keepInMenuBar: viewModel.keepInMenuBarOnQuit,
-            hasPreparingInstance: viewModel.instances.contains(where: \.isPreparing)
+            hasUninterruptibleWork: viewModel.hasUninterruptibleWork
         ) {
         case .showDockIcon:
             setAgentActivationPolicy(.regular)
@@ -1562,7 +1589,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private func rebuildAppMenuQuitItems() {
         guard let appMenu else { return }
         let model = Self.appMenuQuitItems(
-            isTestHost: isTestHost, keepInMenuBar: preferences.keepInMenuBarOnQuit)
+            isTestHost: isTestHost, keepInMenuBar: viewModel.keepInMenuBarOnQuit)
         guard model != appMenuQuitModel else { return }
         appMenuQuitModel = model
 
