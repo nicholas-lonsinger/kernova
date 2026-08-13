@@ -280,6 +280,13 @@ final class NetworkAttachmentCoordinator {
     private var retryTask: Task<Void, Never>?
     private var nextRetryIndex = 0
     private var vmnetMaterializationTask: Task<Void, Never>?
+    /// The kind the in-flight materialization serves — a live mode switch to
+    /// the other vmnet-backed mode must supersede it, not be swallowed by the
+    /// single-flight guard.
+    private var vmnetMaterializationKind: VmnetNetworkKind?
+    /// Identifies the current materialization task, so a superseded
+    /// (cancelled) task resuming late cannot clear its replacement's handle.
+    private var vmnetMaterializationGeneration = 0
     /// Whether this pending episode already dropped the cached vmnet network —
     /// once per episode bounds the recreate churn of a persistently failing
     /// attachment.
@@ -332,6 +339,7 @@ final class NetworkAttachmentCoordinator {
         cancelRetry()
         vmnetMaterializationTask?.cancel()
         vmnetMaterializationTask = nil
+        vmnetMaterializationKind = nil
     }
 
     /// VZ's attachment-disconnect callback: the framework has nil'd the
@@ -431,7 +439,14 @@ final class NetworkAttachmentCoordinator {
     /// since host link changes are a bridged signal and a detached device
     /// fires no disconnects.
     private func ensureVmnetMaterialization(of kind: VmnetNetworkKind) {
-        guard vmnetMaterializationTask == nil else { return }
+        if vmnetMaterializationTask != nil {
+            guard vmnetMaterializationKind != kind else { return }
+            vmnetMaterializationTask?.cancel()
+            vmnetMaterializationTask = nil
+        }
+        vmnetMaterializationKind = kind
+        vmnetMaterializationGeneration += 1
+        let generation = vmnetMaterializationGeneration
         vmnetMaterializationTask = Task {
             [weak self, clock, vmnetNetworks, vmnetRematerializeDelays] in
             var attempt = 0
@@ -440,7 +455,7 @@ final class NetworkAttachmentCoordinator {
                     break
                 }
                 if await vmnetNetworks.materializeNetwork(for: kind) {
-                    self?.vmnetMaterializationTask = nil
+                    self?.clearMaterializationTask(generation: generation)
                     if let coordinator = self, coordinator.isActive {
                         coordinator.reconcile(trigger: "vmnet network materialized")
                     }
@@ -450,8 +465,17 @@ final class NetworkAttachmentCoordinator {
                 do { try await clock.sleep(for: vmnetRematerializeDelays[attempt]) } catch { break }
                 attempt += 1
             }
-            self?.vmnetMaterializationTask = nil
+            self?.clearMaterializationTask(generation: generation)
         }
+    }
+
+    /// Clears the in-flight materialization handle — only if it still belongs
+    /// to the task of `generation`, so a superseded (cancelled) task resuming
+    /// late cannot drop its replacement's handle.
+    private func clearMaterializationTask(generation: Int) {
+        guard vmnetMaterializationGeneration == generation else { return }
+        vmnetMaterializationTask = nil
+        vmnetMaterializationKind = nil
     }
 
     /// The plan the chosen mode resolves to right now, `nil` when Bridged has

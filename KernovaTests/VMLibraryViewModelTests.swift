@@ -30,7 +30,8 @@ struct VMLibraryViewModelTests {
         downloadsDirectory: URL? = FileManager.default.urls(
             for: .downloadsDirectory, in: .userDomainMask
         ).first,
-        vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider()
+        vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
+        isVMNetworkingEntitled: Bool = true
     ) -> (
         VMLibraryViewModel, MockVMStorageService, MockDiskImageService, MockVirtualizationService,
         any USBDeviceProviding
@@ -47,7 +48,8 @@ struct VMLibraryViewModelTests {
             fileSystem: fileSystem,
             downloadsDirectory: downloadsDirectory,
             preferences: preferences,
-            vmnetNetworks: vmnetNetworks
+            vmnetNetworks: vmnetNetworks,
+            isVMNetworkingEntitled: isVMNetworkingEntitled
         )
         vm.presenter = presenter
         return (vm, storageService, diskImageService, virtualizationService, usbDeviceService)

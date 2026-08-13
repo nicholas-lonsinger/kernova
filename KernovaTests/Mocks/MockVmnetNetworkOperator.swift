@@ -85,6 +85,7 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, @unchecked Sendable
 
     private(set) var requestedKinds: [VmnetNetworkKind] = []
     private(set) var materializeCount = 0
+    private(set) var materializedKinds: [VmnetNetworkKind] = []
     private(set) var invalidatedKinds: [VmnetNetworkKind] = []
 
     func attachment(for kind: VmnetNetworkKind) throws -> VZNetworkDeviceAttachment {
@@ -101,6 +102,7 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, @unchecked Sendable
 
     func materializeNetwork(for kind: VmnetNetworkKind) async -> Bool {
         materializeCount += 1
+        materializedKinds.append(kind)
         guard !materializeFails else { return false }
         isMaterialized = true
         return true

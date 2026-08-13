@@ -77,6 +77,11 @@ struct VmnetNetworkRecord: Codable, Sendable, Equatable {
     /// `nil` until the network first materializes.
     var addressing: VmnetNetworkAddressing?
     var reservedMACs: [String]
+
+    init(addressing: VmnetNetworkAddressing? = nil, reservedMACs: [String] = []) {
+        self.addressing = addressing
+        self.reservedMACs = reservedMACs
+    }
 }
 
 /// A materialized app-managed vmnet network.
@@ -175,12 +180,10 @@ struct HostVmnetNetworkOperator: VmnetNetworkOperating {
     ) throws {
         for entry in reservations {
             let octets = entry.mac.split(separator: ":").compactMap { UInt8($0, radix: 16) }
-            var address = in_addr()
-            guard octets.count == 6,
-                entry.address.withCString({ inet_pton(AF_INET, $0, &address) }) == 1
-            else {
+            guard octets.count == 6, let addressValue = IPv4Value.parse(entry.address) else {
                 throw VmnetOperationError(operation: "parsing DHCP reservation", status: nil)
             }
+            var address = in_addr(s_addr: addressValue.bigEndian)
             var mac = ether_addr_t(
                 octet: (octets[0], octets[1], octets[2], octets[3], octets[4], octets[5]))
             let status = vmnet_network_configuration_add_dhcp_reservation(
@@ -195,14 +198,13 @@ struct HostVmnetNetworkOperator: VmnetNetworkOperating {
     private func pin(
         _ addressing: VmnetNetworkAddressing, onto configuration: vmnet_network_configuration_ref
     ) throws {
-        var subnet = in_addr()
-        var mask = in_addr()
-        guard
-            addressing.ipv4Subnet.withCString({ inet_pton(AF_INET, $0, &subnet) }) == 1,
-            addressing.ipv4Mask.withCString({ inet_pton(AF_INET, $0, &mask) }) == 1
+        guard let subnetValue = IPv4Value.parse(addressing.ipv4Subnet),
+            let maskValue = IPv4Value.parse(addressing.ipv4Mask)
         else {
             throw VmnetOperationError(operation: "parsing stored IPv4 addressing", status: nil)
         }
+        var subnet = in_addr(s_addr: subnetValue.bigEndian)
+        var mask = in_addr(s_addr: maskValue.bigEndian)
         let ipv4Status = vmnet_network_configuration_set_ipv4_subnet(configuration, &subnet, &mask)
         guard ipv4Status == .VMNET_SUCCESS else {
             throw VmnetOperationError(
@@ -229,19 +231,10 @@ struct HostVmnetNetworkOperator: VmnetNetworkOperating {
         var prefixLength: UInt8 = 0
         vmnet_network_get_ipv6_prefix(network, &prefix, &prefixLength)
         return VmnetNetworkAddressing(
-            ipv4Subnet: ipv4String(subnet),
-            ipv4Mask: ipv4String(mask),
+            ipv4Subnet: IPv4Value.string(UInt32(bigEndian: subnet.s_addr)),
+            ipv4Mask: IPv4Value.string(UInt32(bigEndian: mask.s_addr)),
             ipv6Prefix: ipv6String(prefix),
             ipv6PrefixLength: prefixLength)
-    }
-
-    private static func ipv4String(_ address: in_addr) -> String {
-        var address = address
-        var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-        guard inet_ntop(AF_INET, &address, &buffer, socklen_t(INET_ADDRSTRLEN)) != nil else {
-            return "?"
-        }
-        return String(cString: buffer)
     }
 
     private static func ipv6String(_ address: in6_addr) -> String {
@@ -320,6 +313,17 @@ final class VmnetNetworkService: @unchecked Sendable {
     private let stateLock = NSLock()
     private var handles: [VmnetNetworkKind: VmnetNetworkHandle] = [:]
     private var records: [VmnetNetworkKind: VmnetNetworkRecord]
+    /// The MAC → address reservations each materialized network was created
+    /// with. `reservedAddress` answers only what the live network honors, so
+    /// a slot assigned after materialization reads as pending rather than as
+    /// an address the guest never receives.
+    private var installedAddresses: [VmnetNetworkKind: [String: String]] = [:]
+    /// Kinds whose next materialization must reserve the stored addressing or
+    /// fail. Set by invalidation: its recreate races VZ still holding the old
+    /// network's refs (a sibling VM's live attachment keeps the subnet
+    /// reserved), and falling back to a fresh subnet there would silently
+    /// shift every VM's reserved address.
+    private var pinnedOnlyKinds: Set<VmnetNetworkKind> = []
     /// Serializes materialization, so concurrent callers produce one network.
     private let materializeLock = NSLock()
     /// Store writes happen here, off whatever thread mutated the records.
@@ -349,9 +353,12 @@ final class VmnetNetworkService: @unchecked Sendable {
         materializeLock.lock()
         defer { materializeLock.unlock() }
         if let handle = cachedHandle(for: kind) { return handle }
-        let handle = try materialize(kind)
+        let (handle, installed) = try materialize(kind)
         stateLock.lock()
         handles[kind] = handle
+        installedAddresses[kind] = Dictionary(
+            installed.map { ($0.mac, $0.address) }, uniquingKeysWith: { first, _ in first })
+        pinnedOnlyKinds.remove(kind)
         stateLock.unlock()
         return handle
     }
@@ -362,30 +369,42 @@ final class VmnetNetworkService: @unchecked Sendable {
         return handles[kind]
     }
 
-    private func materialize(_ kind: VmnetNetworkKind) throws -> VmnetNetworkHandle {
+    private func materialize(_ kind: VmnetNetworkKind) throws
+        -> (handle: VmnetNetworkHandle, installed: [(mac: String, address: String)])
+    {
         let record = currentRecord(for: kind)
         if let stored = record.addressing {
             do {
+                let installing = reservations(for: record.reservedMACs, addressing: stored, kind: kind)
                 let (handle, reserved) = try operations.createNetwork(
-                    kind, addressing: stored,
-                    reservations: reservations(for: record.reservedMACs, addressing: stored, kind: kind))
+                    kind, addressing: stored, reservations: installing)
                 if reserved == stored {
                     Self.logger.info(
                         "Recreated the \(kind.rawValue, privacy: .public) network with its stored addressing"
                     )
-                } else {
-                    // vmnet accepted the pin but reserved something else; the
-                    // store must follow what the network actually is, or every
-                    // later launch re-pins a value no network carries. The
-                    // installed reservations were derived from the old
-                    // addressing — the next materialization re-derives them.
-                    updateRecord(for: kind) { $0.addressing = reserved }
-                    Self.logger.warning(
-                        "Pinned \(kind.rawValue, privacy: .public) network addressing was adjusted by the system — persisting the reserved values"
-                    )
+                    return (handle, installing)
                 }
-                return handle
+                // vmnet accepted the pin but reserved something else; the
+                // store must follow what the network actually is, or every
+                // later launch re-pins a value no network carries. The
+                // installed reservations were derived from the old addressing,
+                // so none of them holds on this network — report none.
+                updateRecord(for: kind) { $0.addressing = reserved }
+                Self.logger.warning(
+                    "Pinned \(kind.rawValue, privacy: .public) network addressing was adjusted by the system — persisting the reserved values"
+                )
+                return (handle, [])
             } catch {
+                if isPinnedOnly(kind) {
+                    // An invalidation recreate racing VZ's own refs on the old
+                    // network: a fresh-subnet fallback here would silently
+                    // shift every VM's reserved address, so fail and let the
+                    // recovery ladder retry once the old refs drain.
+                    Self.logger.warning(
+                        "Recreating the invalidated \(kind.rawValue, privacy: .public) network at its stored addressing failed — retrying later rather than drifting the subnet: \(error.localizedDescription, privacy: .public)"
+                    )
+                    throw error
+                }
                 Self.logger.warning(
                     "Stored \(kind.rawValue, privacy: .public) network addressing is no longer reservable — creating fresh, guest addressing may change: \(error.localizedDescription, privacy: .public)"
                 )
@@ -394,30 +413,38 @@ final class VmnetNetworkService: @unchecked Sendable {
         return try materializeFresh(kind)
     }
 
+    private func isPinnedOnly(_ kind: VmnetNetworkKind) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return pinnedOnlyKinds.contains(kind)
+    }
+
     /// First-ever (or fallback) materialization: the reservation slots' IPs
     /// depend on the subnet, which is only known once a network exists — so
     /// create fresh to discover the addressing, then release and recreate
     /// pinned to it with the reservations installed.
-    private func materializeFresh(_ kind: VmnetNetworkKind) throws -> VmnetNetworkHandle {
+    private func materializeFresh(_ kind: VmnetNetworkKind) throws
+        -> (handle: VmnetNetworkHandle, installed: [(mac: String, address: String)])
+    {
         let (probe, discovered) = try operations.createNetwork(
             kind, addressing: nil, reservations: [])
         let macs = currentRecord(for: kind).reservedMACs
         guard !macs.isEmpty else {
             updateRecord(for: kind) { $0.addressing = discovered }
             Self.logger.notice("Created and persisted the \(kind.rawValue, privacy: .public) network")
-            return probe
+            return (probe, [])
         }
 
         operations.releaseNetwork(probe)
         do {
+            let installing = reservations(for: macs, addressing: discovered, kind: kind)
             let (handle, reserved) = try operations.createNetwork(
-                kind, addressing: discovered,
-                reservations: reservations(for: macs, addressing: discovered, kind: kind))
+                kind, addressing: discovered, reservations: installing)
             updateRecord(for: kind) { $0.addressing = reserved }
             Self.logger.notice(
                 "Created and persisted the \(kind.rawValue, privacy: .public) network with \(macs.count, privacy: .public) reservation slots"
             )
-            return handle
+            return (handle, reserved == discovered ? installing : [])
         } catch {
             // The discovered subnet was re-grabbed between release and
             // recreate. Fall back to a working network without reservations —
@@ -429,17 +456,23 @@ final class VmnetNetworkService: @unchecked Sendable {
             let (handle, addressing) = try operations.createNetwork(
                 kind, addressing: nil, reservations: [])
             updateRecord(for: kind) { $0.addressing = addressing }
-            return handle
+            return (handle, [])
         }
     }
 
     /// The MAC → IPv4 pairs to install for `macs` on a network of
-    /// `addressing`, in slot order; slots past the subnet's capacity are
-    /// dropped with a warning.
+    /// `addressing`, in slot order; slots past the subnet's capacity and MACs
+    /// that no longer parse (a hand-edited store) are dropped with a warning.
     private func reservations(
         for macs: [String], addressing: VmnetNetworkAddressing, kind: VmnetNetworkKind
     ) -> [(mac: String, address: String)] {
         macs.enumerated().compactMap { index, mac in
+            guard VZMACAddress(string: mac) != nil else {
+                Self.logger.warning(
+                    "Skipping unparseable MAC in \(kind.rawValue, privacy: .public) reservation slot \(index, privacy: .public)"
+                )
+                return nil
+            }
             guard let address = addressing.reservedAddress(slot: index) else {
                 Self.logger.warning(
                     "No address left in the \(kind.rawValue, privacy: .public) subnet for reservation slot \(index, privacy: .public)"
@@ -455,18 +488,26 @@ final class VmnetNetworkService: @unchecked Sendable {
     private func currentRecord(for kind: VmnetNetworkKind) -> VmnetNetworkRecord {
         stateLock.lock()
         defer { stateLock.unlock() }
-        return records[kind] ?? VmnetNetworkRecord(addressing: nil, reservedMACs: [])
+        return records[kind] ?? VmnetNetworkRecord()
     }
 
-    /// Mutates `kind`'s record under the state lock and schedules a persist.
+    /// Mutates `kind`'s record under the state lock and schedules a persist
+    /// when the mutation changed it. The enqueue happens inside the critical
+    /// section (it does no I/O on the calling thread) so snapshots reach the
+    /// serial persist queue in mutation order — enqueued after unlock, two
+    /// racing mutators could write the stale snapshot last.
     private func updateRecord(for kind: VmnetNetworkKind, _ mutate: (inout VmnetNetworkRecord) -> Void) {
         stateLock.lock()
-        var record = records[kind] ?? VmnetNetworkRecord(addressing: nil, reservedMACs: [])
+        let original = records[kind] ?? VmnetNetworkRecord()
+        var record = original
         mutate(&record)
+        guard record != original else {
+            stateLock.unlock()
+            return
+        }
         records[kind] = record
-        let snapshot = records
+        persistAsync(records)
         stateLock.unlock()
-        persistAsync(snapshot)
     }
 
     // MARK: - Store
@@ -537,33 +578,39 @@ extension VmnetNetworkService: VmnetNetworkProviding {
     func invalidateNetwork(for kind: VmnetNetworkKind) {
         stateLock.lock()
         let dropped = handles.removeValue(forKey: kind)
+        installedAddresses[kind] = nil
+        // A sibling VM's live attachment may still hold the old network (VZ
+        // retains its own ref), keeping the subnet reserved past our release —
+        // so the recreate must reserve the stored addressing or fail, never
+        // drift to a fresh subnet that would shift every reserved address.
+        if dropped != nil { pinnedOnlyKinds.insert(kind) }
         stateLock.unlock()
         guard let dropped else { return }
-        // Releasing the ref ends its subnet reservation; without this, the
-        // dropped network would keep the subnet and the pinned recreate of the
-        // same addressing would be refused as a conflict. The only caller is
-        // ladder exhaustion, where VZ has already torn down every attachment
-        // to the network.
+        // Releasing the ref ends this process's claim on the subnet; without
+        // it, a fully torn-down network would still block the pinned recreate
+        // as a conflict.
         operations.releaseNetwork(dropped)
         Self.logger.notice("Invalidated the \(kind.rawValue, privacy: .public) network")
     }
 
     func reserveAddressIfNeeded(for mac: String, kind: VmnetNetworkKind) {
         let normalized = mac.lowercased()
-        stateLock.lock()
-        var record = records[kind] ?? VmnetNetworkRecord(addressing: nil, reservedMACs: [])
-        guard !record.reservedMACs.contains(normalized) else {
-            stateLock.unlock()
+        guard VZMACAddress(string: normalized) != nil else {
+            // A malformed MAC (hand-edited config) would poison every later
+            // materialization of the kind — refuse it a slot instead.
+            Self.logger.warning(
+                "Refusing a \(kind.rawValue, privacy: .public) reservation slot for an unparseable MAC"
+            )
             return
         }
-        record.reservedMACs.append(normalized)
-        records[kind] = record
-        let snapshot = records
-        stateLock.unlock()
-        persistAsync(snapshot)
-        Self.logger.info(
-            "Reserved \(kind.rawValue, privacy: .public) address slot \(record.reservedMACs.count - 1, privacy: .public)"
-        )
+        updateRecord(for: kind) { record in
+            guard !record.reservedMACs.contains(normalized) else { return }
+            record.reservedMACs.append(normalized)
+            let slot = record.reservedMACs.count - 1
+            Self.logger.info(
+                "Reserved \(kind.rawValue, privacy: .public) address slot \(slot, privacy: .public)"
+            )
+        }
     }
 
     func reservedAddress(for mac: String, kind: VmnetNetworkKind) -> String? {
@@ -571,9 +618,18 @@ extension VmnetNetworkService: VmnetNetworkProviding {
         stateLock.lock()
         defer { stateLock.unlock() }
         guard let record = records[kind], let addressing = record.addressing,
-            let slot = record.reservedMACs.firstIndex(of: normalized)
+            let slot = record.reservedMACs.firstIndex(of: normalized),
+            let derived = addressing.reservedAddress(slot: slot)
         else { return nil }
-        return addressing.reservedAddress(slot: slot)
+        // While the network is materialized, answer only what it actually
+        // installed: reservations are fixed at creation, so a slot assigned
+        // (or re-derived) after that is pending until the next
+        // materialization — showing it now would display an address the
+        // guest never receives.
+        if handles[kind] != nil, installedAddresses[kind]?[normalized] != derived {
+            return nil
+        }
+        return derived
     }
 
     func kind(ofNetwork network: vmnet_network_ref) -> VmnetNetworkKind? {

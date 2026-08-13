@@ -1061,8 +1061,12 @@ extension VMSettingsViewController {
         let networks = vmnetNetworks
         ipAddressMaterializeTask = Task { [weak self] in
             let materialized = await networks.materializeNetwork(for: kind)
-            self?.ipAddressMaterializeTask = nil
+            // Re-render before clearing the single-flight token: a slot the
+            // materialized network can't serve (subnet capacity, pending
+            // reservation) leaves the address underivable, and re-arming from
+            // that refresh would spin materialize→refresh forever.
             if materialized { self?.refreshIPAddressRow() }
+            self?.ipAddressMaterializeTask = nil
         }
     }
 

@@ -155,6 +155,37 @@ struct NetworkAttachmentCoordinatorTests {
         h.coordinator.stop()
     }
 
+    @Test("A live switch between vmnet-backed modes supersedes the in-flight materialization")
+    func liveSwitchSupersedesInFlightMaterialization() async {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
+            entitled: true,
+            retryDelays: [])
+        h.vmnet.isMaterialized = false
+        h.vmnet.materializeFails = true
+        h.device.refusedPlans = [.hostOnly, .sharedVmnet]
+
+        h.coordinator.activate()
+        #expect(h.coordinator.isPending)
+
+        // The Host Only drive is still in flight; switching to Shared must
+        // replace it with one for the shared network, not be swallowed by the
+        // single-flight guard — the old task's ladder would otherwise strand
+        // the VM detached with no wake-up signal for the new kind. The
+        // refusals lift only after the switch, so the supersede path (not a
+        // direct attach) is what recovers the session.
+        h.vmnet.materializeFails = false
+        h.choiceBox.choice = NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil)
+        h.coordinator.configurationChanged()
+        h.device.refusedPlans = []
+
+        await h.coordinator.vmnetMaterializationTaskForTesting?.value
+        #expect(h.vmnet.materializedKinds.contains(.shared))
+        #expect(h.device.appliedPlans.last == .sharedVmnet)
+        #expect(!h.coordinator.isPending)
+        h.coordinator.stop()
+    }
+
     @Test("A Host Only network that won't materialize goes pending and retries on the ladder")
     func refusedHostOnlyAttachRetriesOnBackoff() async {
         let h = makeHarness(

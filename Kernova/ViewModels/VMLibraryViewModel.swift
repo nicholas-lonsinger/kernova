@@ -16,6 +16,10 @@ final class VMLibraryViewModel {
 
     private let vmnetNetworks: any VmnetNetworkProviding
 
+    /// Whether this build's reservation machinery is live — a process-wide
+    /// constant, snapshotted at init.
+    private let isVMNetworkingEntitled: Bool
+
     private let fileSystem: any FileSystemOperating
 
     private let preferences: AppPreferences
@@ -184,11 +188,13 @@ final class VMLibraryViewModel {
             for: .downloadsDirectory, in: .userDomainMask
         ).first,
         preferences: AppPreferences = .shared,
-        vmnetNetworks: any VmnetNetworkProviding = VmnetNetworkService.shared
+        vmnetNetworks: any VmnetNetworkProviding = VmnetNetworkService.shared,
+        isVMNetworkingEntitled: Bool = EntitlementService.shared.hasVMNetworking
     ) {
         self.storageService = storageService
         self.diskImageService = diskImageService
         self.vmnetNetworks = vmnetNetworks
+        self.isVMNetworkingEntitled = isVMNetworkingEntitled
         self.fileSystem = fileSystem
         self.preferences = preferences
         self.agentInstallPromptDisabled = preferences.agentInstallPromptDisabled
@@ -1465,9 +1471,11 @@ final class VMLibraryViewModel {
     /// any VM that can join an app-managed network holds a slot keyed on its
     /// persisted MAC, so its address is assigned before the network next
     /// materializes. Runs at every instance construction and configuration
-    /// change; cheap and idempotent.
+    /// change; cheap and idempotent. Entitlement-gated like every other
+    /// consumer of the reservation machinery — an unentitled build never
+    /// materializes a network, so slots taken there would be dead weight.
     private func syncAddressReservation(for config: VMConfiguration) {
-        guard config.networkEnabled, let mac = config.macAddress,
+        guard isVMNetworkingEntitled, config.networkEnabled, let mac = config.macAddress,
             let kind = VmnetNetworkKind(mode: config.networkMode)
         else { return }
         vmnetNetworks.reserveAddressIfNeeded(for: mac, kind: kind)

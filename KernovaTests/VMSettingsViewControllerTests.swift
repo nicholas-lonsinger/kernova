@@ -883,6 +883,18 @@ struct VMSettingsViewControllerTests {
         #expect(visibleLabel("192.168.64.9", in: vc.view))
     }
 
+    @Test("A failed materialization leaves the placeholder without spinning the refresh loop")
+    func failedMaterializationLeavesPlaceholder() async throws {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.materializeFails = true
+        let (vc, _) = makeNetworkController(vmnetNetworks: vmnet)
+
+        await vc.ipAddressMaterializeTaskForTesting?.value
+
+        #expect(visibleLabel("—", in: vc.view))
+        #expect(vmnet.materializeCount == 1)
+    }
+
     @Test("A bridged VM's row reads Assigned by your network")
     func bridgedVMShowsExternalAssignment() throws {
         let (vc, _) = makeNetworkController(

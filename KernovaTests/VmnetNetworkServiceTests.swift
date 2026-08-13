@@ -341,6 +341,93 @@ struct VmnetNetworkServiceTests {
         #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:02", kind: .shared) == nil)
     }
 
+    // MARK: - Installed vs pending reservations
+
+    @Test("A slot assigned while its network is materialized reads as pending, then resolves after rematerialization")
+    func slotAssignedAfterMaterializationIsPending() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let operations = MockVmnetNetworkOperator()
+        let service = VmnetNetworkService(operations: operations, storeURL: location.storeURL)
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        _ = try service.network(for: .shared)
+
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:02", kind: .shared)
+
+        // The live network was created before the second slot existed, so its
+        // address is pending — showing it would display an address the guest
+        // never receives.
+        #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:01", kind: .shared) == "192.168.213.2")
+        #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:02", kind: .shared) == nil)
+
+        service.invalidateNetwork(for: .shared)
+        // No network is materialized now, so the durable assignment shows.
+        #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:02", kind: .shared) == "192.168.213.3")
+        _ = try service.network(for: .shared)
+        #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:02", kind: .shared) == "192.168.213.3")
+    }
+
+    @Test("System-adjusted pinned addressing leaves every reservation pending until rematerialization")
+    func adjustedPinnedAddressingLeavesReservationsPending() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        try seed(
+            [
+                .shared: VmnetNetworkRecord(
+                    addressing: Self.storedAddressing, reservedMACs: ["aa:bb:cc:dd:ee:01"])
+            ], at: location.storeURL)
+        let operations = MockVmnetNetworkOperator()
+        operations.reservedAddressingOverride = operations.freshAddressing
+        let service = VmnetNetworkService(operations: operations, storeURL: location.storeURL)
+
+        _ = try service.network(for: .shared)
+
+        // The installed reservations were derived from the old addressing, so
+        // none of them holds on the adjusted network.
+        #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:01", kind: .shared) == nil)
+    }
+
+    @Test("An unparseable MAC is refused a reservation slot")
+    func unparseableMACIsRefusedASlot() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let service = VmnetNetworkService(
+            operations: MockVmnetNetworkOperator(), storeURL: location.storeURL)
+
+        service.reserveAddressIfNeeded(for: "not-a-mac", kind: .shared)
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:01", kind: .shared)
+
+        let store = try readStore(at: location.storeURL, from: service)
+        #expect(store?[.shared]?.reservedMACs == ["aa:bb:cc:dd:ee:01"])
+    }
+
+    // MARK: - Invalidation stays pinned
+
+    @Test("A recreate after invalidation never drifts to a fresh subnet")
+    func invalidationRecreateNeverDriftsTheSubnet() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let operations = MockVmnetNetworkOperator()
+        let service = VmnetNetworkService(operations: operations, storeURL: location.storeURL)
+        _ = try service.network(for: .shared)
+
+        service.invalidateNetwork(for: .shared)
+        // A sibling VM's live attachment can keep the old subnet reserved past
+        // our release; a fresh-subnet fallback would shift every VM's address.
+        operations.pinnedCreateError = TestFailure("subnet still held by VZ refs")
+        #expect(throws: TestFailure.self) {
+            try service.network(for: .shared)
+        }
+        let store = try readStore(at: location.storeURL, from: service)
+        #expect(store?[.shared]?.addressing == operations.freshAddressing)
+
+        // Once the old refs drain, the pinned recreate succeeds and the
+        // constraint lifts.
+        operations.pinnedCreateError = nil
+        _ = try service.network(for: .shared)
+        #expect(operations.pinnedAddressings.last == operations.freshAddressing)
+    }
+
     // MARK: - Network identity
 
     @Test("kind(ofNetwork:) answers for held networks only")
