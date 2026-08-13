@@ -26,11 +26,10 @@ struct VmnetNetworkAddressing: Codable, Sendable, Equatable {
 
 /// A materialized app-managed vmnet network.
 ///
-/// The wrapped ref is returned retained by vmnet and never released: Swift
-/// imports it as a bare `OpaquePointer` with no release path, and the app
-/// holds every materialized network for its lifetime anyway — the subnet
-/// reservation lives exactly as long as the ref (vmnet.h), and a network must
-/// outlive any single VM session so concurrent VMs can share it.
+/// The wrapped ref stays alive as long as the service caches the handle — the
+/// subnet reservation lives exactly as long as the ref (vmnet.h), and a
+/// network must outlive any single VM session so concurrent VMs can share it.
+/// Only `invalidateNetwork(for:)` releases one.
 struct VmnetNetworkHandle: @unchecked Sendable {
     /// Feed to `VZVmnetNetworkDeviceAttachment(network:)`. Safe to cross
     /// isolation domains: the ref is an immutable reservation handle.
@@ -46,6 +45,15 @@ protocol VmnetNetworkOperating: Sendable {
     /// the network actually reserved.
     func createNetwork(_ kind: VmnetNetworkKind, addressing: VmnetNetworkAddressing?) throws
         -> (handle: VmnetNetworkHandle, addressing: VmnetNetworkAddressing)
+    /// Releases `handle`'s network ref, ending its subnet reservation.
+    func releaseNetwork(_ handle: VmnetNetworkHandle)
+}
+
+/// Releases a vmnet object Swift imports as a bare `OpaquePointer`. The vmnet
+/// header documents these as `CFRelease()`-able; Swift refuses a direct
+/// `CFRelease` on an unmanaged import, so route through `Unmanaged`.
+func releaseVmnetRef(_ ref: OpaquePointer) {
+    Unmanaged<AnyObject>.fromOpaque(UnsafeRawPointer(ref)).release()
 }
 
 /// A vmnet call that failed.
@@ -83,6 +91,7 @@ struct HostVmnetNetworkOperator: VmnetNetworkOperating {
         guard let configuration = vmnet_network_configuration_create(mode(for: kind), &status) else {
             throw VmnetOperationError(operation: "vmnet_network_configuration_create", status: status)
         }
+        defer { releaseVmnetRef(configuration) }
         if let addressing {
             try pin(addressing, onto: configuration)
         }
@@ -95,6 +104,10 @@ struct HostVmnetNetworkOperator: VmnetNetworkOperating {
             "Created \(kind.rawValue, privacy: .public) network (\(addressing == nil ? "fresh" : "pinned", privacy: .public)): \(reserved.ipv4Subnet, privacy: .public) mask \(reserved.ipv4Mask, privacy: .public), \(reserved.ipv6Prefix, privacy: .public)/\(reserved.ipv6PrefixLength, privacy: .public)"
         )
         return (VmnetNetworkHandle(network: network), reserved)
+    }
+
+    func releaseNetwork(_ handle: VmnetNetworkHandle) {
+        releaseVmnetRef(handle.network)
     }
 
     private func mode(for kind: VmnetNetworkKind) -> operating_modes_t {
@@ -165,12 +178,24 @@ struct HostVmnetNetworkOperator: VmnetNetworkOperating {
     }
 }
 
-/// App-managed vmnet networks, as attachment construction consumes them.
+/// App-managed vmnet networks, as attachment construction and attachment
+/// recovery consume them.
 protocol VmnetNetworkProviding: Sendable {
     /// A VZ attachment joining the app-managed network of `kind`, materializing
-    /// the network first if this launch hasn't yet. Throws when it cannot be
-    /// materialized.
+    /// the network first if this launch hasn't yet. Blocks for the vmnet XPC
+    /// round-trip — never call on the main actor; config assembly runs
+    /// off-main. Throws when the network cannot be materialized.
     func attachment(for kind: VmnetNetworkKind) throws -> VZNetworkDeviceAttachment
+    /// The non-blocking variant for the main-actor live-attach path: an
+    /// attachment when the network is already materialized, `nil` otherwise.
+    func attachmentIfMaterialized(for kind: VmnetNetworkKind) -> VZNetworkDeviceAttachment?
+    /// Materializes the network of `kind` off the caller's actor. `true` on
+    /// success (or when already materialized); failures are logged here.
+    func materializeNetwork(for kind: VmnetNetworkKind) async -> Bool
+    /// Drops (and releases) the materialized network of `kind`, so the next
+    /// materialization creates it anew — pinned to the persisted addressing,
+    /// so recovery cannot drift the subnet.
+    func invalidateNetwork(for kind: VmnetNetworkKind)
 }
 
 /// Owns the app's managed vmnet networks — today the Host Only network; the
@@ -195,8 +220,13 @@ final class VmnetNetworkService: @unchecked Sendable {
 
     private let operations: any VmnetNetworkOperating
     private let storeURL: URL?
-    private let lock = NSLock()
+    /// Guards `handles` only — never held across a vmnet call or file I/O, so
+    /// the main-actor `attachmentIfMaterialized` path can never block behind a
+    /// materialization in flight.
+    private let stateLock = NSLock()
     private var handles: [VmnetNetworkKind: VmnetNetworkHandle] = [:]
+    /// Serializes materialization, so concurrent callers produce one network.
+    private let materializeLock = NSLock()
 
     /// `storeURL: nil` disables persistence — networks still materialize, with
     /// addressing stable only within the session.
@@ -210,34 +240,49 @@ final class VmnetNetworkService: @unchecked Sendable {
 
     /// `networks.json` beside the `VMs/` directory.
     static func defaultStoreURL() -> URL? {
-        try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        .appendingPathComponent("Kernova", isDirectory: true)
-        .appendingPathComponent("networks.json", isDirectory: false)
+        try? VMStorageService.supportDirectory
+            .appendingPathComponent("networks.json", isDirectory: false)
     }
 
     /// The app-managed network of `kind`, materializing it on first use.
+    /// Blocks for the vmnet XPC round-trip — never call on the main actor.
     func network(for kind: VmnetNetworkKind) throws -> VmnetNetworkHandle {
-        lock.lock()
-        defer { lock.unlock() }
-        if let handle = handles[kind] { return handle }
+        if let handle = cachedHandle(for: kind) { return handle }
+        materializeLock.lock()
+        defer { materializeLock.unlock() }
+        if let handle = cachedHandle(for: kind) { return handle }
         let handle = try materialize(kind)
+        stateLock.lock()
         handles[kind] = handle
+        stateLock.unlock()
         return handle
+    }
+
+    private func cachedHandle(for kind: VmnetNetworkKind) -> VmnetNetworkHandle? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return handles[kind]
     }
 
     private func materialize(_ kind: VmnetNetworkKind) throws -> VmnetNetworkHandle {
         var store = loadStore()
         if let stored = store[kind] {
             do {
-                let (handle, _) = try operations.createNetwork(kind, addressing: stored)
-                Self.logger.info(
-                    "Recreated the \(kind.rawValue, privacy: .public) network with its stored addressing"
-                )
+                let (handle, reserved) = try operations.createNetwork(kind, addressing: stored)
+                if reserved == stored {
+                    Self.logger.info(
+                        "Recreated the \(kind.rawValue, privacy: .public) network with its stored addressing"
+                    )
+                } else {
+                    // vmnet accepted the pin but reserved something else; the
+                    // store must follow what the network actually is, or every
+                    // later launch re-pins a value no network carries.
+                    store[kind] = reserved
+                    try? persist(store)
+                    Self.logger.warning(
+                        "Pinned \(kind.rawValue, privacy: .public) network addressing was adjusted by the system — persisting the reserved values"
+                    )
+                }
                 return handle
             } catch {
                 Self.logger.warning(
@@ -287,5 +332,38 @@ final class VmnetNetworkService: @unchecked Sendable {
 extension VmnetNetworkService: VmnetNetworkProviding {
     func attachment(for kind: VmnetNetworkKind) throws -> VZNetworkDeviceAttachment {
         VZVmnetNetworkDeviceAttachment(network: try network(for: kind).network)
+    }
+
+    func attachmentIfMaterialized(for kind: VmnetNetworkKind) -> VZNetworkDeviceAttachment? {
+        guard let handle = cachedHandle(for: kind) else { return nil }
+        return VZVmnetNetworkDeviceAttachment(network: handle.network)
+    }
+
+    // A nonisolated async method runs off the caller's actor, so the blocking
+    // vmnet round-trip inside `network(for:)` never lands on the main thread.
+    func materializeNetwork(for kind: VmnetNetworkKind) async -> Bool {
+        do {
+            _ = try network(for: kind)
+            return true
+        } catch {
+            Self.logger.error(
+                "Could not materialize the \(kind.rawValue, privacy: .public) network: \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
+    }
+
+    func invalidateNetwork(for kind: VmnetNetworkKind) {
+        stateLock.lock()
+        let dropped = handles.removeValue(forKey: kind)
+        stateLock.unlock()
+        guard let dropped else { return }
+        // Releasing the ref ends its subnet reservation; without this, the
+        // dropped network would keep the subnet and the pinned recreate of the
+        // same addressing would be refused as a conflict. The only caller is
+        // ladder exhaustion, where VZ has already torn down every attachment
+        // to the network.
+        operations.releaseNetwork(dropped)
+        Self.logger.notice("Invalidated the \(kind.rawValue, privacy: .public) network")
     }
 }

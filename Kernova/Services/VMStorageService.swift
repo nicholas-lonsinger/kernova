@@ -17,18 +17,24 @@ struct VMStorageService: Sendable {
 
     // MARK: - Directory Helpers
 
-    var vmsDirectory: URL {
+    /// The `Application Support/Kernova` root every app-level store hangs off —
+    /// the single derivation of the path, so stores can never strand each other
+    /// by recomputing it differently.
+    static var supportDirectory: URL {
         get throws {
-            let appSupport = try FileManager.default.url(
+            try FileManager.default.url(
                 for: .applicationSupportDirectory,
                 in: .userDomainMask,
                 appropriateFor: nil,
                 create: true
             )
-            let vmsDir =
-                appSupport
-                .appendingPathComponent("Kernova", isDirectory: true)
-                .appendingPathComponent("VMs", isDirectory: true)
+            .appendingPathComponent("Kernova", isDirectory: true)
+        }
+    }
+
+    var vmsDirectory: URL {
+        get throws {
+            let vmsDir = try Self.supportDirectory.appendingPathComponent("VMs", isDirectory: true)
 
             if !FileManager.default.fileExists(atPath: vmsDir.path(percentEncoded: false)) {
                 try FileManager.default.createDirectory(at: vmsDir, withIntermediateDirectories: true)

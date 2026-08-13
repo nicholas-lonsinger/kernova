@@ -10,18 +10,18 @@ enum NetworkAttachmentPlan: Equatable {
     case bridged(String)
     case hostOnly
 
-    /// Whether this plan realizes `mode` — a NAT attachment realizes Shared
-    /// Network, a bridged attachment over any interface realizes Bridged, a
-    /// vmnet attachment on the app's Host Only network realizes Host Only.
-    func matches(_ mode: VMNetworkMode) -> Bool {
-        switch (self, mode) {
-        case (.nat, .shared), (.bridged, .bridged), (.hostOnly, .hostOnly):
-            true
-        case (.nat, .bridged), (.nat, .hostOnly),
-            (.bridged, .shared), (.bridged, .hostOnly),
-            (.hostOnly, .shared), (.hostOnly, .bridged):
-            false
+    /// The mode this plan realizes. The bridged interface is deliberately
+    /// ignored: an attachment over any interface realizes Bridged.
+    var realizedMode: VMNetworkMode {
+        switch self {
+        case .nat: .shared
+        case .bridged: .bridged
+        case .hostOnly: .hostOnly
         }
+    }
+
+    func matches(_ mode: VMNetworkMode) -> Bool {
+        realizedMode == mode
     }
 }
 
@@ -97,9 +97,10 @@ final class VZNetworkDeviceHandle: NetworkDeviceControlling {
             device.attachment = VZBridgedNetworkDeviceAttachment(interface: interface)
             return true
         case .hostOnly:
-            // The provider logs the failure detail; the coordinator paces the
-            // retry.
-            guard let attachment = try? vmnetNetworks.attachment(for: .hostOnly) else {
+            // Non-blocking: an unmaterialized network refuses the apply, and
+            // the coordinator materializes it off-main and reconciles when
+            // it's ready.
+            guard let attachment = vmnetNetworks.attachmentIfMaterialized(for: .hostOnly) else {
                 return false
             }
             device.attachment = attachment
@@ -170,12 +171,13 @@ final class HostNetworkLinkObserver: NetworkLinkObserving {
     }
 }
 
-// `SCDynamicStore` invokes these on the store's dispatch queue, so they must
-// be `nonisolated` file-scope functions, never closure literals formed inside
-// the `@MainActor` class: the compiler gives such a literal main-actor
-// isolation plus a dynamic check, which traps (`EXC_BREAKPOINT` in
-// `dispatch_assert_queue`) the moment a real link event fires — observed
-// 2026-08-13, first host-only VM boot.
+// RATIONALE (2026-08-13): `SCDynamicStore` invokes these on the store's
+// dispatch queue, so they must be `nonisolated` file-scope functions, never
+// closure literals formed inside the `@MainActor` class: the compiler gives
+// such a literal main-actor isolation plus a dynamic check, which traps
+// (`EXC_BREAKPOINT` in `dispatch_assert_queue`) the moment a real link event
+// fires — observed on the first host-only VM boot, which reconfigures host
+// interfaces and fires the event immediately.
 
 private nonisolated func hostLinkObserverRetain(_ info: UnsafeRawPointer) -> UnsafeRawPointer {
     _ = Unmanaged<AnyObject>.fromOpaque(info).retain()
@@ -227,12 +229,20 @@ final class NetworkAttachmentCoordinator {
     /// would spin at VZ's failure cadence.
     static let defaultDisconnectBurstWindow: TimeInterval = 1
 
+    /// Reattempt cadence, in seconds, after a failed vmnet materialization
+    /// while a Host Only session sits detached. The NetworkSharing daemon
+    /// publishes no recovery notification, so attempts pace themselves —
+    /// bounded like the attach ladder; a later reconcile trigger re-enters.
+    static let defaultVmnetRematerializeDelays: [TimeInterval] = [8, 16, 32]
+
     private let vmName: String
     private let device: any NetworkDeviceControlling
     private let interfaces: any BridgedInterfaceProviding
     private let linkObserver: any NetworkLinkObserving
+    private let vmnetNetworks: any VmnetNetworkProviding
     private let retryDelays: [TimeInterval]
     private let disconnectBurstWindow: TimeInterval
+    private let vmnetRematerializeDelays: [TimeInterval]
     private let clock: any EngineClock
     private var lastAttachAttemptAt: EngineInstant?
     private let isEligible: @MainActor () -> Bool
@@ -245,14 +255,22 @@ final class NetworkAttachmentCoordinator {
     private var isActive = false
     private var retryTask: Task<Void, Never>?
     private var nextRetryIndex = 0
+    private var vmnetMaterializationTask: Task<Void, Never>?
+    /// Whether this pending episode already dropped the cached vmnet network —
+    /// once per episode bounds the recreate churn of a persistently failing
+    /// attachment.
+    private var didInvalidateVmnetNetwork = false
 
     init(
         vmName: String,
         device: any NetworkDeviceControlling,
         interfaces: any BridgedInterfaceProviding,
         linkObserver: any NetworkLinkObserving,
+        vmnetNetworks: (any VmnetNetworkProviding)? = nil,
         retryDelays: [TimeInterval] = NetworkAttachmentCoordinator.defaultRetryDelays,
         disconnectBurstWindow: TimeInterval = NetworkAttachmentCoordinator.defaultDisconnectBurstWindow,
+        vmnetRematerializeDelays: [TimeInterval] =
+            NetworkAttachmentCoordinator.defaultVmnetRematerializeDelays,
         clock: any EngineClock = makePlatformEngineClock(),
         isEligible: @escaping @MainActor () -> Bool = { true },
         choice: @escaping @MainActor () -> NetworkChoice?,
@@ -262,8 +280,10 @@ final class NetworkAttachmentCoordinator {
         self.device = device
         self.interfaces = interfaces
         self.linkObserver = linkObserver
+        self.vmnetNetworks = vmnetNetworks ?? VmnetNetworkService.shared
         self.retryDelays = retryDelays
         self.disconnectBurstWindow = disconnectBurstWindow
+        self.vmnetRematerializeDelays = vmnetRematerializeDelays
         self.clock = clock
         self.isEligible = isEligible
         self.choice = choice
@@ -284,6 +304,8 @@ final class NetworkAttachmentCoordinator {
         isActive = false
         linkObserver.stop()
         cancelRetry()
+        vmnetMaterializationTask?.cancel()
+        vmnetMaterializationTask = nil
     }
 
     /// VZ's attachment-disconnect callback: the framework has nil'd the
@@ -371,7 +393,38 @@ final class NetworkAttachmentCoordinator {
 
         let pending = device.currentPlan == nil
         setPending(pending)
-        if pending { scheduleRetry() }
+        if pending {
+            scheduleRetry()
+            if choice.mode == .hostOnly { ensureVmnetMaterialization() }
+        }
+    }
+
+    /// Drives the app's vmnet network toward materialized while a Host Only
+    /// session sits detached, reconciling the moment it is ready — the wake-up
+    /// signal ladder exhaustion would otherwise leave missing, since host link
+    /// changes are a bridged signal and a detached device fires no disconnects.
+    private func ensureVmnetMaterialization() {
+        guard vmnetMaterializationTask == nil else { return }
+        vmnetMaterializationTask = Task {
+            [weak self, clock, vmnetNetworks, vmnetRematerializeDelays] in
+            var attempt = 0
+            while !Task.isCancelled {
+                guard let coordinator = self, coordinator.isActive, coordinator.isPending else {
+                    break
+                }
+                if await vmnetNetworks.materializeNetwork(for: .hostOnly) {
+                    self?.vmnetMaterializationTask = nil
+                    if let coordinator = self, coordinator.isActive {
+                        coordinator.reconcile(trigger: "vmnet network materialized")
+                    }
+                    return
+                }
+                guard attempt < vmnetRematerializeDelays.count else { break }
+                do { try await clock.sleep(for: vmnetRematerializeDelays[attempt]) } catch { break }
+                attempt += 1
+            }
+            self?.vmnetMaterializationTask = nil
+        }
     }
 
     /// The plan the chosen mode resolves to right now, `nil` when Bridged has
@@ -406,7 +459,10 @@ final class NetworkAttachmentCoordinator {
     }
 
     private func scheduleRetry() {
-        guard nextRetryIndex < retryDelays.count else { return }
+        guard nextRetryIndex < retryDelays.count else {
+            ladderExhausted()
+            return
+        }
         let delay = retryDelays[nextRetryIndex]
         nextRetryIndex += 1
         retryTask = Task { [weak self, clock] in
@@ -422,9 +478,22 @@ final class NetworkAttachmentCoordinator {
         retryTask = nil
     }
 
+    /// A Host Only ladder burning out with the network materialized is the
+    /// defective-network signature — VZ accepts each attachment, then
+    /// disconnects it — so drop the cached network once per pending episode
+    /// and let materialization recreate it, pinned to the same persisted
+    /// addressing so the recreate cannot drift the subnet.
+    private func ladderExhausted() {
+        guard choice()?.mode == .hostOnly, !didInvalidateVmnetNetwork else { return }
+        didInvalidateVmnetNetwork = true
+        vmnetNetworks.invalidateNetwork(for: .hostOnly)
+        ensureVmnetMaterialization()
+    }
+
     private func setPending(_ pending: Bool) {
         guard pending != isPending else { return }
         isPending = pending
+        if !pending { didInvalidateVmnetNetwork = false }
         Self.logger.notice(
             "Network attachment for '\(self.vmName, privacy: .public)' is \(pending ? "pending reattach" : "attached", privacy: .public)"
         )
@@ -434,5 +503,7 @@ final class NetworkAttachmentCoordinator {
     #if DEBUG
     /// The in-flight backoff retry, for event-driven test waits.
     var retryTaskForTesting: Task<Void, Never>? { retryTask }
+    /// The in-flight vmnet materialization, for event-driven test waits.
+    var vmnetMaterializationTaskForTesting: Task<Void, Never>? { vmnetMaterializationTask }
     #endif
 }

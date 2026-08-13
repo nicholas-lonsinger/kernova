@@ -25,8 +25,13 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
 
     // MARK: - Recorded calls
 
+    /// When set, a pinned create reserves this instead of the pin — the
+    /// "system adjusted the addressing" case.
+    var reservedAddressingOverride: VmnetNetworkAddressing?
+
     private(set) var createdKinds: [VmnetNetworkKind] = []
     private(set) var pinnedAddressings: [VmnetNetworkAddressing?] = []
+    private(set) var releasedNetworks: [OpaquePointer] = []
 
     private var fabricatedNetworks: [UnsafeMutableRawPointer] = []
 
@@ -39,7 +44,11 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
         pinnedAddressings.append(addressing)
         if let createNetworkError { throw createNetworkError }
         if addressing != nil, let pinnedCreateError { throw pinnedCreateError }
-        return (makeHandle(), addressing ?? freshAddressing)
+        return (makeHandle(), reservedAddressingOverride ?? addressing ?? freshAddressing)
+    }
+
+    func releaseNetwork(_ handle: VmnetNetworkHandle) {
+        releasedNetworks.append(handle.network)
     }
 
     /// A handle over a one-byte allocation standing in for the vmnet ref:
@@ -58,16 +67,42 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
 /// callers only compare its identity.
 final class MockVmnetNetworkProvider: VmnetNetworkProviding, @unchecked Sendable {
     var scriptedAttachment: VZNetworkDeviceAttachment = VZNATNetworkDeviceAttachment()
+    /// Whether the network counts as materialized: `attachmentIfMaterialized`
+    /// answers `nil` while `false`, and `materializeNetwork` flips it `true`
+    /// unless scripted to fail.
+    var isMaterialized = true
+    /// When `true`, `materializeNetwork` fails and leaves `isMaterialized` as is.
+    var materializeFails = false
 
     // MARK: - Error Injection
 
     var attachmentError: (any Error)?
 
     private(set) var requestedKinds: [VmnetNetworkKind] = []
+    private(set) var materializeCount = 0
+    private(set) var invalidatedKinds: [VmnetNetworkKind] = []
 
     func attachment(for kind: VmnetNetworkKind) throws -> VZNetworkDeviceAttachment {
         requestedKinds.append(kind)
         if let attachmentError { throw attachmentError }
         return scriptedAttachment
+    }
+
+    func attachmentIfMaterialized(for kind: VmnetNetworkKind) -> VZNetworkDeviceAttachment? {
+        requestedKinds.append(kind)
+        guard isMaterialized, attachmentError == nil else { return nil }
+        return scriptedAttachment
+    }
+
+    func materializeNetwork(for kind: VmnetNetworkKind) async -> Bool {
+        materializeCount += 1
+        guard !materializeFails else { return false }
+        isMaterialized = true
+        return true
+    }
+
+    func invalidateNetwork(for kind: VmnetNetworkKind) {
+        invalidatedKinds.append(kind)
+        isMaterialized = false
     }
 }

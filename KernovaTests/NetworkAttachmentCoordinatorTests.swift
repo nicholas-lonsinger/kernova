@@ -29,6 +29,7 @@ struct NetworkAttachmentCoordinatorTests {
         let coordinator: NetworkAttachmentCoordinator
         let device: MockNetworkDeviceControl
         let provider: MockBridgedInterfaceProvider
+        let vmnet: MockVmnetNetworkProvider
         let observer: MockNetworkLinkObserver
         let clock: TestEngineClock
         let eligibility: EligibilityBox
@@ -54,6 +55,7 @@ struct NetworkAttachmentCoordinatorTests {
     ) -> Harness {
         let device = MockNetworkDeviceControl(plan: devicePlan)
         let provider = MockBridgedInterfaceProvider(available: available, primary: primary)
+        let vmnet = MockVmnetNetworkProvider()
         let observer = MockNetworkLinkObserver()
         let clock = TestEngineClock()
         let eligibility = EligibilityBox()
@@ -64,6 +66,7 @@ struct NetworkAttachmentCoordinatorTests {
             device: device,
             interfaces: provider,
             linkObserver: observer,
+            vmnetNetworks: vmnet,
             retryDelays: retryDelays,
             clock: clock,
             isEligible: { eligibility.isEligible },
@@ -71,7 +74,7 @@ struct NetworkAttachmentCoordinatorTests {
             onPendingChange: { pendingChanges.record($0) })
         return Harness(
             coordinator: coordinator, device: device, provider: provider,
-            observer: observer, clock: clock, eligibility: eligibility,
+            vmnet: vmnet, observer: observer, clock: clock, eligibility: eligibility,
             choiceBox: choiceBox, pendingChanges: pendingChanges)
     }
 
@@ -131,6 +134,47 @@ struct NetworkAttachmentCoordinatorTests {
 
         #expect(h.device.appliedPlans == [.hostOnly])
         #expect(!h.coordinator.isPending)
+    }
+
+    @Test("An unmaterialized Host Only network materializes in the background and reconciles")
+    func unmaterializedHostOnlyMaterializesAndReconciles() async {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
+            retryDelays: [])
+        h.vmnet.isMaterialized = false
+        h.device.refusedPlans = [.hostOnly]
+
+        h.coordinator.activate()
+        #expect(h.coordinator.isPending)
+
+        // The network comes up between the refused apply and the
+        // materialization task running; its completion is the reconcile
+        // trigger — no ladder rung remains to deliver one.
+        h.device.refusedPlans = []
+        await h.coordinator.vmnetMaterializationTaskForTesting?.value
+
+        #expect(h.device.appliedPlans == [.hostOnly])
+        #expect(!h.coordinator.isPending)
+        #expect(h.vmnet.materializeCount == 1)
+    }
+
+    @Test("Ladder exhaustion invalidates the cached network once per pending episode")
+    func ladderExhaustionInvalidatesNetworkOnce() async {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
+            retryDelays: [])
+        h.device.refusedPlans = [.hostOnly]
+        h.vmnet.materializeFails = true
+
+        h.coordinator.activate()
+        #expect(h.vmnet.invalidatedKinds == [.hostOnly])
+        await h.coordinator.vmnetMaterializationTaskForTesting?.value
+
+        // A later trigger while still pending exhausts the ladder again but
+        // must not drop the network a second time.
+        h.observer.fire()
+        #expect(h.vmnet.invalidatedKinds == [.hostOnly])
+        h.coordinator.stop()
     }
 
     @Test("A bridged VM with no usable interface goes pending, then a link event reattaches it")

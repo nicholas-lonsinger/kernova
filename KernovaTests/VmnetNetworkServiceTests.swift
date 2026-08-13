@@ -102,6 +102,41 @@ struct VmnetNetworkServiceTests {
         #expect(store == [.hostOnly: operations.freshAddressing])
     }
 
+    @Test("Addressing the system adjusts on a pinned create is what gets persisted")
+    func adjustedPinnedAddressingRewritesTheStore() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        try seed([.hostOnly: Self.storedAddressing], at: location.storeURL)
+        let operations = MockVmnetNetworkOperator()
+        operations.reservedAddressingOverride = operations.freshAddressing
+        let service = VmnetNetworkService(operations: operations, storeURL: location.storeURL)
+
+        _ = try service.network(for: .hostOnly)
+
+        // The store must follow what the network actually reserved, or every
+        // later launch re-pins a value no network carries.
+        let store = try readStore(at: location.storeURL)
+        #expect(store == [.hostOnly: operations.freshAddressing])
+    }
+
+    @Test("Invalidation releases the network and the next request recreates it pinned")
+    func invalidationReleasesAndRecreatesPinned() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let operations = MockVmnetNetworkOperator()
+        let service = VmnetNetworkService(operations: operations, storeURL: location.storeURL)
+
+        let first = try service.network(for: .hostOnly)
+        service.invalidateNetwork(for: .hostOnly)
+        #expect(operations.releasedNetworks == [first.network])
+
+        let second = try service.network(for: .hostOnly)
+        #expect(second.network != first.network)
+        // The recreate pins the addressing the first create persisted, so
+        // invalidation can never drift the subnet.
+        #expect(operations.pinnedAddressings == [nil, operations.freshAddressing])
+    }
+
     @Test("An unreadable store is treated as empty rather than failing the request")
     func corruptStoreIsTreatedAsEmpty() throws {
         let location = makeStoreLocation()
