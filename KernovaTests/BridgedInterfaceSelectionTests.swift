@@ -25,14 +25,14 @@ struct BridgedInterfaceSelectionTests {
                 persisted: nil, available: ["en0", "en1"], primary: "en1") == "en1")
     }
 
-    @Test("A primary interface that isn't bridgeable falls back to the first available")
-    func primaryAbsentFallsBackToFirst() {
+    @Test("A primary interface that isn't bridgeable resolves to nothing")
+    func unbridgeablePrimaryResolvesToNil() {
         #expect(
             BridgedInterfaceSelection.choose(
-                persisted: nil, available: ["en2", "en3"], primary: "utun4") == "en2")
+                persisted: nil, available: ["en2", "en3"], primary: "utun4") == nil)
         #expect(
             BridgedInterfaceSelection.choose(
-                persisted: "en5", available: ["en2", "en3"], primary: nil) == "en2")
+                persisted: "en5", available: ["en2", "en3"], primary: nil) == nil)
     }
 
     @Test("No bridgeable interfaces resolves to nothing")

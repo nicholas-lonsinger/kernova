@@ -28,6 +28,13 @@ struct ConfigurationBuilder: Sendable {
     /// virtio, `nil` when this build carries none.
     var guestAgentDiskURL: URL? = KernovaMacOSAgentInfo.installerDiskImageURL
 
+    /// Host state behind a bridged attachment's interface choice.
+    var bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider()
+
+    /// What this build's signature authorizes; a fresh instance rather than
+    /// `.shared`, which is `@MainActor` while assembly runs off the main actor.
+    var entitlements = EntitlementService()
+
     /// Builds a validated `VZVirtualMachineConfiguration` from the given VM configuration and bundle URL.
     func build(from config: VMConfiguration, bundleURL: URL) throws -> BuildResult {
         try assemble(from: config, bundleURL: bundleURL, validate: true)
@@ -584,19 +591,29 @@ struct ConfigurationBuilder: Sendable {
 
     /// Resolves the host interface a bridged VM attaches to.
     ///
-    /// A persisted interface the host no longer offers narrows to Automatic; the
-    /// mode itself is never substituted — with nothing to bridge over the start
-    /// fails rather than quietly becoming Shared Network (docs/NETWORKING.md).
+    /// A persisted interface the host no longer offers narrows to Automatic — the
+    /// default-route interface. When neither resolves the start fails: the mode is
+    /// never substituted, so the VM neither bridges over an arbitrary interface
+    /// nor quietly becomes Shared Network (docs/NETWORKING.md).
     private func bridgedAttachment(config: VMConfiguration) throws
         -> VZBridgedNetworkDeviceAttachment
     {
-        let interfaces = VZBridgedNetworkInterface.networkInterfaces
+        guard entitlements.hasVMNetworking else {
+            Self.logger.error(
+                "Bridged networking requested for '\(config.name, privacy: .public)' in a build without com.apple.vm.networking"
+            )
+            throw ConfigurationBuilderError.bridgedNetworkingNotEntitled
+        }
+
+        let available = bridgedInterfaces.interfaces()
         guard
             let chosen = BridgedInterfaceSelection.choose(
                 persisted: config.bridgedInterfaceIdentifier,
-                available: interfaces.map(\.identifier),
-                primary: HostBridgedInterfaceProvider().primaryInterfaceIdentifier()),
-            let interface = interfaces.first(where: { $0.identifier == chosen })
+                available: available.map(\.identifier),
+                primary: bridgedInterfaces.primaryInterfaceIdentifier()),
+            let interface = VZBridgedNetworkInterface.networkInterfaces.first(where: {
+                $0.identifier == chosen
+            })
         else {
             Self.logger.error(
                 "Bridged networking requested for '\(config.name, privacy: .public)' with no bridgeable host interface"
@@ -605,7 +622,7 @@ struct ConfigurationBuilder: Sendable {
         }
 
         if let persisted = config.bridgedInterfaceIdentifier, persisted != chosen {
-            Self.logger.notice(
+            Self.logger.warning(
                 "Bridged interface '\(persisted, privacy: .public)' is unavailable — bridging over '\(chosen, privacy: .public)' instead"
             )
         } else {
@@ -915,6 +932,9 @@ enum ConfigurationBuilderError: LocalizedError {
     case removableMediaAttachFailed(id: UUID, path: String, label: String, underlying: any Error)
     /// Bridged mode was chosen but the host offers no interface to bridge over.
     case noBridgeableInterface
+    /// Bridged mode was chosen in a build whose signature omits
+    /// `com.apple.vm.networking`, which VZ needs for any non-NAT attachment.
+    case bridgedNetworkingNotEntitled
     case sharedDirectoryNotFound(String)
     case sharedDirectoryNotADirectory(String)
     case sharedDirectoryNotReadable(String)
@@ -953,7 +973,9 @@ enum ConfigurationBuilderError: LocalizedError {
         case .removableMediaAttachFailed(_, let path, let label, let underlying):
             "Couldn't open removable media '\(label)' at \(path). The file may have been moved or replaced, or Kernova may no longer have permission to read it. (\(underlying.localizedDescription))"
         case .noBridgeableInterface:
-            "No host network interface is available for bridged networking."
+            "No host network interface could be chosen for bridged networking. Choose a specific interface in the VM's Network settings, or switch to Shared Network."
+        case .bridgedNetworkingNotEntitled:
+            "This build of Kernova can't provide bridged networking. Switch the VM's network mode to Shared Network."
         case .sharedDirectoryNotFound(let path):
             "Shared directory not found at \(path)."
         case .sharedDirectoryNotADirectory(let path):

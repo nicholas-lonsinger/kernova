@@ -35,9 +35,17 @@ struct ConfigurationBuilderTests {
             .removableMediaNotFound, .removableMediaPathIsDirectory, .removableMediaNotWritable:
             Issue.record("Unexpected path validation error: \(error)")
         case .invalidHardwareModel, .invalidMachineIdentifier, .missingKernelPath,
-            .storageDiskAttachFailed, .removableMediaAttachFailed, .noBridgeableInterface:
+            .storageDiskAttachFailed, .removableMediaAttachFailed,
+            .noBridgeableInterface, .bridgedNetworkingNotEntitled:
             break
         }
+    }
+
+    /// Returns a Linux/EFI config set to bridged networking.
+    private func makeBridgedConfig() -> VMConfiguration {
+        VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi,
+            networkEnabled: true, networkMode: .bridged)
     }
 
     /// Returns a Linux/EFI config with optional shared directories.
@@ -1067,6 +1075,45 @@ struct ConfigurationBuilderTests {
         config.macAddress = "not-a-mac"
         let device = try #require(try networkDevices(for: config).first)
         #expect(device.macAddress.string != "not-a-mac")
+    }
+
+    @Test("Bridged mode with no bridgeable host interface refuses to start")
+    func bridgedModeWithoutAnInterfaceThrows() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        var builder = ConfigurationBuilder()
+        builder.bridgedInterfaces = MockBridgedInterfaceProvider()
+        builder.entitlements = EntitlementService(
+            reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
+
+        #expect {
+            try builder.assemble(from: makeBridgedConfig(), bundleURL: bundleURL, validate: false)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                case .noBridgeableInterface = e
+            else { return false }
+            return true
+        }
+    }
+
+    @Test("Bridged mode in a build without the entitlement names the entitlement, not the interface")
+    func bridgedModeWithoutTheEntitlementThrows() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        var builder = ConfigurationBuilder()
+        builder.bridgedInterfaces = MockBridgedInterfaceProvider()
+        builder.entitlements = EntitlementService(reader: MockEntitlementReader())
+
+        #expect {
+            try builder.assemble(from: makeBridgedConfig(), bundleURL: bundleURL, validate: false)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                case .bridgedNetworkingNotEntitled = e
+            else { return false }
+            return true
+        }
     }
 
     // MARK: - Input Devices

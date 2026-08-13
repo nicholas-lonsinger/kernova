@@ -1,5 +1,6 @@
 import AppKit
 import Testing
+import Virtualization
 
 @testable import Kernova
 
@@ -809,26 +810,6 @@ struct VMSettingsViewControllerTests {
 
     // MARK: - Network mode picker
 
-    /// A bridgeable-interface list the test can change between menu rebuilds.
-    @MainActor
-    private final class FakeBridgedInterfaceProvider: BridgedInterfaceProviding {
-        var available: [BridgedInterface]
-        var primary: String?
-
-        init(available: [BridgedInterface] = [], primary: String? = nil) {
-            self.available = available
-            self.primary = primary
-        }
-
-        func interfaces() -> [BridgedInterface] { available }
-        func primaryInterfaceIdentifier() -> String? { primary }
-    }
-
-    private struct FakeEntitlementReader: EntitlementReading {
-        let granted: Set<String>
-        func hasEntitlement(_ key: String) -> Bool { granted.contains(key) }
-    }
-
     private static let wiFi = BridgedInterface(identifier: "en0", localizedDisplayName: "Wi-Fi")
     private static let ethernet = BridgedInterface(
         identifier: "en1", localizedDisplayName: "Ethernet")
@@ -838,7 +819,7 @@ struct VMSettingsViewControllerTests {
         mode: VMNetworkMode = .shared,
         bridgedInterfaceIdentifier: String? = nil,
         macAddress: String? = "aa:bb:cc:dd:ee:ff",
-        interfaces: FakeBridgedInterfaceProvider = FakeBridgedInterfaceProvider(),
+        interfaces: MockBridgedInterfaceProvider = MockBridgedInterfaceProvider(),
         entitled: Bool = true,
         isReadOnly: Bool = false
     ) -> (VMSettingsViewController, VMInstance) {
@@ -853,7 +834,7 @@ struct VMSettingsViewControllerTests {
             instance: instance, viewModel: makeViewModel(), isReadOnly: isReadOnly,
             bridgedInterfaces: interfaces,
             entitlements: EntitlementService(
-                reader: FakeEntitlementReader(
+                reader: MockEntitlementReader(
                     granted: entitled ? ["com.apple.vm.networking"] : [])))
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
@@ -874,7 +855,7 @@ struct VMSettingsViewControllerTests {
     @Test("An entitled build lists a Bridged section with Automatic and each interface")
     func entitledPickerListsBridgedInterfaces() throws {
         let (vc, _) = makeNetworkController(
-            interfaces: FakeBridgedInterfaceProvider(
+            interfaces: MockBridgedInterfaceProvider(
                 available: [Self.wiFi, Self.ethernet], primary: "en0"))
 
         let popUp = try #require(networkModePopUp(in: vc.view))
@@ -889,7 +870,7 @@ struct VMSettingsViewControllerTests {
     @Test("An unentitled build offers no bridged entries")
     func unentitledPickerOmitsBridgedEntries() throws {
         let (vc, _) = makeNetworkController(
-            interfaces: FakeBridgedInterfaceProvider(available: [Self.wiFi]), entitled: false)
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]), entitled: false)
 
         let popUp = try #require(networkModePopUp(in: vc.view))
         #expect(popUp.itemTitles == ["Shared Network", "None"])
@@ -909,7 +890,7 @@ struct VMSettingsViewControllerTests {
 
     @Test("The interface list is rebuilt each time the menu opens")
     func menuRebuildPicksUpNewInterfaces() throws {
-        let provider = FakeBridgedInterfaceProvider(available: [Self.wiFi])
+        let provider = MockBridgedInterfaceProvider(available: [Self.wiFi])
         let (vc, _) = makeNetworkController(interfaces: provider)
         let popUp = try #require(networkModePopUp(in: vc.view))
         #expect(!popUp.itemTitles.contains("Ethernet (en1)"))
@@ -945,7 +926,7 @@ struct VMSettingsViewControllerTests {
     @Test("Choosing an interface sets the bridged mode and the interface in one gesture")
     func selectingInterfaceWritesModeAndIdentifier() throws {
         let (vc, instance) = makeNetworkController(
-            interfaces: FakeBridgedInterfaceProvider(
+            interfaces: MockBridgedInterfaceProvider(
                 available: [Self.wiFi, Self.ethernet], primary: "en0"))
         let popUp = try #require(networkModePopUp(in: vc.view))
 
@@ -961,7 +942,7 @@ struct VMSettingsViewControllerTests {
     func selectingAutomaticClearsTheInterface() throws {
         let (vc, instance) = makeNetworkController(
             mode: .bridged, bridgedInterfaceIdentifier: "en1",
-            interfaces: FakeBridgedInterfaceProvider(available: [Self.wiFi, Self.ethernet]))
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi, Self.ethernet]))
         let popUp = try #require(networkModePopUp(in: vc.view))
 
         popUp.selectItem(withTitle: "Automatic")
@@ -975,7 +956,7 @@ struct VMSettingsViewControllerTests {
     func selectingSharedRemembersTheInterface() throws {
         let (vc, instance) = makeNetworkController(
             mode: .bridged, bridgedInterfaceIdentifier: "en1",
-            interfaces: FakeBridgedInterfaceProvider(available: [Self.wiFi, Self.ethernet]))
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi, Self.ethernet]))
         let popUp = try #require(networkModePopUp(in: vc.view))
 
         popUp.selectItem(withTitle: "Shared Network")
@@ -990,7 +971,7 @@ struct VMSettingsViewControllerTests {
     func absentPersistedInterfaceRendersAsUnavailable() throws {
         let (vc, _) = makeNetworkController(
             mode: .bridged, bridgedInterfaceIdentifier: "en9",
-            interfaces: FakeBridgedInterfaceProvider(available: [Self.wiFi]))
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]))
 
         let popUp = try #require(networkModePopUp(in: vc.view))
         let item = try #require(popUp.menu?.items.first { $0.title == "en9 (unavailable)" })
@@ -1002,7 +983,7 @@ struct VMSettingsViewControllerTests {
     func rememberedInterfaceAddsNoEntryWhileShared() throws {
         let (vc, _) = makeNetworkController(
             mode: .shared, bridgedInterfaceIdentifier: "en9",
-            interfaces: FakeBridgedInterfaceProvider(available: [Self.wiFi]))
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]))
 
         let popUp = try #require(networkModePopUp(in: vc.view))
         #expect(popUp.menu?.items.first { $0.title == "en9 (unavailable)" } == nil)
@@ -1018,10 +999,50 @@ struct VMSettingsViewControllerTests {
         #expect(popUp.menu?.items.first { $0.title == "Bridged (unavailable)" }?.isEnabled == false)
     }
 
+    @Test("Turning networking on gives a VM without a MAC address a stable one")
+    func enablingNetworkingMintsAMACAddress() throws {
+        // Shared Network, from a VM created with networking off.
+        let (sharedVC, sharedInstance) = makeNetworkController(
+            networkEnabled: false, macAddress: nil,
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"))
+        let sharedPopUp = try #require(networkModePopUp(in: sharedVC.view))
+
+        sharedPopUp.selectItem(withTitle: "Shared Network")
+        sharedPopUp.sendAction(sharedPopUp.action, to: sharedPopUp.target)
+
+        let sharedMAC = try #require(sharedInstance.configuration.macAddress)
+        #expect(VZMACAddress(string: sharedMAC) != nil)
+
+        // Bridged, from the same starting state.
+        let (bridgedVC, bridgedInstance) = makeNetworkController(
+            networkEnabled: false, macAddress: nil,
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"))
+        let bridgedPopUp = try #require(networkModePopUp(in: bridgedVC.view))
+
+        bridgedPopUp.selectItem(withTitle: "Wi-Fi (en0)")
+        bridgedPopUp.sendAction(bridgedPopUp.action, to: bridgedPopUp.target)
+
+        #expect(bridgedInstance.configuration.bridgedInterfaceIdentifier == "en0")
+        let bridgedMAC = try #require(bridgedInstance.configuration.macAddress)
+        #expect(VZMACAddress(string: bridgedMAC) != nil)
+    }
+
+    @Test("A VM that already carries a MAC address keeps it")
+    func enablingNetworkingKeepsAnExistingMACAddress() throws {
+        let (vc, instance) = makeNetworkController(
+            networkEnabled: false, macAddress: "aa:bb:cc:dd:ee:ff")
+        let popUp = try #require(networkModePopUp(in: vc.view))
+
+        popUp.selectItem(withTitle: "Shared Network")
+        popUp.sendAction(popUp.action, to: popUp.target)
+
+        #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:ff")
+    }
+
     @Test("Read-only disables the Mode picker")
     func readOnlyDisablesTheModePicker() throws {
         let (vc, _) = makeNetworkController(
-            interfaces: FakeBridgedInterfaceProvider(available: [Self.wiFi]), isReadOnly: true)
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]), isReadOnly: true)
         #expect(networkModePopUp(in: vc.view)?.isEnabled == false)
     }
 
