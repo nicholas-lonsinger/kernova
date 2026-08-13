@@ -37,6 +37,10 @@ final class VirtualizationService {
             }
 
             instance.status = .running
+            // Activation waits for `.running`: VZ documents runtime attachment
+            // swapping for a running VM, and a boot or restore that came up
+            // detached is reconciled here.
+            instance.networkAttachmentCoordinator?.activate()
             // The watchdog flips `agentExpectedButMissing` when a VM that has seen
             // the agent before gets no Hello within the grace period. No-op for
             // fresh VMs (no `lastSeenAgentVersion`), for Linux, and for recovery
@@ -253,6 +257,9 @@ final class VirtualizationService {
             if let vm = instance.virtualMachine {
                 try await vm.resume()
                 instance.status = .running
+                // Idempotent re-activation reconciles an attachment the host
+                // link may have invalidated during the pause.
+                instance.networkAttachmentCoordinator?.activate()
                 instance.removeSaveFile()
                 // The guest is executing again, and this is the same session
                 // that was paused — so `bootedIntoRecovery` still governs, and
@@ -267,6 +274,7 @@ final class VirtualizationService {
                 // actually shows up.
                 try await restoreOrColdBoot(instance)
                 instance.status = .running
+                instance.networkAttachmentCoordinator?.activate()
             } else {
                 throw VirtualizationError.noSaveFile
             }

@@ -483,6 +483,97 @@ struct VMInstanceTests {
         #expect(instance.statusToolTip == "The virtual machine failed to start.")
     }
 
+    // MARK: - Network Attachment Recovery
+
+    /// Wires a mock-backed coordinator onto `instance`, reading its live
+    /// configuration the way the production wiring does.
+    private func attachNetworkCoordinator(
+        to instance: VMInstance,
+        device: MockNetworkDeviceControl,
+        provider: MockBridgedInterfaceProvider = MockBridgedInterfaceProvider()
+    ) -> NetworkAttachmentCoordinator {
+        let coordinator = NetworkAttachmentCoordinator(
+            vmName: instance.name,
+            device: device,
+            interfaces: provider,
+            linkObserver: MockNetworkLinkObserver(),
+            retryDelays: [],
+            isEligible: { [weak instance] in
+                guard let instance else { return false }
+                return instance.status == .running || instance.status == .paused
+            },
+            choice: { [weak instance] in instance?.configuration.networkChoice },
+            onPendingChange: { [weak instance] in instance?.networkAttachmentPending = $0 })
+        instance.networkAttachmentCoordinator = coordinator
+        return coordinator
+    }
+
+    @Test("A running VM awaiting network reattach shows the warning tint and says why")
+    func networkPendingShowsWarningTintAndToolTip() {
+        let instance = makeInstance(status: .running)
+        instance.networkAttachmentPending = true
+
+        #expect(instance.statusDisplayNSColor == StatusColor.warning)
+        let tip = instance.statusToolTip
+        #expect(tip != nil)
+        #expect(tip!.contains("network interface"))
+    }
+
+    @Test("applyLivePolicy forwards a network mode change to the coordinator")
+    func applyLivePolicyForwardsNetworkChange() {
+        let instance = makeInstance(status: .running)
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = .shared
+        let device = MockNetworkDeviceControl(plan: .nat)
+        let coordinator = attachNetworkCoordinator(
+            to: instance, device: device,
+            provider: MockBridgedInterfaceProvider(
+                available: [BridgedInterface(identifier: "en0", localizedDisplayName: "Wi-Fi")]))
+        coordinator.activate()
+        #expect(device.appliedPlans.isEmpty)
+
+        let old = instance.configuration
+        instance.configuration.networkMode = .bridged
+        instance.configuration.bridgedInterfaceIdentifier = "en0"
+        instance.applyLivePolicy(oldConfig: old, newConfig: instance.configuration)
+
+        #expect(device.appliedPlans == [.bridged("en0")])
+    }
+
+    @Test("applyLivePolicy ignores a network change while the VM is stopped")
+    func applyLivePolicyIgnoresNetworkChangeWhileStopped() {
+        let instance = makeInstance(status: .running)
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = .shared
+        let device = MockNetworkDeviceControl()
+        let coordinator = attachNetworkCoordinator(to: instance, device: device)
+        coordinator.activate()
+        #expect(device.appliedPlans == [.nat])
+        instance.status = .stopped
+
+        let old = instance.configuration
+        instance.configuration.networkMode = .bridged
+        instance.applyLivePolicy(oldConfig: old, newConfig: instance.configuration)
+
+        #expect(device.appliedPlans == [.nat])
+    }
+
+    @Test("tearDownSession stops network recovery and clears the pending flag")
+    func tearDownSessionStopsNetworkRecovery() {
+        let instance = makeInstance(status: .running)
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = .bridged
+        let device = MockNetworkDeviceControl()
+        let coordinator = attachNetworkCoordinator(to: instance, device: device)
+        coordinator.activate()
+        #expect(instance.networkAttachmentPending)
+
+        instance.tearDownSession()
+
+        #expect(instance.networkAttachmentCoordinator == nil)
+        #expect(!instance.networkAttachmentPending)
+    }
+
     // MARK: - Lifecycle Action Labels
 
     @Test("startAction is .start without a pending install context")

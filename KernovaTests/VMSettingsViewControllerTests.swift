@@ -821,7 +821,8 @@ struct VMSettingsViewControllerTests {
         macAddress: String? = "aa:bb:cc:dd:ee:ff",
         interfaces: MockBridgedInterfaceProvider = MockBridgedInterfaceProvider(),
         entitled: Bool = true,
-        isReadOnly: Bool = false
+        isReadOnly: Bool = false,
+        status: VMStatus = .stopped
     ) -> (VMSettingsViewController, VMInstance) {
         let config = VMConfiguration(
             name: "Test VM", guestOS: .linux, bootMode: .efi,
@@ -829,7 +830,7 @@ struct VMSettingsViewControllerTests {
             bridgedInterfaceIdentifier: bridgedInterfaceIdentifier, macAddress: macAddress)
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: status)
         let vc = VMSettingsViewController(
             instance: instance, viewModel: makeViewModel(), isReadOnly: isReadOnly,
             bridgedInterfaces: interfaces,
@@ -1039,11 +1040,77 @@ struct VMSettingsViewControllerTests {
         #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:ff")
     }
 
-    @Test("Read-only disables the Mode picker")
-    func readOnlyDisablesTheModePicker() throws {
+    @Test("While a networked VM runs, the picker stays live with None disabled")
+    func runningVMKeepsThePickerLiveWithNoneDisabled() throws {
         let (vc, _) = makeNetworkController(
-            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]), isReadOnly: true)
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"),
+            isReadOnly: true, status: .running)
+
+        let popUp = try #require(networkModePopUp(in: vc.view))
+        #expect(popUp.isEnabled)
+        #expect(popUp.menu?.items.first { $0.title == "None" }?.isEnabled == false)
+        #expect(popUp.menu?.items.first { $0.title == "Shared Network" }?.isEnabled == true)
+        #expect(popUp.menu?.items.first { $0.title == "Wi-Fi (en0)" }?.isEnabled == true)
+    }
+
+    @Test("The Network lock icon hides while the picker is live, and only then")
+    func networkLockIconHidesWhileThePickerIsLive() {
+        let (liveVC, _) = makeNetworkController(
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"),
+            isReadOnly: true, status: .running)
+        // Every other lockable section still shows its lock; only the live
+        // picker's section drops the claim.
+        #expect(lockIcons(in: liveVC.view).filter(\.isHidden).count == 1)
+
+        let (savingVC, _) = makeNetworkController(
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]),
+            isReadOnly: true, status: .saving)
+        #expect(lockIcons(in: savingVC.view).allSatisfy { !$0.isHidden })
+    }
+
+    @Test("A live mode switch writes the config from the running picker")
+    func runningPickerWritesALiveModeSwitch() throws {
+        let (vc, instance) = makeNetworkController(
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"),
+            isReadOnly: true, status: .running)
+        let popUp = try #require(networkModePopUp(in: vc.view))
+
+        popUp.selectItem(withTitle: "Wi-Fi (en0)")
+        popUp.sendAction(popUp.action, to: popUp.target)
+
+        #expect(instance.configuration.networkMode == .bridged)
+        #expect(instance.configuration.bridgedInterfaceIdentifier == "en0")
+    }
+
+    @Test("A running VM in None mode keeps the picker locked")
+    func runningNoneModeVMKeepsThePickerLocked() throws {
+        let (vc, _) = makeNetworkController(
+            networkEnabled: false,
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]),
+            isReadOnly: true, status: .running)
         #expect(networkModePopUp(in: vc.view)?.isEnabled == false)
+    }
+
+    @Test("Transitional and cold-paused states lock the picker")
+    func transitionalStatesLockThePicker() throws {
+        for status in [VMStatus.saving, .restoring, .paused] {
+            // `.paused` with no live `VZVirtualMachine` is cold-paused — there
+            // is no session to hot-swap an attachment on.
+            let (vc, _) = makeNetworkController(
+                interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]),
+                isReadOnly: true, status: status)
+            #expect(networkModePopUp(in: vc.view)?.isEnabled == false)
+        }
+    }
+
+    @Test("A stopped VM keeps the fully editable picker, None included")
+    func stoppedVMKeepsTheEditablePicker() throws {
+        let (vc, _) = makeNetworkController(
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]))
+
+        let popUp = try #require(networkModePopUp(in: vc.view))
+        #expect(popUp.isEnabled)
+        #expect(popUp.menu?.items.first { $0.title == "None" }?.isEnabled == true)
     }
 
     // MARK: - Helpers (view-tree introspection)

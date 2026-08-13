@@ -11,10 +11,11 @@ extension VMInstance {
 
     /// Color used to tint the sidebar's OS icon.
     ///
-    /// Preparing and cold-paused are orange, live-paused is yellow, and the
-    /// remaining states follow `status`.
+    /// Preparing, cold-paused, and running-while-awaiting-network-reattach are
+    /// orange, live-paused is yellow, and the remaining states follow `status`.
     var statusDisplayNSColor: NSColor {
         if isPreparing || isColdPaused { return StatusColor.warning }
+        if status == .running && networkAttachmentPending { return StatusColor.warning }
         switch status {
         // A concrete gray (not `.secondaryLabelColor`) so the icon keeps its
         // stopped color on the selection highlight instead of inverting to white.
@@ -43,6 +44,9 @@ extension VMInstance {
         if let state = preparingState { return state.displayLabel }
         if status == .initialBoot { return "Click Start to install macOS" }
         if status == .error { return errorMessage }
+        if status == .running, networkAttachmentPending {
+            return "The network interface is unavailable. Kernova reconnects automatically when one is available."
+        }
         guard status == .paused else { return nil }
         return isColdPaused
             ? "VM state is saved to disk"

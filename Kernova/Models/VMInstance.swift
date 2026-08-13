@@ -247,6 +247,17 @@ final class VMInstance {
 
     private var delegateAdapter: VMDelegateAdapter?
 
+    // MARK: - Network Attachment Recovery
+
+    /// Keeps the live network attachment realizing the configured mode;
+    /// created with the `VZVirtualMachine` for network-enabled VMs, activated
+    /// once the session reaches `.running`, torn down with the session.
+    @ObservationIgnored var networkAttachmentCoordinator: NetworkAttachmentCoordinator?
+
+    /// `true` while a live session's network device is detached and recovery
+    /// is waiting for a usable host interface.
+    var networkAttachmentPending = false
+
     // MARK: - Bundle Layout
 
     let bundleLayout: VMBundleLayout
@@ -437,6 +448,9 @@ final class VMInstance {
     ///
     /// Does **not** change `status` — callers set the appropriate status after calling this.
     func tearDownSession() {
+        networkAttachmentCoordinator?.stop()
+        networkAttachmentCoordinator = nil
+        networkAttachmentPending = false
         clipboardPassthroughCoordinator?.stop()
         clipboardPassthroughCoordinator = nil
         stopVsockServices()
@@ -471,7 +485,31 @@ final class VMInstance {
         let vm = VZVirtualMachine(configuration: vzConfig)
         virtualMachine = vm
         setupDelegate()
+        setupNetworkAttachmentCoordinator(for: vm)
         return vm
+    }
+
+    /// Builds this session's attachment-recovery coordinator, replacing any
+    /// prior one — the restore-failure fallback attaches a second
+    /// `VZVirtualMachine` without an intervening teardown.
+    private func setupNetworkAttachmentCoordinator(for vm: VZVirtualMachine) {
+        networkAttachmentCoordinator?.stop()
+        networkAttachmentCoordinator = nil
+        networkAttachmentPending = false
+        guard configuration.networkEnabled, let device = vm.networkDevices.first else { return }
+        networkAttachmentCoordinator = NetworkAttachmentCoordinator(
+            vmName: name,
+            device: VZNetworkDeviceHandle(device: device),
+            interfaces: HostBridgedInterfaceProvider(),
+            linkObserver: HostNetworkLinkObserver(),
+            isEligible: { [weak self] in
+                guard let self else { return false }
+                return self.status == .running || self.status == .paused
+            },
+            choice: { [weak self] in self?.configuration.networkChoice },
+            onPendingChange: { [weak self] pending in
+                self?.networkAttachmentPending = pending
+            })
     }
 
     /// Removes the persisted save file from the bundle, if it exists.
@@ -1035,6 +1073,16 @@ final class VMInstance {
     /// restart-only there.
     func applyLivePolicy(oldConfig: VMConfiguration, newConfig: VMConfiguration) {
         guard status == .running || status == .paused else { return }
+
+        // Ahead of the live-VM guard: the coordinator exists exactly while the
+        // session has a network device, which is the guard this hot swap needs.
+        if oldConfig.networkEnabled != newConfig.networkEnabled
+            || oldConfig.networkMode != newConfig.networkMode
+            || oldConfig.bridgedInterfaceIdentifier != newConfig.bridgedInterfaceIdentifier
+        {
+            networkAttachmentCoordinator?.configurationChanged()
+        }
+
         guard let vm = virtualMachine else { return }
 
         // Host-only (no vsock device), so handle it before the socket-device
@@ -1165,6 +1213,20 @@ private final class VMDelegateAdapter: NSObject, VZVirtualMachineDelegate {
             }
             instance.resetToStopped()
             Self.logger.notice("Guest stopped for VM '\(instance.name, privacy: .public)'")
+        }
+    }
+
+    nonisolated func virtualMachine(
+        _ virtualMachine: VZVirtualMachine, networkDevice: VZNetworkDevice,
+        attachmentWasDisconnectedWithError error: any Error
+    ) {
+        MainActor.assumeIsolated {
+            guard let instance else {
+                Self.logger.warning(
+                    "attachmentWasDisconnected received but VMInstance has been deallocated")
+                return
+            }
+            instance.networkAttachmentCoordinator?.attachmentWasDisconnected(error: error)
         }
     }
 
