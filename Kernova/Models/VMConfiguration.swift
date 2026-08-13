@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// The user's preferred display hosting for a VM on start/resume.
 enum VMDisplayPreference: String, Codable, Sendable, Equatable {
@@ -12,6 +13,17 @@ enum VMNetworkMode: String, Codable, Sendable, Equatable {
     case shared
     case bridged
     case hostOnly
+}
+
+/// The user's choice of pointing/keyboard device pair for a macOS guest.
+enum VMInputDeviceMode: String, Codable, Sendable, Equatable {
+    /// Resolve the pair from the guest's effective macOS version.
+    case automatic
+    /// The Mac trackpad and keyboard, which only macOS 13+ guests recognize.
+    case mac
+    /// The USB pointer and keyboard, which every guest recognizes — but a
+    /// 13+ guest reads the pointer as a mouse and pins its scrollbars visible.
+    case usb
 }
 
 /// Persistent configuration for a virtual machine, serialized to `config.json`
@@ -121,6 +133,15 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// When both this and `audioInputEnabled` are `false`, no virtio sound
     /// device is configured at all.
     var audioOutputEnabled: Bool
+
+    // MARK: - Input Devices
+
+    /// Which pointing/keyboard device pair a macOS guest carries; ignored by
+    /// Linux guests, which always take the USB pair.
+    ///
+    /// `.automatic` resolves through ``GuestInputDevices``. Applied at the
+    /// next boot, like the rest of the device configuration.
+    var inputDeviceMode: VMInputDeviceMode
 
     // MARK: - Guest Agent
 
@@ -252,6 +273,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         serialSocketRelayEnabled: Bool = false,
         audioInputEnabled: Bool = false,
         audioOutputEnabled: Bool = true,
+        inputDeviceMode: VMInputDeviceMode = .automatic,
         agentLogForwardingEnabled: Bool = false,
         lastSeenAgentVersion: String? = nil,
         lastSeenGuestOSVersion: String? = nil,
@@ -297,6 +319,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.serialSocketRelayEnabled = serialSocketRelayEnabled
         self.audioInputEnabled = audioInputEnabled
         self.audioOutputEnabled = audioOutputEnabled
+        self.inputDeviceMode = inputDeviceMode
         self.agentLogForwardingEnabled = agentLogForwardingEnabled
         self.lastSeenAgentVersion = lastSeenAgentVersion
         self.lastSeenGuestOSVersion = lastSeenGuestOSVersion
@@ -356,6 +379,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
             try c.decodeIfPresent(Bool.self, forKey: .serialSocketRelayEnabled) ?? false
         self.audioInputEnabled = try c.decodeIfPresent(Bool.self, forKey: .audioInputEnabled) ?? false
         self.audioOutputEnabled = try c.decodeIfPresent(Bool.self, forKey: .audioOutputEnabled) ?? true
+        self.inputDeviceMode =
+            try c.decodeIfPresent(VMInputDeviceMode.self, forKey: .inputDeviceMode) ?? .automatic
         self.agentLogForwardingEnabled = try c.decodeIfPresent(Bool.self, forKey: .agentLogForwardingEnabled) ?? false
         self.lastSeenAgentVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenAgentVersion)
         self.lastSeenGuestOSVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenGuestOSVersion)
@@ -495,6 +520,31 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     static func removableMediaChanged(old: VMConfiguration, new: VMConfiguration) -> Bool {
         (old.removableMedia ?? []) != (new.removableMedia ?? [])
+    }
+}
+
+// MARK: - Effective guest version
+
+extension VMConfiguration {
+    /// The best available reading of what macOS the guest is running, or `nil`
+    /// when nothing has vouched for one.
+    ///
+    /// ``lastSeenGuestOSVersion`` wins: the agent rewrites it whenever the
+    /// guest reports something new, so it survives an in-guest upgrade that
+    /// leaves ``installedImage`` describing a release no longer installed. It
+    /// is peer-supplied free text, though, so a report that parses to nothing
+    /// falls through to the install record rather than erasing its vote.
+    var effectiveGuestMacOSVersion: MacOSVersion? {
+        if let reported = lastSeenGuestOSVersion,
+            let numeric = KernovaOSVersion.numericVersion(in: reported),
+            let version = MacOSVersion(numeric)
+        {
+            return version
+        }
+        if case .macOSRestoreImage(let version, _) = installedImage {
+            return MacOSVersion(version)
+        }
+        return nil
     }
 }
 

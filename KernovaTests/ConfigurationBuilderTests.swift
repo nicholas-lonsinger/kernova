@@ -1238,22 +1238,59 @@ struct ConfigurationBuilderTests {
 
     // MARK: - Input Devices
 
-    @Test("macOS guests get both the Mac and USB pointing/keyboard devices")
-    func macOSInputDevicesIncludeUSBFallbacks() {
+    @Test("A guest known to run macOS 13+ gets only the Mac input devices")
+    func macOSInputDevicesMacPairForModernGuest() {
         // Called directly rather than through `assemble`: the rest of
         // `configureMacOSBoot` needs a real `VZMacHardwareModel`, which only a
         // restore image can mint.
         let vz = VZVirtualMachineConfiguration()
+        var config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
+        config.lastSeenGuestOSVersion = "13.5"
+        ConfigurationBuilder().configureMacOSDevicesForTesting(vz, config: config)
+
+        #expect(vz.pointingDevices.count == 1)
+        #expect(vz.pointingDevices.first is VZMacTrackpadConfiguration)
+        #expect(vz.keyboards.count == 1)
+        #expect(vz.keyboards.first is VZMacKeyboardConfiguration)
+    }
+
+    @Test("A guest known to predate macOS 13 gets only the USB input devices")
+    func macOSInputDevicesUSBPairForOldGuest() {
+        let vz = VZVirtualMachineConfiguration()
+        var config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
+        config.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
+        ConfigurationBuilder().configureMacOSDevicesForTesting(vz, config: config)
+
+        #expect(vz.pointingDevices.count == 1)
+        #expect(vz.pointingDevices.first is VZUSBScreenCoordinatePointingDeviceConfiguration)
+        #expect(vz.keyboards.count == 1)
+        #expect(vz.keyboards.first is VZUSBKeyboardConfiguration)
+    }
+
+    @Test("A guest with no version signal still gets exactly the Mac pair")
+    func macOSInputDevicesMacPairWhenVersionUnknown() {
+        let vz = VZVirtualMachineConfiguration()
         let config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
         ConfigurationBuilder().configureMacOSDevicesForTesting(vz, config: config)
 
-        #expect(vz.pointingDevices.count == 2)
+        #expect(vz.pointingDevices.count == 1)
         #expect(vz.pointingDevices.first is VZMacTrackpadConfiguration)
-        #expect(vz.pointingDevices.last is VZUSBScreenCoordinatePointingDeviceConfiguration)
-
-        #expect(vz.keyboards.count == 2)
+        #expect(vz.keyboards.count == 1)
         #expect(vz.keyboards.first is VZMacKeyboardConfiguration)
-        #expect(vz.keyboards.last is VZUSBKeyboardConfiguration)
+    }
+
+    @Test("An explicit USB choice overrides a 13+ guest's automatic Mac pair")
+    func macOSInputDevicesHonorExplicitUSBChoice() {
+        let vz = VZVirtualMachineConfiguration()
+        var config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
+        config.lastSeenGuestOSVersion = "26.0"
+        config.inputDeviceMode = .usb
+        ConfigurationBuilder().configureMacOSDevicesForTesting(vz, config: config)
+
+        #expect(vz.pointingDevices.count == 1)
+        #expect(vz.pointingDevices.first is VZUSBScreenCoordinatePointingDeviceConfiguration)
+        #expect(vz.keyboards.count == 1)
+        #expect(vz.keyboards.first is VZUSBKeyboardConfiguration)
     }
 
     @Test("macOS display device carries the configured size and pixel density")

@@ -193,6 +193,9 @@ final class VMSettingsViewController: NSViewController {
     private var audioOutputSwitch = NSSwitch()
     private var audioWarningContainer = NSStackView()
 
+    // Input devices (macOS guests only)
+    private var inputDevicesPopUp = NSPopUpButton()
+
     // Guest Agent
     private var logForwardingSwitch = NSSwitch()
     private var installReminderSwitch = NSSwitch()
@@ -514,6 +517,9 @@ extension VMSettingsViewController {
         addSection(buildSharedDirectoriesSection())
         addSection(buildNetworkSection())
         addSection(buildAudioSection())
+        if instance.configuration.guestOS == .macOS {
+            addSection(buildInputDevicesSection())
+        }
         if isGuestAgentSectionVisible(guestOS: instance.configuration.guestOS) {
             // macOS: clipboard rides the agent's vsock channel, so it nests in
             // the agent group rather than forming a sibling section.
@@ -1447,6 +1453,48 @@ extension VMSettingsViewController {
         ])
     }
 
+    // MARK: Input Devices
+
+    /// Titles and modes for the input devices popup, in menu order.
+    private static let inputDeviceChoices: [(title: String, mode: VMInputDeviceMode)] = [
+        ("Automatic", .automatic),
+        ("Mac Keyboard and Trackpad", .mac),
+        ("USB Keyboard and Mouse", .usb),
+    ]
+
+    /// Info copy for the macOS-only input devices picker.
+    private static let inputDevicesInfoParagraphs: [InfoPopoverParagraph] = [
+        .body(
+            "Chooses the virtual keyboard and pointing device the guest sees. Automatic picks by the guest's macOS version: the Mac devices for macOS 13 and later, the USB devices for earlier guests, which don't recognize the Mac ones."
+        ),
+        .body(
+            "The USB pointer reads as a mouse inside the guest, so macOS shows permanently visible scroll bars instead of trackpad-style overlay scroll bars."
+        ),
+    ]
+
+    private func buildInputDevicesSection() -> NSView {
+        inputDevicesPopUp = makeInputDevicesPopUp()
+        persistentLockableControls.append(inputDevicesPopUp)
+        return makeSection([
+            makeHeader("Input", lockable: true, paragraphs: Self.inputDevicesInfoParagraphs),
+            makeGroupedFormCard(rows: [
+                makeGroupedFormCardRow("Devices", control: inputDevicesPopUp)
+            ]),
+        ])
+    }
+
+    private func makeInputDevicesPopUp() -> NSPopUpButton {
+        let popUp = NSPopUpButton()
+        popUp.controlSize = .small
+        for choice in Self.inputDeviceChoices {
+            popUp.addItem(withTitle: choice.title)
+            popUp.lastItem?.representedObject = choice.mode
+        }
+        popUp.target = self
+        popUp.action = #selector(inputDevicesChanged)
+        return popUp
+    }
+
     // MARK: Guest Agent
 
     /// Caption shown beneath the macOS Guest Agent card.
@@ -1763,6 +1811,7 @@ extension VMSettingsViewController {
         refreshDisplay()
         refreshNetwork()
         refreshAudio()
+        refreshInputDevices()
         refreshGuestAgent()
         refreshClipboard()
         refreshSerialRelay()
@@ -2016,6 +2065,20 @@ extension VMSettingsViewController {
                 trailingButtons: [info])
             addFullWidth(banner, to: audioWarningContainer)
         }
+    }
+
+    private func refreshInputDevices() {
+        guard instance.configuration.guestOS == .macOS else { return }
+        let mode = instance.configuration.inputDeviceMode
+        let index = inputDevicesPopUp.itemArray.firstIndex {
+            ($0.representedObject as? VMInputDeviceMode) == mode
+        }
+        guard let index else {
+            Self.logger.fault("No popup item for input device mode '\(mode.rawValue, privacy: .public)'")
+            assertionFailure("No popup item for input device mode: \(mode.rawValue)")
+            return
+        }
+        inputDevicesPopUp.selectItem(at: index)
     }
 
     private func refreshGuestAgent() {
@@ -2518,6 +2581,17 @@ extension VMSettingsViewController: NSMenuItemValidation {
 
     @objc private func audioOutputToggled() {
         writeConfig { $0.audioOutputEnabled = audioOutputSwitch.state == .on }
+    }
+
+    @objc private func inputDevicesChanged() {
+        guard
+            let mode = inputDevicesPopUp.selectedItem?.representedObject as? VMInputDeviceMode
+        else {
+            Self.logger.fault("Input devices popup selection carries no mode")
+            assertionFailure("Input devices popup selection carries no mode")
+            return
+        }
+        writeConfig { $0.inputDeviceMode = mode }
     }
 
     @objc private func logForwardingToggled() {

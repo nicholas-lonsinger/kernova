@@ -1,5 +1,4 @@
 import Foundation
-import KernovaKit
 
 /// How the bundled guest-agent installer image reaches a macOS guest.
 ///
@@ -32,28 +31,7 @@ enum GuestAgentDiskDelivery: Equatable, Sendable {
         // `guestOS`, not `bootMode`: a Linux guest has no Kernova agent at all,
         // and both enums carry a `.macOS` case.
         guard config.guestOS == .macOS else { return .usb }
-        guard let version = effectiveGuestVersion(for: config) else { return .usb }
+        guard let version = config.effectiveGuestMacOSVersion else { return .usb }
         return version.isAtLeast(usbMassStorageFloor) ? .usb : .virtio
-    }
-
-    /// The best available reading of what macOS the guest is running.
-    ///
-    /// ``VMConfiguration/lastSeenGuestOSVersion`` wins: the agent rewrites it
-    /// whenever the guest reports something new, so it survives an in-guest
-    /// upgrade that leaves ``VMConfiguration/installedImage`` describing a
-    /// release no longer installed. It is peer-supplied free text, though, so a
-    /// report that parses to nothing falls through to the install record rather
-    /// than erasing its vote.
-    static func effectiveGuestVersion(for config: VMConfiguration) -> MacOSVersion? {
-        if let reported = config.lastSeenGuestOSVersion,
-            let numeric = KernovaOSVersion.numericVersion(in: reported),
-            let version = MacOSVersion(numeric)
-        {
-            return version
-        }
-        if case .macOSRestoreImage(let version, _) = config.installedImage {
-            return MacOSVersion(version)
-        }
-        return nil
     }
 }

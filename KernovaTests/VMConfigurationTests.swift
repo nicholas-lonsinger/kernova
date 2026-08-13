@@ -1305,6 +1305,34 @@ struct VMConfigurationTests {
         #expect(decoded.bridgedInterfaceIdentifier == nil)
     }
 
+    // MARK: - Input Device Mode Tests
+
+    @Test("inputDeviceMode defaults to automatic, in the initializer and on a missing key")
+    func inputDeviceModeDefaults() throws {
+        let config = VMConfiguration(name: "Test VM", guestOS: .macOS, bootMode: .macOS)
+        #expect(config.inputDeviceMode == .automatic)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+        #expect(decoded.inputDeviceMode == .automatic)
+    }
+
+    @Test("Configuration preserves an explicit input device mode")
+    func inputDeviceModeRoundTrip() throws {
+        var config = VMConfiguration(name: "Test VM", guestOS: .macOS, bootMode: .macOS)
+        config.inputDeviceMode = .usb
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+        #expect(decoded.inputDeviceMode == .usb)
+    }
+
     // MARK: - Full-field round-trip
 
     /// Populates every property with a non-default value, encodes to JSON,
