@@ -12,7 +12,7 @@ protocol EntitlementReading: Sendable {
 /// The real reader, answering from this process's own signature via
 /// `SecTaskCopyValueForEntitlement`.
 struct ProcessEntitlementReader: EntitlementReading {
-    private static let logger = Logger(subsystem: "app.kernova", category: "EntitlementService")
+    private static let logger = Logger(subsystem: "app.kernova", category: "ProcessEntitlementReader")
 
     func hasEntitlement(_ key: String) -> Bool {
         guard let task = SecTaskCreateFromSelf(nil) else {
@@ -22,7 +22,14 @@ struct ProcessEntitlementReader: EntitlementReading {
             assertionFailure("SecTaskCreateFromSelf returned nil")
             return false
         }
-        return (SecTaskCopyValueForEntitlement(task, key as CFString, nil) as? Bool) == true
+        var error: Unmanaged<CFError>?
+        let value = SecTaskCopyValueForEntitlement(task, key as CFString, &error)
+        if let error = error?.takeRetainedValue() {
+            Self.logger.warning(
+                "Entitlement query for '\(key, privacy: .public)' failed — treating as absent: \(String(describing: error), privacy: .public)"
+            )
+        }
+        return (value as? Bool) == true
     }
 }
 

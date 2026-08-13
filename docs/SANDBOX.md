@@ -15,7 +15,7 @@ Everything `Kernova/Resources/Kernova.entitlements` claims:
 | `com.apple.security.files.user-selected.read-write` | Powerbox grants from open/save panels — disk images, ISOs, shared folders, Linux kernel/initrd, local IPSWs |
 | `com.apple.security.files.downloads.read-write` | The fixed download destination in `~/Downloads` — macOS restore images and Linux installer ISOs — and their `.kernovadownload` resume sidecars |
 | `com.apple.security.files.bookmarks.app-scope` | Persisting those panel grants across launches |
-| `com.apple.security.virtualization` | Running guests |
+| `com.apple.security.virtualization` | Running guests — compatible with the sandbox on the store: UTM ships exactly this combination there, macOS guests included |
 | `com.apple.vm.networking` | Guest networking beyond NAT — vmnet requires it for all API use, and a bridged attachment fails VZ configuration validation without it. Granted by Apple as a managed capability on the App ID; compatible with the sandbox on the store — UTM's store build carries it |
 | `com.apple.security.device.audio-input` | Opt-in per-VM microphone passthrough |
 

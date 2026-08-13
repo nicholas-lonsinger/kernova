@@ -191,10 +191,13 @@ fi
 
 section 'Signing'
 
-# Debug signs ad-hoc unless the gitignored, hand-maintained
-# Config/Local.xcconfig overrides CODE_SIGN_IDENTITY; the same file supplies
-# DEVELOPMENT_TEAM, which automatic signing resolves the certificate through
-# and the agent's Release Developer ID signing needs. CI has no Local.xcconfig
+# The app signs ad-hoc in both configurations unless the gitignored,
+# hand-maintained Config/Local.xcconfig overrides CODE_SIGN_IDENTITY (the app
+# target leaves Release unpinned, so the override also governs archives); the
+# same file supplies DEVELOPMENT_TEAM, which automatic signing resolves the
+# certificate through and the agent's Release Developer ID signing needs, and
+# optionally KERNOVA_APP_ENTITLEMENTS, which decides whether an archive
+# carries the restricted com.apple.vm.networking key. CI has no Local.xcconfig
 # and signs ad-hoc too, so it can't catch a broken team here either.
 local_xcconfig="Config/Local.xcconfig"
 resolved_team=""
@@ -214,10 +217,25 @@ else
 fi
 
 if [ -n "$resolved_identity" ] && [ "$resolved_identity" != "-" ]; then
-    pass "Debug CODE_SIGN_IDENTITY = $resolved_identity ($local_xcconfig)"
+    pass "CODE_SIGN_IDENTITY = $resolved_identity ($local_xcconfig) — Debug and app archives"
 else
-    warn "Debug signs ad-hoc — macOS privacy grants re-prompt after every rebuild"
+    warn "The app signs ad-hoc — macOS privacy grants re-prompt after every rebuild"
     detail "With a development certificate, add to $local_xcconfig: CODE_SIGN_IDENTITY = Apple Development"
+fi
+
+# KERNOVA_APP_ENTITLEMENTS selects the app's entitlement set; unset means the
+# Development variant without the restricted com.apple.vm.networking key.
+# Surfaced here because archives inherit it silently — RELEASING.md's Archive
+# step gates which distribution lane may carry the key.
+resolved_entitlements=$(sed -n 's/^[[:space:]]*KERNOVA_APP_ENTITLEMENTS[[:space:]]*=[[:space:]]*//p' "$local_xcconfig" 2>/dev/null | head -1 | sed 's/[[:space:]]*$//')
+if [ "$resolved_entitlements" = "Kernova/Resources/Kernova.entitlements" ]; then
+    pass "KERNOVA_APP_ENTITLEMENTS = $resolved_entitlements ($local_xcconfig)"
+    detail 'archives cut on this machine carry the restricted com.apple.vm.networking key — see docs/RELEASING.md "Archive"'
+elif [ -n "$resolved_entitlements" ]; then
+    pass "KERNOVA_APP_ENTITLEMENTS = $resolved_entitlements ($local_xcconfig)"
+    detail 'not the full Kernova.entitlements set — archives will NOT carry the restricted com.apple.vm.networking key'
+else
+    pass 'App entitlements: Development variant (default — no restricted key; archives need the full set for VM networking)'
 fi
 
 # `security find-identity` lists every codesigning-capable identity in the

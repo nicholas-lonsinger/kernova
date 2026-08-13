@@ -10,10 +10,12 @@
 // no-ops when Local.xcconfig doesn't exist, so a fresh clone builds with
 // neither a team nor a certificate.
 
-// The default signing identity, ad-hoc. Targets that must stay ad-hoc (and
-// the guest agent's Developer ID lane) pin their own at target level, which
-// outranks this file; the app target deliberately leaves Release unpinned
-// so the Local.xcconfig override below can sign an entitled archive.
+// The default signing identity, ad-hoc. The relaunch helper (re-signed at
+// export) and the guest agent (its own Developer ID lane) pin Release at
+// target level, which outranks this file; the app and both test bundles
+// leave Release unpinned so the Local.xcconfig override below reaches them —
+// an entitled archive needs the real identity, and a test bundle must sign
+// with the same team as its now team-signed host to pass library validation.
 CODE_SIGN_IDENTITY = -
 
 // The app target's CODE_SIGN_ENTITLEMENTS, both configurations. The default
