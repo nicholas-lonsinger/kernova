@@ -289,9 +289,8 @@ struct VMSettingsViewControllerTests {
     func readOnlyDisablesLockableControls() {
         let (vc, _, _) = makeController(guestOS: .macOS, isReadOnly: true)
 
-        // Networking is lockable → disabled while read-only.
-        let network = firstSwitch(action: "networkToggled", in: vc.view)
-        #expect(network?.isEnabled == false)
+        // The network Mode picker is lockable → disabled while read-only.
+        #expect(networkModePopUp(in: vc.view)?.isEnabled == false)
 
         // Clipboard is hot-toggleable → stays enabled.
         let clipboard = firstSwitch(action: "clipboardToggled", in: vc.view)
@@ -301,8 +300,7 @@ struct VMSettingsViewControllerTests {
     @Test("Lockable controls are enabled when editable")
     func editableEnablesLockableControls() {
         let (vc, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
-        let network = firstSwitch(action: "networkToggled", in: vc.view)
-        #expect(network?.isEnabled == true)
+        #expect(networkModePopUp(in: vc.view)?.isEnabled == true)
     }
 
     @Test("Lock icons are visible only while read-only")
@@ -333,21 +331,6 @@ struct VMSettingsViewControllerTests {
         clipboard.sendAction(clipboard.action, to: clipboard.target)
 
         #expect(instance.configuration.clipboardSharingEnabled == true)
-    }
-
-    @Test("Toggling Networking writes back to the configuration")
-    func networkToggleWritesConfig() {
-        let (vc, instance, _) = makeController(guestOS: .linux, isReadOnly: false)
-        let initial = instance.configuration.networkEnabled
-
-        guard let network = firstSwitch(action: "networkToggled", in: vc.view) else {
-            Issue.record("Expected a networking switch")
-            return
-        }
-        network.state = initial ? .off : .on
-        network.sendAction(network.action, to: network.target)
-
-        #expect(instance.configuration.networkEnabled == !initial)
     }
 
     // MARK: - Clipboard passthrough
@@ -824,7 +807,231 @@ struct VMSettingsViewControllerTests {
         #expect(!visibleLabel(caption, in: editableVC.view))
     }
 
+    // MARK: - Network mode picker
+
+    /// A bridgeable-interface list the test can change between menu rebuilds.
+    @MainActor
+    private final class FakeBridgedInterfaceProvider: BridgedInterfaceProviding {
+        var available: [BridgedInterface]
+        var primary: String?
+
+        init(available: [BridgedInterface] = [], primary: String? = nil) {
+            self.available = available
+            self.primary = primary
+        }
+
+        func interfaces() -> [BridgedInterface] { available }
+        func primaryInterfaceIdentifier() -> String? { primary }
+    }
+
+    private struct FakeEntitlementReader: EntitlementReading {
+        let granted: Set<String>
+        func hasEntitlement(_ key: String) -> Bool { granted.contains(key) }
+    }
+
+    private static let wiFi = BridgedInterface(identifier: "en0", localizedDisplayName: "Wi-Fi")
+    private static let ethernet = BridgedInterface(
+        identifier: "en1", localizedDisplayName: "Ethernet")
+
+    private func makeNetworkController(
+        networkEnabled: Bool = true,
+        mode: VMNetworkMode = .shared,
+        bridgedInterfaceIdentifier: String? = nil,
+        macAddress: String? = "aa:bb:cc:dd:ee:ff",
+        interfaces: FakeBridgedInterfaceProvider = FakeBridgedInterfaceProvider(),
+        entitled: Bool = true,
+        isReadOnly: Bool = false
+    ) -> (VMSettingsViewController, VMInstance) {
+        let config = VMConfiguration(
+            name: "Test VM", guestOS: .linux, bootMode: .efi,
+            networkEnabled: networkEnabled, networkMode: mode,
+            bridgedInterfaceIdentifier: bridgedInterfaceIdentifier, macAddress: macAddress)
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(config.id.uuidString, isDirectory: true)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+        let vc = VMSettingsViewController(
+            instance: instance, viewModel: makeViewModel(), isReadOnly: isReadOnly,
+            bridgedInterfaces: interfaces,
+            entitlements: EntitlementService(
+                reader: FakeEntitlementReader(
+                    granted: entitled ? ["com.apple.vm.networking"] : [])))
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        return (vc, instance)
+    }
+
+    @Test("The Mode picker replaces the networking switch and offers Shared Network and None")
+    func modePickerOffersSharedAndNone() throws {
+        let (vc, _) = makeNetworkController(entitled: false)
+        #expect(containsLabel("Mode", in: vc.view))
+        #expect(!containsLabel("Networking Enabled", in: vc.view))
+
+        let popUp = try #require(networkModePopUp(in: vc.view))
+        #expect(popUp.itemTitles == ["Shared Network", "None"])
+        #expect(popUp.titleOfSelectedItem == "Shared Network")
+    }
+
+    @Test("An entitled build lists a Bridged section with Automatic and each interface")
+    func entitledPickerListsBridgedInterfaces() throws {
+        let (vc, _) = makeNetworkController(
+            interfaces: FakeBridgedInterfaceProvider(
+                available: [Self.wiFi, Self.ethernet], primary: "en0"))
+
+        let popUp = try #require(networkModePopUp(in: vc.view))
+        #expect(
+            popUp.itemTitles == [
+                "Shared Network", "None", "Bridged", "Automatic", "Wi-Fi (en0)", "Ethernet (en1)",
+            ])
+        let header = try #require(popUp.menu?.items.first { $0.title == "Bridged" })
+        #expect(header.isSectionHeader)
+    }
+
+    @Test("An unentitled build offers no bridged entries")
+    func unentitledPickerOmitsBridgedEntries() throws {
+        let (vc, _) = makeNetworkController(
+            interfaces: FakeBridgedInterfaceProvider(available: [Self.wiFi]), entitled: false)
+
+        let popUp = try #require(networkModePopUp(in: vc.view))
+        #expect(popUp.itemTitles == ["Shared Network", "None"])
+    }
+
+    @Test("A host with nothing to bridge over shows one disabled placeholder")
+    func emptyInterfaceListShowsDisabledPlaceholder() throws {
+        let (vc, _) = makeNetworkController()
+
+        let popUp = try #require(networkModePopUp(in: vc.view))
+        let placeholder = try #require(
+            popUp.menu?.items.first { $0.title == "No Bridgeable Interfaces" })
+        #expect(!placeholder.isEnabled)
+        // Automatic stays offered: it resolves at start, when an interface may be back.
+        #expect(popUp.itemTitles.contains("Automatic"))
+    }
+
+    @Test("The interface list is rebuilt each time the menu opens")
+    func menuRebuildPicksUpNewInterfaces() throws {
+        let provider = FakeBridgedInterfaceProvider(available: [Self.wiFi])
+        let (vc, _) = makeNetworkController(interfaces: provider)
+        let popUp = try #require(networkModePopUp(in: vc.view))
+        #expect(!popUp.itemTitles.contains("Ethernet (en1)"))
+
+        provider.available = [Self.wiFi, Self.ethernet]
+        vc.menuNeedsUpdate(try #require(popUp.menu))
+
+        #expect(popUp.itemTitles.contains("Ethernet (en1)"))
+    }
+
+    @Test("Choosing None writes the mode, hides the MAC row, and says there's no device")
+    func selectingNoneWritesConfigAndEmptiesTheCard() throws {
+        let (vc, instance) = makeNetworkController()
+        let popUp = try #require(networkModePopUp(in: vc.view))
+        #expect(visibleLabel("MAC Address", in: vc.view))
+
+        popUp.selectItem(withTitle: "None")
+        popUp.sendAction(popUp.action, to: popUp.target)
+
+        #expect(instance.configuration.networkEnabled == false)
+        #expect(!visibleLabel("MAC Address", in: vc.view))
+        #expect(visibleLabel("This virtual machine has no network device.", in: vc.view))
+    }
+
+    @Test("A VM with no network device builds with the caption already showing")
+    func noneModeBuildsWithTheCaptionShowing() throws {
+        let (vc, _) = makeNetworkController(networkEnabled: false)
+        #expect(!visibleLabel("MAC Address", in: vc.view))
+        #expect(visibleLabel("This virtual machine has no network device.", in: vc.view))
+        #expect(networkModePopUp(in: vc.view)?.titleOfSelectedItem == "None")
+    }
+
+    @Test("Choosing an interface sets the bridged mode and the interface in one gesture")
+    func selectingInterfaceWritesModeAndIdentifier() throws {
+        let (vc, instance) = makeNetworkController(
+            interfaces: FakeBridgedInterfaceProvider(
+                available: [Self.wiFi, Self.ethernet], primary: "en0"))
+        let popUp = try #require(networkModePopUp(in: vc.view))
+
+        popUp.selectItem(withTitle: "Ethernet (en1)")
+        popUp.sendAction(popUp.action, to: popUp.target)
+
+        #expect(instance.configuration.networkEnabled == true)
+        #expect(instance.configuration.networkMode == .bridged)
+        #expect(instance.configuration.bridgedInterfaceIdentifier == "en1")
+    }
+
+    @Test("Choosing Automatic clears the persisted interface")
+    func selectingAutomaticClearsTheInterface() throws {
+        let (vc, instance) = makeNetworkController(
+            mode: .bridged, bridgedInterfaceIdentifier: "en1",
+            interfaces: FakeBridgedInterfaceProvider(available: [Self.wiFi, Self.ethernet]))
+        let popUp = try #require(networkModePopUp(in: vc.view))
+
+        popUp.selectItem(withTitle: "Automatic")
+        popUp.sendAction(popUp.action, to: popUp.target)
+
+        #expect(instance.configuration.networkMode == .bridged)
+        #expect(instance.configuration.bridgedInterfaceIdentifier == nil)
+    }
+
+    @Test("Going back to Shared Network keeps the interface for the next bridged choice")
+    func selectingSharedRemembersTheInterface() throws {
+        let (vc, instance) = makeNetworkController(
+            mode: .bridged, bridgedInterfaceIdentifier: "en1",
+            interfaces: FakeBridgedInterfaceProvider(available: [Self.wiFi, Self.ethernet]))
+        let popUp = try #require(networkModePopUp(in: vc.view))
+
+        popUp.selectItem(withTitle: "Shared Network")
+        popUp.sendAction(popUp.action, to: popUp.target)
+
+        #expect(instance.configuration.networkEnabled == true)
+        #expect(instance.configuration.networkMode == .shared)
+        #expect(instance.configuration.bridgedInterfaceIdentifier == "en1")
+    }
+
+    @Test("An interface the host no longer offers stays visible as the selection")
+    func absentPersistedInterfaceRendersAsUnavailable() throws {
+        let (vc, _) = makeNetworkController(
+            mode: .bridged, bridgedInterfaceIdentifier: "en9",
+            interfaces: FakeBridgedInterfaceProvider(available: [Self.wiFi]))
+
+        let popUp = try #require(networkModePopUp(in: vc.view))
+        let item = try #require(popUp.menu?.items.first { $0.title == "en9 (unavailable)" })
+        #expect(!item.isEnabled)
+        #expect(popUp.titleOfSelectedItem == "en9 (unavailable)")
+    }
+
+    @Test("An identifier remembered from an earlier bridged choice adds no entry")
+    func rememberedInterfaceAddsNoEntryWhileShared() throws {
+        let (vc, _) = makeNetworkController(
+            mode: .shared, bridgedInterfaceIdentifier: "en9",
+            interfaces: FakeBridgedInterfaceProvider(available: [Self.wiFi]))
+
+        let popUp = try #require(networkModePopUp(in: vc.view))
+        #expect(popUp.menu?.items.first { $0.title == "en9 (unavailable)" } == nil)
+        #expect(popUp.titleOfSelectedItem == "Shared Network")
+    }
+
+    @Test("An unentitled build still reports a bridged VM's mode")
+    func unentitledBuildReportsABridgedVM() throws {
+        let (vc, _) = makeNetworkController(mode: .bridged, entitled: false)
+
+        let popUp = try #require(networkModePopUp(in: vc.view))
+        #expect(popUp.titleOfSelectedItem == "Bridged (unavailable)")
+        #expect(popUp.menu?.items.first { $0.title == "Bridged (unavailable)" }?.isEnabled == false)
+    }
+
+    @Test("Read-only disables the Mode picker")
+    func readOnlyDisablesTheModePicker() throws {
+        let (vc, _) = makeNetworkController(
+            interfaces: FakeBridgedInterfaceProvider(available: [Self.wiFi]), isReadOnly: true)
+        #expect(networkModePopUp(in: vc.view)?.isEnabled == false)
+    }
+
     // MARK: - Helpers (view-tree introspection)
+
+    private func networkModePopUp(in view: NSView) -> NSPopUpButton? {
+        firstSubview(NSPopUpButton.self, in: view) {
+            $0.action.map(NSStringFromSelector) == "networkModeChanged"
+        }
+    }
 
     private func firstSwitch(action name: String, in view: NSView) -> NSSwitch? {
         firstSubview(NSSwitch.self, in: view) { $0.action.map(NSStringFromSelector) == name }

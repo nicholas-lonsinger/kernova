@@ -20,6 +20,11 @@ final class VMSettingsViewController: NSViewController {
     private var viewModel: VMLibraryViewModel
     private var isReadOnly: Bool
 
+    /// Host interfaces offered by the Network section's Mode picker.
+    private let bridgedInterfaces: any BridgedInterfaceProviding
+    /// Decides whether the picker offers Bridged at all.
+    private let entitlements: EntitlementService
+
     // MARK: - Observation & live state
 
     private let fileMonitor = AttachmentFileMonitor()
@@ -156,7 +161,12 @@ final class VMSettingsViewController: NSViewController {
     private var sharedListStack = NSStackView()
 
     // Network
-    private var networkSwitch = NSSwitch()
+    private var networkModePopUp = NSPopUpButton()
+    /// The MAC Address row, hidden while the VM has no network device; `nil` for a
+    /// VM carrying no MAC address, whose row is never built.
+    private var macAddressRow: GroupedFormCollapsibleRow?
+    /// Stands in for the card's rows while the mode is None.
+    private var networkNoDeviceCaption = NSTextField()
 
     // Audio
     private var audioInputSwitch = NSSwitch()
@@ -206,10 +216,18 @@ final class VMSettingsViewController: NSViewController {
 
     // MARK: - Init
 
-    init(instance: VMInstance, viewModel: VMLibraryViewModel, isReadOnly: Bool) {
+    init(
+        instance: VMInstance,
+        viewModel: VMLibraryViewModel,
+        isReadOnly: Bool,
+        bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider(),
+        entitlements: EntitlementService = .shared
+    ) {
         self.instance = instance
         self.viewModel = viewModel
         self.isReadOnly = isReadOnly
+        self.bridgedInterfaces = bridgedInterfaces
+        self.entitlements = entitlements
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -880,19 +898,39 @@ extension VMSettingsViewController {
 
     // MARK: Network
 
-    private func buildNetworkSection() -> NSView {
-        networkSwitch = makeSwitch(action: #selector(networkToggled))
-        persistentLockableControls.append(networkSwitch)
+    /// What a Mode menu item selects, carried as the item's `representedObject`.
+    private enum NetworkModeChoice: Equatable {
+        case shared
+        case none
+        case bridgedAutomatic
+        case bridgedInterface(String)
+        /// A bridged VM in a build the entitlement doesn't cover: the picker can
+        /// offer no Bridged entry, so this one shows the mode without offering it.
+        case bridgedUnavailable
+    }
 
-        var rows: [NSView] = [makeGroupedFormCardRow("Networking Enabled", control: networkSwitch)]
+    private func buildNetworkSection() -> NSView {
+        networkModePopUp = makeNetworkModePopUp()
+        persistentLockableControls.append(networkModePopUp)
+
+        var rows: [NSView] = [makeGroupedFormCardRow("Mode", control: networkModePopUp)]
         if let mac = instance.configuration.macAddress {
-            rows.append(makeGroupedFormCardRow("MAC Address", control: makeGroupedFormValueLabel(mac)))
+            let row = GroupedFormCollapsibleRow(
+                row: makeGroupedFormCardRow("MAC Address", control: makeGroupedFormValueLabel(mac)))
+            macAddressRow = row
+            rows.append(row)
+        } else {
+            macAddressRow = nil
         }
+        networkNoDeviceCaption = makeGroupedFormCaption("This virtual machine has no network device.")
 
         var paragraphs: [InfoPopoverParagraph] = [
             .body(
-                "NAT-mode networking. The host assigns the guest a DHCP address on a private subnet. Outbound connections work; there is no port forwarding from host to guest — incoming connections require knowing the guest's IP."
-            )
+                "The mode sets how the guest reaches the network. Shared Network gives it outbound access through the host: the guest gets a DHCP address on a private subnet, and other machines on your network cannot reach it. Bridged puts the guest on your network through the chosen host interface, where it requests its own address like a separate machine."
+            ),
+            .body(
+                "Bridged traffic bypasses any VPN running on the host. Bridging over Wi-Fi is best-effort — the Wi-Fi standard does not bridge additional stations and there is no client-side fix, so prefer a wired interface."
+            ),
         ]
         if instance.configuration.guestOS == .linux {
             paragraphs.append(
@@ -903,7 +941,114 @@ extension VMSettingsViewController {
         return makeSection([
             makeHeader("Network", lockable: true, paragraphs: paragraphs),
             makeGroupedFormCard(rows: rows),
+            networkNoDeviceCaption,
         ])
+    }
+
+    private func makeNetworkModePopUp() -> NSPopUpButton {
+        let popUp = NSPopUpButton()
+        popUp.controlSize = .small
+        // Otherwise AppKit re-derives each item's enabled state on every event,
+        // undoing the deliberately-disabled entries below.
+        popUp.autoenablesItems = false
+        popUp.target = self
+        popUp.action = #selector(networkModeChanged)
+        popUp.menu?.delegate = self
+        return popUp
+    }
+
+    /// Rebuilds the Mode menu and selects the entry matching the configuration.
+    ///
+    /// The bridgeable-interface list is live host state, so the menu is rebuilt
+    /// from scratch each time it opens rather than cached at build time.
+    private func rebuildNetworkModeMenu() {
+        guard let menu = networkModePopUp.menu else { return }
+        menu.removeAllItems()
+        addNetworkModeItem("Shared Network", choice: .shared, to: menu)
+        addNetworkModeItem("None", choice: .none, to: menu)
+
+        let config = instance.configuration
+        if entitlements.hasVMNetworking {
+            menu.addItem(.sectionHeader(title: "Bridged"))
+            addNetworkModeItem("Automatic", choice: .bridgedAutomatic, to: menu)
+            let interfaces = bridgedInterfaces.interfaces()
+            if interfaces.isEmpty {
+                addNetworkModePlaceholder("No Bridgeable Interfaces", to: menu)
+            }
+            for interface in interfaces {
+                addNetworkModeItem(
+                    Self.networkInterfaceTitle(interface),
+                    choice: .bridgedInterface(interface.identifier), to: menu)
+            }
+            // Keep an interface the host isn't offering right now on the list, so
+            // the picker shows what the VM is actually set to — only while it IS
+            // what the VM is set to; an identifier merely remembered from an
+            // earlier bridged choice adds no entry.
+            if config.networkEnabled, config.networkMode == .bridged,
+                let persisted = config.bridgedInterfaceIdentifier,
+                !interfaces.contains(where: { $0.identifier == persisted })
+            {
+                addNetworkModeItem(
+                    "\(persisted) (unavailable)", choice: .bridgedInterface(persisted),
+                    to: menu, enabled: false)
+            }
+        } else if config.networkEnabled, config.networkMode == .bridged {
+            addNetworkModeItem(
+                "Bridged (unavailable)", choice: .bridgedUnavailable, to: menu, enabled: false)
+        }
+
+        selectNetworkModeItem()
+    }
+
+    /// Appends one Mode entry.
+    ///
+    /// `choice` is deliberately non-optional: in an optional context Swift reads
+    /// the `.none` case as `nil`, which would strip the None entry's identity.
+    private func addNetworkModeItem(
+        _ title: String, choice: NetworkModeChoice, to menu: NSMenu, enabled: Bool = true
+    ) {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.representedObject = choice
+        item.isEnabled = enabled
+        menu.addItem(item)
+    }
+
+    /// Appends an entry that stands for no mode at all — readable, never chosen.
+    private func addNetworkModePlaceholder(_ title: String, to menu: NSMenu) {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        menu.addItem(item)
+    }
+
+    /// How one bridgeable interface reads in the picker — `Wi-Fi (en0)`, or the
+    /// bare identifier when the host names it nothing else.
+    private static func networkInterfaceTitle(_ interface: BridgedInterface) -> String {
+        guard interface.localizedDisplayName != interface.identifier else { return interface.identifier }
+        return "\(interface.localizedDisplayName) (\(interface.identifier))"
+    }
+
+    /// The entry standing for the current configuration.
+    private var currentNetworkChoice: NetworkModeChoice {
+        let config = instance.configuration
+        guard config.networkEnabled else { return .none }
+        switch config.networkMode {
+        case .shared:
+            return .shared
+        case .bridged:
+            guard entitlements.hasVMNetworking else { return .bridgedUnavailable }
+            guard let identifier = config.bridgedInterfaceIdentifier else { return .bridgedAutomatic }
+            return .bridgedInterface(identifier)
+        }
+    }
+
+    private func selectNetworkModeItem() {
+        let choice = currentNetworkChoice
+        guard
+            let item = networkModePopUp.menu?.items.first(where: {
+                $0.representedObject as? NetworkModeChoice == choice
+            })
+        else { return }
+        networkModePopUp.select(item)
     }
 
     // MARK: Audio
@@ -1449,7 +1594,12 @@ extension VMSettingsViewController {
     }
 
     private func refreshNetwork() {
-        networkSwitch.state = instance.configuration.networkEnabled ? .on : .off
+        rebuildNetworkModeMenu()
+        // None leaves no device to describe, so the card's remaining rows give way
+        // to a caption saying so.
+        let hasDevice = instance.configuration.networkEnabled
+        macAddressRow?.isHidden = !hasDevice
+        networkNoDeviceCaption.isHidden = hasDevice
     }
 
     private func refreshAudio() {
@@ -1821,8 +1971,37 @@ extension VMSettingsViewController: NSMenuItemValidation {
         writeConfig { $0.memorySizeInGB = memoryStepper.integerValue }
     }
 
-    @objc private func networkToggled() {
-        writeConfig { $0.networkEnabled = networkSwitch.state == .on }
+    @objc private func networkModeChanged() {
+        guard let choice = networkModePopUp.selectedItem?.representedObject as? NetworkModeChoice
+        else { return }
+        switch choice {
+        case .shared:
+            // `bridgedInterfaceIdentifier` is left alone so switching back to
+            // Bridged remembers the interface.
+            writeConfig {
+                $0.networkEnabled = true
+                $0.networkMode = .shared
+            }
+        case .none:
+            writeConfig { $0.networkEnabled = false }
+        case .bridgedAutomatic:
+            writeConfig {
+                $0.networkEnabled = true
+                $0.networkMode = .bridged
+                $0.bridgedInterfaceIdentifier = nil
+            }
+        case .bridgedInterface(let identifier):
+            writeConfig {
+                $0.networkEnabled = true
+                $0.networkMode = .bridged
+                $0.bridgedInterfaceIdentifier = identifier
+            }
+        case .bridgedUnavailable:
+            return
+        }
+        // The write flips the card's row visibility; refresh in case the value was
+        // already what the model held.
+        refreshNetwork()
     }
 
     // MARK: Display
@@ -2439,6 +2618,16 @@ extension VMSettingsViewController: NSMenuItemValidation {
             guard let self, response == .OK, let url = panel.url else { return }
             self.viewModel.createRemovableMedia(for: self.instance, sizeInGB: sizeInGB, destinationURL: url)
         }
+    }
+}
+
+// MARK: - NSMenuDelegate
+
+extension VMSettingsViewController: NSMenuDelegate {
+    /// Re-reads the host's bridgeable interfaces each time the Mode picker opens.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === networkModePopUp.menu else { return }
+        rebuildNetworkModeMenu()
     }
 }
 

@@ -130,8 +130,24 @@ struct VMConfigurationCloneTests {
         let clone = original.clonedForNewInstance(existingNames: [])
 
         #expect(clone.networkEnabled == true)
+        #expect(clone.networkMode == .shared)
         // macAddress is copied as-is; caller regenerates it
         #expect(clone.macAddress == "aa:bb:cc:dd:ee:ff")
+    }
+
+    @Test("Clone preserves the bridged mode and its interface")
+    func clonePreservesBridgedInterface() {
+        let original = VMConfiguration(
+            name: "Test",
+            guestOS: .linux,
+            bootMode: .efi,
+            networkMode: .bridged,
+            bridgedInterfaceIdentifier: "en0"
+        )
+        let clone = original.clonedForNewInstance(existingNames: [])
+
+        #expect(clone.networkMode == .bridged)
+        #expect(clone.bridgedInterfaceIdentifier == "en0")
     }
 
     @Test("Clone preserves guest OS and boot mode")

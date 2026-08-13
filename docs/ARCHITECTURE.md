@@ -124,6 +124,10 @@ substitute mocks. Services split by concurrency: those that touch
 single VZ-facing translation point, covering boot loader, CPU, memory, storage, network, display,
 input, audio, the Linux SPICE console port, and the macOS `VZVirtioSocketDeviceConfiguration`.
 
+The network attachment follows the VM's persisted mode: shared NAT, or bridged over a host
+interface resolved through `BridgedInterfaceProviding` — the same seam the settings section's Mode
+picker reads its interface list from.
+
 **VZ is only ever handed symlink-resolved URLs.** VZ resolves no symlinks and rejects a path
 containing one in any component, reporting it as a missing or invalid file while `FileManager`
 reports the file present and readable. `ConfigurationBuilder` and `MacOSInstallService` resolve
