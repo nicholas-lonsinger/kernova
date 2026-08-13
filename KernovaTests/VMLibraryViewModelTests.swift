@@ -29,7 +29,8 @@ struct VMLibraryViewModelTests {
         downloadService: MockDownloadService = MockDownloadService(),
         downloadsDirectory: URL? = FileManager.default.urls(
             for: .downloadsDirectory, in: .userDomainMask
-        ).first
+        ).first,
+        vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider()
     ) -> (
         VMLibraryViewModel, MockVMStorageService, MockDiskImageService, MockVirtualizationService,
         any USBDeviceProviding
@@ -45,7 +46,8 @@ struct VMLibraryViewModelTests {
             downloadService: downloadService,
             fileSystem: fileSystem,
             downloadsDirectory: downloadsDirectory,
-            preferences: preferences
+            preferences: preferences,
+            vmnetNetworks: vmnetNetworks
         )
         vm.presenter = presenter
         return (vm, storageService, diskImageService, virtualizationService, usbDeviceService)
@@ -2112,6 +2114,43 @@ struct VMLibraryViewModelTests {
 
         #expect(presenter.showError == true)
         #expect(presenter.errorMessage != nil)
+    }
+
+    // MARK: - Address Reservation Sync
+
+    @Test("A configuration change syncs the VM's DHCP reservation slot for its mode's network")
+    func updateConfigurationSyncsAddressReservation() {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
+        let instance = makeInstance()
+
+        viewModel.updateConfiguration(of: instance) {
+            $0.networkEnabled = true
+            $0.networkMode = .shared
+            $0.macAddress = "AA:BB:CC:DD:EE:0F"
+        }
+
+        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
+        #expect(vmnet.reservedMACs.map(\.kind) == [.shared])
+    }
+
+    @Test("A bridged or MAC-less configuration takes no reservation slot")
+    func bridgedConfigurationTakesNoReservationSlot() {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
+        let instance = makeInstance()
+
+        viewModel.updateConfiguration(of: instance) {
+            $0.networkEnabled = true
+            $0.networkMode = .bridged
+            $0.macAddress = "aa:bb:cc:dd:ee:0f"
+        }
+        viewModel.updateConfiguration(of: instance) {
+            $0.networkMode = .shared
+            $0.macAddress = nil
+        }
+
+        #expect(vmnet.reservedMACs.isEmpty)
     }
 
     // MARK: - trySave / tryForceStop

@@ -497,6 +497,9 @@ struct VMInstanceTests {
             device: device,
             interfaces: provider,
             linkObserver: MockNetworkLinkObserver(),
+            // Pinned rather than read from the test host's signature, so the
+            // plans these tests assert on don't vary with how it was signed.
+            isVMNetworkingEntitled: false,
             retryDelays: [],
             isEligible: { [weak instance] in
                 guard let instance else { return false }
@@ -514,9 +517,18 @@ struct VMInstanceTests {
         instance.networkAttachmentPending = true
 
         #expect(instance.statusDisplayNSColor == StatusColor.warning)
-        let tip = instance.statusToolTip
-        #expect(tip != nil)
-        #expect(tip!.contains("network interface"))
+        // The wording names what is actually unavailable: the app-managed
+        // network for Shared and Host Only, a host interface for Bridged.
+        instance.configuration.networkMode = .shared
+        #expect(
+            instance.statusToolTip
+                == "The Shared Network is unavailable. Kernova reconnects automatically.")
+        instance.configuration.networkMode = .hostOnly
+        #expect(
+            instance.statusToolTip
+                == "The Host Only network is unavailable. Kernova reconnects automatically.")
+        instance.configuration.networkMode = .bridged
+        #expect(instance.statusToolTip?.contains("network interface") == true)
     }
 
     @Test("applyLivePolicy forwards a network mode change to the coordinator")

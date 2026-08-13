@@ -51,6 +51,7 @@ struct NetworkAttachmentCoordinatorTests {
         devicePlan: NetworkAttachmentPlan? = nil,
         available: [BridgedInterface] = [],
         primary: String? = nil,
+        entitled: Bool = false,
         retryDelays: [TimeInterval] = []
     ) -> Harness {
         let device = MockNetworkDeviceControl(plan: devicePlan)
@@ -67,6 +68,7 @@ struct NetworkAttachmentCoordinatorTests {
             interfaces: provider,
             linkObserver: observer,
             vmnetNetworks: vmnet,
+            isVMNetworkingEntitled: entitled,
             retryDelays: retryDelays,
             clock: clock,
             isEligible: { eligibility.isEligible },
@@ -112,6 +114,45 @@ struct NetworkAttachmentCoordinatorTests {
 
         #expect(h.device.appliedPlans == [.hostOnly])
         #expect(!h.coordinator.isPending)
+    }
+
+    @Test("An entitled build realizes Shared over the app-managed vmnet network")
+    func entitledSharedRealizesVmnetPlan() {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
+            entitled: true)
+
+        h.coordinator.activate()
+
+        #expect(h.device.appliedPlans == [.sharedVmnet])
+        #expect(!h.coordinator.isPending)
+    }
+
+    @Test("An entitled build swaps a NAT attachment over to the vmnet shared network")
+    func entitledSharedReplacesNATAttachment() {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
+            devicePlan: .nat,
+            entitled: true)
+
+        h.coordinator.activate()
+
+        #expect(h.device.appliedPlans == [.sharedVmnet])
+    }
+
+    @Test("A Shared ladder burning out invalidates the shared network once per episode")
+    func sharedLadderExhaustionInvalidatesSharedNetwork() async {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
+            entitled: true,
+            retryDelays: [])
+        h.device.refusedPlans = [.sharedVmnet]
+        h.vmnet.materializeFails = true
+
+        h.coordinator.activate()
+        #expect(h.vmnet.invalidatedKinds == [.shared])
+        await h.coordinator.vmnetMaterializationTaskForTesting?.value
+        h.coordinator.stop()
     }
 
     @Test("A Host Only network that won't materialize goes pending and retries on the ladder")

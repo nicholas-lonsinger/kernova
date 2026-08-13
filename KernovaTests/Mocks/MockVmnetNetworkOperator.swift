@@ -1,5 +1,6 @@
 import Foundation
 import Virtualization
+import vmnet
 
 @testable import Kernova
 
@@ -31,17 +32,21 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
 
     private(set) var createdKinds: [VmnetNetworkKind] = []
     private(set) var pinnedAddressings: [VmnetNetworkAddressing?] = []
+    private(set) var installedReservations: [[(mac: String, address: String)]] = []
     private(set) var releasedNetworks: [OpaquePointer] = []
 
     private var fabricatedNetworks: [UnsafeMutableRawPointer] = []
 
     deinit { fabricatedNetworks.forEach { $0.deallocate() } }
 
-    func createNetwork(_ kind: VmnetNetworkKind, addressing: VmnetNetworkAddressing?) throws
-        -> (handle: VmnetNetworkHandle, addressing: VmnetNetworkAddressing)
-    {
+    func createNetwork(
+        _ kind: VmnetNetworkKind,
+        addressing: VmnetNetworkAddressing?,
+        reservations: [(mac: String, address: String)]
+    ) throws -> (handle: VmnetNetworkHandle, addressing: VmnetNetworkAddressing) {
         createdKinds.append(kind)
         pinnedAddressings.append(addressing)
+        installedReservations.append(reservations)
         if let createNetworkError { throw createNetworkError }
         if addressing != nil, let pinnedCreateError { throw pinnedCreateError }
         return (makeHandle(), reservedAddressingOverride ?? addressing ?? freshAddressing)
@@ -104,5 +109,30 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, @unchecked Sendable
     func invalidateNetwork(for kind: VmnetNetworkKind) {
         invalidatedKinds.append(kind)
         isMaterialized = false
+    }
+
+    // MARK: - Reservations
+
+    /// Scripted answer for `reservedAddress(for:kind:)`, keyed by lowercased MAC.
+    var scriptedAddresses: [String: String] = [:]
+    private(set) var reservedMACs: [(mac: String, kind: VmnetNetworkKind)] = []
+
+    func reserveAddressIfNeeded(for mac: String, kind: VmnetNetworkKind) {
+        let normalized = mac.lowercased()
+        guard !reservedMACs.contains(where: { $0.mac == normalized && $0.kind == kind }) else {
+            return
+        }
+        reservedMACs.append((mac: normalized, kind: kind))
+    }
+
+    func reservedAddress(for mac: String, kind: VmnetNetworkKind) -> String? {
+        scriptedAddresses[mac.lowercased()]
+    }
+
+    /// Scripted answer for `kind(ofNetwork:)`.
+    var scriptedNetworkKind: VmnetNetworkKind?
+
+    func kind(ofNetwork network: vmnet_network_ref) -> VmnetNetworkKind? {
+        scriptedNetworkKind
     }
 }
