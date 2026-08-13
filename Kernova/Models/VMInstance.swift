@@ -502,12 +502,11 @@ final class VMInstance {
             device: VZNetworkDeviceHandle(device: device),
             interfaces: HostBridgedInterfaceProvider(),
             linkObserver: HostNetworkLinkObserver(),
-            choice: { [weak self] in
-                guard let self, self.configuration.networkEnabled else { return nil }
-                return NetworkChoice(
-                    mode: self.configuration.networkMode,
-                    bridgedInterfaceIdentifier: self.configuration.bridgedInterfaceIdentifier)
+            isEligible: { [weak self] in
+                guard let self else { return false }
+                return self.status == .running || self.status == .paused
             },
+            choice: { [weak self] in self?.configuration.networkChoice },
             onPendingChange: { [weak self] pending in
                 self?.networkAttachmentPending = pending
             })

@@ -498,12 +498,11 @@ struct VMInstanceTests {
             interfaces: provider,
             linkObserver: MockNetworkLinkObserver(),
             retryDelays: [],
-            choice: { [weak instance] in
-                guard let instance, instance.configuration.networkEnabled else { return nil }
-                return NetworkChoice(
-                    mode: instance.configuration.networkMode,
-                    bridgedInterfaceIdentifier: instance.configuration.bridgedInterfaceIdentifier)
+            isEligible: { [weak instance] in
+                guard let instance else { return false }
+                return instance.status == .running || instance.status == .paused
             },
+            choice: { [weak instance] in instance?.configuration.networkChoice },
             onPendingChange: { [weak instance] in instance?.networkAttachmentPending = $0 })
         instance.networkAttachmentCoordinator = coordinator
         return coordinator
@@ -543,13 +542,14 @@ struct VMInstanceTests {
 
     @Test("applyLivePolicy ignores a network change while the VM is stopped")
     func applyLivePolicyIgnoresNetworkChangeWhileStopped() {
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(status: .running)
         instance.configuration.networkEnabled = true
         instance.configuration.networkMode = .shared
         let device = MockNetworkDeviceControl()
         let coordinator = attachNetworkCoordinator(to: instance, device: device)
         coordinator.activate()
         #expect(device.appliedPlans == [.nat])
+        instance.status = .stopped
 
         let old = instance.configuration
         instance.configuration.networkMode = .bridged

@@ -1053,6 +1053,21 @@ struct VMSettingsViewControllerTests {
         #expect(popUp.menu?.items.first { $0.title == "Wi-Fi (en0)" }?.isEnabled == true)
     }
 
+    @Test("The Network lock icon hides while the picker is live, and only then")
+    func networkLockIconHidesWhileThePickerIsLive() {
+        let (liveVC, _) = makeNetworkController(
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"),
+            isReadOnly: true, status: .running)
+        // Every other lockable section still shows its lock; only the live
+        // picker's section drops the claim.
+        #expect(lockIcons(in: liveVC.view).filter(\.isHidden).count == 1)
+
+        let (savingVC, _) = makeNetworkController(
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]),
+            isReadOnly: true, status: .saving)
+        #expect(lockIcons(in: savingVC.view).allSatisfy { !$0.isHidden })
+    }
+
     @Test("A live mode switch writes the config from the running picker")
     func runningPickerWritesALiveModeSwitch() throws {
         let (vc, instance) = makeNetworkController(

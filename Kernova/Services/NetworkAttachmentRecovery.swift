@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import SystemConfiguration
 import Virtualization
 import os
@@ -23,6 +24,15 @@ struct NetworkChoice: Equatable {
     let mode: VMNetworkMode
     /// The persisted bridged interface, `nil` for Automatic.
     let bridgedInterfaceIdentifier: String?
+}
+
+extension VMConfiguration {
+    /// The network the user chose, as attachment recovery consumes it; `nil`
+    /// when the VM has no network device.
+    var networkChoice: NetworkChoice? {
+        guard networkEnabled else { return nil }
+        return NetworkChoice(mode: networkMode, bridgedInterfaceIdentifier: bridgedInterfaceIdentifier)
+    }
 }
 
 /// A live VM's network device, as attachment recovery drives it.
@@ -155,37 +165,39 @@ final class HostNetworkLinkObserver: NetworkLinkObserving {
 /// until one returns — it never silently becomes Shared Network, and no mode
 /// is ever attached that the user didn't choose (docs/NETWORKING.md).
 ///
-/// Created by `VMInstance` alongside the `VZVirtualMachine`; `activate()` is
-/// deferred until the session reaches `.running`, since VZ documents runtime
-/// attachment swapping for a running VM only.
+/// Created by `VMInstance` alongside the `VZVirtualMachine`. `activate()` is
+/// deferred until the session first reaches `.running`, and reconciliation is
+/// gated to running and live-paused sessions through `isEligible` — Kernova's
+/// choice to keep attachment churn away from boot, restore, and state saves;
+/// runtime attachment swaps themselves carry no VZ state precondition.
 @MainActor
 final class NetworkAttachmentCoordinator {
     private static let logger = Logger(
         subsystem: "app.kernova", category: "NetworkAttachmentCoordinator")
 
-    /// Reattempt cadence after a failed attach, reset by each fresh trigger.
-    /// Bounded: once exhausted, the next link change or disconnect tries again.
-    /// It exists because `VZBridgedNetworkInterface.networkInterfaces` can lag
+    /// Reattempt cadence, in seconds, after a failed attach; escalated while
+    /// attaches keep failing, reset by each fresh trigger. Bounded: once
+    /// exhausted, recovery waits for the next link change or disconnect. It
+    /// exists because `VZBridgedNetworkInterface.networkInterfaces` can lag
     /// the dynamic-store event announcing the interface.
-    static let defaultRetryDelays: [Duration] = [
-        .seconds(1), .seconds(2), .seconds(4), .seconds(8),
-    ]
+    static let defaultRetryDelays: [TimeInterval] = [1, 2, 4, 8]
 
-    /// Two disconnects inside this window mean VZ is failing reattach attempts
-    /// as fast as they are made — setting `VZNetworkDevice.attachment` reports
-    /// failure only asynchronously, through another disconnect callback — so
-    /// the burst routes through the bounded retry ladder instead of
-    /// reattaching immediately, which would spin at VZ's failure cadence.
-    static let defaultDisconnectBurstWindow: Duration = .seconds(1)
+    /// A disconnect this soon, in seconds, after an attach attempt is VZ
+    /// reporting that attempt failed — a live attachment set reports failure
+    /// only asynchronously, through another disconnect callback — so it routes
+    /// through the retry ladder instead of reattaching immediately, which
+    /// would spin at VZ's failure cadence.
+    static let defaultDisconnectBurstWindow: TimeInterval = 1
 
     private let vmName: String
     private let device: any NetworkDeviceControlling
     private let interfaces: any BridgedInterfaceProviding
     private let linkObserver: any NetworkLinkObserving
-    private let retryDelays: [Duration]
-    private let disconnectBurstWindow: Duration
-    private let clock = ContinuousClock()
-    private var lastDisconnectAt: ContinuousClock.Instant?
+    private let retryDelays: [TimeInterval]
+    private let disconnectBurstWindow: TimeInterval
+    private let clock: any EngineClock
+    private var lastAttachAttemptAt: EngineInstant?
+    private let isEligible: @MainActor () -> Bool
     private let choice: @MainActor () -> NetworkChoice?
     private let onPendingChange: @MainActor (Bool) -> Void
 
@@ -201,8 +213,10 @@ final class NetworkAttachmentCoordinator {
         device: any NetworkDeviceControlling,
         interfaces: any BridgedInterfaceProviding,
         linkObserver: any NetworkLinkObserving,
-        retryDelays: [Duration] = NetworkAttachmentCoordinator.defaultRetryDelays,
-        disconnectBurstWindow: Duration = NetworkAttachmentCoordinator.defaultDisconnectBurstWindow,
+        retryDelays: [TimeInterval] = NetworkAttachmentCoordinator.defaultRetryDelays,
+        disconnectBurstWindow: TimeInterval = NetworkAttachmentCoordinator.defaultDisconnectBurstWindow,
+        clock: any EngineClock = makePlatformEngineClock(),
+        isEligible: @escaping @MainActor () -> Bool = { true },
         choice: @escaping @MainActor () -> NetworkChoice?,
         onPendingChange: @escaping @MainActor (Bool) -> Void
     ) {
@@ -212,6 +226,8 @@ final class NetworkAttachmentCoordinator {
         self.linkObserver = linkObserver
         self.retryDelays = retryDelays
         self.disconnectBurstWindow = disconnectBurstWindow
+        self.clock = clock
+        self.isEligible = isEligible
         self.choice = choice
         self.onPendingChange = onPendingChange
     }
@@ -240,11 +256,10 @@ final class NetworkAttachmentCoordinator {
         Self.logger.warning(
             "Network attachment for '\(self.vmName, privacy: .public)' disconnected: \(error.localizedDescription, privacy: .public)"
         )
-        guard isActive else { return }
-        let now = clock.now
-        let isBurst = lastDisconnectAt.map { now - $0 < disconnectBurstWindow } ?? false
-        lastDisconnectAt = now
-        if isBurst {
+        guard isActive, isEligible() else { return }
+        let isFailedAttachReport =
+            lastAttachAttemptAt.map { clock.seconds(since: $0) < disconnectBurstWindow } ?? false
+        if isFailedAttachReport {
             // VZ has already nil'd the attachment; reflect that and let the
             // ladder pace the next attempt rather than reattaching in lockstep
             // with a persistently failing attach.
@@ -268,6 +283,11 @@ final class NetworkAttachmentCoordinator {
 
     private func reconcile(trigger: String, resetBackoff: Bool = true) {
         cancelRetry()
+        guard isEligible() else {
+            // A saving or otherwise ineligible session: drop the trigger —
+            // activation at the next `.running` re-reconciles.
+            return
+        }
         if resetBackoff { nextRetryIndex = 0 }
 
         guard let choice = choice() else {
@@ -281,21 +301,32 @@ final class NetworkAttachmentCoordinator {
         }
 
         let desired = resolvePlan(for: choice)
-        if let desired, device.currentPlan != desired {
-            if device.apply(desired) {
-                Self.logger.notice(
-                    "Attached network for '\(self.vmName, privacy: .public)' (\(String(describing: desired), privacy: .public), on \(trigger, privacy: .public))"
-                )
-            } else {
-                Self.logger.warning(
-                    "Could not attach network for '\(self.vmName, privacy: .public)' (\(String(describing: desired), privacy: .public) refused, on \(trigger, privacy: .public))"
-                )
+        if let desired {
+            if device.currentPlan != desired {
+                lastAttachAttemptAt = clock.now
+                if device.apply(desired) {
+                    Self.logger.notice(
+                        "Attached network for '\(self.vmName, privacy: .public)' (\(String(describing: desired), privacy: .public), on \(trigger, privacy: .public))"
+                    )
+                } else {
+                    Self.logger.warning(
+                        "Could not attach network for '\(self.vmName, privacy: .public)' (\(String(describing: desired), privacy: .public) refused, on \(trigger, privacy: .public))"
+                    )
+                }
             }
+        } else if device.currentPlan != nil {
+            // Nothing realizes the choice — a still-usable bridge would have
+            // been held by `resolvePlan` — so what remains is stale (its
+            // interface vanished) and the honest state is detached.
+            device.detach()
         }
 
-        // Never leave an attachment realizing a mode other than the chosen one:
-        // when the chosen mode cannot attach, the honest state is detached, not
-        // a substituted mode (docs/NETWORKING.md).
+        // Never leave an attachment realizing a mode other than the chosen one
+        // (a refused apply can leave the previous mode's attachment live): when
+        // the chosen mode cannot attach, the honest state is detached, not a
+        // substituted mode (docs/NETWORKING.md). A refused apply whose live
+        // attachment does match the mode is kept — a working bridge beats
+        // detaching, and the next trigger retries.
         if let current = device.currentPlan, !current.matches(choice.mode) {
             device.detach()
         }
@@ -313,14 +344,15 @@ final class NetworkAttachmentCoordinator {
             return .nat
         case .bridged:
             let available = interfaces.interfaces().map(\.identifier)
-            // A live Automatic bridge holds its interface while the host still
-            // offers it: Automatic resolves at boot and reattach, not
-            // continuously — chasing every default-route change would bounce
-            // the guest's link for nothing.
-            if choice.bridgedInterfaceIdentifier == nil,
-                case .bridged(let current)? = device.currentPlan,
-                available.contains(current)
-            {
+            // The persisted interface is reclaimed the moment the host offers
+            // it again; otherwise a live bridge is held while its interface
+            // remains available — for Automatic so a default-route change
+            // doesn't bounce the guest's link, and for a narrowed fallback so
+            // the default route flapping away doesn't detach a working bridge.
+            if let persisted = choice.bridgedInterfaceIdentifier, available.contains(persisted) {
+                return .bridged(persisted)
+            }
+            if case .bridged(let current)? = device.currentPlan, available.contains(current) {
                 return .bridged(current)
             }
             guard
@@ -337,8 +369,8 @@ final class NetworkAttachmentCoordinator {
         guard nextRetryIndex < retryDelays.count else { return }
         let delay = retryDelays[nextRetryIndex]
         nextRetryIndex += 1
-        retryTask = Task { [weak self] in
-            do { try await Task.sleep(for: delay) } catch { return }
+        retryTask = Task { [weak self, clock] in
+            do { try await clock.sleep(for: delay) } catch { return }
             guard let self, !Task.isCancelled else { return }
             self.retryTask = nil
             self.reconcile(trigger: "retry", resetBackoff: false)

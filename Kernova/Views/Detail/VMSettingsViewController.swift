@@ -515,9 +515,12 @@ extension VMSettingsViewController {
     }
 
     /// Section header; any lock icon it creates is registered in ``lockIcons``
-    /// and toggled by ``apply()``.
+    /// and toggled by ``apply()``. A section whose lock is conditional passes
+    /// `lockIconSink` to keep its own reference — by handoff, not by position
+    /// in ``lockIcons``.
     private func makeHeader(
-        _ title: String, lockable: Bool = false, paragraphs: [InfoPopoverParagraph] = []
+        _ title: String, lockable: Bool = false, paragraphs: [InfoPopoverParagraph] = [],
+        lockIconSink: ((NSImageView) -> Void)? = nil
     ) -> NSView {
         var views: [NSView] = []
         if lockable {
@@ -529,6 +532,7 @@ extension VMSettingsViewController {
             lock.setContentHuggingPriority(.required, for: .horizontal)
             lock.isHidden = true
             lockIcons.append(lock)
+            lockIconSink?(lock)
             views.append(lock)
         }
         views.append(makeGroupedFormSectionHeader(title))
@@ -950,8 +954,9 @@ extension VMSettingsViewController {
                     "The interface usually appears as `enp0s1`. If networking doesn't come up, make sure your distro's DHCP client or NetworkManager is running."
                 ))
         }
-        let header = makeHeader("Network", lockable: true, paragraphs: paragraphs)
-        networkLockIcon = lockIcons.last
+        let header = makeHeader("Network", lockable: true, paragraphs: paragraphs) {
+            self.networkLockIcon = $0
+        }
         return makeSection([
             header,
             makeGroupedFormCard(rows: rows),

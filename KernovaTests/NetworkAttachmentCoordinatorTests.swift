@@ -1,3 +1,4 @@
+import Foundation
 import KernovaTestSupport
 import Testing
 @testable import Kernova
@@ -17,11 +18,20 @@ struct NetworkAttachmentCoordinatorTests {
         init(_ choice: NetworkChoice?) { self.choice = choice }
     }
 
+    /// Mutable eligibility the coordinator's `isEligible` closure reads,
+    /// standing in for the live `VMInstance.status` gate.
+    @MainActor
+    private final class EligibilityBox {
+        var isEligible = true
+    }
+
     private struct Harness {
         let coordinator: NetworkAttachmentCoordinator
         let device: MockNetworkDeviceControl
         let provider: MockBridgedInterfaceProvider
         let observer: MockNetworkLinkObserver
+        let clock: TestEngineClock
+        let eligibility: EligibilityBox
         let choiceBox: ChoiceBox
         let pendingChanges: PendingRecorder
     }
@@ -40,12 +50,13 @@ struct NetworkAttachmentCoordinatorTests {
         devicePlan: NetworkAttachmentPlan? = nil,
         available: [BridgedInterface] = [],
         primary: String? = nil,
-        retryDelays: [Duration] = [],
-        disconnectBurstWindow: Duration = NetworkAttachmentCoordinator.defaultDisconnectBurstWindow
+        retryDelays: [TimeInterval] = []
     ) -> Harness {
         let device = MockNetworkDeviceControl(plan: devicePlan)
         let provider = MockBridgedInterfaceProvider(available: available, primary: primary)
         let observer = MockNetworkLinkObserver()
+        let clock = TestEngineClock()
+        let eligibility = EligibilityBox()
         let choiceBox = ChoiceBox(choice)
         let pendingChanges = PendingRecorder()
         let coordinator = NetworkAttachmentCoordinator(
@@ -54,12 +65,14 @@ struct NetworkAttachmentCoordinatorTests {
             interfaces: provider,
             linkObserver: observer,
             retryDelays: retryDelays,
-            disconnectBurstWindow: disconnectBurstWindow,
+            clock: clock,
+            isEligible: { eligibility.isEligible },
             choice: { choiceBox.choice },
             onPendingChange: { pendingChanges.record($0) })
         return Harness(
             coordinator: coordinator, device: device, provider: provider,
-            observer: observer, choiceBox: choiceBox, pendingChanges: pendingChanges)
+            observer: observer, clock: clock, eligibility: eligibility,
+            choiceBox: choiceBox, pendingChanges: pendingChanges)
     }
 
     // MARK: - Session start
@@ -123,12 +136,12 @@ struct NetworkAttachmentCoordinatorTests {
         #expect(h.pendingChanges.values.isEmpty)
     }
 
-    @Test("A disconnect burst paces reattach through the retry ladder")
-    func disconnectBurstPacesReattachThroughRetryLadder() async {
+    @Test("A persistent attach-fail loop escalates the ladder and ends pending")
+    func persistentAttachFailureEscalatesLadderThenRestsPending() async {
         let h = makeHarness(
             choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
             devicePlan: .nat,
-            retryDelays: [.milliseconds(1)])
+            retryDelays: [1, 2])
         h.coordinator.activate()
 
         // VZ fails the attachment: the first disconnect reattaches immediately.
@@ -136,34 +149,46 @@ struct NetworkAttachmentCoordinatorTests {
         h.coordinator.attachmentWasDisconnected(error: TestFailure("link down"))
         #expect(h.device.appliedPlans == [.nat])
 
-        // VZ fails that reattach straight away — a live attach reports failure
-        // only through another disconnect. Within the burst window the ladder
-        // paces the next attempt instead of reattaching in lockstep.
+        // Each reattach fails straight away — a live attach reports failure
+        // only through another disconnect inside the burst window — so the
+        // ladder paces every following attempt instead of reattaching in
+        // lockstep, walking both rungs.
+        for rung in 1...2 {
+            h.device.plan = nil
+            h.coordinator.attachmentWasDisconnected(error: TestFailure("attach failed"))
+            #expect(h.device.appliedPlans.count == rung)
+            #expect(h.coordinator.isPending)
+            guard let retry = h.coordinator.retryTaskForTesting else {
+                Issue.record("Expected a scheduled retry on rung \(rung)")
+                return
+            }
+            await retry.value
+            #expect(h.device.appliedPlans.count == rung + 1)
+        }
+
+        // Exhausted: the next failure report arms nothing and pending holds
+        // until a link event or a disconnect outside the burst window.
         h.device.plan = nil
         h.coordinator.attachmentWasDisconnected(error: TestFailure("attach failed"))
-        #expect(h.device.appliedPlans == [.nat])
+        #expect(h.coordinator.retryTaskForTesting == nil)
+        #expect(h.device.appliedPlans.count == 3)
         #expect(h.coordinator.isPending)
-
-        guard let retry = h.coordinator.retryTaskForTesting else {
-            Issue.record("Expected a scheduled retry")
-            return
-        }
-        await retry.value
-        #expect(h.device.appliedPlans == [.nat, .nat])
-        #expect(!h.coordinator.isPending)
     }
 
     @Test("Disconnects outside the burst window each reattach immediately")
     func spacedDisconnectsReattachImmediately() {
         let h = makeHarness(
             choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
-            devicePlan: .nat,
-            disconnectBurstWindow: .zero)
+            devicePlan: .nat)
         h.coordinator.activate()
 
-        for _ in 1...3 {
+        for round in 1...3 {
             h.device.plan = nil
             h.coordinator.attachmentWasDisconnected(error: TestFailure("link down"))
+            #expect(h.device.appliedPlans.count == round)
+            // The attachment holds long enough to outlive the burst window, so
+            // the next disconnect is a fresh link event, not a failure report.
+            h.clock.advance(seconds: NetworkAttachmentCoordinator.defaultDisconnectBurstWindow + 1)
         }
 
         #expect(h.device.appliedPlans == [.nat, .nat, .nat])
@@ -219,6 +244,70 @@ struct NetworkAttachmentCoordinatorTests {
 
         #expect(h.device.appliedPlans.isEmpty)
         #expect(h.device.currentPlan == .bridged("en0"))
+    }
+
+    @Test("A vanished interface detaches the stale bridge, goes pending, and arms a retry")
+    func vanishedInterfaceDetachesStaleBridge() {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en1"),
+            devicePlan: .bridged("en1"),
+            available: [Self.ethernet],
+            primary: "en1",
+            retryDelays: [60])
+        h.coordinator.activate()
+        #expect(!h.coordinator.isPending)
+
+        // en1 pulled and the default route with it; the link event can land
+        // before (or without) VZ's disconnect callback, so the live attachment
+        // still names the vanished interface.
+        h.provider.available = []
+        h.provider.primary = nil
+        h.observer.fire()
+
+        #expect(h.device.detachCount == 1)
+        #expect(h.device.currentPlan == nil)
+        #expect(h.coordinator.isPending)
+        #expect(h.coordinator.retryTaskForTesting != nil)
+    }
+
+    @Test("A narrowed fallback holds while the default route flaps away")
+    func narrowedFallbackHeldWhilePrimaryGone() {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en5"),
+            devicePlan: .bridged("en0"),
+            available: [Self.wiFi],
+            primary: "en0")
+        h.coordinator.activate()
+
+        h.provider.primary = nil
+        h.observer.fire()
+
+        #expect(h.device.appliedPlans.isEmpty)
+        #expect(h.device.detachCount == 0)
+        #expect(h.device.currentPlan == .bridged("en0"))
+        #expect(!h.coordinator.isPending)
+    }
+
+    @Test("An ineligible session drops triggers until re-activation")
+    func ineligibleSessionDropsTriggers() {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
+            devicePlan: .nat)
+        h.coordinator.activate()
+
+        // Saving: the snapshot must not race an attachment mutation.
+        h.eligibility.isEligible = false
+        h.device.plan = nil
+        h.coordinator.attachmentWasDisconnected(error: TestFailure("mid-save"))
+        h.observer.fire()
+        h.coordinator.configurationChanged()
+        #expect(h.device.appliedPlans.isEmpty)
+        #expect(!h.coordinator.isPending)
+
+        // Back to .running: activation re-reconciles the dropped state.
+        h.eligibility.isEligible = true
+        h.coordinator.activate()
+        #expect(h.device.appliedPlans == [.nat])
     }
 
     // MARK: - Live configuration changes
@@ -280,7 +369,7 @@ struct NetworkAttachmentCoordinatorTests {
         let h = makeHarness(
             choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0"),
             available: [Self.wiFi],
-            retryDelays: [.milliseconds(1)])
+            retryDelays: [1])
         // The interface is listed but the attach refuses — the VZ interface
         // list lagging the dynamic store.
         h.device.refusedBridgeIdentifiers = ["en0"]
@@ -336,7 +425,7 @@ struct NetworkAttachmentCoordinatorTests {
     func stopCancelsRetryAndObservation() {
         let h = makeHarness(
             choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0"),
-            retryDelays: [.seconds(60)])
+            retryDelays: [60])
         h.coordinator.activate()
         #expect(h.coordinator.isPending)
         #expect(h.coordinator.retryTaskForTesting != nil)

@@ -1177,6 +1177,19 @@ struct VMConfigurationTests {
         #expect(config.bridgedInterfaceIdentifier == nil)
     }
 
+    @Test("networkChoice maps the persisted fields and is nil without a device")
+    func networkChoiceMapsPersistedFields() {
+        var config = VMConfiguration(name: "Test VM", guestOS: .linux, bootMode: .efi)
+        config.networkMode = .bridged
+        config.bridgedInterfaceIdentifier = "en0"
+        #expect(
+            config.networkChoice
+                == NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0"))
+
+        config.networkEnabled = false
+        #expect(config.networkChoice == nil)
+    }
+
     @Test("A config carrying neither network key decodes as Shared Network")
     func networkModeKeysMissingUseDefaults() throws {
         // `makeBaseJSON` carries `networkEnabled` but neither mode key.
