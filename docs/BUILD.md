@@ -20,7 +20,11 @@ Set `CODE_SIGN_IDENTITY = Apple Development` there whenever you have a certifica
 
 `DEVELOPMENT_TEAM` is what automatic signing resolves that certificate through, and the guest agent's Release Developer ID signing needs it too ([RELEASING.md](RELEASING.md)) — keep the two lines together.
 
-Every Release configuration pins its identity at target level, which outranks a project xcconfig, so the override reaches Debug alone. The guest agent stays ad-hoc in Debug as well: it runs inside the guest, where a host code identity buys nothing.
+Every Release configuration except the app's own pins its identity at target level, which outranks a project xcconfig — the app leaves Release unpinned so an entitled archive can sign with the real identity the override supplies. The guest agent stays ad-hoc in Debug as well: it runs inside the guest, where a host code identity buys nothing.
+
+The app's entitlements resolve through the same override point. `com.apple.vm.networking` is restricted — automatic signing refuses to sign it without an authorizing profile, and amfid kills an ad-hoc-signed binary that claims it at exec ("adhoc signed but contains restricted entitlements") — so the app's `CODE_SIGN_ENTITLEMENTS` resolves through `KERNOVA_APP_ENTITLEMENTS` in both configurations, defaulting in `Base.xcconfig` to `Kernova/Resources/Kernova.Development.entitlements`: the shipping set minus that key, keeping a profile-less checkout building and launchable.
+
+With the capability enabled on the team's App ID, setting `KERNOVA_APP_ENTITLEMENTS = Kernova/Resources/Kernova.entitlements` in `Local.xcconfig` opts the app into the full set — automatic signing then embeds the authorizing Xcode-managed profile, and an archive cut this way carries the key ([RELEASING.md](RELEASING.md) owns the per-lane choice). Code asks which set it was signed with through `EntitlementService`, never `#if DEBUG`.
 
 ## One test invocation, three test targets
 

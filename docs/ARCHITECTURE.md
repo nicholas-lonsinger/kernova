@@ -188,9 +188,11 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
   ([BUILD.md](BUILD.md)).
 
 Also here: `LoginItemService` (the `SMAppService.mainApp` wrapper behind the login-item toggle),
-`AttachmentFileMonitor` (existence watching for the settings attachment rows), `RuntimeFileAccess`
-(per-boot security-scoped access, released once in `tearDownSession`), and `SerialSocketRelay`
-(below).
+`EntitlementService` (what this build's signature authorizes, read from the process's own
+signature via `SecTaskCopyValueForEntitlement`, so feature UI can degrade in builds signed
+without a restricted entitlement), `AttachmentFileMonitor` (existence watching for the settings
+attachment rows), `RuntimeFileAccess` (per-boot security-scoped access, released once in
+`tearDownSession`), and `SerialSocketRelay` (below).
 
 **Configuration writes have one door.** Every write — settings controls, install/uninstall flows,
 rename, and guest-driven `VMInstance.onUpdateConfiguration` callbacks — routes through

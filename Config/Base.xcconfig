@@ -10,9 +10,18 @@
 // no-ops when Local.xcconfig doesn't exist, so a fresh clone builds with
 // neither a team nor a certificate.
 
-// Debug's signing identity. Every Release configuration pins its own at
-// target level, which outranks a project xcconfig, so the Local.xcconfig
-// override below reaches Debug alone.
+// The default signing identity, ad-hoc. Targets that must stay ad-hoc (and
+// the guest agent's Developer ID lane) pin their own at target level, which
+// outranks this file; the app target deliberately leaves Release unpinned
+// so the Local.xcconfig override below can sign an entitled archive.
 CODE_SIGN_IDENTITY = -
+
+// The app target's CODE_SIGN_ENTITLEMENTS, both configurations. The default
+// Development variant omits the restricted com.apple.vm.networking key an
+// ad-hoc signature cannot carry, keeping a profile-less checkout building
+// in both configurations. Local.xcconfig opts a machine holding the
+// capability-enabled profile into the full Kernova.entitlements set — see
+// docs/BUILD.md "Signing identity".
+KERNOVA_APP_ENTITLEMENTS = Kernova/Resources/Kernova.Development.entitlements
 
 #include? "Local.xcconfig"
