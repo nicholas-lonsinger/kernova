@@ -862,10 +862,51 @@ struct VMSettingsViewControllerTests {
         let popUp = try #require(networkModePopUp(in: vc.view))
         #expect(
             popUp.itemTitles == [
-                "Shared Network", "None", "Bridged", "Automatic", "Wi-Fi (en0)", "Ethernet (en1)",
+                "Shared Network", "Host Only", "None", "Bridged", "Automatic", "Wi-Fi (en0)",
+                "Ethernet (en1)",
             ])
         let header = try #require(popUp.menu?.items.first { $0.title == "Bridged" })
         #expect(header.isSectionHeader)
+    }
+
+    @Test("An entitled build offers Host Only between Shared Network and None")
+    func entitledPickerOffersHostOnly() throws {
+        let (vc, _) = makeNetworkController()
+
+        let popUp = try #require(networkModePopUp(in: vc.view))
+        let titles = popUp.itemTitles
+        let hostOnly = try #require(titles.firstIndex(of: "Host Only"))
+        let shared = try #require(titles.firstIndex(of: "Shared Network"))
+        let none = try #require(titles.firstIndex(of: "None"))
+        #expect(hostOnly == shared + 1)
+        #expect(hostOnly < none)
+        #expect(popUp.menu?.items.first { $0.title == "Host Only" }?.isEnabled == true)
+    }
+
+    @Test("An unentitled build still reports a host-only VM's mode")
+    func unentitledBuildReportsAHostOnlyVM() throws {
+        let (vc, _) = makeNetworkController(mode: .hostOnly, entitled: false)
+
+        let popUp = try #require(networkModePopUp(in: vc.view))
+        #expect(popUp.titleOfSelectedItem == "Host Only (unavailable)")
+        #expect(
+            popUp.menu?.items.first { $0.title == "Host Only (unavailable)" }?.isEnabled == false)
+        #expect(popUp.menu?.items.first { $0.title == "Host Only" } == nil)
+    }
+
+    @Test("Choosing Host Only writes the mode and mints a MAC address")
+    func selectingHostOnlyWritesConfigAndMintsAMACAddress() throws {
+        // From a VM created with networking off, so the MAC is minted here.
+        let (vc, instance) = makeNetworkController(networkEnabled: false, macAddress: nil)
+        let popUp = try #require(networkModePopUp(in: vc.view))
+
+        popUp.selectItem(withTitle: "Host Only")
+        popUp.sendAction(popUp.action, to: popUp.target)
+
+        #expect(instance.configuration.networkEnabled == true)
+        #expect(instance.configuration.networkMode == .hostOnly)
+        let mac = try #require(instance.configuration.macAddress)
+        #expect(VZMACAddress(string: mac) != nil)
     }
 
     @Test("An unentitled build offers no bridged entries")
@@ -1050,6 +1091,7 @@ struct VMSettingsViewControllerTests {
         #expect(popUp.isEnabled)
         #expect(popUp.menu?.items.first { $0.title == "None" }?.isEnabled == false)
         #expect(popUp.menu?.items.first { $0.title == "Shared Network" }?.isEnabled == true)
+        #expect(popUp.menu?.items.first { $0.title == "Host Only" }?.isEnabled == true)
         #expect(popUp.menu?.items.first { $0.title == "Wi-Fi (en0)" }?.isEnabled == true)
     }
 

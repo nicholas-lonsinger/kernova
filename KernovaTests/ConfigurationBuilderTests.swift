@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import KernovaTestSupport
 import Virtualization
 @testable import Kernova
 
@@ -36,7 +37,7 @@ struct ConfigurationBuilderTests {
             Issue.record("Unexpected path validation error: \(error)")
         case .invalidHardwareModel, .invalidMachineIdentifier, .missingKernelPath,
             .storageDiskAttachFailed, .removableMediaAttachFailed,
-            .bridgedNetworkingNotEntitled:
+            .bridgedNetworkingNotEntitled, .hostOnlyNetworkingNotEntitled:
             break
         }
     }
@@ -46,6 +47,13 @@ struct ConfigurationBuilderTests {
         VMConfiguration(
             name: "Test Linux", guestOS: .linux, bootMode: .efi,
             networkEnabled: true, networkMode: .bridged)
+    }
+
+    /// Returns a Linux/EFI config set to host-only networking.
+    private func makeHostOnlyConfig() -> VMConfiguration {
+        VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi,
+            networkEnabled: true, networkMode: .hostOnly)
     }
 
     /// Returns a Linux/EFI config with optional shared directories.
@@ -1113,6 +1121,68 @@ struct ConfigurationBuilderTests {
             else { return false }
             return true
         }
+    }
+
+    @Test("Host Only mode attaches the app-managed network")
+    func hostOnlyModeAttachesTheManagedNetwork() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let networks = MockVmnetNetworkProvider()
+        var builder = ConfigurationBuilder()
+        builder.vmnetNetworks = networks
+        builder.entitlements = EntitlementService(
+            reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
+
+        let devices = try builder.assemble(
+            from: makeHostOnlyConfig(), bundleURL: bundleURL, validate: false
+        ).configuration.networkDevices
+        #expect(devices.count == 1)
+        #expect(devices[0].attachment === networks.scriptedAttachment)
+        #expect(networks.requestedKinds == [.hostOnly])
+    }
+
+    @Test("Host Only mode in a build without the entitlement names the entitlement")
+    func hostOnlyModeWithoutTheEntitlementThrows() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let networks = MockVmnetNetworkProvider()
+        var builder = ConfigurationBuilder()
+        builder.vmnetNetworks = networks
+        builder.entitlements = EntitlementService(reader: MockEntitlementReader())
+
+        #expect {
+            try builder.assemble(from: makeHostOnlyConfig(), bundleURL: bundleURL, validate: false)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                case .hostOnlyNetworkingNotEntitled = e
+            else { return false }
+            return true
+        }
+        // The entitlement is checked before the network is asked for.
+        #expect(networks.requestedKinds.isEmpty)
+    }
+
+    @Test("A Host Only network that cannot be materialized builds the device detached")
+    func hostOnlyModeWithoutANetworkBuildsDetached() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let networks = MockVmnetNetworkProvider()
+        networks.attachmentError = TestFailure("vmnet refused")
+        var builder = ConfigurationBuilder()
+        builder.vmnetNetworks = networks
+        builder.entitlements = EntitlementService(
+            reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
+
+        // The boot (and a restore from saved state, which rebuilds the same
+        // configuration) must succeed; attachment recovery reattaches later.
+        let devices = try builder.assemble(
+            from: makeHostOnlyConfig(), bundleURL: bundleURL, validate: false
+        ).configuration.networkDevices
+        #expect(devices.count == 1)
+        #expect(devices[0].attachment == nil)
     }
 
     // MARK: - Input Devices

@@ -919,6 +919,7 @@ extension VMSettingsViewController {
     /// `bridged`'s payload is the host interface identifier, `nil` for Automatic.
     private enum NetworkModeChoice: Equatable {
         case shared
+        case hostOnly
         case none
         case bridged(String?)
     }
@@ -942,7 +943,7 @@ extension VMSettingsViewController {
 
         var paragraphs: [InfoPopoverParagraph] = [
             .body(
-                "The mode sets how the guest reaches the network. Shared Network gives it outbound access through the host: the guest gets a DHCP address on a private subnet, other machines on your network cannot reach it, and there is no port forwarding from host to guest — incoming connections require knowing the guest's IP. Bridged puts the guest on your network through the chosen host interface, where it requests its own address like a separate machine."
+                "The mode sets how the guest reaches the network. Shared Network gives it outbound access through the host: the guest gets a DHCP address on a private subnet, other machines on your network cannot reach it, and there is no port forwarding from host to guest — incoming connections require knowing the guest's IP. Host Only puts the guest on a private network reachable only from this Mac: it can talk to the host and to other Host Only guests, with no access to your network or the internet. Bridged puts the guest on your network through the chosen host interface, where it requests its own address like a separate machine."
             ),
             .body(
                 "Bridged traffic bypasses a VPN running on the host. Bridging over Wi-Fi is best-effort — the Wi-Fi standard does not bridge additional stations and there is no client-side fix, so prefer a wired interface."
@@ -994,12 +995,21 @@ extension VMSettingsViewController {
         guard let menu = networkModePopUp.menu else { return }
         menu.removeAllItems()
         let liveSwitchable = networkModeIsLiveSwitchable
+        let current = currentNetworkChoice
         addNetworkModeItem("Shared Network", choice: .shared, to: menu)
+        if entitlements.hasVMNetworking {
+            addNetworkModeItem("Host Only", choice: .hostOnly, to: menu)
+        } else if current == .hostOnly {
+            // A host-only VM in a build the entitlement doesn't cover: the
+            // picker offers no Host Only entry, so this one shows the mode
+            // without offering it — carrying the current choice so it still
+            // selects.
+            addNetworkModeItem("Host Only (unavailable)", choice: .hostOnly, to: menu, enabled: false)
+        }
         // While the session runs, every attachable mode can hot-swap; None
         // cannot — network devices cannot be added or removed at runtime.
         addNetworkModeItem("None", choice: .none, to: menu, enabled: !liveSwitchable)
 
-        let current = currentNetworkChoice
         renderedNetworkChoice = current
         renderedNetworkLiveSwitchable = liveSwitchable
         if entitlements.hasVMNetworking {
@@ -1069,6 +1079,8 @@ extension VMSettingsViewController {
         switch config.networkMode {
         case .shared:
             return .shared
+        case .hostOnly:
+            return .hostOnly
         case .bridged:
             return .bridged(config.bridgedInterfaceIdentifier)
         }
@@ -2033,6 +2045,12 @@ extension VMSettingsViewController: NSMenuItemValidation {
             writeConfig {
                 $0.networkEnabled = true
                 $0.networkMode = .shared
+                Self.mintMACAddressIfNeeded(&$0)
+            }
+        case .hostOnly:
+            writeConfig {
+                $0.networkEnabled = true
+                $0.networkMode = .hostOnly
                 Self.mintMACAddressIfNeeded(&$0)
             }
         case .none:

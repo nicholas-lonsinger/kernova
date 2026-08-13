@@ -7,9 +7,10 @@ final class MockNetworkDeviceControl: NetworkDeviceControlling {
     /// The attachment the device currently realizes; tests nil it to simulate
     /// the framework's disconnect behavior.
     var plan: NetworkAttachmentPlan?
-    /// Bridge identifiers `apply` refuses, simulating the interface vanishing
-    /// between resolution and attach.
-    var refusedBridgeIdentifiers: Set<String> = []
+    /// Plans `apply` refuses, simulating the host withdrawing what the plan
+    /// names between resolution and attach — a bridge interface vanishing, a
+    /// vmnet network that will not materialize.
+    var refusedPlans: [NetworkAttachmentPlan] = []
     private(set) var appliedPlans: [NetworkAttachmentPlan] = []
     private(set) var detachCount = 0
 
@@ -20,11 +21,7 @@ final class MockNetworkDeviceControl: NetworkDeviceControlling {
     var currentPlan: NetworkAttachmentPlan? { plan }
 
     func apply(_ plan: NetworkAttachmentPlan) -> Bool {
-        if case .bridged(let identifier) = plan,
-            refusedBridgeIdentifiers.contains(identifier)
-        {
-            return false
-        }
+        guard !refusedPlans.contains(plan) else { return false }
         appliedPlans.append(plan)
         self.plan = plan
         return true

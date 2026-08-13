@@ -11,6 +11,7 @@ enum VMDisplayPreference: String, Codable, Sendable, Equatable {
 enum VMNetworkMode: String, Codable, Sendable, Equatable {
     case shared
     case bridged
+    case hostOnly
 }
 
 /// Persistent configuration for a virtual machine, serialized to `config.json`

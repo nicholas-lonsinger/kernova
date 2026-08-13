@@ -81,3 +81,12 @@ consequences no one observed.
 omits Bridged and Host Only rather than presenting entries that would fail; the modes
 the build can deliver keep working unchanged. Absence is the honest degraded state —
 never a visible-but-broken control.
+
+### 9. Guest-to-guest reach is network membership
+
+**A guest reaches another guest exactly when the user placed both on the same
+app-managed network.** Host Only is one such network: every guest the user puts in that
+mode shares it, reaching the host and each other and nothing wider. Isolation is
+expressed by membership — separate networks are mutually isolated — never by per-VM
+flags; a stricter grouping is a new network, not a mode variant. A network's addressing
+is part of what the user relies on, so it stays stable across app launches.

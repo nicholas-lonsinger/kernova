@@ -8,13 +8,19 @@ import os
 enum NetworkAttachmentPlan: Equatable {
     case nat
     case bridged(String)
+    case hostOnly
 
     /// Whether this plan realizes `mode` — a NAT attachment realizes Shared
-    /// Network, a bridged attachment over any interface realizes Bridged.
+    /// Network, a bridged attachment over any interface realizes Bridged, a
+    /// vmnet attachment on the app's Host Only network realizes Host Only.
     func matches(_ mode: VMNetworkMode) -> Bool {
         switch (self, mode) {
-        case (.nat, .shared), (.bridged, .bridged): true
-        case (.nat, .bridged), (.bridged, .shared): false
+        case (.nat, .shared), (.bridged, .bridged), (.hostOnly, .hostOnly):
+            true
+        case (.nat, .bridged), (.nat, .hostOnly),
+            (.bridged, .shared), (.bridged, .hostOnly),
+            (.hostOnly, .shared), (.hostOnly, .bridged):
+            false
         }
     }
 }
@@ -52,9 +58,14 @@ protocol NetworkDeviceControlling: AnyObject {
 @MainActor
 final class VZNetworkDeviceHandle: NetworkDeviceControlling {
     private let device: VZNetworkDevice
+    private let vmnetNetworks: any VmnetNetworkProviding
 
-    init(device: VZNetworkDevice) {
+    init(
+        device: VZNetworkDevice,
+        vmnetNetworks: any VmnetNetworkProviding = VmnetNetworkService.shared
+    ) {
         self.device = device
+        self.vmnetNetworks = vmnetNetworks
     }
 
     var currentPlan: NetworkAttachmentPlan? {
@@ -63,6 +74,10 @@ final class VZNetworkDeviceHandle: NetworkDeviceControlling {
             .nat
         case let bridged as VZBridgedNetworkDeviceAttachment:
             .bridged(bridged.interface.identifier)
+        case is VZVmnetNetworkDeviceAttachment:
+            // The app manages exactly one vmnet network today, so any vmnet
+            // attachment realizes Host Only.
+            .hostOnly
         default:
             nil
         }
@@ -80,6 +95,14 @@ final class VZNetworkDeviceHandle: NetworkDeviceControlling {
                 })
             else { return false }
             device.attachment = VZBridgedNetworkDeviceAttachment(interface: interface)
+            return true
+        case .hostOnly:
+            // The provider logs the failure detail; the coordinator paces the
+            // retry.
+            guard let attachment = try? vmnetNetworks.attachment(for: .hostOnly) else {
+                return false
+            }
+            device.attachment = attachment
             return true
         }
     }
@@ -105,7 +128,8 @@ final class HostNetworkLinkObserver: NetworkLinkObserving {
         subsystem: "app.kernova", category: "HostNetworkLinkObserver")
 
     private var store: SCDynamicStore?
-    private var onChange: (() -> Void)?
+    /// `fileprivate` for the file-scope callout below.
+    fileprivate var onChange: (() -> Void)?
 
     func start(onChange: @escaping @MainActor () -> Void) {
         stop()
@@ -117,23 +141,13 @@ final class HostNetworkLinkObserver: NetworkLinkObserving {
         var context = SCDynamicStoreContext(
             version: 0,
             info: Unmanaged.passUnretained(self).toOpaque(),
-            retain: { info in
-                _ = Unmanaged<AnyObject>.fromOpaque(info).retain()
-                return info
-            },
-            release: { info in
-                Unmanaged<AnyObject>.fromOpaque(info).release()
-            },
+            retain: hostLinkObserverRetain,
+            release: hostLinkObserverRelease,
             copyDescription: nil)
         guard
             let store = SCDynamicStoreCreate(
                 nil, "Kernova.NetworkLinkObserver" as CFString,
-                { _, _, info in
-                    guard let info else { return }
-                    let observer = Unmanaged<HostNetworkLinkObserver>.fromOpaque(info)
-                        .takeUnretainedValue()
-                    Task { @MainActor in observer.onChange?() }
-                },
+                hostLinkObserverCallout,
                 &context)
         else {
             Self.logger.fault("SCDynamicStoreCreate returned nil — link changes go unobserved")
@@ -154,6 +168,30 @@ final class HostNetworkLinkObserver: NetworkLinkObserving {
         SCDynamicStoreSetDispatchQueue(store, nil)
         self.store = nil
     }
+}
+
+// `SCDynamicStore` invokes these on the store's dispatch queue, so they must
+// be `nonisolated` file-scope functions, never closure literals formed inside
+// the `@MainActor` class: the compiler gives such a literal main-actor
+// isolation plus a dynamic check, which traps (`EXC_BREAKPOINT` in
+// `dispatch_assert_queue`) the moment a real link event fires — observed
+// 2026-08-13, first host-only VM boot.
+
+private nonisolated func hostLinkObserverRetain(_ info: UnsafeRawPointer) -> UnsafeRawPointer {
+    _ = Unmanaged<AnyObject>.fromOpaque(info).retain()
+    return info
+}
+
+private nonisolated func hostLinkObserverRelease(_ info: UnsafeRawPointer) {
+    Unmanaged<AnyObject>.fromOpaque(info).release()
+}
+
+private nonisolated func hostLinkObserverCallout(
+    _ store: SCDynamicStore, _ changedKeys: CFArray, _ info: UnsafeMutableRawPointer?
+) {
+    guard let info else { return }
+    let observer = Unmanaged<HostNetworkLinkObserver>.fromOpaque(info).takeUnretainedValue()
+    Task { @MainActor in observer.onChange?() }
 }
 
 /// Keeps one VM session's live network attachment realizing the mode the user
@@ -342,6 +380,8 @@ final class NetworkAttachmentCoordinator {
         switch choice.mode {
         case .shared:
             return .nat
+        case .hostOnly:
+            return .hostOnly
         case .bridged:
             let available = interfaces.interfaces().map(\.identifier)
             // The persisted interface is reclaimed the moment the host offers

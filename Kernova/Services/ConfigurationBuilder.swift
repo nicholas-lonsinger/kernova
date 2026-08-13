@@ -31,6 +31,9 @@ struct ConfigurationBuilder: Sendable {
     /// Host state behind a bridged attachment's interface choice.
     var bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider()
 
+    /// The app-managed vmnet networks behind a Host Only attachment.
+    var vmnetNetworks: any VmnetNetworkProviding = VmnetNetworkService.shared
+
     /// What this build's signature authorizes; a fresh instance rather than
     /// `.shared`, which is `@MainActor` while assembly runs off the main actor.
     var entitlements = EntitlementService()
@@ -578,6 +581,8 @@ struct ConfigurationBuilder: Sendable {
             networkDevice.attachment = VZNATNetworkDeviceAttachment()
         case .bridged:
             networkDevice.attachment = try bridgedAttachment(config: config)
+        case .hostOnly:
+            networkDevice.attachment = try hostOnlyAttachment(config: config)
         }
 
         if let macString = config.macAddress,
@@ -631,6 +636,31 @@ struct ConfigurationBuilder: Sendable {
             Self.logger.info("Bridging over '\(chosen, privacy: .public)'")
         }
         return VZBridgedNetworkDeviceAttachment(interface: interface)
+    }
+
+    /// The attachment joining the app-managed Host Only network.
+    ///
+    /// A network that cannot be materialized builds the device detached (`nil`)
+    /// rather than failing the build, for the same reason the bridged
+    /// no-interface path does: a throwing build fails a save-file restore,
+    /// which deletes the saved state and cold-boots. Attachment recovery
+    /// retries once the session runs.
+    private func hostOnlyAttachment(config: VMConfiguration) throws -> VZNetworkDeviceAttachment? {
+        guard entitlements.hasVMNetworking else {
+            Self.logger.error(
+                "Host-only networking requested for '\(config.name, privacy: .public)' in a build without com.apple.vm.networking"
+            )
+            throw ConfigurationBuilderError.hostOnlyNetworkingNotEntitled
+        }
+
+        do {
+            return try vmnetNetworks.attachment(for: .hostOnly)
+        } catch {
+            Self.logger.error(
+                "Host Only network for '\(config.name, privacy: .public)' could not be materialized — starting detached: \(error.localizedDescription, privacy: .public)"
+            )
+            return nil
+        }
     }
 
     private func configureEntropy(_ vzConfig: VZVirtualMachineConfiguration) {
@@ -935,6 +965,9 @@ enum ConfigurationBuilderError: LocalizedError {
     /// Bridged mode was chosen in a build whose signature omits
     /// `com.apple.vm.networking`, which VZ needs for any non-NAT attachment.
     case bridgedNetworkingNotEntitled
+    /// Host Only counterpart of `bridgedNetworkingNotEntitled` — vmnet needs
+    /// the same entitlement for all API use.
+    case hostOnlyNetworkingNotEntitled
     case sharedDirectoryNotFound(String)
     case sharedDirectoryNotADirectory(String)
     case sharedDirectoryNotReadable(String)
@@ -974,6 +1007,8 @@ enum ConfigurationBuilderError: LocalizedError {
             "Couldn't open removable media '\(label)' at \(path). The file may have been moved or replaced, or Kernova may no longer have permission to read it. (\(underlying.localizedDescription))"
         case .bridgedNetworkingNotEntitled:
             "This build of Kernova can't provide bridged networking. Switch the VM's network mode to Shared Network."
+        case .hostOnlyNetworkingNotEntitled:
+            "This build of Kernova can't provide host-only networking. Switch the VM's network mode to Shared Network."
         case .sharedDirectoryNotFound(let path):
             "Shared directory not found at \(path)."
         case .sharedDirectoryNotADirectory(let path):

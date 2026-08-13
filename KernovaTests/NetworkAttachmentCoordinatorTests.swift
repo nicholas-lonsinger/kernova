@@ -101,6 +101,38 @@ struct NetworkAttachmentCoordinatorTests {
         #expect(!h.coordinator.isPending)
     }
 
+    @Test("Activation attaches the app-managed Host Only network")
+    func activationAttachesHostOnlyNetwork() {
+        let h = makeHarness(choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil))
+
+        h.coordinator.activate()
+
+        #expect(h.device.appliedPlans == [.hostOnly])
+        #expect(!h.coordinator.isPending)
+    }
+
+    @Test("A Host Only network that won't materialize goes pending and retries on the ladder")
+    func refusedHostOnlyAttachRetriesOnBackoff() async {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
+            retryDelays: [1])
+        h.device.refusedPlans = [.hostOnly]
+
+        h.coordinator.activate()
+        #expect(h.coordinator.isPending)
+        #expect(h.device.appliedPlans.isEmpty)
+
+        h.device.refusedPlans = []
+        guard let retry = h.coordinator.retryTaskForTesting else {
+            Issue.record("Expected a scheduled retry")
+            return
+        }
+        await retry.value
+
+        #expect(h.device.appliedPlans == [.hostOnly])
+        #expect(!h.coordinator.isPending)
+    }
+
     @Test("A bridged VM with no usable interface goes pending, then a link event reattaches it")
     func degradedBridgedStartRecoversOnLinkEvent() {
         let h = makeHarness(choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0"))
@@ -331,6 +363,42 @@ struct NetworkAttachmentCoordinatorTests {
         #expect(!h.coordinator.isPending)
     }
 
+    @Test("A live switch to Host Only swaps the attachment, and back")
+    func liveHostOnlySwitchSwapsAttachment() {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
+            devicePlan: .nat)
+        h.coordinator.activate()
+
+        h.choiceBox.choice = NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil)
+        h.coordinator.configurationChanged()
+        #expect(h.device.appliedPlans == [.hostOnly])
+        #expect(!h.coordinator.isPending)
+
+        h.choiceBox.choice = NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil)
+        h.coordinator.configurationChanged()
+        #expect(h.device.appliedPlans == [.hostOnly, .nat])
+        #expect(!h.coordinator.isPending)
+    }
+
+    @Test("Switching to a Host Only network that won't materialize detaches rather than staying Shared")
+    func refusedHostOnlySwitchDetaches() {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
+            devicePlan: .nat)
+        h.coordinator.activate()
+        h.device.refusedPlans = [.hostOnly]
+
+        h.choiceBox.choice = NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil)
+        h.coordinator.configurationChanged()
+
+        // The NAT attachment must not survive as a silent substitute for the
+        // chosen mode (docs/NETWORKING.md).
+        #expect(h.device.detachCount == 1)
+        #expect(h.device.currentPlan == nil)
+        #expect(h.coordinator.isPending)
+    }
+
     @Test("A live interface switch swaps the bridge")
     func liveInterfaceSwitchSwapsBridge() {
         let h = makeHarness(
@@ -372,12 +440,12 @@ struct NetworkAttachmentCoordinatorTests {
             retryDelays: [1])
         // The interface is listed but the attach refuses — the VZ interface
         // list lagging the dynamic store.
-        h.device.refusedBridgeIdentifiers = ["en0"]
+        h.device.refusedPlans = [.bridged("en0")]
 
         h.coordinator.activate()
         #expect(h.coordinator.isPending)
 
-        h.device.refusedBridgeIdentifiers = []
+        h.device.refusedPlans = []
         guard let retry = h.coordinator.retryTaskForTesting else {
             Issue.record("Expected a scheduled retry")
             return
@@ -393,13 +461,13 @@ struct NetworkAttachmentCoordinatorTests {
         let h = makeHarness(
             choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0"),
             available: [Self.wiFi])
-        h.device.refusedBridgeIdentifiers = ["en0"]
+        h.device.refusedPlans = [.bridged("en0")]
 
         h.coordinator.activate()
         #expect(h.coordinator.isPending)
         #expect(h.coordinator.retryTaskForTesting == nil)
 
-        h.device.refusedBridgeIdentifiers = []
+        h.device.refusedPlans = []
         h.observer.fire()
 
         #expect(h.device.appliedPlans == [.bridged("en0")])
