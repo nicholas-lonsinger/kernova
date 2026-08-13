@@ -1,6 +1,6 @@
 // Template for the gitignored Config/Local.xcconfig — copy it there and set
-// your team. See docs/BUILD.md "Signing identity".
-//
+// your team. docs/BUILD.md "Signing identity" explains each setting.
+
 // The team ID is the OU of your signing certificate. On an Apple Development
 // certificate the CN parenthetical is a per-developer identifier that looks
 // like a team ID but isn't, so read OU rather than the name:
@@ -8,17 +8,13 @@
 //     | openssl x509 -noout -subject
 DEVELOPMENT_TEAM = ABCDE12345
 
-// Signs Debug with your development certificate rather than ad-hoc, giving
-// the app one code identity across rebuilds so macOS privacy grants stick.
-// Drop the line to sign ad-hoc; keep it alongside DEVELOPMENT_TEAM, since
-// automatic signing resolves the certificate through the team.
+// Signs Debug with your development certificate rather than ad-hoc, so macOS
+// privacy grants stick across rebuilds. Keep it alongside DEVELOPMENT_TEAM
+// (automatic signing resolves the certificate through the team); drop the
+// line to sign ad-hoc.
 CODE_SIGN_IDENTITY = Apple Development
 
-// Opts the app (both configurations) into the full entitlement set,
-// including the restricted com.apple.vm.networking key, which automatic
-// signing must authorize through a capability-enabled profile — uncomment
-// only with the capability enabled on the team's App ID and a certificate
-// set above; otherwise the default (the Development variant, set in
-// Base.xcconfig) keeps profile-less builds signing. Archives inherit the
-// choice: comment it back out to cut an unentitled build.
+// Uncomment to opt the app into the full entitlement set, including the
+// restricted com.apple.vm.networking key — only with the capability enabled
+// on the team's App ID and a certificate set above.
 // KERNOVA_APP_ENTITLEMENTS = Kernova/Resources/Kernova.entitlements

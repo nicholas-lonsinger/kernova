@@ -1,29 +1,20 @@
 // Project-level base configuration, wired to both the Debug and Release
-// project XCBuildConfigurations (targets without their own
-// baseConfigurationReference inherit it).
-//
-// DEVELOPMENT_TEAM and the CODE_SIGN_IDENTITY override live in the
-// gitignored, hand-maintained Local.xcconfig included below — see
-// docs/BUILD.md "Signing identity".
-//
-// `#include?` (with the trailing `?`) is the optional form: it silently
-// no-ops when Local.xcconfig doesn't exist, so a fresh clone builds with
-// neither a team nor a certificate.
+// project XCBuildConfigurations. Signing overrides live in the gitignored
+// Local.xcconfig included below — docs/BUILD.md "Signing identity" owns the
+// full story.
 
-// The default signing identity, ad-hoc. The relaunch helper (re-signed at
-// export) and the guest agent (its own Developer ID lane) pin Release at
-// target level, which outranks this file; the app and both test bundles
-// leave Release unpinned so the Local.xcconfig override below reaches them —
-// an entitled archive needs the real identity, and a test bundle must sign
-// with the same team as its now team-signed host to pass library validation.
+// Ad-hoc, so a fresh clone builds with no team or certificate.
 CODE_SIGN_IDENTITY = -
 
-// The app target's CODE_SIGN_ENTITLEMENTS, both configurations. The default
+// Empty on purpose: ad-hoc signing uses no team, and there is no value that
+// isn't someone's personal team ID.
+DEVELOPMENT_TEAM =
+
+// The app target's CODE_SIGN_ENTITLEMENTS, both configurations. The
 // Development variant omits the restricted com.apple.vm.networking key an
-// ad-hoc signature cannot carry, keeping a profile-less checkout building
-// in both configurations. Local.xcconfig opts a machine holding the
-// capability-enabled profile into the full Kernova.entitlements set — see
-// docs/BUILD.md "Signing identity".
+// ad-hoc signature cannot carry.
 KERNOVA_APP_ENTITLEMENTS = Kernova/Resources/Kernova.Development.entitlements
 
+// `#include?` (trailing `?`) is the optional form: it silently no-ops when
+// Local.xcconfig doesn't exist.
 #include? "Local.xcconfig"
