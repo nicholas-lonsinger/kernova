@@ -123,7 +123,7 @@ final class ReviewContentViewController: NSViewController {
 
         addSection(
             "Network",
-            rows: [valueRow("Networking", creationVM.networkEnabled ? "Enabled" : "Disabled")], to: summary)
+            rows: [valueRow("Mode", creationVM.networkEnabled ? "Shared Network" : "None")], to: summary)
 
         if creationVM.selectedOS == .macOS {
             var rows: [NSView] = []

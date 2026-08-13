@@ -28,6 +28,13 @@ struct ConfigurationBuilder: Sendable {
     /// virtio, `nil` when this build carries none.
     var guestAgentDiskURL: URL? = KernovaMacOSAgentInfo.installerDiskImageURL
 
+    /// Host state behind a bridged attachment's interface choice.
+    var bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider()
+
+    /// What this build's signature authorizes; a fresh instance rather than
+    /// `.shared`, which is `@MainActor` while assembly runs off the main actor.
+    var entitlements = EntitlementService()
+
     /// Builds a validated `VZVirtualMachineConfiguration` from the given VM configuration and bundle URL.
     func build(from config: VMConfiguration, bundleURL: URL) throws -> BuildResult {
         try assemble(from: config, bundleURL: bundleURL, validate: true)
@@ -66,7 +73,7 @@ struct ConfigurationBuilder: Sendable {
         try configureStorageDisks(vzConfig, config: config, bundleURL: bundleURL)
         let guestAgentDiskAttached = configureGuestAgentDisk(vzConfig, config: config, bundleURL: bundleURL)
         let coldRemovableMedia = try configureRemovableMedia(vzConfig, config: config)
-        configureNetwork(vzConfig, config: config)
+        try configureNetwork(vzConfig, config: config)
         configureEntropy(vzConfig)
         configureAudio(vzConfig, config: config)
         try configureDirectorySharing(vzConfig, config: config)
@@ -560,11 +567,18 @@ struct ConfigurationBuilder: Sendable {
             ))
     }
 
-    private func configureNetwork(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) {
+    private func configureNetwork(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration)
+        throws
+    {
         guard config.networkEnabled else { return }
 
         let networkDevice = VZVirtioNetworkDeviceConfiguration()
-        networkDevice.attachment = VZNATNetworkDeviceAttachment()
+        switch config.networkMode {
+        case .shared:
+            networkDevice.attachment = VZNATNetworkDeviceAttachment()
+        case .bridged:
+            networkDevice.attachment = try bridgedAttachment(config: config)
+        }
 
         if let macString = config.macAddress,
             let macAddress = VZMACAddress(string: macString)
@@ -573,6 +587,48 @@ struct ConfigurationBuilder: Sendable {
         }
 
         vzConfig.networkDevices = [networkDevice]
+    }
+
+    /// Resolves the host interface a bridged VM attaches to.
+    ///
+    /// A persisted interface the host no longer offers narrows to Automatic — the
+    /// default-route interface. When neither resolves the start fails: the mode is
+    /// never substituted, so the VM neither bridges over an arbitrary interface
+    /// nor quietly becomes Shared Network (docs/NETWORKING.md).
+    private func bridgedAttachment(config: VMConfiguration) throws
+        -> VZBridgedNetworkDeviceAttachment
+    {
+        guard entitlements.hasVMNetworking else {
+            Self.logger.error(
+                "Bridged networking requested for '\(config.name, privacy: .public)' in a build without com.apple.vm.networking"
+            )
+            throw ConfigurationBuilderError.bridgedNetworkingNotEntitled
+        }
+
+        let available = bridgedInterfaces.interfaces()
+        guard
+            let chosen = BridgedInterfaceSelection.choose(
+                persisted: config.bridgedInterfaceIdentifier,
+                available: available.map(\.identifier),
+                primary: bridgedInterfaces.primaryInterfaceIdentifier()),
+            let interface = VZBridgedNetworkInterface.networkInterfaces.first(where: {
+                $0.identifier == chosen
+            })
+        else {
+            Self.logger.error(
+                "Bridged networking requested for '\(config.name, privacy: .public)' with no bridgeable host interface"
+            )
+            throw ConfigurationBuilderError.noBridgeableInterface
+        }
+
+        if let persisted = config.bridgedInterfaceIdentifier, persisted != chosen {
+            Self.logger.warning(
+                "Bridged interface '\(persisted, privacy: .public)' is unavailable — bridging over '\(chosen, privacy: .public)' instead"
+            )
+        } else {
+            Self.logger.info("Bridging over '\(chosen, privacy: .public)'")
+        }
+        return VZBridgedNetworkDeviceAttachment(interface: interface)
     }
 
     private func configureEntropy(_ vzConfig: VZVirtualMachineConfiguration) {
@@ -874,6 +930,11 @@ enum ConfigurationBuilderError: LocalizedError {
     case removableMediaNotWritable(String, String)
     /// Removable-media counterpart of `storageDiskAttachFailed`.
     case removableMediaAttachFailed(id: UUID, path: String, label: String, underlying: any Error)
+    /// Bridged mode was chosen but the host offers no interface to bridge over.
+    case noBridgeableInterface
+    /// Bridged mode was chosen in a build whose signature omits
+    /// `com.apple.vm.networking`, which VZ needs for any non-NAT attachment.
+    case bridgedNetworkingNotEntitled
     case sharedDirectoryNotFound(String)
     case sharedDirectoryNotADirectory(String)
     case sharedDirectoryNotReadable(String)
@@ -911,6 +972,10 @@ enum ConfigurationBuilderError: LocalizedError {
             "Removable media '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
         case .removableMediaAttachFailed(_, let path, let label, let underlying):
             "Couldn't open removable media '\(label)' at \(path). The file may have been moved or replaced, or Kernova may no longer have permission to read it. (\(underlying.localizedDescription))"
+        case .noBridgeableInterface:
+            "No host network interface could be chosen for bridged networking. Choose a specific interface in the VM's Network settings, or switch to Shared Network."
+        case .bridgedNetworkingNotEntitled:
+            "This build of Kernova can't provide bridged networking. Switch the VM's network mode to Shared Network."
         case .sharedDirectoryNotFound(let path):
             "Shared directory not found at \(path)."
         case .sharedDirectoryNotADirectory(let path):

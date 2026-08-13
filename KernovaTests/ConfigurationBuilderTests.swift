@@ -20,6 +20,34 @@ struct ConfigurationBuilderTests {
         return tempDir
     }
 
+    /// Fails the test when `error` is a path-validation refusal.
+    ///
+    /// For the happy-path tests, which tolerate any other builder error: VZ
+    /// validation legitimately fails on a host without virtualization, and only
+    /// the path handling is under test.
+    private func expectNoPathValidationError(_ error: ConfigurationBuilderError) {
+        switch error {
+        case .sharedDirectoryNotFound, .sharedDirectoryNotADirectory,
+            .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
+            .kernelNotFound, .kernelPathIsDirectory,
+            .initrdNotFound, .initrdPathIsDirectory,
+            .storageDiskNotFound, .storageDiskPathIsDirectory, .storageDiskNotWritable,
+            .removableMediaNotFound, .removableMediaPathIsDirectory, .removableMediaNotWritable:
+            Issue.record("Unexpected path validation error: \(error)")
+        case .invalidHardwareModel, .invalidMachineIdentifier, .missingKernelPath,
+            .storageDiskAttachFailed, .removableMediaAttachFailed,
+            .noBridgeableInterface, .bridgedNetworkingNotEntitled:
+            break
+        }
+    }
+
+    /// Returns a Linux/EFI config set to bridged networking.
+    private func makeBridgedConfig() -> VMConfiguration {
+        VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .efi,
+            networkEnabled: true, networkMode: .bridged)
+    }
+
     /// Returns a Linux/EFI config with optional shared directories.
     private func makeLinuxConfig(
         sharedDirectories: [SharedDirectory]? = nil
@@ -225,20 +253,7 @@ struct ConfigurationBuilderTests {
         do {
             _ = try builder.build(from: config, bundleURL: bundleURL)
         } catch let error as ConfigurationBuilderError {
-            switch error {
-            // Path validation errors — these MUST NOT occur:
-            case .sharedDirectoryNotFound, .sharedDirectoryNotADirectory,
-                .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
-                .kernelNotFound, .kernelPathIsDirectory,
-                .initrdNotFound, .initrdPathIsDirectory,
-                .storageDiskNotFound, .storageDiskPathIsDirectory, .storageDiskNotWritable,
-                .removableMediaNotFound, .removableMediaPathIsDirectory, .removableMediaNotWritable:
-                Issue.record("Unexpected path validation error: \(error)")
-            // Non-path-validation errors — tolerated if they occur:
-            case .invalidHardwareModel, .invalidMachineIdentifier,
-                .missingKernelPath, .storageDiskAttachFailed, .removableMediaAttachFailed:
-                break
-            }
+            expectNoPathValidationError(error)
         } catch {
             // VZ framework or other errors are expected
         }
@@ -614,18 +629,7 @@ struct ConfigurationBuilderTests {
         do {
             _ = try builder.build(from: config, bundleURL: bundleURL)
         } catch let error as ConfigurationBuilderError {
-            switch error {
-            case .sharedDirectoryNotFound, .sharedDirectoryNotADirectory,
-                .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
-                .kernelNotFound, .kernelPathIsDirectory,
-                .initrdNotFound, .initrdPathIsDirectory,
-                .storageDiskNotFound, .storageDiskPathIsDirectory, .storageDiskNotWritable,
-                .removableMediaNotFound, .removableMediaPathIsDirectory, .removableMediaNotWritable:
-                Issue.record("Unexpected path validation error: \(error)")
-            case .invalidHardwareModel, .invalidMachineIdentifier,
-                .missingKernelPath, .storageDiskAttachFailed, .removableMediaAttachFailed:
-                break
-            }
+            expectNoPathValidationError(error)
         } catch {
             // VZ framework or other errors are expected
         }
@@ -656,20 +660,7 @@ struct ConfigurationBuilderTests {
         do {
             _ = try builder.build(from: config, bundleURL: bundleURL)
         } catch let error as ConfigurationBuilderError {
-            switch error {
-            // Path validation errors — these MUST NOT occur:
-            case .sharedDirectoryNotFound, .sharedDirectoryNotADirectory,
-                .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
-                .kernelNotFound, .kernelPathIsDirectory,
-                .initrdNotFound, .initrdPathIsDirectory,
-                .storageDiskNotFound, .storageDiskPathIsDirectory, .storageDiskNotWritable,
-                .removableMediaNotFound, .removableMediaPathIsDirectory, .removableMediaNotWritable:
-                Issue.record("Unexpected path validation error: \(error)")
-            // Non-path-validation errors — tolerated if they occur:
-            case .invalidHardwareModel, .invalidMachineIdentifier,
-                .missingKernelPath, .storageDiskAttachFailed, .removableMediaAttachFailed:
-                break
-            }
+            expectNoPathValidationError(error)
         } catch {
             // VZ framework or other errors are expected — the test only
             // verifies that shared directory validation itself passes.
@@ -931,20 +922,7 @@ struct ConfigurationBuilderTests {
         do {
             _ = try builder.build(from: config, bundleURL: bundleURL)
         } catch let error as ConfigurationBuilderError {
-            switch error {
-            // Path validation errors — these MUST NOT occur:
-            case .sharedDirectoryNotFound, .sharedDirectoryNotADirectory,
-                .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
-                .kernelNotFound, .kernelPathIsDirectory,
-                .initrdNotFound, .initrdPathIsDirectory,
-                .storageDiskNotFound, .storageDiskPathIsDirectory, .storageDiskNotWritable,
-                .removableMediaNotFound, .removableMediaPathIsDirectory, .removableMediaNotWritable:
-                Issue.record("Unexpected path validation error: \(error)")
-            // Non-path-validation errors — tolerated if they occur:
-            case .invalidHardwareModel, .invalidMachineIdentifier,
-                .missingKernelPath, .storageDiskAttachFailed, .removableMediaAttachFailed:
-                break
-            }
+            expectNoPathValidationError(error)
         } catch {
             // VZ framework or other errors are expected
         }
@@ -1046,6 +1024,95 @@ struct ConfigurationBuilderTests {
             #expect(hasInput == c.hasInput)
             #expect(hasOutput == c.hasOutput)
             #expect(deviceCount == c.deviceCount)
+        }
+    }
+
+    // MARK: - Network
+
+    /// Assembles `config` and returns its network devices.
+    ///
+    /// `assemble(validate: false)` for the same reason as the audio helper: the
+    /// device is built regardless of the flag, and CI runners can't validate.
+    private func networkDevices(for config: VMConfiguration) throws
+        -> [VZNetworkDeviceConfiguration]
+    {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        return try ConfigurationBuilder()
+            .assemble(from: config, bundleURL: bundleURL, validate: false)
+            .configuration.networkDevices
+    }
+
+    @Test("Mode None configures no network device at all")
+    func networkDisabledOmitsTheDevice() throws {
+        var config = makeLinuxConfig()
+        config.networkEnabled = false
+        // A bridged mode left behind by an earlier choice must not resurrect the
+        // device: `networkEnabled == false` is the None mode.
+        config.networkMode = .bridged
+        #expect(try networkDevices(for: config).isEmpty)
+    }
+
+    @Test("Shared Network attaches one virtio device over NAT")
+    func sharedModeAttachesNAT() throws {
+        let devices = try networkDevices(for: makeLinuxConfig())
+        #expect(devices.count == 1)
+        let device = try #require(devices.first as? VZVirtioNetworkDeviceConfiguration)
+        #expect(device.attachment is VZNATNetworkDeviceAttachment)
+    }
+
+    @Test("A configured MAC address reaches the network device")
+    func macAddressReachesTheDevice() throws {
+        var config = makeLinuxConfig()
+        config.macAddress = "aa:bb:cc:dd:ee:ff"
+        let device = try #require(try networkDevices(for: config).first)
+        #expect(device.macAddress.string == "aa:bb:cc:dd:ee:ff")
+    }
+
+    @Test("An unparsable MAC address leaves VZ's generated one in place")
+    func invalidMACAddressIsIgnored() throws {
+        var config = makeLinuxConfig()
+        config.macAddress = "not-a-mac"
+        let device = try #require(try networkDevices(for: config).first)
+        #expect(device.macAddress.string != "not-a-mac")
+    }
+
+    @Test("Bridged mode with no bridgeable host interface refuses to start")
+    func bridgedModeWithoutAnInterfaceThrows() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        var builder = ConfigurationBuilder()
+        builder.bridgedInterfaces = MockBridgedInterfaceProvider()
+        builder.entitlements = EntitlementService(
+            reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
+
+        #expect {
+            try builder.assemble(from: makeBridgedConfig(), bundleURL: bundleURL, validate: false)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                case .noBridgeableInterface = e
+            else { return false }
+            return true
+        }
+    }
+
+    @Test("Bridged mode in a build without the entitlement names the entitlement, not the interface")
+    func bridgedModeWithoutTheEntitlementThrows() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        var builder = ConfigurationBuilder()
+        builder.bridgedInterfaces = MockBridgedInterfaceProvider()
+        builder.entitlements = EntitlementService(reader: MockEntitlementReader())
+
+        #expect {
+            try builder.assemble(from: makeBridgedConfig(), bundleURL: bundleURL, validate: false)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                case .bridgedNetworkingNotEntitled = e
+            else { return false }
+            return true
         }
     }
 

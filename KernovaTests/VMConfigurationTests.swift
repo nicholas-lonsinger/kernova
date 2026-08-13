@@ -1168,6 +1168,60 @@ struct VMConfigurationTests {
         #expect(decoded.audioOutputEnabled == true)
     }
 
+    // MARK: - Network Mode Tests
+
+    @Test("networkMode defaults to shared with no bridged interface")
+    func networkModeDefaults() {
+        let config = VMConfiguration(name: "Test VM", guestOS: .linux, bootMode: .efi)
+        #expect(config.networkMode == .shared)
+        #expect(config.bridgedInterfaceIdentifier == nil)
+    }
+
+    @Test("A config carrying neither network key decodes as Shared Network")
+    func networkModeKeysMissingUseDefaults() throws {
+        // `makeBaseJSON` carries `networkEnabled` but neither mode key.
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+
+        #expect(decoded.networkEnabled == true)
+        #expect(decoded.networkMode == .shared)
+        #expect(decoded.bridgedInterfaceIdentifier == nil)
+    }
+
+    @Test("Configuration preserves a bridged mode and its interface")
+    func bridgedModeRoundTrip() throws {
+        let config = VMConfiguration(
+            name: "Bridged VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            networkMode: .bridged,
+            bridgedInterfaceIdentifier: "en0"
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.networkMode == .bridged)
+        #expect(decoded.bridgedInterfaceIdentifier == "en0")
+    }
+
+    @Test("A bridged config decodes Automatic from a stored mode without an interface")
+    func bridgedModeWithoutInterfaceDecodesAutomatic() throws {
+        let json = Self.makeBaseJSON(extraFields: "\"networkMode\": \"bridged\"")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+
+        #expect(decoded.networkMode == .bridged)
+        #expect(decoded.bridgedInterfaceIdentifier == nil)
+    }
+
     // MARK: - Full-field round-trip
 
     /// Populates every property with a non-default value, encodes to JSON,
@@ -1199,6 +1253,8 @@ struct VMConfigurationTests {
             displayPreference: .popOut,
             lastFullscreenDisplayID: 0xDEAD_BEEF,
             networkEnabled: false,
+            networkMode: .bridged,
+            bridgedInterfaceIdentifier: "en1",
             macAddress: "aa:bb:cc:dd:ee:ff",
             clipboardSharingEnabled: true,
             clipboardPassthroughEnabled: true,

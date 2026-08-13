@@ -7,6 +7,12 @@ enum VMDisplayPreference: String, Codable, Sendable, Equatable {
     case fullscreen
 }
 
+/// How an enabled network device attaches to the world.
+enum VMNetworkMode: String, Codable, Sendable, Equatable {
+    case shared
+    case bridged
+}
+
 /// Persistent configuration for a virtual machine, serialized to `config.json`
 /// inside each VM bundle directory.
 ///
@@ -59,7 +65,16 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     // MARK: - Network
 
+    /// When `false`, the VM has no network device at all — the "None" mode.
     var networkEnabled: Bool
+
+    /// How an enabled device attaches; ignored while `networkEnabled` is `false`.
+    var networkMode: VMNetworkMode
+
+    /// BSD name of the host interface a bridged VM attaches to (e.g. `en0`), or
+    /// `nil` for Automatic — resolved against the host's default route at start.
+    var bridgedInterfaceIdentifier: String?
+
     var macAddress: String?
 
     // MARK: - Clipboard Sharing
@@ -220,6 +235,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         displayPreference: VMDisplayPreference = .inline,
         lastFullscreenDisplayID: UInt32? = nil,
         networkEnabled: Bool = true,
+        networkMode: VMNetworkMode = .shared,
+        bridgedInterfaceIdentifier: String? = nil,
         macAddress: String? = nil,
         clipboardSharingEnabled: Bool = false,
         clipboardPassthroughEnabled: Bool = false,
@@ -262,6 +279,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.displayPreference = displayPreference
         self.lastFullscreenDisplayID = lastFullscreenDisplayID
         self.networkEnabled = networkEnabled
+        self.networkMode = networkMode
+        self.bridgedInterfaceIdentifier = bridgedInterfaceIdentifier
         self.macAddress = macAddress
         self.clipboardSharingEnabled = clipboardSharingEnabled
         self.clipboardPassthroughEnabled = clipboardPassthroughEnabled
@@ -314,6 +333,9 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.displayPreference = try c.decode(VMDisplayPreference.self, forKey: .displayPreference)
         self.lastFullscreenDisplayID = try c.decodeIfPresent(UInt32.self, forKey: .lastFullscreenDisplayID)
         self.networkEnabled = try c.decode(Bool.self, forKey: .networkEnabled)
+        self.networkMode = try c.decodeIfPresent(VMNetworkMode.self, forKey: .networkMode) ?? .shared
+        self.bridgedInterfaceIdentifier = try c.decodeIfPresent(
+            String.self, forKey: .bridgedInterfaceIdentifier)
         self.macAddress = try c.decodeIfPresent(String.self, forKey: .macAddress)
         self.clipboardSharingEnabled = try c.decode(Bool.self, forKey: .clipboardSharingEnabled)
         self.clipboardPassthroughEnabled =

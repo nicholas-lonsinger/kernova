@@ -18,15 +18,20 @@ struct ReviewContentViewControllerTests {
         #expect(findLabel(withText: "\(vm.cpuCount)", in: vc.view) != nil)
     }
 
-    @Test("Networking row reflects the disabled state")
+    @Test("The network Mode row names the mode a new VM starts in")
     func networkingReflectsModel() {
         let vm = VMCreationViewModel()
-        vm.networkEnabled = false
-        let vc = ReviewContentViewController(creationVM: vm)
-        vc.loadViewIfNeeded()
+        #expect(vm.networkEnabled)
+        let sharedVC = ReviewContentViewController(creationVM: vm)
+        sharedVC.loadViewIfNeeded()
+        #expect(findLabel(withText: "Shared Network", in: sharedVC.view) != nil)
+        #expect(findLabel(withText: "None", in: sharedVC.view) == nil)
 
-        #expect(findLabel(withText: "Disabled", in: vc.view) != nil)
-        #expect(findLabel(withText: "Enabled", in: vc.view) == nil)
+        vm.networkEnabled = false
+        let noneVC = ReviewContentViewController(creationVM: vm)
+        noneVC.loadViewIfNeeded()
+        #expect(findLabel(withText: "None", in: noneVC.view) != nil)
+        #expect(findLabel(withText: "Shared Network", in: noneVC.view) == nil)
     }
 
     @Test("macOS + download shows the abbreviated save-to path")
