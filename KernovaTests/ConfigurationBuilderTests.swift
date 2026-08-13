@@ -36,7 +36,7 @@ struct ConfigurationBuilderTests {
             Issue.record("Unexpected path validation error: \(error)")
         case .invalidHardwareModel, .invalidMachineIdentifier, .missingKernelPath,
             .storageDiskAttachFailed, .removableMediaAttachFailed,
-            .noBridgeableInterface, .bridgedNetworkingNotEntitled:
+            .bridgedNetworkingNotEntitled:
             break
         }
     }
@@ -1077,8 +1077,8 @@ struct ConfigurationBuilderTests {
         #expect(device.macAddress.string != "not-a-mac")
     }
 
-    @Test("Bridged mode with no bridgeable host interface refuses to start")
-    func bridgedModeWithoutAnInterfaceThrows() throws {
+    @Test("Bridged mode with no bridgeable host interface builds the device detached")
+    func bridgedModeWithoutAnInterfaceBuildsDetached() throws {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
@@ -1087,14 +1087,13 @@ struct ConfigurationBuilderTests {
         builder.entitlements = EntitlementService(
             reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
 
-        #expect {
-            try builder.assemble(from: makeBridgedConfig(), bundleURL: bundleURL, validate: false)
-        } throws: { error in
-            guard let e = error as? ConfigurationBuilderError,
-                case .noBridgeableInterface = e
-            else { return false }
-            return true
-        }
+        // The boot (and a restore from saved state, which rebuilds the same
+        // configuration) must succeed; attachment recovery reattaches later.
+        let devices = try builder.assemble(
+            from: makeBridgedConfig(), bundleURL: bundleURL, validate: false
+        ).configuration.networkDevices
+        #expect(devices.count == 1)
+        #expect(devices[0].attachment == nil)
     }
 
     @Test("Bridged mode in a build without the entitlement names the entitlement, not the interface")

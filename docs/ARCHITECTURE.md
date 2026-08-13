@@ -126,7 +126,16 @@ input, audio, the Linux SPICE console port, and the macOS `VZVirtioSocketDeviceC
 
 The network attachment follows the VM's persisted mode: shared NAT, or bridged over a host
 interface resolved through `BridgedInterfaceProviding` — the same seam the settings section's Mode
-picker reads its interface list from.
+picker reads its interface list from. A bridged VM whose interface cannot resolve builds the
+device detached rather than failing the boot or restore.
+
+While a session runs, `NetworkAttachmentCoordinator` (one per session, owned by `VMInstance`,
+activated when the VM reaches `.running`) keeps the live attachment realizing the persisted mode.
+It reconciles on VZ's attachment-disconnect delegate callback, on host link changes observed
+through `NetworkLinkObserving` (`HostNetworkLinkObserver`, SCDynamicStore), and on live
+mode/interface edits arriving through the `applyLivePolicy` path, driving the device through the
+`NetworkDeviceControlling` seam. A session with no realizable attachment surfaces as
+`VMInstance.networkAttachmentPending`, which the sidebar status affordances read.
 
 **VZ is only ever handed symlink-resolved URLs.** VZ resolves no symlinks and rejects a path
 containing one in any component, reporting it as a missing or invalid file while `FileManager`

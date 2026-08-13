@@ -163,6 +163,9 @@ final class VMSettingsViewController: NSViewController {
 
     // Network
     private var networkModePopUp = NSPopUpButton()
+    /// The Network header's lock icon, hidden — unlike its `lockIcons` peers —
+    /// while the picker is the live-switch surface.
+    private var networkLockIcon: NSImageView?
     /// The MAC Address row, hidden while the VM has no network device; `nil` for a
     /// VM carrying no MAC address, whose row is never built.
     private var macAddressRow: GroupedFormCollapsibleRow?
@@ -218,6 +221,9 @@ final class VMSettingsViewController: NSViewController {
     /// nothing about networking skips a rebuild — which enumerates the host's
     /// bridgeable interfaces and queries the process signature.
     private var renderedNetworkChoice: NetworkModeChoice?
+    /// The live-switch state the Mode menu was last built for; a change rebuilds
+    /// so the None entry's enablement tracks it.
+    private var renderedNetworkLiveSwitchable = false
 
     // MARK: - Init
 
@@ -914,8 +920,10 @@ extension VMSettingsViewController {
     }
 
     private func buildNetworkSection() -> NSView {
+        // Deliberately outside `persistentLockableControls`: the picker is the
+        // live-switch surface while the VM runs, so `refreshNetwork()` owns its
+        // enablement (and the section lock icon it makes moot).
         networkModePopUp = makeNetworkModePopUp()
-        persistentLockableControls.append(networkModePopUp)
 
         var rows: [NSView] = [makeGroupedFormCardRow("Mode", control: networkModePopUp)]
         if let mac = instance.configuration.macAddress {
@@ -942,11 +950,23 @@ extension VMSettingsViewController {
                     "The interface usually appears as `enp0s1`. If networking doesn't come up, make sure your distro's DHCP client or NetworkManager is running."
                 ))
         }
+        let header = makeHeader("Network", lockable: true, paragraphs: paragraphs)
+        networkLockIcon = lockIcons.last
         return makeSection([
-            makeHeader("Network", lockable: true, paragraphs: paragraphs),
+            header,
             makeGroupedFormCard(rows: rows),
             networkNoDeviceCaption,
         ])
+    }
+
+    /// While the pane is read-only, whether the Mode picker stays live as the
+    /// hot-swap surface: swapping the attachment needs a running or live-paused
+    /// session and a network device to swap on — None-mode VMs have no device,
+    /// and devices cannot be added or removed at runtime.
+    private var networkModeIsLiveSwitchable: Bool {
+        guard isReadOnly else { return false }
+        return instance.configuration.networkEnabled
+            && (instance.status == .running || instance.isLivePaused)
     }
 
     private func makeNetworkModePopUp() -> NSPopUpButton {
@@ -968,11 +988,15 @@ extension VMSettingsViewController {
     private func rebuildNetworkModeMenu() {
         guard let menu = networkModePopUp.menu else { return }
         menu.removeAllItems()
+        let liveSwitchable = networkModeIsLiveSwitchable
         addNetworkModeItem("Shared Network", choice: .shared, to: menu)
-        addNetworkModeItem("None", choice: .none, to: menu)
+        // While the session runs, every attachable mode can hot-swap; None
+        // cannot — network devices cannot be added or removed at runtime.
+        addNetworkModeItem("None", choice: .none, to: menu, enabled: !liveSwitchable)
 
         let current = currentNetworkChoice
         renderedNetworkChoice = current
+        renderedNetworkLiveSwitchable = liveSwitchable
         if entitlements.hasVMNetworking {
             menu.addItem(.sectionHeader(title: "Bridged"))
             addNetworkModeItem("Automatic", choice: .bridged(nil), to: menu)
@@ -1598,7 +1622,14 @@ extension VMSettingsViewController {
     }
 
     private func refreshNetwork() {
-        if currentNetworkChoice != renderedNetworkChoice {
+        let liveSwitchable = networkModeIsLiveSwitchable
+        networkModePopUp.isEnabled = !isReadOnly || liveSwitchable
+        // `apply()` just showed every lock icon for the read-only pane; a live
+        // picker makes this section's lock a false claim, so re-hide it.
+        networkLockIcon?.isHidden = !isReadOnly || liveSwitchable
+        if currentNetworkChoice != renderedNetworkChoice
+            || liveSwitchable != renderedNetworkLiveSwitchable
+        {
             rebuildNetworkModeMenu()
         }
         // None leaves no device to describe, so the card's remaining rows give way

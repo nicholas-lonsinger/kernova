@@ -592,11 +592,13 @@ struct ConfigurationBuilder: Sendable {
     /// Resolves the host interface a bridged VM attaches to.
     ///
     /// A persisted interface the host no longer offers narrows to Automatic — the
-    /// default-route interface. When neither resolves the start fails: the mode is
-    /// never substituted, so the VM neither bridges over an arbitrary interface
-    /// nor quietly becomes Shared Network (docs/NETWORKING.md).
+    /// default-route interface. When neither resolves the device is built detached
+    /// (`nil`): the boot or restore succeeds, attachment recovery reattaches once
+    /// an interface is available, and the mode is never substituted — the VM
+    /// neither bridges over an arbitrary interface nor quietly becomes Shared
+    /// Network (docs/NETWORKING.md).
     private func bridgedAttachment(config: VMConfiguration) throws
-        -> VZBridgedNetworkDeviceAttachment
+        -> VZBridgedNetworkDeviceAttachment?
     {
         guard entitlements.hasVMNetworking else {
             Self.logger.error(
@@ -615,10 +617,10 @@ struct ConfigurationBuilder: Sendable {
                 $0.identifier == chosen
             })
         else {
-            Self.logger.error(
-                "Bridged networking requested for '\(config.name, privacy: .public)' with no bridgeable host interface"
+            Self.logger.warning(
+                "Bridged networking for '\(config.name, privacy: .public)' has no bridgeable host interface — starting detached"
             )
-            throw ConfigurationBuilderError.noBridgeableInterface
+            return nil
         }
 
         if let persisted = config.bridgedInterfaceIdentifier, persisted != chosen {
@@ -930,8 +932,6 @@ enum ConfigurationBuilderError: LocalizedError {
     case removableMediaNotWritable(String, String)
     /// Removable-media counterpart of `storageDiskAttachFailed`.
     case removableMediaAttachFailed(id: UUID, path: String, label: String, underlying: any Error)
-    /// Bridged mode was chosen but the host offers no interface to bridge over.
-    case noBridgeableInterface
     /// Bridged mode was chosen in a build whose signature omits
     /// `com.apple.vm.networking`, which VZ needs for any non-NAT attachment.
     case bridgedNetworkingNotEntitled
@@ -972,8 +972,6 @@ enum ConfigurationBuilderError: LocalizedError {
             "Removable media '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
         case .removableMediaAttachFailed(_, let path, let label, let underlying):
             "Couldn't open removable media '\(label)' at \(path). The file may have been moved or replaced, or Kernova may no longer have permission to read it. (\(underlying.localizedDescription))"
-        case .noBridgeableInterface:
-            "No host network interface could be chosen for bridged networking. Choose a specific interface in the VM's Network settings, or switch to Shared Network."
         case .bridgedNetworkingNotEntitled:
             "This build of Kernova can't provide bridged networking. Switch the VM's network mode to Shared Network."
         case .sharedDirectoryNotFound(let path):
