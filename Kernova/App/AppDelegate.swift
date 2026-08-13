@@ -354,7 +354,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let provenance = Self.residentProvenanceLine(
             bundlePath: Bundle.main.bundlePath,
             build: Self.buildNumber,
-            configuration: Self.buildConfiguration)
+            configuration: Self.buildConfiguration,
+            vmNetworkingEntitled: EntitlementService.shared.hasVMNetworking)
         Self.logger.notice("Kernova resident app ready — \(provenance, privacy: .public)")
 
         summonUserInterface()
@@ -441,9 +442,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// Formats the resident-app startup provenance line.
     nonisolated static func residentProvenanceLine(
-        bundlePath: String, build: String, configuration: String
+        bundlePath: String, build: String, configuration: String, vmNetworkingEntitled: Bool
     ) -> String {
-        "bundle=\(bundlePath) build=\(build) config=\(configuration)"
+        "bundle=\(bundlePath) build=\(build) config=\(configuration) "
+            + "vmNetworking=\(vmNetworkingEntitled ? "entitled" : "unentitled")"
     }
 
     /// What a GUI summon puts on screen.

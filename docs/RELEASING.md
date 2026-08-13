@@ -68,8 +68,10 @@ set to the profile name above, `ENABLE_HARDENED_RUNTIME = YES`, and
 runtime and a secure timestamp on every binary, and since export re-signing
 can't add either inside the DMG, they have to be baked in at build time.
 
-The outer app and `KernovaRelaunchHelper` sign **ad-hoc** at build time and
-receive their Developer ID signatures from the Organizer export.
+`KernovaRelaunchHelper` signs **ad-hoc** at build time; the outer app signs
+with whatever identity `Config/Local.xcconfig` supplies (ad-hoc on a bare
+checkout). Both receive their Developer ID signatures from the Organizer
+export.
 
 Xcode injects `com.apple.security.get-task-allow` into *build*-action products
 for debugger attachment — the agent target sets
@@ -112,8 +114,12 @@ disabled**.
    It writes nothing unless every entry resolves, so a failure names a mirror
    that moved: repair that entry by hand and re-run. Read the diff before
    committing it — every value in it came off a mirror.
-4. **Archive.** In Xcode, select the **Kernova** scheme, then **Product →
-   Archive** (archiving builds Release).
+4. **Archive.** First check `KERNOVA_APP_ENTITLEMENTS` in
+   `Config/Local.xcconfig`: the full set — with the restricted
+   `com.apple.vm.networking` key — belongs in an archive only when this
+   distribution lane's provisioning profile authorizes the key; amfid kills a
+   launched build whose embedded profile does not. Then, in Xcode, select the
+   **Kernova** scheme and **Product → Archive** (archiving builds Release).
 5. **Confirm the archive type.** In the Organizer, verify the new archive
    appears as a **macOS app** archive, not *Other Items*. If it's *Other
    Items*, a `SKIP_INSTALL` regressed on the agent or `KernovaRelaunchHelper`.
@@ -135,9 +141,11 @@ spctl -a -vv Kernova.app
 codesign -dvvv Kernova.app
 # → Authority=Developer ID Application: Nicholas Lonsinger (8MT4P4GZL2)
 
-# Entitlements: debug entitlement absent
+# Entitlements: debug entitlement absent, networking key matching the lane
 codesign -d --entitlements - Kernova.app
 # → NO com.apple.security.get-task-allow
+# → com.apple.vm.networking present exactly when Local.xcconfig opted the
+#   archive into the full set (see the Archive step)
 
 # Deep structural verification
 codesign -dvv --verify --strict --deep Kernova.app

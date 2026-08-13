@@ -137,7 +137,7 @@ format: ## Rewrite Swift sources in place via swift-format
 # merges rather than silently skipping. Project-wide directives live in
 # .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
 # error surfaces without waiting on swift-format.
-lint: ## Lint Swift sources (swift-format --strict), shell scripts, and docs
+lint: ## Lint Swift sources (swift-format --strict), shell scripts, docs, and entitlement parity
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck $(SHELL_SOURCES); \
@@ -150,6 +150,7 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, and docs
 	@test -n '$(strip $(SWIFT_SOURCE_DIRS))' || { echo 'No tracked Swift sources found — not a git checkout?' >&2; exit 1; }
 	$(SWIFT_FORMAT) lint --strict --recursive $(SWIFT_SOURCE_DIRS)
 	@bash Tools/check-docs.sh
+	@bash Tools/check-entitlements.sh
 
 # Environment sanity check: verifies the local toolchain (macOS, Xcode, Swift,
 # swift-format) and repo setup (git hooks, .worktreeinclude) match what Kernova

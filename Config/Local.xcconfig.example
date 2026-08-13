@@ -13,3 +13,12 @@ DEVELOPMENT_TEAM = ABCDE12345
 // Drop the line to sign ad-hoc; keep it alongside DEVELOPMENT_TEAM, since
 // automatic signing resolves the certificate through the team.
 CODE_SIGN_IDENTITY = Apple Development
+
+// Opts the app (both configurations) into the full entitlement set,
+// including the restricted com.apple.vm.networking key, which automatic
+// signing must authorize through a capability-enabled profile — uncomment
+// only with the capability enabled on the team's App ID and a certificate
+// set above; otherwise the default (the Development variant, set in
+// Base.xcconfig) keeps profile-less builds signing. Archives inherit the
+// choice: comment it back out to cut an unentitled build.
+// KERNOVA_APP_ENTITLEMENTS = Kernova/Resources/Kernova.entitlements

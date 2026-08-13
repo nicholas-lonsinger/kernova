@@ -20,7 +20,12 @@ Set `CODE_SIGN_IDENTITY = Apple Development` there whenever you have a certifica
 
 `DEVELOPMENT_TEAM` is what automatic signing resolves that certificate through, and the guest agent's Release Developer ID signing needs it too ([RELEASING.md](RELEASING.md)) — keep the two lines together.
 
-Every Release configuration pins its identity at target level, which outranks a project xcconfig, so the override reaches Debug alone. The guest agent stays ad-hoc in Debug as well: it runs inside the guest, where a host code identity buys nothing.
+The guest agent and `KernovaRelaunchHelper` pin their Release identities at target level, which outranks a project xcconfig; the app and both test bundles leave Release unpinned, so the override reaches them too — an entitled archive needs the real identity, and a team-signed, hardened test host rejects an ad-hoc test bundle under library validation, so host and bundle must sign together.
+The guest agent stays ad-hoc in Debug as well: it runs inside the guest, where a host code identity buys nothing.
+
+The app's entitlements resolve through the same override point. `com.apple.vm.networking` is restricted — automatic signing refuses to sign it without an authorizing profile, and amfid kills an ad-hoc-signed binary that claims it at exec ("adhoc signed but contains restricted entitlements") — so the app's `CODE_SIGN_ENTITLEMENTS` resolves through `KERNOVA_APP_ENTITLEMENTS` in both configurations, defaulting in `Base.xcconfig` to `Kernova/Resources/Kernova.Development.entitlements`: the shipping set minus that key, keeping a profile-less checkout building and launchable.
+
+With the capability enabled on the team's App ID, setting `KERNOVA_APP_ENTITLEMENTS = Kernova/Resources/Kernova.entitlements` in `Local.xcconfig` opts the app into the full set — automatic signing then embeds the authorizing Xcode-managed profile, and an archive cut this way carries the key ([RELEASING.md](RELEASING.md) owns the per-lane choice). Code asks which set it was signed with through `EntitlementService`, never `#if DEBUG`.
 
 ## One test invocation, three test targets
 
@@ -36,7 +41,7 @@ That works because `KernovaKit` is referenced as a top-level peer — a `PBXFile
 
 Three of the workflows in `.github/workflows/` are required status checks: `lint`, `build-and-test`, and `proto-drift`. The "Required actions" ruleset matches them **by job name**, and that ruleset lives in GitHub's settings rather than in this repo — so renaming a job means editing the ruleset in the same change, or every PR waits on a check that never reports.
 
-The `lint` job runs `make lint`, which is therefore what gates a merge: `swift-format --strict`, shell (`bash -n` plus shellcheck, which it treats as required once `$CI` is set), and `Tools/check-docs.sh` for the documentation line cap and link validity. Each workflow's own header explains its trigger design; read it there before changing one.
+The `lint` job runs `make lint`, which is therefore what gates a merge: `swift-format --strict`, shell (`bash -n` plus shellcheck, which it treats as required once `$CI` is set), `Tools/check-docs.sh` for the documentation line cap and link validity, and `Tools/check-entitlements.sh` for key parity between the two app entitlement variants. Each workflow's own header explains its trigger design; read it there before changing one.
 
 `Kernova.xctestplan` sets `retryOnFailure` with two repetitions, so a test that fails once and passes on the retry still greens the job. The "Report flaky (retried) tests" step reads the result bundle and names those tests, which is where to look — a green conclusion on its own says nothing about flakes.
 
