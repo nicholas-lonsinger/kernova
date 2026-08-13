@@ -71,14 +71,6 @@ struct VmnetOperationError: Error, LocalizedError {
 }
 
 /// The real `VmnetNetworkOperating`, over the macOS 26 vmnet network APIs.
-///
-/// RATIONALE (2026-08-13): a serialization from
-/// `vmnet_network_copy_serialization` is usable only while its source network
-/// still exists. `vmnet_network_create_with_serialization` returns success
-/// either way, but interfaces start only on a rebuild made while the source
-/// lives (measured; the headers state no validity window). The pair therefore
-/// cannot carry a network across launches — persistence here pins the
-/// reserved addressing onto a fresh configuration instead.
 struct HostVmnetNetworkOperator: VmnetNetworkOperating {
     private static let logger = Logger(subsystem: "app.kernova", category: "HostVmnetNetworkOperator")
 
