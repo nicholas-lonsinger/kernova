@@ -124,10 +124,19 @@ substitute mocks. Services split by concurrency: those that touch
 single VZ-facing translation point, covering boot loader, CPU, memory, storage, network, display,
 input, audio, the Linux SPICE console port, and the macOS `VZVirtioSocketDeviceConfiguration`.
 
-The network attachment follows the VM's persisted mode: shared NAT, or bridged over a host
+The network attachment follows the VM's persisted mode: shared NAT, bridged over a host
 interface resolved through `BridgedInterfaceProviding` — the same seam the settings section's Mode
-picker reads its interface list from. A bridged VM whose interface cannot resolve builds the
-device detached rather than failing the boot or restore.
+picker reads its interface list from — or host-only on the app-managed vmnet network reached
+through `VmnetNetworkProviding`. A bridged VM whose interface cannot resolve, or a host-only
+network that cannot materialize, builds the device detached rather than failing the boot or
+restore.
+
+`VmnetNetworkService` (lock-guarded `Sendable`, process-wide — it serves `ConfigurationBuilder`'s
+off-main assembly and the main-actor live-switch path) owns the app's managed vmnet networks. It
+materializes each lazily over the `VmnetNetworkOperating` seam and holds the ref until the app
+exits, so every concurrent VM in the mode shares the one network; addressing stays stable across
+launches by persisting each network's addressing to `Application Support/Kernova/networks.json`
+and pinning it onto the recreated network at next use.
 
 While a session runs, `NetworkAttachmentCoordinator` (one per session, owned by `VMInstance`,
 activated when the VM reaches `.running`) keeps the live attachment realizing the persisted mode.

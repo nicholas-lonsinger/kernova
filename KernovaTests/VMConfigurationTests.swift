@@ -1224,6 +1224,37 @@ struct VMConfigurationTests {
         #expect(decoded.bridgedInterfaceIdentifier == "en0")
     }
 
+    @Test("Configuration preserves the host-only mode")
+    func hostOnlyModeRoundTrip() throws {
+        let config = VMConfiguration(
+            name: "Host Only VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            networkMode: .hostOnly
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.networkMode == .hostOnly)
+        #expect(decoded.networkChoice == NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil))
+    }
+
+    @Test("A host-only config decodes from the stored raw value")
+    func hostOnlyModeDecodesFromRawValue() throws {
+        let json = Self.makeBaseJSON(extraFields: "\"networkMode\": \"hostOnly\"")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+
+        #expect(decoded.networkMode == .hostOnly)
+    }
+
     @Test("A bridged config decodes Automatic from a stored mode without an interface")
     func bridgedModeWithoutInterfaceDecodesAutomatic() throws {
         let json = Self.makeBaseJSON(extraFields: "\"networkMode\": \"bridged\"")
