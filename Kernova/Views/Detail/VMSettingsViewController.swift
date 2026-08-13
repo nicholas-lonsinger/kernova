@@ -1465,7 +1465,7 @@ extension VMSettingsViewController {
     /// Info copy for the macOS-only input devices picker.
     private static let inputDevicesInfoParagraphs: [InfoPopoverParagraph] = [
         .body(
-            "Chooses the virtual keyboard and pointing device the guest sees. Automatic picks by the guest's macOS version: the Mac devices for macOS 13 and later, the USB devices for earlier guests, which don't recognize the Mac ones."
+            "Chooses the virtual keyboard and pointing device the guest sees. Automatic picks by the guest's macOS version: the Mac devices for macOS 13 and later, the USB devices for earlier guests, which don't recognize the Mac ones. When the guest's version isn't known, Automatic picks the Mac devices — choose USB here if such a guest has no working input."
         ),
         .body(
             "The USB pointer reads as a mouse inside the guest, so macOS shows permanently visible scroll bars instead of trackpad-style overlay scroll bars."
