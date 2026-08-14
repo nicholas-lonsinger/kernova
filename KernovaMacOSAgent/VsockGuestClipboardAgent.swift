@@ -139,6 +139,15 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// off-queue supersession check.
     private let currentOutboundGeneration = AtomicGeneration()
 
+    /// The outbound generation whose transfers the user cancelled.
+    ///
+    /// Cancelling aborts what is streaming, but the host decides what it pulls
+    /// and would simply request the next representation of a still-live offer,
+    /// bringing the readout back a beat later. The latch is what ends the
+    /// operation rather than one of its files; a later paste is a fresh gesture
+    /// against a fresh generation.
+    private var cancelledOutboundGeneration: UInt64?
+
     /// The host offer currently promised on the guest pasteboard, with its
     /// per-representation materialization cache.
     private var inboundPromise: InboundPromise?
@@ -407,6 +416,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     private func cancelOutboundTransfers(generation: UInt64) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let sender else { return }
+        cancelledOutboundGeneration = generation
         sender.cancel(generation: generation)
         Self.logger.notice(
             "User cancelled the outbound clipboard transfer (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
@@ -943,6 +953,17 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     // MARK: - Outbound (we are the sender)
 
     private func handleRequest(_ request: Kernova_V1_ClipboardRequest) {
+        guard cancelledOutboundGeneration != request.generation else {
+            Self.logger.debug(
+                "Clipboard request for cancelled gen=\(request.generation, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) — refusing"
+            )
+            // Refused as stale, which the host already retires quietly: its paste
+            // comes back empty and neither side reports a failure.
+            sender?.rejectRequest(
+                transferID: request.transferID, code: "request.stale",
+                message: "The transfer for generation \(request.generation) was cancelled")
+            return
+        }
         guard let pending = pendingOutbound, pending.generation == request.generation else {
             Self.logger.debug(
                 "Stale clipboard request gen=\(request.generation, privacy: .public) (pending=\(self.pendingOutbound?.generation ?? 0, privacy: .public), conn=\(self.connectionTag, privacy: .public))"

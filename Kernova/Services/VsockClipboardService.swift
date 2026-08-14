@@ -160,6 +160,22 @@ final class VsockClipboardService: ClipboardServicing {
     /// the window can call `materializeForPreview()` freely without re-pulling.
     private var previewMaterializationStarted: UInt64 = 0
 
+    /// The inbound generation whose materialization loop the user cancelled.
+    ///
+    /// Cancelling aborts the transfer in flight, but the loop that started it has
+    /// a list of further representations to pull and would simply move to the
+    /// next one — so a multi-file operation would resume a beat after Cancel.
+    /// The latch is what ends the operation rather than one of its files.
+    /// Cleared by the next offer; a later paste or Copy to Mac is a fresh
+    /// gesture and pulls through its own path (docs/CLIPBOARD.md §9).
+    private var cancelledInboundGeneration: UInt64?
+
+    /// The outbound generation whose transfers the user cancelled, for the same
+    /// reason — the peer decides what it pulls, so without this it simply asks
+    /// for the next representation of a still-live offer and the readout comes
+    /// back.
+    private var cancelledOutboundGeneration: UInt64?
+
     /// Digest of the last content we successfully announced; suppresses
     /// redundant offers.
     private var lastGrabbedDigest: Data?
@@ -447,6 +463,7 @@ final class VsockClipboardService: ClipboardServicing {
     /// empty and nothing is reported as a failure on either side.
     private func cancelOutboundTransfers(generation: UInt64) {
         guard let sender else { return }
+        cancelledOutboundGeneration = generation
         sender.cancel(generation: generation)
         Self.logger.notice(
             "User cancelled the outbound clipboard transfer for '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
@@ -461,6 +478,7 @@ final class VsockClipboardService: ClipboardServicing {
     /// the benign `cancelled` code, so the loop ends without raising an issue.
     private func cancelInboundPulls(generation: UInt64) {
         guard let promise = inboundPromise, promise.generation == generation else { return }
+        cancelledInboundGeneration = generation
         for index in promise.inFlight.keys {
             let transferID = ClipboardTransferID.make(
                 generation: generation, repIndex: index, hostMinted: true)
@@ -809,6 +827,17 @@ final class VsockClipboardService: ClipboardServicing {
     // MARK: - Outbound (we are the sender)
 
     private func handleRequest(_ request: Kernova_V1_ClipboardRequest) {
+        guard cancelledOutboundGeneration != request.generation else {
+            Self.logger.debug(
+                "Clipboard request for cancelled gen=\(request.generation, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) — refusing"
+            )
+            // Refused as stale, which the peer already retires quietly: its paste
+            // comes back empty and neither side reports a failure.
+            sender?.rejectRequest(
+                transferID: request.transferID, code: "request.stale",
+                message: "The transfer for generation \(request.generation) was cancelled")
+            return
+        }
         guard let pending = pendingOutbound, pending.generation == request.generation else {
             Self.logger.debug(
                 "Stale clipboard request gen=\(request.generation, privacy: .public) (pending=\(self.pendingOutbound?.generation ?? 0, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
@@ -946,6 +975,8 @@ final class VsockClipboardService: ClipboardServicing {
                 "Clamped \(bounded.clampedCount, privacy: .public) implausible declared byte count(s) in the guest clipboard offer for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
             )
         }
+        // A new offer is a new operation; whatever the user cancelled is over.
+        cancelledInboundGeneration = nil
         let promise = InboundPromise(
             generation: offer.generation, reps: bounded.reps, isConcealed: offer.isConcealed)
         let placeholders = rebuiltReps(from: promise)
@@ -1119,6 +1150,9 @@ final class VsockClipboardService: ClipboardServicing {
         var allSucceeded = true
         for (index, info) in promise.reps.enumerated() {
             guard inboundPromise === promise else { return }  // superseded
+            // The user stopped the whole operation, not the one file that
+            // happened to be in flight when they clicked.
+            guard cancelledInboundGeneration != promise.generation else { return }
             guard Self.isEagerPreviewable(info), !Self.shouldSkip(info) else { continue }
             if await materialize(index: index, info: info, promise: promise, session: session) == nil {
                 allSucceeded = false

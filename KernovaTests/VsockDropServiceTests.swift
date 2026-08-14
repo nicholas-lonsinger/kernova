@@ -420,6 +420,31 @@ struct VsockDropServiceTests {
         #expect(message.contains("Downloads"))
         // The guest's own message text never reaches a surface.
         #expect(!message.contains("detail the host must not render"))
+        // The specific code reaches every surface, so the dropdown line names
+        // the same outcome the notice body does rather than the generic one.
+        #expect(issue.menuLineText == "Drop: the VM's Downloads folder is off limits")
+    }
+
+    @Test("a drop that fails partway never claims the files it already moved weren't saved")
+    func failureCopyDoesNotDenyPartialProgress() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let scratch = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
+
+        #expect(harness.service.startDrop(urls: [file]))
+        try await harness.recorder.wait { !harness.recorder.offers.isEmpty }
+        try harness.guest.send(makeComplete(generation: 1, outcome: .failed, code: .dropDiskFull))
+        try await waitUntil { harness.issue != nil }
+
+        // The guest moves each file as it lands, so a batch that fails on file 3
+        // leaves 1 and 2 in Downloads. A message saying nothing was saved would
+        // send the user looking for files that are there.
+        let message = try #require(harness.issue).displayMessage(
+            pasteLimitBytes: ClipboardPasteLimit.defaultBytes)
+        #expect(message.contains("disk space"))
+        #expect(!message.contains("weren't saved"))
     }
 
     // MARK: - Teardown
@@ -462,6 +487,52 @@ struct VsockDropServiceTests {
         harness.guest.close()
 
         #expect(harness.issue == nil)
+    }
+
+    @Test("the channel ending settles the service, so the display stops offering drops")
+    func channelEndSettlesTheService() async throws {
+        let harness = try Harness()
+        let scratch = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
+
+        #expect(harness.service.startDrop(urls: [file]))
+        try await harness.recorder.wait { !harness.recorder.offers.isEmpty }
+
+        // The guest's drop client closes this channel on every control
+        // reconnect. Nothing calls `stop()` for that, so the service has to
+        // settle itself or it keeps advertising a drop it cannot send.
+        harness.recorder.cancel()
+        harness.guest.close()
+
+        try await waitForChange { !harness.service.isConnected }
+        #expect(!harness.service.startDrop(urls: [file]))
+        #expect(harness.service.transferProgress == nil)
+        #expect(harness.progressCenter.materializationProgress == nil)
+        // The drop in flight when the channel went is owed an answer.
+        #expect(harness.issue != nil)
+    }
+
+    @Test("a folder still being sized when the channel goes reports the interruption")
+    func pendingFolderWalkReportsInterruption() async throws {
+        let harness = try Harness(directoryByteCount: { _ in 4_096 })
+        let scratch = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let folder = scratch.appendingPathComponent("Photos", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+        // The drop is accepted and its offer deferred behind the size walk. This
+        // test is main-actor bound, so the walk's completion hop cannot run
+        // until the awaits below — the same window a slow real walk opens.
+        #expect(harness.service.startDrop(urls: [folder]))
+        harness.recorder.cancel()
+        harness.service.stop()
+        harness.guest.close()
+
+        // No job was ever registered, so `settle()` had nothing to report: only
+        // the discarded walk can account for the drop the user made.
+        try await waitForChange { harness.issue != nil }
+        #expect(harness.recorder.offers.isEmpty)
     }
 
     @Test("a drop is refused once the service has stopped")

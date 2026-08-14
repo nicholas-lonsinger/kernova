@@ -423,6 +423,11 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         let generation = job.generation
         send(completion: outcome, generation: generation, on: channel)
         DispatchQueue.main.async { [weak self] in
+            // Identity-checked, not just keyed: generations restart at 1 with
+            // every accepted channel, so a worker that outlived a teardown would
+            // otherwise clear the *next* connection's job of the same number —
+            // leaving it unreachable by a release or a Cancel.
+            guard self?.jobs[generation] === job else { return }
             self?.jobs[generation] = nil
         }
         Self.logger.notice(

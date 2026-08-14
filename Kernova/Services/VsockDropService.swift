@@ -164,6 +164,13 @@ final class VsockDropService {
                         MainActor.assumeIsolated { self?.handleControlFrame(frame) }
                     }
                 })
+            // The channel is gone — settle here rather than waiting for whatever
+            // replaces this service. `isConnected` is what the display reads to
+            // decide whether it may take a drop, and the guest closes this
+            // channel on every control reconnect (its client pauses until the
+            // next `Hello`), so a service left standing would keep advertising a
+            // drop it can no longer send.
+            await MainActor.run { self?.settle() }
         }
         Self.logger.notice(
             "Vsock drop service started for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
@@ -173,10 +180,20 @@ final class VsockDropService {
     func stop() {
         consumeTask?.cancel()
         consumeTask = nil
+        settle()
+    }
+
+    /// Tears the service down once its channel is over, whether the owner asked
+    /// or the channel simply ended.
+    ///
+    /// Idempotent: the consume loop's own settle and an owner's `stop()` race by
+    /// construction, and the first one through does the work.
+    private func settle() {
+        channel.close()
+        guard isConnected else { return }
+        isConnected = false
         sender?.cancelAll()
         sender = nil
-        channel.close()
-        isConnected = false
         // A job still open when the channel goes is a drop whose files never
         // landed, and the gesture was made on this Mac — so it is owed an answer
         // here. One already called off is not: the user knows.
@@ -184,7 +201,9 @@ final class VsockDropService {
         for job in abandoned { job.liveGeneration.set(0) }
         jobs.removeAll()
         if !abandoned.isEmpty {
-            raiseIssue(.dropInterrupted(fileCount: abandoned.reduce(0) { $0 + $1.content.representations.count }))
+            raiseIssue(
+                .dropInterrupted(
+                    fileCount: abandoned.reduce(0) { $0 + $1.content.representations.count }))
         }
         progress.clearAll()
         // Synchronously, not via the tracker's emission hop: a readout still
@@ -281,7 +300,14 @@ final class VsockDropService {
             DispatchQueue.main.async {
                 guard let self else { return }
                 MainActor.assumeIsolated {
-                    guard self.isConnected else { return }
+                    guard self.isConnected else {
+                        // The channel went away while the folder was being
+                        // sized. The drop was accepted, so its disappearance is
+                        // owed the same answer an interrupted transfer gets —
+                        // there is no job yet for `settle()` to have reported.
+                        self.raiseIssue(.dropInterrupted(fileCount: dropped.count))
+                        return
+                    }
                     self.offer(
                         generation: generation,
                         reps: Self.representations(for: dropped, sizes: measured))

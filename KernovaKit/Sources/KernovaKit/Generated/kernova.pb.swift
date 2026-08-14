@@ -737,8 +737,9 @@ public nonisolated struct Kernova_V1_Error: Sendable {
 /// Metadata only, exactly like `ClipboardOffer`: the guest pulls each
 /// representation with a `ClipboardRequest` on the drop channel and receives it
 /// through the same `ClipboardStreamBegin`/`Chunk`/`End` path a paste uses. Every
-/// representation carries a non-empty `filename` and `is_inline = false` — a drop
-/// always lands as a file — and the guest writes each into its Downloads folder.
+/// representation carries a non-empty `filename`, and the guest writes each into
+/// its Downloads folder as a file — `is_inline` is meaningless here and is
+/// ignored, since a drop never reaches a pasteboard.
 public nonisolated struct Kernova_V1_DropOffer: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for

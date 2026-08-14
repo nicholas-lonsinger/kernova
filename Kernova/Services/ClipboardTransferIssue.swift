@@ -187,22 +187,30 @@ extension ClipboardTransferIssue {
     /// Raised when the guest reports it could not put the dropped files in its
     /// Downloads folder.
     ///
-    /// Composed from the guest's machine-readable `code`, never from its
-    /// message text: the sentence a user reads is written on this side.
+    /// Composed from the guest's machine-readable `code`, never from its message
+    /// text: the sentence a user reads is written on this side. The code is
+    /// carried into the issue too, so every surface renders the same specific
+    /// outcome rather than the dropdown falling back to the generic line.
+    ///
+    /// The wording says the drop did not finish rather than that nothing was
+    /// saved: a batch that fails partway leaves the files it already moved in
+    /// Downloads, and a message claiming otherwise would send the user looking
+    /// for something that is there.
     static func dropFailed(code: ClipboardErrorCode?) -> ClipboardTransferIssue {
+        let resolved = code ?? .dropFailed
         let message: String
-        switch code {
+        switch resolved {
         case .dropDiskFull:
-            message = "The VM ran out of disk space, so the files weren't saved."
+            message = "The VM ran out of disk space, so the drop didn't finish."
         case .dropDownloadsDenied:
             message =
-                "The guest agent isn't allowed to use the VM's Downloads folder, so the files weren't saved."
+                "The guest agent isn't allowed to use the VM's Downloads folder, so the drop didn't finish."
         default:
-            message = "The files couldn't be saved in the VM's Downloads folder."
+            message =
+                "The drop didn't finish — some files may not be in the VM's Downloads folder."
         }
         return ClipboardTransferIssue(
-            kind: .localFailure(code: ClipboardErrorCode.dropFailed.rawValue, message: message),
-            date: Date())
+            kind: .localFailure(code: resolved.rawValue, message: message), date: Date())
     }
 
     /// Raised when a copied file's bytes arrived but could not be written to a
