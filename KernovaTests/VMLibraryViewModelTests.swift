@@ -2155,6 +2155,191 @@ struct VMLibraryViewModelTests {
         #expect(vmnet.reservedMACs.isEmpty)
     }
 
+    // MARK: - Address Reservation Release
+
+    /// A VM in the library already holding a reservation slot on its mode's
+    /// network — the state a load leaves behind, without going through a scan.
+    private func makeReservedInstance(
+        in viewModel: VMLibraryViewModel, using vmnet: MockVmnetNetworkProvider,
+        mac: String, mode: VMNetworkMode = .shared
+    ) -> VMInstance {
+        let instance = makeInstance()
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = mode
+        instance.configuration.macAddress = mac
+        viewModel.instances.append(instance)
+        if let kind = VmnetNetworkKind(mode: mode) {
+            vmnet.reserveAddressIfNeeded(for: mac, kind: kind)
+        }
+        return instance
+    }
+
+    @Test("Deleting a VM releases its DHCP reservation slot")
+    func deleteReleasesAddressReservation() async {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
+        let instance = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
+
+        for task in viewModel.deleteConfirmed(instance) { await task.value }
+
+        #expect(vmnet.releasedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
+        #expect(vmnet.reservedMACs.isEmpty)
+    }
+
+    @Test("A slot another VM still wants survives a delete")
+    func deleteKeepsASlotADuplicateMACStillWants() async {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
+        let first = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
+        _ = makeReservedInstance(in: viewModel, using: vmnet, mac: "AA:BB:CC:DD:EE:0F")
+
+        for task in viewModel.deleteConfirmed(first) { await task.value }
+
+        #expect(vmnet.releasedMACs.isEmpty)
+        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
+    }
+
+    @Test("Editing the MAC releases the retired slot before the new MAC takes one")
+    func macAddressChangeReleasesTheRetiredSlotFirst() {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
+        let instance = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
+
+        viewModel.updateConfiguration(of: instance) { $0.macAddress = "aa:bb:cc:dd:ee:10" }
+
+        // Release first, so the freed slot is the lowest one available and the
+        // VM's reserved address does not move.
+        #expect(vmnet.releasedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
+        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:10"])
+    }
+
+    @Test("Switching network mode releases the slot on the old kind")
+    func modeSwitchReleasesTheOldKindsSlot() {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
+        let instance = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
+
+        viewModel.updateConfiguration(of: instance) { $0.networkMode = .hostOnly }
+
+        #expect(vmnet.releasedMACs.map(\.kind) == [.shared])
+        #expect(vmnet.reservedMACs.map(\.kind) == [.hostOnly])
+    }
+
+    @Test("Disabling networking releases the slot")
+    func disablingNetworkingReleasesTheSlot() {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
+        let instance = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
+
+        viewModel.updateConfiguration(of: instance) { $0.networkEnabled = false }
+
+        #expect(vmnet.releasedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
+        #expect(vmnet.reservedMACs.isEmpty)
+    }
+
+    @Test("An unrelated configuration change releases nothing")
+    func unrelatedChangeReleasesNothing() {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
+        let instance = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
+
+        viewModel.updateConfiguration(of: instance) { $0.name = "Renamed" }
+
+        #expect(vmnet.releasedMACs.isEmpty)
+        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
+    }
+
+    @Test("Loading the library frees slots no VM claims")
+    func loadFreesSlotsNoVMClaims() async {
+        let vmnet = MockVmnetNetworkProvider()
+        let storage = MockVMStorageService()
+        var config = VMConfiguration(name: "Kept", guestOS: .linux, bootMode: .efi)
+        config.networkEnabled = true
+        config.networkMode = .shared
+        config.macAddress = "aa:bb:cc:dd:ee:0f"
+        storage.bundles[
+            FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        ] = config
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage, vmnetNetworks: vmnet)
+        // A slot left behind by a VM trashed while the app was not running.
+        vmnet.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:99", kind: .shared)
+
+        await viewModel.loadVMs()
+
+        #expect(vmnet.retainedMACs.first(where: { $0.kind == .shared })?.macs == ["aa:bb:cc:dd:ee:0f"])
+        #expect(vmnet.retainedMACs.first(where: { $0.kind == .hostOnly })?.macs == [])
+        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
+    }
+
+    @Test("A library that failed to read a bundle frees no slot")
+    func loadWithAFailedBundleFreesNothing() async {
+        let vmnet = MockVmnetNetworkProvider()
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(name: "Unreadable", guestOS: .linux, bootMode: .efi)
+        let failing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[failing] = config
+        storage.loadConfigurationFailURLs = [failing]
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage, vmnetNetworks: vmnet)
+        vmnet.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:99", kind: .shared)
+
+        await viewModel.loadVMs()
+
+        // The failed bundle's VM still exists, so its slot must not be reclaimed.
+        #expect(vmnet.retainedMACs.isEmpty)
+        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:99"])
+    }
+
+    @Test("A reconcile keeps the slot of a VM whose bundle is on disk but unreadable")
+    func reconcileKeepsTheSlotOfAnUnreadableBundle() {
+        let vmnet = MockVmnetNetworkProvider()
+        let storage = MockVMStorageService()
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage, vmnetNetworks: vmnet)
+        let instance = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
+        // The bundle is still on disk; only its configuration stopped parsing,
+        // so the VM leaves the library but has not gone away.
+        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.loadConfigurationFailURLs = [instance.bundleURL]
+
+        viewModel.reconcileWithDisk()
+
+        #expect(viewModel.instances.isEmpty)
+        #expect(vmnet.releasedMACs.isEmpty)
+        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
+    }
+
+    @Test("A reconcile releases the slot of a VM whose bundle is gone")
+    func reconcileReleasesTheSlotOfADeletedBundle() {
+        let vmnet = MockVmnetNetworkProvider()
+        let storage = MockVMStorageService()
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage, vmnetNetworks: vmnet)
+        _ = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
+
+        viewModel.reconcileWithDisk()
+
+        #expect(viewModel.instances.isEmpty)
+        #expect(vmnet.releasedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
+    }
+
+    @Test("An unentitled build neither releases nor prunes")
+    func unentitledBuildLeavesReservationsAlone() async {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, _, _, _) = makeViewModel(
+            vmnetNetworks: vmnet, isVMNetworkingEntitled: false)
+        let instance = makeInstance()
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = .shared
+        instance.configuration.macAddress = "aa:bb:cc:dd:ee:0f"
+        viewModel.instances = [instance]
+
+        viewModel.updateConfiguration(of: instance) { $0.macAddress = "aa:bb:cc:dd:ee:10" }
+        await viewModel.loadVMs()
+
+        #expect(vmnet.releasedMACs.isEmpty)
+        #expect(vmnet.retainedMACs.isEmpty)
+    }
+
     // MARK: - Port Forwarding Sync
 
     private static let webRule = PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80)
@@ -2214,7 +2399,7 @@ struct VMLibraryViewModelTests {
                 == ["aa:bb:cc:dd:ee:0f", "aa:bb:cc:dd:ee:10"])
         #expect(vmnet.declaredForwardingRules.dropLast().last?.rules.isEmpty == true)
         #expect(vmnet.declaredForwardingRules.last?.rules == [Self.webRule])
-        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f", "aa:bb:cc:dd:ee:10"])
+        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:10"])
     }
 
     @Test("Deleting a VM withdraws its forwarding rules")

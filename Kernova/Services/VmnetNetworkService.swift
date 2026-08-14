@@ -9,7 +9,7 @@ import vmnet
 /// (docs/NETWORKING.md).
 // `CodingKeyRepresentable` so a `[VmnetNetworkKind: …]` store encodes as a
 // JSON object keyed by kind, not Codable's array-of-pairs fallback.
-enum VmnetNetworkKind: String, Codable, CodingKeyRepresentable, Sendable {
+enum VmnetNetworkKind: String, Codable, CodingKeyRepresentable, CaseIterable, Sendable {
     /// The Host Only network: guests on it reach the host and each other,
     /// never the LAN or the internet.
     case hostOnly
@@ -71,14 +71,18 @@ enum IPv4Value {
 }
 
 /// What one app-managed network persists across launches: its addressing once
-/// first reserved, and the ordered MACs holding DHCP reservation slots —
-/// slot order is the address assignment, so the list only ever appends.
+/// first reserved, and the ordered MACs holding DHCP reservation slots.
+///
+/// Slot position *is* the address (``VmnetNetworkAddressing/reservedAddress(slot:)``),
+/// so a slot is released by emptying it in place — a `nil` element is a free
+/// slot the next MAC needing one refills, leaving every surviving VM's address
+/// where it was. Trailing free slots are trimmed.
 struct VmnetNetworkRecord: Codable, Sendable, Equatable {
     /// `nil` until the network first materializes.
     var addressing: VmnetNetworkAddressing?
-    var reservedMACs: [String]
+    var reservedMACs: [String?]
 
-    init(addressing: VmnetNetworkAddressing? = nil, reservedMACs: [String] = []) {
+    init(addressing: VmnetNetworkAddressing? = nil, reservedMACs: [String?] = []) {
         self.addressing = addressing
         self.reservedMACs = reservedMACs
     }
@@ -307,6 +311,22 @@ protocol VmnetNetworkProviding: Sendable {
     /// Cheap and non-blocking — safe from the main actor; the reservation is
     /// installed at the network's next materialization.
     func reserveAddressIfNeeded(for mac: String, kind: VmnetNetworkKind)
+    /// Frees the DHCP reservation slot `mac` holds on the network of `kind`,
+    /// so a later MAC can take it; a no-op when it holds none. Cheap and
+    /// non-blocking — safe from the main actor.
+    ///
+    /// The slot is emptied in place, so no surviving VM's reserved address
+    /// moves. The live network keeps honoring the freed reservation until its
+    /// next materialization.
+    func releaseAddressReservation(for mac: String, kind: VmnetNetworkKind)
+    /// Frees every DHCP reservation slot on the network of `kind` whose MAC is
+    /// not in `macs` — the reclaim for slots orphaned while the app was not
+    /// running. Same in-place semantics as
+    /// ``releaseAddressReservation(for:kind:)``.
+    ///
+    /// Callers pass the complete set of MACs wanting a slot on that network;
+    /// an incomplete set frees slots that are still in use.
+    func retainAddressReservations(_ macs: Set<String>, kind: VmnetNetworkKind)
     /// The IPv4 address reserved for `mac` on the network of `kind`; `nil`
     /// while `mac` holds no slot or the network has never materialized (its
     /// addressing is not yet known).
@@ -530,7 +550,8 @@ final class VmnetNetworkService: @unchecked Sendable {
         let (probe, discovered) = try operations.createNetwork(
             kind, addressing: nil, reservations: [], forwardingRules: [])
         let macs = currentRecord(for: kind).reservedMACs
-        guard !macs.isEmpty else {
+        let slotCount = macs.count(where: { $0 != nil })
+        guard slotCount > 0 else {
             updateRecord(for: kind) { $0.addressing = discovered }
             Self.logger.notice("Created and persisted the \(kind.rawValue, privacy: .public) network")
             return MaterializedNetwork(handle: probe, reservations: [], forwardingRules: [])
@@ -545,7 +566,7 @@ final class VmnetNetworkService: @unchecked Sendable {
                 forwardingRules: Self.operatorRules(forwarding))
             updateRecord(for: kind) { $0.addressing = reserved }
             Self.logger.notice(
-                "Created and persisted the \(kind.rawValue, privacy: .public) network with \(macs.count, privacy: .public) reservation slots"
+                "Created and persisted the \(kind.rawValue, privacy: .public) network with \(slotCount, privacy: .public) reservation slots"
             )
             let holds = reserved == discovered
             return MaterializedNetwork(
@@ -570,12 +591,12 @@ final class VmnetNetworkService: @unchecked Sendable {
     /// `addressing`, in slot order; slots past the subnet's capacity and MACs
     /// that no longer parse (a hand-edited store) are dropped with a warning.
     private func reservations(
-        for macs: [String], addressing: VmnetNetworkAddressing, kind: VmnetNetworkKind
+        for macs: [String?], addressing: VmnetNetworkAddressing, kind: VmnetNetworkKind
     ) -> [(mac: String, address: String)] {
         let slots = Self.resolveSlots(macs: macs, addressing: addressing)
         for (index, slot) in slots.enumerated() {
             switch slot {
-            case .installable:
+            case .installable, .free:
                 continue
             case .unparseableMAC:
                 Self.logger.warning(
@@ -593,6 +614,8 @@ final class VmnetNetworkService: @unchecked Sendable {
     /// What one reservation slot resolves to against a network's addressing.
     private enum ResolvedSlot {
         case installable(mac: String, address: String)
+        /// The slot holds no MAC — released, and waiting to be refilled.
+        case free
         /// The slot's MAC no longer parses (a hand-edited store).
         case unparseableMAC
         /// The subnet has no address left at this slot's index.
@@ -604,9 +627,10 @@ final class VmnetNetworkService: @unchecked Sendable {
     /// both while materializing and while answering
     /// ``portForwardingRulesArePending(for:)``.
     private static func resolveSlots(
-        macs: [String], addressing: VmnetNetworkAddressing
+        macs: [String?], addressing: VmnetNetworkAddressing
     ) -> [ResolvedSlot] {
         macs.enumerated().map { index, mac in
+            guard let mac else { return .free }
             guard VZMACAddress(string: mac) != nil else { return .unparseableMAC }
             guard let address = addressing.reservedAddress(slot: index) else { return .noAddressLeft }
             return .installable(mac: mac, address: address)
@@ -868,12 +892,53 @@ extension VmnetNetworkService: VmnetNetworkProviding {
         }
         updateRecord(for: kind) { record in
             guard !record.reservedMACs.contains(normalized) else { return }
-            record.reservedMACs.append(normalized)
-            let slot = record.reservedMACs.count - 1
+            // A slot freed by an earlier release is refilled before the table
+            // grows, so reclaimed addresses are the ones handed out next.
+            let slot = record.reservedMACs.firstIndex(where: { $0 == nil }) ?? record.reservedMACs.count
+            if slot == record.reservedMACs.count {
+                record.reservedMACs.append(normalized)
+            } else {
+                record.reservedMACs[slot] = normalized
+            }
             Self.logger.info(
                 "Reserved \(kind.rawValue, privacy: .public) address slot \(slot, privacy: .public)"
             )
         }
+    }
+
+    func releaseAddressReservation(for mac: String, kind: VmnetNetworkKind) {
+        let normalized = mac.lowercased()
+        updateRecord(for: kind) { record in
+            guard let slot = record.reservedMACs.firstIndex(of: normalized) else { return }
+            record.reservedMACs[slot] = nil
+            Self.trimFreeTail(&record.reservedMACs)
+            Self.logger.info(
+                "Released \(kind.rawValue, privacy: .public) address slot \(slot, privacy: .public)"
+            )
+        }
+    }
+
+    func retainAddressReservations(_ macs: Set<String>, kind: VmnetNetworkKind) {
+        let retained = Set(macs.map { $0.lowercased() })
+        updateRecord(for: kind) { record in
+            var freed = 0
+            for (slot, mac) in record.reservedMACs.enumerated() {
+                guard let mac, !retained.contains(mac) else { continue }
+                record.reservedMACs[slot] = nil
+                freed += 1
+            }
+            guard freed > 0 else { return }
+            Self.trimFreeTail(&record.reservedMACs)
+            Self.logger.info(
+                "Released \(freed, privacy: .public) \(kind.rawValue, privacy: .public) address slots no VM claims"
+            )
+        }
+    }
+
+    /// Drops trailing free slots, so an emptied table reads as empty and the
+    /// store never accumulates a tail of `null`s.
+    private static func trimFreeTail(_ macs: inout [String?]) {
+        while let last = macs.last, last == nil { macs.removeLast() }
     }
 
     func reservedAddress(for mac: String, kind: VmnetNetworkKind) -> String? {

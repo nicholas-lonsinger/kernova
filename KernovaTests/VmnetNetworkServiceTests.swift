@@ -255,6 +255,149 @@ struct VmnetNetworkServiceTests {
         #expect(store?[.shared]?.reservedMACs == ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"])
     }
 
+    // MARK: - Releasing reservation slots
+
+    @Test("A released slot is handed to the next MAC, leaving every other address put")
+    func releasedSlotIsReusedWithoutMovingOthers() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        try seed(
+            [.shared: VmnetNetworkRecord(addressing: Self.storedAddressing, reservedMACs: [])],
+            at: location.storeURL)
+        let service = VmnetNetworkService(
+            operations: MockVmnetNetworkOperator(), storeURL: location.storeURL)
+        for suffix in ["01", "02", "03"] {
+            service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:\(suffix)", kind: .shared)
+        }
+
+        service.releaseAddressReservation(for: "aa:bb:cc:dd:ee:02", kind: .shared)
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:04", kind: .shared)
+
+        #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:02", kind: .shared) == nil)
+        // The freed slot is refilled in place, so the newcomer takes the
+        // reclaimed address and the two survivors keep theirs.
+        #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:04", kind: .shared) == "192.168.77.3")
+        #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:01", kind: .shared) == "192.168.77.2")
+        #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:03", kind: .shared) == "192.168.77.4")
+    }
+
+    @Test("A release is keyed case-insensitively")
+    func releaseIsCaseInsensitive() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let service = VmnetNetworkService(
+            operations: MockVmnetNetworkOperator(), storeURL: location.storeURL)
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:02", kind: .shared)
+
+        service.releaseAddressReservation(for: "AA:BB:CC:DD:EE:01", kind: .shared)
+
+        let store = try readStore(at: location.storeURL, from: service)
+        #expect(store?[.shared]?.reservedMACs == [nil, "aa:bb:cc:dd:ee:02"])
+    }
+
+    @Test("Releasing a MAC that holds no slot writes nothing")
+    func releasingAnUnreservedMACWritesNothing() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let service = VmnetNetworkService(
+            operations: MockVmnetNetworkOperator(), storeURL: location.storeURL)
+
+        service.releaseAddressReservation(for: "aa:bb:cc:dd:ee:01", kind: .shared)
+
+        #expect(try readStore(at: location.storeURL, from: service) == nil)
+    }
+
+    @Test("A released trailing slot is trimmed rather than persisted as a hole")
+    func releasedTrailingSlotIsTrimmed() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let service = VmnetNetworkService(
+            operations: MockVmnetNetworkOperator(), storeURL: location.storeURL)
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:02", kind: .shared)
+
+        service.releaseAddressReservation(for: "aa:bb:cc:dd:ee:02", kind: .shared)
+
+        let store = try readStore(at: location.storeURL, from: service)
+        #expect(store?[.shared]?.reservedMACs == ["aa:bb:cc:dd:ee:01"])
+    }
+
+    @Test("A released slot survives a relaunch as a free slot")
+    func releasedSlotPersistsAsFreeAcrossInstances() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let first = VmnetNetworkService(
+            operations: MockVmnetNetworkOperator(), storeURL: location.storeURL)
+        first.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        first.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:02", kind: .shared)
+        first.releaseAddressReservation(for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        first.flushPersistsForTesting()
+
+        let second = VmnetNetworkService(
+            operations: MockVmnetNetworkOperator(), storeURL: location.storeURL)
+        second.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:03", kind: .shared)
+
+        let store = try readStore(at: location.storeURL, from: second)
+        #expect(store?[.shared]?.reservedMACs == ["aa:bb:cc:dd:ee:03", "aa:bb:cc:dd:ee:02"])
+    }
+
+    @Test("Retaining a set of MACs frees every slot outside it")
+    func retainFreesUnclaimedSlots() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let service = VmnetNetworkService(
+            operations: MockVmnetNetworkOperator(), storeURL: location.storeURL)
+        for suffix in ["01", "02", "03"] {
+            service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:\(suffix)", kind: .shared)
+        }
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:04", kind: .hostOnly)
+
+        service.retainAddressReservations(["AA:BB:CC:DD:EE:03"], kind: .shared)
+
+        let store = try readStore(at: location.storeURL, from: service)
+        #expect(store?[.shared]?.reservedMACs == [nil, nil, "aa:bb:cc:dd:ee:03"])
+        // Retaining on one network never touches the other's slots.
+        #expect(store?[.hostOnly]?.reservedMACs == ["aa:bb:cc:dd:ee:04"])
+    }
+
+    @Test("Retaining nothing empties the table")
+    func retainNothingEmptiesTheTable() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let service = VmnetNetworkService(
+            operations: MockVmnetNetworkOperator(), storeURL: location.storeURL)
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:01", kind: .shared)
+
+        service.retainAddressReservations([], kind: .shared)
+
+        #expect(try readStore(at: location.storeURL, from: service)?[.shared]?.reservedMACs == [])
+    }
+
+    @Test("A reused slot is installed for its new owner at the next materialization")
+    func reusedSlotInstallsForItsNewOwner() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        try seed(
+            [
+                .shared: VmnetNetworkRecord(
+                    addressing: Self.storedAddressing,
+                    reservedMACs: ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"])
+            ], at: location.storeURL)
+        let operations = MockVmnetNetworkOperator()
+        let service = VmnetNetworkService(operations: operations, storeURL: location.storeURL)
+        _ = try service.network(for: .shared)
+
+        service.releaseAddressReservation(for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:03", kind: .shared)
+        service.invalidateNetwork(for: .shared)
+        _ = try service.network(for: .shared)
+
+        let installed = try #require(operations.installedReservations.last)
+        #expect(installed.map(\.mac) == ["aa:bb:cc:dd:ee:03", "aa:bb:cc:dd:ee:02"])
+        #expect(installed.map(\.address) == ["192.168.77.2", "192.168.77.3"])
+    }
+
     // MARK: - Reservations at materialization
 
     @Test("First materialization with slots discovers addressing, then recreates pinned with reservations")

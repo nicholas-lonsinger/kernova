@@ -355,7 +355,26 @@ final class VMLibraryViewModel {
                 selectedID = instances.first?.id
             }
         }
+        pruneAddressReservations(scanWasComplete: scan.failedBundleNames.isEmpty)
         Self.logger.notice("Loaded \(self.instances.count, privacy: .public) VMs")
+    }
+
+    /// Frees every reservation slot no VM in the library claims — the reclaim
+    /// for slots orphaned while the app was not running (a bundle trashed in
+    /// Finder), which no in-session release can catch.
+    ///
+    /// Runs only over a complete library: a bundle whose configuration failed
+    /// to parse is absent from `instances` while its VM still exists, so its
+    /// slot must not be handed to somebody else. Entitlement-gated like the
+    /// rest of the reservation machinery — an unentitled build never reserves,
+    /// so pruning there would empty a store the entitled build owns.
+    private func pruneAddressReservations(scanWasComplete: Bool) {
+        guard isVMNetworkingEntitled, scanWasComplete else { return }
+        let targets = instances.compactMap { reservationTarget(for: $0.configuration) }
+        for kind in VmnetNetworkKind.allCases {
+            let macs = Set(targets.filter { $0.kind == kind }.map(\.mac))
+            vmnetNetworks.retainAddressReservations(macs, kind: kind)
+        }
     }
 
     // MARK: - Create
@@ -1473,6 +1492,19 @@ final class VMLibraryViewModel {
         syncPortForwardingRules(for: instance.configuration)
     }
 
+    /// The reservation slot `config` wants: the network its mode maps to and
+    /// the lowercased MAC keying the slot, `nil` for a VM that can join no
+    /// app-managed network (networking off, or Bridged, where external DHCP
+    /// owns addressing).
+    private func reservationTarget(
+        for config: VMConfiguration
+    ) -> (kind: VmnetNetworkKind, mac: String)? {
+        guard config.networkEnabled, let mac = config.macAddress,
+            let kind = VmnetNetworkKind(mode: config.networkMode)
+        else { return nil }
+        return (kind: kind, mac: mac.lowercased())
+    }
+
     /// Keeps the VM's DHCP reservation slot in step with its configuration:
     /// any VM that can join an app-managed network holds a slot keyed on its
     /// persisted MAC, so its address is assigned before the network next
@@ -1481,10 +1513,21 @@ final class VMLibraryViewModel {
     /// consumer of the reservation machinery — an unentitled build never
     /// materializes a network, so slots taken there would be dead weight.
     private func syncAddressReservation(for config: VMConfiguration) {
-        guard isVMNetworkingEntitled, config.networkEnabled, let mac = config.macAddress,
-            let kind = VmnetNetworkKind(mode: config.networkMode)
-        else { return }
-        vmnetNetworks.reserveAddressIfNeeded(for: mac, kind: kind)
+        guard isVMNetworkingEntitled, let target = reservationTarget(for: config) else { return }
+        vmnetNetworks.reserveAddressIfNeeded(for: target.mac, kind: target.kind)
+    }
+
+    /// Frees `target`'s reservation slot unless a VM still in the library wants
+    /// the same one — duplicate MACs are possible, so the last claimant is what
+    /// releases the slot.
+    private func releaseAddressReservationIfUnused(_ target: (kind: VmnetNetworkKind, mac: String)) {
+        guard isVMNetworkingEntitled else { return }
+        let stillWanted = instances.contains {
+            let other = reservationTarget(for: $0.configuration)
+            return other?.kind == target.kind && other?.mac == target.mac
+        }
+        guard !stillWanted else { return }
+        vmnetNetworks.releaseAddressReservation(for: target.mac, kind: target.kind)
     }
 
     /// Keeps the VM's port-forwarding rules in step with its configuration: a
@@ -1551,6 +1594,15 @@ final class VMLibraryViewModel {
         // under the new one are dropped as duplicates.
         if let retired = old.macAddress, retired != new.macAddress {
             declarePortForwardingRules([], for: old)
+        }
+        // Released before the new slot is taken, so the freed slot is the
+        // lowest one available and an edited MAC normally keeps the VM's
+        // address. Covers a MAC change, a mode switch, and networking off.
+        if let retired = reservationTarget(for: old) {
+            let kept = reservationTarget(for: new)
+            if kept?.kind != retired.kind || kept?.mac != retired.mac {
+                releaseAddressReservationIfUnused(retired)
+            }
         }
         syncAddressReservation(for: new)
         syncPortForwardingRules(for: new)
@@ -2406,6 +2458,9 @@ final class VMLibraryViewModel {
 
             var diskConfigs: [(VMConfiguration, URL)] = []
             var failedBundles: [String] = []
+            // Bundles present on disk but unreadable: their VMs still exist, so
+            // eviction must not reclaim what is keyed on them.
+            var failedBundleURLs: Set<URL> = []
             for bundleURL in diskBundles {
                 let bundleName = bundleURL.deletingPathExtension().lastPathComponent
                 do {
@@ -2417,6 +2472,7 @@ final class VMLibraryViewModel {
                         "Failed to load config from \(bundleURL.lastPathComponent, privacy: .public) during reconciliation: \(error.localizedDescription, privacy: .public)"
                     )
                     failedBundles.append(bundleName)
+                    failedBundleURLs.insert(bundleURL)
                 }
             }
             let diskIDs = Set(diskConfigs.map(\.0.id))
@@ -2450,7 +2506,7 @@ final class VMLibraryViewModel {
                 // Cancel any in-flight setup task before evicting — otherwise it keeps
                 // mutating an orphan instance the view model no longer knows about.
                 instance.setupTask?.cancel()
-                evict(instance)
+                evict(instance, bundleIsGone: !failedBundleURLs.contains(instance.bundleURL))
                 Self.logger.info("VM '\(instance.name, privacy: .public)' no longer on disk — removed from library")
                 didChange = true
             }
@@ -2524,14 +2580,24 @@ final class VMLibraryViewModel {
     ///
     /// The single removal path: a clipboard problem left in the issue center
     /// would otherwise keep drawing a menu line for a VM that no longer exists.
-    private func evict(_ instance: VMInstance) {
+    ///
+    /// `bundleIsGone: false` drops the row but keeps the VM's DHCP reservation
+    /// slot, for a bundle still on disk whose configuration could not be read —
+    /// that VM still exists, so handing its address to somebody else would move
+    /// it once the configuration is readable again.
+    private func evict(_ instance: VMInstance, bundleIsGone: Bool = true) {
         instances.removeAll { $0.id == instance.id }
         if selectedID == instance.id {
             selectedID = instances.first?.id
         }
         ClipboardIssueCenter.shared.clear(instanceID: instance.instanceID)
-        // A VM out of the library stops claiming its host ports.
+        // A VM out of the library stops claiming its host ports and its
+        // address, so the next VM created can be handed both.
         declarePortForwardingRules([], for: instance.configuration)
+        guard bundleIsGone, let target = reservationTarget(for: instance.configuration) else {
+            return
+        }
+        releaseAddressReservationIfUnused(target)
     }
 
     // MARK: - Reorder

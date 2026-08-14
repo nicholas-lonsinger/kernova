@@ -130,7 +130,14 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, @unchecked Sendable
 
     /// Scripted answer for `reservedAddress(for:kind:)`, keyed by lowercased MAC.
     var scriptedAddresses: [String: String] = [:]
+    /// The slots currently held, so a test reads the live set rather than a
+    /// call log — mirroring the service, where a release frees the slot.
     private(set) var reservedMACs: [(mac: String, kind: VmnetNetworkKind)] = []
+    /// Every release, in call order — kept alongside `reservedMACs` so a test
+    /// can assert a release happened, and that it preceded a reserve.
+    private(set) var releasedMACs: [(mac: String, kind: VmnetNetworkKind)] = []
+    /// Every retain set, in call order.
+    private(set) var retainedMACs: [(macs: Set<String>, kind: VmnetNetworkKind)] = []
 
     func reserveAddressIfNeeded(for mac: String, kind: VmnetNetworkKind) {
         let normalized = mac.lowercased()
@@ -138,6 +145,18 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, @unchecked Sendable
             return
         }
         reservedMACs.append((mac: normalized, kind: kind))
+    }
+
+    func releaseAddressReservation(for mac: String, kind: VmnetNetworkKind) {
+        let normalized = mac.lowercased()
+        releasedMACs.append((mac: normalized, kind: kind))
+        reservedMACs.removeAll { $0.mac == normalized && $0.kind == kind }
+    }
+
+    func retainAddressReservations(_ macs: Set<String>, kind: VmnetNetworkKind) {
+        let retained = Set(macs.map { $0.lowercased() })
+        retainedMACs.append((macs: retained, kind: kind))
+        reservedMACs.removeAll { $0.kind == kind && !retained.contains($0.mac) }
     }
 
     func reservedAddress(for mac: String, kind: VmnetNetworkKind) -> String? {
