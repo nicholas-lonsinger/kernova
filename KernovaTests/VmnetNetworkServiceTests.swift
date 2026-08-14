@@ -452,13 +452,44 @@ struct VmnetNetworkServiceTests {
 
         _ = try service.network(for: .shared)
 
-        // Discovery, failed pinned recreate, then the working fallback — the
-        // mode beats the IP display.
-        #expect(operations.pinnedAddressings == [nil, operations.freshAddressing, nil])
+        // The fallback carries no reservation, so it reads as one still to
+        // install and the bounded loop retries — but every pinned create
+        // fails, so it runs to the attempt limit and publishes the working
+        // fresh network without reservations. The mode beats the IP display.
+        #expect(try #require(operations.pinnedAddressings.last) == nil)
         #expect(operations.installedReservations.last?.isEmpty == true)
+        #expect(service.networkConfigurationIsPending(for: .shared))
+        // Three attempts of discovery, failed pinned recreate and fallback,
+        // plus the failed pinned create opening attempts two and three.
+        #expect(operations.createdKinds.count == 11)
         let store = try readStore(at: location.storeURL, from: service)
         #expect(store?[.shared]?.addressing == operations.freshAddressing)
         #expect(store?[.shared]?.reservedMACs == ["aa:bb:cc:dd:ee:01"])
+    }
+
+    @Test("A transiently failed pinned recreate installs its reservations on the retry")
+    func transientlyFailedRecreateInstallsReservationsOnRetry() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let operations = MockVmnetNetworkOperator()
+        operations.pinnedCreateError = TestFailure("subnet re-grabbed")
+        let service = VmnetNetworkService(operations: operations, storeURL: location.storeURL)
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        // Call 3 is the fresh fallback, by which point the re-grab has passed —
+        // the retry's pinned create reserves the addressing that one persisted.
+        operations.duringCreateNetwork = { [weak operations] call in
+            guard call == 3 else { return }
+            operations?.pinnedCreateError = nil
+        }
+
+        _ = try service.network(for: .shared)
+
+        #expect(operations.createdKinds.count == 4)
+        let installed = try #require(operations.installedReservations.last)
+        #expect(installed.map(\.mac) == ["aa:bb:cc:dd:ee:01"])
+        #expect(installed.map(\.address) == ["192.168.213.2"])
+        #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:01", kind: .shared) == "192.168.213.2")
+        #expect(!service.networkConfigurationIsPending(for: .shared))
     }
 
     @Test("Slots past the subnet's capacity are dropped from the installed reservations")
@@ -482,6 +513,125 @@ struct VmnetNetworkServiceTests {
         let installed = try #require(operations.installedReservations.first)
         #expect(installed.map(\.address) == ["192.168.77.2"])
         #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:02", kind: .shared) == nil)
+    }
+
+    // MARK: - Reservations declared while a network is being created
+
+    @Test("A reservation declared while the network is being created lands in the published network")
+    func reservationDeclaredMidCreateIsInstalled() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01"], at: location)
+        operations.duringCreateNetwork = { [weak service] call in
+            guard call == 1 else { return }
+            service?.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:02", kind: .shared)
+        }
+
+        let handle = try service.network(for: .shared)
+
+        // The first network never became visible to anyone, so it is released
+        // and recreated rather than published without the late slot.
+        let installed = try #require(operations.installedReservations.last)
+        #expect(installed.map(\.mac) == ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"])
+        #expect(installed.map(\.address) == ["192.168.77.2", "192.168.77.3"])
+        #expect(operations.releasedNetworks.count == 1)
+        #expect(operations.releasedNetworks.first != handle.network)
+        // The guest takes its deterministic reservation, and the address shows
+        // rather than reading as pending.
+        #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:02", kind: .shared) == "192.168.77.3")
+        #expect(!service.networkConfigurationIsPending(for: .shared))
+    }
+
+    @Test("A slot freed while the network is being created is gone from the published network")
+    func reservationReleasedMidCreateIsDropped() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"], at: location)
+        operations.duringCreateNetwork = { [weak service] call in
+            guard call == 1 else { return }
+            service?.releaseAddressReservation(for: "aa:bb:cc:dd:ee:02", kind: .shared)
+        }
+
+        _ = try service.network(for: .shared)
+
+        #expect(operations.installedReservations.last?.map(\.mac) == ["aa:bb:cc:dd:ee:01"])
+        #expect(operations.releasedNetworks.count == 1)
+        #expect(!service.networkConfigurationIsPending(for: .shared))
+    }
+
+    @Test("A slot that moves while the network is being created publishes at its new address")
+    func relocatedSlotMidCreateIsInstalledAtItsNewAddress() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        // A free slot ahead of the only reservation, so releasing and
+        // re-reserving that MAC refills the hole and moves its address while
+        // leaving the set of reserved MACs identical.
+        try seed(
+            [
+                .shared: VmnetNetworkRecord(
+                    addressing: Self.storedAddressing, reservedMACs: [nil, "aa:bb:cc:dd:ee:02"])
+            ], at: location.storeURL)
+        let operations = MockVmnetNetworkOperator()
+        let service = VmnetNetworkService(operations: operations, storeURL: location.storeURL)
+        operations.duringCreateNetwork = { [weak service] call in
+            guard call == 1 else { return }
+            service?.releaseAddressReservation(for: "aa:bb:cc:dd:ee:02", kind: .shared)
+            service?.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:02", kind: .shared)
+        }
+
+        _ = try service.network(for: .shared)
+
+        #expect(operations.installedReservations.first?.map(\.address) == ["192.168.77.3"])
+        #expect(operations.installedReservations.last?.map(\.address) == ["192.168.77.2"])
+        #expect(operations.releasedNetworks.count == 1)
+        #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:02", kind: .shared) == "192.168.77.2")
+        #expect(!service.networkConfigurationIsPending(for: .shared))
+    }
+
+    @Test("A reservation declared during the discovery create is installed before the network publishes")
+    func reservationDeclaredDuringDiscoveryIsInstalled() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let operations = MockVmnetNetworkOperator()
+        let service = VmnetNetworkService(operations: operations, storeURL: location.storeURL)
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        // Call 2 is the pinned recreate that carries the reservations; the
+        // addressing it pins is only known once the discovery create returns.
+        operations.duringCreateNetwork = { [weak service] call in
+            guard call == 2 else { return }
+            service?.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:02", kind: .shared)
+        }
+
+        _ = try service.network(for: .shared)
+
+        #expect(operations.createdKinds.count == 3)
+        #expect(operations.releasedNetworks.count == 2)
+        let installed = try #require(operations.installedReservations.last)
+        #expect(installed.map(\.mac) == ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"])
+        #expect(installed.map(\.address) == ["192.168.213.2", "192.168.213.3"])
+        #expect(!service.networkConfigurationIsPending(for: .shared))
+    }
+
+    @Test("Reservations that keep changing publish a network anyway, still reading as pending")
+    func endlessReservationChangesPublishAndStayPending() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01"], at: location)
+        operations.duringCreateNetwork = { [weak service] call in
+            service?.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:0\(call + 1)", kind: .shared)
+        }
+
+        _ = try service.network(for: .shared)
+
+        // Three attempts, two of them released — the caller is never made to
+        // wait on a library that keeps declaring, and the pending flag brings
+        // the rest at the next recreate.
+        #expect(operations.createdKinds.count == 3)
+        #expect(operations.releasedNetworks.count == 2)
+        #expect(service.networkConfigurationIsPending(for: .shared))
     }
 
     // MARK: - Installed vs pending reservations
@@ -617,6 +767,10 @@ struct VmnetNetworkServiceTests {
         // forwarding to them, which is what leaves them pending.
         #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:01", kind: .shared) == nil)
         #expect(service.networkConfigurationIsPending(for: .shared))
+        // Nothing was declared during the create, so the rewritten addressing
+        // alone must not read as a mid-create change and recreate the network.
+        #expect(operations.createdKinds.count == 1)
+        #expect(operations.releasedNetworks.isEmpty)
     }
 
     // MARK: - Port forwarding rules
