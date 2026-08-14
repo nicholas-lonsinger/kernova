@@ -1489,8 +1489,8 @@ final class VMLibraryViewModel {
         // Reservations and forwarding rules are fixed at network creation, so a
         // change made while a VM ran waits for the last session on that network
         // to release it.
-        instance.onSessionTornDown = { [weak self] in
-            self?.rebuildNetworksIfIdle()
+        instance.onSessionTornDown = { [weak self, weak instance] in
+            self?.rebuildNetworksIfIdle(ignoring: instance)
         }
         syncAddressReservation(for: instance.configuration)
         syncPortForwardingRules(for: instance.configuration)
@@ -1564,18 +1564,23 @@ final class VMLibraryViewModel {
     /// recreate — and only while no session holds an attachment on the network.
     /// The recreate keeps the network's addressing, so no guest's address
     /// moves.
-    private func rebuildNetworksIfIdle() {
-        for kind in VmnetNetworkKind.allCases { rebuildNetworkIfIdle(kind) }
+    /// `tornDown` is the instance whose session just ended, excluded from the
+    /// idle scan: `tearDownSession` fires its hook before the caller settles
+    /// the status, so a VM released from a transitioning one (`.saving` on a
+    /// save-suspend, `.installing` on a cancelled guest setup) would otherwise
+    /// read as still holding the network it just let go of.
+    private func rebuildNetworksIfIdle(ignoring tornDown: VMInstance? = nil) {
+        for kind in VmnetNetworkKind.allCases { rebuildNetworkIfIdle(kind, ignoring: tornDown) }
     }
 
-    private func rebuildNetworkIfIdle(_ kind: VmnetNetworkKind) {
+    private func rebuildNetworkIfIdle(_ kind: VmnetNetworkKind, ignoring tornDown: VMInstance?) {
         guard vmnetNetworks.networkConfigurationIsPending(for: kind) else { return }
         let attached = instances.contains {
-            $0.mayHoldAttachment(on: kind, networks: vmnetNetworks)
+            $0 !== tornDown && $0.mayHoldAttachment(on: kind, networks: vmnetNetworks)
         }
         guard !attached else { return }
         Self.logger.notice(
-            "Recreating the \(kind.rawValue, privacy: .public) network so its changed reservations and port forwarding rules take effect"
+            "Recreating the \(kind.rawValue, privacy: .public) network to install its pending changes"
         )
         vmnetNetworks.invalidateNetwork(for: kind)
     }
@@ -1618,9 +1623,14 @@ final class VMLibraryViewModel {
         syncAddressReservation(for: new)
         syncPortForwardingRules(for: new)
         let saved = saveConfiguration(for: instance)
+        // A live session still reads as attached to the network it is *on*, so
+        // the network this VM is switching *to* is idle only until
+        // `applyLivePolicy` attaches it — which it does synchronously. Recreate
+        // it now, or the change this VM just declared waits for a teardown.
+        rebuildNetworksIfIdle()
         applyLivePolicy(for: instance, old: old, new: new)
         // A live switch off a network frees it inside `applyLivePolicy` — the
-        // syncs above ran while the session still held the attachment, so
+        // pass above ran while the session still held that attachment, so
         // re-check now rather than leaving the pending change to an unrelated
         // event.
         rebuildNetworksIfIdle()

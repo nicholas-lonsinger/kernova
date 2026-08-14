@@ -2614,6 +2614,30 @@ struct VMLibraryViewModelTests {
         #expect(vmnet.invalidatedKinds == [.shared])
     }
 
+    @Test("A session torn down from a transitioning status still frees the network")
+    func teardownFromATransitioningStatusStillRecreates() async throws {
+        let vmnet = MockVmnetNetworkProvider()
+        let viewModel = await makeSharedNetworkLibrary(
+            named: ["Saving VM", "Edited VM"], vmnet: vmnet)
+        let saving = try #require(viewModel.instances.first { $0.name == "Saving VM" })
+        let edited = try #require(viewModel.instances.first { $0.name == "Edited VM" })
+        saving.hasLiveVirtualMachineOverrideForTesting = true
+        saving.status = .running
+        vmnet.scriptedPendingKinds = [.shared]
+
+        viewModel.updateConfiguration(of: edited) { $0.macAddress = "aa:bb:cc:dd:ee:11" }
+        #expect(vmnet.invalidatedKinds.isEmpty)
+
+        // `tearDownSession` fires its hook before the caller settles the
+        // status, so the VM that just released the network still reads as
+        // transitioning — the scan has to skip it rather than believe it.
+        saving.hasLiveVirtualMachineOverrideForTesting = false
+        saving.status = .saving
+        saving.tearDownSession()
+
+        #expect(vmnet.invalidatedKinds == [.shared])
+    }
+
     // MARK: - trySave / tryForceStop
 
     @Test("trySave throws on failure")
