@@ -24,6 +24,7 @@ Requires macOS 26 (Tahoe) or later on Apple Silicon to run the app. macOS guests
 - **Full lifecycle** — start, stop, pause, resume, suspend, and restore, plus Force Stop for a hung VM and a one-shot Start in Recovery Mode for macOS guests
 - **Cloning and import** — clone a VM with a fresh machine identity, or keep it via a setting or the ⌥-alternate menu command; import `.kernova` bundles by double-click or drag-and-drop, which is also how you bring existing VMs into the sandboxed library (on the same volume it's an APFS clone: near-instant, no double disk usage)
 - **Keeps running in the background** — a resident menu-bar app, on by default and toggleable in Settings, with opt-in Open at Login, so closing the window can leave VMs running headless. Quitting save-suspends them; system sleep auto-pauses and wake resumes
+- **Starts chosen VMs on its own** — a per-VM opt-in that boots (or resumes from saved state) that guest whenever Kernova opens; paired with Open at Login, the machine comes up with those VMs already running
 
 <p align="center">
   <picture>

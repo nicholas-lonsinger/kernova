@@ -119,6 +119,12 @@ final class VMSettingsViewController: NSViewController {
     /// space, so without this the box would linger.
     private var nameOutsideClickMonitor: Any?
 
+    // Startup
+    private var autoStartSwitch = NSSwitch()
+    /// Holds the banner naming how many macOS guests are marked to start at
+    /// launch, when that exceeds what macOS runs at once.
+    private var autoStartWarningContainer = NSStackView()
+
     // Resources
     private var cpuField = NSTextField()
     private var cpuStepper = NSStepper()
@@ -248,6 +254,8 @@ final class VMSettingsViewController: NSViewController {
     /// The duplicate-MAC banner's rendered message, `nil` when no banner is
     /// shown, so a pass that changed nothing about it skips the rebuild.
     private var renderedNetworkMACWarning: String?
+    /// The Startup capacity banner's rendered message, on the same terms.
+    private var renderedAutoStartWarning: String?
     /// The Mode menu's rendered selection, so an `apply()` pass that changed
     /// nothing about networking skips a rebuild — which enumerates the host's
     /// bridgeable interfaces and queries the process signature.
@@ -397,6 +405,11 @@ final class VMSettingsViewController: NSViewController {
                 // duplicate-MAC banner follows a change made on the *other*
                 // holder, and library membership changing under it.
                 _ = self.viewModel.vmNamesSharingMACAddress(with: self.instance)
+                // Same reach for the Startup capacity banner, which counts the
+                // marked macOS guests across the whole library. Registered on
+                // its own rather than riding the read above, which is free to
+                // stop enumerating every configuration.
+                _ = self.viewModel.macOSVMNamesMarkedForAutoStart
             },
             apply: { [weak self] in self?.apply() }
         )
@@ -526,12 +539,14 @@ extension VMSettingsViewController {
         renderedSharedRows = nil
         renderedAudioWarning = nil
         renderedNetworkMACWarning = nil
+        renderedAutoStartWarning = nil
         renderedNetworkChoice = nil
         renderedPortForwardingRows = nil
 
         displayResolutionIsCustom = false
 
         addSection(buildGeneralSection())
+        addSection(buildStartupSection())
         addSection(buildResourcesSection())
         addSection(buildDisplaySection())
         addSection(buildStorageSection())
@@ -725,6 +740,68 @@ extension VMSettingsViewController {
                     instance.configuration.createdAt.formatted(date: .abbreviated, time: .shortened))),
         ]
         return makeSection([makeHeader("General"), makeGroupedFormCard(rows: rows)])
+    }
+
+    // MARK: Startup
+
+    /// How many macOS guests macOS itself will run at the same time.
+    ///
+    /// The cap is the platform's, enforced by VZ — a start past it fails, which
+    /// is what ``VMLibraryViewModel/explainedFailure(for:on:)`` explains after
+    /// the fact. Here it is read ahead of time, off the marked set.
+    static let concurrentMacOSGuestLimit = 2
+
+    /// Caption under the Startup card: the launch pass walks the library in
+    /// sidebar order, so that is the order the marked VMs come up in.
+    static let autoStartOrderCaption =
+        "Virtual machines start in the order they appear in the sidebar."
+
+    /// Warning for a marked set macOS cannot run at once, or `nil` when it fits.
+    ///
+    /// Shown only on a macOS guest's own pane: it is the guests past the cap
+    /// that fail, and the pane a user is looking at is the one they can act on.
+    /// Linux guests do not count against the macOS cap and never see it.
+    static func autoStartCapacityWarning(
+        isMacOSGuest: Bool, markedMacOSVMCount: Int
+    ) -> String? {
+        guard isMacOSGuest, markedMacOSVMCount > concurrentMacOSGuestLimit else { return nil }
+        return "\(markedMacOSVMCount) macOS virtual machines are set to start when Kernova opens. "
+            + "macOS allows at most two macOS virtual machines to run at once, "
+            + "so the ones after the first two won't start."
+    }
+
+    /// The Startup card's one toggle, its ordering caption, and the capacity
+    /// banner's container.
+    ///
+    /// Not `lockable`, and `autoStartSwitch` stays out of
+    /// `persistentLockableControls`: the flag is read once at app launch and
+    /// reaches no `VZVirtualMachineConfiguration`, so it edits while the VM runs.
+    private func buildStartupSection() -> NSView {
+        autoStartSwitch = makeSwitch(action: #selector(autoStartToggled))
+        let card = makeGroupedFormCard(rows: [
+            makeToggleRowWithInfo(
+                "Start When Kernova Opens", control: autoStartSwitch,
+                paragraphs: [
+                    .body(
+                        "Starts this virtual machine each time Kernova opens. A suspended VM resumes from its saved state; one that has not finished its initial setup is left alone."
+                    ),
+                    .body(
+                        "Turn on Open at Login in Settings → General to have it running after you log in."
+                    ),
+                ])
+        ])
+
+        autoStartWarningContainer = NSStackView()
+        autoStartWarningContainer.orientation = .vertical
+        autoStartWarningContainer.alignment = .leading
+        autoStartWarningContainer.spacing = Spacing.small
+        autoStartWarningContainer.translatesAutoresizingMaskIntoConstraints = false
+
+        return makeSection([
+            makeHeader("Startup"), card,
+            makeGroupedFormCaption(Self.autoStartOrderCaption),
+            autoStartWarningContainer,
+        ])
     }
 
     // MARK: Resources
@@ -1835,6 +1912,7 @@ extension VMSettingsViewController {
         persistentLockableControls.forEach { $0.isEnabled = !isReadOnly }
 
         refreshGeneral()
+        refreshStartup()
         refreshResources()
         refreshDisplay()
         refreshNetwork()
@@ -1940,6 +2018,21 @@ extension VMSettingsViewController {
         nameRowIsEditing = false
         nameDisplayRow.isHidden = false
         nameEditRow.isHidden = true
+    }
+
+    private func refreshStartup() {
+        autoStartSwitch.state = instance.configuration.startsAutomaticallyOnLaunch ? .on : .off
+
+        let message = Self.autoStartCapacityWarning(
+            isMacOSGuest: instance.configuration.guestOS == .macOS,
+            markedMacOSVMCount: viewModel.macOSVMNamesMarkedForAutoStart.count)
+        guard message != renderedAutoStartWarning else { return }
+        renderedAutoStartWarning = message
+        autoStartWarningContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        guard let message else { return }
+        let banner = makeGroupedFormBanner(
+            symbolName: "exclamationmark.triangle.fill", tint: .systemYellow, message: message)
+        addFullWidth(banner, to: autoStartWarningContainer)
     }
 
     private func refreshResources() {
@@ -2666,6 +2759,10 @@ extension VMSettingsViewController: NSMenuItemValidation {
         // Routed through the view model's named accessor rather than the generic
         // `writeConfig` so every write of this flag shares one logged path.
         viewModel.setAgentInstallNudgeDismissed(installReminderSwitch.state != .on, for: instance)
+    }
+
+    @objc private func autoStartToggled() {
+        writeConfig { $0.startsAutomaticallyOnLaunch = autoStartSwitch.state == .on }
     }
 
     @objc private func serialRelayToggled() {

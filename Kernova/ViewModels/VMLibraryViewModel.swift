@@ -234,7 +234,7 @@ final class VMLibraryViewModel {
     /// that the VM has never completed its initial boot, so it outranks
     /// `.paused`/`.stopped`.
     nonisolated static func initialStatus(for config: VMConfiguration, layout: VMBundleLayout) -> VMStatus {
-        if config.installContext != nil || config.linuxInstallContext != nil {
+        if config.hasPendingSetup {
             return .initialBoot
         }
         return layout.hasSaveFile ? .paused : .stopped
@@ -1379,7 +1379,14 @@ final class VMLibraryViewModel {
     private func reserveAndImport(from sourceURL: URL) {
         do {
             let vmsDir = try storageService.vmsDirectory
-            let config = try storageService.loadConfiguration(from: sourceURL)
+            var config = try storageService.loadConfiguration(from: sourceURL)
+
+            // Auto-start is the one setting that runs a guest with no user
+            // action, so it is local intent rather than something a bundle
+            // carries in: a VM arriving pre-marked would boot on the next
+            // launch without ever being asked for. The local user marks it.
+            let arrivedMarkedForAutoStart = config.startsAutomaticallyOnLaunch
+            config.startsAutomaticallyOnLaunch = false
 
             // Already in the library by UUID (including a source already inside the VMs
             // directory) — select it rather than re-importing.
@@ -1399,11 +1406,18 @@ final class VMLibraryViewModel {
                 configuration: config, bundleURL: destinationURL, status: initialStatus,
                 preferences: preferences)
 
+            let storage = storageService
+            let sanitizedConfig = config
             prepareBundle(
                 phantom, operation: .importing,
                 copyWork: {
                     try await Self.runBoundedCopy {
                         try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+                    }
+                    // The copy reproduces the source `config.json` verbatim, so
+                    // the cleared flag only reaches disk by writing it back.
+                    if arrivedMarkedForAutoStart {
+                        try storage.saveConfiguration(sanitizedConfig, to: destinationURL)
                     }
                 },
                 onSuccess: {
@@ -2521,6 +2535,126 @@ final class VMLibraryViewModel {
                 Self.logger.notice(
                     "Cloned VM '\(sourceName, privacy: .public)' as '\(config.name, privacy: .public)'")
             })
+    }
+
+    // MARK: - Launch Auto-Start
+
+    /// Names of the macOS VMs marked to start automatically, in library order —
+    /// which is the order ``startAutomaticVMsForLaunch()`` reaches them in.
+    ///
+    /// Feeds the Startup section's capacity warning: macOS caps how many macOS
+    /// guests run at once, so a longer list than that cap cannot come up whole.
+    var macOSVMNamesMarkedForAutoStart: [String] {
+        instances
+            .filter {
+                $0.configuration.guestOS == .macOS
+                    && $0.configuration.startsAutomaticallyOnLaunch
+            }
+            .map(\.name)
+    }
+
+    /// What the launch auto-start pass does with one VM.
+    enum AutoStartStep: Equatable {
+        case start
+        case resume
+        case skip
+    }
+
+    /// The pass's move for one VM, decided from state alone.
+    ///
+    /// A VM that has yet to finish setup is skipped: its start runs the macOS
+    /// install or the Linux image download, neither of which may begin
+    /// unattended. ``VMConfiguration/hasPendingSetup`` is what decides that, not
+    /// the status — ``start(_:)`` dispatches on the surviving install context
+    /// too, so a failed install sitting at `.error` still routes into the
+    /// installer, and `.error` otherwise means "retry the boot".
+    nonisolated static func autoStartStep(
+        startsAutomaticallyOnLaunch: Bool,
+        isPreparing: Bool,
+        hasPendingSetup: Bool,
+        isColdPaused: Bool,
+        status: VMStatus
+    ) -> AutoStartStep {
+        guard startsAutomaticallyOnLaunch, !isPreparing, !hasPendingSetup,
+            status != .initialBoot
+        else { return .skip }
+        if isColdPaused { return .resume }
+        return status.canStart ? .start : .skip
+    }
+
+    /// Starts every VM marked to start automatically, one after another.
+    ///
+    /// Sequential on purpose: each guest commits its whole memory allocation at
+    /// start, and the duplicate machine-ID and MAC refusals inside ``start(_:)``
+    /// and ``resume(_:)`` compare against VMs that are already live, so they only
+    /// answer deterministically once the previous VM has settled.
+    ///
+    /// Per-VM failures are logged and surfaced by those two methods; the pass
+    /// carries on to the next VM either way.
+    ///
+    /// Cancelling stops it between VMs — a start already inside VZ is left to
+    /// finish, since abandoning one mid-flight is worse than completing it.
+    func startAutomaticVMsForLaunch() async {
+        let marked = instances.filter { $0.configuration.startsAutomaticallyOnLaunch }
+        guard !marked.isEmpty else {
+            Self.logger.debug("Launch auto-start: no VMs are marked to start automatically")
+            return
+        }
+
+        Self.logger.notice("Launch auto-start: \(marked.count, privacy: .public) VM(s) marked")
+
+        var startedCount = 0
+        var skippedCount = 0
+        var failedCount = 0
+        for instance in marked {
+            // A quit cancels the pass; anything left is the terminating app's
+            // business, not this one's.
+            if Task.isCancelled {
+                Self.logger.notice("Launch auto-start cancelled — the app is terminating")
+                break
+            }
+            // A boot takes long enough for the user to delete or evict a later
+            // VM meanwhile, and `marked` still holds that instance. Starting it
+            // would open a display window over a bundle no longer in the library.
+            guard instances.contains(where: { $0 === instance }) else {
+                Self.logger.debug(
+                    "Launch auto-start: '\(instance.name, privacy: .public)' left the library before its turn"
+                )
+                skippedCount += 1
+                continue
+            }
+            // Re-read at the moment of acting rather than trusting the snapshot:
+            // the user can start a VM by hand while this pass runs, and the
+            // previous iteration's boot is what can make the next one a
+            // duplicate-identity conflict.
+            let step = Self.autoStartStep(
+                startsAutomaticallyOnLaunch: instance.configuration.startsAutomaticallyOnLaunch,
+                isPreparing: instance.isPreparing,
+                hasPendingSetup: instance.configuration.hasPendingSetup,
+                isColdPaused: instance.isColdPaused,
+                status: instance.status)
+            switch step {
+            case .start:
+                await start(instance)
+            case .resume:
+                await resume(instance)
+            case .skip:
+                Self.logger.debug(
+                    "Launch auto-start: skipped '\(instance.name, privacy: .public)' (\(instance.status.displayName, privacy: .public))"
+                )
+                skippedCount += 1
+                continue
+            }
+            if instance.status.isActive {
+                startedCount += 1
+            } else {
+                failedCount += 1
+            }
+        }
+
+        Self.logger.notice(
+            "Launch auto-start finished — \(startedCount, privacy: .public) running, \(failedCount, privacy: .public) failed, \(skippedCount, privacy: .public) skipped"
+        )
     }
 
     // MARK: - Sleep/Wake

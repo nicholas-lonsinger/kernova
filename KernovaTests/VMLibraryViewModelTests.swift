@@ -4395,6 +4395,219 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.activeRename == .sidebar(other.id))
     }
 
+    // MARK: - Launch Auto-Start
+
+    /// Marks the instance to start automatically, returning it for chaining.
+    @discardableResult
+    private func markAutoStart(_ instance: VMInstance) -> VMInstance {
+        instance.configuration.startsAutomaticallyOnLaunch = true
+        return instance
+    }
+
+    /// One row of the launch auto-start decision table.
+    struct AutoStartCase: Sendable, CustomStringConvertible {
+        let marked: Bool
+        let isPreparing: Bool
+        let hasPendingSetup: Bool
+        let isColdPaused: Bool
+        let status: VMStatus
+        let expected: VMLibraryViewModel.AutoStartStep
+
+        init(
+            marked: Bool, preparing: Bool = false, pendingSetup: Bool = false,
+            coldPaused: Bool = false, _ status: VMStatus,
+            _ expected: VMLibraryViewModel.AutoStartStep
+        ) {
+            self.marked = marked
+            self.isPreparing = preparing
+            self.hasPendingSetup = pendingSetup
+            self.isColdPaused = coldPaused
+            self.status = status
+            self.expected = expected
+        }
+
+        var description: String {
+            "marked \(marked), preparing \(isPreparing), pendingSetup \(hasPendingSetup), "
+                + "coldPaused \(isColdPaused), \(status.displayName) → \(expected)"
+        }
+    }
+
+    @Test(
+        "autoStartStep decides start, resume, or skip from state",
+        arguments: [
+            AutoStartCase(marked: true, .stopped, .start),
+            AutoStartCase(marked: true, .error, .start),
+            AutoStartCase(marked: true, coldPaused: true, .paused, .resume),
+            // A VM that never finished setup would begin an unattended install
+            // or image download, so it is skipped despite passing `canStart`.
+            AutoStartCase(marked: true, .initialBoot, .skip),
+            AutoStartCase(marked: true, pendingSetup: true, .initialBoot, .skip),
+            // A failed install leaves the context intact at `.error`, where
+            // `start(_:)` still routes into the installer — the status alone
+            // would read this as an ordinary boot retry.
+            AutoStartCase(marked: true, pendingSetup: true, .error, .skip),
+            AutoStartCase(marked: true, pendingSetup: true, .stopped, .skip),
+            AutoStartCase(marked: true, preparing: true, .stopped, .skip),
+            AutoStartCase(marked: true, .running, .skip),
+            AutoStartCase(marked: true, .starting, .skip),
+            AutoStartCase(marked: true, .saving, .skip),
+            AutoStartCase(marked: true, .restoring, .skip),
+            AutoStartCase(marked: true, .installing, .skip),
+            // Live-paused: the VZ object is already in memory, so the launch
+            // pass has nothing to bring up.
+            AutoStartCase(marked: true, .paused, .skip),
+            AutoStartCase(marked: false, .stopped, .skip),
+            AutoStartCase(marked: false, coldPaused: true, .paused, .skip),
+        ])
+    func autoStartStepMatrix(testCase: AutoStartCase) {
+        #expect(
+            VMLibraryViewModel.autoStartStep(
+                startsAutomaticallyOnLaunch: testCase.marked,
+                isPreparing: testCase.isPreparing,
+                hasPendingSetup: testCase.hasPendingSetup,
+                isColdPaused: testCase.isColdPaused,
+                status: testCase.status) == testCase.expected)
+    }
+
+    @Test("macOSVMNamesMarkedForAutoStart lists marked macOS VMs in library order")
+    func markedMacOSVMNamesFollowLibraryOrder() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let firstMac = markAutoStart(makeInstance(name: "Mac One", guestOS: .macOS))
+        let unmarkedMac = makeInstance(name: "Mac Unmarked", guestOS: .macOS)
+        let markedLinux = markAutoStart(makeInstance(name: "Linux Marked"))
+        let secondMac = markAutoStart(makeInstance(name: "Mac Two", guestOS: .macOS))
+        viewModel.instances = [firstMac, unmarkedMac, markedLinux, secondMac]
+
+        // Linux guests don't count against the macOS cap, and an unmarked macOS
+        // VM isn't coming up at launch.
+        #expect(viewModel.macOSVMNamesMarkedForAutoStart == ["Mac One", "Mac Two"])
+    }
+
+    @Test("startAutomaticVMsForLaunch starts only marked VMs")
+    func autoStartStartsOnlyMarked() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let marked1 = markAutoStart(makeInstance(name: "Marked 1"))
+        let marked2 = markAutoStart(makeInstance(name: "Marked 2"))
+        let unmarked = makeInstance(name: "Unmarked")
+        viewModel.instances = [marked1, marked2, unmarked]
+
+        await viewModel.startAutomaticVMsForLaunch()
+
+        #expect(virtService.startCallCount == 2)
+        #expect(marked1.status == .running)
+        #expect(marked2.status == .running)
+        #expect(unmarked.status == .stopped)
+    }
+
+    @Test("startAutomaticVMsForLaunch resumes a marked VM with saved state")
+    func autoStartResumesColdPaused() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let saved = markAutoStart(makeInstance(name: "Suspended"))
+        saved.status = .paused
+        viewModel.instances = [saved]
+
+        await viewModel.startAutomaticVMsForLaunch()
+
+        #expect(virtService.resumeCallCount == 1)
+        #expect(virtService.startCallCount == 0)
+        #expect(saved.status == .running)
+    }
+
+    @Test("startAutomaticVMsForLaunch leaves a marked VM awaiting initial boot alone")
+    func autoStartSkipsInitialBoot() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let fresh = markAutoStart(makeInstance(name: "Never Booted"))
+        fresh.status = .initialBoot
+        viewModel.instances = [fresh]
+
+        await viewModel.startAutomaticVMsForLaunch()
+
+        #expect(virtService.startCallCount == 0)
+        #expect(fresh.status == .initialBoot)
+    }
+
+    /// The status reads `.error` — an ordinary boot retry — but the surviving
+    /// install context means `start(_:)` would route back into the installer.
+    @Test("startAutomaticVMsForLaunch leaves a marked VM whose setup failed alone")
+    func autoStartSkipsFailedSetup() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let stalled = markAutoStart(makeInstance(name: "Setup Failed"))
+        stalled.configuration.linuxInstallContext = LinuxInstallContext(
+            source: .catalogEntry(makeLinuxCatalogEntry()))
+        stalled.status = .error
+        viewModel.instances = [stalled]
+
+        await viewModel.startAutomaticVMsForLaunch()
+
+        #expect(virtService.startCallCount == 0)
+        #expect(stalled.status == .error)
+    }
+
+    @Test("startAutomaticVMsForLaunch carries on past a VM that fails to start")
+    func autoStartContinuesAfterFailure() async {
+        let virtService = MockVirtualizationService()
+        virtService.startError = VirtualizationError.noVirtualMachine
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let failing = markAutoStart(makeInstance(name: "Failing"))
+        let following = markAutoStart(makeInstance(name: "Following"))
+        viewModel.instances = [failing, following]
+
+        await viewModel.startAutomaticVMsForLaunch()
+
+        #expect(virtService.startCallCount == 2)
+        #expect(presenter.showError == true)
+    }
+
+    @Test("startAutomaticVMsForLaunch stops between VMs once cancelled")
+    func autoStartHonorsCancellation() async {
+        let (viewModel, suspending) = makeSuspendingViewModel()
+        let first = markAutoStart(makeInstance(name: "First"))
+        let second = markAutoStart(makeInstance(name: "Second"))
+        viewModel.instances = [first, second]
+
+        let pass = Task { await viewModel.startAutomaticVMsForLaunch() }
+        // Suspended inside the first VM's start — the quit lands here.
+        await suspending.waitUntilSuspended()
+        pass.cancel()
+        suspending.shouldSuspendOnStart = false
+        suspending.resumeSuspended()
+        await pass.value
+
+        #expect(first.status == .running)
+        #expect(second.status == .stopped)
+    }
+
+    @Test("startAutomaticVMsForLaunch skips a VM that left the library mid-pass")
+    func autoStartSkipsInstanceRemovedMidPass() async {
+        let (viewModel, suspending) = makeSuspendingViewModel()
+        let first = markAutoStart(makeInstance(name: "First"))
+        let second = markAutoStart(makeInstance(name: "Second"))
+        viewModel.instances = [first, second]
+
+        let pass = Task { await viewModel.startAutomaticVMsForLaunch() }
+        // Deleted while the first VM is still booting, so the pass's snapshot
+        // holds an instance the library no longer has.
+        await suspending.waitUntilSuspended()
+        viewModel.instances = [first]
+        suspending.shouldSuspendOnStart = false
+        suspending.resumeSuspended()
+        await pass.value
+
+        #expect(first.status == .running)
+        #expect(second.status == .stopped)
+    }
+
+    @Test("startAutomaticVMsForLaunch does nothing when no VM is marked")
+    func autoStartNoOpWhenNothingMarked() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        viewModel.instances = [makeInstance(name: "Unmarked")]
+
+        await viewModel.startAutomaticVMsForLaunch()
+
+        #expect(virtService.startCallCount == 0)
+        #expect(virtService.resumeCallCount == 0)
+    }
+
     // MARK: - Sleep/Wake
 
     @Test("pauseAllForSleep pauses only running VMs")
@@ -4575,6 +4788,26 @@ struct VMLibraryViewModelTests {
             #expect(FileManager.default.fileExists(atPath: imported.bundleURL.path(percentEncoded: false)))
         }
         #expect(presenter.showError == false)
+    }
+
+    /// Auto-start runs a guest with no user action, so it is local intent rather
+    /// than something a bundle carries in from elsewhere.
+    @Test("Importing a bundle pre-marked to start automatically clears the flag")
+    func importClearsAutoStartFlag() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let source = try makeImportSource(name: "Pre-marked VM", storage: storage)
+        defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
+        var marked = source.config
+        marked.startsAutomaticallyOnLaunch = true
+        storage.bundles[source.url] = marked
+
+        _ = viewModel.importVMs(fromDroppedURLs: [source.url])
+        await viewModel.awaitPreparingForTesting()
+
+        let imported = try #require(viewModel.instances.first)
+        #expect(imported.configuration.startsAutomaticallyOnLaunch == false)
+        // …and the cleared flag reached the imported bundle, not just the row.
+        #expect(storage.bundles[imported.bundleURL]?.startsAutomaticallyOnLaunch == false)
     }
 
     @Test("importVMs imports every bundle in a multi-select batch (#444)")

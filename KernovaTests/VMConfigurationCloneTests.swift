@@ -190,6 +190,14 @@ struct VMConfigurationCloneTests {
         #expect(clone.agentInstallNudgeDismissed == false)
     }
 
+    @Test("Clone resets startsAutomaticallyOnLaunch to false")
+    func cloneResetsStartsAutomaticallyOnLaunch() {
+        var config = makeConfig()
+        config.startsAutomaticallyOnLaunch = true
+        let clone = config.clonedForNewInstance(existingNames: [])
+        #expect(clone.startsAutomaticallyOnLaunch == false)
+    }
+
     // MARK: - Shared Directories
 
     @Test("Clone regenerates shared directory IDs")

@@ -360,6 +360,38 @@ struct VMConfigurationTests {
         #expect(config.serialSocketRelayEnabled == false)
     }
 
+    // MARK: - Launch Auto-Start
+
+    @Test("startsAutomaticallyOnLaunch round-trips through JSON")
+    func startsAutomaticallyOnLaunchRoundTrip() throws {
+        var original = VMConfiguration(name: "Auto VM", guestOS: .linux, bootMode: .efi)
+        original.startsAutomaticallyOnLaunch = true
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: try encoder.encode(original))
+
+        #expect(decoded.startsAutomaticallyOnLaunch == true)
+    }
+
+    @Test("Missing startsAutomaticallyOnLaunch decodes as false")
+    func missingStartsAutomaticallyOnLaunchDefaultsFalse() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+
+        #expect(config.startsAutomaticallyOnLaunch == false)
+    }
+
+    @Test("A new configuration does not start automatically")
+    func newConfigurationDoesNotStartAutomatically() {
+        let config = VMConfiguration(name: "Fresh VM", guestOS: .linux, bootMode: .efi)
+
+        #expect(config.startsAutomaticallyOnLaunch == false)
+    }
+
     // MARK: - Port Forwarding
 
     @Test("Port forwarding rules round-trip through JSON")
@@ -1352,6 +1384,7 @@ struct VMConfigurationTests {
             name: "Comprehensive VM",
             guestOS: .macOS,
             bootMode: .macOS,
+            startsAutomaticallyOnLaunch: true,
             cpuCount: 12,
             memorySizeInGB: 24,
             diskSizeInGB: 256,

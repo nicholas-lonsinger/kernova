@@ -335,6 +335,161 @@ struct VMSettingsViewControllerTests {
         #expect(instance.configuration.clipboardSharingEnabled == true)
     }
 
+    // MARK: - Launch auto-start
+
+    @Test("The Startup toggle reflects the configuration")
+    func autoStartSwitchReflectsConfiguration() {
+        let viewModel = makeViewModel()
+        let instance = makeInstance(guestOS: .linux)
+        instance.configuration.startsAutomaticallyOnLaunch = true
+        let vc = VMSettingsViewController(
+            instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+
+        #expect(firstSwitch(action: "autoStartToggled", in: vc.view)?.state == .on)
+    }
+
+    @Test("Toggling the Startup switch writes back to the configuration")
+    func autoStartToggleWritesConfig() {
+        let (vc, instance, _) = makeController(guestOS: .linux, isReadOnly: false)
+        #expect(instance.configuration.startsAutomaticallyOnLaunch == false)
+
+        guard let autoStart = firstSwitch(action: "autoStartToggled", in: vc.view) else {
+            Issue.record("Expected a Startup switch")
+            return
+        }
+        autoStart.state = .on
+        autoStart.sendAction(autoStart.action, to: autoStart.target)
+
+        #expect(instance.configuration.startsAutomaticallyOnLaunch == true)
+    }
+
+    /// The flag is consumed once at app launch and reaches no
+    /// `VZVirtualMachineConfiguration`, so it must stay editable while the VM
+    /// runs — unlike every control the read-only banner locks.
+    @Test("The Startup toggle stays editable while the VM is running")
+    func autoStartSwitchStaysEnabledWhenReadOnly() {
+        let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: true)
+        #expect(firstSwitch(action: "autoStartToggled", in: vc.view)?.isEnabled == true)
+    }
+
+    @Test("The Startup section says which order the marked VMs start in")
+    func startupSectionStatesTheStartOrder() {
+        let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: false)
+        #expect(visibleLabel(VMSettingsViewController.autoStartOrderCaption, in: vc.view))
+    }
+
+    // MARK: - Startup capacity warning
+
+    /// Builds a controller over a library holding `markedMacOSVMs` macOS VMs
+    /// marked to start automatically — the VM under test among them when it is
+    /// itself a macOS guest.
+    private func makeStartupController(guestOS: VMGuestOS, markedMacOSVMs: Int) -> (
+        VMSettingsViewController, VMInstance
+    ) {
+        let viewModel = makeViewModel()
+        let instance = makeInstance(guestOS: guestOS)
+        var library = [instance]
+        var remaining = markedMacOSVMs
+        if guestOS == .macOS, remaining > 0 {
+            instance.configuration.startsAutomaticallyOnLaunch = true
+            remaining -= 1
+        }
+        for index in 0..<remaining {
+            let other = makeInstance(guestOS: .macOS)
+            other.configuration.name = "Marked \(index)"
+            other.configuration.startsAutomaticallyOnLaunch = true
+            library.append(other)
+        }
+        viewModel.instances = library
+        let vc = VMSettingsViewController(
+            instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        return (vc, instance)
+    }
+
+    @Test("Three marked macOS VMs warn that macOS won't run them all")
+    func startupWarnsOverTheMacOSLimit() throws {
+        let (vc, _) = makeStartupController(guestOS: .macOS, markedMacOSVMs: 3)
+        let warning = try #require(
+            VMSettingsViewController.autoStartCapacityWarning(
+                isMacOSGuest: true, markedMacOSVMCount: 3))
+
+        #expect(visibleLabel(warning, in: vc.view))
+    }
+
+    /// Whether any visible label carries the capacity warning's vendor sentence.
+    ///
+    /// Matched by substring rather than by whole string: the message leads with
+    /// the marked count, so the exact text is only known where a warning is
+    /// expected — and the absence assertions are exactly where it is not.
+    private func showsMacOSCapacityWarning(in view: NSView) -> Bool {
+        firstSubview(NSTextField.self, in: view) {
+            $0.stringValue.contains("macOS allows at most two macOS virtual machines to run at once")
+                && isVisible($0, within: view)
+        } != nil
+    }
+
+    @Test("Two marked macOS VMs are within the limit and warn about nothing")
+    func startupDoesNotWarnAtTheMacOSLimit() {
+        let (vc, _) = makeStartupController(guestOS: .macOS, markedMacOSVMs: 2)
+        #expect(!showsMacOSCapacityWarning(in: vc.view))
+    }
+
+    /// Linux guests don't count against the macOS cap, so the warning is not
+    /// theirs to show even while three macOS VMs are marked.
+    @Test("A Linux guest never shows the macOS capacity warning")
+    func startupNeverWarnsOnALinuxGuest() {
+        let (vc, _) = makeStartupController(guestOS: .linux, markedMacOSVMs: 3)
+        #expect(!showsMacOSCapacityWarning(in: vc.view))
+    }
+
+    /// One row of the capacity-warning decision table.
+    struct CapacityCase: Sendable, CustomStringConvertible {
+        let isMacOSGuest: Bool
+        let marked: Int
+        let warns: Bool
+
+        init(_ isMacOSGuest: Bool, _ marked: Int, _ warns: Bool) {
+            self.isMacOSGuest = isMacOSGuest
+            self.marked = marked
+            self.warns = warns
+        }
+
+        var description: String {
+            "\(isMacOSGuest ? "macOS" : "Linux") guest, \(marked) marked → "
+                + (warns ? "warns" : "silent")
+        }
+    }
+
+    @Test(
+        "autoStartCapacityWarning fires only for a macOS guest over the limit",
+        arguments: [
+            CapacityCase(true, 0, false),
+            CapacityCase(true, 1, false),
+            CapacityCase(true, 2, false),
+            CapacityCase(true, 3, true),
+            CapacityCase(true, 7, true),
+            // A Linux guest doesn't count against the macOS cap and can do
+            // nothing about it from its own pane.
+            CapacityCase(false, 3, false),
+            CapacityCase(false, 7, false),
+        ])
+    func autoStartCapacityWarningMatrix(testCase: CapacityCase) {
+        let warning = VMSettingsViewController.autoStartCapacityWarning(
+            isMacOSGuest: testCase.isMacOSGuest, markedMacOSVMCount: testCase.marked)
+
+        #expect((warning != nil) == testCase.warns)
+        if let warning {
+            // The vendor's claim, at the vendor's strength.
+            #expect(
+                warning.contains("macOS allows at most two macOS virtual machines to run at once"))
+            #expect(warning.contains("\(testCase.marked) macOS virtual machines"))
+        }
+    }
+
     // MARK: - Clipboard passthrough
 
     /// Builds a controller over a config with the given clipboard-sharing state,
