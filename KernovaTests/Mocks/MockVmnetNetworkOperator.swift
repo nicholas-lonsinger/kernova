@@ -85,11 +85,13 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
 /// callers only compare its identity.
 final class MockVmnetNetworkProvider: VmnetNetworkProviding, @unchecked Sendable {
     var scriptedAttachment: VZNetworkDeviceAttachment = VZNATNetworkDeviceAttachment()
-    /// Whether the network counts as materialized: `attachmentIfMaterialized`
-    /// answers `nil` while `false`, and `materializeNetwork` flips it `true`
-    /// unless scripted to fail.
-    var isMaterialized = true
-    /// When `true`, `materializeNetwork` fails and leaves `isMaterialized` as is.
+    /// The kinds counting as materialized — held per kind, since one pass of the
+    /// idle rebuild queries every kind and a shared flag would let the first
+    /// invalidation mask the rest. `attachmentIfMaterialized` answers `nil` for
+    /// a kind not in it, `materializeNetwork` inserts, and `invalidateNetwork`
+    /// removes.
+    var materializedKinds: Set<VmnetNetworkKind> = Set(VmnetNetworkKind.allCases)
+    /// When `true`, `materializeNetwork` fails and leaves `materializedKinds` as is.
     var materializeFails = false
 
     // MARK: - Error Injection
@@ -98,7 +100,8 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, @unchecked Sendable
 
     private(set) var requestedKinds: [VmnetNetworkKind] = []
     private(set) var materializeCount = 0
-    private(set) var materializedKinds: [VmnetNetworkKind] = []
+    /// Every `materializeNetwork` call, in order — failures included.
+    private(set) var materializeRequestedKinds: [VmnetNetworkKind] = []
     private(set) var invalidatedKinds: [VmnetNetworkKind] = []
 
     func attachment(for kind: VmnetNetworkKind) throws -> VZNetworkDeviceAttachment {
@@ -109,21 +112,21 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, @unchecked Sendable
 
     func attachmentIfMaterialized(for kind: VmnetNetworkKind) -> VZNetworkDeviceAttachment? {
         requestedKinds.append(kind)
-        guard isMaterialized, attachmentError == nil else { return nil }
+        guard materializedKinds.contains(kind), attachmentError == nil else { return nil }
         return scriptedAttachment
     }
 
     func materializeNetwork(for kind: VmnetNetworkKind) async -> Bool {
         materializeCount += 1
-        materializedKinds.append(kind)
+        materializeRequestedKinds.append(kind)
         guard !materializeFails else { return false }
-        isMaterialized = true
+        materializedKinds.insert(kind)
         return true
     }
 
     func invalidateNetwork(for kind: VmnetNetworkKind) {
         invalidatedKinds.append(kind)
-        isMaterialized = false
+        materializedKinds.remove(kind)
     }
 
     // MARK: - Reservations
@@ -167,8 +170,8 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, @unchecked Sendable
 
     /// The rules last declared per lowercased MAC, in declaration order.
     private(set) var declaredForwardingRules: [(mac: String, rules: [PortForwardingRule])] = []
-    /// Scripted answer for `portForwardingRulesArePending(for:)`.
-    var scriptedPendingForwardingKinds: Set<VmnetNetworkKind> = []
+    /// Scripted answer for `networkConfigurationIsPending(for:)`.
+    var scriptedPendingKinds: Set<VmnetNetworkKind> = []
     private(set) var pendingQueriedKinds: [VmnetNetworkKind] = []
 
     func setPortForwardingRules(
@@ -177,11 +180,11 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, @unchecked Sendable
         declaredForwardingRules.append((mac: mac.lowercased(), rules: rules))
     }
 
-    func portForwardingRulesArePending(for kind: VmnetNetworkKind) -> Bool {
+    func networkConfigurationIsPending(for kind: VmnetNetworkKind) -> Bool {
         pendingQueriedKinds.append(kind)
         // Mirrors the service: nothing pends against a network that is not
         // materialized — its next materialization installs what is declared then.
-        return isMaterialized && scriptedPendingForwardingKinds.contains(kind)
+        return materializedKinds.contains(kind) && scriptedPendingKinds.contains(kind)
     }
 
     /// Scripted answer for `kind(ofNetwork:)`.

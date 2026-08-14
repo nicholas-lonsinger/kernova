@@ -88,6 +88,10 @@ final class MockVirtualizationService: VirtualizationProviding {
 
     func save(_ instance: VMInstance) async throws {
         saveCallCount += 1
+        // The real service marks the VM `.saving` before tearing the session
+        // down and settles the resting status after — so the teardown hook
+        // fires while the status still reads as transitioning.
+        instance.status = .saving
         if let error = saveError {
             instance.tearDownSession()
             instance.status = .error
