@@ -521,6 +521,16 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         UInt64(memorySizeInGB) * 1024 * 1024 * 1024
     }
 
+    /// Whether this VM has yet to complete its initial boot — a surviving
+    /// install context of either guest's kind.
+    ///
+    /// The canonical signal, and the one ``VMStatus/initialBoot`` is derived
+    /// from: a start here runs the macOS install or the Linux image download
+    /// rather than booting the guest.
+    var hasPendingSetup: Bool {
+        installContext != nil || linuxInstallContext != nil
+    }
+
     /// The stored `displayWidth`/`displayHeight`/`displayPPI` trio as one value.
     var displayResolution: DisplayBootSizing.Resolution {
         get {

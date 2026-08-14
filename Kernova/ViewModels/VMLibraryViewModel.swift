@@ -234,7 +234,7 @@ final class VMLibraryViewModel {
     /// that the VM has never completed its initial boot, so it outranks
     /// `.paused`/`.stopped`.
     nonisolated static func initialStatus(for config: VMConfiguration, layout: VMBundleLayout) -> VMStatus {
-        if config.installContext != nil || config.linuxInstallContext != nil {
+        if config.hasPendingSetup {
             return .initialBoot
         }
         return layout.hasSaveFile ? .paused : .stopped
@@ -2548,16 +2548,22 @@ final class VMLibraryViewModel {
 
     /// The pass's move for one VM, decided from state alone.
     ///
-    /// `.initialBoot` satisfies ``VMStatus/canStart`` yet is skipped: its start
-    /// runs the macOS install or the Linux image download, neither of which may
-    /// begin unattended.
+    /// A VM that has yet to finish setup is skipped: its start runs the macOS
+    /// install or the Linux image download, neither of which may begin
+    /// unattended. ``VMConfiguration/hasPendingSetup`` is what decides that, not
+    /// the status — ``start(_:)`` dispatches on the surviving install context
+    /// too, so a failed install sitting at `.error` still routes into the
+    /// installer, and `.error` otherwise means "retry the boot".
     nonisolated static func autoStartStep(
         startsAutomaticallyOnLaunch: Bool,
         isPreparing: Bool,
+        hasPendingSetup: Bool,
         isColdPaused: Bool,
         status: VMStatus
     ) -> AutoStartStep {
-        guard startsAutomaticallyOnLaunch, !isPreparing, status != .initialBoot else { return .skip }
+        guard startsAutomaticallyOnLaunch, !isPreparing, !hasPendingSetup,
+            status != .initialBoot
+        else { return .skip }
         if isColdPaused { return .resume }
         return status.canStart ? .start : .skip
     }
@@ -2610,6 +2616,7 @@ final class VMLibraryViewModel {
             let step = Self.autoStartStep(
                 startsAutomaticallyOnLaunch: instance.configuration.startsAutomaticallyOnLaunch,
                 isPreparing: instance.isPreparing,
+                hasPendingSetup: instance.configuration.hasPendingSetup,
                 isColdPaused: instance.isColdPaused,
                 status: instance.status)
             switch step {

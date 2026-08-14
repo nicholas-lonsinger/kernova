@@ -4408,24 +4408,27 @@ struct VMLibraryViewModelTests {
     struct AutoStartCase: Sendable, CustomStringConvertible {
         let marked: Bool
         let isPreparing: Bool
+        let hasPendingSetup: Bool
         let isColdPaused: Bool
         let status: VMStatus
         let expected: VMLibraryViewModel.AutoStartStep
 
         init(
-            marked: Bool, preparing: Bool = false, coldPaused: Bool = false, _ status: VMStatus,
+            marked: Bool, preparing: Bool = false, pendingSetup: Bool = false,
+            coldPaused: Bool = false, _ status: VMStatus,
             _ expected: VMLibraryViewModel.AutoStartStep
         ) {
             self.marked = marked
             self.isPreparing = preparing
+            self.hasPendingSetup = pendingSetup
             self.isColdPaused = coldPaused
             self.status = status
             self.expected = expected
         }
 
         var description: String {
-            "marked \(marked), preparing \(isPreparing), coldPaused \(isColdPaused), "
-                + "\(status.displayName) → \(expected)"
+            "marked \(marked), preparing \(isPreparing), pendingSetup \(hasPendingSetup), "
+                + "coldPaused \(isColdPaused), \(status.displayName) → \(expected)"
         }
     }
 
@@ -4438,6 +4441,12 @@ struct VMLibraryViewModelTests {
             // A VM that never finished setup would begin an unattended install
             // or image download, so it is skipped despite passing `canStart`.
             AutoStartCase(marked: true, .initialBoot, .skip),
+            AutoStartCase(marked: true, pendingSetup: true, .initialBoot, .skip),
+            // A failed install leaves the context intact at `.error`, where
+            // `start(_:)` still routes into the installer — the status alone
+            // would read this as an ordinary boot retry.
+            AutoStartCase(marked: true, pendingSetup: true, .error, .skip),
+            AutoStartCase(marked: true, pendingSetup: true, .stopped, .skip),
             AutoStartCase(marked: true, preparing: true, .stopped, .skip),
             AutoStartCase(marked: true, .running, .skip),
             AutoStartCase(marked: true, .starting, .skip),
@@ -4455,6 +4464,7 @@ struct VMLibraryViewModelTests {
             VMLibraryViewModel.autoStartStep(
                 startsAutomaticallyOnLaunch: testCase.marked,
                 isPreparing: testCase.isPreparing,
+                hasPendingSetup: testCase.hasPendingSetup,
                 isColdPaused: testCase.isColdPaused,
                 status: testCase.status) == testCase.expected)
     }
@@ -4500,6 +4510,23 @@ struct VMLibraryViewModelTests {
 
         #expect(virtService.startCallCount == 0)
         #expect(fresh.status == .initialBoot)
+    }
+
+    /// The status reads `.error` — an ordinary boot retry — but the surviving
+    /// install context means `start(_:)` would route back into the installer.
+    @Test("startAutomaticVMsForLaunch leaves a marked VM whose setup failed alone")
+    func autoStartSkipsFailedSetup() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let stalled = markAutoStart(makeInstance(name: "Setup Failed"))
+        stalled.configuration.linuxInstallContext = LinuxInstallContext(
+            source: .catalogEntry(makeLinuxCatalogEntry()))
+        stalled.status = .error
+        viewModel.instances = [stalled]
+
+        await viewModel.startAutomaticVMsForLaunch()
+
+        #expect(virtService.startCallCount == 0)
+        #expect(stalled.status == .error)
     }
 
     @Test("startAutomaticVMsForLaunch carries on past a VM that fails to start")

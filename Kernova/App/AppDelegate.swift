@@ -25,8 +25,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// The launch pass that brings up the VMs marked to start automatically.
     ///
     /// Retained so a quit can cancel it: the pass outlives the library read, and
-    /// left running it would keep booting guests behind the termination save
-    /// pass — which would then either chase them or exit through a starting VM.
+    /// left running it would keep starting *further* guests behind the
+    /// termination save pass. Cancelling bounds the pass to the VMs it has
+    /// already reached — the one inside VZ at that moment still finishes, and a
+    /// quit does not wait on a `.starting` VM.
     private var autoStartPass: Task<Void, Never>?
     private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
     private var clipboardObservers: [UUID: Any] = [:]
