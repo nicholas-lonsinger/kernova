@@ -298,7 +298,8 @@ VMCreationWizardViewController (modal sheet, presented by DetailContainerViewCon
 ```
 
 **Serial console.** `VMInstance.startSerialReading` is the guest output pipe's single reader; it
-fans out to `serial.log` (authoritative, always on) and to `SerialSocketRelay` (best-effort tee,
+fans out to `serial.log` (authoritative, always on, size-capped by `SerialLogWriter`'s
+single-generation rotation to `serial.log.1`) and to `SerialSocketRelay` (best-effort tee,
 gated on `serialSocketRelayEnabled`). The relay's `AF_UNIX` socket is the sole host-side writer of
 serial input. There is no in-app terminal emulator — emulation is delegated to the user's terminal.
 
