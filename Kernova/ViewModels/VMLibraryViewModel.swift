@@ -2458,6 +2458,9 @@ final class VMLibraryViewModel {
 
             var diskConfigs: [(VMConfiguration, URL)] = []
             var failedBundles: [String] = []
+            // Bundles present on disk but unreadable: their VMs still exist, so
+            // eviction must not reclaim what is keyed on them.
+            var failedBundleURLs: Set<URL> = []
             for bundleURL in diskBundles {
                 let bundleName = bundleURL.deletingPathExtension().lastPathComponent
                 do {
@@ -2469,6 +2472,7 @@ final class VMLibraryViewModel {
                         "Failed to load config from \(bundleURL.lastPathComponent, privacy: .public) during reconciliation: \(error.localizedDescription, privacy: .public)"
                     )
                     failedBundles.append(bundleName)
+                    failedBundleURLs.insert(bundleURL)
                 }
             }
             let diskIDs = Set(diskConfigs.map(\.0.id))
@@ -2502,7 +2506,7 @@ final class VMLibraryViewModel {
                 // Cancel any in-flight setup task before evicting — otherwise it keeps
                 // mutating an orphan instance the view model no longer knows about.
                 instance.setupTask?.cancel()
-                evict(instance)
+                evict(instance, bundleIsGone: !failedBundleURLs.contains(instance.bundleURL))
                 Self.logger.info("VM '\(instance.name, privacy: .public)' no longer on disk — removed from library")
                 didChange = true
             }
@@ -2576,7 +2580,12 @@ final class VMLibraryViewModel {
     ///
     /// The single removal path: a clipboard problem left in the issue center
     /// would otherwise keep drawing a menu line for a VM that no longer exists.
-    private func evict(_ instance: VMInstance) {
+    ///
+    /// `bundleIsGone: false` drops the row but keeps the VM's DHCP reservation
+    /// slot, for a bundle still on disk whose configuration could not be read —
+    /// that VM still exists, so handing its address to somebody else would move
+    /// it once the configuration is readable again.
+    private func evict(_ instance: VMInstance, bundleIsGone: Bool = true) {
         instances.removeAll { $0.id == instance.id }
         if selectedID == instance.id {
             selectedID = instances.first?.id
@@ -2585,9 +2594,10 @@ final class VMLibraryViewModel {
         // A VM out of the library stops claiming its host ports and its
         // address, so the next VM created can be handed both.
         declarePortForwardingRules([], for: instance.configuration)
-        if let target = reservationTarget(for: instance.configuration) {
-            releaseAddressReservationIfUnused(target)
+        guard bundleIsGone, let target = reservationTarget(for: instance.configuration) else {
+            return
         }
+        releaseAddressReservationIfUnused(target)
     }
 
     // MARK: - Reorder

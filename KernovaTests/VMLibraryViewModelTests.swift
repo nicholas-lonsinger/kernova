@@ -2291,6 +2291,37 @@ struct VMLibraryViewModelTests {
         #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:99"])
     }
 
+    @Test("A reconcile keeps the slot of a VM whose bundle is on disk but unreadable")
+    func reconcileKeepsTheSlotOfAnUnreadableBundle() {
+        let vmnet = MockVmnetNetworkProvider()
+        let storage = MockVMStorageService()
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage, vmnetNetworks: vmnet)
+        let instance = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
+        // The bundle is still on disk; only its configuration stopped parsing,
+        // so the VM leaves the library but has not gone away.
+        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.loadConfigurationFailURLs = [instance.bundleURL]
+
+        viewModel.reconcileWithDisk()
+
+        #expect(viewModel.instances.isEmpty)
+        #expect(vmnet.releasedMACs.isEmpty)
+        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
+    }
+
+    @Test("A reconcile releases the slot of a VM whose bundle is gone")
+    func reconcileReleasesTheSlotOfADeletedBundle() {
+        let vmnet = MockVmnetNetworkProvider()
+        let storage = MockVMStorageService()
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage, vmnetNetworks: vmnet)
+        _ = makeReservedInstance(in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f")
+
+        viewModel.reconcileWithDisk()
+
+        #expect(viewModel.instances.isEmpty)
+        #expect(vmnet.releasedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
+    }
+
     @Test("An unentitled build neither releases nor prunes")
     func unentitledBuildLeavesReservationsAlone() async {
         let vmnet = MockVmnetNetworkProvider()
