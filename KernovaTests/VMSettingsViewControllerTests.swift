@@ -1,3 +1,4 @@
+import AVFoundation
 import AppKit
 import Testing
 import Virtualization
@@ -1623,6 +1624,63 @@ struct VMSettingsViewControllerTests {
 
     private func removeRuleButtons(in view: NSView) -> [NSButton] {
         allSubviews(NSButton.self, in: view) { $0.toolTip == "Remove Rule" }
+    }
+
+    // MARK: - Microphone permission
+
+    /// Builds a controller whose Audio section is driven by a pinned permission
+    /// status, so the denied banner does not depend on the test host's own TCC
+    /// state.
+    private func makeMicController(
+        _ status: AVAuthorizationStatus,
+        systemSettings: SystemSettingsLink = SystemSettingsLink()
+    ) -> VMSettingsViewController {
+        let instance = makeInstance(guestOS: .linux)
+        instance.configuration.audioInputEnabled = true
+        let vc = VMSettingsViewController(
+            instance: instance, viewModel: makeViewModel(), isReadOnly: false,
+            micPermissionStatus: { status }, systemSettings: systemSettings)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        return vc
+    }
+
+    @Test("Denied permission shows the warning banner with an Open System Settings button")
+    func deniedMicShowsBannerAndButton() {
+        let vc = makeMicController(.denied)
+
+        #expect(findLabel(containing: "Microphone permission is denied", in: vc.view) != nil)
+        #expect(findButton(titled: "Open System Settings", in: vc.view) != nil)
+    }
+
+    @Test("The banner's Open System Settings button opens the Microphone privacy pane")
+    func deniedMicBannerButtonOpensSettings() throws {
+        let recorder = URLOpenRecorder(results: [true])
+        let vc = makeMicController(.denied, systemSettings: SystemSettingsLink(open: recorder.open))
+
+        let button = try #require(findButton(titled: "Open System Settings", in: vc.view))
+        button.performClick(nil)
+
+        #expect(recorder.opened == [SystemSettingsLink.microphonePrivacyURL])
+    }
+
+    @Test("An undetermined permission explains the upcoming prompt instead of offering the link")
+    func undeterminedMicShowsCaptionOnly() {
+        let vc = makeMicController(.notDetermined)
+
+        #expect(
+            findLabel(
+                withText: "macOS will ask for microphone permission the first time a VM uses it.",
+                in: vc.view) != nil)
+        #expect(findButton(titled: "Open System Settings", in: vc.view) == nil)
+    }
+
+    @Test("Granted permission shows neither the banner nor the link")
+    func authorizedMicShowsNothing() {
+        let vc = makeMicController(.authorized)
+
+        #expect(findLabel(containing: "Microphone permission is denied", in: vc.view) == nil)
+        #expect(findButton(titled: "Open System Settings", in: vc.view) == nil)
     }
 
     // MARK: - Helpers (view-tree introspection)

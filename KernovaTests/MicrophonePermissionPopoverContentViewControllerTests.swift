@@ -71,6 +71,27 @@ struct MicrophonePermissionPopoverContentViewControllerTests {
         }
     }
 
+    @Test("offers an Open System Settings button alongside the manual steps")
+    func openSettingsButtonPresent() {
+        let vc = MicrophonePermissionPopoverContentViewController()
+        vc.loadViewIfNeeded()
+
+        #expect(findButton(titled: "Open System Settings", in: vc.view) != nil)
+    }
+
+    @Test("clicking Open System Settings opens the Microphone privacy pane")
+    func openSettingsButtonOpensMicrophonePane() throws {
+        let recorder = URLOpenRecorder(results: [true])
+        let vc = MicrophonePermissionPopoverContentViewController(
+            systemSettings: SystemSettingsLink(open: recorder.open))
+        vc.loadViewIfNeeded()
+
+        let button = try #require(findButton(titled: "Open System Settings", in: vc.view))
+        button.performClick(nil)
+
+        #expect(recorder.opened == [SystemSettingsLink.microphonePrivacyURL])
+    }
+
     // MARK: - Helpers
 
     /// Counts the number of distinct `.font`-attribute runs in `attributed`.
