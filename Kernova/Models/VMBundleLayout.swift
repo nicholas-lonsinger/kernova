@@ -40,6 +40,11 @@ struct VMBundleLayout: Sendable {
         bundleURL.appendingPathComponent("serial.log")
     }
 
+    /// The rotated previous generation of `serialLogURL` (see `SerialLogWriter`).
+    var serialLogRotatedURL: URL {
+        bundleURL.appendingPathComponent("serial.log.1")
+    }
+
     var additionalDisksDirectoryURL: URL {
         bundleURL.appendingPathComponent("AdditionalDisks")
     }

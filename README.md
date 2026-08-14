@@ -40,7 +40,7 @@ Requires macOS 26 (Tahoe) or later on Apple Silicon to run the app. macOS guests
 - **Input** — Mac or USB keyboard-and-pointer devices, chosen automatically by guest macOS version with a per-VM override
 - **Audio** — guest audio routed to the host, on by default; host microphone passthrough opt-in per VM, off by default for privacy
 - **Network** — per-VM modes: Shared Network (default; private outbound through the host, with port-forwarding rules), Bridged onto a chosen host interface or Automatic, Host Only (guests reach the host and each other, nothing wider), or None — plus a live IP address readout and a persistent, editable MAC address with one-click regeneration
-- **Serial** — output persisted to `serial.log` in the bundle, plus an opt-in AF_UNIX socket relay for external tools (`socat`, `nc -U`), hot-toggleable while running
+- **Serial** — output persisted to a size-capped `serial.log` in the bundle, plus an opt-in AF_UNIX socket relay for external tools (`socat`, `nc -U`), hot-toggleable while running
 
 <p align="center">
   <picture>

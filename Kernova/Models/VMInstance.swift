@@ -238,7 +238,7 @@ final class VMInstance {
     var serialInputPipe: Pipe?
     var serialOutputPipe: Pipe?
 
-    private var serialLogFileHandle: FileHandle?
+    private var serialLogWriter: SerialLogWriter?
 
     /// Host-side AF_UNIX relay exposing the serial port to an external terminal.
     ///
@@ -568,46 +568,24 @@ final class VMInstance {
 
     /// Begins reading from the serial output pipe.
     ///
-    /// Output is written to the on-disk `serial.log` and tee'd to the
-    /// `SerialSocketRelay` when enabled.
+    /// Output is written to the on-disk `serial.log` (size-capped by
+    /// `SerialLogWriter`) and tee'd to the `SerialSocketRelay` when enabled.
     func startSerialReading() {
         guard let outputPipe = serialOutputPipe else { return }
 
-        let logURL = serialLogURL
-        if !FileManager.default.fileExists(atPath: logURL.path(percentEncoded: false)) {
-            FileManager.default.createFile(atPath: logURL.path(percentEncoded: false), contents: nil)
-        }
-        do {
-            let handle = try FileHandle(forWritingTo: logURL)
-            do { _ = try handle.seekToEnd() } catch {
-                Self.logger.warning(
-                    "Could not seek to end of serial log: \(error.localizedDescription, privacy: .public)")
-            }
-            serialLogFileHandle = handle
-        } catch {
-            Self.logger.warning(
-                "Could not open serial log for writing: \(error.localizedDescription, privacy: .public)")
-        }
-
-        // Created once per session so the readability handler can capture it as
-        // a `Sendable` local — the handler must never touch `self` off-actor.
+        // Created once per session so the readability handler can capture them
+        // as `Sendable` locals — the handler must never touch `self` off-actor.
+        let writer = SerialLogWriter(
+            logURL: bundleLayout.serialLogURL, rotatedURL: bundleLayout.serialLogRotatedURL,
+            label: name)
+        serialLogWriter = writer
         let relay = makeSerialRelay()
-
-        // Captured for the readability handler, which runs on a background GCD queue.
-        let logFileHandle = serialLogFileHandle
-        let logger = Self.logger
 
         outputPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
 
-            // Background-safe: FileHandle is thread-safe for sequential writes.
-            do {
-                try logFileHandle?.write(contentsOf: data)
-            } catch {
-                logger.error("Failed to write to serial log: \(error.localizedDescription, privacy: .public)")
-            }
-
+            writer.write(data)
             relay?.forwardOutput(data)
         }
 
@@ -645,14 +623,8 @@ final class VMInstance {
         serialOutputPipe?.fileHandleForReading.readabilityHandler = nil
         serialSocketRelay?.stop()
         serialSocketRelay = nil
-        do {
-            try serialLogFileHandle?.close()
-        } catch {
-            Self.logger.warning(
-                "Failed to close serial log file for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-        }
-        serialLogFileHandle = nil
+        serialLogWriter?.close()
+        serialLogWriter = nil
     }
 
     // MARK: - Clipboard Service Lifecycle
