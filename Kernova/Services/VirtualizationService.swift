@@ -30,7 +30,7 @@ final class VirtualizationService {
 
         do {
             if instance.hasSaveFile {
-                try await restoreOrColdBoot(instance)
+                try await restoreFromSaveFile(instance)
             } else {
                 try await coldBootRetryingLockContention(
                     instance, bootIntoRecovery: bootIntoRecovery)
@@ -57,7 +57,11 @@ final class VirtualizationService {
                 "Failed to start VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(Self.underlyingChainDescription(nsError), privacy: .public)]"
             )
             instance.tearDownSession()
-            Self.applyStartFailure(error, to: instance, transientRestingStatus: .stopped)
+            if Self.isRestoreFailure(error) {
+                Self.applyRestoreFailure(to: instance)
+            } else {
+                Self.applyStartFailure(error, to: instance, transientRestingStatus: .stopped)
+            }
             throw error
         }
     }
@@ -272,7 +276,7 @@ final class VirtualizationService {
                 // runs the agent, and no host-side flag survives the save to
                 // say which. The accept path arms once a control channel
                 // actually shows up.
-                try await restoreOrColdBoot(instance)
+                try await restoreFromSaveFile(instance)
                 instance.status = .running
                 instance.networkAttachmentCoordinator?.activate()
             } else {
@@ -285,8 +289,12 @@ final class VirtualizationService {
                 "Failed to resume VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             instance.tearDownSession()
-            instance.status = .error
-            instance.errorMessage = error.localizedDescription
+            if Self.isRestoreFailure(error) {
+                Self.applyRestoreFailure(to: instance)
+            } else {
+                instance.status = .error
+                instance.errorMessage = error.localizedDescription
+            }
             throw error
         }
     }
@@ -388,6 +396,24 @@ final class VirtualizationService {
         return chain
     }
 
+    /// `true` when `error` is a failed save-file restore — the one start/resume
+    /// failure that rests at cold-paused instead of `.error` or `.stopped`.
+    static func isRestoreFailure(_ error: Error) -> Bool {
+        guard let virtualizationError = error as? VirtualizationError,
+            case .restoreFailed = virtualizationError
+        else { return false }
+        return true
+    }
+
+    /// Records a failed save-file restore on `instance`, after the caller's
+    /// `tearDownSession()`: back at cold-paused with the save file untouched,
+    /// so the user can retry the resume or explicitly discard the saved state.
+    /// No stored message — the failure reaches the user as a thrown error.
+    static func applyRestoreFailure(to instance: VMInstance) {
+        instance.status = .paused
+        instance.errorMessage = nil
+    }
+
     /// Records a failed start or install on `instance`: a transient failure
     /// rests at `transientRestingStatus` carrying no message, a permanent one
     /// lands in `.error` carrying the description the banner and tooltip show.
@@ -416,8 +442,12 @@ final class VirtualizationService {
 
     /// Builds a `VZVirtualMachine`, restores from a save file, and resumes.
     ///
-    /// On restore failure, deletes the stale save file and falls back to a cold boot.
-    private func restoreOrColdBoot(_ instance: VMInstance) async throws {
+    /// A restore or resume failure surfaces as
+    /// ``VirtualizationError/restoreFailed(underlying:)`` with the save file
+    /// left in place — a cold boot over a suspended session destroys it, so
+    /// discarding the saved state stays an explicit user action
+    /// (`stop(_:)` on a cold-paused VM).
+    private func restoreFromSaveFile(_ instance: VMInstance) async throws {
         instance.openRuntimeFileAccess()
         let result = try await buildConfiguration(for: instance)
 
@@ -431,26 +461,18 @@ final class VirtualizationService {
         instance.startClipboardService()
         instance.startVsockServices()
 
-        Self.logger.debug("restoreOrColdBoot: attempting restore from save file")
+        Self.logger.debug("restoreFromSaveFile: attempting restore from save file")
         do {
             instance.status = .restoring
             try await restoreMachineState(vm, from: instance.saveFileURL)
             try await vm.resume()
             instance.removeSaveFile()
         } catch {
-            Self.logger.warning(
-                "Restore failed for VM '\(instance.name, privacy: .public)', falling back to cold boot: \(error.localizedDescription, privacy: .public)"
+            let nsError = error as NSError
+            Self.logger.error(
+                "Restore failed for VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(Self.underlyingChainDescription(nsError), privacy: .public)]"
             )
-            instance.removeSaveFile()
-
-            // A fresh VZVirtualMachine: the previous one may be in a bad state.
-            Self.logger.debug("restoreOrColdBoot: falling back to cold boot with fresh VM")
-            let freshVM = instance.attachVirtualMachine(from: result.configuration)
-            // Re-attach the vsock listener — the previous one referenced the
-            // now-dead VM. Idempotent.
-            instance.startVsockServices()
-            instance.status = .starting
-            try await freshVM.start()
+            throw VirtualizationError.restoreFailed(underlying: error)
         }
     }
 
@@ -514,6 +536,7 @@ enum VirtualizationError: LocalizedError {
     case invalidStateTransition(from: VMStatus, action: String)
     case noVirtualMachine
     case noSaveFile
+    case restoreFailed(underlying: any Error)
 
     var errorDescription: String? {
         switch self {
@@ -523,6 +546,10 @@ enum VirtualizationError: LocalizedError {
             "No virtual machine instance is available."
         case .noSaveFile:
             "No saved state file found."
+        case .restoreFailed(let underlying):
+            "Could not restore the saved state: \(underlying.localizedDescription) "
+                + "The saved state was kept — choose Resume to try again, "
+                + "or Discard Saved State to remove it and start fresh."
         }
     }
 }

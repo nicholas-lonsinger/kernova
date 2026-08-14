@@ -335,6 +335,52 @@ struct VirtualizationServiceTests {
         #expect(VirtualizationService.fileLockRetryDelay(forAttempt: 4) == nil)
     }
 
+    // MARK: - Restore Failure
+
+    @Test("a failed restore rests at cold-paused with the save file intact")
+    func applyRestoreFailureRestsColdPausedKeepingSaveFile() throws {
+        let instance = makeInstance(status: .restoring)
+        try FileManager.default.createDirectory(
+            at: instance.bundleURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
+        FileManager.default.createFile(
+            atPath: instance.saveFileURL.path(percentEncoded: false),
+            contents: Data("fake save".utf8))
+        instance.errorMessage = "stale message"
+
+        instance.tearDownSession()
+        VirtualizationService.applyRestoreFailure(to: instance)
+
+        #expect(instance.status == .paused)
+        #expect(instance.isColdPaused)
+        #expect(instance.errorMessage == nil)
+        #expect(instance.hasSaveFile)
+    }
+
+    @Test("isRestoreFailure matches only restoreFailed")
+    func isRestoreFailureMatchesOnlyRestoreFailed() {
+        let restoreFailed = VirtualizationError.restoreFailed(
+            underlying: NSError(
+                domain: VZError.errorDomain, code: VZError.Code.internalError.rawValue))
+        #expect(VirtualizationService.isRestoreFailure(restoreFailed))
+        #expect(!VirtualizationService.isRestoreFailure(VirtualizationError.noSaveFile))
+        #expect(
+            !VirtualizationService.isRestoreFailure(
+                NSError(domain: NSPOSIXErrorDomain, code: Int(EIO))))
+    }
+
+    @Test("restoreFailed carries the underlying failure and the way forward")
+    func restoreFailedDescriptionCarriesUnderlyingAndGuidance() {
+        let underlying = NSError(
+            domain: "test", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "The save file is corrupted."])
+        let description = VirtualizationError.restoreFailed(underlying: underlying)
+            .localizedDescription
+        #expect(description.contains("The save file is corrupted."))
+        #expect(description.contains("Resume"))
+        #expect(description.contains("Discard Saved State"))
+    }
+
     @Test("start sets error status for permanent config error")
     func startSetsErrorForPermanentConfigError() async throws {
         let instance = makeInstance(status: .stopped)

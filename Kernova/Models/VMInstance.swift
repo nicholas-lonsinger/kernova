@@ -526,8 +526,7 @@ final class VMInstance {
     }
 
     /// Builds this session's attachment-recovery coordinator, replacing any
-    /// prior one — the restore-failure fallback attaches a second
-    /// `VZVirtualMachine` without an intervening teardown.
+    /// prior one.
     private func setupNetworkAttachmentCoordinator(for vm: VZVirtualMachine) {
         networkAttachmentCoordinator?.stop()
         networkAttachmentCoordinator = nil

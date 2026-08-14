@@ -4558,6 +4558,26 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == true)
     }
 
+    @Test("startAutomaticVMsForLaunch leaves a failed restore cold-paused and carries on")
+    func autoStartRestoreFailureRestsColdPausedAndContinues() async {
+        let virtService = MockVirtualizationService()
+        virtService.resumeError = VirtualizationError.restoreFailed(
+            underlying: NSError(domain: "test", code: 1))
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let suspended = markAutoStart(makeInstance(name: "Suspended"))
+        suspended.status = .paused
+        let following = markAutoStart(makeInstance(name: "Following"))
+        viewModel.instances = [suspended, following]
+
+        await viewModel.startAutomaticVMsForLaunch()
+
+        #expect(virtService.resumeCallCount == 1)
+        #expect(virtService.startCallCount == 1)
+        #expect(suspended.status == .paused)
+        #expect(suspended.errorMessage == nil)
+        #expect(presenter.showError == true)
+    }
+
     @Test("startAutomaticVMsForLaunch stops between VMs once cancelled")
     func autoStartHonorsCancellation() async {
         let (viewModel, suspending) = makeSuspendingViewModel()

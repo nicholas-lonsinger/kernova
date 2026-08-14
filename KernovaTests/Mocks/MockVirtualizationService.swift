@@ -46,8 +46,12 @@ final class MockVirtualizationService: VirtualizationProviding {
         statusAtStart = instance.status
         if let error = startError {
             instance.tearDownSession()
-            VirtualizationService.applyStartFailure(
-                error, to: instance, transientRestingStatus: .stopped)
+            if VirtualizationService.isRestoreFailure(error) {
+                VirtualizationService.applyRestoreFailure(to: instance)
+            } else {
+                VirtualizationService.applyStartFailure(
+                    error, to: instance, transientRestingStatus: .stopped)
+            }
             throw error
         }
         instance.status = .running
@@ -79,8 +83,12 @@ final class MockVirtualizationService: VirtualizationProviding {
         resumeCallCount += 1
         if let error = resumeError {
             instance.tearDownSession()
-            instance.status = .error
-            instance.errorMessage = error.localizedDescription
+            if VirtualizationService.isRestoreFailure(error) {
+                VirtualizationService.applyRestoreFailure(to: instance)
+            } else {
+                instance.status = .error
+                instance.errorMessage = error.localizedDescription
+            }
             throw error
         }
         instance.status = .running
