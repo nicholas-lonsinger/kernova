@@ -438,10 +438,11 @@ final class VmnetNetworkService: @unchecked Sendable {
     /// The app-managed network of `kind`, materializing it on first use.
     /// Blocks for the vmnet XPC round-trip — never call on the main actor.
     ///
-    /// A rule declared during the create is not in the network that comes back,
-    /// and would go unnoticed — nothing was materialized when it arrived, so it
-    /// never read as pending. Such a network is released and recreated before
-    /// anyone can take it, up to ``materializeAttemptLimit`` attempts.
+    /// A reservation slot taken (or freed) and a rule declared during the create
+    /// are not in the network that comes back, and would go unnoticed — nothing
+    /// was materialized when they arrived, so they never read as pending. Such a
+    /// network is released and recreated before anyone can take it, up to
+    /// ``materializeAttemptLimit`` attempts.
     func network(for kind: VmnetNetworkKind) throws -> VmnetNetworkHandle {
         if let handle = cachedHandle(for: kind) { return handle }
         materializeLock.lock()
@@ -452,15 +453,25 @@ final class VmnetNetworkService: @unchecked Sendable {
             attempt += 1
             let materialized = try materialize(kind)
             stateLock.lock()
-            let stale =
+            // Slots compare by MAC, and rules by MAC-keyed rule, both blind to
+            // the addresses they resolve to: a network that came back on
+            // addressing the record did not ask for re-derives every address
+            // without anyone having declared anything, and reading that as a
+            // mid-create change would recreate on every attempt. It publishes
+            // pending instead, for a later idle rebuild to carry.
+            let reservationsChanged =
+                materialized.submittedReservations.map(\.mac)
+                != installableReservationsLocked(for: kind).map(\.mac)
+            let rulesChanged =
                 Self.rulesByMAC(materialized.submittedForwardingRules)
                 != installableForwardingRulesLocked(for: kind)
+            let stale = reservationsChanged || rulesChanged
             if stale, attempt < Self.materializeAttemptLimit {
                 stateLock.unlock()
                 // Never published, so nothing else can hold this network.
                 operations.releaseNetwork(materialized.handle)
                 Self.logger.info(
-                    "Forwarding rules changed while the \(kind.rawValue, privacy: .public) network was being created — recreating it"
+                    "DHCP reservations or forwarding rules changed while the \(kind.rawValue, privacy: .public) network was being created — recreating it"
                 )
                 continue
             }
@@ -472,10 +483,10 @@ final class VmnetNetworkService: @unchecked Sendable {
             pinnedOnlyKinds.remove(kind)
             stateLock.unlock()
             if stale {
-                // Left pending on purpose: the next rule sync or session
-                // teardown recreates the network at an idle moment.
+                // Left pending on purpose: the next configuration sync or
+                // session teardown recreates the network at an idle moment.
                 Self.logger.warning(
-                    "Published the \(kind.rawValue, privacy: .public) network without the forwarding rules declared during its creation — they take effect at the next recreate"
+                    "Published the \(kind.rawValue, privacy: .public) network without the DHCP reservations and forwarding rules declared during its creation — they take effect at the next recreate"
                 )
             }
             return materialized.handle
@@ -516,7 +527,8 @@ final class VmnetNetworkService: @unchecked Sendable {
                     "Pinned \(kind.rawValue, privacy: .public) network addressing was adjusted by the system — persisting the reserved values"
                 )
                 return MaterializedNetwork(
-                    handle: handle, reservations: [], forwardingRules: [], submitted: forwarding)
+                    handle: handle, reservations: [], forwardingRules: [],
+                    submittedReservations: installing, submittedForwardingRules: forwarding)
             } catch {
                 if isPinnedOnly(kind) {
                     // An invalidation recreate racing VZ's own refs on the old
@@ -558,9 +570,9 @@ final class VmnetNetworkService: @unchecked Sendable {
         }
 
         operations.releaseNetwork(probe)
+        let installing = reservations(for: macs, addressing: discovered, kind: kind)
+        let forwarding = forwardingRules(for: installing, kind: kind)
         do {
-            let installing = reservations(for: macs, addressing: discovered, kind: kind)
-            let forwarding = forwardingRules(for: installing, kind: kind)
             let (handle, reserved) = try operations.createNetwork(
                 kind, addressing: discovered, reservations: installing,
                 forwardingRules: Self.operatorRules(forwarding))
@@ -571,7 +583,8 @@ final class VmnetNetworkService: @unchecked Sendable {
             let holds = reserved == discovered
             return MaterializedNetwork(
                 handle: handle, reservations: holds ? installing : [],
-                forwardingRules: holds ? forwarding : [], submitted: forwarding)
+                forwardingRules: holds ? forwarding : [],
+                submittedReservations: installing, submittedForwardingRules: forwarding)
         } catch {
             // The discovered subnet was re-grabbed between release and
             // recreate. Fall back to a working network without reservations —
@@ -583,7 +596,13 @@ final class VmnetNetworkService: @unchecked Sendable {
             let (handle, addressing) = try operations.createNetwork(
                 kind, addressing: nil, reservations: [], forwardingRules: [])
             updateRecord(for: kind) { $0.addressing = addressing }
-            return MaterializedNetwork(handle: handle, reservations: [], forwardingRules: [])
+            // Submitted as declared, though this network carries none of it:
+            // the create that would have installed it just failed, so retrying
+            // it here would fail the same way. The next materialization brings
+            // them, as the warning above says.
+            return MaterializedNetwork(
+                handle: handle, reservations: [], forwardingRules: [],
+                submittedReservations: installing, submittedForwardingRules: forwarding)
         }
     }
 
@@ -656,28 +675,32 @@ final class VmnetNetworkService: @unchecked Sendable {
 
     /// What one successful materialization produced: the handle, plus what the
     /// created network actually honors.
+    ///
+    /// The `submitted` pair is what this attempt handed to `createNetwork` —
+    /// the declarations as they stood when it started, which is the same as
+    /// what the network honors except where it came back on addressing they
+    /// were not resolved against, honoring none of them. Comparing the
+    /// submitted sets against what would install now is what tells a
+    /// declaration that changed mid-create from one that never held.
     private struct MaterializedNetwork {
         let handle: VmnetNetworkHandle
         let reservations: [(mac: String, address: String)]
         let forwardingRules: [ResolvedForwardingRule]
-        /// The rules handed to `createNetwork`, which is what the declarations
-        /// looked like when this attempt started — the same set as
-        /// ``forwardingRules`` except where the network came back on addressing
-        /// the rules were not resolved against, which honors none of them.
-        /// Comparing it against what would install now is what tells a
-        /// declaration that changed mid-create from one that never held.
+        let submittedReservations: [(mac: String, address: String)]
         let submittedForwardingRules: [ResolvedForwardingRule]
 
         init(
             handle: VmnetNetworkHandle,
             reservations: [(mac: String, address: String)] = [],
             forwardingRules: [ResolvedForwardingRule] = [],
-            submitted: [ResolvedForwardingRule]? = nil
+            submittedReservations: [(mac: String, address: String)]? = nil,
+            submittedForwardingRules: [ResolvedForwardingRule]? = nil
         ) {
             self.handle = handle
             self.reservations = reservations
             self.forwardingRules = forwardingRules
-            self.submittedForwardingRules = submitted ?? forwardingRules
+            self.submittedReservations = submittedReservations ?? reservations
+            self.submittedForwardingRules = submittedForwardingRules ?? forwardingRules
         }
     }
 
