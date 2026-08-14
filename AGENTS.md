@@ -10,6 +10,8 @@ The tool-neutral operating guide for this repository. Deep-dive docs are indexed
 
 Xcode project, not SwiftPM. From the terminal go through the `Makefile` (`make help` lists every target) — never hand-write an `xcodebuild` invocation; the flags are not the obvious ones. Fresh-clone setup: [README](README.md#development-setup); machinery: [docs/BUILD.md](docs/BUILD.md).
 
+Run long targets (`build`, `test`, `test-suite`) as bare **background** shell commands — no pipes, no `tail`/`tee`, no watcher loops. The harness keeps the full output in the task's log file and notifies on exit: the exit code is the verdict, and nothing enters context during the run, so output-mangling saves no tokens — it only truncates the log. After exit, grep the log file for just the lines you need.
+
 The app is Apple Silicon-only (`ARCHS = arm64` project-wide), so `#if arch(arm64)` guards are unnecessary.
 
 A new top-level target needing a dynamic build number calls `Tools/set-build-number.sh <app|agent>` from a `Set Build Number from Git` build phase — never patch the built `Info.plist`.
