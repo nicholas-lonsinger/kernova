@@ -45,11 +45,17 @@ extension VMInstance {
         if status == .initialBoot { return "Click Start to install macOS" }
         if status == .error { return errorMessage }
         if status == .running, networkAttachmentPending {
-            // Host Only waits on the app's own network, not a host interface —
-            // pointing the user at Wi-Fi/Ethernet would misdirect them.
-            return configuration.networkMode == .hostOnly
-                ? "The Host Only network is unavailable. Kernova reconnects automatically."
-                : "The network interface is unavailable. Kernova reconnects automatically when one is available."
+            // Shared and Host Only wait on the app's own network, not a host
+            // interface — pointing the user at Wi-Fi/Ethernet would misdirect
+            // them.
+            return switch configuration.networkMode {
+            case .hostOnly:
+                "The Host Only network is unavailable. Kernova reconnects automatically."
+            case .shared:
+                "The Shared Network is unavailable. Kernova reconnects automatically."
+            case .bridged:
+                "The network interface is unavailable. Kernova reconnects automatically when one is available."
+            }
         }
         guard status == .paused else { return nil }
         return isColdPaused

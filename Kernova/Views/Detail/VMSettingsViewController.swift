@@ -26,6 +26,8 @@ final class VMSettingsViewController: NSViewController {
     /// Decides whether the picker offers Bridged at all.
     private let entitlements: EntitlementService
 
+    private let vmnetNetworks: any VmnetNetworkProviding
+
     // MARK: - Observation & live state
 
     private let fileMonitor = AttachmentFileMonitor()
@@ -169,6 +171,13 @@ final class VMSettingsViewController: NSViewController {
     /// The MAC Address row, hidden while the VM has no network device; `nil` for a
     /// VM carrying no MAC address, whose row is never built.
     private var macAddressRow: GroupedFormCollapsibleRow?
+    private var ipAddressRow: GroupedFormCollapsibleRow?
+    private var ipAddressValueLabel: NSTextField?
+    private var ipAddressCopyButton: NSButton?
+    /// What the copy button copies — the reserved address, `nil` while the
+    /// row shows anything else.
+    private var ipAddressCopyValue: String?
+    private var ipAddressMaterializeTask: Task<Void, Never>?
     /// Stands in for the card's rows while the mode is None.
     private var networkNoDeviceCaption = NSTextField()
 
@@ -232,13 +241,15 @@ final class VMSettingsViewController: NSViewController {
         viewModel: VMLibraryViewModel,
         isReadOnly: Bool,
         bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider(),
-        entitlements: EntitlementService = .shared
+        entitlements: EntitlementService = .shared,
+        vmnetNetworks: any VmnetNetworkProviding = VmnetNetworkService.shared
     ) {
         self.instance = instance
         self.viewModel = viewModel
         self.isReadOnly = isReadOnly
         self.bridgedInterfaces = bridgedInterfaces
         self.entitlements = entitlements
+        self.vmnetNetworks = vmnetNetworks
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -931,6 +942,7 @@ extension VMSettingsViewController {
         networkModePopUp = makeNetworkModePopUp()
 
         var rows: [NSView] = [makeGroupedFormCardRow("Mode", control: networkModePopUp)]
+        rows.append(makeIPAddressRow())
         if let mac = instance.configuration.macAddress {
             let row = GroupedFormCollapsibleRow(
                 row: makeGroupedFormCardRow("MAC Address", control: makeGroupedFormValueLabel(mac)))
@@ -941,9 +953,16 @@ extension VMSettingsViewController {
         }
         networkNoDeviceCaption = makeGroupedFormCaption("This virtual machine has no network device.")
 
+        // With the entitlement, Shared and Host Only assign each guest a
+        // deterministic address the IP Address row shows; without it there is
+        // no row, so the copy concedes the gap instead.
+        let sharedReachClause =
+            entitlements.hasVMNetworking
+            ? "there is no port forwarding from host to guest — this Mac reaches it at the address in the IP Address row"
+            : "there is no port forwarding from host to guest — incoming connections require knowing the guest's IP"
         var paragraphs: [InfoPopoverParagraph] = [
             .body(
-                "The mode sets how the guest reaches the network. Shared Network gives it outbound access through the host: the guest gets a DHCP address on a private subnet, other machines on your network cannot reach it, and there is no port forwarding from host to guest — incoming connections require knowing the guest's IP. Host Only puts the guest on a private network reachable only from this Mac: it can talk to the host and to other Host Only guests, with no access to your network or the internet. Bridged puts the guest on your network through the chosen host interface, where it requests its own address like a separate machine."
+                "The mode sets how the guest reaches the network. Shared Network gives it outbound access through the host: the guest gets a DHCP address on a private subnet, other machines on your network cannot reach it, and \(sharedReachClause). Host Only puts the guest on a private network reachable only from this Mac: it can talk to the host and to other Host Only guests, with no access to your network or the internet. Bridged puts the guest on your network through the chosen host interface, where it requests its own address like a separate machine."
             ),
             .body(
                 "Bridged traffic bypasses a VPN running on the host. Bridging over Wi-Fi is best-effort — the Wi-Fi standard does not bridge additional stations and there is no client-side fix, so prefer a wired interface."
@@ -963,6 +982,102 @@ extension VMSettingsViewController {
             makeGroupedFormCard(rows: rows),
             networkNoDeviceCaption,
         ])
+    }
+
+    /// The IP Address row: the reserved address with a copy affordance for
+    /// the modes the app assigns addressing in, "Assigned by your network"
+    /// for Bridged (external DHCP — nothing deterministic to show).
+    /// `refreshIPAddressRow()` owns its content and visibility.
+    private func makeIPAddressRow() -> GroupedFormCollapsibleRow {
+        let value = makeGroupedFormValueLabel("")
+        ipAddressValueLabel = value
+
+        let copy = NSButton()
+        copy.image = .systemSymbol("doc.on.doc", accessibilityDescription: "Copy IP Address")
+        copy.imagePosition = .imageOnly
+        copy.isBordered = false
+        copy.contentTintColor = .secondaryLabelColor
+        copy.toolTip = "Copy IP Address"
+        copy.target = self
+        copy.action = #selector(copyIPAddressTapped)
+        ipAddressCopyButton = copy
+
+        let control = NSStackView(views: [value, copy])
+        control.orientation = .horizontal
+        control.spacing = Spacing.tight
+        let row = GroupedFormCollapsibleRow(
+            row: makeGroupedFormCardRow("IP Address", control: control))
+        ipAddressRow = row
+        return row
+    }
+
+    /// Renders the IP Address row for the current mode, kicking a
+    /// materialization when the address is not yet derivable — the network's
+    /// addressing is only known once it has materialized, and the reservation
+    /// is meant to be shown even while the VM is stopped.
+    private func refreshIPAddressRow() {
+        let config = instance.configuration
+        guard config.networkEnabled else {
+            ipAddressRow?.isHidden = true
+            return
+        }
+
+        let mode = config.networkMode
+        ipAddressCopyValue = nil
+        switch mode {
+        case .bridged:
+            ipAddressRow?.isHidden = false
+            ipAddressCopyButton?.isHidden = true
+            ipAddressValueLabel?.stringValue = "Assigned by your network"
+        case .shared, .hostOnly:
+            guard entitlements.hasVMNetworking, let mac = config.macAddress,
+                let kind = VmnetNetworkKind(mode: mode)
+            else {
+                // Without the entitlement (or a MAC to key on) there is no
+                // reservation machinery behind the row — absence over a
+                // visible-but-empty control.
+                ipAddressRow?.isHidden = true
+                return
+            }
+            ipAddressRow?.isHidden = false
+            vmnetNetworks.reserveAddressIfNeeded(for: mac, kind: kind)
+            if let address = vmnetNetworks.reservedAddress(for: mac, kind: kind) {
+                ipAddressCopyValue = address
+                ipAddressCopyButton?.isHidden = false
+                ipAddressValueLabel?.stringValue = address
+            } else {
+                ipAddressCopyButton?.isHidden = true
+                ipAddressValueLabel?.stringValue = "—"
+                materializeForIPAddressDisplay(kind)
+            }
+        }
+    }
+
+    /// Materializes `kind`'s network off-main so the pending IP Address row
+    /// can fill in; re-renders on success. Single-flight — every refresh of a
+    /// still-pending row lands here, and one materialization serves them all.
+    private func materializeForIPAddressDisplay(_ kind: VmnetNetworkKind) {
+        guard ipAddressMaterializeTask == nil else { return }
+        let networks = vmnetNetworks
+        ipAddressMaterializeTask = Task { [weak self] in
+            let materialized = await networks.materializeNetwork(for: kind)
+            // Re-render before clearing the single-flight token: a slot the
+            // materialized network can't serve (subnet capacity, pending
+            // reservation) leaves the address underivable, and re-arming from
+            // that refresh would spin materialize→refresh forever.
+            if materialized { self?.refreshIPAddressRow() }
+            self?.ipAddressMaterializeTask = nil
+        }
+    }
+
+    #if DEBUG
+    /// The in-flight IP-row materialization, for event-driven test waits.
+    var ipAddressMaterializeTaskForTesting: Task<Void, Never>? { ipAddressMaterializeTask }
+    #endif
+
+    @objc private func copyIPAddressTapped() {
+        guard let value = ipAddressCopyValue else { return }
+        copyToPasteboard(value)
     }
 
     /// While the pane is read-only, whether the Mode picker stays live as the
@@ -1654,6 +1769,7 @@ extension VMSettingsViewController {
         let hasDevice = instance.configuration.networkEnabled
         macAddressRow?.isHidden = !hasDevice
         networkNoDeviceCaption.isHidden = hasDevice
+        refreshIPAddressRow()
     }
 
     private func refreshAudio() {

@@ -578,7 +578,7 @@ struct ConfigurationBuilder: Sendable {
         let networkDevice = VZVirtioNetworkDeviceConfiguration()
         switch config.networkMode {
         case .shared:
-            networkDevice.attachment = VZNATNetworkDeviceAttachment()
+            networkDevice.attachment = sharedAttachment(config: config)
         case .bridged:
             networkDevice.attachment = try bridgedAttachment(config: config)
         case .hostOnly:
@@ -636,6 +636,23 @@ struct ConfigurationBuilder: Sendable {
             Self.logger.info("Bridging over '\(chosen, privacy: .public)'")
         }
         return VZBridgedNetworkDeviceAttachment(interface: interface)
+    }
+
+    /// The Shared Network attachment: the app-managed vmnet shared network in
+    /// an entitled build — whose DHCP reservations back the IP display — and
+    /// the system NAT attachment otherwise. A vmnet network that cannot be
+    /// materialized builds the device detached (`nil`) like the Host Only
+    /// path, and attachment recovery retries once the session runs.
+    private func sharedAttachment(config: VMConfiguration) -> VZNetworkDeviceAttachment? {
+        guard entitlements.hasVMNetworking else { return VZNATNetworkDeviceAttachment() }
+        do {
+            return try vmnetNetworks.attachment(for: .shared)
+        } catch {
+            Self.logger.error(
+                "Shared network for '\(config.name, privacy: .public)' could not be materialized — starting detached: \(error.localizedDescription, privacy: .public)"
+            )
+            return nil
+        }
     }
 
     /// The attachment joining the app-managed Host Only network.

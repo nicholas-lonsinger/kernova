@@ -51,6 +51,7 @@ struct NetworkAttachmentCoordinatorTests {
         devicePlan: NetworkAttachmentPlan? = nil,
         available: [BridgedInterface] = [],
         primary: String? = nil,
+        entitled: Bool = false,
         retryDelays: [TimeInterval] = []
     ) -> Harness {
         let device = MockNetworkDeviceControl(plan: devicePlan)
@@ -67,6 +68,7 @@ struct NetworkAttachmentCoordinatorTests {
             interfaces: provider,
             linkObserver: observer,
             vmnetNetworks: vmnet,
+            isVMNetworkingEntitled: entitled,
             retryDelays: retryDelays,
             clock: clock,
             isEligible: { eligibility.isEligible },
@@ -112,6 +114,76 @@ struct NetworkAttachmentCoordinatorTests {
 
         #expect(h.device.appliedPlans == [.hostOnly])
         #expect(!h.coordinator.isPending)
+    }
+
+    @Test("An entitled build realizes Shared over the app-managed vmnet network")
+    func entitledSharedRealizesVmnetPlan() {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
+            entitled: true)
+
+        h.coordinator.activate()
+
+        #expect(h.device.appliedPlans == [.sharedVmnet])
+        #expect(!h.coordinator.isPending)
+    }
+
+    @Test("An entitled build swaps a NAT attachment over to the vmnet shared network")
+    func entitledSharedReplacesNATAttachment() {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
+            devicePlan: .nat,
+            entitled: true)
+
+        h.coordinator.activate()
+
+        #expect(h.device.appliedPlans == [.sharedVmnet])
+    }
+
+    @Test("A Shared ladder burning out invalidates the shared network once per episode")
+    func sharedLadderExhaustionInvalidatesSharedNetwork() async {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
+            entitled: true,
+            retryDelays: [])
+        h.device.refusedPlans = [.sharedVmnet]
+        h.vmnet.materializeFails = true
+
+        h.coordinator.activate()
+        #expect(h.vmnet.invalidatedKinds == [.shared])
+        await h.coordinator.vmnetMaterializationTaskForTesting?.value
+        h.coordinator.stop()
+    }
+
+    @Test("A live switch between vmnet-backed modes supersedes the in-flight materialization")
+    func liveSwitchSupersedesInFlightMaterialization() async {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
+            entitled: true,
+            retryDelays: [])
+        h.vmnet.isMaterialized = false
+        h.vmnet.materializeFails = true
+        h.device.refusedPlans = [.hostOnly, .sharedVmnet]
+
+        h.coordinator.activate()
+        #expect(h.coordinator.isPending)
+
+        // The Host Only drive is still in flight; switching to Shared must
+        // replace it with one for the shared network, not be swallowed by the
+        // single-flight guard — the old task's ladder would otherwise strand
+        // the VM detached with no wake-up signal for the new kind. The
+        // refusals lift only after the switch, so the supersede path (not a
+        // direct attach) is what recovers the session.
+        h.vmnet.materializeFails = false
+        h.choiceBox.choice = NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil)
+        h.coordinator.configurationChanged()
+        h.device.refusedPlans = []
+
+        await h.coordinator.vmnetMaterializationTaskForTesting?.value
+        #expect(h.vmnet.materializedKinds.contains(.shared))
+        #expect(h.device.appliedPlans.last == .sharedVmnet)
+        #expect(!h.coordinator.isPending)
+        h.coordinator.stop()
     }
 
     @Test("A Host Only network that won't materialize goes pending and retries on the ladder")

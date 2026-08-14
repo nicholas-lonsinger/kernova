@@ -14,6 +14,12 @@ final class VMLibraryViewModel {
     let diskImageService: any DiskImageProviding
     let lifecycle: VMLifecycleCoordinator
 
+    private let vmnetNetworks: any VmnetNetworkProviding
+
+    /// Whether this build's reservation machinery is live — a process-wide
+    /// constant, snapshotted at init.
+    private let isVMNetworkingEntitled: Bool
+
     private let fileSystem: any FileSystemOperating
 
     private let preferences: AppPreferences
@@ -181,10 +187,14 @@ final class VMLibraryViewModel {
         downloadsDirectory: URL? = FileManager.default.urls(
             for: .downloadsDirectory, in: .userDomainMask
         ).first,
-        preferences: AppPreferences = .shared
+        preferences: AppPreferences = .shared,
+        vmnetNetworks: any VmnetNetworkProviding = VmnetNetworkService.shared,
+        isVMNetworkingEntitled: Bool = EntitlementService.shared.hasVMNetworking
     ) {
         self.storageService = storageService
         self.diskImageService = diskImageService
+        self.vmnetNetworks = vmnetNetworks
+        self.isVMNetworkingEntitled = isVMNetworkingEntitled
         self.fileSystem = fileSystem
         self.preferences = preferences
         self.agentInstallPromptDisabled = preferences.agentInstallPromptDisabled
@@ -1454,6 +1464,21 @@ final class VMLibraryViewModel {
             guard let self, let instance else { return }
             self.unmountGuestAgentInstaller(from: instance)
         }
+        syncAddressReservation(for: instance.configuration)
+    }
+
+    /// Keeps the VM's DHCP reservation slot in step with its configuration:
+    /// any VM that can join an app-managed network holds a slot keyed on its
+    /// persisted MAC, so its address is assigned before the network next
+    /// materializes. Runs at every instance construction and configuration
+    /// change; cheap and idempotent. Entitlement-gated like every other
+    /// consumer of the reservation machinery — an unentitled build never
+    /// materializes a network, so slots taken there would be dead weight.
+    private func syncAddressReservation(for config: VMConfiguration) {
+        guard isVMNetworkingEntitled, config.networkEnabled, let mac = config.macAddress,
+            let kind = VmnetNetworkKind(mode: config.networkMode)
+        else { return }
+        vmnetNetworks.reserveAddressIfNeeded(for: mac, kind: kind)
     }
 
     /// The single entry point for any UI-driven or programmatic mutation of
@@ -1475,6 +1500,7 @@ final class VMLibraryViewModel {
         mutate(&new)
         guard new != old else { return true }
         instance.configuration = new
+        syncAddressReservation(for: new)
         let saved = saveConfiguration(for: instance)
         applyLivePolicy(for: instance, old: old, new: new)
         return saved

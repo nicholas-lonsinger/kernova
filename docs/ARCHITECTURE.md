@@ -124,19 +124,23 @@ substitute mocks. Services split by concurrency: those that touch
 single VZ-facing translation point, covering boot loader, CPU, memory, storage, network, display,
 input, audio, the Linux SPICE console port, and the macOS `VZVirtioSocketDeviceConfiguration`.
 
-The network attachment follows the VM's persisted mode: shared NAT, bridged over a host
-interface resolved through `BridgedInterfaceProviding` — the same seam the settings section's Mode
-picker reads its interface list from — or host-only on the app-managed vmnet network reached
-through `VmnetNetworkProviding`. A bridged VM whose interface cannot resolve, or a host-only
-network that cannot materialize, builds the device detached rather than failing the boot or
-restore.
+The network attachment follows the VM's persisted mode: shared over the app-managed vmnet
+shared network in an entitled build (system NAT otherwise), bridged over a host interface
+resolved through `BridgedInterfaceProviding` — the same seam the settings section's Mode picker
+reads its interface list from — or host-only on the app-managed host-mode network, both reached
+through `VmnetNetworkProviding`. A bridged VM whose interface cannot resolve, or a vmnet network
+that cannot materialize, builds the device detached rather than failing the boot or restore.
 
 `VmnetNetworkService` (lock-guarded `Sendable`, process-wide — it serves `ConfigurationBuilder`'s
-off-main assembly and the main-actor live-switch path) owns the app's managed vmnet networks. It
-materializes each lazily over the `VmnetNetworkOperating` seam and holds the ref until the app
-exits, so every concurrent VM in the mode shares the one network; addressing stays stable across
-launches by persisting each network's addressing to `Application Support/Kernova/networks.json`
-and pinning it onto the recreated network at next use.
+off-main assembly and the main-actor live-switch path) owns the app's managed vmnet networks and
+the per-VM DHCP reservations riding them: each VM holds a slot keyed on its persisted MAC, the
+slot's derived address is what the settings pane's IP Address row shows, and slots are kept in
+step with configurations through `VMLibraryViewModel`'s persistence funnel. The service
+materializes each network lazily over the `VmnetNetworkOperating` seam and holds the ref until
+the app exits, so every concurrent VM in the mode shares the one network; addressing and slots
+stay stable across launches by persisting each network's record to
+`Application Support/Kernova/networks.json` and pinning the addressing onto the recreated
+network at next use.
 
 While a session runs, `NetworkAttachmentCoordinator` (one per session, owned by `VMInstance`,
 activated when the VM reaches `.running`) keeps the live attachment realizing the persisted mode.

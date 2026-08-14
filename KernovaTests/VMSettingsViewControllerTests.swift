@@ -822,7 +822,8 @@ struct VMSettingsViewControllerTests {
         interfaces: MockBridgedInterfaceProvider = MockBridgedInterfaceProvider(),
         entitled: Bool = true,
         isReadOnly: Bool = false,
-        status: VMStatus = .stopped
+        status: VMStatus = .stopped,
+        vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider()
     ) -> (VMSettingsViewController, VMInstance) {
         let config = VMConfiguration(
             name: "Test VM", guestOS: .linux, bootMode: .efi,
@@ -836,10 +837,85 @@ struct VMSettingsViewControllerTests {
             bridgedInterfaces: interfaces,
             entitlements: EntitlementService(
                 reader: MockEntitlementReader(
-                    granted: entitled ? ["com.apple.vm.networking"] : [])))
+                    granted: entitled ? ["com.apple.vm.networking"] : [])),
+            vmnetNetworks: vmnetNetworks)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
         return (vc, instance)
+    }
+
+    // MARK: - IP Address row
+
+    @Test("An entitled Shared VM shows its reserved address and takes a reservation slot")
+    func entitledSharedVMShowsReservedAddress() throws {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:ff": "192.168.64.10"]
+        let (vc, _) = makeNetworkController(vmnetNetworks: vmnet)
+
+        #expect(visibleLabel("IP Address", in: vc.view))
+        #expect(visibleLabel("192.168.64.10", in: vc.view))
+        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:ff"])
+        #expect(vmnet.reservedMACs.map(\.kind) == [.shared])
+    }
+
+    @Test("An entitled Host Only VM's row reserves on the Host Only network")
+    func entitledHostOnlyVMReservesOnItsNetwork() throws {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:ff": "192.168.128.5"]
+        let (vc, _) = makeNetworkController(mode: .hostOnly, vmnetNetworks: vmnet)
+
+        #expect(visibleLabel("192.168.128.5", in: vc.view))
+        #expect(vmnet.reservedMACs.map(\.kind) == [.hostOnly])
+    }
+
+    @Test("A not-yet-derivable address renders as a placeholder, then fills in after materialization")
+    func pendingAddressShowsPlaceholderAndMaterializes() async throws {
+        let vmnet = MockVmnetNetworkProvider()
+        let (vc, _) = makeNetworkController(vmnetNetworks: vmnet)
+
+        #expect(visibleLabel("—", in: vc.view))
+        // The address becomes derivable once the network materializes — which
+        // the row kicked off itself.
+        vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:ff": "192.168.64.9"]
+        await vc.ipAddressMaterializeTaskForTesting?.value
+
+        #expect(vmnet.materializeCount == 1)
+        #expect(visibleLabel("192.168.64.9", in: vc.view))
+    }
+
+    @Test("A failed materialization leaves the placeholder without spinning the refresh loop")
+    func failedMaterializationLeavesPlaceholder() async throws {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.materializeFails = true
+        let (vc, _) = makeNetworkController(vmnetNetworks: vmnet)
+
+        await vc.ipAddressMaterializeTaskForTesting?.value
+
+        #expect(visibleLabel("—", in: vc.view))
+        #expect(vmnet.materializeCount == 1)
+    }
+
+    @Test("A bridged VM's row reads Assigned by your network")
+    func bridgedVMShowsExternalAssignment() throws {
+        let (vc, _) = makeNetworkController(
+            mode: .bridged, bridgedInterfaceIdentifier: "en0",
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"))
+
+        #expect(visibleLabel("Assigned by your network", in: vc.view))
+    }
+
+    @Test("An unentitled build shows no IP Address row")
+    func unentitledBuildHidesTheIPAddressRow() throws {
+        let (vc, _) = makeNetworkController(entitled: false)
+
+        #expect(!visibleLabel("IP Address", in: vc.view))
+    }
+
+    @Test("Mode None hides the IP Address row with the rest of the card")
+    func noneModeHidesTheIPAddressRow() throws {
+        let (vc, _) = makeNetworkController(networkEnabled: false)
+
+        #expect(!visibleLabel("IP Address", in: vc.view))
     }
 
     @Test("The Mode picker replaces the networking switch and offers Shared Network and None")

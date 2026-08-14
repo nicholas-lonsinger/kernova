@@ -1061,12 +1061,63 @@ struct ConfigurationBuilderTests {
         #expect(try networkDevices(for: config).isEmpty)
     }
 
-    @Test("Shared Network attaches one virtio device over NAT")
+    @Test("Shared Network without the entitlement attaches one virtio device over NAT")
     func sharedModeAttachesNAT() throws {
-        let devices = try networkDevices(for: makeLinuxConfig())
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let networks = MockVmnetNetworkProvider()
+        var builder = ConfigurationBuilder()
+        builder.vmnetNetworks = networks
+        builder.entitlements = EntitlementService(reader: MockEntitlementReader())
+
+        let devices = try builder.assemble(
+            from: makeLinuxConfig(), bundleURL: bundleURL, validate: false
+        ).configuration.networkDevices
         #expect(devices.count == 1)
         let device = try #require(devices.first as? VZVirtioNetworkDeviceConfiguration)
         #expect(device.attachment is VZNATNetworkDeviceAttachment)
+        #expect(networks.requestedKinds.isEmpty)
+    }
+
+    @Test("Shared Network with the entitlement attaches the app-managed shared network")
+    func entitledSharedModeAttachesTheManagedNetwork() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let networks = MockVmnetNetworkProvider()
+        var builder = ConfigurationBuilder()
+        builder.vmnetNetworks = networks
+        builder.entitlements = EntitlementService(
+            reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
+
+        let devices = try builder.assemble(
+            from: makeLinuxConfig(), bundleURL: bundleURL, validate: false
+        ).configuration.networkDevices
+        #expect(devices.count == 1)
+        #expect(devices[0].attachment === networks.scriptedAttachment)
+        #expect(networks.requestedKinds == [.shared])
+    }
+
+    @Test("A shared network that cannot be materialized builds the device detached")
+    func entitledSharedModeWithoutANetworkBuildsDetached() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let networks = MockVmnetNetworkProvider()
+        networks.attachmentError = TestFailure("vmnet refused")
+        var builder = ConfigurationBuilder()
+        builder.vmnetNetworks = networks
+        builder.entitlements = EntitlementService(
+            reader: MockEntitlementReader(granted: ["com.apple.vm.networking"]))
+
+        // The boot (and a restore from saved state, which rebuilds the same
+        // configuration) must succeed; attachment recovery reattaches later.
+        let devices = try builder.assemble(
+            from: makeLinuxConfig(), bundleURL: bundleURL, validate: false
+        ).configuration.networkDevices
+        #expect(devices.count == 1)
+        #expect(devices[0].attachment == nil)
     }
 
     @Test("A configured MAC address reaches the network device")
