@@ -22,6 +22,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Retained so `application(_:open:)` can wait for it: a Finder open that
     /// launched the app is delivered while the read is still in flight.
     private var libraryLoad: Task<Void, Never>?
+    /// The launch pass that brings up the VMs marked to start automatically.
+    ///
+    /// Retained so a quit can cancel it: the pass outlives the library read, and
+    /// left running it would keep booting guests behind the termination save
+    /// pass — which would then either chase them or exit through a starting VM.
+    private var autoStartPass: Task<Void, Never>?
     private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
     private var clipboardObservers: [UUID: Any] = [:]
     private var displayWindows: [UUID: VMDisplayWindowController] = [:]
@@ -365,7 +371,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // library read is still doing its off-main-actor file I/O, so a VM
         // booting here finds the measurable surface `applyMatchWindowBootResolution`
         // needs. The marked VMs only exist in `instances` once that read applies.
-        Task { @MainActor in
+        autoStartPass = Task { @MainActor in
             await self.libraryLoad?.value
             await self.viewModel.startAutomaticVMsForLaunch()
         }
@@ -923,10 +929,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return .terminateLater
 
         case .terminateNow:
+            autoStartPass?.cancel()
             cancelAndCleanupPreparingInstances()
             return .terminateNow
 
         case .saveThenTerminate:
+            // Before the save pass, so it never has to chase a guest the launch
+            // pass brings up behind it.
+            autoStartPass?.cancel()
             cancelAndCleanupPreparingInstances()
             // macOS quits and relaunches the app when a TCC permission is revoked, and
             // its built-in relaunch times out while VMs are saving. Mark for relaunch

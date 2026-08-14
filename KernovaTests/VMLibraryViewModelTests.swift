@@ -4517,6 +4517,45 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == true)
     }
 
+    @Test("startAutomaticVMsForLaunch stops between VMs once cancelled")
+    func autoStartHonorsCancellation() async {
+        let (viewModel, suspending) = makeSuspendingViewModel()
+        let first = markAutoStart(makeInstance(name: "First"))
+        let second = markAutoStart(makeInstance(name: "Second"))
+        viewModel.instances = [first, second]
+
+        let pass = Task { await viewModel.startAutomaticVMsForLaunch() }
+        // Suspended inside the first VM's start — the quit lands here.
+        await suspending.waitUntilSuspended()
+        pass.cancel()
+        suspending.shouldSuspendOnStart = false
+        suspending.resumeSuspended()
+        await pass.value
+
+        #expect(first.status == .running)
+        #expect(second.status == .stopped)
+    }
+
+    @Test("startAutomaticVMsForLaunch skips a VM that left the library mid-pass")
+    func autoStartSkipsInstanceRemovedMidPass() async {
+        let (viewModel, suspending) = makeSuspendingViewModel()
+        let first = markAutoStart(makeInstance(name: "First"))
+        let second = markAutoStart(makeInstance(name: "Second"))
+        viewModel.instances = [first, second]
+
+        let pass = Task { await viewModel.startAutomaticVMsForLaunch() }
+        // Deleted while the first VM is still booting, so the pass's snapshot
+        // holds an instance the library no longer has.
+        await suspending.waitUntilSuspended()
+        viewModel.instances = [first]
+        suspending.shouldSuspendOnStart = false
+        suspending.resumeSuspended()
+        await pass.value
+
+        #expect(first.status == .running)
+        #expect(second.status == .stopped)
+    }
+
     @Test("startAutomaticVMsForLaunch does nothing when no VM is marked")
     func autoStartNoOpWhenNothingMarked() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
@@ -4708,6 +4747,26 @@ struct VMLibraryViewModelTests {
             #expect(FileManager.default.fileExists(atPath: imported.bundleURL.path(percentEncoded: false)))
         }
         #expect(presenter.showError == false)
+    }
+
+    /// Auto-start runs a guest with no user action, so it is local intent rather
+    /// than something a bundle carries in from elsewhere.
+    @Test("Importing a bundle pre-marked to start automatically clears the flag")
+    func importClearsAutoStartFlag() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let source = try makeImportSource(name: "Pre-marked VM", storage: storage)
+        defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
+        var marked = source.config
+        marked.startsAutomaticallyOnLaunch = true
+        storage.bundles[source.url] = marked
+
+        _ = viewModel.importVMs(fromDroppedURLs: [source.url])
+        await viewModel.awaitPreparingForTesting()
+
+        let imported = try #require(viewModel.instances.first)
+        #expect(imported.configuration.startsAutomaticallyOnLaunch == false)
+        // …and the cleared flag reached the imported bundle, not just the row.
+        #expect(storage.bundles[imported.bundleURL]?.startsAutomaticallyOnLaunch == false)
     }
 
     @Test("importVMs imports every bundle in a multi-select batch (#444)")

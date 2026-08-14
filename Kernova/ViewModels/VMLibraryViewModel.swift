@@ -1379,7 +1379,14 @@ final class VMLibraryViewModel {
     private func reserveAndImport(from sourceURL: URL) {
         do {
             let vmsDir = try storageService.vmsDirectory
-            let config = try storageService.loadConfiguration(from: sourceURL)
+            var config = try storageService.loadConfiguration(from: sourceURL)
+
+            // Auto-start is the one setting that runs a guest with no user
+            // action, so it is local intent rather than something a bundle
+            // carries in: a VM arriving pre-marked would boot on the next
+            // launch without ever being asked for. The local user marks it.
+            let arrivedMarkedForAutoStart = config.startsAutomaticallyOnLaunch
+            config.startsAutomaticallyOnLaunch = false
 
             // Already in the library by UUID (including a source already inside the VMs
             // directory) — select it rather than re-importing.
@@ -1399,11 +1406,18 @@ final class VMLibraryViewModel {
                 configuration: config, bundleURL: destinationURL, status: initialStatus,
                 preferences: preferences)
 
+            let storage = storageService
+            let sanitizedConfig = config
             prepareBundle(
                 phantom, operation: .importing,
                 copyWork: {
                     try await Self.runBoundedCopy {
                         try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+                    }
+                    // The copy reproduces the source `config.json` verbatim, so
+                    // the cleared flag only reaches disk by writing it back.
+                    if arrivedMarkedForAutoStart {
+                        try storage.saveConfiguration(sanitizedConfig, to: destinationURL)
                     }
                 },
                 onSuccess: {
@@ -2557,6 +2571,9 @@ final class VMLibraryViewModel {
     ///
     /// Per-VM failures are logged and surfaced by those two methods; the pass
     /// carries on to the next VM either way.
+    ///
+    /// Cancelling stops it between VMs — a start already inside VZ is left to
+    /// finish, since abandoning one mid-flight is worse than completing it.
     func startAutomaticVMsForLaunch() async {
         let marked = instances.filter { $0.configuration.startsAutomaticallyOnLaunch }
         guard !marked.isEmpty else {
@@ -2570,6 +2587,22 @@ final class VMLibraryViewModel {
         var skippedCount = 0
         var failedCount = 0
         for instance in marked {
+            // A quit cancels the pass; anything left is the terminating app's
+            // business, not this one's.
+            if Task.isCancelled {
+                Self.logger.notice("Launch auto-start cancelled — the app is terminating")
+                break
+            }
+            // A boot takes long enough for the user to delete or evict a later
+            // VM meanwhile, and `marked` still holds that instance. Starting it
+            // would open a display window over a bundle no longer in the library.
+            guard instances.contains(where: { $0 === instance }) else {
+                Self.logger.debug(
+                    "Launch auto-start: '\(instance.name, privacy: .public)' left the library before its turn"
+                )
+                skippedCount += 1
+                continue
+            }
             // Re-read at the moment of acting rather than trusting the snapshot:
             // the user can start a VM by hand while this pass runs, and the
             // previous iteration's boot is what can make the next one a
