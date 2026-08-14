@@ -562,7 +562,7 @@ struct VMSettingsViewControllerTests {
 
         #expect(instance.configuration.displaySizesToWindow == true)
         #expect(!popUp.isEnabled)
-        #expect(sizeField("Width", in: vc.view)?.isEnabled == false)
+        #expect(editableField("Width", in: vc.view)?.isEnabled == false)
         // Neither HiDPI nor auto-resize is a size control, so match mode leaves
         // both usable.
         #expect(firstSwitch(action: "displayHiDPIToggled", in: vc.view)?.isEnabled == true)
@@ -574,8 +574,8 @@ struct VMSettingsViewControllerTests {
         let (vc, _) = makeDisplayController(sizesToWindow: true)
 
         #expect(firstPopUp(in: vc.view)?.isEnabled == false)
-        #expect(sizeField("Width", in: vc.view)?.isEnabled == false)
-        #expect(sizeField("Height", in: vc.view)?.isEnabled == false)
+        #expect(editableField("Width", in: vc.view)?.isEnabled == false)
+        #expect(editableField("Height", in: vc.view)?.isEnabled == false)
         // HiDPI picks the scale the computed size is measured at, so it stays
         // usable — as does the mode switch, so the user can turn match off.
         #expect(firstSwitch(action: "displayHiDPIToggled", in: vc.view)?.isEnabled == true)
@@ -594,15 +594,15 @@ struct VMSettingsViewControllerTests {
 
         #expect(instance.configuration.displayWidth == 1440)
         #expect(instance.configuration.displayHeight == 900)
-        #expect(sizeField("Width", in: vc.view)?.integerValue == 1440)
-        #expect(sizeField("Height", in: vc.view)?.integerValue == 900)
+        #expect(editableField("Width", in: vc.view)?.integerValue == 1440)
+        #expect(editableField("Height", in: vc.view)?.integerValue == 900)
     }
 
     @Test("A typed size below the floor clamps and flips the popup to Custom")
     func typedSizeClampsAndSelectsCustom() {
         let (vc, instance) = makeDisplayController()
-        guard let width = sizeField("Width", in: vc.view),
-            let height = sizeField("Height", in: vc.view),
+        guard let width = editableField("Width", in: vc.view),
+            let height = editableField("Height", in: vc.view),
             let popUp = firstPopUp(in: vc.view)
         else {
             Issue.record("Expected the width, height, and resolution controls")
@@ -634,7 +634,7 @@ struct VMSettingsViewControllerTests {
         #expect(instance.configuration.displayHeight == 1600)
         #expect(instance.configuration.displayPPI == DisplayBootSizing.hiDPIPixelsPerInch)
         // The fields keep showing the "looks like" size.
-        #expect(sizeField("Width", in: vc.view)?.integerValue == 1280)
+        #expect(editableField("Width", in: vc.view)?.integerValue == 1280)
 
         hiDPI.state = .off
         hiDPI.sendAction(hiDPI.action, to: hiDPI.target)
@@ -669,18 +669,18 @@ struct VMSettingsViewControllerTests {
         let (retinaVC, _) = makeDisplayController(width: 2560, height: 1600, ppi: 220)
         #expect(firstSwitch(action: "displayHiDPIToggled", in: retinaVC.view)?.state == .on)
         // The fields show the halved "looks like" size.
-        #expect(sizeField("Width", in: retinaVC.view)?.integerValue == 1280)
+        #expect(editableField("Width", in: retinaVC.view)?.integerValue == 1280)
 
         let (standardVC, _) = makeDisplayController(width: 1920, height: 1200, ppi: 144)
         #expect(firstSwitch(action: "displayHiDPIToggled", in: standardVC.view)?.state == .off)
-        #expect(sizeField("Width", in: standardVC.view)?.integerValue == 1920)
+        #expect(editableField("Width", in: standardVC.view)?.integerValue == 1920)
 
         // Match mode on a 1× host: the intent is on while the trio it last
         // booted at is not, and each control shows its own.
         let (divergentVC, _) = makeDisplayController(
             sizesToWindow: true, width: 1400, height: 880, ppi: 144, hiDPI: true)
         #expect(firstSwitch(action: "displayHiDPIToggled", in: divergentVC.view)?.state == .on)
-        #expect(sizeField("Width", in: divergentVC.view)?.integerValue == 1400)
+        #expect(editableField("Width", in: divergentVC.view)?.integerValue == 1400)
     }
 
     @Test("Turning match-window off reconciles the trio to the HiDPI intent")
@@ -700,7 +700,7 @@ struct VMSettingsViewControllerTests {
         #expect(instance.configuration.displayWidth == 2800)
         #expect(instance.configuration.displayHeight == 1760)
         #expect(instance.configuration.displayPPI == DisplayBootSizing.hiDPIPixelsPerInch)
-        #expect(sizeField("Width", in: vc.view)?.integerValue == 1400)
+        #expect(editableField("Width", in: vc.view)?.integerValue == 1400)
     }
 
     @Test("Turning match-window off leaves an already-matching trio alone")
@@ -747,7 +747,7 @@ struct VMSettingsViewControllerTests {
             #expect(
                 firstSwitch(action: "displayMatchWindowToggled", in: vc.view)?.isEnabled == false)
             #expect(firstPopUp(in: vc.view)?.isEnabled == false)
-            #expect(sizeField("Width", in: vc.view)?.isEnabled == false)
+            #expect(editableField("Width", in: vc.view)?.isEnabled == false)
             #expect(firstSwitch(action: "displayAutoResizeToggled", in: vc.view)?.isEnabled == true)
             if guestOS == .macOS {
                 #expect(firstSwitch(action: "displayHiDPIToggled", in: vc.view)?.isEnabled == false)
@@ -777,7 +777,7 @@ struct VMSettingsViewControllerTests {
         let (vc, _) = makeDisplayController(width: 1920, height: 1200)
         let window = makeTestWindow(styleMask: [.titled])
         window.contentView = vc.view
-        guard let width = sizeField("Width", in: vc.view) else {
+        guard let width = editableField("Width", in: vc.view) else {
             Issue.record("Expected the width field")
             return
         }
@@ -794,7 +794,7 @@ struct VMSettingsViewControllerTests {
 
         #expect(width.currentEditor()?.string == "1600")
         // The committed value is untouched: only the editor holds the edit.
-        #expect(sizeField("Height", in: vc.view)?.integerValue == 1200)
+        #expect(editableField("Height", in: vc.view)?.integerValue == 1200)
     }
 
     @Test("The restart caption shows only while read-only")
@@ -1160,6 +1160,193 @@ struct VMSettingsViewControllerTests {
         #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:ff")
     }
 
+    // MARK: - MAC Address row
+
+    /// Ends editing the way a click outside the field does.
+    private func commitEdit(_ field: NSTextField, on vc: VMSettingsViewController) {
+        vc.controlTextDidEndEditing(Notification(name: .init("test"), object: field))
+    }
+
+    @Test("The MAC Address row offers the persisted address in an editable field")
+    func macAddressRowIsEditable() throws {
+        let (vc, _) = makeNetworkController()
+
+        let field = try #require(editableField("MAC Address", in: vc.view))
+        #expect(field.stringValue == "aa:bb:cc:dd:ee:ff")
+        #expect(findButton(titled: "Generate", in: vc.view) != nil)
+    }
+
+    @Test("A typed MAC address is persisted in canonical form")
+    func typedMACAddressIsPersistedCanonically() throws {
+        let (vc, instance) = makeNetworkController()
+        let field = try #require(editableField("MAC Address", in: vc.view))
+
+        field.stringValue = " AA:BB:CC:DD:EE:0F "
+        commitEdit(field, on: vc)
+
+        #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:0f")
+        #expect(field.stringValue == "aa:bb:cc:dd:ee:0f")
+    }
+
+    @Test("A MAC address no guest can use is refused and the field reverts")
+    func unusableMACAddressIsRefused() throws {
+        // Malformed spellings, then the three that parse but address no
+        // station: all-zero, broadcast, and multicast.
+        let refused = [
+            "aa-bb-cc-dd-ee-ff", "aabbccddeeff", "a:b:c:d:e:f", "aa:bb:cc:dd:ee:fg", "",
+            "00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff", "01:00:5e:00:00:01",
+        ]
+        for text in refused {
+            let (vc, instance) = makeNetworkController()
+            let field = try #require(editableField("MAC Address", in: vc.view))
+
+            field.stringValue = text
+            commitEdit(field, on: vc)
+
+            #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:ff")
+            #expect(field.stringValue == "aa:bb:cc:dd:ee:ff")
+        }
+    }
+
+    @Test("Text a real edit session rejects reverts in the field")
+    func rejectedEditRevertsThroughTheFieldEditor() throws {
+        let (vc, instance) = makeNetworkController()
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("MAC Address", in: vc.view))
+        #expect(window.makeFirstResponder(field))
+        try #require(field.currentEditor()).string = "nonsense"
+
+        #expect(window.makeFirstResponder(nil))
+
+        #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:ff")
+        #expect(field.stringValue == "aa:bb:cc:dd:ee:ff")
+    }
+
+    @Test("Text a real edit session accepts lands canonically in the field")
+    func acceptedEditCanonicalizesThroughTheFieldEditor() throws {
+        let (vc, instance) = makeNetworkController()
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("MAC Address", in: vc.view))
+        #expect(window.makeFirstResponder(field))
+        try #require(field.currentEditor()).string = "AA:BB:CC:DD:EE:0F"
+
+        #expect(window.makeFirstResponder(nil))
+
+        #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:0f")
+        #expect(field.stringValue == "aa:bb:cc:dd:ee:0f")
+    }
+
+    @Test("Choosing None settles an open MAC edit instead of hiding a focused field")
+    func hidingTheRowEndsAnOpenMACEdit() throws {
+        let (vc, instance) = makeNetworkController()
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("MAC Address", in: vc.view))
+        #expect(window.makeFirstResponder(field))
+        try #require(field.currentEditor()).string = "aa:bb:cc:dd:ee:01"
+        let popUp = try #require(networkModePopUp(in: vc.view))
+
+        popUp.selectItem(withTitle: "None")
+        popUp.sendAction(popUp.action, to: popUp.target)
+
+        #expect(instance.configuration.networkEnabled == false)
+        #expect(!visibleLabel("MAC Address", in: vc.view))
+        #expect(field.currentEditor() == nil)
+    }
+
+    @Test("Generate overrides an edit still open in the field")
+    func generateOverridesAnOpenEdit() throws {
+        let (vc, instance) = makeNetworkController()
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("MAC Address", in: vc.view))
+        #expect(window.makeFirstResponder(field))
+        try #require(field.currentEditor()).string = "aa:bb:cc:dd:ee:01"
+        let generate = try #require(findButton(titled: "Generate", in: vc.view))
+
+        generate.sendAction(generate.action, to: generate.target)
+
+        // Clicking a push button leaves the field first responder, so the
+        // generated address has to survive the edit it interrupts.
+        let mac = try #require(instance.configuration.macAddress)
+        #expect(mac != "aa:bb:cc:dd:ee:01")
+        #expect(field.stringValue == mac)
+        #expect(window.makeFirstResponder(nil))
+        #expect(instance.configuration.macAddress == mac)
+    }
+
+    @Test("Generate mints a fresh locally administered address and shows it")
+    func generateMintsALocallyAdministeredAddress() throws {
+        let (vc, instance) = makeNetworkController()
+        let generate = try #require(findButton(titled: "Generate", in: vc.view))
+
+        generate.sendAction(generate.action, to: generate.target)
+
+        let mac = try #require(instance.configuration.macAddress)
+        #expect(mac != "aa:bb:cc:dd:ee:ff")
+        let address = try #require(VZMACAddress(string: mac))
+        #expect(address.isUnicastAddress)
+        #expect(address.isLocallyAdministeredAddress)
+        #expect(editableField("MAC Address", in: vc.view)?.stringValue == mac)
+    }
+
+    @Test("A running VM locks the MAC controls while the picker stays live")
+    func runningVMLocksTheMACControls() throws {
+        let (vc, _) = makeNetworkController(
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"),
+            isReadOnly: true, status: .running)
+
+        #expect(editableField("MAC Address", in: vc.view)?.isEnabled == false)
+        #expect(findButton(titled: "Generate", in: vc.view)?.isEnabled == false)
+        #expect(networkModePopUp(in: vc.view)?.isEnabled == true)
+    }
+
+    @Test("A refresh leaves a MAC address the user is still typing in alone")
+    func refreshKeepsAnInProgressMACEdit() throws {
+        let (vc, _) = makeNetworkController()
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("MAC Address", in: vc.view))
+        #expect(window.makeFirstResponder(field))
+        let editor = try #require(field.currentEditor())
+        editor.string = "aa:bb:cc:dd:ee:0"
+
+        // Stands in for any observation pass — starting the VM from the toolbar
+        // mutates status, which refreshes the whole pane.
+        vc.viewDidAppear()
+
+        #expect(field.currentEditor()?.string == "aa:bb:cc:dd:ee:0")
+    }
+
+    @Test("A VM given its first MAC address shows it in the row straight away")
+    func mintedMACAddressAppearsInTheRow() throws {
+        let (vc, instance) = makeNetworkController(networkEnabled: false, macAddress: nil)
+        #expect(!visibleLabel("MAC Address", in: vc.view))
+        let popUp = try #require(networkModePopUp(in: vc.view))
+
+        popUp.selectItem(withTitle: "Shared Network")
+        popUp.sendAction(popUp.action, to: popUp.target)
+
+        #expect(visibleLabel("MAC Address", in: vc.view))
+        #expect(
+            editableField("MAC Address", in: vc.view)?.stringValue
+                == instance.configuration.macAddress)
+    }
+
+    @Test("Only a usable MAC address normalizes")
+    func normalizedMACAddressAcceptsOnlyUsableAddresses() {
+        #expect(VMSettingsViewController.normalizedMACAddress("AA:BB:CC:DD:EE:FF") == "aa:bb:cc:dd:ee:ff")
+        #expect(VMSettingsViewController.normalizedMACAddress(" aa:bb:cc:dd:ee:ff\n") == "aa:bb:cc:dd:ee:ff")
+        for text in [
+            "aa-bb-cc-dd-ee-ff", "aabbccddeeff", "a:b:c:d:e:f", "aa:bb:cc:dd:ee:fg", "",
+            "00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff", "01:00:5e:00:00:01",
+        ] {
+            #expect(VMSettingsViewController.normalizedMACAddress(text) == nil)
+        }
+    }
+
     @Test("While a networked VM runs, the picker stays live with None disabled")
     func runningVMKeepsThePickerLiveWithNoneDisabled() throws {
         let (vc, _) = makeNetworkController(
@@ -1370,11 +1557,13 @@ struct VMSettingsViewControllerTests {
         firstSubview(NSPopUpButton.self, in: view)
     }
 
-    /// The editable field in the grouped-form card row titled `label`.
-    private func sizeField(_ label: String, in view: NSView) -> NSTextField? {
+    /// The editable field in the grouped-form card row titled `label`, however
+    /// deeply the row nests it (the MAC row pairs its field with a button).
+    private func editableField(_ label: String, in view: NSView) -> NSTextField? {
         let row = firstSubview(NSStackView.self, in: view) { stack in
             stack.arrangedSubviews.contains { ($0 as? NSTextField)?.stringValue == label }
         }
-        return row?.arrangedSubviews.compactMap { $0 as? NSTextField }.first { $0.isEditable }
+        guard let row else { return nil }
+        return findEditableField(in: row)
     }
 }

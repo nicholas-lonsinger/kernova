@@ -8,8 +8,8 @@ import os
 /// viewing a running VM's configuration in read-only mode.
 ///
 /// Structure that depends on the *instance* (guest-agent section visibility,
-/// MAC-address row, OS-specific help text) is fixed per instance and built in
-/// ``buildForm()``; switching VMs rebuilds the form. ``apply()`` only updates
+/// OS-specific help text) is fixed per instance and built in ``buildForm()``;
+/// switching VMs rebuilds the form. ``apply()`` only updates
 /// mutable state: control values, lock/enabled state, the dynamic attachment
 /// lists, and the microphone permission warning.
 @MainActor
@@ -169,9 +169,10 @@ final class VMSettingsViewController: NSViewController {
     /// The Network header's lock icon, hidden — unlike its `lockIcons` peers —
     /// while the picker is the live-switch surface.
     private var networkLockIcon: NSImageView?
-    /// The MAC Address row, hidden while the VM has no network device; `nil` for a
-    /// VM carrying no MAC address, whose row is never built.
+    /// The MAC Address row, hidden while the VM has no network device or has
+    /// yet to be given an address.
     private var macAddressRow: GroupedFormCollapsibleRow?
+    private var macAddressField = NSTextField()
     private var ipAddressRow: GroupedFormCollapsibleRow?
     private var ipAddressValueLabel: NSTextField?
     private var ipAddressCopyButton: NSButton?
@@ -959,14 +960,7 @@ extension VMSettingsViewController {
 
         var rows: [NSView] = [makeGroupedFormCardRow("Mode", control: networkModePopUp)]
         rows.append(makeIPAddressRow())
-        if let mac = instance.configuration.macAddress {
-            let row = GroupedFormCollapsibleRow(
-                row: makeGroupedFormCardRow("MAC Address", control: makeGroupedFormValueLabel(mac)))
-            macAddressRow = row
-            rows.append(row)
-        } else {
-            macAddressRow = nil
-        }
+        rows.append(makeMACAddressRow())
         rows.append(makePortForwardingRow())
         networkNoDeviceCaption = makeGroupedFormCaption("This virtual machine has no network device.")
 
@@ -1108,6 +1102,52 @@ extension VMSettingsViewController {
     @objc private func copyIPAddressTapped() {
         guard let value = ipAddressCopyValue else { return }
         copyToPasteboard(value)
+    }
+
+    // MARK: MAC Address
+
+    /// The MAC Address row: an editable, VZ-validated field and a Generate
+    /// button. `refreshMACAddressRow()` owns its content and visibility.
+    private func makeMACAddressRow() -> GroupedFormCollapsibleRow {
+        macAddressField = NSTextField()
+        macAddressField.alignment = .right
+        macAddressField.delegate = self
+        macAddressField.toolTip =
+            "Six pairs of hexadecimal digits separated by colons, for example 3a:5f:20:11:88:c4."
+        macAddressField.widthAnchor.constraint(equalToConstant: 140).isActive = true
+
+        let generate = makePushButton("Generate", action: #selector(generateMACAddressTapped))
+        generate.controlSize = .small
+        // Unlike the Mode picker above it, the address is read once at start and
+        // fixed for the session, so both controls lock with the section.
+        persistentLockableControls += [macAddressField, generate]
+
+        let control = NSStackView(views: [macAddressField, generate])
+        control.orientation = .horizontal
+        control.alignment = .centerY
+        control.spacing = Spacing.tight
+        let row = GroupedFormCollapsibleRow(
+            row: makeGroupedFormCardRow("MAC Address", control: control))
+        macAddressRow = row
+        return row
+    }
+
+    private func refreshMACAddressRow() {
+        let config = instance.configuration
+        let hidden = !config.networkEnabled || config.macAddress == nil
+        // End an open editor before the row goes: AppKit doesn't resign a
+        // hidden field, so the mode picker — which takes no first responder of
+        // its own — would leave it focused and invisible, swallowing keystrokes.
+        if hidden, macAddressField.currentEditor() != nil {
+            view.window?.makeFirstResponder(nil)
+        }
+        macAddressRow?.isHidden = hidden
+        // A field with an open editor is mid-edit: any refresh — a status change
+        // started from the toolbar, say — would otherwise discard the keystrokes
+        // typed so far.
+        if macAddressField.currentEditor() == nil {
+            macAddressField.stringValue = instance.configuration.macAddress ?? ""
+        }
     }
 
     // MARK: Port Forwarding
@@ -1931,7 +1971,7 @@ extension VMSettingsViewController {
         // None leaves no device to describe, so the card's remaining rows give way
         // to a caption saying so.
         let hasDevice = instance.configuration.networkEnabled
-        macAddressRow?.isHidden = !hasDevice
+        refreshMACAddressRow()
         networkNoDeviceCaption.isHidden = hasDevice
         refreshIPAddressRow()
         // Rules ride the app-managed shared network, and reach the guest at the
@@ -2322,6 +2362,40 @@ extension VMSettingsViewController: NSMenuItemValidation {
     private static func mintMACAddressIfNeeded(_ config: inout VMConfiguration) {
         guard config.macAddress == nil else { return }
         config.macAddress = VZMACAddress.randomLocallyAdministered().string
+    }
+
+    /// The canonical form of the MAC address `text` names — lowercase,
+    /// colon-separated — or `nil` when it names none a guest can use.
+    ///
+    /// `VZMACAddress(string:)` takes six colon-separated hex pairs in either
+    /// case and rejects every other spelling, so case is the only thing left to
+    /// normalize. It also accepts the all-zero address and multicast/broadcast
+    /// addresses, none of which a station can send from: a guest configured
+    /// with one gets no link, and the app would key its reservation and
+    /// forwarding rules on an address no frame can source
+    /// (docs/NETWORKING.md principle 3 — refuse at entry what cannot take
+    /// effect).
+    static func normalizedMACAddress(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let address = VZMACAddress(string: trimmed), address.isUnicastAddress,
+            address.string != Self.unspecifiedMACAddress
+        else { return nil }
+        return address.string
+    }
+
+    /// The all-zero address, which parses and reads as unicast but addresses
+    /// nothing.
+    private static let unspecifiedMACAddress = "00:00:00:00:00:00"
+
+    @objc private func generateMACAddressTapped() {
+        // Clicking a push button takes no first responder, so an edit open in
+        // the field would outlive the write and commit over it on the way out.
+        // Settle it first; the generated address then replaces whatever it left.
+        if macAddressField.currentEditor() != nil {
+            view.window?.makeFirstResponder(nil)
+        }
+        writeConfig { $0.macAddress = VZMACAddress.randomLocallyAdministered().string }
+        refreshMACAddressRow()
     }
 
     @objc private func networkModeChanged() {
@@ -3029,6 +3103,8 @@ extension VMSettingsViewController: NSTextFieldDelegate {
             applyMemoryFieldEdit()
         case displayWidthField, displayHeightField:
             applyDisplaySizeFieldEdit()
+        case macAddressField:
+            applyMACAddressFieldEdit()
         default:
             break
         }
@@ -3069,6 +3145,22 @@ extension VMSettingsViewController: NSTextFieldDelegate {
         memoryField.integerValue = clamped
         memoryStepper.integerValue = clamped
         writeConfig { $0.memorySizeInGB = clamped }
+    }
+
+    /// Persists the typed MAC in canonical form. Text naming no address a guest
+    /// can use writes nothing; the field snapping back to the persisted address
+    /// is the rejection, and the field's tooltip names the accepted spelling.
+    ///
+    /// The field is written directly rather than through
+    /// `refreshMACAddressRow()`: editing is still ending here, so the editor the
+    /// refresh defers to is the very one being reconciled away.
+    private func applyMACAddressFieldEdit() {
+        guard let normalized = Self.normalizedMACAddress(macAddressField.stringValue) else {
+            macAddressField.stringValue = instance.configuration.macAddress ?? ""
+            return
+        }
+        writeConfig { $0.macAddress = normalized }
+        macAddressField.stringValue = normalized
     }
 }
 
