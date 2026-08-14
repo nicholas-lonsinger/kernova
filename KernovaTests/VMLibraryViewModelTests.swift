@@ -2155,6 +2155,104 @@ struct VMLibraryViewModelTests {
         #expect(vmnet.reservedMACs.isEmpty)
     }
 
+    // MARK: - Port Forwarding Sync
+
+    private static let webRule = PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80)
+
+    @Test("A configuration change declares a shared VM's forwarding rules")
+    func updateConfigurationDeclaresForwardingRules() {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
+        let instance = makeInstance()
+
+        viewModel.updateConfiguration(of: instance) {
+            $0.networkEnabled = true
+            $0.networkMode = .shared
+            $0.macAddress = "AA:BB:CC:DD:EE:0F"
+            $0.portForwardingRules = [Self.webRule]
+        }
+
+        #expect(vmnet.declaredForwardingRules.last?.mac == "aa:bb:cc:dd:ee:0f")
+        #expect(vmnet.declaredForwardingRules.last?.rules == [Self.webRule])
+    }
+
+    @Test("Switching away from Shared Network withdraws the VM's forwarding rules")
+    func modeSwitchWithdrawsForwardingRules() {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
+        let instance = makeInstance()
+        viewModel.updateConfiguration(of: instance) {
+            $0.networkEnabled = true
+            $0.networkMode = .shared
+            $0.macAddress = "aa:bb:cc:dd:ee:0f"
+            $0.portForwardingRules = [Self.webRule]
+        }
+
+        viewModel.updateConfiguration(of: instance) { $0.networkMode = .hostOnly }
+
+        #expect(vmnet.declaredForwardingRules.last?.rules.isEmpty == true)
+    }
+
+    @Test("Deleting a VM withdraws its forwarding rules")
+    func deleteWithdrawsForwardingRules() async {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
+        let instance = makeInstance()
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = .shared
+        instance.configuration.macAddress = "aa:bb:cc:dd:ee:0f"
+        instance.configuration.portForwardingRules = [Self.webRule]
+        viewModel.instances = [instance]
+
+        for task in viewModel.deleteConfirmed(instance) { await task.value }
+
+        #expect(vmnet.declaredForwardingRules.last?.rules.isEmpty == true)
+    }
+
+    @Test("A pending rule change recreates the shared network once no VM is on it")
+    func pendingRulesRecreateTheNetworkWhenIdle() {
+        let vmnet = MockVmnetNetworkProvider()
+        vmnet.scriptedPendingForwardingKinds = [.shared]
+        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
+        let instance = makeInstance()
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = .shared
+        instance.configuration.macAddress = "aa:bb:cc:dd:ee:0f"
+        viewModel.instances = [instance]
+
+        viewModel.updateConfiguration(of: instance) { $0.portForwardingRules = [Self.webRule] }
+
+        #expect(vmnet.invalidatedKinds == [.shared])
+    }
+
+    @Test("A live shared-network VM holds the recreate off until its session ends")
+    func liveSharedVMDefersTheRecreate() async throws {
+        let storage = MockVMStorageService()
+        for name in ["Running VM", "Edited VM"] {
+            var config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
+            config.networkMode = .shared
+            config.macAddress = VZMACAddress.randomLocallyAdministered().string
+            storage.bundles[
+                FileManager.default.temporaryDirectory
+                    .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+            ] = config
+        }
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage, vmnetNetworks: vmnet)
+        await viewModel.loadVMs()
+        let running = try #require(viewModel.instances.first { $0.name == "Running VM" })
+        let edited = try #require(viewModel.instances.first { $0.name == "Edited VM" })
+        running.status = .running
+        vmnet.scriptedPendingForwardingKinds = [.shared]
+
+        viewModel.updateConfiguration(of: edited) { $0.portForwardingRules = [Self.webRule] }
+        #expect(vmnet.invalidatedKinds.isEmpty)
+
+        // The session ending is what makes the recreate safe.
+        running.status = .stopped
+        #expect(vmnet.invalidatedKinds == [.shared])
+    }
+
     // MARK: - trySave / tryForceStop
 
     @Test("trySave throws on failure")

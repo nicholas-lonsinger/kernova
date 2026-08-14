@@ -379,12 +379,152 @@ struct VmnetNetworkServiceTests {
         let operations = MockVmnetNetworkOperator()
         operations.reservedAddressingOverride = operations.freshAddressing
         let service = VmnetNetworkService(operations: operations, storeURL: location.storeURL)
+        service.setPortForwardingRules([Self.webRule], for: "aa:bb:cc:dd:ee:01", kind: .shared)
 
         _ = try service.network(for: .shared)
 
         // The installed reservations were derived from the old addressing, so
-        // none of them holds on the adjusted network.
+        // none of them holds on the adjusted network — nor do the rules
+        // forwarding to them, which is what leaves them pending.
         #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:01", kind: .shared) == nil)
+        #expect(service.portForwardingRulesArePending(for: .shared))
+    }
+
+    // MARK: - Port forwarding rules
+
+    private static let webRule = PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80)
+    private static let sshRule = PortForwardingRule(transport: .tcp, hostPort: 2222, guestPort: 22)
+
+    /// A service over a store already holding `macs` as reservation slots on
+    /// the shared network, so materialization is a single pinned create.
+    private func makeSeededSharedService(
+        macs: [String], at location: (directory: URL, storeURL: URL)
+    ) throws -> (VmnetNetworkService, MockVmnetNetworkOperator) {
+        try seed(
+            [.shared: VmnetNetworkRecord(addressing: Self.storedAddressing, reservedMACs: macs)],
+            at: location.storeURL)
+        let operations = MockVmnetNetworkOperator()
+        return (
+            VmnetNetworkService(operations: operations, storeURL: location.storeURL), operations
+        )
+    }
+
+    @Test("Rules install at materialization, forwarding to the MAC's reserved address")
+    func rulesInstallWithTheSlotDerivedAddress() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01"], at: location)
+        service.setPortForwardingRules(
+            [Self.webRule, Self.sshRule], for: "AA:BB:CC:DD:EE:01", kind: .shared)
+
+        _ = try service.network(for: .shared)
+
+        let installed = try #require(operations.installedForwardingRules.first)
+        #expect(installed.map(\.rule) == [Self.webRule, Self.sshRule])
+        #expect(installed.map(\.internalAddress) == ["192.168.77.2", "192.168.77.2"])
+    }
+
+    @Test("TCP and UDP on the same host port both install")
+    func sameHostPortOnBothTransportsInstalls() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01"], at: location)
+        let tcp = PortForwardingRule(transport: .tcp, hostPort: 5000, guestPort: 5000)
+        let udp = PortForwardingRule(transport: .udp, hostPort: 5000, guestPort: 5000)
+        service.setPortForwardingRules([tcp, udp], for: "aa:bb:cc:dd:ee:01", kind: .shared)
+
+        _ = try service.network(for: .shared)
+
+        #expect(operations.installedForwardingRules.first?.map(\.rule) == [tcp, udp])
+    }
+
+    @Test("Rules for a MAC holding no reservation slot are dropped")
+    func rulesWithoutAReservationAreDropped() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01"], at: location)
+        service.setPortForwardingRules([Self.webRule], for: "aa:bb:cc:dd:ee:09", kind: .shared)
+
+        _ = try service.network(for: .shared)
+
+        #expect(operations.installedForwardingRules.first?.isEmpty == true)
+        // An uninstallable rule must not read as pending, or it would drive an
+        // endless recreate.
+        #expect(!service.portForwardingRulesArePending(for: .shared))
+    }
+
+    @Test("A host port claimed twice across VMs installs once, in slot order")
+    func duplicateHostPortAcrossVMsInstallsFirstSlotOnly() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"], at: location)
+        let second = PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 8080)
+        service.setPortForwardingRules([Self.webRule], for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        service.setPortForwardingRules([second], for: "aa:bb:cc:dd:ee:02", kind: .shared)
+
+        _ = try service.network(for: .shared)
+
+        let installed = try #require(operations.installedForwardingRules.first)
+        #expect(installed.map(\.rule) == [Self.webRule])
+        #expect(installed.map(\.internalAddress) == ["192.168.77.2"])
+    }
+
+    @Test("Clearing a VM's rules frees its host port for the next materialization")
+    func clearingRulesReleasesTheHostPort() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01"], at: location)
+        service.setPortForwardingRules([Self.webRule], for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        _ = try service.network(for: .shared)
+
+        service.setPortForwardingRules([], for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        #expect(service.portForwardingRulesArePending(for: .shared))
+        service.invalidateNetwork(for: .shared)
+        _ = try service.network(for: .shared)
+
+        #expect(operations.installedForwardingRules.last?.isEmpty == true)
+    }
+
+    @Test("Rules declared for an unparseable MAC are refused")
+    func unparseableMACIsRefusedForwardingRules() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01"], at: location)
+
+        service.setPortForwardingRules([Self.webRule], for: "not-a-mac", kind: .shared)
+        _ = try service.network(for: .shared)
+
+        #expect(operations.installedForwardingRules.first?.isEmpty == true)
+        #expect(!service.portForwardingRulesArePending(for: .shared))
+    }
+
+    @Test("Rules pend only after the network they would change is materialized")
+    func pendingTracksTheMaterializedRuleSet() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, _) = try makeSeededSharedService(macs: ["aa:bb:cc:dd:ee:01"], at: location)
+        service.setPortForwardingRules([Self.webRule], for: "aa:bb:cc:dd:ee:01", kind: .shared)
+
+        // Nothing is materialized, so the next materialization installs the
+        // rules as they stand — there is nothing to recreate.
+        #expect(!service.portForwardingRulesArePending(for: .shared))
+
+        _ = try service.network(for: .shared)
+        #expect(!service.portForwardingRulesArePending(for: .shared))
+
+        service.setPortForwardingRules(
+            [Self.webRule, Self.sshRule], for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        #expect(service.portForwardingRulesArePending(for: .shared))
+
+        service.invalidateNetwork(for: .shared)
+        _ = try service.network(for: .shared)
+        #expect(!service.portForwardingRulesArePending(for: .shared))
     }
 
     @Test("An unparseable MAC is refused a reservation slot")

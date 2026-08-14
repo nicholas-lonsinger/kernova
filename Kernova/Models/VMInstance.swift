@@ -33,7 +33,12 @@ final class VMInstance {
 
     let instanceID: UUID
     var configuration: VMConfiguration
-    var status: VMStatus
+    var status: VMStatus {
+        didSet {
+            guard status != oldValue, status.isResting else { return }
+            onSessionEnded?()
+        }
+    }
     var virtualMachine: VZVirtualMachine?
     let bundleURL: URL
 
@@ -192,6 +197,13 @@ final class VMInstance {
     ///
     /// The host uses it to auto-eject the guest-agent installer disk.
     @ObservationIgnored var onAgentBecameCurrent: (@MainActor () -> Void)?
+
+    /// Fired when this VM settles into a resting status, so no session of its
+    /// own is live any more.
+    ///
+    /// Wired by `VMLibraryViewModel.wirePersistence(for:)`; the library uses it
+    /// for work that can only run while no VM holds the resource it touches.
+    @ObservationIgnored var onSessionEnded: (@MainActor () -> Void)?
 
     /// Applies a configuration mutation, routing it through the persistence
     /// pipeline when `onUpdateConfiguration` is wired.

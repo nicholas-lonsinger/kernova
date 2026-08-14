@@ -1464,7 +1464,13 @@ final class VMLibraryViewModel {
             guard let self, let instance else { return }
             self.unmountGuestAgentInstaller(from: instance)
         }
+        // Forwarding rules are fixed at network creation, so an edit made while
+        // a VM ran waits for the last session on that network to end.
+        instance.onSessionEnded = { [weak self] in
+            self?.rebuildSharedNetworkIfIdle()
+        }
         syncAddressReservation(for: instance.configuration)
+        syncPortForwardingRules(for: instance.configuration)
     }
 
     /// Keeps the VM's DHCP reservation slot in step with its configuration:
@@ -1479,6 +1485,46 @@ final class VMLibraryViewModel {
             let kind = VmnetNetworkKind(mode: config.networkMode)
         else { return }
         vmnetNetworks.reserveAddressIfNeeded(for: mac, kind: kind)
+    }
+
+    /// Keeps the VM's port-forwarding rules in step with its configuration: a
+    /// Shared Network VM declares its rules on that network, a VM in any other
+    /// mode declares none. Runs wherever ``syncAddressReservation(for:)`` does.
+    private func syncPortForwardingRules(for config: VMConfiguration) {
+        let forwards = config.networkEnabled && config.networkMode == .shared
+        declarePortForwardingRules(forwards ? config.portForwardingRules : [], for: config)
+    }
+
+    /// Declares `rules` for the VM `config` identifies, then rebuilds the
+    /// shared network if that changed what it should carry.
+    ///
+    /// Entitlement-gated like the reservation machinery it rides on — an
+    /// unentitled build attaches system NAT, which forwards nothing.
+    private func declarePortForwardingRules(
+        _ rules: [PortForwardingRule], for config: VMConfiguration
+    ) {
+        guard isVMNetworkingEntitled, let mac = config.macAddress else { return }
+        vmnetNetworks.setPortForwardingRules(rules, for: mac, kind: .shared)
+        rebuildSharedNetworkIfIdle()
+    }
+
+    /// Recreates the shared network when the rules it was created with are no
+    /// longer the ones that should install, and no VM could be attached to it.
+    ///
+    /// Rules are fixed at creation, so an edit reaches guests only through a
+    /// recreate — and only while no session holds an attachment on the network.
+    /// The recreate keeps the network's addressing, so no guest's address
+    /// moves.
+    private func rebuildSharedNetworkIfIdle() {
+        guard vmnetNetworks.portForwardingRulesArePending(for: .shared) else { return }
+        let attached = instances.contains { instance in
+            instance.configuration.networkEnabled && instance.configuration.networkMode == .shared
+                && !instance.status.isResting
+        }
+        guard !attached else { return }
+        Self.logger.notice(
+            "Recreating the shared network so its changed port forwarding rules take effect")
+        vmnetNetworks.invalidateNetwork(for: .shared)
     }
 
     /// The single entry point for any UI-driven or programmatic mutation of
@@ -1501,6 +1547,7 @@ final class VMLibraryViewModel {
         guard new != old else { return true }
         instance.configuration = new
         syncAddressReservation(for: new)
+        syncPortForwardingRules(for: new)
         let saved = saveConfiguration(for: instance)
         applyLivePolicy(for: instance, old: old, new: new)
         return saved
@@ -2473,6 +2520,8 @@ final class VMLibraryViewModel {
             selectedID = instances.first?.id
         }
         ClipboardIssueCenter.shared.clear(instanceID: instance.instanceID)
+        // A VM out of the library stops claiming its host ports.
+        declarePortForwardingRules([], for: instance.configuration)
     }
 
     // MARK: - Reorder
