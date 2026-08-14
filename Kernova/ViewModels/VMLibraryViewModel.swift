@@ -681,7 +681,7 @@ final class VMLibraryViewModel {
     /// on, persisting the result before the VZ configuration is built.
     ///
     /// Left alone when a save file exists: VZ restores only into a configuration
-    /// identical to the saved one, and a mismatch silently discards the save.
+    /// identical to the saved one, and a mismatch fails the restore.
     private func applyMatchWindowBootResolution(to instance: VMInstance) {
         guard instance.configuration.displaySizesToWindow, !instance.hasSaveFile else { return }
         guard let surface = displayBootGeometryProvider?.displayBootSurface(for: instance) else {
@@ -817,6 +817,16 @@ final class VMLibraryViewModel {
         Self.logger.notice(
             "Removed failed attachment '\(failure.label, privacy: .public)' from '\(instance.name, privacy: .public)'; retrying start"
         )
+        // A save file restores only into the exact device set it was saved
+        // with, so it cannot outlive the removal — the alert disclosed the
+        // discard before the user confirmed.
+        if instance.hasSaveFile {
+            instance.removeSaveFile()
+            Self.logger.notice(
+                "Discarded saved state for '\(instance.name, privacy: .public)' along with the removed attachment"
+            )
+            if instance.isColdPaused { instance.status = .stopped }
+        }
         await start(instance)
     }
 
