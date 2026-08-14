@@ -1133,13 +1133,20 @@ extension VMSettingsViewController {
     }
 
     private func refreshMACAddressRow() {
-        let mac = instance.configuration.macAddress
-        macAddressRow?.isHidden = !instance.configuration.networkEnabled || mac == nil
+        let config = instance.configuration
+        let hidden = !config.networkEnabled || config.macAddress == nil
+        // End an open editor before the row goes: AppKit doesn't resign a
+        // hidden field, so the mode picker — which takes no first responder of
+        // its own — would leave it focused and invisible, swallowing keystrokes.
+        if hidden, macAddressField.currentEditor() != nil {
+            view.window?.makeFirstResponder(nil)
+        }
+        macAddressRow?.isHidden = hidden
         // A field with an open editor is mid-edit: any refresh — a status change
         // started from the toolbar, say — would otherwise discard the keystrokes
         // typed so far.
         if macAddressField.currentEditor() == nil {
-            macAddressField.stringValue = mac ?? ""
+            macAddressField.stringValue = instance.configuration.macAddress ?? ""
         }
     }
 
@@ -2381,6 +2388,12 @@ extension VMSettingsViewController: NSMenuItemValidation {
     private static let unspecifiedMACAddress = "00:00:00:00:00:00"
 
     @objc private func generateMACAddressTapped() {
+        // Clicking a push button takes no first responder, so an edit open in
+        // the field would outlive the write and commit over it on the way out.
+        // Settle it first; the generated address then replaces whatever it left.
+        if macAddressField.currentEditor() != nil {
+            view.window?.makeFirstResponder(nil)
+        }
         writeConfig { $0.macAddress = VZMACAddress.randomLocallyAdministered().string }
         refreshMACAddressRow()
     }
@@ -3137,15 +3150,17 @@ extension VMSettingsViewController: NSTextFieldDelegate {
     /// Persists the typed MAC in canonical form. Text naming no address a guest
     /// can use writes nothing; the field snapping back to the persisted address
     /// is the rejection, and the field's tooltip names the accepted spelling.
+    ///
+    /// The field is written directly rather than through
+    /// `refreshMACAddressRow()`: editing is still ending here, so the editor the
+    /// refresh defers to is the very one being reconciled away.
     private func applyMACAddressFieldEdit() {
         guard let normalized = Self.normalizedMACAddress(macAddressField.stringValue) else {
-            refreshMACAddressRow()
+            macAddressField.stringValue = instance.configuration.macAddress ?? ""
             return
         }
         writeConfig { $0.macAddress = normalized }
-        // Retyping the persisted address in another case writes nothing, so the
-        // field is reconciled here rather than by the configuration observation.
-        refreshMACAddressRow()
+        macAddressField.stringValue = normalized
     }
 }
 

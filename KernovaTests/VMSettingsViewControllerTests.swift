@@ -1208,6 +1208,75 @@ struct VMSettingsViewControllerTests {
         }
     }
 
+    @Test("Text a real edit session rejects reverts in the field")
+    func rejectedEditRevertsThroughTheFieldEditor() throws {
+        let (vc, instance) = makeNetworkController()
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("MAC Address", in: vc.view))
+        #expect(window.makeFirstResponder(field))
+        try #require(field.currentEditor()).string = "nonsense"
+
+        #expect(window.makeFirstResponder(nil))
+
+        #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:ff")
+        #expect(field.stringValue == "aa:bb:cc:dd:ee:ff")
+    }
+
+    @Test("Text a real edit session accepts lands canonically in the field")
+    func acceptedEditCanonicalizesThroughTheFieldEditor() throws {
+        let (vc, instance) = makeNetworkController()
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("MAC Address", in: vc.view))
+        #expect(window.makeFirstResponder(field))
+        try #require(field.currentEditor()).string = "AA:BB:CC:DD:EE:0F"
+
+        #expect(window.makeFirstResponder(nil))
+
+        #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:0f")
+        #expect(field.stringValue == "aa:bb:cc:dd:ee:0f")
+    }
+
+    @Test("Choosing None settles an open MAC edit instead of hiding a focused field")
+    func hidingTheRowEndsAnOpenMACEdit() throws {
+        let (vc, instance) = makeNetworkController()
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("MAC Address", in: vc.view))
+        #expect(window.makeFirstResponder(field))
+        try #require(field.currentEditor()).string = "aa:bb:cc:dd:ee:01"
+        let popUp = try #require(networkModePopUp(in: vc.view))
+
+        popUp.selectItem(withTitle: "None")
+        popUp.sendAction(popUp.action, to: popUp.target)
+
+        #expect(instance.configuration.networkEnabled == false)
+        #expect(!visibleLabel("MAC Address", in: vc.view))
+        #expect(field.currentEditor() == nil)
+    }
+
+    @Test("Generate overrides an edit still open in the field")
+    func generateOverridesAnOpenEdit() throws {
+        let (vc, instance) = makeNetworkController()
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("MAC Address", in: vc.view))
+        #expect(window.makeFirstResponder(field))
+        try #require(field.currentEditor()).string = "aa:bb:cc:dd:ee:01"
+        let generate = try #require(findButton(titled: "Generate", in: vc.view))
+
+        generate.sendAction(generate.action, to: generate.target)
+
+        // Clicking a push button leaves the field first responder, so the
+        // generated address has to survive the edit it interrupts.
+        let mac = try #require(instance.configuration.macAddress)
+        #expect(mac != "aa:bb:cc:dd:ee:01")
+        #expect(field.stringValue == mac)
+        #expect(window.makeFirstResponder(nil))
+        #expect(instance.configuration.macAddress == mac)
+    }
+
     @Test("Generate mints a fresh locally administered address and shows it")
     func generateMintsALocallyAdministeredAddress() throws {
         let (vc, instance) = makeNetworkController()
