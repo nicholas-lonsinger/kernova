@@ -61,12 +61,25 @@ enum IPv4Value {
     }
 
     static func string(_ value: UInt32) -> String {
-        var address = in_addr(s_addr: value.bigEndian)
-        var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-        guard inet_ntop(AF_INET, &address, &buffer, socklen_t(INET_ADDRSTRLEN)) != nil else {
-            return "?"
+        withUnsafeBytes(of: in_addr(s_addr: value.bigEndian)) {
+            presentationString($0, family: AF_INET, capacity: INET_ADDRSTRLEN)
         }
-        return String(cString: buffer)
+    }
+}
+
+/// The dotted-quad or colon-hex form of the socket address whose bytes are
+/// `address`, `"?"` when `inet_ntop` fails. `capacity` is the family's
+/// `INET*_ADDRSTRLEN`.
+private func presentationString(
+    _ address: UnsafeRawBufferPointer, family: Int32, capacity: Int32
+) -> String {
+    var buffer = [CChar](repeating: 0, count: Int(capacity))
+    return buffer.withUnsafeMutableBufferPointer { buffer in
+        guard
+            let text = inet_ntop(
+                family, address.baseAddress, buffer.baseAddress, socklen_t(buffer.count))
+        else { return "?" }
+        return String(cString: text)
     }
 }
 
@@ -280,12 +293,9 @@ struct HostVmnetNetworkOperator: VmnetNetworkOperating {
     }
 
     private static func ipv6String(_ address: in6_addr) -> String {
-        var address = address
-        var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
-        guard inet_ntop(AF_INET6, &address, &buffer, socklen_t(INET6_ADDRSTRLEN)) != nil else {
-            return "?"
+        withUnsafeBytes(of: address) {
+            presentationString($0, family: AF_INET6, capacity: INET6_ADDRSTRLEN)
         }
-        return String(cString: buffer)
     }
 }
 
