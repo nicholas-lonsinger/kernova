@@ -328,10 +328,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// Brings up the resident app with its library window on screen.
     ///
-    /// VMs are **not** auto-started — they appear at their last-logout state — and
-    /// idle termination is not armed: while *Continue running in Status Bar* is
-    /// on the app stays resident until an explicit Quit, with any running VMs
-    /// executing headless.
+    /// VMs appear at their last-logout state, except those marked
+    /// `VMConfiguration.startsAutomaticallyOnLaunch`, which come up once the
+    /// library read lands. Idle termination is not armed: while *Continue running
+    /// in Status Bar* is on the app stays resident until an explicit Quit, with
+    /// any running VMs executing headless.
     private func startResidentApp() {
         syncStatusItem()
         observeResidencyPreference()
@@ -359,6 +360,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         Self.logger.notice("Kernova resident app ready — \(provenance, privacy: .public)")
 
         summonUserInterface()
+
+        // After the summon, not before: its deferred window show runs while the
+        // library read is still doing its off-main-actor file I/O, so a VM
+        // booting here finds the measurable surface `applyMatchWindowBootResolution`
+        // needs. The marked VMs only exist in `instances` once that read applies.
+        Task { @MainActor in
+            await self.libraryLoad?.value
+            await self.viewModel.startAutomaticVMsForLaunch()
+        }
     }
 
     /// Builds the menu-bar status item.

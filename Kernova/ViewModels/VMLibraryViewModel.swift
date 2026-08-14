@@ -2523,6 +2523,86 @@ final class VMLibraryViewModel {
             })
     }
 
+    // MARK: - Launch Auto-Start
+
+    /// What the launch auto-start pass does with one VM.
+    enum AutoStartStep: Equatable {
+        case start
+        case resume
+        case skip
+    }
+
+    /// The pass's move for one VM, decided from state alone.
+    ///
+    /// `.initialBoot` satisfies ``VMStatus/canStart`` yet is skipped: its start
+    /// runs the macOS install or the Linux image download, neither of which may
+    /// begin unattended.
+    nonisolated static func autoStartStep(
+        startsAutomaticallyOnLaunch: Bool,
+        isPreparing: Bool,
+        isColdPaused: Bool,
+        status: VMStatus
+    ) -> AutoStartStep {
+        guard startsAutomaticallyOnLaunch, !isPreparing, status != .initialBoot else { return .skip }
+        if isColdPaused { return .resume }
+        return status.canStart ? .start : .skip
+    }
+
+    /// Starts every VM marked to start automatically, one after another.
+    ///
+    /// Sequential on purpose: each guest commits its whole memory allocation at
+    /// start, and the duplicate machine-ID and MAC refusals inside ``start(_:)``
+    /// and ``resume(_:)`` compare against VMs that are already live, so they only
+    /// answer deterministically once the previous VM has settled.
+    ///
+    /// Per-VM failures are logged and surfaced by those two methods; the pass
+    /// carries on to the next VM either way.
+    func startAutomaticVMsForLaunch() async {
+        let marked = instances.filter { $0.configuration.startsAutomaticallyOnLaunch }
+        guard !marked.isEmpty else {
+            Self.logger.debug("Launch auto-start: no VMs are marked to start automatically")
+            return
+        }
+
+        Self.logger.notice("Launch auto-start: \(marked.count, privacy: .public) VM(s) marked")
+
+        var startedCount = 0
+        var skippedCount = 0
+        var failedCount = 0
+        for instance in marked {
+            // Re-read at the moment of acting rather than trusting the snapshot:
+            // the user can start a VM by hand while this pass runs, and the
+            // previous iteration's boot is what can make the next one a
+            // duplicate-identity conflict.
+            let step = Self.autoStartStep(
+                startsAutomaticallyOnLaunch: instance.configuration.startsAutomaticallyOnLaunch,
+                isPreparing: instance.isPreparing,
+                isColdPaused: instance.isColdPaused,
+                status: instance.status)
+            switch step {
+            case .start:
+                await start(instance)
+            case .resume:
+                await resume(instance)
+            case .skip:
+                Self.logger.debug(
+                    "Launch auto-start: skipped '\(instance.name, privacy: .public)' (\(instance.status.displayName, privacy: .public))"
+                )
+                skippedCount += 1
+                continue
+            }
+            if instance.status.isActive {
+                startedCount += 1
+            } else {
+                failedCount += 1
+            }
+        }
+
+        Self.logger.notice(
+            "Launch auto-start finished — \(startedCount, privacy: .public) running, \(failedCount, privacy: .public) failed, \(skippedCount, privacy: .public) skipped"
+        )
+    }
+
     // MARK: - Sleep/Wake
 
     /// Pauses all running VMs before system sleep, tracking which were auto-paused so

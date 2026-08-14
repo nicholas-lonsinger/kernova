@@ -4395,6 +4395,139 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.activeRename == .sidebar(other.id))
     }
 
+    // MARK: - Launch Auto-Start
+
+    /// Marks the instance to start automatically, returning it for chaining.
+    @discardableResult
+    private func markAutoStart(_ instance: VMInstance) -> VMInstance {
+        instance.configuration.startsAutomaticallyOnLaunch = true
+        return instance
+    }
+
+    /// One row of the launch auto-start decision table.
+    struct AutoStartCase: Sendable, CustomStringConvertible {
+        let marked: Bool
+        let isPreparing: Bool
+        let isColdPaused: Bool
+        let status: VMStatus
+        let expected: VMLibraryViewModel.AutoStartStep
+
+        init(
+            marked: Bool, preparing: Bool = false, coldPaused: Bool = false, _ status: VMStatus,
+            _ expected: VMLibraryViewModel.AutoStartStep
+        ) {
+            self.marked = marked
+            self.isPreparing = preparing
+            self.isColdPaused = coldPaused
+            self.status = status
+            self.expected = expected
+        }
+
+        var description: String {
+            "marked \(marked), preparing \(isPreparing), coldPaused \(isColdPaused), "
+                + "\(status.displayName) → \(expected)"
+        }
+    }
+
+    @Test(
+        "autoStartStep decides start, resume, or skip from state",
+        arguments: [
+            AutoStartCase(marked: true, .stopped, .start),
+            AutoStartCase(marked: true, .error, .start),
+            AutoStartCase(marked: true, coldPaused: true, .paused, .resume),
+            // A VM that never finished setup would begin an unattended install
+            // or image download, so it is skipped despite passing `canStart`.
+            AutoStartCase(marked: true, .initialBoot, .skip),
+            AutoStartCase(marked: true, preparing: true, .stopped, .skip),
+            AutoStartCase(marked: true, .running, .skip),
+            AutoStartCase(marked: true, .starting, .skip),
+            AutoStartCase(marked: true, .saving, .skip),
+            AutoStartCase(marked: true, .restoring, .skip),
+            AutoStartCase(marked: true, .installing, .skip),
+            // Live-paused: the VZ object is already in memory, so the launch
+            // pass has nothing to bring up.
+            AutoStartCase(marked: true, .paused, .skip),
+            AutoStartCase(marked: false, .stopped, .skip),
+            AutoStartCase(marked: false, coldPaused: true, .paused, .skip),
+        ])
+    func autoStartStepMatrix(testCase: AutoStartCase) {
+        #expect(
+            VMLibraryViewModel.autoStartStep(
+                startsAutomaticallyOnLaunch: testCase.marked,
+                isPreparing: testCase.isPreparing,
+                isColdPaused: testCase.isColdPaused,
+                status: testCase.status) == testCase.expected)
+    }
+
+    @Test("startAutomaticVMsForLaunch starts only marked VMs")
+    func autoStartStartsOnlyMarked() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let marked1 = markAutoStart(makeInstance(name: "Marked 1"))
+        let marked2 = markAutoStart(makeInstance(name: "Marked 2"))
+        let unmarked = makeInstance(name: "Unmarked")
+        viewModel.instances = [marked1, marked2, unmarked]
+
+        await viewModel.startAutomaticVMsForLaunch()
+
+        #expect(virtService.startCallCount == 2)
+        #expect(marked1.status == .running)
+        #expect(marked2.status == .running)
+        #expect(unmarked.status == .stopped)
+    }
+
+    @Test("startAutomaticVMsForLaunch resumes a marked VM with saved state")
+    func autoStartResumesColdPaused() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let saved = markAutoStart(makeInstance(name: "Suspended"))
+        saved.status = .paused
+        viewModel.instances = [saved]
+
+        await viewModel.startAutomaticVMsForLaunch()
+
+        #expect(virtService.resumeCallCount == 1)
+        #expect(virtService.startCallCount == 0)
+        #expect(saved.status == .running)
+    }
+
+    @Test("startAutomaticVMsForLaunch leaves a marked VM awaiting initial boot alone")
+    func autoStartSkipsInitialBoot() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let fresh = markAutoStart(makeInstance(name: "Never Booted"))
+        fresh.status = .initialBoot
+        viewModel.instances = [fresh]
+
+        await viewModel.startAutomaticVMsForLaunch()
+
+        #expect(virtService.startCallCount == 0)
+        #expect(fresh.status == .initialBoot)
+    }
+
+    @Test("startAutomaticVMsForLaunch carries on past a VM that fails to start")
+    func autoStartContinuesAfterFailure() async {
+        let virtService = MockVirtualizationService()
+        virtService.startError = VirtualizationError.noVirtualMachine
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let failing = markAutoStart(makeInstance(name: "Failing"))
+        let following = markAutoStart(makeInstance(name: "Following"))
+        viewModel.instances = [failing, following]
+
+        await viewModel.startAutomaticVMsForLaunch()
+
+        #expect(virtService.startCallCount == 2)
+        #expect(presenter.showError == true)
+    }
+
+    @Test("startAutomaticVMsForLaunch does nothing when no VM is marked")
+    func autoStartNoOpWhenNothingMarked() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        viewModel.instances = [makeInstance(name: "Unmarked")]
+
+        await viewModel.startAutomaticVMsForLaunch()
+
+        #expect(virtService.startCallCount == 0)
+        #expect(virtService.resumeCallCount == 0)
+    }
+
     // MARK: - Sleep/Wake
 
     @Test("pauseAllForSleep pauses only running VMs")

@@ -334,6 +334,45 @@ struct VMSettingsViewControllerTests {
         #expect(instance.configuration.clipboardSharingEnabled == true)
     }
 
+    // MARK: - Launch auto-start
+
+    @Test("The Startup toggle reflects the configuration")
+    func autoStartSwitchReflectsConfiguration() {
+        let viewModel = makeViewModel()
+        let instance = makeInstance(guestOS: .linux)
+        instance.configuration.startsAutomaticallyOnLaunch = true
+        let vc = VMSettingsViewController(
+            instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+
+        #expect(firstSwitch(action: "autoStartToggled", in: vc.view)?.state == .on)
+    }
+
+    @Test("Toggling the Startup switch writes back to the configuration")
+    func autoStartToggleWritesConfig() {
+        let (vc, instance, _) = makeController(guestOS: .linux, isReadOnly: false)
+        #expect(instance.configuration.startsAutomaticallyOnLaunch == false)
+
+        guard let autoStart = firstSwitch(action: "autoStartToggled", in: vc.view) else {
+            Issue.record("Expected a Startup switch")
+            return
+        }
+        autoStart.state = .on
+        autoStart.sendAction(autoStart.action, to: autoStart.target)
+
+        #expect(instance.configuration.startsAutomaticallyOnLaunch == true)
+    }
+
+    /// The flag is consumed once at app launch and reaches no
+    /// `VZVirtualMachineConfiguration`, so it must stay editable while the VM
+    /// runs — unlike every control the read-only banner locks.
+    @Test("The Startup toggle stays editable while the VM is running")
+    func autoStartSwitchStaysEnabledWhenReadOnly() {
+        let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: true)
+        #expect(firstSwitch(action: "autoStartToggled", in: vc.view)?.isEnabled == true)
+    }
+
     // MARK: - Clipboard passthrough
 
     /// Builds a controller over a config with the given clipboard-sharing state,

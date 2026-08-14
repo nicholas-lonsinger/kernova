@@ -117,6 +117,9 @@ final class VMSettingsViewController: NSViewController {
     /// space, so without this the box would linger.
     private var nameOutsideClickMonitor: Any?
 
+    // Startup
+    private var autoStartSwitch = NSSwitch()
+
     // Resources
     private var cpuField = NSTextField()
     private var cpuStepper = NSStepper()
@@ -523,6 +526,7 @@ extension VMSettingsViewController {
         displayResolutionIsCustom = false
 
         addSection(buildGeneralSection())
+        addSection(buildStartupSection())
         addSection(buildResourcesSection())
         addSection(buildDisplaySection())
         addSection(buildStorageSection())
@@ -716,6 +720,30 @@ extension VMSettingsViewController {
                     instance.configuration.createdAt.formatted(date: .abbreviated, time: .shortened))),
         ]
         return makeSection([makeHeader("General"), makeGroupedFormCard(rows: rows)])
+    }
+
+    // MARK: Startup
+
+    /// The Startup card's one toggle.
+    ///
+    /// Not `lockable`, and `autoStartSwitch` stays out of
+    /// `persistentLockableControls`: the flag is read once at app launch and
+    /// reaches no `VZVirtualMachineConfiguration`, so it edits while the VM runs.
+    private func buildStartupSection() -> NSView {
+        autoStartSwitch = makeSwitch(action: #selector(autoStartToggled))
+        let card = makeGroupedFormCard(rows: [
+            makeToggleRowWithInfo(
+                "Start When Kernova Opens", control: autoStartSwitch,
+                paragraphs: [
+                    .body(
+                        "Starts this virtual machine each time Kernova opens. A suspended VM resumes from its saved state; one that has not finished its initial setup is left alone."
+                    ),
+                    .body(
+                        "Turn on Open at Login in Settings → General to have it running after you log in."
+                    ),
+                ])
+        ])
+        return makeSection([makeHeader("Startup"), card])
     }
 
     // MARK: Resources
@@ -1826,6 +1854,7 @@ extension VMSettingsViewController {
         persistentLockableControls.forEach { $0.isEnabled = !isReadOnly }
 
         refreshGeneral()
+        refreshStartup()
         refreshResources()
         refreshDisplay()
         refreshNetwork()
@@ -1931,6 +1960,10 @@ extension VMSettingsViewController {
         nameRowIsEditing = false
         nameDisplayRow.isHidden = false
         nameEditRow.isHidden = true
+    }
+
+    private func refreshStartup() {
+        autoStartSwitch.state = instance.configuration.startsAutomaticallyOnLaunch ? .on : .off
     }
 
     private func refreshResources() {
@@ -2655,6 +2688,10 @@ extension VMSettingsViewController: NSMenuItemValidation {
         // Routed through the view model's named accessor rather than the generic
         // `writeConfig` so every write of this flag shares one logged path.
         viewModel.setAgentInstallNudgeDismissed(installReminderSwitch.state != .on, for: instance)
+    }
+
+    @objc private func autoStartToggled() {
+        writeConfig { $0.startsAutomaticallyOnLaunch = autoStartSwitch.state == .on }
     }
 
     @objc private func serialRelayToggled() {

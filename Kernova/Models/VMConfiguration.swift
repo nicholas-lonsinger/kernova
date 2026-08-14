@@ -39,6 +39,15 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     var guestOS: VMGuestOS
     var bootMode: VMBootMode
 
+    // MARK: - Startup
+
+    /// When `true`, Kernova starts this VM as part of coming up — resuming it
+    /// from saved state when one exists, cold-booting it otherwise.
+    ///
+    /// A VM still awaiting its initial boot is left alone: its start runs an
+    /// install or an image download, which never begins unattended.
+    var startsAutomaticallyOnLaunch: Bool
+
     // MARK: - Resources
 
     var cpuCount: Int
@@ -252,6 +261,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         name: String,
         guestOS: VMGuestOS,
         bootMode: VMBootMode,
+        startsAutomaticallyOnLaunch: Bool = false,
         cpuCount: Int? = nil,
         memorySizeInGB: Int? = nil,
         diskSizeInGB: Int? = nil,
@@ -298,6 +308,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.name = name
         self.guestOS = guestOS
         self.bootMode = bootMode
+        self.startsAutomaticallyOnLaunch = startsAutomaticallyOnLaunch
         self.cpuCount = cpuCount ?? guestOS.defaultCPUCount
         self.memorySizeInGB = memorySizeInGB ?? guestOS.defaultMemoryInGB
         self.diskSizeInGB = diskSizeInGB ?? VMGuestOS.defaultDiskSizeInGB
@@ -354,6 +365,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.name = try c.decode(String.self, forKey: .name)
         self.guestOS = try c.decode(VMGuestOS.self, forKey: .guestOS)
         self.bootMode = try c.decode(VMBootMode.self, forKey: .bootMode)
+        self.startsAutomaticallyOnLaunch =
+            try c.decodeIfPresent(Bool.self, forKey: .startsAutomaticallyOnLaunch) ?? false
         self.cpuCount = try c.decode(Int.self, forKey: .cpuCount)
         self.memorySizeInGB = try c.decode(Int.self, forKey: .memorySizeInGB)
         self.diskSizeInGB = try c.decode(Int.self, forKey: .diskSizeInGB)
@@ -488,6 +501,11 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         // A clone's guest-agent state hasn't been evaluated by the user, so let
         // the install nudge surface again rather than inheriting the dismissal.
         clone.agentInstallNudgeDismissed = false
+
+        // Duplicating a VM asks for a copy, not for a second guest booting at
+        // every launch — and a clone keeping the source's machine ID would be
+        // refused by the duplicate-identity guard every time.
+        clone.startsAutomaticallyOnLaunch = false
 
         return clone
     }
