@@ -2453,10 +2453,10 @@ extension VMSettingsViewController: NSMenuItemValidation {
     @objc private func generateMACAddressTapped() {
         // Clicking a push button takes no first responder, so an edit open in
         // the field would outlive the write and commit over it on the way out.
-        // Settle it first; the generated address then replaces whatever it left.
-        if macAddressField.currentEditor() != nil {
-            view.window?.makeFirstResponder(nil)
-        }
+        // Discard it rather than settling it: the generated address supersedes
+        // whatever was typed, so committing first would only refuse a typed
+        // duplicate with an alert about an address no longer in play.
+        macAddressField.abortEditing()
         writeConfig { $0.macAddress = VZMACAddress.randomLocallyAdministered().string }
         refreshMACAddressRow()
     }

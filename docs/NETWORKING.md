@@ -88,7 +88,7 @@ never a visible-but-broken control.
 second holder** — the DHCP reservation slot and the forwarding rules are both keyed
 on the address, so two holders share one slot and one rule set. Enforcement sits at
 the single configuration funnel, not at each surface that can write an address, and
-the user moves an address by clearing or deleting the VM holding it first. An
+the user moves an address by changing or deleting the VM holding it first. An
 address a bundle arrives with is never silently rewritten: the guest can pin it, and
 under Bridged the LAN's DHCP server may hold a reservation for it.
 
