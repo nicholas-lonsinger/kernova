@@ -20,10 +20,10 @@ Requires macOS 26 (Tahoe) or later on Apple Silicon to run the app. macOS guests
 
 ### Virtual machines
 
-- **macOS and Linux guests** — a step-by-step creation wizard, including IPSW download for macOS; EFI/UEFI or direct kernel boot for Linux
+- **macOS and Linux guests** — a step-by-step creation wizard: macOS installs from the latest IPSW, a version catalog, a pasted URL, or a local file; Linux installs from a downloadable distribution catalog (checksum-verified against the distribution's own manifest), an image URL, or a local ISO, booting EFI/UEFI or a direct kernel
 - **Full lifecycle** — start, stop, pause, resume, suspend, and restore, plus Force Stop for a hung VM and a one-shot Start in Recovery Mode for macOS guests
-- **Cloning and import** — clone a VM with freshly regenerated identifiers; import `.kernova` bundles by double-click or drag-and-drop, which is also how you bring existing VMs into the sandboxed library (on the same volume it's an APFS clone: near-instant, no double disk usage)
-- **Keeps running in the background** — a resident menu-bar app with opt-in Open at Login and Continue running in Status Bar toggles, so closing the window can leave VMs running headless. Quitting save-suspends them; system sleep auto-pauses and wake resumes
+- **Cloning and import** — clone a VM with a fresh machine identity, or keep it via a setting or the ⌥-alternate menu command; import `.kernova` bundles by double-click or drag-and-drop, which is also how you bring existing VMs into the sandboxed library (on the same volume it's an APFS clone: near-instant, no double disk usage)
+- **Keeps running in the background** — a resident menu-bar app, on by default and toggleable in Settings, with opt-in Open at Login, so closing the window can leave VMs running headless. Quitting save-suspends them; system sleep auto-pauses and wake resumes
 
 <p align="center">
   <picture>
@@ -36,9 +36,10 @@ Requires macOS 26 (Tahoe) or later on Apple Silicon to run the app. macOS guests
 
 - **Storage** — ASIF sparse disks for near-native SSD performance, with live on-disk-vs-allocated capacity, extra disks with per-disk read-only and drag-to-reorder boot order, and hot-plug removable media (ISOs, disk images) attachable and ejectable while the VM runs
 - **Shared directories** — host folders exposed over VirtioFS, read-only or read-write
-- **Display** — configurable resolution and DPI; per-VM choice of inline, pop-out window, or fullscreen, and a toggle between the live display and a read-only settings form while the VM runs
+- **Display** — resolution presets or a custom size, HiDPI, and live auto-resize with the window; per-VM choice of inline, pop-out window, or fullscreen, and a toggle between the live display and a read-only settings form while the VM runs
+- **Input** — Mac or USB keyboard-and-pointer devices, chosen automatically by guest macOS version with a per-VM override
 - **Audio** — guest audio routed to the host, on by default; host microphone passthrough opt-in per VM, off by default for privacy
-- **Network** — persistent, stable MAC addresses
+- **Network** — per-VM modes: Shared Network (default; private outbound through the host, with port-forwarding rules), Bridged onto a chosen host interface or Automatic, Host Only (guests reach the host and each other, nothing wider), or None — plus a live IP address readout and a persistent, editable MAC address with one-click regeneration
 - **Serial** — output persisted to `serial.log` in the bundle, plus an opt-in AF_UNIX socket relay for external tools (`socat`, `nc -U`), hot-toggleable while running
 
 <p align="center">
@@ -51,7 +52,8 @@ Requires macOS 26 (Tahoe) or later on Apple Silicon to run the app. macOS guests
 ### Guest integration
 
 - **Guest agent (macOS guests)** — a lightweight in-guest menu-bar helper, installed from an attachable installer disk, reporting status and version to the host over vsock
-- **Clipboard sync** — bidirectional host↔guest text, rich text, images, and multiple files or entire folders. Copying is instant in either direction: only a paste moves bytes, up to 2 GB of files per paste, with integrity verification and live transfer progress in a dedicated clipboard window. Concealed and password content shows a locked placeholder; transient snapshots aren't synced. macOS guests sync over the vsock agent, Linux guests sync text only via spice-vdagent
+- **Clipboard sync** — bidirectional host↔guest text, rich text, images, and multiple files or entire folders. Copying is instant in either direction: only a paste moves bytes — up to an adjustable ceiling (2 GB by default) — with integrity verification and live transfer progress in a dedicated clipboard window.
+  Per-VM opt-in Automatic Clipboard Passthrough syncs continuously with no paste step. Concealed and password content shows a locked placeholder; transient snapshots aren't synced. macOS guests sync over the vsock agent, Linux guests sync text only via spice-vdagent
 - **Log forwarding (macOS guests)** — opt-in per VM and live-toggleable; the guest's `os.Logger` records surface on the host in Console.app under the `app.kernova.guest` subsystem
 
 <p align="center">
@@ -77,7 +79,7 @@ make install-hooks   # one-time per clone
 
 `install-hooks` points the repo at the checked-in `.githooks/`, which Git does not activate on its own: a pre-push `make lint` matching the required `lint` check on `main` (bypass a single push with `git push --no-verify`), and a post-checkout hook that sets up a new git worktree with no manual step. The hook machinery is documented in [docs/BUILD.md](docs/BUILD.md).
 
-Then open `Kernova.xcodeproj`, select the `Kernova` scheme, and build and run (⌘R). The app requires the `com.apple.security.virtualization` entitlement, already in the project configuration.
+Then open `Kernova.xcodeproj`, select the `Kernova` scheme, and build and run (⌘R). The app requires the `com.apple.security.virtualization` entitlement, already in the project configuration. Bridged and Host Only networking additionally need the restricted `com.apple.vm.networking` entitlement; a build signed without a provisioning profile omits those modes from the network picker and everything else still works.
 
 `make doctor` checks that your toolchain, signing, and hooks match what Kernova needs. `make` with no arguments lists every build, test, format, and lint target.
 
@@ -93,7 +95,7 @@ Runs every test target via the test plan. Tests use [Swift Testing](https://deve
 
 ## Architecture
 
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the component map, data flow, and design decisions; [docs/README.md](docs/README.md) indexes the rest, including [docs/SPEC.md](docs/SPEC.md) for design philosophy and UI guidelines and [docs/CLIPBOARD.md](docs/CLIPBOARD.md) for the clipboard subsystem.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the component map, data flow, and design decisions; [docs/README.md](docs/README.md) indexes the rest, including [docs/SPEC.md](docs/SPEC.md) for design philosophy and UI guidelines, [docs/CLIPBOARD.md](docs/CLIPBOARD.md) for the clipboard subsystem, and [docs/NETWORKING.md](docs/NETWORKING.md) for networking principles.
 
 ## License
 
