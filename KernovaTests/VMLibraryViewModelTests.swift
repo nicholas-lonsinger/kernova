@@ -2193,6 +2193,30 @@ struct VMLibraryViewModelTests {
         #expect(vmnet.declaredForwardingRules.last?.rules.isEmpty == true)
     }
 
+    @Test("Editing the MAC address moves the rules to it and withdraws the old ones")
+    func macAddressChangeMovesForwardingRules() {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
+        let instance = makeInstance()
+        viewModel.updateConfiguration(of: instance) {
+            $0.networkEnabled = true
+            $0.networkMode = .shared
+            $0.macAddress = "aa:bb:cc:dd:ee:0f"
+            $0.portForwardingRules = [Self.webRule]
+        }
+
+        viewModel.updateConfiguration(of: instance) { $0.macAddress = "aa:bb:cc:dd:ee:10" }
+
+        // The retired address gives up its claim on the host port before the new
+        // one declares the same rules, so nothing is dropped as a duplicate.
+        #expect(
+            vmnet.declaredForwardingRules.suffix(2).map(\.mac)
+                == ["aa:bb:cc:dd:ee:0f", "aa:bb:cc:dd:ee:10"])
+        #expect(vmnet.declaredForwardingRules.dropLast().last?.rules.isEmpty == true)
+        #expect(vmnet.declaredForwardingRules.last?.rules == [Self.webRule])
+        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f", "aa:bb:cc:dd:ee:10"])
+    }
+
     @Test("Deleting a VM withdraws its forwarding rules")
     func deleteWithdrawsForwardingRules() async {
         let vmnet = MockVmnetNetworkProvider()

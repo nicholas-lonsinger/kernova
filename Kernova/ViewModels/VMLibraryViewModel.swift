@@ -1545,6 +1545,13 @@ final class VMLibraryViewModel {
         mutate(&new)
         guard new != old else { return true }
         instance.configuration = new
+        // An edited MAC leaves its predecessor holding an older — so
+        // higher-priority — reservation slot. Left declared there, the retired
+        // address keeps claiming the VM's host ports and the rules re-declared
+        // under the new one are dropped as duplicates.
+        if let retired = old.macAddress, retired != new.macAddress {
+            declarePortForwardingRules([], for: old)
+        }
         syncAddressReservation(for: new)
         syncPortForwardingRules(for: new)
         let saved = saveConfiguration(for: instance)
