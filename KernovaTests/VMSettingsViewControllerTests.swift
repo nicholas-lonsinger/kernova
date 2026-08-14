@@ -1265,6 +1265,27 @@ struct VMSettingsViewControllerTests {
         #expect(!containsLabel(Self.duplicateMACBanner, in: vc.view))
     }
 
+    @Test("A refused live mode switch puts the Mode picker back on the VM's mode")
+    func refusedLiveModeSwitchRevertsThePicker() throws {
+        let presenter = MockVMLibraryPresenting()
+        let viewModel = makeLibraryHolding("aa:bb:cc:dd:ee:ff", presenter: presenter)
+        // The holder is live on Shared; this VM shares its address on Host Only,
+        // which the start guard permits — the two are on different networks.
+        let holder = try #require(viewModel.instances.first)
+        holder.status = .running
+        let (vc, instance) = makeNetworkController(
+            mode: .hostOnly, isReadOnly: true, status: .running, viewModel: viewModel)
+        let popUp = try #require(networkModePopUp(in: vc.view))
+        let shared = try #require(popUp.itemArray.first { $0.title == "Shared Network" })
+
+        popUp.select(shared)
+        popUp.sendAction(popUp.action, to: popUp.target)
+
+        #expect(instance.configuration.networkMode == .hostOnly)
+        #expect(presenter.errorTitle == "Duplicate MAC Address")
+        #expect(popUp.titleOfSelectedItem == "Host Only")
+    }
+
     @Test("Generate discards a typed duplicate instead of refusing it")
     func generateDiscardsATypedDuplicate() throws {
         let presenter = MockVMLibraryPresenting()

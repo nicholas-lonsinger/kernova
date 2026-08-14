@@ -1724,6 +1724,70 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == false)
     }
 
+    @Test("a start that dispatches to macOS guest setup is refused before the installer runs")
+    func macOSSetupStartBlockedByRunningMACAddressTwin() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMACAddressPair(to: viewModel)
+        starting.configuration.installContext = MacOSInstallContext(
+            source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        starting.status = .initialBoot
+        other.status = .running
+
+        await viewModel.start(starting)
+
+        // The installer builds and runs its own VZ virtual machine, so the
+        // refusal has to land before guest setup is dispatched at all.
+        #expect(starting.setupTask == nil)
+        #expect(virtService.startCallCount == 0)
+        #expect(presenter.errorTitle == "Duplicate MAC Address")
+    }
+
+    @Test("a live mode switch onto a MAC address twin's network is refused, changing nothing")
+    func liveModeSwitchOntoAMACAddressTwinIsRefused() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let (switching, other) = appendMACAddressPair(
+            to: viewModel, mode: .hostOnly, otherMode: .shared)
+        // Both run: the start guard allowed it, the modes being different.
+        switching.status = .running
+        other.status = .running
+
+        let accepted = viewModel.updateConfiguration(of: switching) { $0.networkMode = .shared }
+
+        #expect(accepted == false)
+        #expect(switching.configuration.networkMode == .hostOnly)
+        #expect(presenter.errorTitle == "Duplicate MAC Address")
+    }
+
+    @Test("a stopped VM may take the mode a live MAC address twin is on — its start is the guard")
+    func stoppedVMMayTakeALiveMACAddressTwinsMode() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let (switching, other) = appendMACAddressPair(
+            to: viewModel, mode: .hostOnly, otherMode: .shared)
+        switching.status = .stopped
+        other.status = .running
+
+        let accepted = viewModel.updateConfiguration(of: switching) { $0.networkMode = .shared }
+
+        #expect(accepted)
+        #expect(switching.configuration.networkMode == .shared)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("a live VM already sharing a network with its twin stays editable")
+    func aVMAlreadyInAMACAddressCollisionStaysEditable() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let (switching, other) = appendMACAddressPair(to: viewModel)
+        switching.status = .running
+        other.status = .running
+
+        let accepted = viewModel.updateConfiguration(of: switching) { $0.memorySizeInGB = 6 }
+
+        #expect(accepted)
+        #expect(switching.configuration.memorySizeInGB == 6)
+        #expect(presenter.showError == false)
+    }
+
     // MARK: - Duplicate MAC Address Admission
 
     /// Two on-disk bundles carrying `mac`, in a storage mock — the hand-copied

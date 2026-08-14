@@ -487,7 +487,10 @@ final class VMSettingsViewController: NSViewController {
         }
     }
 
-    private func writeConfig(_ mutate: (inout VMConfiguration) -> Void) {
+    /// - Returns: Whether the mutation was applied, so a caller whose control
+    ///   already moved can put it back when the view model refused.
+    @discardableResult
+    private func writeConfig(_ mutate: (inout VMConfiguration) -> Void) -> Bool {
         viewModel.updateConfiguration(of: instance, mutate: mutate)
     }
 }
@@ -2509,31 +2512,36 @@ extension VMSettingsViewController: NSMenuItemValidation {
     @objc private func networkModeChanged() {
         guard let choice = networkModePopUp.selectedItem?.representedObject as? NetworkModeChoice
         else { return }
+        let accepted: Bool
         switch choice {
         case .shared:
             // `bridgedInterfaceIdentifier` is left alone so switching back to
             // Bridged remembers the interface.
-            writeConfig {
+            accepted = writeConfig {
                 $0.networkEnabled = true
                 $0.networkMode = .shared
                 Self.mintMACAddressIfNeeded(&$0)
             }
         case .hostOnly:
-            writeConfig {
+            accepted = writeConfig {
                 $0.networkEnabled = true
                 $0.networkMode = .hostOnly
                 Self.mintMACAddressIfNeeded(&$0)
             }
         case .none:
-            writeConfig { $0.networkEnabled = false }
+            accepted = writeConfig { $0.networkEnabled = false }
         case .bridged(let identifier):
-            writeConfig {
+            accepted = writeConfig {
                 $0.networkEnabled = true
                 $0.networkMode = .bridged
                 $0.bridgedInterfaceIdentifier = identifier
                 Self.mintMACAddressIfNeeded(&$0)
             }
         }
+        // A refused switch leaves the configuration untouched, so nothing marks
+        // the menu stale and the picker would go on showing a mode the VM is not
+        // on. Rebuilding re-selects the configured one.
+        if !accepted { rebuildNetworkModeMenu() }
         // The write flips the card's row visibility; refresh in case the value was
         // already what the model held.
         refreshNetwork()
