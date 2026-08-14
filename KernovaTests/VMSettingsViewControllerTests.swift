@@ -1208,16 +1208,18 @@ struct VMSettingsViewControllerTests {
         }
     }
 
-    /// A library already holding `mac`, wired to a presenter so the refusal's
-    /// alert is observable rather than buffered.
+    /// A library whose single member, named "Holder", already holds `mac` —
+    /// named so a banner reporting it is unambiguous, and wired to a presenter
+    /// so a refusal's alert is observable rather than buffered.
     private func makeLibraryHolding(
-        _ mac: String, presenter: MockVMLibraryPresenting
+        _ mac: String, presenter: MockVMLibraryPresenting? = nil
     ) -> VMLibraryViewModel {
         let viewModel = makeViewModel()
         let holder = makeInstance(guestOS: .linux)
+        holder.configuration.name = "Holder"
         holder.configuration.macAddress = mac
         viewModel.instances = [holder]
-        viewModel.presenter = presenter
+        if let presenter { viewModel.presenter = presenter }
         return viewModel
     }
 
@@ -1234,6 +1236,54 @@ struct VMSettingsViewControllerTests {
         #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:ff")
         #expect(field.stringValue == "aa:bb:cc:dd:ee:ff")
         #expect(presenter.errorTitle == "MAC Address In Use")
+    }
+
+    private static let duplicateMACBanner =
+        "This MAC address is also used by “Holder”. Each virtual machine needs its own."
+
+    @Test("The Network section names another VM holding this VM's MAC address")
+    func networkSectionDisclosesADuplicateMACAddress() {
+        let viewModel = makeLibraryHolding("aa:bb:cc:dd:ee:ff")
+        let (vc, _) = makeNetworkController(viewModel: viewModel)
+
+        #expect(visibleLabel(Self.duplicateMACBanner, in: vc.view))
+    }
+
+    @Test("No duplicate-MAC banner when the address is this VM's alone")
+    func networkSectionHasNoBannerForAUniqueMACAddress() {
+        let viewModel = makeLibraryHolding("aa:bb:cc:dd:ee:0f")
+        let (vc, _) = makeNetworkController(viewModel: viewModel)
+
+        #expect(!containsLabel(Self.duplicateMACBanner, in: vc.view))
+    }
+
+    @Test("No duplicate-MAC banner while this VM has no network device")
+    func networkSectionHasNoBannerWithNetworkingOff() {
+        let viewModel = makeLibraryHolding("aa:bb:cc:dd:ee:ff")
+        let (vc, _) = makeNetworkController(networkEnabled: false, viewModel: viewModel)
+
+        #expect(!containsLabel(Self.duplicateMACBanner, in: vc.view))
+    }
+
+    @Test("A refused live mode switch puts the Mode picker back on the VM's mode")
+    func refusedLiveModeSwitchRevertsThePicker() throws {
+        let presenter = MockVMLibraryPresenting()
+        let viewModel = makeLibraryHolding("aa:bb:cc:dd:ee:ff", presenter: presenter)
+        // The holder is live on Shared; this VM shares its address on Host Only,
+        // which the start guard permits — the two are on different networks.
+        let holder = try #require(viewModel.instances.first)
+        holder.status = .running
+        let (vc, instance) = makeNetworkController(
+            mode: .hostOnly, isReadOnly: true, status: .running, viewModel: viewModel)
+        let popUp = try #require(networkModePopUp(in: vc.view))
+        let shared = try #require(popUp.itemArray.first { $0.title == "Shared Network" })
+
+        popUp.select(shared)
+        popUp.sendAction(popUp.action, to: popUp.target)
+
+        #expect(instance.configuration.networkMode == .hostOnly)
+        #expect(presenter.errorTitle == "Duplicate MAC Address")
+        #expect(popUp.titleOfSelectedItem == "Host Only")
     }
 
     @Test("Generate discards a typed duplicate instead of refusing it")

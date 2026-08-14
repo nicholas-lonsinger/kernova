@@ -1541,6 +1541,320 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errorTitle == "Duplicate Machine ID")
     }
 
+    // MARK: - Duplicate MAC Address Boot Guard
+
+    /// Two VMs carrying the given MAC addresses and network modes, both appended
+    /// to `viewModel`.
+    ///
+    /// `other` is the one the tests park in a live status; `starting` is the one
+    /// they try to boot.
+    private func appendMACAddressPair(
+        to viewModel: VMLibraryViewModel,
+        mac: String = "aa:bb:cc:dd:ee:01",
+        otherMAC: String = "aa:bb:cc:dd:ee:01",
+        mode: VMNetworkMode = .shared,
+        otherMode: VMNetworkMode = .shared
+    ) -> (starting: VMInstance, other: VMInstance) {
+        let starting = makeInstance(name: "Starting")
+        let other = makeInstance(name: "Twin")
+        starting.configuration.macAddress = mac
+        starting.configuration.networkMode = mode
+        other.configuration.macAddress = otherMAC
+        other.configuration.networkMode = otherMode
+        viewModel.instances.append(contentsOf: [starting, other])
+        return (starting, other)
+    }
+
+    @Test("start is refused while another VM with the same MAC address is running")
+    func startBlockedByRunningMACAddressTwin() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMACAddressPair(to: viewModel)
+        other.status = .running
+
+        await viewModel.start(starting)
+
+        #expect(virtService.startCallCount == 0)
+        #expect(presenter.errorTitle == "Duplicate MAC Address")
+        #expect(presenter.errorMessage?.contains("Starting") == true)
+        #expect(presenter.errorMessage?.contains("Twin") == true)
+        #expect(starting.status == .stopped)
+    }
+
+    @Test("start is refused while the MAC address twin is live-paused (it still holds the address)")
+    func startBlockedByLivePausedMACAddressTwin() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMACAddressPair(to: viewModel)
+        other.status = .paused
+        other.hasLiveVirtualMachineOverrideForTesting = true
+
+        await viewModel.start(starting)
+
+        #expect(virtService.startCallCount == 0)
+        #expect(presenter.errorTitle == "Duplicate MAC Address")
+    }
+
+    @Test("start proceeds when the MAC address twin is stopped")
+    func startProceedsWhenMACAddressTwinIsStopped() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMACAddressPair(to: viewModel)
+        other.status = .stopped
+
+        await viewModel.start(starting)
+
+        #expect(virtService.startCallCount == 1)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("start proceeds when the MAC address twin runs on a different network mode")
+    func startProceedsWhenMACAddressTwinIsOnAnotherMode() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMACAddressPair(
+            to: viewModel, mode: .shared, otherMode: .hostOnly)
+        other.status = .running
+
+        await viewModel.start(starting)
+
+        #expect(virtService.startCallCount == 1)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("start is refused for two bridged VMs whichever interface each names")
+    func startBlockedByBridgedMACAddressTwinOnAnotherInterface() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMACAddressPair(
+            to: viewModel, mode: .bridged, otherMode: .bridged)
+        starting.configuration.bridgedInterfaceIdentifier = "en0"
+        other.configuration.bridgedInterfaceIdentifier = "en1"
+        other.status = .running
+
+        await viewModel.start(starting)
+
+        #expect(virtService.startCallCount == 0)
+        #expect(presenter.errorTitle == "Duplicate MAC Address")
+    }
+
+    @Test("start proceeds when the starting VM has networking off")
+    func startProceedsWhenStartingVMHasNetworkingOff() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMACAddressPair(to: viewModel)
+        starting.configuration.networkEnabled = false
+        other.status = .running
+
+        await viewModel.start(starting)
+
+        #expect(virtService.startCallCount == 1)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("start proceeds when the running MAC address twin has networking off")
+    func startProceedsWhenMACAddressTwinHasNetworkingOff() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMACAddressPair(to: viewModel)
+        other.configuration.networkEnabled = false
+        other.status = .running
+
+        await viewModel.start(starting)
+
+        #expect(virtService.startCallCount == 1)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("start proceeds when the running VM's MAC address differs")
+    func startProceedsWhenMACAddressesDiffer() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMACAddressPair(
+            to: viewModel, otherMAC: "aa:bb:cc:dd:ee:02")
+        other.status = .running
+
+        await viewModel.start(starting)
+
+        #expect(virtService.startCallCount == 1)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("the boot refusal matches the held MAC address regardless of case")
+    func startRefusalIgnoresMACAddressCase() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMACAddressPair(
+            to: viewModel, mac: "aa:bb:cc:dd:ee:01", otherMAC: "AA:BB:CC:DD:EE:01")
+        other.status = .running
+
+        await viewModel.start(starting)
+
+        #expect(virtService.startCallCount == 0)
+        #expect(presenter.errorTitle == "Duplicate MAC Address")
+    }
+
+    @Test("a cold resume is refused while a MAC address twin is running")
+    func coldResumeBlockedByRunningMACAddressTwin() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (resuming, other) = appendMACAddressPair(to: viewModel)
+        resuming.status = .paused
+        other.status = .running
+
+        await viewModel.resume(resuming)
+
+        #expect(virtService.resumeCallCount == 0)
+        #expect(presenter.errorTitle == "Duplicate MAC Address")
+        #expect(resuming.status == .paused)
+    }
+
+    @Test("a hot resume is never refused — the live VM already holds the address")
+    func hotResumeIsNotBlockedByMACAddressTwin() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (resuming, other) = appendMACAddressPair(to: viewModel)
+        resuming.status = .paused
+        resuming.hasLiveVirtualMachineOverrideForTesting = true
+        other.status = .running
+
+        await viewModel.resume(resuming)
+
+        #expect(virtService.resumeCallCount == 1)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("a start that dispatches to macOS guest setup is refused before the installer runs")
+    func macOSSetupStartBlockedByRunningMACAddressTwin() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMACAddressPair(to: viewModel)
+        starting.configuration.installContext = MacOSInstallContext(
+            source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        starting.status = .initialBoot
+        other.status = .running
+
+        await viewModel.start(starting)
+
+        // The installer builds and runs its own VZ virtual machine, so the
+        // refusal has to land before guest setup is dispatched at all.
+        #expect(starting.setupTask == nil)
+        #expect(virtService.startCallCount == 0)
+        #expect(presenter.errorTitle == "Duplicate MAC Address")
+    }
+
+    @Test("a live mode switch onto a MAC address twin's network is refused, changing nothing")
+    func liveModeSwitchOntoAMACAddressTwinIsRefused() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let (switching, other) = appendMACAddressPair(
+            to: viewModel, mode: .hostOnly, otherMode: .shared)
+        // Both run: the start guard allowed it, the modes being different.
+        switching.status = .running
+        other.status = .running
+
+        let accepted = viewModel.updateConfiguration(of: switching) { $0.networkMode = .shared }
+
+        #expect(accepted == false)
+        #expect(switching.configuration.networkMode == .hostOnly)
+        #expect(presenter.errorTitle == "Duplicate MAC Address")
+    }
+
+    @Test("a stopped VM may take the mode a live MAC address twin is on — its start is the guard")
+    func stoppedVMMayTakeALiveMACAddressTwinsMode() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let (switching, other) = appendMACAddressPair(
+            to: viewModel, mode: .hostOnly, otherMode: .shared)
+        switching.status = .stopped
+        other.status = .running
+
+        let accepted = viewModel.updateConfiguration(of: switching) { $0.networkMode = .shared }
+
+        #expect(accepted)
+        #expect(switching.configuration.networkMode == .shared)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("a live VM already sharing a network with its twin stays editable")
+    func aVMAlreadyInAMACAddressCollisionStaysEditable() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let (switching, other) = appendMACAddressPair(to: viewModel)
+        switching.status = .running
+        other.status = .running
+
+        let accepted = viewModel.updateConfiguration(of: switching) { $0.memorySizeInGB = 6 }
+
+        #expect(accepted)
+        #expect(switching.configuration.memorySizeInGB == 6)
+        #expect(presenter.showError == false)
+    }
+
+    // MARK: - Duplicate MAC Address Admission
+
+    /// Two on-disk bundles carrying `mac`, in a storage mock — the hand-copied
+    /// pair every admission path has to take.
+    private func makeStorageWithMACAddressPair(mac: String = "aa:bb:cc:dd:ee:01")
+        -> MockVMStorageService
+    {
+        let storage = MockVMStorageService()
+        for name in ["First VM", "Second VM"] {
+            var config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
+            config.macAddress = mac
+            let bundleURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+            storage.bundles[bundleURL] = config
+        }
+        return storage
+    }
+
+    @Test("loadVMs admits both bundles sharing a MAC address, without an error")
+    func loadAdmitsBundlesSharingAMACAddress() async {
+        let storage = makeStorageWithMACAddressPair()
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
+
+        await viewModel.loadVMs()
+
+        #expect(viewModel.instances.count == 2)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("reconcileWithDisk admits a discovered bundle whose MAC address is already held")
+    func reconcileAdmitsABundleSharingAMACAddress() {
+        let storage = makeStorageWithMACAddressPair()
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
+
+        viewModel.reconcileWithDisk()
+
+        #expect(viewModel.instances.count == 2)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("vmNamesSharingMACAddress names the other holders, regardless of case")
+    func vmNamesSharingMACAddressNamesOtherHolders() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let (starting, _) = appendMACAddressPair(
+            to: viewModel, mac: "aa:bb:cc:dd:ee:01", otherMAC: "AA:BB:CC:DD:EE:01")
+
+        #expect(viewModel.vmNamesSharingMACAddress(with: starting) == ["Twin"])
+    }
+
+    @Test("vmNamesSharingMACAddress is empty when the address is the VM's alone")
+    func vmNamesSharingMACAddressIsEmptyWhenUnique() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let (starting, _) = appendMACAddressPair(
+            to: viewModel, otherMAC: "aa:bb:cc:dd:ee:02")
+
+        #expect(viewModel.vmNamesSharingMACAddress(with: starting).isEmpty)
+    }
+
+    @Test("vmNamesSharingMACAddress counts a holder whose networking is off")
+    func vmNamesSharingMACAddressCountsANetworkingOffHolder() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let (starting, other) = appendMACAddressPair(to: viewModel)
+        other.configuration.networkEnabled = false
+
+        #expect(viewModel.vmNamesSharingMACAddress(with: starting) == ["Twin"])
+    }
+
     // MARK: - Match-Window Boot Resolution
 
     /// Hands `start` a fixed surface, standing in for the window/screen geometry

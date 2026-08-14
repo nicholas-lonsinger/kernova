@@ -84,13 +84,16 @@ never a visible-but-broken control.
 
 ### 9. A MAC address belongs to one virtual machine
 
-**An address identifies exactly one VM in the library, and the library refuses a
-second holder** — the DHCP reservation slot and the forwarding rules are both keyed
-on the address, so two holders share one slot and one rule set. Enforcement sits at
-the single configuration funnel, not at each surface that can write an address, and
-the user moves an address by changing or deleting the VM holding it first. An
-address a bundle arrives with is never silently rewritten: the guest can pin it, and
-under Bridged the LAN's DHCP server may hold a reservation for it.
+**An address identifies exactly one VM in the library** — the DHCP reservation slot
+and the forwarding rules are both keyed on it, so two holders share one slot and one
+rule set. The app never writes a second holder: enforcement sits at the single
+configuration funnel, not at each surface that can write an address, and the user
+moves an address by changing or deleting the VM holding it first. An address a
+bundle arrives with is neither rewritten nor grounds to keep the bundle out — the
+guest can pin it, and under Bridged the LAN's DHCP server may hold a reservation for
+it — so import, load and reconcile admit it, and the VM's Network section names the
+other holder while the address stays editable. Two holders never run on one network
+at once: the second to start is refused.
 
 ### 10. Guest-to-guest reach is network membership
 
