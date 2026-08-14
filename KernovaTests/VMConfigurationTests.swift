@@ -360,6 +360,45 @@ struct VMConfigurationTests {
         #expect(config.serialSocketRelayEnabled == false)
     }
 
+    // MARK: - Port Forwarding
+
+    @Test("Port forwarding rules round-trip through JSON")
+    func portForwardingRulesRoundTrip() throws {
+        var original = VMConfiguration(name: "Forwarding VM", guestOS: .linux, bootMode: .efi)
+        original.portForwardingRules = [
+            PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80),
+            PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53),
+        ]
+
+        let decoded = try VMConfiguration.makeJSONDecoder()
+            .decode(VMConfiguration.self, from: VMConfiguration.makeJSONEncoder().encode(original))
+
+        #expect(decoded.portForwardingRules == original.portForwardingRules)
+    }
+
+    @Test("Missing portForwardingRules decodes as none")
+    func missingPortForwardingRulesDefaultsEmpty() throws {
+        let config = try VMConfiguration.makeJSONDecoder()
+            .decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+
+        #expect(config.portForwardingRules.isEmpty)
+    }
+
+    @Test("A clone starts with no forwarding rules of its own")
+    func cloneDropsPortForwardingRules() {
+        var config = VMConfiguration(name: "Forwarding VM", guestOS: .linux, bootMode: .efi)
+        config.portForwardingRules = [
+            PortForwardingRule(transport: .tcp, hostPort: 2222, guestPort: 22)
+        ]
+
+        let clone = config.clonedForNewInstance(existingNames: [])
+
+        // Carried over, the clone's rules would claim host ports the source
+        // already holds on the same network.
+        #expect(clone.portForwardingRules.isEmpty)
+        #expect(config.portForwardingRules.count == 1)
+    }
+
     @Test("Unknown JSON keys are silently ignored")
     func unknownKeysIgnored() throws {
         let json = Self.makeBaseJSON(

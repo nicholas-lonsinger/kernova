@@ -11,6 +11,9 @@ import vmnet
 /// Every handle wraps a fabricated pointer, distinct per call so a test can
 /// tell a cached handle from a freshly materialized one.
 final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable {
+    /// One create call's forwarding-rule argument.
+    typealias RecordedForwardingRules = [(rule: PortForwardingRule, internalAddress: String)]
+
     /// The addressing a fresh (unpinned) create reserves.
     var freshAddressing = VmnetNetworkAddressing(
         ipv4Subnet: "192.168.213.0", ipv4Mask: "255.255.255.0",
@@ -33,7 +36,14 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
     private(set) var createdKinds: [VmnetNetworkKind] = []
     private(set) var pinnedAddressings: [VmnetNetworkAddressing?] = []
     private(set) var installedReservations: [[(mac: String, address: String)]] = []
+    /// The forwarding rules each create was handed, in call order.
+    private(set) var installedForwardingRules: [RecordedForwardingRules] = []
     private(set) var releasedNetworks: [OpaquePointer] = []
+
+    /// Runs inside each create, before it returns, with the 1-based number of
+    /// the call — the seam for a test that has to change service state while a
+    /// create is in flight.
+    var duringCreateNetwork: ((Int) -> Void)?
 
     private var fabricatedNetworks: [UnsafeMutableRawPointer] = []
 
@@ -42,11 +52,14 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
     func createNetwork(
         _ kind: VmnetNetworkKind,
         addressing: VmnetNetworkAddressing?,
-        reservations: [(mac: String, address: String)]
+        reservations: [(mac: String, address: String)],
+        forwardingRules: [(rule: PortForwardingRule, internalAddress: String)]
     ) throws -> (handle: VmnetNetworkHandle, addressing: VmnetNetworkAddressing) {
         createdKinds.append(kind)
         pinnedAddressings.append(addressing)
         installedReservations.append(reservations)
+        installedForwardingRules.append(forwardingRules)
+        duringCreateNetwork?(createdKinds.count)
         if let createNetworkError { throw createNetworkError }
         if addressing != nil, let pinnedCreateError { throw pinnedCreateError }
         return (makeHandle(), reservedAddressingOverride ?? addressing ?? freshAddressing)
@@ -129,6 +142,27 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, @unchecked Sendable
 
     func reservedAddress(for mac: String, kind: VmnetNetworkKind) -> String? {
         scriptedAddresses[mac.lowercased()]
+    }
+
+    // MARK: - Port forwarding
+
+    /// The rules last declared per lowercased MAC, in declaration order.
+    private(set) var declaredForwardingRules: [(mac: String, rules: [PortForwardingRule])] = []
+    /// Scripted answer for `portForwardingRulesArePending(for:)`.
+    var scriptedPendingForwardingKinds: Set<VmnetNetworkKind> = []
+    private(set) var pendingQueriedKinds: [VmnetNetworkKind] = []
+
+    func setPortForwardingRules(
+        _ rules: [PortForwardingRule], for mac: String, kind: VmnetNetworkKind
+    ) {
+        declaredForwardingRules.append((mac: mac.lowercased(), rules: rules))
+    }
+
+    func portForwardingRulesArePending(for kind: VmnetNetworkKind) -> Bool {
+        pendingQueriedKinds.append(kind)
+        // Mirrors the service: nothing pends against a network that is not
+        // materialized — its next materialization installs what is declared then.
+        return isMaterialized && scriptedPendingForwardingKinds.contains(kind)
     }
 
     /// Scripted answer for `kind(ofNetwork:)`.

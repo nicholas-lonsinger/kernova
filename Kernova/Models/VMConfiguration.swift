@@ -78,6 +78,13 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     var macAddress: String?
 
+    /// Host→guest port mappings for a Shared Network VM, installed on the
+    /// app-managed network when it is created.
+    ///
+    /// Ignored in every other mode: Bridged guests are reached at their own
+    /// address, Host Only ones only from this Mac.
+    var portForwardingRules: [PortForwardingRule]
+
     // MARK: - Clipboard Sharing
 
     /// When `true`, a SPICE agent console port is configured to enable clipboard
@@ -239,6 +246,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         networkMode: VMNetworkMode = .shared,
         bridgedInterfaceIdentifier: String? = nil,
         macAddress: String? = nil,
+        portForwardingRules: [PortForwardingRule] = [],
         clipboardSharingEnabled: Bool = false,
         clipboardPassthroughEnabled: Bool = false,
         serialSocketRelayEnabled: Bool = false,
@@ -283,6 +291,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.networkMode = networkMode
         self.bridgedInterfaceIdentifier = bridgedInterfaceIdentifier
         self.macAddress = macAddress
+        self.portForwardingRules = portForwardingRules
         self.clipboardSharingEnabled = clipboardSharingEnabled
         self.clipboardPassthroughEnabled = clipboardPassthroughEnabled
         self.serialSocketRelayEnabled = serialSocketRelayEnabled
@@ -338,6 +347,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.bridgedInterfaceIdentifier = try c.decodeIfPresent(
             String.self, forKey: .bridgedInterfaceIdentifier)
         self.macAddress = try c.decodeIfPresent(String.self, forKey: .macAddress)
+        self.portForwardingRules =
+            try c.decodeIfPresent([PortForwardingRule].self, forKey: .portForwardingRules) ?? []
         self.clipboardSharingEnabled = try c.decode(Bool.self, forKey: .clipboardSharingEnabled)
         self.clipboardPassthroughEnabled =
             try c.decodeIfPresent(Bool.self, forKey: .clipboardPassthroughEnabled) ?? false
@@ -438,6 +449,10 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         clone.sharedDirectories = sharedDirectories?.map { dir in
             SharedDirectory(id: UUID(), path: dir.path, readOnly: dir.readOnly, bookmark: dir.bookmark)
         }
+
+        // A host port is claimed once network-wide, so carried-over rules would
+        // collide with the source's the moment both VMs share a network.
+        clone.portForwardingRules = []
 
         // The clone copies the source bundle's post-install artifacts, so
         // preserving either install context would falsely mark it as awaiting
