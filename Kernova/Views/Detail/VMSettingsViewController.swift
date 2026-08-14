@@ -187,6 +187,8 @@ final class VMSettingsViewController: NSViewController {
     private var portForwardingListStack = NSStackView()
     /// Stands in for the card's rows while the mode is None.
     private var networkNoDeviceCaption = NSTextField()
+    /// Holds the banner naming the other VMs sharing this one's MAC address.
+    private var networkWarningContainer = NSStackView()
 
     // Audio
     private var audioInputSwitch = NSSwitch()
@@ -241,6 +243,9 @@ final class VMSettingsViewController: NSViewController {
     private var renderedRemovableRows: [RenderedRow]?
     private var renderedSharedRows: [RenderedRow]?
     private var renderedAudioWarning: MicWarningState?
+    /// The duplicate-MAC banner's rendered message, `nil` when no banner is
+    /// shown, so a pass that changed nothing about it skips the rebuild.
+    private var renderedNetworkMACWarning: String?
     /// The Mode menu's rendered selection, so an `apply()` pass that changed
     /// nothing about networking skips a rebuild — which enumerates the host's
     /// bridgeable interfaces and queries the process signature.
@@ -379,6 +384,10 @@ final class VMSettingsViewController: NSViewController {
                 _ = self.instance.status
                 _ = self.viewModel.activeRename
                 _ = self.viewModel.agentInstallPromptDisabled
+                // Registers every instance's configuration, so the
+                // duplicate-MAC banner follows a change made on the *other*
+                // holder, and library membership changing under it.
+                _ = self.viewModel.vmNamesSharingMACAddress(with: self.instance)
             },
             apply: { [weak self] in self?.apply() }
         )
@@ -504,6 +513,7 @@ extension VMSettingsViewController {
         renderedRemovableRows = nil
         renderedSharedRows = nil
         renderedAudioWarning = nil
+        renderedNetworkMACWarning = nil
         renderedNetworkChoice = nil
         renderedPortForwardingRows = nil
 
@@ -969,6 +979,11 @@ extension VMSettingsViewController {
         rows.append(makeMACAddressRow())
         rows.append(makePortForwardingRow())
         networkNoDeviceCaption = makeGroupedFormCaption("This virtual machine has no network device.")
+        networkWarningContainer = NSStackView()
+        networkWarningContainer.orientation = .vertical
+        networkWarningContainer.alignment = .leading
+        networkWarningContainer.spacing = Spacing.small
+        networkWarningContainer.translatesAutoresizingMaskIntoConstraints = false
 
         // With the entitlement, Shared and Host Only assign each guest a
         // deterministic address the IP Address row shows, and Shared can forward
@@ -1010,6 +1025,7 @@ extension VMSettingsViewController {
         return makeSection([
             header,
             makeGroupedFormCard(rows: rows),
+            networkWarningContainer,
             networkNoDeviceCaption,
         ])
     }
@@ -2021,6 +2037,7 @@ extension VMSettingsViewController {
         // to a caption saying so.
         let hasDevice = instance.configuration.networkEnabled
         refreshMACAddressRow()
+        refreshMACAddressWarning(hasDevice: hasDevice)
         networkNoDeviceCaption.isHidden = hasDevice
         refreshIPAddressRow()
         // Rules ride the app-managed shared network, and reach the guest at the
@@ -2032,6 +2049,34 @@ extension VMSettingsViewController {
             && entitlements.hasVMNetworking && instance.configuration.macAddress != nil
         portForwardingRow?.isHidden = !forwards
         if forwards { refreshPortForwardingRows() }
+    }
+
+    /// Discloses that another VM in the library carries this one's MAC address.
+    ///
+    /// Import, load and reconcile admit a bundle whatever address it arrives
+    /// with, so the pair is visible here rather than refused at the door — the
+    /// address stays editable, and Generate above the banner moves this VM off
+    /// it. Shown wherever the MAC row is: an address is held while networking
+    /// is off, but nothing shows it there to contradict.
+    private func refreshMACAddressWarning(hasDevice: Bool) {
+        let message: String?
+        if hasDevice, instance.configuration.macAddress != nil {
+            let names = viewModel.vmNamesSharingMACAddress(with: instance)
+            message =
+                names.isEmpty
+                ? nil
+                : "This MAC address is also used by \(names.map { "“\($0)”" }.joined(separator: ", ")). "
+                    + "Each virtual machine needs its own."
+        } else {
+            message = nil
+        }
+        guard message != renderedNetworkMACWarning else { return }
+        renderedNetworkMACWarning = message
+        networkWarningContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        guard let message else { return }
+        let banner = makeGroupedFormBanner(
+            symbolName: "exclamationmark.triangle.fill", tint: .systemYellow, message: message)
+        addFullWidth(banner, to: networkWarningContainer)
     }
 
     private func refreshAudio() {

@@ -330,6 +330,7 @@ final class VMLibraryViewModel {
                 wirePersistence(for: instance)
                 return instance
             } + addedDuringRead
+        logDuplicateMACAddressHolders()
 
         if !scan.failedBundleNames.isEmpty {
             reportedFailedBundles.formUnion(scan.failedBundleNames)
@@ -551,6 +552,7 @@ final class VMLibraryViewModel {
         }
 
         if refuseIfDuplicateMachineIDConflict(instance) { return }
+        if refuseIfDuplicateMACAddressConflict(instance) { return }
 
         surfaceDisplay(for: instance)
         applyMatchWindowBootResolution(to: instance)
@@ -620,6 +622,50 @@ final class VMLibraryViewModel {
             return true
         }
         return false
+    }
+
+    /// Refuses an operation that would put a second guest on one MAC address on
+    /// one network, logging the refusal and surfacing the alert.
+    ///
+    /// ``refuseIfDuplicateMACAddress(_:on:)`` keeps the library unique for every
+    /// address the app writes; this covers the pair a bundle arrived carrying,
+    /// which passed through no writer.
+    ///
+    /// - Returns: `true` when the caller must abort.
+    private func refuseIfDuplicateMACAddressConflict(_ instance: VMInstance) -> Bool {
+        guard let conflict = liveMACAddressConflict(for: instance),
+            let mac = instance.configuration.macAddress
+        else { return false }
+        Self.logger.notice(
+            "Refused to run '\(instance.name, privacy: .public)': shares the MAC address \(mac, privacy: .public) with active VM '\(conflict.name, privacy: .public)'"
+        )
+        surfaceError(
+            "“\(instance.name)” has the same MAC address as “\(conflict.name)”, which is active. "
+                + "Two virtual machines with the same MAC address must not run on the same network at once. "
+                + "Stop “\(conflict.name)” first, or give one of them a new address in Network settings.",
+            title: "Duplicate MAC Address")
+        return true
+    }
+
+    /// The first live VM sharing `instance`'s MAC address on the network it
+    /// would join, if any.
+    ///
+    /// Live means VZ holds the attachment, as it does for the machine identity.
+    /// The mode names the network, so two holders collide only where both
+    /// guests attach: networking off puts no address on a wire, and Shared,
+    /// Host Only and Bridged are separate networks. Two bridged VMs compare as
+    /// one network whatever interface each names — Automatic resolves at start,
+    /// so which link they land on is not knowable in advance.
+    private func liveMACAddressConflict(for instance: VMInstance) -> VMInstance? {
+        let config = instance.configuration
+        guard config.networkEnabled, let mac = config.macAddress?.lowercased() else { return nil }
+        return instances.first { other in
+            other !== instance
+                && (other.status.isActive || other.isLivePaused)
+                && other.configuration.networkEnabled
+                && other.configuration.networkMode == config.networkMode
+                && other.configuration.macAddress?.lowercased() == mac
+        }
     }
 
     /// Resizes a cold-booting VM's display to the surface it is about to appear
@@ -846,10 +892,13 @@ final class VMLibraryViewModel {
 
     func resume(_ instance: VMInstance) async {
         // A cold resume builds a fresh VZVirtualMachine from the save file, so it
-        // claims the machine identity just as a cold boot does. A hot resume's
-        // live object already holds it, and refusing would be refusing a VM its
-        // own identity.
-        if instance.isColdPaused, refuseIfDuplicateMachineIDConflict(instance) { return }
+        // claims the machine identity — and puts its MAC address back on a
+        // network — just as a cold boot does. A hot resume's live object already
+        // holds both, and refusing would be refusing a VM its own identity.
+        if instance.isColdPaused {
+            if refuseIfDuplicateMachineIDConflict(instance) { return }
+            if refuseIfDuplicateMACAddressConflict(instance) { return }
+        }
 
         surfaceDisplay(for: instance)
         do {
@@ -1194,6 +1243,7 @@ final class VMLibraryViewModel {
         instances.append(phantom)
         sortInstances()
         persistOrder()
+        logDuplicateMACAddressHolders()
         if selectedInstance?.isPreparing != true {
             selectedID = phantom.id
         }
@@ -1583,6 +1633,36 @@ final class VMLibraryViewModel {
         let wanted = mac.lowercased()
         return instances.first {
             $0 !== instance && $0.configuration.macAddress?.lowercased() == wanted
+        }
+    }
+
+    /// Names of the other VMs in the library carrying `instance`'s MAC address,
+    /// in library order — empty when the address is this VM's alone.
+    ///
+    /// Case-insensitive, matching the reservation slots and forwarding rules the
+    /// address keys. A VM with networking off counts: it still holds the
+    /// address, and turning networking back on would form the collision.
+    func vmNamesSharingMACAddress(with instance: VMInstance) -> [String] {
+        guard let wanted = instance.configuration.macAddress?.lowercased() else { return [] }
+        return instances.compactMap { other in
+            guard other !== instance, other.configuration.macAddress?.lowercased() == wanted else {
+                return nil
+            }
+            return other.name
+        }
+    }
+
+    /// Records every MAC address two or more VMs in the library hold.
+    ///
+    /// Import, load and reconcile admit whatever address a bundle arrives
+    /// carrying, so this is where a pair the app never authored becomes
+    /// traceable. Runs wherever library membership changes.
+    private func logDuplicateMACAddressHolders() {
+        let holders = Dictionary(grouping: instances) { $0.configuration.macAddress?.lowercased() }
+        for (mac, vms) in holders where mac != nil && vms.count > 1 {
+            let names = vms.map { "'\($0.name)'" }.joined(separator: ", ")
+            Self.logger.warning(
+                "MAC address \(mac ?? "", privacy: .public) is held by \(names, privacy: .public)")
         }
     }
 
@@ -2594,6 +2674,7 @@ final class VMLibraryViewModel {
             if didChange {
                 sortInstances()
                 persistOrder()
+                logDuplicateMACAddressHolders()
             }
 
             let newFailures = failedBundles.filter { !reportedFailedBundles.contains($0) }
