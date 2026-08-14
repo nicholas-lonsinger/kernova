@@ -161,6 +161,30 @@ public nonisolated struct Kernova_V1_Frame: Sendable {
     set {payload = .logRecord(newValue)}
   }
 
+  public var dropOffer: Kernova_V1_DropOffer {
+    get {
+      if case .dropOffer(let v)? = payload {return v}
+      return Kernova_V1_DropOffer()
+    }
+    set {payload = .dropOffer(newValue)}
+  }
+
+  public var dropComplete: Kernova_V1_DropComplete {
+    get {
+      if case .dropComplete(let v)? = payload {return v}
+      return Kernova_V1_DropComplete()
+    }
+    set {payload = .dropComplete(newValue)}
+  }
+
+  public var dropRelease: Kernova_V1_DropRelease {
+    get {
+      if case .dropRelease(let v)? = payload {return v}
+      return Kernova_V1_DropRelease()
+    }
+    set {payload = .dropRelease(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Payload: Equatable, Sendable {
@@ -187,6 +211,9 @@ public nonisolated struct Kernova_V1_Frame: Sendable {
     case clipboardStreamAck(Kernova_V1_ClipboardStreamAck)
     case clipboardStreamAbort(Kernova_V1_ClipboardStreamAbort)
     case logRecord(Kernova_V1_LogRecord)
+    case dropOffer(Kernova_V1_DropOffer)
+    case dropComplete(Kernova_V1_DropComplete)
+    case dropRelease(Kernova_V1_DropRelease)
 
   }
 
@@ -705,13 +732,126 @@ public nonisolated struct Kernova_V1_Error: Sendable {
   fileprivate var _inReplyTo: String? = nil
 }
 
+/// Host->guest: the files of one drag-and-drop gesture onto the VM display.
+///
+/// Metadata only, exactly like `ClipboardOffer`: the guest pulls each
+/// representation with a `ClipboardRequest` on the drop channel and receives it
+/// through the same `ClipboardStreamBegin`/`Chunk`/`End` path a paste uses. Every
+/// representation carries a non-empty `filename`, and the guest writes each into
+/// its Downloads folder as a file — `is_inline` is meaningless here and is
+/// ignored, since a drop never reaches a pasteboard.
+public nonisolated struct Kernova_V1_DropOffer: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Per-connection counter, starting at 1. Each drop gesture is an independent
+  /// job under its own generation; a second drop does not supersede the first.
+  public var generation: UInt64 = 0
+
+  /// Metadata for each dropped item, in the order the drop delivered them.
+  public var repInfo: [Kernova_V1_ClipboardRepresentationInfo] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Guest->host: the drop job for `generation` has finished.
+public nonisolated struct Kernova_V1_DropComplete: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var generation: UInt64 = 0
+
+  public var outcome: Kernova_V1_DropComplete.Outcome = .unspecified
+
+  /// Stable machine-readable code for `OUTCOME_FAILED`, from
+  /// `ClipboardErrorCode` (e.g. "clipboard.drop.disk.full"); empty otherwise.
+  /// The host renders its own sentence from this rather than from `message`.
+  public var code: String = String()
+
+  /// Human-readable detail for logs. Never rendered in host UI.
+  public var message: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public nonisolated enum Outcome: SwiftProtobuf.Enum, Swift.CaseIterable {
+    public typealias RawValue = Int
+    case unspecified // = 0
+
+    /// Every representation landed in the guest's Downloads folder.
+    case completed // = 1
+
+    /// Cancelled from either side. Files already landed are kept; the in-flight
+    /// partial is deleted by the stream layer's abort path.
+    case cancelled // = 2
+
+    /// The drop could not be completed — see `code`.
+    case failed // = 3
+    case UNRECOGNIZED(Int)
+
+    public init() {
+      self = .unspecified
+    }
+
+    public init?(rawValue: Int) {
+      switch rawValue {
+      case 0: self = .unspecified
+      case 1: self = .completed
+      case 2: self = .cancelled
+      case 3: self = .failed
+      default: self = .UNRECOGNIZED(rawValue)
+      }
+    }
+
+    public var rawValue: Int {
+      switch self {
+      case .unspecified: return 0
+      case .completed: return 1
+      case .cancelled: return 2
+      case .failed: return 3
+      case .UNRECOGNIZED(let i): return i
+      }
+    }
+
+    // The compiler won't synthesize support with the UNRECOGNIZED case.
+    public static let allCases: [Kernova_V1_DropComplete.Outcome] = [
+      .unspecified,
+      .completed,
+      .cancelled,
+      .failed,
+    ]
+
+  }
+
+  public init() {}
+}
+
+/// Host->guest: the host abandons the drop for `generation` (the user cancelled,
+/// or the session is going away). The guest aborts the in-flight pull, drops the
+/// representations it has not requested yet, keeps whatever already landed in
+/// Downloads, and replies `DropComplete{OUTCOME_CANCELLED}`.
+public nonisolated struct Kernova_V1_DropRelease: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var generation: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "kernova.v1"
 
 nonisolated extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Frame"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{2}\u{9}hello\0\u{1}error\0\u{1}heartbeat\0\u{3}policy_update\0\u{4}\u{7}clipboard_offer\0\u{3}clipboard_request\0\u{4}\u{2}clipboard_release\0\u{3}clipboard_stream_begin\0\u{3}clipboard_chunk\0\u{3}clipboard_stream_end\0\u{3}clipboard_stream_ack\0\u{3}clipboard_stream_abort\0\u{4}\u{2}log_record\0\u{c}\u{16}\u{1}\u{c}\u{1d}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{2}\u{9}hello\0\u{1}error\0\u{1}heartbeat\0\u{3}policy_update\0\u{4}\u{7}clipboard_offer\0\u{3}clipboard_request\0\u{4}\u{2}clipboard_release\0\u{3}clipboard_stream_begin\0\u{3}clipboard_chunk\0\u{3}clipboard_stream_end\0\u{3}clipboard_stream_ack\0\u{3}clipboard_stream_abort\0\u{4}\u{2}log_record\0\u{4}\u{a}drop_offer\0\u{3}drop_complete\0\u{3}drop_release\0\u{c}\u{16}\u{1}\u{c}\u{1d}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -889,6 +1029,45 @@ nonisolated extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._Me
           self.payload = .logRecord(v)
         }
       }()
+      case 40: try {
+        var v: Kernova_V1_DropOffer?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .dropOffer(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .dropOffer(v)
+        }
+      }()
+      case 41: try {
+        var v: Kernova_V1_DropComplete?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .dropComplete(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .dropComplete(v)
+        }
+      }()
+      case 42: try {
+        var v: Kernova_V1_DropRelease?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .dropRelease(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .dropRelease(v)
+        }
+      }()
       default: break
       }
     }
@@ -954,6 +1133,18 @@ nonisolated extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._Me
     case .logRecord?: try {
       guard case .logRecord(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 30)
+    }()
+    case .dropOffer?: try {
+      guard case .dropOffer(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 40)
+    }()
+    case .dropComplete?: try {
+      guard case .dropComplete(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 41)
+    }()
+    case .dropRelease?: try {
+      guard case .dropRelease(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 42)
     }()
     case nil: break
     }
@@ -1600,6 +1791,120 @@ nonisolated extension Kernova_V1_Error: SwiftProtobuf.Message, SwiftProtobuf._Me
     if lhs.code != rhs.code {return false}
     if lhs.message != rhs.message {return false}
     if lhs._inReplyTo != rhs._inReplyTo {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V1_DropOffer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DropOffer"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{3}rep_info\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
+      case 2: try { try decoder.decodeRepeatedMessageField(value: &self.repInfo) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.generation != 0 {
+      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 1)
+    }
+    if !self.repInfo.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.repInfo, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V1_DropOffer, rhs: Kernova_V1_DropOffer) -> Bool {
+    if lhs.generation != rhs.generation {return false}
+    if lhs.repInfo != rhs.repInfo {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V1_DropComplete: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DropComplete"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{1}outcome\0\u{1}code\0\u{1}message\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.outcome) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.code) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.message) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.generation != 0 {
+      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 1)
+    }
+    if self.outcome != .unspecified {
+      try visitor.visitSingularEnumField(value: self.outcome, fieldNumber: 2)
+    }
+    if !self.code.isEmpty {
+      try visitor.visitSingularStringField(value: self.code, fieldNumber: 3)
+    }
+    if !self.message.isEmpty {
+      try visitor.visitSingularStringField(value: self.message, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V1_DropComplete, rhs: Kernova_V1_DropComplete) -> Bool {
+    if lhs.generation != rhs.generation {return false}
+    if lhs.outcome != rhs.outcome {return false}
+    if lhs.code != rhs.code {return false}
+    if lhs.message != rhs.message {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V1_DropComplete.Outcome: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0OUTCOME_UNSPECIFIED\0\u{1}OUTCOME_COMPLETED\0\u{1}OUTCOME_CANCELLED\0\u{1}OUTCOME_FAILED\0")
+}
+
+nonisolated extension Kernova_V1_DropRelease: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DropRelease"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.generation != 0 {
+      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V1_DropRelease, rhs: Kernova_V1_DropRelease) -> Bool {
+    if lhs.generation != rhs.generation {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

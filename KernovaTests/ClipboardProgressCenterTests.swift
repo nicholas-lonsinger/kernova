@@ -15,6 +15,13 @@ struct ClipboardProgressCenterTests {
     /// Stands in for a clipboard service: the center keys purely on identity.
     private final class Source {}
 
+    /// A source whose shown operation can be stopped, counting the requests it
+    /// receives.
+    private final class CancellableSource: TransferCancelling {
+        private(set) var cancels = 0
+        func requestCancelOfShownOperation() { cancels += 1 }
+    }
+
     private func makeSnapshot(
         peerName: String, bytesTransferred: UInt64, totalBytes: UInt64
     ) -> ClipboardProgressSnapshot {
@@ -101,5 +108,78 @@ struct ClipboardProgressCenterTests {
 
         // No underflow trap, and the clamped remainder (0) loses to the real one.
         #expect(center.materializationProgress?.peerName == "Ordinary")
+    }
+
+    // MARK: - Cancel routing
+
+    @Test("Cancel reaches the source publishing the shown readout, not another")
+    func cancelRoutesToThePublishedSource() {
+        let center = ClipboardProgressCenter()
+        let shown = CancellableSource()
+        let hidden = CancellableSource()
+
+        center.progressChanged(
+            from: hidden, makeSnapshot(peerName: "Hidden", bytesTransferred: 0, totalBytes: 100))
+        center.progressChanged(
+            from: shown, makeSnapshot(peerName: "Shown", bytesTransferred: 0, totalBytes: 10_000))
+        #expect(center.materializationProgress?.peerName == "Shown")
+
+        center.cancelCurrent()
+
+        // The other VM's transfer is running under a readout nobody is looking
+        // at; stopping it would cancel something the user cannot see.
+        #expect(shown.cancels == 1)
+        #expect(hidden.cancels == 0)
+    }
+
+    @Test("Cancel follows the readout when the winner changes")
+    func cancelFollowsTheWinner() {
+        let center = ClipboardProgressCenter()
+        let first = CancellableSource()
+        let second = CancellableSource()
+
+        center.progressChanged(
+            from: first, makeSnapshot(peerName: "First", bytesTransferred: 0, totalBytes: 10_000))
+        center.progressChanged(
+            from: second, makeSnapshot(peerName: "Second", bytesTransferred: 0, totalBytes: 100))
+        center.cancelCurrent()
+        #expect(first.cancels == 1)
+
+        // The first VM finishes; the second one's remainder takes the readout.
+        center.progressChanged(
+            from: first,
+            makeSnapshot(peerName: "First", bytesTransferred: 10_000, totalBytes: 10_000))
+        center.cancelCurrent()
+        #expect(second.cancels == 1)
+        #expect(first.cancels == 1)
+    }
+
+    @Test("Cancel with nothing published, or from a source that can't cancel, does nothing")
+    func cancelIsANoOpWithoutACancellableSource() {
+        let center = ClipboardProgressCenter()
+        center.cancelCurrent()
+
+        let plain = Source()
+        center.progressChanged(
+            from: plain, makeSnapshot(peerName: "Plain", bytesTransferred: 0, totalBytes: 100))
+        // A source that never adopted `TransferCancelling` publishes readouts
+        // that report themselves non-cancellable, so no surface offers the
+        // button — and routing to it is a no-op rather than a crash.
+        center.cancelCurrent()
+        #expect(center.materializationProgress?.peerName == "Plain")
+    }
+
+    @Test("A source that stopped publishing is no longer the cancel target")
+    func cancelDropsWithTheSource() {
+        let center = ClipboardProgressCenter()
+        let stopping = CancellableSource()
+
+        center.progressChanged(
+            from: stopping,
+            makeSnapshot(peerName: "Stopping", bytesTransferred: 0, totalBytes: 10_000))
+        center.progressChanged(from: stopping, nil)
+        center.cancelCurrent()
+
+        #expect(stopping.cancels == 0)
     }
 }

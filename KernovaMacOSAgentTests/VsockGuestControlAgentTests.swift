@@ -73,7 +73,8 @@ struct VsockGuestControlAgentTests {
         unresponsiveAfter: TimeInterval? = nil,
         terminateAfter: TimeInterval? = nil,
         onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
-        onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil
+        onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil,
+        onHostCapabilitiesChanged: (@Sendable () -> Void)? = nil
     ) -> VsockGuestControlAgent {
         let provided = AtomicInt()
         let provider: VsockSocketProvider = { _, _ in
@@ -92,7 +93,8 @@ struct VsockGuestControlAgentTests {
             unresponsiveAfter: unresponsiveAfter ?? Self.watchdogDisabledUnresponsive,
             terminateAfter: terminateAfter ?? Self.watchdogDisabledTerminate,
             onPolicy: onPolicy,
-            onStateChange: onStateChange
+            onStateChange: onStateChange,
+            onHostCapabilitiesChanged: onHostCapabilitiesChanged
         )
     }
 
@@ -517,6 +519,50 @@ struct VsockGuestControlAgentTests {
         // Log forwarding passes through; clipboard is forced off by the gate.
         #expect(policy.logForwardingEnabled == true)
         #expect(policy.clipboardSharingEnabled == false)
+    }
+
+    // MARK: - Display drops
+
+    @Test("the host's drop capability is recorded from its Hello")
+    func hostDropCapabilityObservedFromHello() async throws {
+        let (agentFd, hostFd) = try makeRawSocketPair()
+        let host = VsockChannel(fileDescriptor: hostFd)
+        host.start()
+        defer { host.close() }
+
+        let notified = AtomicInt()
+        let agent = makeAgent(agentFd: agentFd, onHostCapabilitiesChanged: { notified.increment() })
+        agent.start()
+        defer { agent.stop() }
+
+        _ = try await nextFrame(from: host)  // drain outbound Hello
+        // The connection itself clears the previous host's capabilities, which
+        // is a change the drop client has to hear about too.
+        try await notified.changed.wait { notified.value >= 1 }
+        #expect(agent.hostSupportsDropFiles == false)
+
+        try host.send(makeHostHelloFrame())
+        try await notified.changed.wait { notified.value >= 2 }
+        #expect(agent.hostSupportsDropFiles)
+    }
+
+    @Test("a host that advertises no drop capability leaves it off")
+    func hostWithoutDropCapability() async throws {
+        let (agentFd, hostFd) = try makeRawSocketPair()
+        let host = VsockChannel(fileDescriptor: hostFd)
+        host.start()
+        defer { host.close() }
+
+        let notified = AtomicInt()
+        let agent = makeAgent(agentFd: agentFd, onHostCapabilitiesChanged: { notified.increment() })
+        agent.start()
+        defer { agent.stop() }
+
+        _ = try await nextFrame(from: host)  // drain outbound Hello
+        try host.send(makeHostHelloFrame(streamingCapable: false))
+        try await notified.changed.wait { notified.value >= 2 }
+
+        #expect(agent.hostSupportsDropFiles == false)
     }
 
     @Test("stop() halts the connection without throwing")

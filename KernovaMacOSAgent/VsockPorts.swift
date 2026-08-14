@@ -12,4 +12,7 @@ enum KernovaVsockPort {
 
     /// Guest agent log forwarding.
     static let log: UInt32 = 49153
+
+    /// Files dragged onto the VM display, streamed host→guest into Downloads.
+    static let drop: UInt32 = 49155
 }

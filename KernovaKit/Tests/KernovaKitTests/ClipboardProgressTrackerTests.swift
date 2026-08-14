@@ -698,4 +698,114 @@ struct ClipboardProgressTrackerTests {
 
         #expect(harness.emissions.isEmpty)
     }
+
+    // MARK: - Cancel
+
+    /// Counts cancel invocations for a session, so a test can tell "the right
+    /// one fired" from "both did".
+    private final class CancelCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = 0
+        var count: Int { lock.withLock { value } }
+        var handler: @Sendable () -> Void {
+            { self.lock.withLock { self.value += 1 } }
+        }
+    }
+
+    /// Reveals `session` by driving one unit past the reveal delay.
+    private func reveal(
+        _ harness: Harness, _ session: ClipboardProgressTracker.SessionToken, bytes: UInt64,
+        at time: TimeInterval
+    ) {
+        harness.tracker.unitBegan(session: session, id: 0, expectedBytes: bytes, name: "f.bin")
+        harness.now = time
+        harness.tracker.unitProgressed(session: session, id: 0, bytesTransferred: 1)
+    }
+
+    @Test("a cancellable session says so on its snapshot, and a plain one does not")
+    func snapshotReportsCancellability() throws {
+        let harness = Harness(revealDelay: 1)
+        let cancellable = harness.tracker.openSession(
+            direction: .outbound, peerName: "VM", onCancelRequested: {})
+        reveal(harness, cancellable, bytes: 1_000, at: 2)
+        #expect(try #require(harness.latest).isCancellable)
+
+        let plain = Harness(revealDelay: 1)
+        let session = plain.tracker.openSession(direction: .outbound, peerName: "VM")
+        reveal(plain, session, bytes: 1_000, at: 2)
+        #expect(try #require(plain.latest).isCancellable == false)
+    }
+
+    @Test("a cancel reaches the session backing the readout, and no other")
+    func cancelsOnlyThePublishedSession() {
+        let harness = Harness(revealDelay: 1)
+        let shownCancel = CancelCounter()
+        let hiddenCancel = CancelCounter()
+
+        // The bigger remaining payload wins the readout, so the smaller session
+        // is live but not shown — and must not be what a Cancel stops.
+        let hidden = harness.tracker.openSession(
+            direction: .outbound, peerName: "VM", onCancelRequested: hiddenCancel.handler)
+        harness.tracker.unitBegan(session: hidden, id: 0, expectedBytes: 1_000, name: "small.bin")
+        let shown = harness.tracker.openSession(
+            direction: .outbound, peerName: "VM", onCancelRequested: shownCancel.handler)
+        harness.tracker.unitBegan(session: shown, id: 0, expectedBytes: 500_000, name: "big.bin")
+        harness.now = 2
+        harness.tracker.unitProgressed(session: shown, id: 0, bytesTransferred: 1_000)
+        #expect(harness.latest?.currentItemName == "big.bin")
+
+        harness.tracker.requestCancelOfPublishedSession()
+
+        #expect(shownCancel.count == 1)
+        #expect(hiddenCancel.count == 0)
+    }
+
+    @Test("a repeated cancel fires the handler again — idempotency is the handler's job")
+    func repeatedCancelIsForwarded() {
+        let harness = Harness(revealDelay: 1)
+        let counter = CancelCounter()
+        let session = harness.tracker.openSession(
+            direction: .outbound, peerName: "VM", onCancelRequested: counter.handler)
+        reveal(harness, session, bytes: 1_000, at: 2)
+
+        harness.tracker.requestCancelOfPublishedSession()
+        harness.tracker.requestCancelOfPublishedSession()
+
+        // The tracker deliberately does not latch: it cannot know whether a
+        // second click means "stop the next file too".
+        #expect(counter.count == 2)
+    }
+
+    @Test("a cancel with nothing on screen, or after the session ended, does nothing")
+    func cancelIsANoOpWithoutAPublishedSession() {
+        let harness = Harness(revealDelay: 1, idleLinger: 2)
+        let counter = CancelCounter()
+
+        // Nothing revealed yet.
+        harness.tracker.requestCancelOfPublishedSession()
+        #expect(counter.count == 0)
+
+        let session = harness.tracker.openSession(
+            direction: .outbound, peerName: "VM", onCancelRequested: counter.handler)
+        reveal(harness, session, bytes: 1_000, at: 2)
+        harness.tracker.unitEnded(session: session, id: 0, succeeded: true)
+        harness.fireScheduledWork()
+
+        harness.tracker.requestCancelOfPublishedSession()
+        #expect(counter.count == 0)
+    }
+
+    @Test("clearing every session leaves nothing for a cancel to reach")
+    func clearAllDropsThePublishedSession() {
+        let harness = Harness(revealDelay: 1)
+        let counter = CancelCounter()
+        let session = harness.tracker.openSession(
+            direction: .outbound, peerName: "VM", onCancelRequested: counter.handler)
+        reveal(harness, session, bytes: 1_000, at: 2)
+
+        harness.tracker.clearAll()
+        harness.tracker.requestCancelOfPublishedSession()
+
+        #expect(counter.count == 0)
+    }
 }

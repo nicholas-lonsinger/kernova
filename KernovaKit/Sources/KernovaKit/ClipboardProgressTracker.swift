@@ -85,6 +85,9 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
         let peerName: String
         let isPaste: Bool
         let startedAt: TimeInterval
+        /// Stops what this session is measuring, when the operation can be
+        /// cancelled. `nil` for one that cannot.
+        let onCancelRequested: (@Sendable () -> Void)?
         /// Whether the reveal gate has been passed — once true, the readout is on
         /// screen and every terminal must clear it.
         var revealed = false
@@ -118,7 +121,8 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
 
         init(
             token: SessionToken, direction: ClipboardProgressSnapshot.Direction, peerName: String,
-            isPaste: Bool, startedAt: TimeInterval, units: [Unit: UnitState]
+            isPaste: Bool, startedAt: TimeInterval, units: [Unit: UnitState],
+            onCancelRequested: (@Sendable () -> Void)?
         ) {
             self.token = token
             self.direction = direction
@@ -126,6 +130,7 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
             self.isPaste = isPaste
             self.startedAt = startedAt
             self.units = units
+            self.onCancelRequested = onCancelRequested
             for state in units.values {
                 totalBytes &+= state.expected
                 transferredBytes &+= state.observed
@@ -206,6 +211,9 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
     /// Whether the last emission put something on screen, so a clear is only sent
     /// when there is something to clear.
     private var showing = false
+    /// The session backing the snapshot last emitted, so a Cancel on the readout
+    /// reaches the operation the user is actually looking at.
+    private var publishedSession: SessionToken?
 
     private let revealDelay: TimeInterval
     private let idleLinger: TimeInterval
@@ -256,9 +264,15 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
     /// nothing else explains the wait. A paste *this* side performs never sets
     /// it: that paste parks this process's main thread, so no readout of it can
     /// repaint before it is over.
+    ///
+    /// `onCancelRequested` stops what the session measures — the transfers, not
+    /// the offer behind them — and is what puts a Cancel button on the readout.
+    /// It is invoked outside the tracker's lock, may fire more than once, and may
+    /// fire after the session has ended, so it must be idempotent. Leave it `nil`
+    /// for an operation with nothing to cancel.
     public func openSession(
         direction: ClipboardProgressSnapshot.Direction, peerName: String, isPaste: Bool = false,
-        units: [PlannedUnit] = []
+        units: [PlannedUnit] = [], onCancelRequested: (@Sendable () -> Void)? = nil
     ) -> SessionToken {
         let opened: (token: SessionToken, unitCount: Int, plannedBytes: UInt64) = lock.withLock {
             let token = SessionToken(value: nextToken)
@@ -269,7 +283,7 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
             }
             let session = Session(
                 token: token, direction: direction, peerName: peerName, isPaste: isPaste,
-                startedAt: now(), units: table)
+                startedAt: now(), units: table, onCancelRequested: onCancelRequested)
             sessions[token] = session
             return (token, session.units.count, session.totalBytes)
         }
@@ -277,6 +291,25 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
             "Progress session \(opened.token.value, privacy: .public) opened — \(direction, privacy: .public) '\(peerName, privacy: .public)' isPaste=\(isPaste, privacy: .public), \(opened.unitCount, privacy: .public) unit(s), \(opened.plannedBytes, privacy: .public) bytes"
         )
         return opened.token
+    }
+
+    /// Cancels the operation behind the snapshot last emitted.
+    ///
+    /// The readout is the only handle the user has on a transfer, so a Cancel on
+    /// it must reach *that* operation and no other — a second VM's transfer
+    /// running at the same time is a different session and is left alone. A no-op
+    /// when nothing is published, when the published session has since ended, or
+    /// when its operation is not cancellable.
+    public func requestCancelOfPublishedSession() {
+        // Resolved under the lock, invoked outside it: a cancel closure aborts
+        // transfers whose terminals re-enter this tracker.
+        let cancel: (@Sendable () -> Void)? = lock.withLock {
+            guard let token = publishedSession else { return nil }
+            return sessions[token]?.onCancelRequested
+        }
+        guard let cancel else { return }
+        Self.logger.notice("Cancel requested for the published progress session")
+        cancel()
     }
 
     /// Whether `token` still addresses a live session.
@@ -409,6 +442,7 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
             let logs = sessions.values.map { endedLocked($0) }
             sessions.removeAll()
             showing = false
+            publishedSession = nil
             return Outcome(wasShowing ? .emit(nil, session: nil) : .none, logs: logs)
         }
         deliver(outcome)
@@ -570,6 +604,7 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
         let projection = projectionLocked()
         guard projection != nil || showing else { return .none }
         showing = projection != nil
+        publishedSession = projection?.token
         return .emit(projection?.snapshot, session: projection?.token)
     }
 
@@ -607,7 +642,8 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
             bytesPerSecond: session.rate.bytesPerSecond,
             secondsRemaining: session.rate.secondsRemaining(bytes: transferred, total: total),
             isPasteSession: session.isPaste,
-            elapsedSeconds: max(0, now() - session.startedAt))
+            elapsedSeconds: max(0, now() - session.startedAt),
+            isCancellable: session.onCancelRequested != nil)
         return (session.token, snapshot)
     }
 }

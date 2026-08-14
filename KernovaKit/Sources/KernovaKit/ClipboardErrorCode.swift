@@ -44,4 +44,15 @@ public enum ClipboardErrorCode: String, CaseIterable, Sendable {
     /// A copied folder was not offered because the peer's agent cannot receive a
     /// folder streamed with no declared size.
     case folderPeerOutdated = "clipboard.folder.peer.outdated"
+
+    /// The guest has no room to write a dropped file into its Downloads folder.
+    case dropDiskFull = "clipboard.drop.disk.full"
+
+    /// The guest could not write into its Downloads folder — the guest user has
+    /// not granted the agent access to it.
+    case dropDownloadsDenied = "clipboard.drop.downloads.denied"
+
+    /// A dropped file did not reach the guest's Downloads folder, for a reason
+    /// with no more specific code.
+    case dropFailed = "clipboard.drop.failed"
 }

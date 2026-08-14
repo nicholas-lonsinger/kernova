@@ -154,6 +154,65 @@ extension ClipboardTransferIssue {
             date: Date())
     }
 
+    /// Raised when none of the items dropped on the VM display could be read, so
+    /// nothing was offered to the guest.
+    static func dropItemsUnreadable() -> ClipboardTransferIssue {
+        ClipboardTransferIssue(
+            kind: .localFailure(
+                code: ClipboardErrorCode.dropFailed.rawValue,
+                message: "Those items couldn't be read, so nothing was sent to the VM."),
+            date: Date())
+    }
+
+    /// Raised when the drop offer itself could not be sent to the guest.
+    static func dropSendFailed() -> ClipboardTransferIssue {
+        ClipboardTransferIssue(
+            kind: .localFailure(
+                code: ClipboardErrorCode.dropFailed.rawValue,
+                message: "The connection to the VM dropped, so the files weren't sent."),
+            date: Date())
+    }
+
+    /// Raised when the VM's drop connection ended while files were still on their
+    /// way, so the drop never finished.
+    static func dropInterrupted(fileCount: Int) -> ClipboardTransferIssue {
+        let subject = fileCount == 1 ? "The file" : "The files"
+        return ClipboardTransferIssue(
+            kind: .localFailure(
+                code: ClipboardErrorCode.dropFailed.rawValue,
+                message: "\(subject) stopped transferring when the VM disconnected."),
+            date: Date())
+    }
+
+    /// Raised when the guest reports it could not put the dropped files in its
+    /// Downloads folder.
+    ///
+    /// Composed from the guest's machine-readable `code`, never from its message
+    /// text: the sentence a user reads is written on this side. The code is
+    /// carried into the issue too, so every surface renders the same specific
+    /// outcome rather than the dropdown falling back to the generic line.
+    ///
+    /// The wording says the drop did not finish rather than that nothing was
+    /// saved: a batch that fails partway leaves the files it already moved in
+    /// Downloads, and a message claiming otherwise would send the user looking
+    /// for something that is there.
+    static func dropFailed(code: ClipboardErrorCode?) -> ClipboardTransferIssue {
+        let resolved = code ?? .dropFailed
+        let message: String
+        switch resolved {
+        case .dropDiskFull:
+            message = "The VM ran out of disk space, so the drop didn't finish."
+        case .dropDownloadsDenied:
+            message =
+                "The guest agent isn't allowed to use the VM's Downloads folder, so the drop didn't finish."
+        default:
+            message =
+                "The drop didn't finish — some files may not be in the VM's Downloads folder."
+        }
+        return ClipboardTransferIssue(
+            kind: .localFailure(code: resolved.rawValue, message: message), date: Date())
+    }
+
     /// Raised when a copied file's bytes arrived but could not be written to a
     /// file on this Mac for the paste to serve.
     static func pasteFileStagingFailed() -> ClipboardTransferIssue {
@@ -196,7 +255,7 @@ extension ClipboardTransferIssue {
             case .pasteTimeout:
                 return "The clipboard transfer to the guest timed out"
             case .pasteFailed, .copyTooLarge, .pasteIncompleteSet, .forwardItemsSkipped,
-                .folderPeerOutdated, .none:
+                .folderPeerOutdated, .dropDiskFull, .dropDownloadsDenied, .dropFailed, .none:
                 return "Clipboard transfer failed on the guest side"
             }
         case .localFailure(_, let message):
@@ -224,6 +283,8 @@ extension ClipboardTransferIssue {
                 return "Clipboard not copied to \(Self.quoted(vmName))."
             case .pasteIncompleteSet, .pasteTimeout, .pasteFailed:
                 return "Clipboard not pasted from \(Self.quoted(vmName))."
+            case .dropFailed, .dropDiskFull, .dropDownloadsDenied:
+                return "Files not copied to \(Self.quoted(vmName))."
             case .pasteDiskFull, .pasteTooLarge, .none:
                 return "Clipboard issue with \(Self.quoted(vmName))."
             }
@@ -274,6 +335,9 @@ extension ClipboardTransferIssue {
             case .pasteIncompleteSet, .pasteFailed: return "Clipboard: paste from the guest failed"
             case .folderPeerOutdated: return "Clipboard: folder copy needs a guest agent update"
             case .forwardItemsSkipped: return "Clipboard: some items weren't forwarded"
+            case .dropDiskFull: return "Drop: the VM ran out of disk space"
+            case .dropDownloadsDenied: return "Drop: the VM's Downloads folder is off limits"
+            case .dropFailed: return "Drop: the files didn't reach the VM"
             case .pasteDiskFull, .pasteTooLarge, .none: return "Clipboard: transfer didn't complete"
             }
         }

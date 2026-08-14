@@ -4708,6 +4708,69 @@ struct VsockClipboardServiceTests {
         responder.releaseEnd()
         await previewTask.value
     }
+
+    // MARK: - Cancelling a shown transfer
+
+    @Test("cancelling an outbound paste refuses the rest of the guest's pulls")
+    func cancelStopsTheWholeOutboundOperation() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let center = ClipboardProgressCenter()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
+            progressRevealDelay: 0, progressIdleLinger: 0, progressCenter: center)
+        service.start()
+        defer { service.stop() }
+
+        // Two representations, so there is a "next file" for the cancel to have
+        // to stop as well as the one in flight.
+        let first = String(repeating: "A", count: 200 * 1024)
+        service.clipboardContent = ClipboardContent(
+            representations: [
+                ClipboardContent.Representation(
+                    uti: ClipboardContent.utf8TextUTI, data: Data(first.utf8)),
+                ClipboardContent.Representation(uti: "public.html", data: Data("<p>b</p>".utf8)),
+            ])
+        service.grabIfChanged()
+
+        let offerFrame = try await nextFrame(from: guest)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            Issue.record("Expected an offer, got \(String(describing: offerFrame.payload))")
+            return
+        }
+        let firstInfo = try #require(offer.repInfo.first)
+        let firstID = transferID(generation: offer.generation, repIndex: 0)
+        try guest.send(makeRequest(generation: offer.generation, repIndex: 0, uti: firstInfo.uti))
+        _ = try await nextFrame(from: guest)  // Begin
+        // A one-chunk window parks the sender mid-transfer, with the readout up.
+        try sendAck(from: guest, transferID: firstID, bytesConsumed: 0, windowBytes: 64 * 1024)
+        try await waitForChange { service.transferProgress != nil }
+        #expect(service.transferProgress?.isCancellable == true)
+
+        center.cancelCurrent()
+
+        // The guest's paste walks to the next representation regardless — the
+        // peer decides what it pulls — so the cancel has to refuse that too, or
+        // the operation the user stopped simply resumes a beat later.
+        let secondInfo = offer.repInfo[1]
+        try guest.send(makeRequest(generation: offer.generation, repIndex: 1, uti: secondInfo.uti))
+        let secondID = transferID(generation: offer.generation, repIndex: 1)
+        while true {
+            let frame = try await nextFrame(from: guest)
+            if case .clipboardStreamAbort(let abort) = frame.payload, abort.transferID == secondID {
+                // Refused as stale, which the guest already retires quietly.
+                #expect(abort.code == "request.stale")
+                break
+            }
+            if case .clipboardStreamBegin(let begin) = frame.payload, begin.transferID == secondID {
+                Issue.record("The cancelled operation streamed its next representation")
+                break
+            }
+        }
+    }
 }
 
 extension [CopyToMacItem] {

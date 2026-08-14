@@ -21,14 +21,18 @@ struct VMInstanceVsockAdmissionTests {
     }
 
     private func makeGuestHello(streamingCapable: Bool) -> Frame {
+        makeGuestHello(
+            capabilities: streamingCapable
+                ? KernovaCapability.controlChannelDefaults
+                : [KernovaCapability.controlV1, KernovaCapability.controlHeartbeatV1])
+    }
+
+    private func makeGuestHello(capabilities: [String]) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.hello = Kernova_V1_Hello.with {
             $0.serviceVersion = 1
-            $0.capabilities =
-                streamingCapable
-                ? KernovaCapability.controlChannelDefaults
-                : [KernovaCapability.controlV1, KernovaCapability.controlHeartbeatV1]
+            $0.capabilities = capabilities
             $0.agentInfo = Kernova_V1_AgentInfo.with {
                 $0.os = "macOS"
                 $0.osVersion = "26.0"
@@ -41,7 +45,7 @@ struct VMInstanceVsockAdmissionTests {
     /// The verdict as the listener acts on it, for the assertions that only care
     /// whether the channel gets in.
     private func admits(_ instance: VMInstance, clipboard: Bool) -> Bool {
-        instance.featureChannelAdmission(requiringClipboardStreaming: clipboard) == .admit
+        instance.featureChannelAdmission(clipboard ? .clipboardStreaming : .none) == .admit
     }
 
     /// Whether the refusal is the routine "handshake hasn't landed" one, which
@@ -65,7 +69,8 @@ struct VMInstanceVsockAdmissionTests {
     func refusedWithoutControlService(clipboard: Bool) {
         let instance = makeInstance()
         #expect(
-            isNotReady(instance.featureChannelAdmission(requiringClipboardStreaming: clipboard)))
+            isNotReady(
+                instance.featureChannelAdmission(clipboard ? .clipboardStreaming : .none)))
     }
 
     @Test("Admission follows the control Hello handshake and its capabilities")
@@ -85,14 +90,14 @@ struct VMInstanceVsockAdmissionTests {
 
         // Channel accepted but no guest Hello yet — still refused, and as the
         // routine "too early" verdict rather than a peer that overstepped.
-        #expect(isNotReady(instance.featureChannelAdmission(requiringClipboardStreaming: false)))
+        #expect(isNotReady(instance.featureChannelAdmission(.none)))
 
         // A Hello without the streaming capability admits the log channel; the
         // clipboard channel is refused against a *completed* handshake, so that
         // refusal names the peer.
         try guest.send(makeGuestHello(streamingCapable: false))
         try await waitForChange { admits(instance, clipboard: false) }
-        #expect(isDenied(instance.featureChannelAdmission(requiringClipboardStreaming: true)))
+        #expect(isDenied(instance.featureChannelAdmission(.clipboardStreaming)))
 
         // A Hello advertising streaming flips clipboard admission too.
         try guest.send(makeGuestHello(streamingCapable: true))
@@ -166,5 +171,59 @@ struct VMInstanceVsockAdmissionTests {
         try secondGuest.send(makeGuestHello(streamingCapable: true))
         try await waitForChange { admits(instance, clipboard: true) }
         #expect(instance.vsockControlService !== first)
+    }
+
+    // MARK: - Drop channel
+
+    @Test("The drop channel is refused before the handshake, and without drop.files.v1")
+    func dropAdmissionFollowsItsOwnCapability() async throws {
+        let instance = makeInstance()
+        let (guestFd, hostFd) = try makeRawSocketPair()
+        let guest = VsockChannel(fileDescriptor: guestFd)
+        let host = VsockChannel(fileDescriptor: hostFd)
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        #expect(isNotReady(instance.featureChannelAdmission(.dropFiles)))
+
+        let control = VsockControlService(channel: host, label: "admission-test")
+        instance.vsockControlService = control
+        control.start()
+        defer { control.stop() }
+
+        // An agent that streams the clipboard but predates display drops gets
+        // the log and clipboard channels and not this one.
+        try guest.send(
+            makeGuestHello(capabilities: [
+                KernovaCapability.controlV1, KernovaCapability.controlHeartbeatV1,
+                KernovaCapability.clipboardStreamV1,
+            ]))
+        try await waitForChange { admits(instance, clipboard: true) }
+        #expect(isDenied(instance.featureChannelAdmission(.dropFiles)))
+
+        try guest.send(makeGuestHello(capabilities: KernovaCapability.controlChannelDefaults))
+        try await waitForChange { instance.featureChannelAdmission(.dropFiles) == .admit }
+    }
+
+    @Test("Stopping the control service withdraws drop admission too")
+    func stopWithdrawsDropAdmission() async throws {
+        let instance = makeInstance()
+        let (guestFd, hostFd) = try makeRawSocketPair()
+        let guest = VsockChannel(fileDescriptor: guestFd)
+        let host = VsockChannel(fileDescriptor: hostFd)
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let control = VsockControlService(channel: host, label: "admission-test")
+        instance.vsockControlService = control
+        control.start()
+
+        try guest.send(makeGuestHello(streamingCapable: true))
+        try await waitForChange { instance.featureChannelAdmission(.dropFiles) == .admit }
+
+        control.stop()
+        #expect(instance.featureChannelAdmission(.dropFiles) != .admit)
     }
 }

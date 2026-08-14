@@ -5,8 +5,9 @@ import AppKit
 ///
 /// Every label must stay single-line and truncate rather than wrap: a menu item
 /// that changed height while its menu was open would re-lay-out the dropdown
-/// under the user's cursor. Non-actionable — the menu item carrying it is
-/// disabled.
+/// under the user's cursor. The Cancel button is the view's only control; the
+/// menu item carrying it is disabled, and a custom view's own subviews track
+/// mouse events regardless of that.
 @MainActor
 public final class ClipboardProgressMenuItemView: NSView {
     /// Content width — fits a headline naming a VM plus the byte-progress line
@@ -20,6 +21,7 @@ public final class ClipboardProgressMenuItemView: NSView {
     private static let rowSpacing: CGFloat = 4
 
     private let headline = NSTextField(labelWithString: "")
+    private let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
     private let bar = NSProgressIndicator()
     /// The fraction the bar should show, committed to it only while the view is
     /// on screen — see `viewDidMoveToWindow`.
@@ -27,6 +29,15 @@ public final class ClipboardProgressMenuItemView: NSView {
     private let byteProgress = NSTextField(labelWithString: "")
     private let itemCounter = NSTextField(labelWithString: "")
     private let timeRemaining = NSTextField(labelWithString: "")
+
+    /// Stops the transfer the readout is showing.
+    ///
+    /// `nil` hides the Cancel button, for a readout of something that cannot be
+    /// stopped. Set it before the view is shown; it is read at click time, so a
+    /// later change takes effect without a rebuild.
+    public var onCancel: (() -> Void)? {
+        didSet { cancelButton.isHidden = onCancel == nil }
+    }
 
     /// Creates the readout, sized to its content.
     public init() {
@@ -38,6 +49,11 @@ public final class ClipboardProgressMenuItemView: NSView {
         frame.size = NSSize(
             width: Self.contentWidth,
             height: stack.fittingSize.height + Self.verticalInset * 2)
+        // Measured with the button in place, then hidden: `NSStackView` drops a
+        // hidden view from layout, so measuring without it would size the item
+        // too short for the first readout that *can* be cancelled — and an
+        // `NSMenu` takes a custom item's height from the frame, once.
+        cancelButton.isHidden = true
     }
 
     @available(*, unavailable)
@@ -51,6 +67,15 @@ public final class ClipboardProgressMenuItemView: NSView {
         headline.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
         headline.textColor = .labelColor
         headline.lineBreakMode = .byTruncatingTail
+        headline.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        cancelButton.bezelStyle = .rounded
+        cancelButton.controlSize = .small
+        cancelButton.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        cancelButton.target = self
+        cancelButton.action = #selector(cancelTapped)
+        cancelButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        cancelButton.setContentHuggingPriority(.required, for: .horizontal)
 
         bar.style = .bar
         bar.isIndeterminate = false
@@ -78,7 +103,13 @@ public final class ClipboardProgressMenuItemView: NSView {
         byteRow.distribution = .fill
         byteRow.spacing = 8
 
-        let stack = NSStackView(views: [headline, bar, byteRow, timeRemaining])
+        let headlineRow = NSStackView(views: [headline, cancelButton])
+        headlineRow.orientation = .horizontal
+        headlineRow.alignment = .centerY
+        headlineRow.distribution = .fill
+        headlineRow.spacing = 8
+
+        let stack = NSStackView(views: [headlineRow, bar, byteRow, timeRemaining])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Self.rowSpacing
@@ -90,6 +121,7 @@ public final class ClipboardProgressMenuItemView: NSView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.verticalInset),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.leadingInset),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.trailingInset),
+            headlineRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             byteRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             bar.widthAnchor.constraint(equalTo: stack.widthAnchor),
             // Pin the content width so the rows lay out (and the height measures)
@@ -139,4 +171,18 @@ public final class ClipboardProgressMenuItemView: NSView {
             ClipboardProgressFormat.timeRemaining(seconds: snapshot.secondsRemaining) ?? ""
         setAccessibilityLabel(ClipboardProgressFormat.summary(snapshot))
     }
+
+    /// Runs the cancel handler for whatever the readout is currently showing.
+    ///
+    /// Read at click time rather than captured, so a handler replaced between two
+    /// operations cancels the live one.
+    @objc private func cancelTapped() {
+        onCancel?()
+    }
+
+    #if DEBUG
+    /// Test seam: the Cancel button, so a test can assert its visibility and
+    /// drive its action without a live menu.
+    public var cancelButtonForTesting: NSButton { cancelButton }
+    #endif
 }

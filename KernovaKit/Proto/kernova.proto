@@ -62,6 +62,10 @@ message Frame {
     // 29 retired (see `reserved` above).
 
     LogRecord log_record = 30;
+
+    DropOffer drop_offer = 40;
+    DropComplete drop_complete = 41;
+    DropRelease drop_release = 42;
   }
 }
 
@@ -398,4 +402,54 @@ message Error {
   // e.g. "clipboard.request". Populated when the error is causally linked
   // to a specific incoming message.
   optional string in_reply_to = 3;
+}
+
+// Host->guest: the files of one drag-and-drop gesture onto the VM display.
+//
+// Metadata only, exactly like `ClipboardOffer`: the guest pulls each
+// representation with a `ClipboardRequest` on the drop channel and receives it
+// through the same `ClipboardStreamBegin`/`Chunk`/`End` path a paste uses. Every
+// representation carries a non-empty `filename`, and the guest writes each into
+// its Downloads folder as a file — `is_inline` is meaningless here and is
+// ignored, since a drop never reaches a pasteboard.
+message DropOffer {
+  // Per-connection counter, starting at 1. Each drop gesture is an independent
+  // job under its own generation; a second drop does not supersede the first.
+  uint64 generation = 1;
+
+  // Metadata for each dropped item, in the order the drop delivered them.
+  repeated ClipboardRepresentationInfo rep_info = 2;
+}
+
+// Guest->host: the drop job for `generation` has finished.
+message DropComplete {
+  uint64 generation = 1;
+
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    // Every representation landed in the guest's Downloads folder.
+    OUTCOME_COMPLETED = 1;
+    // Cancelled from either side. Files already landed are kept; the in-flight
+    // partial is deleted by the stream layer's abort path.
+    OUTCOME_CANCELLED = 2;
+    // The drop could not be completed — see `code`.
+    OUTCOME_FAILED = 3;
+  }
+  Outcome outcome = 2;
+
+  // Stable machine-readable code for `OUTCOME_FAILED`, from
+  // `ClipboardErrorCode` (e.g. "clipboard.drop.disk.full"); empty otherwise.
+  // The host renders its own sentence from this rather than from `message`.
+  string code = 3;
+
+  // Human-readable detail for logs. Never rendered in host UI.
+  string message = 4;
+}
+
+// Host->guest: the host abandons the drop for `generation` (the user cancelled,
+// or the session is going away). The guest aborts the in-flight pull, drops the
+// representations it has not requested yet, keeps whatever already landed in
+// Downloads, and replies `DropComplete{OUTCOME_CANCELLED}`.
+message DropRelease {
+  uint64 generation = 1;
 }

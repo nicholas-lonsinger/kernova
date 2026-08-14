@@ -141,6 +141,16 @@ final class VMInstance {
 
     var vsockControlService: VsockControlService?
 
+    /// Listener for the guest's drop channel; installed for every guest with a
+    /// socket device while the VM has a live `VZVirtualMachine`.
+    ///
+    /// Ungated by any setting: dropping files on the display is the toggle.
+    var vsockDropListenerHost: VsockListenerHost?
+
+    /// Serves files dropped on this VM's display; populated once the guest
+    /// agent's drop client connects.
+    var vsockDropService: VsockDropService?
+
     /// `true` when this VM has reached `.running`, the host previously saw a
     /// guest agent connect (`configuration.lastSeenAgentVersion != nil`), and a
     /// grace period has elapsed without a `Hello` arriving over the control
@@ -760,6 +770,12 @@ final class VMInstance {
         controlHost.attach(to: socketDevice)
         vsockControlListenerHost = controlHost
 
+        // Unconditional, like control: there is no drop setting — the display
+        // simply refuses the gesture when the guest can't take it.
+        let dropHost = makeDropListenerHost()
+        dropHost.attach(to: socketDevice)
+        vsockDropListenerHost = dropHost
+
         if configuration.agentLogForwardingEnabled {
             let logHost = makeLogListenerHost()
             logHost.attach(to: socketDevice)
@@ -777,20 +793,47 @@ final class VMInstance {
 
     // MARK: - Vsock Feature-Channel Admission
 
-    /// Whether a feature vsock channel (log or clipboard) may be admitted right
-    /// now: a control channel whose `Hello` handshake completed must exist —
-    /// and, for the clipboard port, its `Hello` must have advertised
-    /// `clipboard.stream.v1`.
+    /// The guest capability a feature vsock channel needs before it may be
+    /// admitted, beyond the completed control handshake every one of them
+    /// requires.
+    enum FeatureChannelRequirement {
+        /// Log forwarding — the handshake alone.
+        case none
+        /// The clipboard channel: `clipboard.stream.v1`.
+        case clipboardStreaming
+        /// The drop channel: `drop.files.v1`.
+        case dropFiles
+
+        /// The capability tag a guest must advertise, or `nil` when none is
+        /// needed.
+        var capability: String? {
+            switch self {
+            case .none: return nil
+            case .clipboardStreaming: return KernovaCapability.clipboardStreamV1
+            case .dropFiles: return KernovaCapability.dropFilesV1
+            }
+        }
+    }
+
+    /// Whether a feature vsock channel may be admitted right now: a control
+    /// channel whose `Hello` handshake completed must exist, and its `Hello` must
+    /// have advertised whatever capability `requirement` names.
     ///
     /// Evaluated at accept time so it tracks reconnects.
-    func featureChannelAdmission(requiringClipboardStreaming: Bool) -> VsockAdmission {
+    func featureChannelAdmission(_ requirement: FeatureChannelRequirement) -> VsockAdmission {
         guard let control = vsockControlService, control.isConnected else {
             return .notReady(reason: "no control channel has completed its handshake")
         }
-        guard !requiringClipboardStreaming || control.guestSupportsClipboardStreaming else {
+        let advertised: Bool
+        switch requirement {
+        case .none: advertised = true
+        case .clipboardStreaming: advertised = control.guestSupportsClipboardStreaming
+        case .dropFiles: advertised = control.guestSupportsDropFiles
+        }
+        guard advertised else {
             return .denied(
                 reason:
-                    "the connected guest agent does not advertise \(KernovaCapability.clipboardStreamV1)"
+                    "the connected guest agent does not advertise \(requirement.capability ?? "")"
             )
         }
         return .admit
@@ -880,7 +923,7 @@ final class VMInstance {
         VsockListenerHost(
             port: KernovaVsockPort.log,
             shouldAdmit: { [weak self] in
-                self?.featureChannelAdmission(requiringClipboardStreaming: false)
+                self?.featureChannelAdmission(.none)
                     ?? .notReady(reason: "the VM instance is gone")
             }
         ) { [weak self] channel in
@@ -895,13 +938,38 @@ final class VMInstance {
         }
     }
 
+    /// Builds the drop-channel listener; each accepted channel replaces any prior
+    /// drop service.
+    private func makeDropListenerHost() -> VsockListenerHost {
+        VsockListenerHost(
+            port: KernovaVsockPort.drop,
+            shouldAdmit: { [weak self] in
+                self?.featureChannelAdmission(.dropFiles)
+                    ?? .notReady(reason: "the VM instance is gone")
+            }
+        ) { [weak self] channel in
+            guard let self else {
+                channel.close()
+                return
+            }
+            self.vsockDropService?.stop()
+            let service = VsockDropService(
+                channel: channel, label: self.name, instanceID: self.instanceID,
+                maxPasteBytes: { [weak self] in
+                    self?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes
+                })
+            self.vsockDropService = service
+            service.start()
+        }
+    }
+
     /// Builds the clipboard-channel listener; each accepted channel replaces any
     /// prior clipboard service.
     private func makeClipboardListenerHost() -> VsockListenerHost {
         VsockListenerHost(
             port: KernovaVsockPort.clipboard,
             shouldAdmit: { [weak self] in
-                self?.featureChannelAdmission(requiringClipboardStreaming: true)
+                self?.featureChannelAdmission(.clipboardStreaming)
                     ?? .notReady(reason: "the VM instance is gone")
             }
         ) { [weak self] channel in
@@ -1062,6 +1130,10 @@ final class VMInstance {
         vsockLogService?.stop()
         vsockLogService = nil
         vsockLogListenerHost = nil
+
+        vsockDropService?.stop()
+        vsockDropService = nil
+        vsockDropListenerHost = nil
 
         if clipboardService is VsockClipboardService {
             clipboardService?.stop()

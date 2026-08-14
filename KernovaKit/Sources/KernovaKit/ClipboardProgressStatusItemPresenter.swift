@@ -20,6 +20,10 @@ public final class ClipboardProgressStatusItemPresenter {
     /// the reminder's dismissal handler instead of opening the menu.
     private let willAutoOpen: (() -> Void)?
 
+    /// Stops the operation the readout is showing, for a readout that reports
+    /// itself cancellable. `nil` leaves every readout without a Cancel button.
+    private let onCancel: (() -> Void)?
+
     /// The paste currently materializing, or `nil` when none is.
     public private(set) var snapshot: ClipboardProgressSnapshot?
 
@@ -43,19 +47,45 @@ public final class ClipboardProgressStatusItemPresenter {
     private var pendingAutoOpen = false
 
     /// Creates a presenter bound to a status item and its dropdown.
-    public init(statusItem: NSStatusItem, menu: NSMenu, willAutoOpen: (() -> Void)? = nil) {
+    ///
+    /// `onCancel` stops whichever operation the readout is currently showing; the
+    /// button appears only while that readout reports itself cancellable.
+    public init(
+        statusItem: NSStatusItem, menu: NSMenu, willAutoOpen: (() -> Void)? = nil,
+        onCancel: (() -> Void)? = nil
+    ) {
         self.statusItem = statusItem
         self.menu = menu
         self.willAutoOpen = willAutoOpen
+        self.onCancel = onCancel
     }
 
     /// Applies the readout the domain host just published — a snapshot to render,
     /// or `nil` to clear it.
     public func apply(_ snapshot: ClipboardProgressSnapshot?) {
         self.snapshot = snapshot
-        if let snapshot { view.apply(snapshot) }
+        if let snapshot {
+            view.apply(snapshot)
+            view.onCancel = snapshot.isCancellable ? cancelHandler() : nil
+        }
         syncItems()
         applyAutoOpen(snapshot)
+    }
+
+    /// The click handler installed on the readout: dismiss the dropdown the user
+    /// clicked in, then cancel.
+    ///
+    /// The dropdown goes first because the cancel's own effect on the readout
+    /// arrives asynchronously — the transfers abort, the session ends below
+    /// 100 %, and the linger clears it — so leaving the menu up would strand the
+    /// user in front of a row that keeps ticking for a moment after they stopped
+    /// it.
+    private func cancelHandler() -> (() -> Void)? {
+        guard let onCancel else { return nil }
+        return { [weak self] in
+            self?.menu.cancelTracking()
+            onCancel()
+        }
     }
 
     /// Inserts the readout rows at the top of a dropdown being rebuilt, when a

@@ -1,5 +1,6 @@
 import Cocoa
 import Virtualization
+import os
 
 /// Pure AppKit view containing a `VZVirtualMachineView` with built-in pause and transition overlays.
 ///
@@ -16,6 +17,30 @@ final class VMDisplayBackingView: NSView {
 
     /// Called when the user taps the resume button on the pause overlay.
     var onResume: (() -> Void)?
+
+    /// Whether this VM can take files dropped on its display right now.
+    ///
+    /// Read at every drag event rather than cached, so a drag that outlives the
+    /// guest agent's connection stops being accepted mid-gesture.
+    var dropAvailability: () -> DisplayDropAvailability = { .none }
+
+    /// Sends dropped file URLs to the guest, reporting whether they were taken.
+    var onDropFiles: ([URL]) -> Bool = { _ in false }
+
+    /// Whether `registerForDraggedTypes` is currently in effect, so
+    /// ``applyDropRegistration()`` can be called on every observation tick
+    /// without churning AppKit's registration.
+    private var isDropRegistered = false
+
+    private static let logger = Logger(subsystem: "app.kernova", category: "VMDisplayBackingView")
+
+    /// The only pasteboard reading options a display drop ever uses: concrete
+    /// file URLs, never a file promise. A Finder drag carries these; a
+    /// promise-only drag never enters, because `.fileURL` is the sole registered
+    /// type.
+    private static let fileURLReadingOptions: [NSPasteboard.ReadingOptionKey: Any] = [
+        .urlReadingFileURLsOnly: true
+    ]
 
     /// Mirrors `machineView.automaticallyReconfiguresDisplay`, so ``apply(automaticallyReconfiguresDisplay:)``
     /// writes the framework property only when it actually changes.
@@ -108,6 +133,66 @@ final class VMDisplayBackingView: NSView {
         }
         self.automaticallyReconfiguresDisplay = automaticallyReconfiguresDisplay
         machineView.automaticallyReconfiguresDisplay = automaticallyReconfiguresDisplay
+    }
+
+    // MARK: - File Drop
+
+    /// Registers (or unregisters) the display as a drag destination to match the
+    /// VM's current availability.
+    ///
+    /// Registration is what separates the two refusals the issue asks for: a VM
+    /// that has never run the agent is *not* a destination, so a drag over it is
+    /// as if Kernova weren't there, while a registered-but-disconnected one takes
+    /// part and returns an empty operation. Idempotent — hosts call it on every
+    /// observation tick.
+    func applyDropRegistration() {
+        let shouldRegister = dropAvailability() != .none
+        guard shouldRegister != isDropRegistered else { return }
+        isDropRegistered = shouldRegister
+        if shouldRegister {
+            registerForDraggedTypes([.fileURL])
+            // A `VZVirtualMachineView` covering this view would take the drag
+            // first if it registered types of its own. It does not today, and
+            // this is the line that says so if that ever changes.
+            if !machineView.registeredDraggedTypes.isEmpty {
+                Self.logger.fault(
+                    "VZVirtualMachineView registers dragged types — display drops will not reach Kernova"
+                )
+                assertionFailure("VZVirtualMachineView registers dragged types")
+            }
+        } else {
+            unregisterDraggedTypes()
+        }
+    }
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        dragOperation(for: sender)
+    }
+
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        dragOperation(for: sender)
+    }
+
+    /// `.copy` when this drag can be sent to the guest, else the empty operation
+    /// AppKit renders as "no" — no accept badge, and a release springs back.
+    private func dragOperation(for sender: any NSDraggingInfo) -> NSDragOperation {
+        guard dropAvailability() == .available,
+            sender.draggingPasteboard.canReadObject(
+                forClasses: [NSURL.self], options: Self.fileURLReadingOptions)
+        else { return [] }
+        return .copy
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        guard
+            let urls = sender.draggingPasteboard.readObjects(
+                forClasses: [NSURL.self], options: Self.fileURLReadingOptions) as? [URL],
+            !urls.isEmpty
+        else { return false }
+        // Re-checked here rather than trusted from `draggingUpdated`: the guest
+        // agent can go away between the last pointer move and the release.
+        guard dropAvailability() == .available else { return false }
+        return onDropFiles(urls)
     }
 
     // MARK: - Overlay Animation

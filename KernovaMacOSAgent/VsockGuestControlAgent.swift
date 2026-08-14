@@ -58,6 +58,21 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     /// offer one.
     private var hostSupportsDirectoryStreamingStorage = false
 
+    /// Whether the host advertised the display-drop capability.
+    ///
+    /// Guarded by `lock` and reset per connection; a host without it runs no drop
+    /// listener, so the guest's drop client stays paused rather than redialling a
+    /// port nothing is bound to.
+    private var hostSupportsDropFilesStorage = false
+
+    /// Invoked whenever the host's advertised capabilities change — on each
+    /// `Hello`, and on each connection teardown that clears them.
+    ///
+    /// Separate from `onStateChange`, which is change-gated on a state already
+    /// set to `.connected` before any `Hello` arrives and so never fires for the
+    /// capabilities themselves. Called off the main thread.
+    private let onHostCapabilitiesChanged: (@Sendable () -> Void)?
+
     /// Creates the control agent; tests inject a socketpair-backed client and
     /// small cadences.
     init(
@@ -68,7 +83,8 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         unresponsiveAfter: TimeInterval = 15,
         terminateAfter: TimeInterval = 30,
         onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
-        onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil
+        onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil,
+        onHostCapabilitiesChanged: (@Sendable () -> Void)? = nil
     ) {
         precondition(
             unresponsiveAfter < terminateAfter,
@@ -84,6 +100,7 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         self.livenessTickInterval = min(heartbeatInterval, unresponsiveAfter / 3)
         self.onPolicy = onPolicy
         self.onStateChange = onStateChange
+        self.onHostCapabilitiesChanged = onHostCapabilitiesChanged
     }
 
     // MARK: - UI state accessors
@@ -102,6 +119,12 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     /// straight onto the wire.
     var hostSupportsDirectoryStreaming: Bool {
         lock.withLock { hostSupportsDirectoryStreamingStorage }
+    }
+
+    /// Thread-safe read of whether the host takes files dropped on the VM
+    /// display.
+    var hostSupportsDropFiles: Bool {
+        lock.withLock { hostSupportsDropFilesStorage }
     }
 
     /// Transitions `connectionState`, firing `onStateChange` only on a real
@@ -143,7 +166,11 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             unresponsiveLogged = false
             hostSupportsClipboardStreaming = false
             hostSupportsDirectoryStreamingStorage = false
+            hostSupportsDropFilesStorage = false
         }
+        // The clearing is a capability change like any other: a client enabled by
+        // the previous host's Hello has to stand down until this one says Hello.
+        onHostCapabilitiesChanged?()
         updateConnectionState(.connected)
 
         sendHello(on: channel)
@@ -213,11 +240,14 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             let hostStreams = hello.capabilities.contains(KernovaCapability.clipboardStreamV1)
             let hostStreamsDirectories = hello.capabilities.contains(
                 KernovaCapability.clipboardStreamDirectoryV1)
+            let hostTakesDrops = hello.capabilities.contains(KernovaCapability.dropFilesV1)
             lock.withLock {
                 hostSupportsClipboardStreaming = hostStreams
                 hostSupportsDirectoryStreamingStorage = hostStreamsDirectories
+                hostSupportsDropFilesStorage = hostTakesDrops
                 hostBundledAgentVersionStorage = hello.bundledAgentVersion
             }
+            onHostCapabilitiesChanged?()
             // `logDescription` bounds the peer-supplied capability strings; these
             // records can be forwarded into the host's log store.
             Self.logger.notice(
@@ -247,7 +277,7 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             onPolicy?(effective)
         case .clipboardOffer, .clipboardRequest, .clipboardRelease,
             .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck,
-            .clipboardStreamAbort, .logRecord, .none:
+            .clipboardStreamAbort, .logRecord, .dropOffer, .dropComplete, .dropRelease, .none:
             Self.logger.warning("Unexpected payload on control channel — wrong port")
         }
     }

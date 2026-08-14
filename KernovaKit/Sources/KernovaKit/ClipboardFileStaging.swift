@@ -238,7 +238,8 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         defer { lock.unlock() }
         let dir = try directory(for: generation)
         let parent = dir.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let url = parent.appendingPathComponent(Self.sanitize(name), isDirectory: true)
+        let url = parent.appendingPathComponent(
+            FinderStyleUniquing.sanitizedComponent(name), isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
@@ -332,7 +333,7 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// this the second sink in the generation reuses the first's path and the
     /// two files collapse into one. Caller holds the lock.
     private static func uniqueDestination(in dir: URL, filename: String) -> URL {
-        let sanitized = sanitize(filename)
+        let sanitized = FinderStyleUniquing.sanitizedComponent(filename)
         let candidate = dir.appendingPathComponent(sanitized)
         guard FileManager.default.fileExists(atPath: candidate.path) else { return candidate }
         let name = sanitized as NSString
@@ -345,15 +346,6 @@ public final class ClipboardFileStaging: @unchecked Sendable {
             if !FileManager.default.fileExists(atPath: url.path) { return url }
             counter += 1
         }
-    }
-
-    /// Reduces a suggested filename to a single safe path component so a
-    /// crafted name (`"../escape"`, `"a/b"`) can't write outside the
-    /// generation directory.
-    private static func sanitize(_ filename: String) -> String {
-        let base = (filename as NSString).lastPathComponent
-        let cleaned = base.replacingOccurrences(of: "/", with: "_")
-        return cleaned.isEmpty || cleaned == "." || cleaned == ".." ? "clipboard-file" : cleaned
     }
 
     /// Default free-space query: `volumeAvailableCapacityForImportantUsageKey`
