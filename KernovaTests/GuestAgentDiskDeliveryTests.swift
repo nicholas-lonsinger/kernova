@@ -104,7 +104,7 @@ struct GuestAgentDiskDeliveryTests {
     func unparsableInstallRecord() {
         var config = Self.makeConfig()
         config.installedImage = .macOSRestoreImage(version: "not a version", build: "21A559")
-        #expect(GuestAgentDiskDelivery.effectiveGuestVersion(for: config) == nil)
+        #expect(config.effectiveGuestMacOSVersion == nil)
         #expect(GuestAgentDiskDelivery.mode(for: config) == .usb)
     }
 
@@ -112,7 +112,7 @@ struct GuestAgentDiskDeliveryTests {
     func linuxInstallRecordIsNotAVersion() {
         var config = Self.makeConfig()
         config.installedImage = .linuxCatalogImage(distribution: "Ubuntu", version: "12.0.1")
-        #expect(GuestAgentDiskDelivery.effectiveGuestVersion(for: config) == nil)
+        #expect(config.effectiveGuestMacOSVersion == nil)
         #expect(GuestAgentDiskDelivery.mode(for: config) == .usb)
     }
 

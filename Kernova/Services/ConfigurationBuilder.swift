@@ -153,10 +153,8 @@ struct ConfigurationBuilder: Sendable {
 
     /// Attaches the display, pointing, and keyboard devices for a macOS guest.
     ///
-    /// Both input arrays pair the Mac device with its USB equivalent: a guest running
-    /// macOS 13.0 or later binds `VZMacTrackpadConfiguration`/`VZMacKeyboardConfiguration`
-    /// and ignores the USB devices, while an earlier guest recognizes only the USB ones
-    /// (`VZMacTrackpadConfiguration.h`, `VZMacKeyboardConfiguration.h`).
+    /// The input arrays carry exactly the one pair ``GuestInputDevices``
+    /// resolves for the guest — never both.
     private func configureMacOSDevices(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) {
         let graphics = VZMacGraphicsDeviceConfiguration()
         graphics.displays = [
@@ -168,14 +166,14 @@ struct ConfigurationBuilder: Sendable {
         ]
         vzConfig.graphicsDevices = [graphics]
 
-        vzConfig.pointingDevices = [
-            VZMacTrackpadConfiguration(),
-            VZUSBScreenCoordinatePointingDeviceConfiguration(),
-        ]
-        vzConfig.keyboards = [
-            VZMacKeyboardConfiguration(),
-            VZUSBKeyboardConfiguration(),
-        ]
+        switch GuestInputDevices.resolve(for: config) {
+        case .mac:
+            vzConfig.pointingDevices = [VZMacTrackpadConfiguration()]
+            vzConfig.keyboards = [VZMacKeyboardConfiguration()]
+        case .usb:
+            vzConfig.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
+            vzConfig.keyboards = [VZUSBKeyboardConfiguration()]
+        }
     }
 
     #if DEBUG
