@@ -7,7 +7,10 @@ import AppKit
 /// the steps to grant it via System Settings.
 @MainActor
 final class MicrophonePermissionPopoverContentViewController: NSViewController {
-    init() {
+    private let systemSettings: SystemSettingsLink
+
+    init(systemSettings: SystemSettingsLink = SystemSettingsLink()) {
+        self.systemSettings = systemSettings
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -17,53 +20,37 @@ final class MicrophonePermissionPopoverContentViewController: NSViewController {
     }
 
     override func loadView() {
-        let container = NSView()
-
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = CalloutStyle.verticalSpacing
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        stack.addArrangedSubview(makeCalloutHeadline("Microphone Permission"))
-        stack.addArrangedSubview(
+        installCalloutStack(rows: [
+            makeCalloutHeadline("Microphone Permission"),
             makeCalloutBody(
                 "Kernova needs microphone permission to pass your mic input to virtual machines.",
                 color: .labelColor
-            )
-        )
-        stack.addArrangedSubview(makeDivider())
-        stack.addArrangedSubview(makeSubheadline("How to enable"))
-        stack.addArrangedSubview(makeStep(number: 1, lead: "Open ", bold: "System Settings"))
-        stack.addArrangedSubview(
-            makeStep(number: 2, lead: "Go to ", bold: "Privacy & Security → Microphone")
-        )
-        stack.addArrangedSubview(
-            makeStep(number: 3, lead: "Enable the toggle for ", bold: "Kernova")
-        )
-        stack.addArrangedSubview(
-            makeCalloutBody("You will need to restart Kernova after granting permission.")
-        )
-
-        container.addSubview(stack)
-        let padding = CalloutStyle.padding
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: padding),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: padding),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -padding),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -padding),
-            container.widthAnchor.constraint(equalToConstant: CalloutStyle.width),
+            ),
+            makeOpenSettingsButton(),
+            makeDivider(),
+            makeSubheadline("How to enable"),
+            makeStep(number: 1, lead: "Open ", bold: "System Settings"),
+            makeStep(number: 2, lead: "Go to ", bold: "Privacy & Security → Microphone"),
+            makeStep(number: 3, lead: "Enable the toggle for ", bold: "Kernova"),
+            makeCalloutBody("You will need to restart Kernova after granting permission."),
         ])
-
-        view = container
     }
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        let fittingSize = view.fittingSize
-        if preferredContentSize != fittingSize {
-            preferredContentSize = fittingSize
-        }
+        syncCalloutContentSize()
+    }
+
+    private func makeOpenSettingsButton() -> NSButton {
+        let button = NSButton(
+            title: "Open System Settings", target: self, action: #selector(openSettingsTapped))
+        button.bezelStyle = .push
+        button.keyEquivalent = "\r"
+        return button
+    }
+
+    @objc private func openSettingsTapped() {
+        systemSettings.openMicrophonePrivacy()
     }
 
     /// Full-width horizontal `NSBox` separator.

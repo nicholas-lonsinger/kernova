@@ -43,7 +43,9 @@ final class VMSettingsViewController: NSViewController {
     /// `withObservationTracking` has no unregister) bails when its token no
     /// longer matches, so stale chains can't accumulate.
     private var fileMonitorObservationToken: UUID?
-    private var micPermission: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+    private var micPermission: AVAuthorizationStatus
+    private let micPermissionStatus: @MainActor () -> AVAuthorizationStatus
+    private let systemSettings: SystemSettingsLink
 
     // MARK: - Presenters & coordinators
 
@@ -265,7 +267,11 @@ final class VMSettingsViewController: NSViewController {
         isReadOnly: Bool,
         bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider(),
         entitlements: EntitlementService = .shared,
-        vmnetNetworks: any VmnetNetworkProviding = VmnetNetworkService.shared
+        vmnetNetworks: any VmnetNetworkProviding = VmnetNetworkService.shared,
+        micPermissionStatus: @escaping @MainActor () -> AVAuthorizationStatus = {
+            AVCaptureDevice.authorizationStatus(for: .audio)
+        },
+        systemSettings: SystemSettingsLink = SystemSettingsLink()
     ) {
         self.instance = instance
         self.viewModel = viewModel
@@ -273,6 +279,9 @@ final class VMSettingsViewController: NSViewController {
         self.bridgedInterfaces = bridgedInterfaces
         self.entitlements = entitlements
         self.vmnetNetworks = vmnetNetworks
+        self.micPermissionStatus = micPermissionStatus
+        self.systemSettings = systemSettings
+        self.micPermission = micPermissionStatus()
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -2105,12 +2114,14 @@ extension VMSettingsViewController {
             info.isBordered = false
             info.imagePosition = .imageOnly
             info.contentTintColor = .secondaryLabelColor
+            let openSettings = NSButton(
+                title: "Open System Settings", target: self, action: #selector(openMicPermissionSettings))
             let banner = makeGroupedFormBanner(
                 symbolName: "exclamationmark.triangle.fill",
                 tint: .systemRed,
                 message:
                     "Microphone permission is denied. Enable it in System Settings for Kernova to pass your microphone to VMs.",
-                trailingButtons: [info])
+                trailingButtons: [openSettings, info])
             addFullWidth(banner, to: audioWarningContainer)
         }
     }
@@ -2415,7 +2426,7 @@ extension VMSettingsViewController {
     }
 
     private func refreshMicPermission() {
-        micPermission = AVCaptureDevice.authorizationStatus(for: .audio)
+        micPermission = micPermissionStatus()
     }
 
     private func makeSecondaryLabel(_ text: String) -> NSTextField {
@@ -2705,7 +2716,12 @@ extension VMSettingsViewController: NSMenuItemValidation {
 
     @objc private func showMicPermissionInfo(_ sender: NSButton) {
         micPermissionPresenter.show(
-            content: MicrophonePermissionPopoverContentViewController(), from: sender, preferredEdge: .minY)
+            content: MicrophonePermissionPopoverContentViewController(systemSettings: systemSettings),
+            from: sender, preferredEdge: .minY)
+    }
+
+    @objc private func openMicPermissionSettings() {
+        systemSettings.openMicrophonePrivacy()
     }
 
     @objc private func appDidBecomeActive() {
