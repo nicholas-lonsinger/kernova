@@ -23,8 +23,9 @@ struct SerialLogWriterTests {
         let tempDir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
         let logURL = tempDir.appendingPathComponent("serial.log")
+        let rotatedURL = tempDir.appendingPathComponent("serial.log.1")
 
-        let writer = SerialLogWriter(logURL: logURL, label: "test", maxFileSize: 1024)
+        let writer = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 1024)
         writer.write(Data("hello ".utf8))
         writer.write(Data("world".utf8))
         writer.close()
@@ -37,12 +38,13 @@ struct SerialLogWriterTests {
         let tempDir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
         let logURL = tempDir.appendingPathComponent("serial.log")
+        let rotatedURL = tempDir.appendingPathComponent("serial.log.1")
 
-        let first = SerialLogWriter(logURL: logURL, label: "test", maxFileSize: 1024)
+        let first = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 1024)
         first.write(Data("run1\n".utf8))
         first.close()
 
-        let second = SerialLogWriter(logURL: logURL, label: "test", maxFileSize: 1024)
+        let second = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 1024)
         second.write(Data("run2\n".utf8))
         second.close()
 
@@ -56,7 +58,7 @@ struct SerialLogWriterTests {
         let logURL = tempDir.appendingPathComponent("serial.log")
         let rotatedURL = tempDir.appendingPathComponent("serial.log.1")
 
-        let writer = SerialLogWriter(logURL: logURL, label: "test", maxFileSize: 8)
+        let writer = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 8)
         writer.write(Data("0123456789".utf8))  // 10 bytes ≥ cap → rotates
         writer.write(Data("after".utf8))
         writer.close()
@@ -72,7 +74,7 @@ struct SerialLogWriterTests {
         let logURL = tempDir.appendingPathComponent("serial.log")
         let rotatedURL = tempDir.appendingPathComponent("serial.log.1")
 
-        let writer = SerialLogWriter(logURL: logURL, label: "test", maxFileSize: 8)
+        let writer = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 8)
         writer.write(Data("first-gen".utf8))  // rotation 1
         writer.write(Data("second-gen".utf8))  // rotation 2
         writer.write(Data("live".utf8))
@@ -82,20 +84,21 @@ struct SerialLogWriterTests {
         #expect(contents(of: logURL) == "live")
     }
 
-    @Test("An oversized pre-existing log rotates on open")
-    func oversizedExistingLogRotatesOnOpen() throws {
+    @Test("An oversized pre-existing log is cleared on open, not archived")
+    func oversizedExistingLogIsClearedOnOpen() throws {
         let tempDir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
         let logURL = tempDir.appendingPathComponent("serial.log")
         let rotatedURL = tempDir.appendingPathComponent("serial.log.1")
         try Data("stale-history".utf8).write(to: logURL)
+        try Data("prior-generation".utf8).write(to: rotatedURL)
 
-        let writer = SerialLogWriter(logURL: logURL, label: "test", maxFileSize: 8)
+        let writer = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 8)
         writer.write(Data("fresh".utf8))
         writer.close()
 
-        #expect(contents(of: rotatedURL) == "stale-history")
         #expect(contents(of: logURL) == "fresh")
+        #expect(contents(of: rotatedURL) == "prior-generation")
     }
 
     @Test("An under-cap pre-existing log is kept and appended to")
@@ -106,7 +109,7 @@ struct SerialLogWriterTests {
         let rotatedURL = tempDir.appendingPathComponent("serial.log.1")
         try Data("old\n".utf8).write(to: logURL)
 
-        let writer = SerialLogWriter(logURL: logURL, label: "test", maxFileSize: 1024)
+        let writer = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 1024)
         writer.write(Data("new\n".utf8))
         writer.close()
 
@@ -119,8 +122,9 @@ struct SerialLogWriterTests {
         let tempDir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
         let logURL = tempDir.appendingPathComponent("serial.log")
+        let rotatedURL = tempDir.appendingPathComponent("serial.log.1")
 
-        let writer = SerialLogWriter(logURL: logURL, label: "test", maxFileSize: 1024)
+        let writer = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 1024)
         writer.write(Data("kept".utf8))
         writer.close()
         writer.write(Data("dropped".utf8))
@@ -134,8 +138,9 @@ struct SerialLogWriterTests {
         let missingDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let logURL = missingDir.appendingPathComponent("serial.log")
+        let rotatedURL = missingDir.appendingPathComponent("serial.log.1")
 
-        let writer = SerialLogWriter(logURL: logURL, label: "test", maxFileSize: 1024)
+        let writer = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 1024)
         writer.write(Data("dropped".utf8))
         writer.close()
 
@@ -149,7 +154,7 @@ struct SerialLogWriterTests {
         let logURL = tempDir.appendingPathComponent("serial.log")
         let rotatedURL = tempDir.appendingPathComponent("serial.log.1")
 
-        let writer = SerialLogWriter(logURL: logURL, label: "test", maxFileSize: 4)
+        let writer = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 4)
         writer.write(Data("full".utf8))  // exactly at cap → rotates
         writer.write(Data())  // must not rotate the now-empty live file again
         writer.close()

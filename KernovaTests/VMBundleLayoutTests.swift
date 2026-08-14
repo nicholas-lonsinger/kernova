@@ -57,6 +57,13 @@ struct VMBundleLayoutTests {
         #expect(layout.serialLogURL.deletingLastPathComponent() == bundleURL)
     }
 
+    @Test("serialLogRotatedURL appends serial.log.1 to bundle path")
+    func serialLogRotatedURL() {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        #expect(layout.serialLogRotatedURL.lastPathComponent == "serial.log.1")
+        #expect(layout.serialLogRotatedURL.deletingLastPathComponent() == bundleURL)
+    }
+
     @Test("additionalDisksDirectoryURL appends AdditionalDisks to bundle path")
     func additionalDisksDirectoryURL() {
         let layout = VMBundleLayout(bundleURL: bundleURL)

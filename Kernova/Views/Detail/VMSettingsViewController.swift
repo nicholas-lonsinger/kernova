@@ -1626,7 +1626,7 @@ extension VMSettingsViewController {
                 "Expose Serial Socket", control: serialRelaySwitch,
                 paragraphs: [
                     .body(
-                        "Exposes the running VM's serial port over a local UNIX socket so an external terminal can attach. Output is always captured to `serial.log` regardless of this setting."
+                        "Exposes the running VM's serial port over a local UNIX socket so an external terminal can attach. Output is always captured to `serial.log` regardless of this setting; when it grows large it rolls to `serial.log.1` alongside."
                     ),
                     .body(
                         "While the VM is running, connect with `socat` (best for full-screen apps; `brew install socat`):"

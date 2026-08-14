@@ -3,9 +3,10 @@ import os
 
 /// Appending writer for a VM's on-disk `serial.log` that bounds its size with
 /// single-generation rotation: when the file reaches `maxFileSize` it is
-/// renamed to `serial.log.1` (replacing any earlier generation) and a fresh
-/// `serial.log` is started, so a bundle never holds more than roughly twice
-/// `maxFileSize` of serial history.
+/// renamed to `rotatedURL` (replacing any earlier generation) and a fresh log
+/// is started, so a bundle never holds more than roughly twice `maxFileSize`
+/// of serial history. A pre-existing log already at the cap is cleared at
+/// open rather than archived, so the bound holds from the first write.
 ///
 /// All file state is guarded by one `NSLock`, so `write(_:)` is safe to call
 /// from the background queue that drives serial output. After `close()` or a
@@ -31,24 +32,40 @@ final class SerialLogWriter: @unchecked Sendable {
 
     private static let logger = Logger(subsystem: "app.kernova", category: "SerialLogWriter")
 
-    init(logURL: URL, label: String, maxFileSize: Int = SerialLogWriter.defaultMaxFileSize) {
+    init(
+        logURL: URL, rotatedURL: URL, label: String,
+        maxFileSize: Int = SerialLogWriter.defaultMaxFileSize
+    ) {
         self.logURL = logURL
-        self.rotatedURL = logURL.appendingPathExtension("1")
+        self.rotatedURL = rotatedURL
         self.maxFileSize = maxFileSize
         self.label = label
 
         lock.lock()
         defer { lock.unlock() }
         openLocked()
+
+        // A pre-existing log at or over the cap (from a build without one, or
+        // a run whose rotation was disabled) is cleared, not archived: rotating
+        // it whole would carry an arbitrarily large file as `serial.log.1`,
+        // breaking the twice-the-cap bound exactly when it matters most.
         if fileSize >= maxFileSize {
-            rotateLocked()
+            do {
+                try handle?.truncate(atOffset: 0)
+                fileSize = 0
+            } catch {
+                Self.logger.warning(
+                    "Could not clear oversized serial log for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
+            }
         }
     }
 
     /// Appends `data` to the log, rotating once the file reaches `maxFileSize`.
     ///
-    /// Safe to call from any thread. A dropped chunk (closed writer, failed
-    /// open, or write error) is logged and never blocks the serial reader.
+    /// Safe to call from any thread and never blocks the serial reader. A
+    /// write error is logged and the chunk dropped; writes after `close()` or
+    /// a failed open are dropped silently.
     func write(_ data: Data) {
         guard !data.isEmpty else { return }
         lock.lock()

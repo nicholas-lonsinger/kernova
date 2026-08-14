@@ -575,7 +575,9 @@ final class VMInstance {
 
         // Created once per session so the readability handler can capture them
         // as `Sendable` locals — the handler must never touch `self` off-actor.
-        let writer = SerialLogWriter(logURL: serialLogURL, label: name)
+        let writer = SerialLogWriter(
+            logURL: bundleLayout.serialLogURL, rotatedURL: bundleLayout.serialLogRotatedURL,
+            label: name)
         serialLogWriter = writer
         let relay = makeSerialRelay()
 
