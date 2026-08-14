@@ -1525,8 +1525,8 @@ final class VMLibraryViewModel {
     }
 
     /// Frees `target`'s reservation slot unless a VM still in the library wants
-    /// the same one — duplicate MACs are possible, so the last claimant is what
-    /// releases the slot.
+    /// the same one — a bundle can arrive carrying an address another VM already
+    /// holds, so the last claimant is what releases the slot.
     private func releaseAddressReservationIfUnused(_ target: (kind: VmnetNetworkKind, mac: String)) {
         guard isVMNetworkingEntitled else { return }
         let stillWanted = instances.contains {
@@ -1554,6 +1554,53 @@ final class VMLibraryViewModel {
     ) {
         guard isVMNetworkingEntitled, let mac = config.macAddress else { return }
         vmnetNetworks.setPortForwardingRules(rules, for: mac, kind: .shared)
+    }
+
+    /// Withdraws the rules `config` declared, unless a VM still in the library
+    /// carries the same MAC — rules are keyed on the address, so a blanket
+    /// withdrawal would disarm that VM's rules too; its own are re-declared
+    /// instead. An address is one VM's alone once it passes
+    /// ``refuseIfDuplicateMACAddress(_:on:)``, so the survivor is a bundle that
+    /// arrived carrying one already in use.
+    private func withdrawPortForwardingRules(for config: VMConfiguration) {
+        guard let mac = config.macAddress?.lowercased() else { return }
+        let survivor = instances.first { $0.configuration.macAddress?.lowercased() == mac }
+        if let survivor {
+            syncPortForwardingRules(for: survivor.configuration)
+        } else {
+            declarePortForwardingRules([], for: config)
+        }
+    }
+
+    /// The VM other than `instance` whose configuration carries `mac`, `nil`
+    /// when no other VM holds it.
+    ///
+    /// Case-insensitive, matching the reservation slots and forwarding rules the
+    /// address keys. A VM with networking off counts: the address persists
+    /// across mode changes, so turning networking back on would re-form the
+    /// collision.
+    private func vmHoldingMACAddress(_ mac: String, otherThan instance: VMInstance) -> VMInstance? {
+        let wanted = mac.lowercased()
+        return instances.first {
+            $0 !== instance && $0.configuration.macAddress?.lowercased() == wanted
+        }
+    }
+
+    /// Refuses a change that would give `instance` a MAC address another VM in
+    /// the library holds, logging the refusal and surfacing the alert.
+    ///
+    /// - Returns: `true` when the caller must abort.
+    private func refuseIfDuplicateMACAddress(_ mac: String, on instance: VMInstance) -> Bool {
+        guard let holder = vmHoldingMACAddress(mac, otherThan: instance) else { return false }
+        Self.logger.notice(
+            "Refused the MAC address \(mac, privacy: .public) for '\(instance.name, privacy: .public)': '\(holder.name, privacy: .public)' already holds it"
+        )
+        surfaceError(
+            "“\(holder.name)” already uses \(mac). "
+                + "Each virtual machine needs its own MAC address. "
+                + "Change or delete “\(holder.name)” first to move this address to “\(instance.name)”.",
+            title: "MAC Address In Use")
+        return true
     }
 
     /// Recreates every app-managed network whose DHCP reservations or
@@ -1591,9 +1638,15 @@ final class VMLibraryViewModel {
     /// Applies the mutation, persists the result, and dispatches the live policy /
     /// removable-media reconcile. No-ops when the mutation produces the same value.
     ///
+    /// A mutation moving the VM onto a MAC address another VM holds is refused
+    /// whole — no field it also sets is applied — so this is the one place every
+    /// writer of an address passes through.
+    ///
     /// - Returns: Whether the new configuration reached disk. A no-op mutation
     ///   returns `true`; a failed write leaves the new value in memory, so a
-    ///   caller that needs memory and disk to agree rolls back on `false`.
+    ///   caller that needs memory and disk to agree rolls back on `false`. A
+    ///   refused mutation also returns `false`, having left the configuration
+    ///   untouched.
     @discardableResult
     func updateConfiguration(
         of instance: VMInstance,
@@ -1603,13 +1656,18 @@ final class VMLibraryViewModel {
         var new = old
         mutate(&new)
         guard new != old else { return true }
+        if let mac = new.macAddress, mac.lowercased() != old.macAddress?.lowercased(),
+            refuseIfDuplicateMACAddress(mac, on: instance)
+        {
+            return false
+        }
         instance.configuration = new
         // An edited MAC leaves its predecessor holding an older — so
         // higher-priority — reservation slot. Left declared there, the retired
         // address keeps claiming the VM's host ports and the rules re-declared
         // under the new one are dropped as duplicates.
         if let retired = old.macAddress, retired != new.macAddress {
-            declarePortForwardingRules([], for: old)
+            withdrawPortForwardingRules(for: old)
         }
         // Released before the new slot is taken, so the freed slot is the
         // lowest one available and an edited MAC normally keeps the VM's
@@ -2615,7 +2673,7 @@ final class VMLibraryViewModel {
         ClipboardIssueCenter.shared.clear(instanceID: instance.instanceID)
         // A VM out of the library stops claiming its host ports and its
         // address, so the next VM created can be handed both.
-        declarePortForwardingRules([], for: instance.configuration)
+        withdrawPortForwardingRules(for: instance.configuration)
         if bundleIsGone, let target = reservationTarget(for: instance.configuration) {
             releaseAddressReservationIfUnused(target)
         }

@@ -2161,12 +2161,14 @@ struct VMLibraryViewModelTests {
     /// network — the state a load leaves behind, without going through a scan.
     private func makeReservedInstance(
         in viewModel: VMLibraryViewModel, using vmnet: MockVmnetNetworkProvider,
-        mac: String, mode: VMNetworkMode = .shared
+        mac: String, mode: VMNetworkMode = .shared, name: String = "Test VM",
+        rules: [PortForwardingRule] = []
     ) -> VMInstance {
-        let instance = makeInstance()
+        let instance = makeInstance(name: name)
         instance.configuration.networkEnabled = true
         instance.configuration.networkMode = mode
         instance.configuration.macAddress = mac
+        instance.configuration.portForwardingRules = rules
         viewModel.instances.append(instance)
         if let kind = VmnetNetworkKind(mode: mode) {
             vmnet.reserveAddressIfNeeded(for: mac, kind: kind)
@@ -2340,9 +2342,141 @@ struct VMLibraryViewModelTests {
         #expect(vmnet.retainedMACs.isEmpty)
     }
 
+    // MARK: - MAC Address Uniqueness
+
+    /// A library holding one VM on `held` and one on `editing`, both on the
+    /// shared network — the starting point for every uniqueness assertion.
+    private func makeLibrarySharingNoAddress(
+        using vmnet: MockVmnetNetworkProvider, held: String, editing: String,
+        storage: MockVMStorageService = MockVMStorageService()
+    ) -> (VMLibraryViewModel, VMInstance, VMInstance) {
+        let (viewModel, _, _, _, _) = makeViewModel(
+            storageService: storage, vmnetNetworks: vmnet)
+        let holder = makeReservedInstance(in: viewModel, using: vmnet, mac: held, name: "Holder")
+        let editor = makeReservedInstance(
+            in: viewModel, using: vmnet, mac: editing, name: "Editing VM")
+        return (viewModel, holder, editor)
+    }
+
+    @Test("A MAC address another VM holds is refused, changing nothing")
+    func duplicateMACAddressIsRefused() {
+        let vmnet = MockVmnetNetworkProvider()
+        let storage = MockVMStorageService()
+        let (viewModel, _, editor) = makeLibrarySharingNoAddress(
+            using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10",
+            storage: storage)
+
+        let accepted = viewModel.updateConfiguration(of: editor) {
+            $0.macAddress = "aa:bb:cc:dd:ee:0f"
+        }
+
+        #expect(accepted == false)
+        #expect(editor.configuration.macAddress == "aa:bb:cc:dd:ee:10")
+        #expect(storage.saveConfigurationCallCount == 0)
+        #expect(vmnet.releasedMACs.isEmpty)
+        #expect(vmnet.declaredForwardingRules.isEmpty)
+        #expect(presenter.errorTitle == "MAC Address In Use")
+        #expect(presenter.errorMessage?.contains("Holder") == true)
+        #expect(presenter.errorMessage?.contains("aa:bb:cc:dd:ee:0f") == true)
+    }
+
+    @Test("The refusal matches the held address regardless of case")
+    func duplicateMACAddressRefusalIgnoresCase() {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, editor) = makeLibrarySharingNoAddress(
+            using: vmnet, held: "AA:BB:CC:DD:EE:0F", editing: "aa:bb:cc:dd:ee:10")
+
+        let accepted = viewModel.updateConfiguration(of: editor) {
+            $0.macAddress = "aa:bb:cc:dd:ee:0f"
+        }
+
+        #expect(accepted == false)
+        #expect(editor.configuration.macAddress == "aa:bb:cc:dd:ee:10")
+    }
+
+    @Test("A VM with networking off still holds its address")
+    func aVMWithNetworkingOffStillHoldsItsAddress() {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, holder, editor) = makeLibrarySharingNoAddress(
+            using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
+        holder.configuration.networkEnabled = false
+
+        let accepted = viewModel.updateConfiguration(of: editor) {
+            $0.macAddress = "aa:bb:cc:dd:ee:0f"
+        }
+
+        #expect(accepted == false)
+        #expect(editor.configuration.macAddress == "aa:bb:cc:dd:ee:10")
+    }
+
+    @Test("A refused mutation drops the fields it also set")
+    func aRefusedMutationDropsItsOtherFields() {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, editor) = makeLibrarySharingNoAddress(
+            using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
+
+        let accepted = viewModel.updateConfiguration(of: editor) {
+            $0.name = "Renamed"
+            $0.macAddress = "aa:bb:cc:dd:ee:0f"
+        }
+
+        #expect(accepted == false)
+        #expect(editor.configuration.name == "Editing VM")
+        #expect(editor.configuration.macAddress == "aa:bb:cc:dd:ee:10")
+    }
+
+    @Test("A VM keeping an address that arrived shared still accepts other edits")
+    func aVMSharingAnAddressFromDiskStillAcceptsEdits() {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, editor) = makeLibrarySharingNoAddress(
+            using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:0f")
+
+        // Only a change of address is refused, so a pair that arrived from disk
+        // sharing one stays editable in every other respect.
+        let accepted = viewModel.updateConfiguration(of: editor) { $0.name = "Renamed" }
+
+        #expect(accepted)
+        #expect(editor.configuration.name == "Renamed")
+        #expect(!presenter.showError)
+    }
+
+    @Test("Moving the holder off an address frees it for another VM")
+    func editingTheHolderFreesItsAddress() {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, holder, editor) = makeLibrarySharingNoAddress(
+            using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
+
+        viewModel.updateConfiguration(of: holder) { $0.macAddress = "aa:bb:cc:dd:ee:11" }
+        let accepted = viewModel.updateConfiguration(of: editor) {
+            $0.macAddress = "aa:bb:cc:dd:ee:0f"
+        }
+
+        #expect(accepted)
+        #expect(editor.configuration.macAddress == "aa:bb:cc:dd:ee:0f")
+        #expect(!presenter.showError)
+    }
+
+    @Test("Deleting the holder frees its address for another VM")
+    func deletingTheHolderFreesItsAddress() async {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, holder, editor) = makeLibrarySharingNoAddress(
+            using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
+
+        for task in viewModel.deleteConfirmed(holder) { await task.value }
+        let accepted = viewModel.updateConfiguration(of: editor) {
+            $0.macAddress = "aa:bb:cc:dd:ee:0f"
+        }
+
+        #expect(accepted)
+        #expect(editor.configuration.macAddress == "aa:bb:cc:dd:ee:0f")
+        #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:0f"])
+        #expect(!presenter.showError)
+    }
+
     // MARK: - Port Forwarding Sync
 
     private static let webRule = PortForwardingRule(transport: .tcp, hostPort: 8080, guestPort: 80)
+    private static let sshRule = PortForwardingRule(transport: .tcp, hostPort: 2222, guestPort: 22)
 
     @Test("A configuration change declares a shared VM's forwarding rules")
     func updateConfigurationDeclaresForwardingRules() {
@@ -2636,6 +2770,45 @@ struct VMLibraryViewModelTests {
         saving.tearDownSession()
 
         #expect(vmnet.invalidatedKinds == [.shared])
+    }
+
+    @Test("Deleting a VM leaves the rules of one sharing its address declared")
+    func deleteKeepsADuplicateMACsForwardingRules() async {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
+        let deleted = makeReservedInstance(
+            in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f", name: "Deleted",
+            rules: [Self.webRule])
+        _ = makeReservedInstance(
+            in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f", name: "Survivor",
+            rules: [Self.sshRule])
+
+        for task in viewModel.deleteConfirmed(deleted) { await task.value }
+
+        // Rules are keyed on the address, so withdrawing the deleted VM's would
+        // disarm the survivor's through the same key.
+        #expect(vmnet.declaredForwardingRules.last?.mac == "aa:bb:cc:dd:ee:0f")
+        #expect(vmnet.declaredForwardingRules.last?.rules == [Self.sshRule])
+    }
+
+    @Test("Editing a MAC leaves the rules of a VM sharing the retired address declared")
+    func macAddressChangeKeepsADuplicateMACsForwardingRules() {
+        let vmnet = MockVmnetNetworkProvider()
+        let (viewModel, _, _, _, _) = makeViewModel(vmnetNetworks: vmnet)
+        let edited = makeReservedInstance(
+            in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f", name: "Edited",
+            rules: [Self.webRule])
+        _ = makeReservedInstance(
+            in: viewModel, using: vmnet, mac: "aa:bb:cc:dd:ee:0f", name: "Survivor",
+            rules: [Self.sshRule])
+
+        viewModel.updateConfiguration(of: edited) { $0.macAddress = "aa:bb:cc:dd:ee:10" }
+
+        #expect(
+            vmnet.declaredForwardingRules.suffix(2).map(\.mac)
+                == ["aa:bb:cc:dd:ee:0f", "aa:bb:cc:dd:ee:10"])
+        #expect(vmnet.declaredForwardingRules.dropLast().last?.rules == [Self.sshRule])
+        #expect(vmnet.declaredForwardingRules.last?.rules == [Self.webRule])
     }
 
     // MARK: - trySave / tryForceStop

@@ -1208,6 +1208,22 @@ struct VMSettingsViewControllerTests {
         }
     }
 
+    @Test("A MAC address another VM holds is refused and the field reverts")
+    func macAddressHeldByAnotherVMIsRefused() throws {
+        let viewModel = makeViewModel()
+        let holder = makeInstance(guestOS: .linux)
+        holder.configuration.macAddress = "aa:bb:cc:dd:ee:0f"
+        viewModel.instances = [holder]
+        let (vc, instance) = makeNetworkController(viewModel: viewModel)
+        let field = try #require(editableField("MAC Address", in: vc.view))
+
+        field.stringValue = "AA:BB:CC:DD:EE:0F"
+        commitEdit(field, on: vc)
+
+        #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:ff")
+        #expect(field.stringValue == "aa:bb:cc:dd:ee:ff")
+    }
+
     @Test("Text a real edit session rejects reverts in the field")
     func rejectedEditRevertsThroughTheFieldEditor() throws {
         let (vc, instance) = makeNetworkController()

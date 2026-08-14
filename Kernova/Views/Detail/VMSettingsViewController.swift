@@ -3221,20 +3221,19 @@ extension VMSettingsViewController: NSTextFieldDelegate {
         writeConfig { $0.memorySizeInGB = clamped }
     }
 
-    /// Persists the typed MAC in canonical form. Text naming no address a guest
-    /// can use writes nothing; the field snapping back to the persisted address
-    /// is the rejection, and the field's tooltip names the accepted spelling.
+    /// Persists the typed MAC in canonical form, then shows the address the VM
+    /// ended up with — so text naming no address a guest can use, and an address
+    /// the library refused because another VM holds it, both snap the field back.
+    /// The tooltip names the accepted spelling; the refusal carries its own alert.
     ///
     /// The field is written directly rather than through
     /// `refreshMACAddressRow()`: editing is still ending here, so the editor the
     /// refresh defers to is the very one being reconciled away.
     private func applyMACAddressFieldEdit() {
-        guard let normalized = Self.normalizedMACAddress(macAddressField.stringValue) else {
-            macAddressField.stringValue = instance.configuration.macAddress ?? ""
-            return
+        if let normalized = Self.normalizedMACAddress(macAddressField.stringValue) {
+            writeConfig { $0.macAddress = normalized }
         }
-        writeConfig { $0.macAddress = normalized }
-        macAddressField.stringValue = normalized
+        macAddressField.stringValue = instance.configuration.macAddress ?? ""
     }
 }
 
