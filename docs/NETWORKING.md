@@ -82,7 +82,17 @@ omits Bridged and Host Only rather than presenting entries that would fail; the 
 the build can deliver keep working unchanged. Absence is the honest degraded state —
 never a visible-but-broken control.
 
-### 9. Guest-to-guest reach is network membership
+### 9. A MAC address belongs to one virtual machine
+
+**An address identifies exactly one VM in the library, and the library refuses a
+second holder** — the DHCP reservation slot and the forwarding rules are both keyed
+on the address, so two holders share one slot and one rule set. Enforcement sits at
+the single configuration funnel, not at each surface that can write an address, and
+the user moves an address by changing or deleting the VM holding it first. An
+address a bundle arrives with is never silently rewritten: the guest can pin it, and
+under Bridged the LAN's DHCP server may hold a reservation for it.
+
+### 10. Guest-to-guest reach is network membership
 
 **A guest reaches another guest exactly when the user placed both on the same
 app-managed network.** Host Only is one such network: every guest the user puts in that

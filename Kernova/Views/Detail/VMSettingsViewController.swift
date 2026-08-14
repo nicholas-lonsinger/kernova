@@ -2453,10 +2453,10 @@ extension VMSettingsViewController: NSMenuItemValidation {
     @objc private func generateMACAddressTapped() {
         // Clicking a push button takes no first responder, so an edit open in
         // the field would outlive the write and commit over it on the way out.
-        // Settle it first; the generated address then replaces whatever it left.
-        if macAddressField.currentEditor() != nil {
-            view.window?.makeFirstResponder(nil)
-        }
+        // Discard it rather than settling it: the generated address supersedes
+        // whatever was typed, so committing first would only refuse a typed
+        // duplicate with an alert about an address no longer in play.
+        macAddressField.abortEditing()
         writeConfig { $0.macAddress = VZMACAddress.randomLocallyAdministered().string }
         refreshMACAddressRow()
     }
@@ -3221,20 +3221,19 @@ extension VMSettingsViewController: NSTextFieldDelegate {
         writeConfig { $0.memorySizeInGB = clamped }
     }
 
-    /// Persists the typed MAC in canonical form. Text naming no address a guest
-    /// can use writes nothing; the field snapping back to the persisted address
-    /// is the rejection, and the field's tooltip names the accepted spelling.
+    /// Persists the typed MAC in canonical form, then shows the address the VM
+    /// ended up with — so text naming no address a guest can use, and an address
+    /// the library refused because another VM holds it, both snap the field back.
+    /// The tooltip names the accepted spelling; the refusal carries its own alert.
     ///
     /// The field is written directly rather than through
     /// `refreshMACAddressRow()`: editing is still ending here, so the editor the
     /// refresh defers to is the very one being reconciled away.
     private func applyMACAddressFieldEdit() {
-        guard let normalized = Self.normalizedMACAddress(macAddressField.stringValue) else {
-            macAddressField.stringValue = instance.configuration.macAddress ?? ""
-            return
+        if let normalized = Self.normalizedMACAddress(macAddressField.stringValue) {
+            writeConfig { $0.macAddress = normalized }
         }
-        writeConfig { $0.macAddress = normalized }
-        macAddressField.stringValue = normalized
+        macAddressField.stringValue = instance.configuration.macAddress ?? ""
     }
 }
 

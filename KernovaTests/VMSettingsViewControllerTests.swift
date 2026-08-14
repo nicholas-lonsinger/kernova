@@ -1208,6 +1208,56 @@ struct VMSettingsViewControllerTests {
         }
     }
 
+    /// A library already holding `mac`, wired to a presenter so the refusal's
+    /// alert is observable rather than buffered.
+    private func makeLibraryHolding(
+        _ mac: String, presenter: MockVMLibraryPresenting
+    ) -> VMLibraryViewModel {
+        let viewModel = makeViewModel()
+        let holder = makeInstance(guestOS: .linux)
+        holder.configuration.macAddress = mac
+        viewModel.instances = [holder]
+        viewModel.presenter = presenter
+        return viewModel
+    }
+
+    @Test("A MAC address another VM holds is refused and the field reverts")
+    func macAddressHeldByAnotherVMIsRefused() throws {
+        let presenter = MockVMLibraryPresenting()
+        let viewModel = makeLibraryHolding("aa:bb:cc:dd:ee:0f", presenter: presenter)
+        let (vc, instance) = makeNetworkController(viewModel: viewModel)
+        let field = try #require(editableField("MAC Address", in: vc.view))
+
+        field.stringValue = "AA:BB:CC:DD:EE:0F"
+        commitEdit(field, on: vc)
+
+        #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:ff")
+        #expect(field.stringValue == "aa:bb:cc:dd:ee:ff")
+        #expect(presenter.errorTitle == "MAC Address In Use")
+    }
+
+    @Test("Generate discards a typed duplicate instead of refusing it")
+    func generateDiscardsATypedDuplicate() throws {
+        let presenter = MockVMLibraryPresenting()
+        let viewModel = makeLibraryHolding("aa:bb:cc:dd:ee:0f", presenter: presenter)
+        let (vc, instance) = makeNetworkController(viewModel: viewModel)
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("MAC Address", in: vc.view))
+        #expect(window.makeFirstResponder(field))
+        try #require(field.currentEditor()).string = "aa:bb:cc:dd:ee:0f"
+        let generate = try #require(findButton(titled: "Generate", in: vc.view))
+
+        generate.sendAction(generate.action, to: generate.target)
+
+        // The generated address supersedes the typed one, so the duplicate is
+        // never committed and its refusal never reaches the user.
+        let mac = try #require(instance.configuration.macAddress)
+        #expect(mac != "aa:bb:cc:dd:ee:0f")
+        #expect(field.stringValue == mac)
+        #expect(!presenter.showError)
+    }
+
     @Test("Text a real edit session rejects reverts in the field")
     func rejectedEditRevertsThroughTheFieldEditor() throws {
         let (vc, instance) = makeNetworkController()
