@@ -40,6 +40,11 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
     private(set) var installedForwardingRules: [RecordedForwardingRules] = []
     private(set) var releasedNetworks: [OpaquePointer] = []
 
+    /// Runs inside each create, before it returns, with the 1-based number of
+    /// the call — the seam for a test that has to change service state while a
+    /// create is in flight.
+    var duringCreateNetwork: ((Int) -> Void)?
+
     private var fabricatedNetworks: [UnsafeMutableRawPointer] = []
 
     deinit { fabricatedNetworks.forEach { $0.deallocate() } }
@@ -54,6 +59,7 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
         pinnedAddressings.append(addressing)
         installedReservations.append(reservations)
         installedForwardingRules.append(forwardingRules)
+        duringCreateNetwork?(createdKinds.count)
         if let createNetworkError { throw createNetworkError }
         if addressing != nil, let pinnedCreateError { throw pinnedCreateError }
         return (makeHandle(), reservedAddressingOverride ?? addressing ?? freshAddressing)
@@ -154,7 +160,9 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, @unchecked Sendable
 
     func portForwardingRulesArePending(for kind: VmnetNetworkKind) -> Bool {
         pendingQueriedKinds.append(kind)
-        return scriptedPendingForwardingKinds.contains(kind)
+        // Mirrors the service: nothing pends against a network that is not
+        // materialized — its next materialization installs what is declared then.
+        return isMaterialized && scriptedPendingForwardingKinds.contains(kind)
     }
 
     /// Scripted answer for `kind(ofNetwork:)`.

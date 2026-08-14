@@ -33,12 +33,7 @@ final class VMInstance {
 
     let instanceID: UUID
     var configuration: VMConfiguration
-    var status: VMStatus {
-        didSet {
-            guard status != oldValue, status.isResting else { return }
-            onSessionEnded?()
-        }
-    }
+    var status: VMStatus
     var virtualMachine: VZVirtualMachine?
     let bundleURL: URL
 
@@ -198,12 +193,13 @@ final class VMInstance {
     /// The host uses it to auto-eject the guest-agent installer disk.
     @ObservationIgnored var onAgentBecameCurrent: (@MainActor () -> Void)?
 
-    /// Fired when this VM settles into a resting status, so no session of its
-    /// own is live any more.
+    /// Fired at the end of ``tearDownSession()``, once this VM's
+    /// `VZVirtualMachine` and everything riding it are released — a stop, a
+    /// force stop, an error, or a completed save-suspend alike.
     ///
     /// Wired by `VMLibraryViewModel.wirePersistence(for:)`; the library uses it
     /// for work that can only run while no VM holds the resource it touches.
-    @ObservationIgnored var onSessionEnded: (@MainActor () -> Void)?
+    @ObservationIgnored var onSessionTornDown: (@MainActor () -> Void)?
 
     /// Applies a configuration mutation, routing it through the persistence
     /// pipeline when `onUpdateConfiguration` is wired.
@@ -377,6 +373,33 @@ final class VMInstance {
         canAttachUSBDevices && configuration.guestOS == .macOS
     }
 
+    /// Whether this VM may be holding — or be about to take — an attachment on
+    /// the app-managed network of `kind`, so recreating that network would pull
+    /// it out from under a session.
+    ///
+    /// A live session answers from the attachment it is *on*, not from the
+    /// configuration: the two disagree from a live mode switch until the swap
+    /// lands, in both directions. With no live `VZVirtualMachine` there is
+    /// nothing to read, so the configuration decides — and only while a session
+    /// could be forming or settling, since off-main configuration assembly can
+    /// already hold a handle this VM has not been given yet.
+    func mayHoldAttachment(
+        on kind: VmnetNetworkKind, networks: any VmnetNetworkProviding
+    ) -> Bool {
+        if let virtualMachine {
+            return virtualMachine.networkDevices.contains { device in
+                guard let vmnet = device.attachment as? VZVmnetNetworkDeviceAttachment else {
+                    return false
+                }
+                return networks.kind(ofNetwork: vmnet.network) == kind
+            }
+        }
+        guard configuration.networkEnabled,
+            VmnetNetworkKind(mode: configuration.networkMode) == kind
+        else { return false }
+        return status.isTransitioning || hasLiveVirtualMachine
+    }
+
     /// `true` when the VM is paused-to-disk but has no live `VZVirtualMachine` in memory.
     var isColdPaused: Bool {
         status == .paused && !hasLiveVirtualMachine
@@ -482,6 +505,7 @@ final class VMInstance {
         // `.hidden` (headless) has no window to do so — reset here so it
         // can't leak into the next session.
         displayMode = .inline
+        onSessionTornDown?()
     }
 
     func resetToStopped() {

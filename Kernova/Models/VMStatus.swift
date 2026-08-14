@@ -43,22 +43,6 @@ enum VMStatus: Sendable {
         }
     }
 
-    /// Whether no VZ session is live in this state, so work that cannot run
-    /// alongside one — recreating a network a session would be attached to —
-    /// may proceed.
-    ///
-    /// `.paused` counts as live: it covers a live-paused VM, which still holds
-    /// its attachments. Exhaustive rather than `default`, so a new state has to
-    /// choose a side.
-    var isResting: Bool {
-        switch self {
-        case .stopped, .error, .initialBoot:
-            true
-        case .starting, .running, .paused, .saving, .restoring, .installing:
-            false
-        }
-    }
-
     /// Whether terminating during this state would leave a half-written file
     /// where a complete one belongs, so a quit must wait the operation out
     /// instead of exiting through it.

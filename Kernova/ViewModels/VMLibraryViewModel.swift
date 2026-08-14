@@ -1465,8 +1465,8 @@ final class VMLibraryViewModel {
             self.unmountGuestAgentInstaller(from: instance)
         }
         // Forwarding rules are fixed at network creation, so an edit made while
-        // a VM ran waits for the last session on that network to end.
-        instance.onSessionEnded = { [weak self] in
+        // a VM ran waits for the last session on that network to release it.
+        instance.onSessionTornDown = { [weak self] in
             self?.rebuildSharedNetworkIfIdle()
         }
         syncAddressReservation(for: instance.configuration)
@@ -1517,9 +1517,8 @@ final class VMLibraryViewModel {
     /// moves.
     private func rebuildSharedNetworkIfIdle() {
         guard vmnetNetworks.portForwardingRulesArePending(for: .shared) else { return }
-        let attached = instances.contains { instance in
-            instance.configuration.networkEnabled && instance.configuration.networkMode == .shared
-                && !instance.status.isResting
+        let attached = instances.contains {
+            $0.mayHoldAttachment(on: .shared, networks: vmnetNetworks)
         }
         guard !attached else { return }
         Self.logger.notice(
@@ -1550,6 +1549,10 @@ final class VMLibraryViewModel {
         syncPortForwardingRules(for: new)
         let saved = saveConfiguration(for: instance)
         applyLivePolicy(for: instance, old: old, new: new)
+        // A live switch off the shared network frees it inside `applyLivePolicy`
+        // — the sync above ran while the session still held the attachment, so
+        // re-check now rather than leaving pending rules to an unrelated event.
+        rebuildSharedNetworkIfIdle()
         return saved
     }
 

@@ -1218,18 +1218,24 @@ extension VMSettingsViewController {
         return row
     }
 
-    /// Every (transport, host port) pair already forwarded on the shared
-    /// network: the host port is claimed network-wide, so a new rule collides
-    /// with any Shared Network VM's, not just this one's.
+    /// Every (transport, host port) pair any VM in the library claims.
+    ///
+    /// The claim is held by the persisted configuration, not by the mode: a rule
+    /// survives a switch away from Shared Network and takes its host port back
+    /// on the way in, so a VM in another mode counts too — otherwise two VMs end
+    /// up holding the same port and one of them silently stops forwarding.
     private func takenHostPortClaims() -> Set<PortForwardingHostClaim> {
         var claims = Set(instance.configuration.portForwardingRules.map(\.hostClaim))
         for other in viewModel.instances where other.id != instance.id {
-            let config = other.configuration
-            guard config.networkEnabled, config.networkMode == .shared else { continue }
-            claims.formUnion(config.portForwardingRules.map(\.hostClaim))
+            claims.formUnion(other.configuration.portForwardingRules.map(\.hostClaim))
         }
         return claims
     }
+
+    #if DEBUG
+    /// The claim set the Add Rule sheet is built with, for tests.
+    var takenHostPortClaimsForTesting: Set<PortForwardingHostClaim> { takenHostPortClaims() }
+    #endif
 
     private func writePortForwardingRules(_ rules: [PortForwardingRule]) {
         viewModel.updateConfiguration(of: instance) { $0.portForwardingRules = rules }

@@ -384,8 +384,8 @@ struct VMConfigurationTests {
         #expect(config.portForwardingRules.isEmpty)
     }
 
-    @Test("A clone keeps the source VM's forwarding rules")
-    func cloneKeepsPortForwardingRules() {
+    @Test("A clone starts with no forwarding rules of its own")
+    func cloneDropsPortForwardingRules() {
         var config = VMConfiguration(name: "Forwarding VM", guestOS: .linux, bootMode: .efi)
         config.portForwardingRules = [
             PortForwardingRule(transport: .tcp, hostPort: 2222, guestPort: 22)
@@ -393,7 +393,10 @@ struct VMConfigurationTests {
 
         let clone = config.clonedForNewInstance(existingNames: [])
 
-        #expect(clone.portForwardingRules == config.portForwardingRules)
+        // Carried over, the clone's rules would claim host ports the source
+        // already holds on the same network.
+        #expect(clone.portForwardingRules.isEmpty)
+        #expect(config.portForwardingRules.count == 1)
     }
 
     @Test("Unknown JSON keys are silently ignored")

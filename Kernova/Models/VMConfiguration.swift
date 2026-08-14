@@ -450,6 +450,10 @@ struct VMConfiguration: Codable, Sendable, Equatable {
             SharedDirectory(id: UUID(), path: dir.path, readOnly: dir.readOnly, bookmark: dir.bookmark)
         }
 
+        // A host port is claimed once network-wide, so carried-over rules would
+        // collide with the source's the moment both VMs share a network.
+        clone.portForwardingRules = []
+
         // The clone copies the source bundle's post-install artifacts, so
         // preserving either install context would falsely mark it as awaiting
         // an initial boot.

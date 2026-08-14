@@ -2225,10 +2225,13 @@ struct VMLibraryViewModelTests {
         #expect(vmnet.invalidatedKinds == [.shared])
     }
 
-    @Test("A live shared-network VM holds the recreate off until its session ends")
-    func liveSharedVMDefersTheRecreate() async throws {
+    /// A library holding one shared-network VM per name, wired through the real
+    /// load path so each instance carries its persistence hooks.
+    private func makeSharedNetworkLibrary(
+        named names: [String], vmnet: MockVmnetNetworkProvider
+    ) async -> VMLibraryViewModel {
         let storage = MockVMStorageService()
-        for name in ["Running VM", "Edited VM"] {
+        for name in names {
             var config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
             config.networkMode = .shared
             config.macAddress = VZMACAddress.randomLocallyAdministered().string
@@ -2237,19 +2240,75 @@ struct VMLibraryViewModelTests {
                     .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
             ] = config
         }
-        let vmnet = MockVmnetNetworkProvider()
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage, vmnetNetworks: vmnet)
         await viewModel.loadVMs()
+        return viewModel
+    }
+
+    @Test("A live shared-network VM holds the recreate off until its session is torn down")
+    func liveSharedVMDefersTheRecreate() async throws {
+        let vmnet = MockVmnetNetworkProvider()
+        let viewModel = await makeSharedNetworkLibrary(
+            named: ["Running VM", "Edited VM"], vmnet: vmnet)
         let running = try #require(viewModel.instances.first { $0.name == "Running VM" })
         let edited = try #require(viewModel.instances.first { $0.name == "Edited VM" })
+        running.hasLiveVirtualMachineOverrideForTesting = true
         running.status = .running
         vmnet.scriptedPendingForwardingKinds = [.shared]
 
         viewModel.updateConfiguration(of: edited) { $0.portForwardingRules = [Self.webRule] }
         #expect(vmnet.invalidatedKinds.isEmpty)
 
-        // The session ending is what makes the recreate safe.
+        // Releasing the session's virtual machine is what makes the recreate
+        // safe; the override stands in for the `VZVirtualMachine` teardown nils.
+        running.hasLiveVirtualMachineOverrideForTesting = false
+        running.tearDownSession()
         running.status = .stopped
+
+        #expect(vmnet.invalidatedKinds == [.shared])
+    }
+
+    @Test("A save-suspended VM releases the shared network for a pending rule change")
+    func saveSuspendReleasesTheSharedNetwork() async throws {
+        let vmnet = MockVmnetNetworkProvider()
+        let viewModel = await makeSharedNetworkLibrary(
+            named: ["Suspending VM", "Edited VM"], vmnet: vmnet)
+        let suspending = try #require(viewModel.instances.first { $0.name == "Suspending VM" })
+        let edited = try #require(viewModel.instances.first { $0.name == "Edited VM" })
+        suspending.hasLiveVirtualMachineOverrideForTesting = true
+        suspending.status = .running
+        vmnet.scriptedPendingForwardingKinds = [.shared]
+
+        viewModel.updateConfiguration(of: edited) { $0.portForwardingRules = [Self.webRule] }
+        #expect(vmnet.invalidatedKinds.isEmpty)
+
+        // A save-suspend rests at `.paused` with nothing live, so the rebuild
+        // rides the session teardown rather than any status.
+        suspending.hasLiveVirtualMachineOverrideForTesting = false
+        await viewModel.save(suspending)
+
+        #expect(suspending.status == .paused)
+        #expect(vmnet.invalidatedKinds == [.shared])
+    }
+
+    @Test("A live switch out of Shared Network frees the network for the pending rebuild")
+    func liveSwitchOutOfSharedFreesTheNetwork() async throws {
+        let vmnet = MockVmnetNetworkProvider()
+        let viewModel = await makeSharedNetworkLibrary(named: ["Running VM"], vmnet: vmnet)
+        let running = try #require(viewModel.instances.first)
+        running.hasLiveVirtualMachineOverrideForTesting = true
+        running.status = .running
+        vmnet.scriptedPendingForwardingKinds = [.shared]
+
+        // The rule sync runs while the VM is still on the shared network; only
+        // the mode write that follows frees it.
+        viewModel.updateConfiguration(of: running) {
+            $0.portForwardingRules = [Self.webRule]
+        }
+        #expect(vmnet.invalidatedKinds.isEmpty)
+
+        viewModel.updateConfiguration(of: running) { $0.networkMode = .hostOnly }
+
         #expect(vmnet.invalidatedKinds == [.shared])
     }
 

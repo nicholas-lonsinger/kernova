@@ -824,7 +824,8 @@ struct VMSettingsViewControllerTests {
         entitled: Bool = true,
         isReadOnly: Bool = false,
         status: VMStatus = .stopped,
-        vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider()
+        vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
+        viewModel: VMLibraryViewModel? = nil
     ) -> (VMSettingsViewController, VMInstance) {
         let config = VMConfiguration(
             name: "Test VM", guestOS: .linux, bootMode: .efi,
@@ -835,7 +836,7 @@ struct VMSettingsViewControllerTests {
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
         let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: status)
         let vc = VMSettingsViewController(
-            instance: instance, viewModel: makeViewModel(), isReadOnly: isReadOnly,
+            instance: instance, viewModel: viewModel ?? makeViewModel(), isReadOnly: isReadOnly,
             bridgedInterfaces: interfaces,
             entitlements: EntitlementService(
                 reader: MockEntitlementReader(
@@ -1306,6 +1307,31 @@ struct VMSettingsViewControllerTests {
 
         #expect(findButton(titled: "Add Rule…", in: vc.view)?.isEnabled == true)
         #expect(removeRuleButtons(in: vc.view).allSatisfy { $0.isEnabled })
+    }
+
+    @Test("Host port claims cover every VM's rules, whatever mode each VM is in")
+    func hostPortClaimsSpanEveryMode() {
+        let viewModel = makeViewModel()
+        // A rule persists across a mode switch and takes its host port back on
+        // the way in, so a Host Only VM still holds the claim.
+        let hostOnly = makeInstance(guestOS: .linux)
+        hostOnly.configuration.networkMode = .hostOnly
+        hostOnly.configuration.portForwardingRules = [Self.sshRule]
+        let disabled = makeInstance(guestOS: .linux)
+        disabled.configuration.networkEnabled = false
+        disabled.configuration.portForwardingRules = [
+            PortForwardingRule(transport: .udp, hostPort: 5353, guestPort: 53)
+        ]
+        viewModel.instances = [hostOnly, disabled]
+
+        let (vc, _) = makeNetworkController(
+            portForwardingRules: [Self.webRule], viewModel: viewModel)
+
+        #expect(
+            vc.takenHostPortClaimsForTesting == [
+                Self.webRule.hostClaim, Self.sshRule.hostClaim,
+                PortForwardingHostClaim(transport: .udp, hostPort: 5353),
+            ])
     }
 
     private func removeRuleButtons(in view: NSView) -> [NSButton] {

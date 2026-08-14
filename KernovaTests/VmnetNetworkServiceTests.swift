@@ -504,6 +504,53 @@ struct VmnetNetworkServiceTests {
         #expect(!service.portForwardingRulesArePending(for: .shared))
     }
 
+    @Test("A rule declared while the network is being created lands in the published network")
+    func rulesDeclaredMidCreateAreInstalled() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01"], at: location)
+        service.setPortForwardingRules([Self.webRule], for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        operations.duringCreateNetwork = { [weak service] call in
+            guard call == 1 else { return }
+            service?.setPortForwardingRules(
+                [Self.webRule, Self.sshRule], for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        }
+
+        let handle = try service.network(for: .shared)
+
+        // The first network never became visible to anyone, so it is released
+        // and recreated rather than published without the late rule.
+        #expect(operations.installedForwardingRules.last?.map(\.rule) == [Self.webRule, Self.sshRule])
+        #expect(operations.releasedNetworks.count == 1)
+        #expect(operations.releasedNetworks.first != handle.network)
+        #expect(!service.portForwardingRulesArePending(for: .shared))
+    }
+
+    @Test("Rules that keep changing publish a network anyway, still reading as pending")
+    func endlessRuleChangesPublishAndStayPending() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, operations) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01"], at: location)
+        var rules = [Self.webRule]
+        operations.duringCreateNetwork = { [weak service] _ in
+            rules.append(
+                PortForwardingRule(
+                    transport: .tcp, hostPort: UInt16(9000 + rules.count), guestPort: 80))
+            service?.setPortForwardingRules(rules, for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        }
+
+        _ = try service.network(for: .shared)
+
+        // Three attempts, two of them released — the caller is never made to
+        // wait on an editor that keeps typing, and the pending flag brings the
+        // rest at the next recreate.
+        #expect(operations.createdKinds.count == 3)
+        #expect(operations.releasedNetworks.count == 2)
+        #expect(service.portForwardingRulesArePending(for: .shared))
+    }
+
     @Test("Rules pend only after the network they would change is materialized")
     func pendingTracksTheMaterializedRuleSet() throws {
         let location = makeStoreLocation()
