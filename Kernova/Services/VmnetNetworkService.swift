@@ -339,10 +339,10 @@ protocol VmnetNetworkProviding: Sendable {
     /// network's next materialization.
     func setPortForwardingRules(_ rules: [PortForwardingRule], for mac: String, kind: VmnetNetworkKind)
     /// Whether the materialized network of `kind` carries a different set of
-    /// forwarding rules than the one that would install right now — so
-    /// recreating it would change what is forwarded. `false` while no network
-    /// of `kind` is materialized.
-    func portForwardingRulesArePending(for kind: VmnetNetworkKind) -> Bool
+    /// DHCP reservations or forwarding rules than the ones that would install
+    /// right now — so recreating it would change what guests get. `false`
+    /// while no network of `kind` is materialized.
+    func networkConfigurationIsPending(for kind: VmnetNetworkKind) -> Bool
     /// The kind whose materialized network `network` is, `nil` for a network
     /// this service does not hold.
     func kind(ofNetwork network: vmnet_network_ref) -> VmnetNetworkKind?
@@ -366,7 +366,7 @@ protocol VmnetNetworkProviding: Sendable {
 /// and rules can only be added to a configuration), so either one declared
 /// while its network is materialized takes effect at the next materialization
 /// — the next app launch, or a recreate driven by recovery or by
-/// ``portForwardingRulesArePending(for:)``.
+/// ``networkConfigurationIsPending(for:)``.
 ///
 /// Lock-guarded `Sendable` rather than `@MainActor`: it never touches
 /// `VZVirtualMachine`, and `ConfigurationBuilder` consumes it during off-main
@@ -625,7 +625,7 @@ final class VmnetNetworkService: @unchecked Sendable {
     /// Resolves every reservation slot in order, without logging — the shared
     /// source of truth for what a network of `addressing` would install, read
     /// both while materializing and while answering
-    /// ``portForwardingRulesArePending(for:)``.
+    /// ``networkConfigurationIsPending(for:)``.
     private static func resolveSlots(
         macs: [String?], addressing: VmnetNetworkAddressing
     ) -> [ResolvedSlot] {
@@ -751,6 +751,20 @@ final class VmnetNetworkService: @unchecked Sendable {
         return desiredForwardingRules[kind] ?? [:]
     }
 
+    /// The MAC → address reservations a network of `kind` created right now
+    /// would install, in slot order — slots that cannot install (past the
+    /// subnet's capacity, or holding a MAC that no longer parses) are not in
+    /// it, so it is directly comparable with `installedAddresses`.
+    ///
+    /// The caller holds `stateLock`.
+    private func installableReservationsLocked(
+        for kind: VmnetNetworkKind
+    ) -> [(mac: String, address: String)] {
+        guard let record = records[kind], let addressing = record.addressing else { return [] }
+        return Self.installablePairs(
+            Self.resolveSlots(macs: record.reservedMACs, addressing: addressing))
+    }
+
     /// The rules a network of `kind` created right now would carry, keyed by
     /// MAC — declarations that cannot install (no reservation slot, a host port
     /// another VM already claims) are not in it, so it is directly comparable
@@ -760,12 +774,10 @@ final class VmnetNetworkService: @unchecked Sendable {
     private func installableForwardingRulesLocked(
         for kind: VmnetNetworkKind
     ) -> [String: [PortForwardingRule]] {
-        guard let record = records[kind], let addressing = record.addressing else { return [:] }
-        let slots = Self.resolveSlots(macs: record.reservedMACs, addressing: addressing)
-        return Self.rulesByMAC(
+        Self.rulesByMAC(
             Self.resolveForwardingRules(
                 desired: desiredForwardingRules[kind] ?? [:],
-                reservations: Self.installablePairs(slots)
+                reservations: installableReservationsLocked(for: kind)
             ).installing)
     }
 
@@ -986,16 +998,27 @@ extension VmnetNetworkService: VmnetNetworkProviding {
         )
     }
 
-    func portForwardingRulesArePending(for kind: VmnetNetworkKind) -> Bool {
+    func networkConfigurationIsPending(for kind: VmnetNetworkKind) -> Bool {
         stateLock.lock()
         defer { stateLock.unlock() }
         // Nothing pends against a network that does not exist yet: its next
         // materialization installs whatever is declared then.
         guard handles[kind] != nil else { return false }
-        // Compared against what would *install*, not against everything
-        // declared: a rule whose VM holds no reservation can never install, and
-        // measuring against it would leave the flag stuck true and drive an
-        // endless recreate.
+        // Both sides are compared as what would *install*, not as everything
+        // declared: a slot past the subnet's capacity, a MAC that no longer
+        // parses, and a rule whose VM holds no reservation can never install,
+        // and measuring against them would leave the flag stuck true and drive
+        // an endless recreate.
+        //
+        // The whole reservation set is compared rather than only its additions,
+        // so a slot released by a departed VM also pends — the live network
+        // honors its reservation until the recreate.
+        let reservations = Dictionary(
+            installableReservationsLocked(for: kind).map { ($0.mac, $0.address) },
+            // Matches how `installedAddresses` is built, so a hand-edited store
+            // holding one MAC in two slots does not read as forever pending.
+            uniquingKeysWith: { first, _ in first })
+        if reservations != (installedAddresses[kind] ?? [:]) { return true }
         return installableForwardingRulesLocked(for: kind) != (installedForwardingRules[kind] ?? [:])
     }
 

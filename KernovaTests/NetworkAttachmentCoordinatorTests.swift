@@ -161,7 +161,7 @@ struct NetworkAttachmentCoordinatorTests {
             choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
             entitled: true,
             retryDelays: [])
-        h.vmnet.isMaterialized = false
+        h.vmnet.materializedKinds = []
         h.vmnet.materializeFails = true
         h.device.refusedPlans = [.hostOnly, .sharedVmnet]
 
@@ -180,7 +180,7 @@ struct NetworkAttachmentCoordinatorTests {
         h.device.refusedPlans = []
 
         await h.coordinator.vmnetMaterializationTaskForTesting?.value
-        #expect(h.vmnet.materializedKinds.contains(.shared))
+        #expect(h.vmnet.materializeRequestedKinds.contains(.shared))
         #expect(h.device.appliedPlans.last == .sharedVmnet)
         #expect(!h.coordinator.isPending)
         h.coordinator.stop()
@@ -213,7 +213,7 @@ struct NetworkAttachmentCoordinatorTests {
         let h = makeHarness(
             choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
             retryDelays: [])
-        h.vmnet.isMaterialized = false
+        h.vmnet.materializedKinds = []
         h.device.refusedPlans = [.hostOnly]
 
         h.coordinator.activate()

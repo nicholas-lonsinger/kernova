@@ -375,6 +375,9 @@ final class VMLibraryViewModel {
             let macs = Set(targets.filter { $0.kind == kind }.map(\.mac))
             vmnetNetworks.retainAddressReservations(macs, kind: kind)
         }
+        // A reload can run while a network is materialized, so the slots this
+        // just reclaimed only reach guests through a recreate.
+        rebuildNetworksIfIdle()
     }
 
     // MARK: - Create
@@ -1483,13 +1486,17 @@ final class VMLibraryViewModel {
             guard let self, let instance else { return }
             self.unmountGuestAgentInstaller(from: instance)
         }
-        // Forwarding rules are fixed at network creation, so an edit made while
-        // a VM ran waits for the last session on that network to release it.
+        // Reservations and forwarding rules are fixed at network creation, so a
+        // change made while a VM ran waits for the last session on that network
+        // to release it.
         instance.onSessionTornDown = { [weak self] in
-            self?.rebuildSharedNetworkIfIdle()
+            self?.rebuildNetworksIfIdle()
         }
         syncAddressReservation(for: instance.configuration)
         syncPortForwardingRules(for: instance.configuration)
+        // The create/clone/import/load entry point: a VM arriving with a slot
+        // on an already-materialized network is pending until it is recreated.
+        rebuildNetworksIfIdle()
     }
 
     /// The reservation slot `config` wants: the network its mode maps to and
@@ -1538,8 +1545,7 @@ final class VMLibraryViewModel {
         declarePortForwardingRules(forwards ? config.portForwardingRules : [], for: config)
     }
 
-    /// Declares `rules` for the VM `config` identifies, then rebuilds the
-    /// shared network if that changed what it should carry.
+    /// Declares `rules` for the VM `config` identifies.
     ///
     /// Entitlement-gated like the reservation machinery it rides on — an
     /// unentitled build attaches system NAT, which forwards nothing.
@@ -1548,25 +1554,30 @@ final class VMLibraryViewModel {
     ) {
         guard isVMNetworkingEntitled, let mac = config.macAddress else { return }
         vmnetNetworks.setPortForwardingRules(rules, for: mac, kind: .shared)
-        rebuildSharedNetworkIfIdle()
     }
 
-    /// Recreates the shared network when the rules it was created with are no
-    /// longer the ones that should install, and no VM could be attached to it.
+    /// Recreates every app-managed network whose DHCP reservations or
+    /// forwarding rules are no longer the ones that should install, once no VM
+    /// could be attached to it.
     ///
-    /// Rules are fixed at creation, so an edit reaches guests only through a
+    /// Both are fixed at creation, so a change reaches guests only through a
     /// recreate — and only while no session holds an attachment on the network.
     /// The recreate keeps the network's addressing, so no guest's address
     /// moves.
-    private func rebuildSharedNetworkIfIdle() {
-        guard vmnetNetworks.portForwardingRulesArePending(for: .shared) else { return }
+    private func rebuildNetworksIfIdle() {
+        for kind in VmnetNetworkKind.allCases { rebuildNetworkIfIdle(kind) }
+    }
+
+    private func rebuildNetworkIfIdle(_ kind: VmnetNetworkKind) {
+        guard vmnetNetworks.networkConfigurationIsPending(for: kind) else { return }
         let attached = instances.contains {
-            $0.mayHoldAttachment(on: .shared, networks: vmnetNetworks)
+            $0.mayHoldAttachment(on: kind, networks: vmnetNetworks)
         }
         guard !attached else { return }
         Self.logger.notice(
-            "Recreating the shared network so its changed port forwarding rules take effect")
-        vmnetNetworks.invalidateNetwork(for: .shared)
+            "Recreating the \(kind.rawValue, privacy: .public) network so its changed reservations and port forwarding rules take effect"
+        )
+        vmnetNetworks.invalidateNetwork(for: kind)
     }
 
     /// The single entry point for any UI-driven or programmatic mutation of
@@ -1608,10 +1619,11 @@ final class VMLibraryViewModel {
         syncPortForwardingRules(for: new)
         let saved = saveConfiguration(for: instance)
         applyLivePolicy(for: instance, old: old, new: new)
-        // A live switch off the shared network frees it inside `applyLivePolicy`
-        // — the sync above ran while the session still held the attachment, so
-        // re-check now rather than leaving pending rules to an unrelated event.
-        rebuildSharedNetworkIfIdle()
+        // A live switch off a network frees it inside `applyLivePolicy` — the
+        // syncs above ran while the session still held the attachment, so
+        // re-check now rather than leaving the pending change to an unrelated
+        // event.
+        rebuildNetworksIfIdle()
         return saved
     }
 
@@ -2594,10 +2606,10 @@ final class VMLibraryViewModel {
         // A VM out of the library stops claiming its host ports and its
         // address, so the next VM created can be handed both.
         declarePortForwardingRules([], for: instance.configuration)
-        guard bundleIsGone, let target = reservationTarget(for: instance.configuration) else {
-            return
+        if bundleIsGone, let target = reservationTarget(for: instance.configuration) {
+            releaseAddressReservationIfUnused(target)
         }
-        releaseAddressReservationIfUnused(target)
+        rebuildNetworksIfIdle()
     }
 
     // MARK: - Reorder

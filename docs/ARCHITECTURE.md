@@ -136,8 +136,9 @@ off-main assembly and the main-actor live-switch path) owns the app's managed vm
 the per-VM DHCP reservations and port-forwarding rules riding them: each VM holds a slot keyed on
 its persisted MAC, the slot's derived address is what the settings pane's IP Address row shows and
 what a Shared Network VM's rules forward to, and both are kept in step with configurations through
-`VMLibraryViewModel`'s persistence funnel — which also recreates the shared network, once no VM is
-attached to it, when the rules it carries no longer match the ones configured. The service
+`VMLibraryViewModel`'s persistence funnel — which also recreates an app-managed network, once no VM
+is attached to it, when the reservations or rules it carries no longer match the ones configured.
+The service
 materializes each network lazily over the `VmnetNetworkOperating` seam and holds the ref until
 the app exits, so every concurrent VM in the mode shares the one network; addressing and slots
 stay stable across launches by persisting each network's record to

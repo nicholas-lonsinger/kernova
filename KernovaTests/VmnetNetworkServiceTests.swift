@@ -510,6 +510,92 @@ struct VmnetNetworkServiceTests {
         #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:02", kind: .shared) == "192.168.213.3")
     }
 
+    @Test("A slot taken while its network is materialized pends until the recreate installs it")
+    func newSlotOnAMaterializedNetworkPends() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, _) = try makeSeededSharedService(macs: ["aa:bb:cc:dd:ee:01"], at: location)
+
+        // Nothing is materialized, so the next materialization installs the
+        // slots as they stand — there is nothing to recreate.
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:02", kind: .shared)
+        #expect(!service.networkConfigurationIsPending(for: .shared))
+
+        _ = try service.network(for: .shared)
+        #expect(!service.networkConfigurationIsPending(for: .shared))
+
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:03", kind: .shared)
+        #expect(service.networkConfigurationIsPending(for: .shared))
+
+        service.invalidateNetwork(for: .shared)
+        _ = try service.network(for: .shared)
+        #expect(!service.networkConfigurationIsPending(for: .shared))
+        #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:03", kind: .shared) == "192.168.77.4")
+    }
+
+    @Test("A released slot leaves the materialized network pending")
+    func releasedSlotLeavesTheNetworkPending() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, _) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"], at: location)
+        _ = try service.network(for: .shared)
+
+        service.releaseAddressReservation(for: "aa:bb:cc:dd:ee:02", kind: .shared)
+
+        // The live network keeps honoring the freed reservation, so what pends
+        // is the whole set differing — not only an addition to it.
+        #expect(service.networkConfigurationIsPending(for: .shared))
+        service.invalidateNetwork(for: .shared)
+        _ = try service.network(for: .shared)
+        #expect(!service.networkConfigurationIsPending(for: .shared))
+    }
+
+    @Test("A refilled slot pends, and rematerializing moves no other VM's address")
+    func refilledSlotPendsAndKeepsEveryOtherAddress() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let (service, _) = try makeSeededSharedService(
+            macs: ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02", "aa:bb:cc:dd:ee:03"], at: location)
+        _ = try service.network(for: .shared)
+
+        service.releaseAddressReservation(for: "aa:bb:cc:dd:ee:01", kind: .shared)
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:04", kind: .shared)
+        #expect(service.networkConfigurationIsPending(for: .shared))
+
+        service.invalidateNetwork(for: .shared)
+        _ = try service.network(for: .shared)
+
+        // The freed slot keeps its index, so the newcomer takes the departed
+        // VM's address and the survivors keep theirs.
+        #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:04", kind: .shared) == "192.168.77.2")
+        #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:02", kind: .shared) == "192.168.77.3")
+        #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:03", kind: .shared) == "192.168.77.4")
+        #expect(!service.networkConfigurationIsPending(for: .shared))
+    }
+
+    @Test("A slot past the subnet's capacity never reads as pending")
+    func slotPastSubnetCapacityNeverPends() throws {
+        let location = makeStoreLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        // A /30 leaves exactly one usable host past the gateway: host 2.
+        let tiny = VmnetNetworkAddressing(
+            ipv4Subnet: "192.168.77.0", ipv4Mask: "255.255.255.252",
+            ipv6Prefix: "fd00:aaaa:bbbb:cccc::", ipv6PrefixLength: 64)
+        try seed(
+            [.shared: VmnetNetworkRecord(addressing: tiny, reservedMACs: ["aa:bb:cc:dd:ee:01"])],
+            at: location.storeURL)
+        let service = VmnetNetworkService(
+            operations: MockVmnetNetworkOperator(), storeURL: location.storeURL)
+        _ = try service.network(for: .shared)
+
+        service.reserveAddressIfNeeded(for: "aa:bb:cc:dd:ee:02", kind: .shared)
+
+        // The slot can never install, so reading it as pending would drive an
+        // endless recreate.
+        #expect(!service.networkConfigurationIsPending(for: .shared))
+    }
+
     @Test("System-adjusted pinned addressing leaves every reservation pending until rematerialization")
     func adjustedPinnedAddressingLeavesReservationsPending() throws {
         let location = makeStoreLocation()
@@ -530,7 +616,7 @@ struct VmnetNetworkServiceTests {
         // none of them holds on the adjusted network — nor do the rules
         // forwarding to them, which is what leaves them pending.
         #expect(service.reservedAddress(for: "aa:bb:cc:dd:ee:01", kind: .shared) == nil)
-        #expect(service.portForwardingRulesArePending(for: .shared))
+        #expect(service.networkConfigurationIsPending(for: .shared))
     }
 
     // MARK: - Port forwarding rules
@@ -596,7 +682,7 @@ struct VmnetNetworkServiceTests {
         #expect(operations.installedForwardingRules.first?.isEmpty == true)
         // An uninstallable rule must not read as pending, or it would drive an
         // endless recreate.
-        #expect(!service.portForwardingRulesArePending(for: .shared))
+        #expect(!service.networkConfigurationIsPending(for: .shared))
     }
 
     @Test("A host port claimed twice across VMs installs once, in slot order")
@@ -626,7 +712,7 @@ struct VmnetNetworkServiceTests {
         _ = try service.network(for: .shared)
 
         service.setPortForwardingRules([], for: "aa:bb:cc:dd:ee:01", kind: .shared)
-        #expect(service.portForwardingRulesArePending(for: .shared))
+        #expect(service.networkConfigurationIsPending(for: .shared))
         service.invalidateNetwork(for: .shared)
         _ = try service.network(for: .shared)
 
@@ -644,7 +730,7 @@ struct VmnetNetworkServiceTests {
         _ = try service.network(for: .shared)
 
         #expect(operations.installedForwardingRules.first?.isEmpty == true)
-        #expect(!service.portForwardingRulesArePending(for: .shared))
+        #expect(!service.networkConfigurationIsPending(for: .shared))
     }
 
     @Test("A rule declared while the network is being created lands in the published network")
@@ -667,7 +753,7 @@ struct VmnetNetworkServiceTests {
         #expect(operations.installedForwardingRules.last?.map(\.rule) == [Self.webRule, Self.sshRule])
         #expect(operations.releasedNetworks.count == 1)
         #expect(operations.releasedNetworks.first != handle.network)
-        #expect(!service.portForwardingRulesArePending(for: .shared))
+        #expect(!service.networkConfigurationIsPending(for: .shared))
     }
 
     @Test("Rules that keep changing publish a network anyway, still reading as pending")
@@ -691,7 +777,7 @@ struct VmnetNetworkServiceTests {
         // rest at the next recreate.
         #expect(operations.createdKinds.count == 3)
         #expect(operations.releasedNetworks.count == 2)
-        #expect(service.portForwardingRulesArePending(for: .shared))
+        #expect(service.networkConfigurationIsPending(for: .shared))
     }
 
     @Test("Rules pend only after the network they would change is materialized")
@@ -703,18 +789,18 @@ struct VmnetNetworkServiceTests {
 
         // Nothing is materialized, so the next materialization installs the
         // rules as they stand — there is nothing to recreate.
-        #expect(!service.portForwardingRulesArePending(for: .shared))
+        #expect(!service.networkConfigurationIsPending(for: .shared))
 
         _ = try service.network(for: .shared)
-        #expect(!service.portForwardingRulesArePending(for: .shared))
+        #expect(!service.networkConfigurationIsPending(for: .shared))
 
         service.setPortForwardingRules(
             [Self.webRule, Self.sshRule], for: "aa:bb:cc:dd:ee:01", kind: .shared)
-        #expect(service.portForwardingRulesArePending(for: .shared))
+        #expect(service.networkConfigurationIsPending(for: .shared))
 
         service.invalidateNetwork(for: .shared)
         _ = try service.network(for: .shared)
-        #expect(!service.portForwardingRulesArePending(for: .shared))
+        #expect(!service.networkConfigurationIsPending(for: .shared))
     }
 
     @Test("An unparseable MAC is refused a reservation slot")
