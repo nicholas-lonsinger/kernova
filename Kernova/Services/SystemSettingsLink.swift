@@ -11,8 +11,6 @@ struct SystemSettingsLink {
     /// Observed 2026-08-14 on macOS 26: this URL lands System Settings on the
     /// Microphone sub-pane, not just the Privacy & Security root.
     static let microphonePrivacyURL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
-    /// Privacy & Security with no sub-pane anchor.
-    static let privacySecurityURL = "x-apple.systempreferences:com.apple.preference.security"
 
     private static let logger = Logger(subsystem: "app.kernova", category: "SystemSettingsLink")
 
@@ -22,19 +20,28 @@ struct SystemSettingsLink {
         self.open = open
     }
 
-    /// Opens System Settings on the Microphone privacy pane, falling back to the
-    /// unanchored Privacy & Security pane when the anchored URL does not open.
+    /// Opens System Settings on the Microphone privacy pane.
+    ///
+    /// Returns whether System Settings launched — not whether it reached the
+    /// Microphone sub-pane. The `?Privacy_Microphone` anchor is opaque to
+    /// Launch Services, which resolves only the scheme, so an anchor macOS
+    /// stops honoring still opens System Settings and still reports success.
+    /// That is the graceful degradation for a dropped anchor: the user lands in
+    /// System Settings, and the popover's written steps carry them the rest of
+    /// the way. A second, unanchored URL would share this one's scheme and pane
+    /// id, so it could never succeed where this one failed.
     @discardableResult
     func openMicrophonePrivacy() -> Bool {
-        for string in [Self.microphonePrivacyURL, Self.privacySecurityURL] {
-            guard let url = URL(string: string) else {
-                Self.logger.fault("Malformed System Settings URL '\(string, privacy: .public)'")
-                assertionFailure("Malformed System Settings URL: \(string)")
-                continue
-            }
-            if open(url) { return true }
+        guard let url = URL(string: Self.microphonePrivacyURL) else {
+            Self.logger.fault(
+                "Malformed System Settings URL '\(Self.microphonePrivacyURL, privacy: .public)'")
+            assertionFailure("Malformed System Settings URL: \(Self.microphonePrivacyURL)")
+            return false
         }
-        Self.logger.warning("System Settings did not open for microphone permission")
-        return false
+        guard open(url) else {
+            Self.logger.warning("System Settings did not open for microphone permission")
+            return false
+        }
+        return true
     }
 }
