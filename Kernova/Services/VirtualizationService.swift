@@ -52,16 +52,15 @@ final class VirtualizationService {
                 Self.logger.notice("Started VM '\(instance.name, privacy: .public)'")
             }
         } catch {
-            let nsError = error as NSError
-            Self.logger.error(
-                "Failed to start VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(Self.underlyingChainDescription(nsError), privacy: .public)]"
-            )
-            instance.tearDownSession()
-            if Self.isRestoreFailure(error) {
-                Self.applyRestoreFailure(to: instance)
-            } else {
-                Self.applyStartFailure(error, to: instance, transientRestingStatus: .stopped)
+            // A restore failure already logged itself with the full error chain.
+            if !Self.isRestoreFailure(error) {
+                let nsError = error as NSError
+                Self.logger.error(
+                    "Failed to start VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(Self.underlyingChainDescription(nsError), privacy: .public)]"
+                )
             }
+            instance.tearDownSession()
+            Self.applyLifecycleFailure(error, to: instance, transientRestingStatus: .stopped)
             throw error
         }
     }
@@ -285,16 +284,14 @@ final class VirtualizationService {
 
             Self.logger.notice("Resumed VM '\(instance.name, privacy: .public)'")
         } catch {
-            Self.logger.error(
-                "Failed to resume VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            instance.tearDownSession()
-            if Self.isRestoreFailure(error) {
-                Self.applyRestoreFailure(to: instance)
-            } else {
-                instance.status = .error
-                instance.errorMessage = error.localizedDescription
+            // A restore failure already logged itself with the full error chain.
+            if !Self.isRestoreFailure(error) {
+                Self.logger.error(
+                    "Failed to resume VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
             }
+            instance.tearDownSession()
+            Self.applyLifecycleFailure(error, to: instance, transientRestingStatus: nil)
             throw error
         }
     }
@@ -405,12 +402,42 @@ final class VirtualizationService {
         return true
     }
 
+    /// `error` with one `restoreFailed` wrapper peeled off, so the contention
+    /// and transience classifiers can read the VZ failure underneath.
+    static func unwrappedRestoreFailure(_ error: Error) -> Error {
+        guard let virtualizationError = error as? VirtualizationError,
+            case .restoreFailed(let underlying) = virtualizationError
+        else { return error }
+        return underlying
+    }
+
+    /// Records a failed start or resume on `instance`, after the caller's
+    /// `tearDownSession()`. A failed save-file restore rests via
+    /// ``applyRestoreFailure(to:)``; anything else classifies through
+    /// ``applyStartFailure(_:to:transientRestingStatus:)`` when
+    /// `transientRestingStatus` is given (a start), or rests at `.error`
+    /// carrying the message (a resume).
+    static func applyLifecycleFailure(
+        _ error: Error, to instance: VMInstance, transientRestingStatus: VMStatus?
+    ) {
+        if isRestoreFailure(error) {
+            applyRestoreFailure(to: instance)
+        } else if let transientRestingStatus {
+            applyStartFailure(error, to: instance, transientRestingStatus: transientRestingStatus)
+        } else {
+            instance.status = .error
+            instance.errorMessage = error.localizedDescription
+        }
+    }
+
     /// Records a failed save-file restore on `instance`, after the caller's
     /// `tearDownSession()`: back at cold-paused with the save file untouched,
     /// so the user can retry the resume or explicitly discard the saved state.
+    /// If the save file is gone — discarded while the attempt was in flight —
+    /// rests at `.stopped` instead: `.paused` without a save file is a dead end.
     /// No stored message — the failure reaches the user as a thrown error.
     static func applyRestoreFailure(to instance: VMInstance) {
-        instance.status = .paused
+        instance.status = instance.hasSaveFile ? .paused : .stopped
         instance.errorMessage = nil
     }
 
@@ -440,7 +467,10 @@ final class VirtualizationService {
         }.value
     }
 
-    /// Builds a `VZVirtualMachine`, restores from a save file, and resumes.
+    /// Builds a `VZVirtualMachine`, restores from a save file, and resumes,
+    /// retrying with bounded backoff when the attempt fails on VZ file-lock
+    /// contention (see ``isFileLockContention(_:)``) — the restore-path
+    /// counterpart of ``coldBootRetryingLockContention(_:bootIntoRecovery:)``.
     ///
     /// A restore or resume failure surfaces as
     /// ``VirtualizationError/restoreFailed(underlying:)`` with the save file
@@ -448,6 +478,36 @@ final class VirtualizationService {
     /// discarding the saved state stays an explicit user action
     /// (`stop(_:)` on a cold-paused VM).
     private func restoreFromSaveFile(_ instance: VMInstance) async throws {
+        var attempt = 0
+        while true {
+            do {
+                try await restoreFromSaveFileAttempt(instance)
+                return
+            } catch let attemptError {
+                guard Self.isFileLockContention(Self.unwrappedRestoreFailure(attemptError)),
+                    let delay = Self.fileLockRetryDelay(forAttempt: attempt)
+                else { throw attemptError }
+                attempt += 1
+                Self.logger.warning(
+                    "Restore of '\(instance.name, privacy: .public)' hit file-lock contention; retry \(attempt, privacy: .public) in \(String(describing: delay), privacy: .public)"
+                )
+                instance.tearDownSession()
+                do {
+                    try await Task.sleep(for: delay)
+                } catch {
+                    // Cancelled mid-backoff: surface the original lock failure
+                    // rather than leak a `CancellationError` into the status/alert
+                    // classification paths, which aren't shaped for it.
+                    throw attemptError
+                }
+            }
+        }
+    }
+
+    /// One restore attempt: build, attach, restore, resume. A configuration
+    /// build failure propagates as-is (the caller's attachment explainers
+    /// match on it); a restore or resume failure is wrapped in `restoreFailed`.
+    private func restoreFromSaveFileAttempt(_ instance: VMInstance) async throws {
         instance.openRuntimeFileAccess()
         let result = try await buildConfiguration(for: instance)
 
@@ -547,9 +607,19 @@ enum VirtualizationError: LocalizedError {
         case .noSaveFile:
             "No saved state file found."
         case .restoreFailed(let underlying):
-            "Could not restore the saved state: \(underlying.localizedDescription) "
+            "Could not restore the saved state: \(underlying.localizedDescription)\n\n"
                 + "The saved state was kept — choose Resume to try again, "
                 + "or Discard Saved State to remove it and start fresh."
         }
+    }
+}
+
+/// Bridges `restoreFailed`'s underlying error into `NSUnderlyingErrorKey` so
+/// the chain-walking classifiers (`isVirtualMachineLimitExceeded`,
+/// `underlyingChainDescription`) see through the wrapper.
+extension VirtualizationError: CustomNSError {
+    var errorUserInfo: [String: Any] {
+        guard case .restoreFailed(let underlying) = self else { return [:] }
+        return [NSUnderlyingErrorKey: underlying as NSError]
     }
 }

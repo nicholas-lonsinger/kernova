@@ -357,6 +357,83 @@ struct VirtualizationServiceTests {
         #expect(instance.hasSaveFile)
     }
 
+    @Test("a failed restore with the save file already discarded rests stopped")
+    func applyRestoreFailureWithoutSaveFileRestsStopped() {
+        let instance = makeInstance(status: .restoring)
+        instance.errorMessage = "stale message"
+
+        VirtualizationService.applyRestoreFailure(to: instance)
+
+        #expect(instance.status == .stopped)
+        #expect(instance.errorMessage == nil)
+    }
+
+    @Test("applyLifecycleFailure dispatches by failure kind and entry point")
+    func applyLifecycleFailureDispatches() throws {
+        // A restore failure rests at cold-paused, regardless of entry point.
+        let restored = makeInstance(status: .restoring)
+        try FileManager.default.createDirectory(
+            at: restored.bundleURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: restored.bundleURL) }
+        FileManager.default.createFile(
+            atPath: restored.saveFileURL.path(percentEncoded: false),
+            contents: Data("fake save".utf8))
+        VirtualizationService.applyLifecycleFailure(
+            VirtualizationError.restoreFailed(underlying: NSError(domain: "test", code: 1)),
+            to: restored, transientRestingStatus: .stopped)
+        #expect(restored.status == .paused)
+
+        // A permanent start failure lands in .error carrying the message.
+        let started = makeInstance(status: .starting)
+        VirtualizationService.applyLifecycleFailure(
+            VirtualizationError.noVirtualMachine, to: started, transientRestingStatus: .stopped)
+        #expect(started.status == .error)
+        #expect(started.errorMessage != nil)
+
+        // A transient start failure rests at the given status with no message.
+        let transient = makeInstance(status: .starting)
+        VirtualizationService.applyLifecycleFailure(
+            NSError(domain: VZError.errorDomain, code: VZError.Code.operationCancelled.rawValue),
+            to: transient, transientRestingStatus: .stopped)
+        #expect(transient.status == .stopped)
+        #expect(transient.errorMessage == nil)
+
+        // A resume failure (no resting status) lands in .error with the message.
+        let resumed = makeInstance(status: .paused)
+        VirtualizationService.applyLifecycleFailure(
+            VirtualizationError.noSaveFile, to: resumed, transientRestingStatus: nil)
+        #expect(resumed.status == .error)
+        #expect(resumed.errorMessage != nil)
+    }
+
+    @Test("classifiers see through the restoreFailed wrapper")
+    func classifiersSeeThroughRestoreFailedWrapper() {
+        let limit = NSError(
+            domain: VZError.errorDomain, code: VZError.Code.virtualMachineLimitExceeded.rawValue)
+        #expect(
+            VirtualizationService.isVirtualMachineLimitExceeded(
+                VirtualizationError.restoreFailed(underlying: limit)))
+
+        let contention = NSError(
+            domain: VZError.errorDomain,
+            code: VZError.Code.invalidVirtualMachineConfiguration.rawValue,
+            userInfo: [
+                NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(EAGAIN))
+            ])
+        let unwrapped = VirtualizationService.unwrappedRestoreFailure(
+            VirtualizationError.restoreFailed(underlying: contention))
+        #expect(VirtualizationService.isFileLockContention(unwrapped))
+
+        // A non-wrapper error passes through unchanged.
+        let passthrough = VirtualizationService.unwrappedRestoreFailure(
+            VirtualizationError.noSaveFile)
+        #expect(passthrough is VirtualizationError)
+        #expect(!VirtualizationService.isRestoreFailure(passthrough))
+
+        // The CustomNSError bridge leaves the other cases' descriptions alone.
+        #expect(VirtualizationError.noSaveFile.localizedDescription == "No saved state file found.")
+    }
+
     @Test("isRestoreFailure matches only restoreFailed")
     func isRestoreFailureMatchesOnlyRestoreFailed() {
         let restoreFailed = VirtualizationError.restoreFailed(

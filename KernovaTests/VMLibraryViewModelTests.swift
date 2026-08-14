@@ -2075,6 +2075,33 @@ struct VMLibraryViewModelTests {
         #expect(fileSystem.trashedURLs.isEmpty)
     }
 
+    @Test("removeStartFailedAttachmentAndStart discards a saved state it can no longer restore")
+    func removeStartFailedAttachmentDiscardsSaveFile() async throws {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
+        instance.configuration.removableMedia = [item]
+        viewModel.instances.append(instance)
+        instance.status = .error  // a failed cold resume leaves the VM here, save file intact
+        try FileManager.default.createDirectory(
+            at: instance.bundleURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
+        FileManager.default.createFile(
+            atPath: instance.saveFileURL.path(percentEncoded: false),
+            contents: Data("fake save".utf8))
+
+        let failure = StartFailedAttachment(
+            kind: .removableMedia, id: item.id, label: item.label, message: "test")
+        await viewModel.removeStartFailedAttachmentAndStart(failure, on: instance)
+
+        // The save restores only into the saved device set, so the confirmed
+        // repair discards it and the retried start cold-boots.
+        #expect(!instance.hasSaveFile)
+        #expect(virtService.startCallCount == 1)
+        #expect(instance.status == .running)
+    }
+
     @Test("start keeps the generic error when the main disk attach fails")
     func startMainDiskAttachFailureStaysGeneric() async {
         let virtService = MockVirtualizationService()
@@ -4559,13 +4586,19 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("startAutomaticVMsForLaunch leaves a failed restore cold-paused and carries on")
-    func autoStartRestoreFailureRestsColdPausedAndContinues() async {
+    func autoStartRestoreFailureRestsColdPausedAndContinues() async throws {
         let virtService = MockVirtualizationService()
         virtService.resumeError = VirtualizationError.restoreFailed(
             underlying: NSError(domain: "test", code: 1))
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let suspended = markAutoStart(makeInstance(name: "Suspended"))
         suspended.status = .paused
+        try FileManager.default.createDirectory(
+            at: suspended.bundleURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: suspended.bundleURL) }
+        FileManager.default.createFile(
+            atPath: suspended.saveFileURL.path(percentEncoded: false),
+            contents: Data("fake save".utf8))
         let following = markAutoStart(makeInstance(name: "Following"))
         viewModel.instances = [suspended, following]
 

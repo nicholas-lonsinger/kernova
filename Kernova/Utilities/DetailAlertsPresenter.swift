@@ -342,10 +342,15 @@ final class DetailAlertsPresenter: NSObject {
     private func startFailedAttachmentConfig(
         _ failure: StartFailedAttachment, _ vm: VMInstance
     ) -> AlertConfiguration {
-        AlertConfiguration(
+        var message =
+            "\(failure.message)\n\nYou can remove “\(failure.label)” from this virtual machine and start without it. The file itself is not deleted, and you can re-attach it later in Settings."
+        if vm.hasSaveFile {
+            message +=
+                " Removing it also discards this virtual machine’s saved state, which can only be restored with the same devices attached."
+        }
+        return AlertConfiguration(
             title: "Couldn't Start “\(vm.name)”",
-            message:
-                "\(failure.message)\n\nYou can remove “\(failure.label)” from this virtual machine and start without it. The file itself is not deleted, and you can re-attach it later in Settings.",
+            message: message,
             buttons: [
                 AlertButton("Remove and Start", role: .default) { [weak self] in
                     guard let self else { return }
