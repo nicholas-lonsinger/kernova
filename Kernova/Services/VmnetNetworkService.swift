@@ -430,10 +430,18 @@ final class VmnetNetworkService: @unchecked Sendable {
     }
 
     /// How many networks one request may create before publishing whatever the
-    /// last attempt produced: each retry answers a rule declaration that landed
-    /// while the previous create was in flight, and a caller cannot be made to
-    /// wait on an editor that keeps typing.
+    /// last attempt produced: each retry answers a reservation or rule
+    /// declaration that landed while the previous create was in flight, and a
+    /// caller cannot be made to wait on an editor that keeps typing.
     private static let materializeAttemptLimit = 3
+
+    /// Names the declaration kinds a log line is about, for the two that report
+    /// what changed mid-create.
+    private static func declarationNames(reservations: Bool, rules: Bool) -> String {
+        [reservations ? "DHCP reservations" : nil, rules ? "forwarding rules" : nil]
+            .compactMap { $0 }
+            .joined(separator: " and ")
+    }
 
     /// The app-managed network of `kind`, materializing it on first use.
     /// Blocks for the vmnet XPC round-trip — never call on the main actor.
@@ -453,25 +461,29 @@ final class VmnetNetworkService: @unchecked Sendable {
             attempt += 1
             let materialized = try materialize(kind)
             stateLock.lock()
-            // Slots compare by MAC, and rules by MAC-keyed rule, both blind to
-            // the addresses they resolve to: a network that came back on
-            // addressing the record did not ask for re-derives every address
-            // without anyone having declared anything, and reading that as a
-            // mid-create change would recreate on every attempt. It publishes
-            // pending instead, for a later idle rebuild to carry.
-            let reservationsChanged =
-                materialized.submittedReservations.map(\.mac)
-                != installableReservationsLocked(for: kind).map(\.mac)
+            // Both sides are measured against the addressing this attempt
+            // submitted with, so only a changed declaration registers: a
+            // network that came back on addressing the record did not ask for
+            // re-derives every address without anyone having declared
+            // anything, and reading that as a mid-create change would recreate
+            // on every attempt. It publishes pending instead, for a later idle
+            // rebuild to carry.
+            let reservationsChanged = !materialized.submittedReservations.elementsEqual(
+                installableReservationsLocked(
+                    for: kind, addressing: materialized.submittedAddressing),
+                by: { $0 == $1 })
             let rulesChanged =
                 Self.rulesByMAC(materialized.submittedForwardingRules)
                 != installableForwardingRulesLocked(for: kind)
             let stale = reservationsChanged || rulesChanged
+            let changed = Self.declarationNames(
+                reservations: reservationsChanged, rules: rulesChanged)
             if stale, attempt < Self.materializeAttemptLimit {
                 stateLock.unlock()
                 // Never published, so nothing else can hold this network.
                 operations.releaseNetwork(materialized.handle)
                 Self.logger.info(
-                    "DHCP reservations or forwarding rules changed while the \(kind.rawValue, privacy: .public) network was being created — recreating it"
+                    "The \(kind.rawValue, privacy: .public) network's \(changed, privacy: .public) changed while it was being created — recreating it"
                 )
                 continue
             }
@@ -486,7 +498,7 @@ final class VmnetNetworkService: @unchecked Sendable {
                 // Left pending on purpose: the next configuration sync or
                 // session teardown recreates the network at an idle moment.
                 Self.logger.warning(
-                    "Published the \(kind.rawValue, privacy: .public) network without the DHCP reservations and forwarding rules declared during its creation — they take effect at the next recreate"
+                    "Published the \(kind.rawValue, privacy: .public) network without the \(changed, privacy: .public) declared during its creation — they take effect at the next recreate"
                 )
             }
             return materialized.handle
@@ -513,7 +525,8 @@ final class VmnetNetworkService: @unchecked Sendable {
                         "Recreated the \(kind.rawValue, privacy: .public) network with its stored addressing"
                     )
                     return MaterializedNetwork(
-                        handle: handle, reservations: installing, forwardingRules: forwarding)
+                        handle: handle, reservations: installing, forwardingRules: forwarding,
+                        submittedAddressing: stored)
                 }
                 // vmnet accepted the pin but reserved something else; the
                 // store must follow what the network actually is, or every
@@ -528,7 +541,8 @@ final class VmnetNetworkService: @unchecked Sendable {
                 )
                 return MaterializedNetwork(
                     handle: handle, reservations: [], forwardingRules: [],
-                    submittedReservations: installing, submittedForwardingRules: forwarding)
+                    submittedReservations: installing, submittedForwardingRules: forwarding,
+                    submittedAddressing: stored)
             } catch {
                 if isPinnedOnly(kind) {
                     // An invalidation recreate racing VZ's own refs on the old
@@ -570,9 +584,9 @@ final class VmnetNetworkService: @unchecked Sendable {
         }
 
         operations.releaseNetwork(probe)
-        let installing = reservations(for: macs, addressing: discovered, kind: kind)
-        let forwarding = forwardingRules(for: installing, kind: kind)
         do {
+            let installing = reservations(for: macs, addressing: discovered, kind: kind)
+            let forwarding = forwardingRules(for: installing, kind: kind)
             let (handle, reserved) = try operations.createNetwork(
                 kind, addressing: discovered, reservations: installing,
                 forwardingRules: Self.operatorRules(forwarding))
@@ -584,7 +598,8 @@ final class VmnetNetworkService: @unchecked Sendable {
             return MaterializedNetwork(
                 handle: handle, reservations: holds ? installing : [],
                 forwardingRules: holds ? forwarding : [],
-                submittedReservations: installing, submittedForwardingRules: forwarding)
+                submittedReservations: installing, submittedForwardingRules: forwarding,
+                submittedAddressing: discovered)
         } catch {
             // The discovered subnet was re-grabbed between release and
             // recreate. Fall back to a working network without reservations —
@@ -596,13 +611,12 @@ final class VmnetNetworkService: @unchecked Sendable {
             let (handle, addressing) = try operations.createNetwork(
                 kind, addressing: nil, reservations: [], forwardingRules: [])
             updateRecord(for: kind) { $0.addressing = addressing }
-            // Submitted as declared, though this network carries none of it:
-            // the create that would have installed it just failed, so retrying
-            // it here would fail the same way. The next materialization brings
-            // them, as the warning above says.
-            return MaterializedNetwork(
-                handle: handle, reservations: [], forwardingRules: [],
-                submittedReservations: installing, submittedForwardingRules: forwarding)
+            // Submitted nothing and carries nothing, which is what it reports:
+            // the retry that answers reads as one more declaration to install,
+            // and it pins the subnet just persisted rather than the one that
+            // was re-grabbed — a create that can succeed where this one could
+            // not.
+            return MaterializedNetwork(handle: handle, reservations: [], forwardingRules: [])
         }
     }
 
@@ -676,7 +690,7 @@ final class VmnetNetworkService: @unchecked Sendable {
     /// What one successful materialization produced: the handle, plus what the
     /// created network actually honors.
     ///
-    /// The `submitted` pair is what this attempt handed to `createNetwork` —
+    /// The `submitted` values are what this attempt handed to `createNetwork` —
     /// the declarations as they stood when it started, which is the same as
     /// what the network honors except where it came back on addressing they
     /// were not resolved against, honoring none of them. Comparing the
@@ -688,19 +702,28 @@ final class VmnetNetworkService: @unchecked Sendable {
         let forwardingRules: [ResolvedForwardingRule]
         let submittedReservations: [(mac: String, address: String)]
         let submittedForwardingRules: [ResolvedForwardingRule]
+        /// The addressing ``submittedReservations`` were resolved against, so
+        /// an equivalent submission made now is measured on the same footing —
+        /// otherwise a network that came back on addressing the record did not
+        /// ask for reads as a declaration change on every attempt. `nil` where
+        /// the attempt submitted no reservations, which measures against
+        /// whatever the record holds now.
+        let submittedAddressing: VmnetNetworkAddressing?
 
         init(
             handle: VmnetNetworkHandle,
             reservations: [(mac: String, address: String)] = [],
             forwardingRules: [ResolvedForwardingRule] = [],
             submittedReservations: [(mac: String, address: String)]? = nil,
-            submittedForwardingRules: [ResolvedForwardingRule]? = nil
+            submittedForwardingRules: [ResolvedForwardingRule]? = nil,
+            submittedAddressing: VmnetNetworkAddressing? = nil
         ) {
             self.handle = handle
             self.reservations = reservations
             self.forwardingRules = forwardingRules
             self.submittedReservations = submittedReservations ?? reservations
             self.submittedForwardingRules = submittedForwardingRules ?? forwardingRules
+            self.submittedAddressing = submittedAddressing
         }
     }
 
@@ -777,13 +800,16 @@ final class VmnetNetworkService: @unchecked Sendable {
     /// The MAC → address reservations a network of `kind` created right now
     /// would install, in slot order — slots that cannot install (past the
     /// subnet's capacity, or holding a MAC that no longer parses) are not in
-    /// it, so it is directly comparable with `installedAddresses`.
+    /// it, so it is directly comparable with `installedAddresses`. Pass
+    /// `addressing` to resolve the slots against something other than what the
+    /// record holds now.
     ///
     /// The caller holds `stateLock`.
     private func installableReservationsLocked(
-        for kind: VmnetNetworkKind
+        for kind: VmnetNetworkKind, addressing override: VmnetNetworkAddressing? = nil
     ) -> [(mac: String, address: String)] {
-        guard let record = records[kind], let addressing = record.addressing else { return [] }
+        guard let record = records[kind], let addressing = override ?? record.addressing
+        else { return [] }
         return Self.installablePairs(
             Self.resolveSlots(macs: record.reservedMACs, addressing: addressing))
     }
