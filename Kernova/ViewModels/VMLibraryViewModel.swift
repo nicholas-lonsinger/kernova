@@ -2539,6 +2539,20 @@ final class VMLibraryViewModel {
 
     // MARK: - Launch Auto-Start
 
+    /// Names of the macOS VMs marked to start automatically, in library order —
+    /// which is the order ``startAutomaticVMsForLaunch()`` reaches them in.
+    ///
+    /// Feeds the Startup section's capacity warning: macOS caps how many macOS
+    /// guests run at once, so a longer list than that cap cannot come up whole.
+    var macOSVMNamesMarkedForAutoStart: [String] {
+        instances
+            .filter {
+                $0.configuration.guestOS == .macOS
+                    && $0.configuration.startsAutomaticallyOnLaunch
+            }
+            .map(\.name)
+    }
+
     /// What the launch auto-start pass does with one VM.
     enum AutoStartStep: Equatable {
         case start

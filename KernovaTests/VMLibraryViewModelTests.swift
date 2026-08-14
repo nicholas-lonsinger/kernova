@@ -4469,6 +4469,20 @@ struct VMLibraryViewModelTests {
                 status: testCase.status) == testCase.expected)
     }
 
+    @Test("macOSVMNamesMarkedForAutoStart lists marked macOS VMs in library order")
+    func markedMacOSVMNamesFollowLibraryOrder() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let firstMac = markAutoStart(makeInstance(name: "Mac One", guestOS: .macOS))
+        let unmarkedMac = makeInstance(name: "Mac Unmarked", guestOS: .macOS)
+        let markedLinux = markAutoStart(makeInstance(name: "Linux Marked"))
+        let secondMac = markAutoStart(makeInstance(name: "Mac Two", guestOS: .macOS))
+        viewModel.instances = [firstMac, unmarkedMac, markedLinux, secondMac]
+
+        // Linux guests don't count against the macOS cap, and an unmarked macOS
+        // VM isn't coming up at launch.
+        #expect(viewModel.macOSVMNamesMarkedForAutoStart == ["Mac One", "Mac Two"])
+    }
+
     @Test("startAutomaticVMsForLaunch starts only marked VMs")
     func autoStartStartsOnlyMarked() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
