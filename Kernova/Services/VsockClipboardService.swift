@@ -429,9 +429,69 @@ final class VsockClipboardService: ClipboardServicing {
         }
         if let stale = outboundSession { progress.closeSession(stale.token, immediately: true) }
         let token = progress.openSession(
-            direction: .outbound, peerName: label, isPaste: true)
+            direction: .outbound, peerName: label, isPaste: true,
+            onCancelRequested: { [weak self] in
+                Self.onMainQueue { self?.cancelOutboundTransfers(generation: generation) }
+            })
         outboundSession = (generation: generation, token: token)
         return token
+    }
+
+    /// Stops streaming what the guest is pulling for `generation`, because the
+    /// user cancelled the readout.
+    ///
+    /// The offer itself survives: the guest can paste again and pull the same
+    /// representations, exactly as it can after any retired transfer
+    /// (docs/CLIPBOARD.md §9). The abort the sender emits carries `superseded`,
+    /// which the guest already treats as benign, so its paste simply comes back
+    /// empty and nothing is reported as a failure on either side.
+    private func cancelOutboundTransfers(generation: UInt64) {
+        guard let sender else { return }
+        sender.cancel(generation: generation)
+        Self.logger.notice(
+            "User cancelled the outbound clipboard transfer for '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
+        )
+    }
+
+    /// Stops the pulls the materialization loop has in flight for `generation`.
+    ///
+    /// Two halves, because the transfer spans both sides: an abort frame per
+    /// in-flight id tells the guest's sender to stop producing bytes, and the
+    /// local cancel deletes each partial temp file and wakes the parked pull with
+    /// the benign `cancelled` code, so the loop ends without raising an issue.
+    private func cancelInboundPulls(generation: UInt64) {
+        guard let promise = inboundPromise, promise.generation == generation else { return }
+        for index in promise.inFlight.keys {
+            let transferID = ClipboardTransferID.make(
+                generation: generation, repIndex: index, hostMinted: true)
+            sendStreamAbort(transferID: transferID, code: "user.cancelled")
+        }
+        receiver?.cancel(generation: generation)
+        Self.logger.notice(
+            "User cancelled the inbound clipboard transfer from '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
+        )
+    }
+
+    /// Tells the peer's sender to stop streaming a transfer this side is
+    /// abandoning.
+    private func sendStreamAbort(transferID: UInt64, code: String) {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.clipboardStreamAbort = .with {
+            $0.transferID = transferID
+            $0.code = code
+            $0.message = "Cancelled by the user"
+        }
+        try? channel.send(frame)
+    }
+
+    /// Runs `body` on the main actor on the next turn of the main queue.
+    ///
+    /// The hop is what makes a cancel closure safe to invoke from anywhere: the
+    /// tracker calls it outside its own lock, but on whichever thread noticed the
+    /// click.
+    nonisolated private static func onMainQueue(_ body: @escaping @MainActor () -> Void) {
+        DispatchQueue.main.async { MainActor.assumeIsolated { body() } }
     }
 
     // MARK: - Transfer issues
@@ -691,35 +751,12 @@ final class VsockClipboardService: ClipboardServicing {
     ) async {
         do {
             for try await frame in channel.incoming where frame.protocolVersion == 1 {
-                switch frame.payload {
-                case .clipboardStreamBegin(let begin):
-                    receiver.handleBegin(begin)
-                case .clipboardChunk(let chunk):
-                    receiver.handleChunk(chunk)
-                case .clipboardStreamEnd(let end):
-                    receiver.handleEnd(end)
-                case .clipboardStreamAck(let ack):
-                    sender.handleAck(
-                        transferID: ack.transferID, bytesConsumed: ack.bytesConsumed,
-                        windowBytes: ack.windowBytes)
-                case .clipboardStreamAbort(let abort):
-                    // Route by the direction bit so an abort reaches exactly the
-                    // engine that owns the id; the host receives ids that carry
-                    // the bit and sends those that don't. [H3]
-                    if ClipboardTransferID.hostReceives(abort.transferID) {
-                        receiver.handleAbort(abort)
-                    } else {
-                        // A sender-bound abort must not be handled off-main here:
-                        // `handleRequest` registers the transfer on main, so an
-                        // abort handled synchronously could race ahead of that
-                        // registration and no-op on an unregistered id — the
-                        // transfer would then stream despite being cancelled. The
-                        // shared main-queue dispatch preserves their order.
-                        onControlFrame(frame)
-                    }
-                default:
-                    onControlFrame(frame)
-                }
+                // `handleRequest` registers outbound transfers on the main actor,
+                // so a sender-bound abort rides the same hop rather than being
+                // handled here. [H3]
+                ClipboardStreamRouting.route(
+                    frame, role: .host, sender: sender, receiver: receiver,
+                    senderAbortDelivery: .viaControlFrame, onControlFrame: onControlFrame)
             }
             logger.info(
                 "Vsock clipboard channel closed for '\(label, privacy: .public)' (conn=\(connectionTag, privacy: .public))"
@@ -756,7 +793,8 @@ final class VsockClipboardService: ClipboardServicing {
         case .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck:
             // Routed off-main by the consume loop; never reaches here.
             break
-        case .hello, .heartbeat, .policyUpdate, .logRecord:
+        case .hello, .heartbeat, .policyUpdate, .logRecord, .dropOffer, .dropComplete,
+            .dropRelease:
             // Control-plane and log payloads belong on their own channels; a peer
             // sending them here crossed wires. A conformant agent reconnects.
             Self.logger.warning(
@@ -1049,7 +1087,12 @@ final class VsockClipboardService: ClipboardServicing {
                 id: UInt64(index), expectedBytes: info.byteCount,
                 name: info.filename.isEmpty ? nil : info.filename)
         }
-        return progress.openSession(direction: .inbound, peerName: label, units: units)
+        let generation = promise.generation
+        return progress.openSession(
+            direction: .inbound, peerName: label, units: units,
+            onCancelRequested: { [weak self] in
+                Self.onMainQueue { self?.cancelInboundPulls(generation: generation) }
+            })
     }
 
     /// Pulls the representations the window renders richly (text, inline RTF,
@@ -1461,7 +1504,7 @@ final class VsockClipboardService: ClipboardServicing {
     /// act on.
     // `nonisolated` so the blocking pull can read it off the main actor.
     nonisolated private static let retiringAbortCodes: Set<String> = [
-        "cancelled", "superseded", "request.stale",
+        "cancelled", "superseded", "request.stale", "user.cancelled",
     ]
 
     /// Records a user-visible issue for a paste-time fire that will serve
@@ -1644,6 +1687,16 @@ final class VsockClipboardService: ClipboardServicing {
     }
 }
 
+// MARK: - Cancelling the shown transfer
+
+extension VsockClipboardService: TransferCancelling {
+    /// Routes a Cancel on the app-wide readout to whichever of this VM's
+    /// operations that readout is showing.
+    func requestCancelOfShownOperation() {
+        progress.requestCancelOfPublishedSession()
+    }
+}
+
 // MARK: - Paste-time representation serving
 
 extension VsockClipboardService: ClipboardPasteboardRepProviding {
@@ -1697,6 +1750,11 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
     /// Runs one paste-time blocking pull under its own single-transfer progress
     /// session (a paste has no other session to join), caching the delivered rep
     /// so the item's sibling flavors — and later fires — reuse it.
+    ///
+    /// The session is deliberately not cancellable: this pull parks the thread
+    /// the pasteboard fired it on, usually main, so the dropdown carrying the
+    /// Cancel button cannot repaint — let alone be clicked — until the pull is
+    /// already over.
     nonisolated private func pullWithOwnSession(
         _ snapshot: LazyPullSnapshot
     ) -> ClipboardContent.Representation? {

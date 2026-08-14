@@ -260,16 +260,16 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     // MARK: - Init
 
     /// Production init — uses real `NSPasteboard.general` on the clipboard port,
-    /// publishing transfer progress through `onProgress` and clipboard refusals
-    /// through `onClipboardNotice`.
+    /// reporting progress through the agent-wide `progressTracker` and clipboard
+    /// refusals through `onClipboardNotice`.
     convenience init(
-        onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void,
+        progressTracker: ClipboardProgressTracker,
         onClipboardNotice: @escaping @Sendable () -> Void
     ) {
         self.init(
             pasteboard: NSPasteboard.general,
             client: VsockGuestClient(port: KernovaVsockPort.clipboard, label: "clipboard"),
-            onProgress: onProgress,
+            progressTracker: progressTracker,
             onClipboardNotice: onClipboardNotice
         )
     }
@@ -281,11 +281,18 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// parallel tests, an `onProgress` sink to observe the readout the status
     /// item renders, an `onClipboardNotice` sink to observe refusals, and zeroed
     /// reveal/linger delays so a test transfer surfaces while in flight.
+    ///
+    /// `progressTracker` is the agent's single readout authority, shared with
+    /// every other agent that transfers files, so one status item never has two
+    /// sources deciding what it shows. A test that only cares about the clipboard
+    /// leaves it out and gets one built from `progressRevealDelay` /
+    /// `progressIdleLinger` / `onProgress`.
     init(
         pasteboard: Pasteboard, client: VsockGuestClient,
         clock: any EngineClock = makePlatformEngineClock(),
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         stagingTempRoot: URL = FileManager.default.temporaryDirectory,
+        progressTracker: ClipboardProgressTracker? = nil,
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
         onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void = { _ in },
@@ -295,8 +302,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         self.client = client
         self.clock = clock
         self.onClipboardNotice = onClipboardNotice
-        self.progressTracker = ClipboardProgressTracker(
-            revealDelay: progressRevealDelay, idleLinger: progressIdleLinger, emit: onProgress)
+        self.progressTracker =
+            progressTracker
+            ?? ClipboardProgressTracker(
+                revealDelay: progressRevealDelay, idleLinger: progressIdleLinger, emit: onProgress)
         self.staging = ClipboardFileStaging(
             label: "agent", tempRoot: stagingTempRoot, freeSpaceProvider: freeSpaceProvider)
         self.lastPasteboardChangeCount = pasteboard.changeCount
@@ -380,9 +389,28 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
         if let stale = outboundSession { progressTracker.closeSession(stale.token, immediately: true) }
         let token = progressTracker.openSession(
-            direction: .outbound, peerName: Self.pasteSourceName)
+            direction: .outbound, peerName: Self.pasteSourceName,
+            onCancelRequested: { [weak self] in
+                DispatchQueue.main.async { self?.cancelOutboundTransfers(generation: generation) }
+            })
         outboundSession = (generation: generation, token: token)
         return token
+    }
+
+    /// Stops streaming what the host is pulling for `generation`, because the
+    /// user cancelled the readout in this guest.
+    ///
+    /// The offer stands: the host can paste again and pull the same
+    /// representations. The sender's abort carries `superseded`, which the host
+    /// already retires quietly, so the host's paste comes back empty without
+    /// either side reporting a failure.
+    private func cancelOutboundTransfers(generation: UInt64) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let sender else { return }
+        sender.cancel(generation: generation)
+        Self.logger.notice(
+            "User cancelled the outbound clipboard transfer (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
+        )
     }
 
     /// Clears per-connection streaming + pending state on the main queue.
@@ -397,8 +425,14 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         pendingOutbound = nil
         currentOutboundGeneration.set(0)
         inboundPromise = nil
+        // Only this agent's own session is retired, never `clearAll()`: the
+        // tracker is the whole agent's readout authority and another agent's
+        // transfer may be live on it, which a clipboard teardown has no business
+        // wiping off the status item.
+        if let session = outboundSession {
+            progressTracker.closeSession(session.token, immediately: true)
+        }
         outboundSession = nil
-        progressTracker.clearAll()
         // A stale in-flight estimate walk's completion checks `liveChannel` and
         // drops itself; clear the flag now so the next connection can walk again.
         estimateInFlight = false
@@ -467,33 +501,18 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             for try await frame in channel.incoming where frame.protocolVersion == 1 {
                 // High-frequency stream frames go straight to the thread-safe
                 // engine off the main queue; only control frames hop to main.
-                switch frame.payload {
-                case .clipboardStreamBegin(let begin):
-                    receiver.handleBegin(begin)
-                case .clipboardChunk(let chunk):
-                    receiver.handleChunk(chunk)
-                case .clipboardStreamEnd(let end):
-                    receiver.handleEnd(end)
-                case .clipboardStreamAck(let ack):
-                    sender.handleAck(
-                        transferID: ack.transferID, bytesConsumed: ack.bytesConsumed,
-                        windowBytes: ack.windowBytes)
-                case .clipboardStreamAbort(let abort):
-                    // Route by the direction bit: a host-received id (bit set) is
-                    // one this guest sends; otherwise this guest receives it.
-                    if ClipboardTransferID.hostReceives(abort.transferID) {
-                        sender.handleAbort(transferID: abort.transferID)
-                    } else {
-                        receiver.handleAbort(abort)
-                    }
-                default:
-                    // Control frames are serialized on the main queue, so while a
-                    // synchronous `provideData` pull blocks main they queue behind
-                    // it; a pull is woken by its off-main Abort, not by these.
-                    DispatchQueue.main.async { [weak self] in
-                        self?.handleControlFrame(frame)
-                    }
-                }
+                ClipboardStreamRouting.route(
+                    frame, role: .guest, sender: sender, receiver: receiver,
+                    senderAbortDelivery: .direct,
+                    onControlFrame: { frame in
+                        // Control frames are serialized on the main queue, so
+                        // while a synchronous `provideData` pull blocks main they
+                        // queue behind it; a pull is woken by its off-main Abort,
+                        // not by these.
+                        DispatchQueue.main.async { [weak self] in
+                            self?.handleControlFrame(frame)
+                        }
+                    })
             }
             Self.logger.notice(
                 "Vsock clipboard channel closed by host (conn=\(connectionTag, privacy: .public))")
@@ -915,7 +934,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             .clipboardStreamAbort:
             // Routed off-main by the consume loop; never reaches here.
             break
-        case .hello, .heartbeat, .policyUpdate, .logRecord, .none:
+        case .hello, .heartbeat, .policyUpdate, .logRecord, .dropOffer, .dropComplete,
+            .dropRelease, .none:
             Self.logger.warning("Unexpected payload on clipboard channel — wrong port")
         }
     }
@@ -1366,7 +1386,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     /// Abort codes that are a normal supersession/teardown, not a failure worth
     /// surfacing to the user.
-    private static let benignAbortCodes: Set<String> = ["superseded", "cancelled", "request.stale"]
+    private static let benignAbortCodes: Set<String> = [
+        "superseded", "cancelled", "request.stale", "user.cancelled",
+    ]
 
     /// Maps a receiver/peer abort code to the user-facing paste code the host
     /// renders.

@@ -64,6 +64,13 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
         let backing = VMDisplayBackingView()
         backing.onResume = onResume
+        backing.dropAvailability = { [weak instance] in
+            instance?.displayDropAvailability ?? .none
+        }
+        backing.onDropFiles = { [weak instance] urls in
+            instance?.sendDroppedFilesToGuest(urls) ?? false
+        }
+        backing.applyDropRegistration()
         backing.update(
             virtualMachine: instance.virtualMachine,
             isPaused: instance.status == .paused,
@@ -190,6 +197,12 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 _ = self.instance.displayMode
                 _ = self.instance.configuration.clipboardSharingEnabled
                 _ = self.instance.configuration.displayAutoResizes
+                // Everything `displayDropAvailability` reads, so the display
+                // registers and unregisters as a drag destination when the guest
+                // agent comes and goes.
+                _ = self.instance.configuration.lastSeenAgentVersion
+                _ = self.instance.vsockDropService?.isConnected
+                _ = self.instance.vsockControlService?.isConnected
             },
             apply: { [weak self] in
                 guard let self else { return }
@@ -204,6 +217,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                         transitionText: status.transitionLabel,
                         automaticallyReconfiguresDisplay: self.instance.configuration.displayAutoResizes
                     )
+                    self.backingView.applyDropRegistration()
                     self.updateToolbarItems()
                 }
             }

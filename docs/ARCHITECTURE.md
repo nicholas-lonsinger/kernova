@@ -166,8 +166,9 @@ The vsock stack (macOS guests only):
   mirrors the same assignments guest-side.
 - `VsockListenerHost` — one `VZVirtioSocketListener` per port, bridging an accepted connection to a
   `VsockChannel`. Its `shouldAdmit` predicate refuses a connection before any channel is built;
-  `VMInstance` wires the log and clipboard listeners to `featureChannelAdmission`, so no feature
-  channel is accepted before the control handshake completes. Socket-buffer sizing and its
+  `VMInstance` wires the log, clipboard and drop listeners to `featureChannelAdmission`, so no
+  feature channel is accepted before the control handshake completes, and each names the guest
+  capability it additionally requires. Socket-buffer sizing and its
   measurements: [research/2026-07-13-vsock-transport-throughput.md](research/2026-07-13-vsock-transport-throughput.md).
 - `VsockControlService` — `@MainActor` `@Observable` owner of the always-on control channel:
   `Hello`/`Heartbeat` exchange, a liveness watchdog, the observed `agentVersion`, and `PolicyUpdate`
@@ -178,10 +179,17 @@ The vsock stack (macOS guests only):
   notification that re-arms `VMInstance`'s agent-arrival watchdog. Installed for every macOS guest
   with a socket device, independent of clipboard sharing.
 - `VsockGuestLogService` — forwards guest `LogRecord` frames into the `app.kernova.guest` subsystem.
+- `VsockDropService` — `@MainActor` `@Observable` owner of the drop channel, send-only. Files
+  dragged onto `VMDisplayBackingView` become a `DropOffer` the guest pulls representation by
+  representation over the same streaming engine the clipboard uses; the guest writes them into its
+  Downloads folder and replies `DropComplete`. Installed for every guest with a socket device,
+  gated only on the guest's `drop.files.v1`. `VMInstance.displayDropAvailability` is the single
+  read site deciding whether the display registers as a drag destination at all.
 
 The log and clipboard listeners are gated on their configuration toggles and re-evaluated at
-runtime through `VMInstance.applyLivePolicy(oldConfig:newConfig:)`. Linux clipboard sharing is
-restart-only — its SPICE port must be declared at config-build time.
+runtime through `VMInstance.applyLivePolicy(oldConfig:newConfig:)`; the control and drop listeners
+have no toggle to track. Linux clipboard sharing is restart-only — its SPICE port must be declared
+at config-build time.
 
 Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
 
@@ -396,8 +404,8 @@ kernel resources until relaunch — hence one owner (`RuntimeFileAccess`) and on
   `NSWorkspace`. Sandboxed with `app-sandbox` + `inherit`.
 
 - **KernovaMacOSAgent** — `Kernova Guest Agent.app`, the `.accessory` menu-bar app that runs inside
-  macOS guests, holding three independent vsock connections to the host (control, log forwarding,
-  clipboard). It is not embedded as a bundle: the `Package Guest Agent DMG` build phase produces
+  macOS guests, holding four independent vsock connections to the host (control, log forwarding,
+  clipboard, drop). It is not embedded as a bundle: the `Package Guest Agent DMG` build phase produces
   `Contents/Resources/KernovaMacOSAgent.dmg`, so it must already carry its final Developer ID
   signature when the DMG is baked — export-time re-signing cannot reach inside a DMG resource
   ([RELEASING.md](RELEASING.md)); version bumps are in [BUILD.md](BUILD.md).

@@ -3,8 +3,8 @@ import Foundation
 import KernovaKit
 
 // Guest-side agent for macOS VMs managed by Kernova: an `.accessory` menu-bar
-// app holding three long-lived, self-reconnecting vsock connections to the host
-// — control, clipboard, and log forwarding.
+// app holding four long-lived, self-reconnecting vsock connections to the host
+// — control, clipboard, drop, and log forwarding.
 
 @main
 @MainActor
@@ -43,8 +43,14 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
 
     private var vsockConnection: VsockHostConnection?
     private var clipboardAgent: VsockGuestClipboardAgent?
+    private var dropAgent: VsockGuestDropAgent?
     private var controlAgent: VsockGuestControlAgent?
     private var statusItemController: AgentStatusItemController?
+
+    /// This side's single transfer-readout authority, shared by every agent that
+    /// moves files, so the one status item never has two sources deciding what it
+    /// shows.
+    private var progressTracker: ClipboardProgressTracker?
 
     /// Retained so the signal sources stay armed for the process lifetime.
     private var sigintSource: DispatchSourceSignal?
@@ -96,20 +102,23 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         // Progress emissions arrive off-main and hop via `DispatchQueue.main`,
         // not a `Task` — two independently scheduled hops carrying immutable
         // snapshots have no ordering guarantee, and the ring would jump backwards.
+        let progressTracker = ClipboardProgressTracker { [weak self] snapshot in
+            DispatchQueue.main.async {
+                self?.statusItemController?.materializationProgressChanged(snapshot)
+            }
+        }
         let clipboardAgent = VsockGuestClipboardAgent(
-            onProgress: { [weak self] snapshot in
-                DispatchQueue.main.async {
-                    self?.statusItemController?.materializationProgressChanged(snapshot)
-                }
-            },
+            progressTracker: progressTracker,
             onClipboardNotice: { [weak self] in
                 DispatchQueue.main.async {
                     self?.statusItemController?.clipboardNoticeRaised()
                 }
             })
+        let dropAgent = VsockGuestDropAgent(progressTracker: progressTracker)
 
         // `onPolicy` gates the log + clipboard capabilities; `onStateChange`
-        // drives the status-item icon.
+        // drives the status-item icon; `onHostCapabilitiesChanged` is what tells
+        // the drop client whether this host has a drop listener at all.
         let controlAgent = VsockGuestControlAgent(
             onPolicy: { [weak self] policy in
                 vsockConnection.setEnabled(policy.logForwardingEnabled)
@@ -125,6 +134,9 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
                 Task { @MainActor in
                     self?.statusItemController?.connectionStateChanged()
                 }
+            },
+            onHostCapabilitiesChanged: { [weak dropAgent] in
+                dropAgent?.syncEnablement()
             }
         )
 
@@ -132,7 +144,12 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         clipboardAgent.hostStreamsDirectories = { [weak controlAgent] in
             controlAgent?.hostSupportsDirectoryStreaming ?? false
         }
+        dropAgent.hostSupportsDrop = { [weak controlAgent] in
+            controlAgent?.hostSupportsDropFiles ?? false
+        }
+        self.progressTracker = progressTracker
         self.clipboardAgent = clipboardAgent
+        self.dropAgent = dropAgent
         self.controlAgent = controlAgent
 
         self.statusItemController = AgentStatusItemController(
@@ -143,25 +160,31 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
                 vsockConnection?.isLogForwardingEnabled ?? false
             },
             clipboardActivity: { [weak clipboardAgent] in clipboardAgent?.clipboardActivity ?? .disabled },
+            onCancelTransfer: { [weak progressTracker] in
+                progressTracker?.requestCancelOfPublishedSession()
+            },
             onQuit: { NSApp.terminate(nil) }
         )
 
         installSignalHandlers(
             vsockConnection: vsockConnection,
             clipboardAgent: clipboardAgent,
+            dropAgent: dropAgent,
             controlAgent: controlAgent
         )
 
         vsockConnection.start()
         clipboardAgent.start()
+        dropAgent.start()
         controlAgent.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         // Stop control first so heartbeat cessation is the cleanest going-away
-        // signal to the host; clipboard and log follow.
+        // signal to the host; clipboard, drop and log follow.
         controlAgent?.stop()
         clipboardAgent?.stop()
+        dropAgent?.stop()
         vsockConnection?.stop()
         // Balance any held App-Nap activity so begin/end stays paired.
         updateAppNap(clipboardEnabled: false)
@@ -185,6 +208,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     private func installSignalHandlers(
         vsockConnection: VsockHostConnection,
         clipboardAgent: VsockGuestClipboardAgent,
+        dropAgent: VsockGuestDropAgent,
         controlAgent: VsockGuestControlAgent
     ) {
         signal(SIGINT, SIG_IGN)
@@ -200,6 +224,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             Self.logger.notice("Received termination signal, shutting down")
             controlAgent.stop()
             clipboardAgent.stop()
+            dropAgent.stop()
             vsockConnection.stop()
             exit(0)
         }

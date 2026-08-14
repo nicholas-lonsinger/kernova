@@ -47,7 +47,8 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// reaches the reattached menu rather than the popover's dismissal handler.
     private lazy var pasteProgressPresenter = ClipboardProgressStatusItemPresenter(
         statusItem: statusItem, menu: menu,
-        willAutoOpen: { [weak self] in self?.transientPopover.dismiss() })
+        willAutoOpen: { [weak self] in self?.transientPopover.dismiss() },
+        onCancel: { ClipboardProgressCenter.shared.cancelCurrent() })
 
     /// The status item's one transient-popover slot, shared by the soft-quit
     /// reminder and the clipboard notice.

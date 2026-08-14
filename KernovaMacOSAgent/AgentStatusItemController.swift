@@ -20,11 +20,13 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     private let hostBundledVersion: () -> String
     private let logForwardingEnabled: () -> Bool
     private let clipboardActivity: () -> ClipboardActivity
+    private let onCancelTransfer: () -> Void
     private let onQuit: () -> Void
 
     /// Built lazily, since most sessions never reveal a paste readout.
     private lazy var pasteProgressPresenter = ClipboardProgressStatusItemPresenter(
-        statusItem: statusItem, menu: menu)
+        statusItem: statusItem, menu: menu,
+        onCancel: { [weak self] in self?.onCancelTransfer() })
 
     init(
         version: String,
@@ -32,6 +34,7 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         hostBundledVersion: @escaping () -> String,
         logForwardingEnabled: @escaping () -> Bool,
         clipboardActivity: @escaping () -> ClipboardActivity,
+        onCancelTransfer: @escaping () -> Void = {},
         onQuit: @escaping () -> Void
     ) {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -40,6 +43,7 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         self.hostBundledVersion = hostBundledVersion
         self.logForwardingEnabled = logForwardingEnabled
         self.clipboardActivity = clipboardActivity
+        self.onCancelTransfer = onCancelTransfer
         self.onQuit = onQuit
         super.init()
 

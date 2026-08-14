@@ -200,6 +200,17 @@ final class VsockControlService {
     /// Whether the guest can honor a pushed `clipboard_max_paste_bytes`.
     var guestSupportsPasteLimit: Bool { guestSupportsPasteLimitStorage }
 
+    /// Whether the connected guest agent advertised `drop.files.v1` in its
+    /// `Hello`.
+    ///
+    /// Set on Hello, reset on stop. An agent without it runs no drop client, so
+    /// the display refuses the gesture rather than offering files nothing will
+    /// pull.
+    private var guestSupportsDropFilesStorage = false
+
+    /// Whether the guest can receive files dropped onto the VM display.
+    var guestSupportsDropFiles: Bool { guestSupportsDropFilesStorage }
+
     private static let logger = Logger(subsystem: "app.kernova", category: "VsockControlService")
 
     // MARK: - Init
@@ -319,6 +330,7 @@ final class VsockControlService {
         guestSupportsClipboardStreamingStorage = false
         guestSupportsDirectoryStreamingStorage = false
         guestSupportsPasteLimitStorage = false
+        guestSupportsDropFilesStorage = false
         Self.logger.info("Vsock control service stopped for '\(self.label, privacy: .public)'")
         // Last, so the owner observes fully-settled state — notably a nil
         // `agentVersion` — from inside the callback.
@@ -523,6 +535,8 @@ final class VsockControlService {
                 KernovaCapability.clipboardStreamDirectoryV1)
             guestSupportsPasteLimitStorage = hello.capabilities.contains(
                 KernovaCapability.clipboardPasteLimitV1)
+            guestSupportsDropFilesStorage = hello.capabilities.contains(
+                KernovaCapability.dropFilesV1)
             // Every peer-supplied piece of this line is filtered first — the
             // version by `boundedField`, the capability tags by
             // `logDescription` — so none of them can write arbitrary content
@@ -554,7 +568,8 @@ final class VsockControlService {
             )
         case .policyUpdate, .clipboardOffer, .clipboardRequest,
             .clipboardRelease, .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd,
-            .clipboardStreamAck, .clipboardStreamAbort, .logRecord, .none:
+            .clipboardStreamAck, .clipboardStreamAbort, .logRecord, .dropOffer, .dropComplete,
+            .dropRelease, .none:
             // PolicyUpdate is host→guest and never arrives here; other payloads
             // belong on other channels. RATIONALE: the clipboard and log
             // channels close on a wrong-port payload, but this one stays up —

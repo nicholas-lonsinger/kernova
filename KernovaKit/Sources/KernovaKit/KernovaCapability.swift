@@ -35,11 +35,20 @@ public enum KernovaCapability {
     /// to `ClipboardPasteLimit.defaultBytes` and stay in agreement.
     public static let clipboardPasteLimitV1 = "clipboard.paste.limit.v1"
 
+    /// Files dragged onto the VM display, streamed on their own vsock channel
+    /// and written into the guest's Downloads folder.
+    ///
+    /// Independent of clipboard sharing: the drop channel carries its own offer
+    /// and never touches a pasteboard. A peer without it has no drop listener or
+    /// drop client at all, so the display refuses the gesture rather than
+    /// starting a transfer nothing will answer.
+    public static let dropFilesV1 = "drop.files.v1"
+
     /// The capabilities advertised by both the host control service and the
     /// guest control agent today.
     public static let controlChannelDefaults = [
         controlV1, controlHeartbeatV1, clipboardStreamV1, clipboardStreamDirectoryV1,
-        clipboardPasteLimitV1,
+        clipboardPasteLimitV1, dropFilesV1,
     ]
 
     /// Every capability tag this build recognizes — the allowlist for

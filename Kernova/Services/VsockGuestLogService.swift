@@ -99,9 +99,11 @@ final class VsockGuestLogService {
             return true
         case .hello, .heartbeat, .policyUpdate, .clipboardOffer, .clipboardRequest,
             .clipboardRelease, .clipboardStreamBegin, .clipboardChunk,
-            .clipboardStreamEnd, .clipboardStreamAck, .clipboardStreamAbort:
+            .clipboardStreamEnd, .clipboardStreamAck, .clipboardStreamAbort,
+            .dropOffer, .dropComplete, .dropRelease:
             // Hello, Heartbeat, and PolicyUpdate belong on the control channel;
-            // clipboard payloads belong on the clipboard channel.
+            // clipboard payloads belong on the clipboard channel, drop payloads
+            // on the drop channel.
             logger.warning(
                 "Unexpected payload on log channel for '\(label, privacy: .public)' — wrong port; closing the channel"
             )

@@ -1,8 +1,50 @@
 import AppKit
 import KernovaKit
 
+/// Whether the VM display takes files dragged onto it, and if not, why.
+enum DisplayDropAvailability {
+    /// This VM has never run a guest agent, so the display is not a drag
+    /// destination at all — a drag over it behaves as if Kernova were not there.
+    case none
+    /// The agent has connected before but is not reachable now. The display takes
+    /// part in the drag and refuses it, which is what makes the pointer show no
+    /// accept badge and a release spring back.
+    case disconnected
+    /// Files dropped now will be sent to the guest.
+    case available
+}
+
 /// Display-layer properties derived from a VM's status.
 extension VMInstance {
+    /// Whether files dragged onto this VM's display can be sent to the guest.
+    ///
+    /// The single read site for the gesture's three states. `.none` is decided
+    /// from persisted state (`lastSeenAgentVersion`), so it survives restarts and
+    /// a VM that has never had an agent never advertises a drop it cannot do;
+    /// the live channel decides the rest, so an agent that goes away mid-session
+    /// downgrades to a refusal on the next observation tick.
+    var displayDropAvailability: DisplayDropAvailability {
+        guard configuration.guestOS == .macOS, configuration.lastSeenAgentVersion != nil else {
+            return .none
+        }
+        guard let drop = vsockDropService, drop.isConnected,
+            vsockControlService?.guestSupportsDropFiles == true
+        else { return .disconnected }
+        return .available
+    }
+
+    /// Sends `urls` to the guest's Downloads folder, reporting whether the drop
+    /// was taken up.
+    ///
+    /// Re-checks availability itself: a drag can outlive the channel it was
+    /// started over, and a drop the service can no longer serve must spring back
+    /// rather than silently vanish.
+    func sendDroppedFilesToGuest(_ urls: [URL]) -> Bool {
+        guard displayDropAvailability == .available, let service = vsockDropService else {
+            return false
+        }
+        return service.startDrop(urls: urls)
+    }
     /// Display name that distinguishes preparing, cold-paused ("Suspended"), and live-paused ("Paused").
     var statusDisplayName: String {
         if let state = preparingState { return state.displayLabel }

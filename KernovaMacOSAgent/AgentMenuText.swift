@@ -44,9 +44,9 @@ enum AgentMenuText {
 
     /// Why a paste of the host's clipboard did not happen, per failure code.
     ///
-    /// `copyTooLarge`, `pasteIncompleteSet`, `forwardItemsSkipped` and
-    /// `folderPeerOutdated` are host-only outcomes that never reach the guest, so
-    /// they read as the generic failure.
+    /// `copyTooLarge`, `pasteIncompleteSet`, `forwardItemsSkipped`,
+    /// `folderPeerOutdated` and the three drop codes are outcomes the guest
+    /// reports rather than receives, so they read as the generic failure.
     private static func pasteRefusalDetail(
         _ code: ClipboardErrorCode, pasteLimitBytes: Int?
     ) -> String {
@@ -58,7 +58,7 @@ enum AgentMenuText {
         case .pasteDiskFull: return "not enough disk space to paste"
         case .pasteTimeout: return "paste timed out"
         case .pasteFailed, .copyTooLarge, .pasteIncompleteSet, .forwardItemsSkipped,
-            .folderPeerOutdated:
+            .folderPeerOutdated, .dropDiskFull, .dropDownloadsDenied, .dropFailed:
             return "paste failed"
         }
     }

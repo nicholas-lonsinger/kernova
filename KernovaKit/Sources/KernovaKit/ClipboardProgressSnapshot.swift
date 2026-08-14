@@ -43,12 +43,17 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
     public let isPasteSession: Bool
     /// How long this operation has been running.
     public let elapsedSeconds: TimeInterval
+    /// Whether the user can stop this operation — what puts a Cancel affordance
+    /// on the readout. A surface must not offer one otherwise: the transfers
+    /// behind an operation with nothing to cancel would keep running.
+    public let isCancellable: Bool
 
     /// Creates a snapshot of one clipboard operation in flight.
     public init(
         direction: Direction, peerName: String, currentItemName: String?, filesCompleted: Int,
         fileCount: Int, bytesTransferred: UInt64, totalBytes: UInt64, bytesPerSecond: Double?,
-        secondsRemaining: Double?, isPasteSession: Bool, elapsedSeconds: TimeInterval
+        secondsRemaining: Double?, isPasteSession: Bool, elapsedSeconds: TimeInterval,
+        isCancellable: Bool = false
     ) {
         self.direction = direction
         self.peerName = peerName
@@ -61,6 +66,7 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
         self.secondsRemaining = secondsRemaining
         self.isPasteSession = isPasteSession
         self.elapsedSeconds = elapsedSeconds
+        self.isCancellable = isCancellable
     }
 
     /// Progress as a `0...1` fraction, clamped (a zero/unknown total reads as 0).

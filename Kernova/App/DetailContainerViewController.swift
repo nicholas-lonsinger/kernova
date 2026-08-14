@@ -156,6 +156,16 @@ final class DetailContainerViewController: NSViewController {
             else { return }
             Task { await viewModel.resume(target) }
         }
+        backing.dropAvailability = { [weak viewModel] in
+            viewModel?.instances.first(where: { $0.id == instanceID })?.displayDropAvailability
+                ?? .none
+        }
+        backing.onDropFiles = { [weak viewModel] urls in
+            guard let target = viewModel?.instances.first(where: { $0.id == instanceID })
+            else { return false }
+            return target.sendDroppedFilesToGuest(urls)
+        }
+        backing.applyDropRegistration()
 
         backing.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(backing)
@@ -217,6 +227,12 @@ final class DetailContainerViewController: NSViewController {
                         _ = inst.virtualMachine
                         _ = inst.displayMode
                         _ = inst.configuration.displayAutoResizes
+                        // Everything `displayDropAvailability` reads, so the
+                        // display registers and unregisters as a drag
+                        // destination when the guest agent comes and goes.
+                        _ = inst.configuration.lastSeenAgentVersion
+                        _ = inst.vsockDropService?.isConnected
+                        _ = inst.vsockControlService?.isConnected
                     }
                 }
             },
@@ -242,6 +258,7 @@ final class DetailContainerViewController: NSViewController {
             guard let instance = viewModel.instances.first(where: { $0.id == id }) else { continue }
             backing.apply(
                 automaticallyReconfiguresDisplay: instance.configuration.displayAutoResizes)
+            backing.applyDropRegistration()
         }
 
         // Evict backing views for VMs no longer running inline
