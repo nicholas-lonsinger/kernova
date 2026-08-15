@@ -86,6 +86,8 @@ No compatibility path is written for any shape that is not the current one.
 
 **The guest agent** the host bundles is the only supported one, so never write a path that keeps an older agent working — not on the host, and not in the shared KernovaKit code the agent compiles. The Hello exchange's capability strings gate *features*, never versions: an agent that advertises a capability but predates a change to it is out of date, not a peer to accommodate, and the `MARKETING_VERSION` bump is the whole remedy for that skew.
 
+Nothing refuses an older agent, either: it keeps every feature it can still run, and the version mismatch surfaces the update affordance while nothing else acts on it.
+
 ### File Operations
 
 Prefer `trash` over `rm` when deleting files. A user-confirmed permanent-delete flow ("Delete Immediately") is the exception and removes outright.
