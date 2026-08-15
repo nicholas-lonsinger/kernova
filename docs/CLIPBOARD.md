@@ -148,9 +148,8 @@ defect; round-trip equality with a native copy/paste is the bar.
   marker suppressed is not a copy and releases nothing.
 - **Directory fidelity rides the archive's field-key set.** A folder crosses as an archive of its
   tree, and what survives the round trip is exactly what `ClipboardDirectoryArchive`'s key set
-  carries — entry kinds, permissions, ownership, flags, timestamps, link targets. Changing
-  directory fidelity means changing that key set, never bolting metadata on through a side
-  channel.
+  carries. Changing directory fidelity means changing that key set, never bolting metadata on
+  through a side channel.
 - **Accepted gap: extended attributes cross on *no* paste path** — Finder tags,
   `com.apple.quarantine`, `kMDItemWhereFroms`. A plain file streams content bytes into a freshly
   created destination file, which cannot carry them, and the directory archive deliberately omits
