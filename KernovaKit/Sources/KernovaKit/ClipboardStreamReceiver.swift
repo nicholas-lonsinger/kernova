@@ -198,14 +198,18 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                 // Raw is how a peer sends what fits in RAM, and nothing else:
                 // refusing anything larger, or anything not inline, is what
                 // bounds the buffer a misbehaving peer could otherwise grow
-                // without limit — there is no staging file to spill it to.
+                // without limit — there is no staging file to spill it to. A
+                // pull primed as a folder is refused too, so a peer claiming
+                // `is_inline` cannot divert it into the RAM buffer and have a
+                // folder's request answered with a file.
                 guard transfer.isInline,
+                    transfer.expectation?.directoryName == nil,
                     let declared = transfer.declaredTotalBytes,
                     declared <= self.maxResidentInlineBytes
                 else {
                     self.fail(
                         transfer, code: "payload.unsupported",
-                        message: "A raw payload must be inline and fit in memory")
+                        message: "A raw payload must be inline, fit in memory, and answer no folder pull")
                     return
                 }
                 // Reserve toward the declared size (capped) so the buffer grows

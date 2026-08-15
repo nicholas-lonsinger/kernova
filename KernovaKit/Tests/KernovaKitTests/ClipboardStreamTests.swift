@@ -1248,6 +1248,26 @@ struct ClipboardStreamTests {
         #expect(materializedFiles(under: harness.stagingTempRoot).isEmpty)
     }
 
+    @Test("a raw inline Begin answering a folder pull is refused")
+    func rawBeginForAPrimedFolderRejected() async throws {
+        // The requester primed a folder; a peer claiming a small inline payload
+        // must not have that request answered with bytes in RAM.
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+        prime(harness, id: 12, advertised: 4096, extractsDirectoryNamed: "Folder")
+
+        harness.receiver.handleBegin(
+            .with {
+                $0.generation = 1; $0.transferID = 12; $0.uti = "public.folder"
+                $0.totalBytes = 16; $0.isInline = true; $0.filename = "Folder"
+            })
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.abortInfos.first?.code == "payload.unsupported")
+        #expect(harness.collector.representation(12) == nil)
+        #expect(materializedFiles(under: harness.stagingTempRoot).isEmpty)
+    }
+
     @Test("an archived Begin nobody is awaiting is refused before anything is staged")
     func unawaitedArchiveBeginRejected() async throws {
         // An archive carries neither a name to unpack it under nor a size to
