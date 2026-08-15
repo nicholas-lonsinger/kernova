@@ -25,12 +25,17 @@ public enum ClipboardDirectoryArchive {
     }
 
     /// Fidelity key set: type, path, link target, device id, data, uid, gid,
-    /// permissions, flags, mtime, ctime, and per-entry SHA-256.
+    /// permissions, flags, mtime, and ctime.
+    ///
+    /// No per-entry digest (`SH2`): AppleArchive writes it into the entry header,
+    /// so the encoder reads and hashes each file in full before its first
+    /// payload byte can leave, and the transfer's stream-level SHA-256 already
+    /// covers every payload byte (CLIPBOARD.md §7).
     ///
     /// RATIONALE: extended attributes (`XAT`) are deliberately omitted — the
     /// plain-file streaming path cannot carry them, and a folder carrying them
     /// alone would break CLIPBOARD.md §6's uniform xattr gap.
-    static let fieldKeys = "TYP,PAT,LNK,DEV,DAT,UID,GID,MOD,FLG,MTM,CTM,SH2"
+    static let fieldKeys = "TYP,PAT,LNK,DEV,DAT,UID,GID,MOD,FLG,MTM,CTM"
 }
 
 extension ClipboardDirectoryArchive {
