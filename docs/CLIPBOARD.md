@@ -286,8 +286,7 @@ Non-negotiable mechanics for how clipboard changes ship:
 - **Verify at the seam.** Protocol and stream changes get deterministic, transport-level tests
   (socketpair round-trips through the real sender and receiver) covering inline and file paths,
   backpressure, abort, and digest/size mismatch. Use event-driven waits, never sleeps.
-- **Evolve by capability negotiation, not legacy shims.** Protocol changes are gated by the Hello
+- **Gate protocol changes on capability, not on version.** Protocol changes are gated by the Hello
   exchange's `capabilities` list; frames carrying an unsupported `Frame.protocol_version` are
-  dropped silently. There is **no legacy fallback**, and any behavior change requiring a guest
-  reinstall **bumps the guest agent version**. Do not add back-compat decode paths for data that
-  does not exist.
+  dropped silently. That list says which features a peer speaks, never which agent build it is —
+  what a change may assume about the agent on the other end is AGENTS.md's current-only rule.

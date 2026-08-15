@@ -78,9 +78,13 @@ guard let value = knownGoodAPI("compile-time-constant") else {
 
 Never force-unwrap (`!`) — it crashes end users — and never return a fallback silently, without `assertionFailure`; that masks bugs during development.
 
-### Persisted Data
+### Current-Only Surfaces
 
-Persisted formats are current-only — no migration code. Back-compat shims, decode-time back-fills, schema version flags, old-format fallbacks, and decode defaults that differ from what new instances get are all out. Adding a field to a persisted `Codable` type is `decodeIfPresent ?? default` with one uniform default, and nothing else. Migration code takes the maintainer's explicit sign-off, given only for old-shape data confirmed to exist (shipped in a release, or found on disk).
+No compatibility path is written for any shape that is not the current one.
+
+**Persisted formats** are current-only — no migration code. Back-compat shims, decode-time back-fills, schema version flags, old-format fallbacks, and decode defaults that differ from what new instances get are all out. Adding a field to a persisted `Codable` type is `decodeIfPresent ?? default` with one uniform default, and nothing else. Migration code takes the maintainer's explicit sign-off, given only for old-shape data confirmed to exist (shipped in a release, or found on disk).
+
+**The guest agent** the host bundles is the only supported one, so never write a path that keeps an older agent working — not on the host, and not in the shared KernovaKit code the agent compiles. The Hello exchange's capability strings gate *features*, never versions: an agent that advertises a capability but predates a change to it is out of date, not a peer to accommodate, and the `MARKETING_VERSION` bump is the whole remedy for that skew.
 
 ### File Operations
 
