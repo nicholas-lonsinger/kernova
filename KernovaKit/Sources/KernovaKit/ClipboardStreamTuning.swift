@@ -15,17 +15,22 @@ public enum ClipboardStreamTuning {
     /// because a same-host vsock is bounded by per-chunk ack round-trip latency,
     /// not bandwidth: the window over that round trip is the stream's rate
     /// ceiling, so this is how much ack latency the transport absorbs before the
-    /// sender starts parking on credit. It buys that headroom without resident
-    /// memory of its own — the sender frames and releases each chunk — which is
-    /// what separates it from the two pipes below.
+    /// sender starts parking on credit.
+    ///
+    /// It is free on the sending side, which frames and releases each chunk, and
+    /// not on the receiving one: `handleChunk` hands a chunk to the write lane
+    /// without blocking, so a sink slower than the wire retains up to this much
+    /// per transfer. Size it for the round trip, but as memory a slow volume can
+    /// hold, not as a number with no cost.
     public static let defaultWindowBytes = 4 * 1024 * 1024
 
     /// Hard cap on the credit window: 8 MiB.
     ///
     /// Every ack carries the receiver's window and each side clamps what it
     /// receives to its own compiled value here, so a default above this cap is
-    /// silently undone by the first ack: the two move together. It is also what
-    /// a peer's advertisement is held to, and so what bounds `maxBacklogBytes`.
+    /// silently undone by the first ack: the two move together. Clamping the
+    /// receiver's own window is also what bounds `maxBacklogBytes`; a peer's
+    /// advertisement is clamped on the sending side and reaches neither.
     public static let maxWindowBytes = 8 * 1024 * 1024
 
     /// How far the archive encoder may run ahead of the transport: 1 MiB.
@@ -66,9 +71,9 @@ public enum ClipboardStreamTuning {
     /// quantum: 1 s.
     ///
     /// Without it the quantum stretches the gap between credit-opening acks to
-    /// four chunk-write times, so under degraded I/O sustained per-chunk writes
-    /// in the 2.5–10 s range trip the sender's 10 s no-ack deadline and abort a
-    /// live transfer.
+    /// a quarter-window of chunk writes — 16 of them at the shipped window — so
+    /// under degraded I/O a sustained per-chunk write above 0.625 s trips the
+    /// sender's 10 s no-ack deadline and aborts a live transfer.
     public static let ackLatencyBound: TimeInterval = 1
 
     /// Upper bound on how much an inline reassembly buffer pre-reserves: 64 MiB.

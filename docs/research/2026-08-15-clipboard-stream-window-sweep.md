@@ -22,16 +22,19 @@ at a time, against a modelled ack round trip.
    2 and 4 ms, 4 MiB between 4 and 8 ms, and 8 MiB is still at full rate at
    8 ms. Credit stall accounts for the whole loss — 1.24 s of a 1.64 s transfer
    at 1 MiB and 8 ms.
-3. **The credit window costs no resident memory.** Peak `phys_footprint` delta
-   is 0.5–1.5 MiB at every window from 1 to 8 MiB, indistinguishable from run
-   noise, because the sender frames and releases each chunk. The pipes are
-   where a capacity is held as heap.
+3. **The credit window costs no resident memory against a sink that keeps
+   up.** Peak `phys_footprint` delta is 0.5–1.5 MiB at every window from 1 to
+   8 MiB, indistinguishable from run noise, because the sender frames and
+   releases each chunk and the receiver's write lane drains as fast as it
+   fills. Against a sink slower than the wire the receiving side retains up to
+   a window per transfer — every configuration swept had a fast sink, so that
+   case is outside these numbers.
 4. **The file path and the folder path are one path.** Identical chunk counts
    and wire bytes, and rates within 2 % of each other at every configuration —
    what #866 did, measured.
 
 **Values chosen from this:** credit window 1 → 4 MiB with its cap 2 → 8 MiB,
-which buys ~4× the round-trip headroom at no measured memory cost. Both pipes
+which buys ~4× the round-trip headroom at a bounded memory cost. Both pipes
 and the guard quantum stay at 1 MiB, on the null in finding 1.
 
 ## What was and was not measured
