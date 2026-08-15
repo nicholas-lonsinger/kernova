@@ -1079,12 +1079,21 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             // image file promises both — carries no size bound (§1).
             guard type != .fileURL || allowsFileURLPull(repIndex, promise: promise, channel: channel)
             else { return nil }
-            guard
-                let pulled = pullRepresentation(
-                    repIndex, promise: promise, channel: channel, receiver: receiver)
-            else { return nil }
-            promise.materialized[repIndex] = pulled
-            representation = pulled
+            if let pulled = pullRepresentation(
+                repIndex, promise: promise, channel: channel, receiver: receiver)
+            {
+                promise.materialized[repIndex] = pulled
+                representation = pulled
+            } else if let cached = liveMaterialized(repIndex: repIndex, generation: generation) {
+                // The wait ran the run loop, so a sibling flavor of this same rep
+                // — an image file promises both at one repIndex — could have fired
+                // nested, superseded this pull's transfer id and cached the rep on
+                // its way out. Serve from that cache rather than leaving this
+                // flavor empty.
+                representation = cached
+            } else {
+                return nil
+            }
         }
 
         if type == .fileURL {
@@ -1092,6 +1101,15 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 from: representation, repIndex: repIndex, promise: promise, generation: generation)
         }
         return representation.inMemoryData
+    }
+
+    /// The materialized rep for `repIndex`, but only while `generation` still
+    /// addresses the live offer — the cache a nested sibling-flavor fire fills.
+    private func liveMaterialized(repIndex: Int, generation: UInt64)
+        -> ClipboardContent.Representation?
+    {
+        guard let promise = inboundPromise, promise.generation == generation else { return nil }
+        return promise.materialized[repIndex]
     }
 
     /// Registers a per-transfer awaiter, sends the request via `sendRequest`, and

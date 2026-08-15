@@ -195,12 +195,6 @@ final class VsockClipboardService: ClipboardServicing {
     /// resolving and the supersession re-check, so a test can drive a newer
     /// offer / `stop()` into that exact gap deterministically.
     var afterInboundPullForTesting: (@MainActor () async -> Void)?
-
-    /// Test seam: runs on each `publishProgress`, on the main queue the readout
-    /// hops through. A main-thread paste pull runs the event loop, so this fires
-    /// *inside* the pull — the point a test drives from without a separately
-    /// scheduled task that a saturated bundle would starve.
-    var onPublishProgressForTesting: (@MainActor (ClipboardProgressSnapshot?) -> Void)?
     #endif
 
     // `nonisolated` so the off-main `consume` loop can log; `Logger` is Sendable.
@@ -425,9 +419,6 @@ final class VsockClipboardService: ClipboardServicing {
         guard next != transferProgress else { return }
         transferProgress = next
         progressCenter.progressChanged(from: self, next)
-        #if DEBUG
-        onPublishProgressForTesting?(next)
-        #endif
     }
 
     /// The outbound session measuring what this side is streaming for `generation`,

@@ -50,6 +50,41 @@ struct LazyPullCoordinatorMainThreadTests {
         }
     }
 
+    @Test("nested main-thread waits both resolve, and the outer is not stranded by the inner (#860)")
+    func nestedWaitsBothResolve() {
+        let coordinator = LazyPullCoordinator()
+        let innerResolved = Box(false)
+        let clock = ContinuousClock()
+        let started = clock.now
+
+        // The outer pull runs the event loop. From inside it, a nested inner pull
+        // for a different id runs its own loop while the outer is resolved. The
+        // wait's wake events are not addressed to a specific loop, so the inner
+        // can consume the outer's; the outer must still return promptly rather
+        // than stranding to its window — the per-slice re-check is what guarantees
+        // that under any interleaving.
+        let outcome = coordinator.pull(transferID: 1, timeout: 5) {
+            RunLoop.main.perform {
+                let inner = coordinator.pull(transferID: 2, timeout: 5) {
+                    coordinator.deliver(1, self.inlineRep("outer"))
+                    RunLoop.main.perform { coordinator.deliver(2, self.inlineRep("inner")) }
+                }
+                if case .delivered(let rep) = inner, rep.inMemoryData == Data("inner".utf8) {
+                    innerResolved.value = true
+                }
+            }
+        }
+
+        guard case .delivered(let rep) = outcome else {
+            Issue.record("Expected the outer pull to deliver, got \(outcome)")
+            return
+        }
+        #expect(rep.inMemoryData == Data("outer".utf8))
+        #expect(innerResolved.value)
+        // Both resolved well under the 5 s window rather than blocking to it.
+        #expect(clock.now - started < .seconds(2))
+    }
+
     @Test("a resolve from another thread breaks the wait at once, not at the window boundary")
     func offThreadDeliverWakesPull() {
         let coordinator = LazyPullCoordinator()

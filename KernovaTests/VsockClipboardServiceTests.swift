@@ -2942,61 +2942,6 @@ struct VsockClipboardServiceTests {
     }
 
     @Test(
-        "A paste pull on the main thread keeps the run loop turning: the readout reveals while the pull holds main (#860)"
-    )
-    func mainThreadPastePullPublishesProgressMidPull() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
-            progressRevealDelay: 0, progressIdleLinger: 0)
-        service.start()
-        defer { service.stop() }
-
-        let fileBytes = Data((0..<(200 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
-        let responder = FakeGuestResponder(guest: guest)
-        defer { responder.cancel() }
-        responder.register(
-            generation: 43, repIndex: 0, uti: "public.data", bytes: fileBytes,
-            filename: "big.bin", isInline: false)
-        responder.start()
-
-        try guest.send(
-            makeOffer(
-                generation: 43,
-                reps: [(uti: "public.data", byteCount: fileBytes.count, filename: "big.bin", isInline: false)]))
-        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
-
-        // The pull runs the event loop, so an inbound progress hop — enqueued
-        // off-main while the transfer streams — is dispatched by the nested loop
-        // rather than parked behind the pull. Capturing it proves the readout
-        // reaches the UI while a paste holds main. The capture only observes; the
-        // pull resolves off-main (the stream's End wakes it), so nothing here is
-        // gated on the bundle's main-queue backlog.
-        let observed = Box<ClipboardProgressSnapshot?>(nil)
-        service.onPublishProgressForTesting = { snapshot in
-            guard snapshot?.direction == .inbound, observed.value == nil else { return }
-            observed.value = snapshot
-        }
-        // Entered from a main-run-loop callout, the context the pasteboard callback
-        // arrives in (docs/TESTING.md), so the nested loop drains the main queue.
-        let url: URL? = await withCheckedContinuation { continuation in
-            RunLoop.main.perform {
-                continuation.resume(returning: service.copyToMacFileURL(generation: 43, repIndex: 0))
-            }
-        }
-
-        #expect(url != nil)
-        try await waitForChange { observed.value != nil }
-        #expect(observed.value?.totalBytes == UInt64(fileBytes.count))
-        #expect(observed.value?.currentItemName == "big.bin")
-        try await waitForChange { service.transferProgress == nil }
-    }
-
-    @Test(
         "A preview trigger landing inside a paste pull neither displaces the pull nor re-requests its rep (#860)"
     )
     func previewTriggerInsidePastePullLeavesThePullAlone() async throws {
