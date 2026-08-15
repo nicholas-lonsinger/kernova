@@ -917,6 +917,16 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             }
             return
         }
+        // The extract unpacked a whole archive and the peer kept streaming past
+        // the tail a finished decoder leaves unread: more payload than the
+        // archive it already completed, so it is named as the overrun it is
+        // rather than as a failure of the extract, which succeeded.
+        if case ClipboardArchiveStreamError.streamClosed = error {
+            fail(
+                transfer, code: "size.overrun",
+                message: "The peer streamed past the end of a complete archive")
+            return
+        }
         guard staging.hasCapacity(forByteCount: 0) else {
             failDiskFull(transfer)
             return
