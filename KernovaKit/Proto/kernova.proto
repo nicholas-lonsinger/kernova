@@ -389,8 +389,7 @@ message PolicyUpdate {
   // ends enforce it against their own inbound pastes, so the host pushes its
   // value here rather than letting the two sides hold separate figures.
   //
-  // `0` means unset — the receiver uses its own built-in default. Only a guest
-  // advertising `clipboard.paste.limit.v1` is sent a non-default value.
+  // `0` means unset — the receiver uses its own built-in default.
   uint64 clipboard_max_paste_bytes = 3;
 }
 

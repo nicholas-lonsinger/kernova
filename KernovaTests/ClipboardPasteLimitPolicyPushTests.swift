@@ -26,18 +26,12 @@ struct ClipboardPasteLimitPolicyPushTests {
         return instance
     }
 
-    private func makeGuestHello(pasteLimitCapable: Bool = true) -> Frame {
+    private func makeGuestHello() -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.hello = Kernova_V1_Hello.with {
             $0.serviceVersion = 1
-            $0.capabilities =
-                pasteLimitCapable
-                ? KernovaCapability.controlChannelDefaults
-                : [
-                    KernovaCapability.controlV1, KernovaCapability.controlHeartbeatV1,
-                    KernovaCapability.clipboardStreamV2,
-                ]
+            $0.capabilities = KernovaCapability.controlChannelDefaults
             $0.agentInfo = Kernova_V1_AgentInfo.with {
                 $0.os = "macOS"
                 $0.osVersion = "26.0"
@@ -108,44 +102,6 @@ struct ClipboardPasteLimitPolicyPushTests {
 
         let pushed = try await nextPolicy(from: guest)
         #expect(pushed.clipboardMaxPasteBytes == UInt64(raised))
-        #expect(instance.effectiveClipboardMaxPasteBytes == raised)
-    }
-
-    @Test("an agent without the capability is sent the default but does not clamp the host")
-    func rePushHeldAtDefaultWithoutCapability() async throws {
-        let preferences = makeEphemeralPreferences(suiteName: "test.kernova.ceiling-push-old")
-        let viewModel = VMLibraryViewModel(
-            storageService: MockVMStorageService(),
-            diskImageService: MockDiskImageService(),
-            virtualizationService: MockVirtualizationService(),
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService(),
-            preferences: preferences)
-
-        let instance = makeInstance(preferences: preferences)
-        viewModel.instances.append(instance)
-        let guest = try attachControlService(to: instance)
-        defer {
-            instance.stopVsockServices()
-            guest.close()
-        }
-
-        _ = try await nextFrame(from: guest)  // host hello
-        try guest.send(makeGuestHello(pasteLimitCapable: false))
-        _ = try await nextPolicy(from: guest)  // connect-time push
-
-        let raised = 16 * 1024 * 1024 * 1024
-        preferences.clipboardMaxPasteBytes = raised
-        viewModel.applyClipboardPasteLimitChange()
-
-        let pushed = try await nextPolicy(from: guest)
-        // The older agent enforces its own built-in ceiling whatever it is sent,
-        // so it is sent the figure it will actually apply.
-        #expect(pushed.clipboardMaxPasteBytes == UInt64(ClipboardPasteLimit.defaultBytes))
-        // The host's ceiling is its own: it gates guest→host, which that agent
-        // only ever *sends* into and never refuses. Clamping it here would drop
-        // the user's setting over a capability that does not apply.
         #expect(instance.effectiveClipboardMaxPasteBytes == raised)
     }
 }

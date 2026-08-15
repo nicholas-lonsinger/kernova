@@ -20,8 +20,7 @@ struct VsockControlServiceTests {
     /// Tests use
     /// this to drive the `agentStatus` numeric-comparison matrix.
     private func makeGuestHello(
-        agentVersion: String, osVersion: String = "26.0", streamingCapable: Bool = true,
-        pasteLimitCapable: Bool = true
+        agentVersion: String, osVersion: String = "26.0", streamingCapable: Bool = true
     ) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
@@ -29,7 +28,6 @@ struct VsockControlServiceTests {
             $0.serviceVersion = 1
             var capabilities = [KernovaCapability.controlV1, KernovaCapability.controlHeartbeatV1]
             if streamingCapable { capabilities.append(KernovaCapability.clipboardStreamV2) }
-            if pasteLimitCapable { capabilities.append(KernovaCapability.clipboardPasteLimitV1) }
             $0.capabilities = capabilities
             $0.agentInfo = Kernova_V1_AgentInfo.with {
                 $0.os = "macOS"
@@ -1200,21 +1198,7 @@ struct VsockControlServiceTests {
 
     // MARK: - Paste ceiling
 
-    /// What a guest sees, and what the host will enforce, for a snapshot
-    /// carrying `requested` as its ceiling.
-    ///
-    /// Read while the service is still connected — `stop()` clears the observed
-    /// capabilities, so the derived values have to be captured here rather than
-    /// by the caller after teardown.
-    private struct PushedCeiling {
-        var pushedBytes: UInt64
-        var guestSupportsPasteLimit: Bool
-        var guestWillEnforce: Int
-    }
-
-    private func pushCeiling(
-        requested: Int, pasteLimitCapable: Bool
-    ) async throws -> PushedCeiling {
+    private func pushCeiling(requested: Int) async throws -> UInt64 {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -1231,8 +1215,7 @@ struct VsockControlServiceTests {
         defer { service.stop() }
 
         _ = try await nextFrame(from: guest)  // host hello
-        try guest.send(
-            makeGuestHello(agentVersion: "0.54.0", pasteLimitCapable: pasteLimitCapable))
+        try guest.send(makeGuestHello(agentVersion: "0.54.0"))
 
         var policy: Kernova_V1_PolicyUpdate?
         for _ in 0..<6 where policy == nil {
@@ -1241,30 +1224,13 @@ struct VsockControlServiceTests {
                 policy = p
             }
         }
-        return PushedCeiling(
-            pushedBytes: try #require(policy).clipboardMaxPasteBytes,
-            guestSupportsPasteLimit: service.guestSupportsPasteLimit,
-            guestWillEnforce: service.effectiveMaxPasteBytes(requested))
+        return try #require(policy).clipboardMaxPasteBytes
     }
 
-    @Test("the user's paste ceiling reaches a guest that advertises the capability")
-    func pasteCeilingReachesACapableGuest() async throws {
+    @Test("the user's paste ceiling reaches the guest verbatim")
+    func pasteCeilingReachesTheGuest() async throws {
         let raised = 16 * 1024 * 1024 * 1024
-        let result = try await pushCeiling(requested: raised, pasteLimitCapable: true)
-        #expect(result.pushedBytes == UInt64(raised))
-        #expect(result.guestSupportsPasteLimit == true)
-        #expect(result.guestWillEnforce == raised)
-    }
-
-    @Test("a guest without the capability is sent the ceiling it will actually apply")
-    func pasteCeilingHeldAtDefaultWithoutCapability() async throws {
-        let raised = 16 * 1024 * 1024 * 1024
-        let result = try await pushCeiling(requested: raised, pasteLimitCapable: false)
-        // The older agent ignores the field and falls back on its own, so
-        // sending anything else would be a figure nothing honors.
-        #expect(result.pushedBytes == UInt64(ClipboardPasteLimit.defaultBytes))
-        #expect(result.guestSupportsPasteLimit == false)
-        #expect(result.guestWillEnforce == ClipboardPasteLimit.defaultBytes)
+        #expect(try await pushCeiling(requested: raised) == UInt64(raised))
     }
 
     // MARK: - ObservedAgentInfo.boundedField

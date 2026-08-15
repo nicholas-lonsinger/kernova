@@ -179,17 +179,6 @@ final class VsockControlService {
     /// clipboard-channel admission check requires.
     var guestSupportsClipboardStreaming: Bool { guestSupportsClipboardStreamingStorage }
 
-    /// Whether the connected guest agent advertised `clipboard.paste.limit.v1`
-    /// in its `Hello`.
-    ///
-    /// Set on Hello, reset on stop. An agent without it enforces its own
-    /// built-in ceiling whatever the host sends, so this is what tells the host
-    /// to hold both ends at the default rather than let the two disagree.
-    private var guestSupportsPasteLimitStorage = false
-
-    /// Whether the guest can honor a pushed `clipboard_max_paste_bytes`.
-    var guestSupportsPasteLimit: Bool { guestSupportsPasteLimitStorage }
-
     /// Whether the connected guest agent advertised `drop.files.v2` in its
     /// `Hello`.
     ///
@@ -318,7 +307,6 @@ final class VsockControlService {
         isUnresponsive = false
         lastInboundFrame = nil
         guestSupportsClipboardStreamingStorage = false
-        guestSupportsPasteLimitStorage = false
         guestSupportsDropFilesStorage = false
         Self.logger.info("Vsock control service stopped for '\(self.label, privacy: .public)'")
         // Last, so the owner observes fully-settled state — notably a nil
@@ -355,19 +343,6 @@ final class VsockControlService {
         }
     }
 
-    /// The ceiling the **guest** will enforce once this policy lands: the user's
-    /// value for an agent advertising `clipboard.paste.limit.v1`, otherwise the
-    /// built-in default the older agent falls back to on its own.
-    ///
-    /// Send-side only. The host's own ceiling is independent of this — the guest
-    /// enforces host→guest and the host enforces guest→host, so neither side's
-    /// capability constrains the other's (`VMInstance.effectiveClipboardMaxPasteBytes`).
-    /// Sending the figure the peer will actually apply keeps the wire honest and
-    /// gives the host a true answer for messages naming the guest's ceiling.
-    func effectiveMaxPasteBytes(_ requested: Int) -> Int {
-        guestSupportsPasteLimit ? requested : ClipboardPasteLimit.defaultBytes
-    }
-
     /// Sends a `PolicyUpdate` frame carrying the current toggle snapshot to the guest.
     ///
     /// Called on Hello receipt and whenever the user flips a hot-toggleable setting while the VM
@@ -380,21 +355,17 @@ final class VsockControlService {
                 "Clipboard sharing requested but guest agent for '\(self.label, privacy: .public)' lacks the \(KernovaCapability.clipboardStreamV2, privacy: .public) capability — keeping clipboard disabled (agent needs updating)"
             )
         }
-        // An agent that can't honor a pushed ceiling enforces its own built-in
-        // one, so hold both ends at the default rather than let the host allow
-        // a paste the guest will refuse.
-        let maxPasteBytes = effectiveMaxPasteBytes(policy.clipboardMaxPasteBytes)
         var frame = Frame()
         frame.protocolVersion = 1
         frame.policyUpdate = Kernova_V1_PolicyUpdate.with {
             $0.logForwardingEnabled = policy.logForwardingEnabled
             $0.clipboardSharingEnabled = clipboardEnabled
-            $0.clipboardMaxPasteBytes = UInt64(maxPasteBytes)
+            $0.clipboardMaxPasteBytes = UInt64(policy.clipboardMaxPasteBytes)
         }
         do {
             try channel.send(frame)
             Self.logger.notice(
-                "Sent policy update for '\(self.label, privacy: .public)' (logForwarding=\(policy.logForwardingEnabled, privacy: .public), clipboard=\(clipboardEnabled, privacy: .public), maxPasteBytes=\(maxPasteBytes, privacy: .public))"
+                "Sent policy update for '\(self.label, privacy: .public)' (logForwarding=\(policy.logForwardingEnabled, privacy: .public), clipboard=\(clipboardEnabled, privacy: .public), maxPasteBytes=\(policy.clipboardMaxPasteBytes, privacy: .public))"
             )
         } catch {
             Self.logger.error(
@@ -520,8 +491,6 @@ final class VsockControlService {
             let reportedOSVersion = ObservedAgentInfo.boundedField(hello.agentInfo.osVersion)
             guestSupportsClipboardStreamingStorage = hello.capabilities.contains(
                 KernovaCapability.clipboardStreamV2)
-            guestSupportsPasteLimitStorage = hello.capabilities.contains(
-                KernovaCapability.clipboardPasteLimitV1)
             guestSupportsDropFilesStorage = hello.capabilities.contains(
                 KernovaCapability.dropFilesV2)
             // Every peer-supplied piece of this line is filtered first — the

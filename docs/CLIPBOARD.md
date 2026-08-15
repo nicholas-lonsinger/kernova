@@ -84,8 +84,8 @@ Caveats this does **not** waive:
 - **The cap is enforced by the receiver, once per direction** — the side whose paste deadline is
   at risk. The guest gates host→guest, the host gates guest→host, and neither caps what it
   *sends*. So the host pushes the value in `PolicyUpdate` to keep the guest's copy tracking the
-  user's choice, gated on `clipboard.paste.limit.v1`; that capability governs what the *guest*
-  will apply and must never clamp the host's own ceiling, which no peer is party to.
+  user's choice; what the *guest* will apply must never clamp the host's own ceiling, which no
+  peer is party to.
 - **Keep the two directions symmetric.** A capability that makes a payload lazy-eligible one way
   must make it lazy-eligible the other.
 
