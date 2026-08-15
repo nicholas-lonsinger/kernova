@@ -20,8 +20,7 @@ struct KernovaCapabilityTests {
         // was handed, so the tags are replaced rather than added to.
         #expect(
             KernovaCapability.controlChannelDefaults == [
-                "control.v1", "control.heartbeat.v1", "clipboard.stream.v2",
-                "clipboard.paste.limit.v1", "drop.files.v2",
+                "control.v1", "control.heartbeat.v1", "clipboard.stream.v2", "drop.files.v2",
             ])
         #expect(!KernovaCapability.recognized.contains("clipboard.stream.v1"))
         #expect(!KernovaCapability.recognized.contains("clipboard.stream.directory.v1"))

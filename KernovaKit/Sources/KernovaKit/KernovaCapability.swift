@@ -24,14 +24,6 @@ public enum KernovaCapability {
     /// interoperating with one.
     public static let clipboardStreamV2 = "clipboard.stream.v2"
 
-    /// Honoring `PolicyUpdate.clipboard_max_paste_bytes` — the user-selected
-    /// ceiling on a paste's file-representation total.
-    ///
-    /// Both ends enforce the ceiling independently, so the host uses the user's
-    /// value only for a guest advertising this; otherwise both sides fall back
-    /// to `ClipboardPasteLimit.defaultBytes` and stay in agreement.
-    public static let clipboardPasteLimitV1 = "clipboard.paste.limit.v1"
-
     /// Files dragged onto the VM display, streamed on their own vsock channel
     /// in the `clipboardStreamV2` payload encoding and written into the guest's
     /// Downloads folder.
@@ -45,7 +37,7 @@ public enum KernovaCapability {
     /// The capabilities advertised by both the host control service and the
     /// guest control agent today.
     public static let controlChannelDefaults = [
-        controlV1, controlHeartbeatV1, clipboardStreamV2, clipboardPasteLimitV1, dropFilesV2,
+        controlV1, controlHeartbeatV1, clipboardStreamV2, dropFilesV2,
     ]
 
     /// Every capability tag this build recognizes — the allowlist for

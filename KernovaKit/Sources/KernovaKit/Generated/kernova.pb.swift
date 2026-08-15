@@ -696,8 +696,7 @@ public nonisolated struct Kernova_V1_PolicyUpdate: Sendable {
   /// ends enforce it against their own inbound pastes, so the host pushes its
   /// value here rather than letting the two sides hold separate figures.
   ///
-  /// `0` means unset — the receiver uses its own built-in default. Only a guest
-  /// advertising `clipboard.paste.limit.v1` is sent a non-default value.
+  /// `0` means unset — the receiver uses its own built-in default.
   public var clipboardMaxPasteBytes: UInt64 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
