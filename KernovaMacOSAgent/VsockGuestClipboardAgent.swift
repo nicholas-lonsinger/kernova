@@ -153,7 +153,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     private var inboundPromise: InboundPromise?
 
     /// Bridges the synchronous `provideDataForType` callback to the off-actor
-    /// stream receive, blocking the main thread until bytes land.
+    /// stream receive, holding the main thread — its event loop still running —
+    /// until bytes land.
     private let lazyCoordinator = LazyPullCoordinator()
 
     /// Owner of the data providers still promised on the pasteboard, keeping each
@@ -1044,10 +1045,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// Streams the bytes for a promised pasteboard type on demand.
     ///
     /// Runs synchronously on the agent's main thread (the pasteboard server's
-    /// `provideDataForType` callback). `itemTypes` is the promising item's own
-    /// type → rep-index map, so a `.fileURL` pull resolves to *this* item's file
-    /// rep rather than the first file rep across the offer. Returns `nil` on a
-    /// stale generation, a type this item never promised, or a failed pull.
+    /// `provideDataForType` callback), whose event loop keeps running while the
+    /// pull waits — so control frames, the poll and even a second promise
+    /// callback can land mid-pull; a supersession landing there cancels the pull.
+    /// `itemTypes` is the promising item's own type → rep-index map, so a
+    /// `.fileURL` pull resolves to *this* item's file rep rather than the first
+    /// file rep across the offer. Returns `nil` on a stale generation, a type
+    /// this item never promised, or a failed pull.
     private func provideData(
         _ type: NSPasteboard.PasteboardType, itemTypes: PromisedItem, generation: UInt64
     ) -> Data? {
@@ -1091,7 +1095,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     }
 
     /// Registers a per-transfer awaiter, sends the request via `sendRequest`, and
-    /// blocks the calling thread until the transfer resolves — the shared
+    /// holds the calling thread until the transfer resolves — the shared
     /// transport core of every inbound pull.
     ///
     /// The deadlock-safe wakeup: the receiver's `awaitTransfer` handler fires

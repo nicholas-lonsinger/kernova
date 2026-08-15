@@ -178,9 +178,10 @@ final class HostClipboardPublisher {
     /// Each flavor's bytes are served at paste time: `.fileURL` through
     /// `copyToMacFileURL`, inline flavors through `copyToMacData`. The pull runs
     /// synchronously on the thread of the pasteboard server's `provideData`
-    /// callback (usually main), blocking it while the stream receiver delivers
-    /// off-main; the offer's paste-bound total is size-capped so the pull and
-    /// stage complete within the OS paste deadline. A promise that withholds
+    /// callback (usually main, which keeps running its event loop meanwhile)
+    /// while the stream receiver delivers off-main; the offer's paste-bound total
+    /// is size-capped so the pull and stage complete within the OS paste
+    /// deadline. A promise that withholds
     /// `.fileURL` (the over-cap refusal) never registers that type, so the paste
     /// finds no file flavor to fire rather than firing one that serves nothing.
     nonisolated static func promisedItemSpecs(

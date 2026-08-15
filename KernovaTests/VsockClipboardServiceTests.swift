@@ -2929,9 +2929,8 @@ struct VsockClipboardServiceTests {
         try await waitForChange { service.transferProgress?.direction == .inbound }
         #expect(service.transferProgress?.totalBytes == UInt64(fileBytes.count))
         #expect(service.transferProgress?.currentItemName == "big.bin")
-        // Never flagged a paste session, though a paste is what fires it: this pull
-        // parks the thread serving the promise — the main thread in production — so
-        // the dropdown it popped would only appear once the paste was already over.
+        // Not flagged a paste session: the readout appears, but a paste fires once
+        // per item, so its per-item session carries no Cancel to stop the rest.
         #expect(service.transferProgress?.isPasteSession == false)
 
         // Releasing End resolves the pull; the terminal clears the readout (§13:
@@ -2943,7 +2942,119 @@ struct VsockClipboardServiceTests {
     }
 
     @Test(
-        "A control frame arriving while a paste pull blocks main does not stall stream-frame routing (#458)"
+        "A paste pull on the main thread keeps the run loop turning: the readout reveals while the pull holds main (#860)"
+    )
+    func mainThreadPastePullPublishesProgressMidPull() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
+            progressRevealDelay: 0, progressIdleLinger: 0)
+        service.start()
+        defer { service.stop() }
+
+        let fileBytes = Data((0..<(200 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 43, repIndex: 0, uti: "public.data", bytes: fileBytes,
+            filename: "big.bin", isInline: false)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 43,
+                reps: [(uti: "public.data", byteCount: fileBytes.count, filename: "big.bin", isInline: false)]))
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        // The pull runs the event loop, so an inbound progress hop — enqueued
+        // off-main while the transfer streams — is dispatched by the nested loop
+        // rather than parked behind the pull. Capturing it proves the readout
+        // reaches the UI while a paste holds main. The capture only observes; the
+        // pull resolves off-main (the stream's End wakes it), so nothing here is
+        // gated on the bundle's main-queue backlog.
+        let observed = Box<ClipboardProgressSnapshot?>(nil)
+        service.onPublishProgressForTesting = { snapshot in
+            guard snapshot?.direction == .inbound, observed.value == nil else { return }
+            observed.value = snapshot
+        }
+        // Entered from a main-run-loop callout, the context the pasteboard callback
+        // arrives in (docs/TESTING.md), so the nested loop drains the main queue.
+        let url: URL? = await withCheckedContinuation { continuation in
+            RunLoop.main.perform {
+                continuation.resume(returning: service.copyToMacFileURL(generation: 43, repIndex: 0))
+            }
+        }
+
+        #expect(url != nil)
+        try await waitForChange { observed.value != nil }
+        #expect(observed.value?.totalBytes == UInt64(fileBytes.count))
+        #expect(observed.value?.currentItemName == "big.bin")
+        try await waitForChange { service.transferProgress == nil }
+    }
+
+    @Test(
+        "A preview trigger landing inside a paste pull neither displaces the pull nor re-requests its rep (#860)"
+    )
+    func previewTriggerInsidePastePullLeavesThePullAlone() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
+            progressRevealDelay: 0, progressIdleLinger: 0)
+        service.start()
+        defer { service.stop() }
+
+        // A previewable rep: the one kind a preview trigger would pull itself. The
+        // paste-fires guard is the same for either wait branch, so this drives the
+        // pull off-main (`offCooperativePool`, as every other blocking-pull test
+        // does) and keeps main free to fire the preview promptly, then release End
+        // — no dependence on the nested loop's timing.
+        let text = "shared by paste and preview"
+        let bytes = Data(text.utf8)
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.holdEnd = true
+        responder.register(
+            generation: 44, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: bytes,
+            isInline: true)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 44,
+                reps: [(uti: ClipboardContent.utf8TextUTI, byteCount: bytes.count, filename: "", isInline: true)]))
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        let pull = Task {
+            await offCooperativePool {
+                service.copyToMacData(generation: 44, repIndex: 0, uti: ClipboardContent.utf8TextUTI)
+            }
+        }
+        // Wait until the paste's transfer is live (its progress revealed), then
+        // trigger the preview into the parked pull and let the paste finish.
+        try await waitForChange { service.transferProgress?.direction == .inbound }
+        await service.materializeForPreview()
+        responder.releaseEnd()
+        let data = await pull.value
+
+        // The paste kept its awaiter and served the bytes; the preview minted no
+        // second request for the same transfer id.
+        #expect(data == bytes)
+        #expect(responder.requests.count == 1)
+        // The paste cached what it pulled, so the next trigger serves from there.
+        await service.materializeForPreview()
+        #expect(responder.requests.count == 1)
+    }
+
+    @Test(
+        "A control frame arriving while a paste pull holds main does not stall stream-frame routing (#458)"
     )
     func controlFrameDuringBlockingPullDoesNotStallRouting() async throws {
         let (guest, host) = try makePair()
@@ -2952,17 +3063,19 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         // RATIONALE: deliberately far BELOW `testWaitBackstop`, not ≥60 s. This
-        // test blocks the real main thread inside `copyToMacFileURL`, so this
-        // injected timeout is the ceiling on how long the whole bundle's
-        // MainActor can be held hostage if the fast path loses — every
-        // concurrently running test's waits freeze for exactly this long. A
-        // 60 s value once froze the bundle wall-to-wall and mass-failed 17
-        // tests whose 60 s backstops could not outlast it; 5 s bounds the
-        // blast radius while staying orders of magnitude above the genuine
-        // ms-scale delivery (the responder runs on the now-unpoisoned
-        // cooperative pool — see `offCooperativePool`). Under a #458
-        // regression the pull resolves to nothing when this fires, so the
-        // test fails either way and the value's size never masks it.
+        // test calls `copyToMacFileURL` on the real main thread from this
+        // main-queue job, where the pull's nested event loop cannot drain the
+        // main queue (docs/TESTING.md), so this injected timeout is the ceiling on
+        // how long the whole bundle's MainActor can be held hostage if the fast
+        // path loses — every concurrently running test's waits freeze for
+        // exactly this long. A 60 s value once froze the bundle wall-to-wall and
+        // mass-failed 17 tests whose 60 s backstops could not outlast it; 5 s
+        // bounds the blast radius while staying orders of magnitude above the
+        // genuine ms-scale delivery (the responder runs on the now-unpoisoned
+        // cooperative pool — see `offCooperativePool`). Under a #458 regression
+        // the pull resolves to nothing when this fires, so the test fails either
+        // way and the value's size never masks it. Re-checked 2026-08-15 with
+        // the event-loop wait.
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), lazyPullTimeout: 5)
         service.start()
@@ -3034,16 +3147,17 @@ struct VsockClipboardServiceTests {
         }
         defer { responderTask.cancel() }
 
-        // The pasteboard `provide` callback calls this directly on main — a
-        // real synchronous block of the main thread, exactly like production.
-        // Under the old `await onControlFrame` code this would hang until the
-        // lazyPullTimeout backstop fired and resolved to `.pullFailed`: the
-        // interleaved control frame suspends the whole consume loop on the
-        // unavailable main actor, so the Begin/Chunk/End behind it in the channel
-        // never route and the pull's semaphore never signals. Under the fix, the
-        // consume loop dispatches the control frame fire-and-forget and keeps
-        // draining — Begin/Chunk/End route immediately regardless of main being
-        // blocked — so this resolves promptly.
+        // Called directly on main from this main-queue job, so for main-queue
+        // work — the control frame's hop included — main is as unavailable as a
+        // parked thread until the pull returns. Under the old `await
+        // onControlFrame` code this would hang until the lazyPullTimeout backstop
+        // fired and resolved to `.pullFailed`: the interleaved control frame
+        // suspends the whole consume loop on the unavailable main actor, so the
+        // Begin/Chunk/End behind it in the channel never route and the pull's
+        // wait never resolves. Under the fix, the consume loop dispatches the
+        // control frame fire-and-forget and keeps draining — Begin/Chunk/End
+        // route immediately regardless of main's availability — so this resolves
+        // promptly.
         guard let url = service.copyToMacFileURL(generation: 30, repIndex: 0) else {
             Issue.record("Expected copyToMacFileURL to serve the rep")
             return

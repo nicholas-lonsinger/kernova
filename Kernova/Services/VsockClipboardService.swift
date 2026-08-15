@@ -106,16 +106,18 @@ final class VsockClipboardService: ClipboardServicing {
     @ObservationIgnored
     private var outboundSession: (generation: UInt64, token: ClipboardProgressTracker.SessionToken)?
 
-    /// Synchronous-blocking pull machinery for representations served inside a
-    /// pasteboard `provideData` callback, on whichever thread the pasteboard
-    /// server fires it (usually main).
+    /// Synchronous pull machinery for representations served inside a pasteboard
+    /// `provideData` callback, on whichever thread the pasteboard server fires it
+    /// (usually main, where the wait runs the event loop rather than parking).
     ///
     /// A paste-time pull can target a rep the async preview `pull` has in
     /// flight under the same `transfer_id`; that is safe by construction: the
     /// receiver's newest awaiter wins delivery, the guest sender ignores a
     /// duplicate-id request while one is streaming (and re-streams after it
     /// finished), and the displaced preview resolves at its inactivity backstop,
-    /// retrying into the cache the paste pull populated.
+    /// retrying into the cache the paste pull populated. The reverse order is
+    /// closed off instead: `materialize` never starts a pull for a rep a paste
+    /// fire is pulling (`InboundPromise.pasteFires`).
     private let lazyCoordinator = LazyPullCoordinator()
 
     private var sender: ClipboardStreamSender?
@@ -193,6 +195,12 @@ final class VsockClipboardService: ClipboardServicing {
     /// resolving and the supersession re-check, so a test can drive a newer
     /// offer / `stop()` into that exact gap deterministically.
     var afterInboundPullForTesting: (@MainActor () async -> Void)?
+
+    /// Test seam: runs on each `publishProgress`, on the main queue the readout
+    /// hops through. A main-thread paste pull runs the event loop, so this fires
+    /// *inside* the pull — the point a test drives from without a separately
+    /// scheduled task that a saturated bundle would starve.
+    var onPublishProgressForTesting: (@MainActor (ClipboardProgressSnapshot?) -> Void)?
     #endif
 
     // `nonisolated` so the off-main `consume` loop can log; `Logger` is Sendable.
@@ -226,6 +234,11 @@ final class VsockClipboardService: ClipboardServicing {
         /// share one pull per rep instead of minting a duplicate (same-transfer_id)
         /// request that would orphan a continuation.
         var inFlight: [Int: Task<ClipboardContent.Representation?, Never>] = [:]
+        /// Reps a paste-time provider fire is pulling right now. That pull owns
+        /// its `transfer_id`'s awaiter, and its wait runs the event loop, so a
+        /// preview trigger landing inside it must not register a second awaiter
+        /// and take delivery away from the paste.
+        var pasteFires: Set<Int> = []
         /// Monotonic count of materializations cached into `materialized`, bumped
         /// on each pulled rep so `republishOffActor` can detect one that landed
         /// during its off-actor hash.
@@ -345,10 +358,11 @@ final class VsockClipboardService: ClipboardServicing {
                 channel: channel, label: label, connectionTag: connectionTag, sender: sender,
                 receiver: receiver,
                 onControlFrame: { [weak self] frame in
-                    // Fire-and-forget: awaiting the main-actor hop would halt
-                    // stream-frame routing while main is blocked in a paste's
-                    // `performBlockingPull`. Serial `DispatchQueue.main`
-                    // preserves control-frame FIFO order; a per-frame Task would not.
+                    // Fire-and-forget: the consume loop must never wait on the
+                    // main actor — a paste's promise callback occupies it, and
+                    // the stream frames routed here are what resolve that
+                    // callback. Serial `DispatchQueue.main` preserves
+                    // control-frame FIFO order; a per-frame Task would not.
                     DispatchQueue.main.async {
                         MainActor.assumeIsolated { self?.handleControlFrame(frame) }
                     }
@@ -411,6 +425,9 @@ final class VsockClipboardService: ClipboardServicing {
         guard next != transferProgress else { return }
         transferProgress = next
         progressCenter.progressChanged(from: self, next)
+        #if DEBUG
+        onPublishProgressForTesting?(next)
+        #endif
     }
 
     /// The outbound session measuring what this side is streaming for `generation`,
@@ -1098,8 +1115,7 @@ final class VsockClipboardService: ClipboardServicing {
     private func cachedMaterialized(
         generation: UInt64, repIndex: Int
     ) -> ClipboardContent.Representation? {
-        guard let promise = inboundPromise, promise.generation == generation else { return nil }
-        return promise.materialized[repIndex]
+        livePromise(generation: generation)?.materialized[repIndex]
     }
 
     /// Whether a `.fileURL` fire for the live offer must be refused because the
@@ -1158,12 +1174,19 @@ final class VsockClipboardService: ClipboardServicing {
         index: Int, info: Kernova_V1_ClipboardRepresentationInfo, promise: InboundPromise,
         session: ClipboardProgressTracker.SessionToken?
     ) async -> ClipboardContent.Representation? {
-        // Neither early return moves a byte on this session's behalf, so both give
-        // the unit back: left declared, it would sit in the denominator waiting on
-        // events that never arrive.
+        // None of the early returns moves a byte on this session's behalf, so each
+        // gives the unit back: left declared, it would sit in the denominator
+        // waiting on events that never arrive.
         if let cached = promise.materialized[index] {
             if let session { progress.discardUnit(session: session, id: UInt64(index)) }
             return cached
+        }
+        if promise.pasteFires.contains(index) {
+            // The paste caches what it pulls, and `materializeForPreview` latches
+            // only on full success, so the next display trigger serves this rep
+            // from `materialized` instead.
+            if let session { progress.discardUnit(session: session, id: UInt64(index)) }
+            return nil
         }
         if let existing = promise.inFlight[index] {
             if let session { progress.discardUnit(session: session, id: UInt64(index)) }
@@ -1311,10 +1334,10 @@ final class VsockClipboardService: ClipboardServicing {
         return rep
     }
 
-    // MARK: - Synchronous blocking pull (paste-time provider)
+    // MARK: - Synchronous pull (paste-time provider)
 
     /// Immutable, `Sendable` snapshot of the state a synchronous file pull needs,
-    /// captured on the main actor before the pull blocks its calling thread.
+    /// captured on the main actor before the pull holds its calling thread.
     private struct LazyPullSnapshot: Sendable {
         let uti: String
         let byteCount: UInt64
@@ -1385,12 +1408,14 @@ final class VsockClipboardService: ClipboardServicing {
         onMain { self.raiseIssue(issue) }
     }
 
-    /// Synchronously pulls one file rep, blocking the calling thread until the
-    /// streamed bytes land (or abort/time out), staged into the host container.
+    /// Synchronously pulls one rep, holding the calling thread until the streamed
+    /// bytes land (or abort/time out), staged into the host container.
     ///
     /// Safe to call on main: the receiver's `awaitTransfer` handler fires off-main
-    /// into the coordinator, never hopping to the thread this call blocks.
-    /// `onProgress` is the **only** progress this function reports — the session
+    /// into the coordinator, never hopping to the thread this call holds — and on
+    /// main that thread keeps running the event loop meanwhile
+    /// (`LazyPullCoordinator`). `onProgress` is the **only** progress this
+    /// function reports — the session
     /// owning the pull ends its own unit, and reporting here would double-count.
     nonisolated private func performBlockingPull(
         _ snapshot: LazyPullSnapshot,
@@ -1565,11 +1590,10 @@ extension VsockClipboardService: TransferCancelling {
 
 extension VsockClipboardService: ClipboardPasteboardRepProviding {
     /// Serves the pasteboard `.fileURL` for a promised rep at paste time: the
-    /// materialization cache first, else the deadline-bound blocking pull.
+    /// materialization cache first, else the deadline-bound synchronous pull.
     ///
     /// The cache/cap reads hop to main (they touch main-confined promise state);
-    /// the blocking pull then runs on the calling thread, woken off-main by the
-    /// receiver.
+    /// the pull then holds the calling thread, resolved off-main by the receiver.
     nonisolated func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? {
         // Post-stop all-or-nothing: a partially-materialized file set serves no
         // file at all rather than a silent subset.
@@ -1590,7 +1614,7 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
     }
 
     /// Serves an inline pasteboard flavor's bytes for a promised rep at paste
-    /// time: the materialization cache first, else the blocking pull.
+    /// time: the materialization cache first, else the synchronous pull.
     ///
     /// Inline reps are exempt from the paste-budget cap — Kernova imposes no size
     /// cap on inline content (docs/CLIPBOARD.md §1).
@@ -1611,19 +1635,20 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
         return Self.residentBytes(of: rep)
     }
 
-    /// Runs one paste-time blocking pull under its own single-transfer progress
-    /// session (a paste has no other session to join), caching the delivered rep
-    /// so the item's sibling flavors — and later fires — reuse it.
+    /// Runs one paste-time pull under its own single-transfer progress session
+    /// (a paste has no other session to join), caching the delivered rep so the
+    /// item's sibling flavors — and later fires — reuse it.
     ///
-    /// The session is deliberately not cancellable: this pull parks the thread
-    /// the pasteboard fired it on, usually main, so the dropdown carrying the
-    /// Cancel button cannot repaint — let alone be clicked — until the pull is
-    /// already over.
+    /// The session is not cancellable: it spans one provider fire, and the
+    /// pasteboard fires once per item, so a Cancel could stop only the item in
+    /// flight while the consumer moves on to the next.
     nonisolated private func pullWithOwnSession(
         _ snapshot: LazyPullSnapshot
     ) -> ClipboardContent.Representation? {
         let tracker = onMain { self.progress }
         let repIndex = snapshot.repIndex
+        let generation = snapshot.generation
+        onMain { self.livePromise(generation: generation)?.pasteFires.insert(repIndex) }
         let session = tracker.openSession(
             direction: .inbound, peerName: onMain { self.label },
             units: [
@@ -1632,24 +1657,36 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
                     name: snapshot.filename.isEmpty ? nil : snapshot.filename)
             ])
         tracker.unitBegan(session: session, id: UInt64(repIndex))
-        let rep = performBlockingPull(snapshot) { bytes, total in
+        let pulled = performBlockingPull(snapshot) { bytes, total in
             tracker.unitProgressed(
                 session: session, id: UInt64(repIndex), bytesTransferred: bytes,
                 totalBytes: total)
         }
+        let rep = onMain { () -> ClipboardContent.Representation? in
+            guard let promise = self.livePromise(generation: generation) else { return pulled }
+            promise.pasteFires.remove(repIndex)
+            if let pulled {
+                if promise.materialized[repIndex] == nil {
+                    promise.materialized[repIndex] = pulled
+                    promise.materializeEpoch += 1
+                }
+                return pulled
+            }
+            // A nested fire for the same rep — a second consumer asking for a
+            // sibling flavor while this pull ran the event loop — supersedes this
+            // pull and fills the cache on its way out; serve from it rather than
+            // leaving this flavor empty.
+            return promise.materialized[repIndex]
+        }
         tracker.unitEnded(session: session, id: UInt64(repIndex), succeeded: rep != nil)
         tracker.closeSession(session)
-        if let rep {
-            onMain {
-                guard let promise = self.inboundPromise,
-                    promise.generation == snapshot.generation,
-                    promise.materialized[repIndex] == nil
-                else { return }
-                promise.materialized[repIndex] = rep
-                promise.materializeEpoch += 1
-            }
-        }
         return rep
+    }
+
+    /// The inbound promise when it is still the one `generation` addresses.
+    private func livePromise(generation: UInt64) -> InboundPromise? {
+        guard let promise = inboundPromise, promise.generation == generation else { return nil }
+        return promise
     }
 
     /// The `public.file-url` value for a pulled (or cached) rep: the staged file
