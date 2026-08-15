@@ -152,6 +152,45 @@ struct ClipboardDirectoryAccountingTests {
         try await waitUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
     }
 
+    @Test("the receiver paces its extract guard on its own quantum, not on the window")
+    func extractGuardTakesThePacingTheReceiverWasGiven() async throws {
+        let fm = FileManager.default
+        let free = Box<Int64>(100 << 30)
+        // Three distinct sizes, and only the smallest is smaller than the tree.
+        // The guard therefore fires — many times — if and only if the receiver
+        // hands its sink the pacing it was given: from the window, or from the
+        // pipe capacity, or with the two swapped, the first check would land
+        // past the last byte and the transfer would complete.
+        let tree = 256 * 1024
+        let harness = try StreamHarness(
+            chunkSize: Self.chunk, windowBytes: 4 * tree,
+            extractPipeBytes: 8 * tree, extractPacingBytes: tree / 8,
+            freeSpaceProvider: { _ in free.value })
+        defer { harness.tearDown() }
+        let (scratch, source) = try makeCompressibleTree(uncompressedBytes: tree)
+        defer { try? fm.removeItem(at: scratch) }
+        let bytes = try archiveBytes(of: source)
+
+        let id: UInt64 = 65
+        prime(harness, id: id, named: "Logs", advertised: tree)
+        begin(harness, id: id, named: "Logs")
+        try await harness.collector.gate.wait { harness.collector.ackedByteCounts(id) == [0] }
+        free.value = 1024
+        feed(harness, id: id, bytes: bytes)
+        harness.receiver.handleEnd(
+            .with {
+                $0.transferID = id
+                $0.totalBytes = UInt64(bytes.count)
+                $0.sha256 = Data(SHA256.hash(data: bytes))
+            })
+
+        try await harness.collector.gate.wait {
+            harness.collector.abortCount > 0 || harness.collector.representation(id) != nil
+        }
+        #expect(harness.collector.representation(id) == nil)
+        #expect(harness.collector.abortInfos.first?.code == .diskFull)
+    }
+
     @Test("a folder that unpacks past what its offer advertised is refused")
     func extractIsHeldToTheAdvertisedSize() async throws {
         let fm = FileManager.default

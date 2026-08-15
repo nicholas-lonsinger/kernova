@@ -187,6 +187,10 @@ still run elsewhere, and a failed or superseded transfer wakes it immediately (Â
   large transfer.
 - Chunk size and the credit window are one tuning pair â€” never ship a chunk-size bump without
   co-scaling the window.
+- **A flow-control size and a safety bound are never the same constant.** The quantum an extract
+  re-checks its free-space and payload ceilings on decides how far a transfer overruns them before
+  the next check; sized from the credit window or a pipe, tuning throughput silently coarsens a
+  guard.
 
 ### 9. Abort and restart must be immediate, idempotent, and bidirectional
 

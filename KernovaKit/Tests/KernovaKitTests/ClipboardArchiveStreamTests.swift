@@ -530,6 +530,39 @@ struct ClipboardArchiveStreamTests {
         #expect(bytes.prefix(4) == Data("pbz4".utf8))
     }
 
+    @Test("the extract guard is paced by its own quantum, not by the credit window")
+    func extractGuardPacingIsIndependentOfTheCreditWindow() throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        try fm.createDirectory(at: source, withIntermediateDirectories: true)
+        // Incompressible, so the tree the guard counts is the size written.
+        let payloadBytes = 4 * ClipboardStreamTuning.extractPacingBytes
+        let urandom = try FileHandle(forReadingFrom: URL(fileURLWithPath: "/dev/urandom"))
+        defer { try? urandom.close() }
+        var payload = Data()
+        while payload.count < payloadBytes {
+            let block = try urandom.read(upToCount: payloadBytes - payload.count)
+            guard let block, !block.isEmpty else { break }
+            payload.append(block)
+        }
+        #expect(payload.count == payloadBytes)
+        try payload.write(to: source.appendingPathComponent("random.bin"))
+
+        // Every parameter defaulted: this is the sink the receiver builds.
+        let advances = Box(0)
+        let sink = ClipboardArchiveExtractSink(
+            destinationURL: try makeDestination(in: scratch), label: "test",
+            onOutputAdvanced: { _ in advances.value += 1 })
+        try sink.write(try archiveBytes(of: source))
+        _ = try sink.commit()
+
+        // Paced from the credit window instead, a payload this size would report
+        // once — and the free-space and ceiling checks would run once with it.
+        #expect(advances.value >= payloadBytes / ClipboardStreamTuning.extractPacingBytes - 1)
+    }
+
     // MARK: - Failure and cleanup
 
     @Test("encoding a nonexistent folder fails rather than ending the stream")

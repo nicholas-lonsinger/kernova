@@ -19,6 +19,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
     private let channel: VsockChannel
     private let chunkSize: Int
     private let windowBytes: Int
+    private let encodePipeBytes: Int
     private let noAckTimeout: TimeInterval
     private let maxResidentInlineBytes: Int
 
@@ -42,6 +43,8 @@ public final class ClipboardStreamSender: @unchecked Sendable {
     ///   - chunkSize: per-chunk payload size; defaults to 64 KiB.
     ///   - windowBytes: in-flight credit window; clamped up to at least one
     ///     chunk so a transfer can always make progress.
+    ///   - encodePipeBytes: how far the archive encoder may run ahead of the
+    ///     transport.
     ///   - noAckTimeout: how long a transfer waits for credit to advance before
     ///     aborting a hung peer.
     ///   - maxResidentInlineBytes: the largest inline payload streamed raw; a
@@ -54,6 +57,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         channel: VsockChannel,
         chunkSize: Int = ClipboardStreamTuning.defaultChunkPayloadSize,
         windowBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
+        encodePipeBytes: Int = ClipboardStreamTuning.encodePipeBytes,
         noAckTimeout: TimeInterval = 10,
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
         onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)? = nil
@@ -61,6 +65,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         self.init(
             clock: clock,
             channel: channel, chunkSize: chunkSize, windowBytes: windowBytes,
+            encodePipeBytes: encodePipeBytes,
             noAckTimeout: noAckTimeout, maxResidentInlineBytes: maxResidentInlineBytes,
             onTransferTimed: onTransferTimed,
             archiveSource: Self.defaultArchiveSource)
@@ -80,6 +85,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         channel: VsockChannel,
         chunkSize: Int = ClipboardStreamTuning.defaultChunkPayloadSize,
         windowBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
+        encodePipeBytes: Int = ClipboardStreamTuning.encodePipeBytes,
         noAckTimeout: TimeInterval = 10,
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
         onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)? = nil,
@@ -90,6 +96,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         self.channel = channel
         self.chunkSize = max(1, chunkSize)
         self.windowBytes = max(windowBytes, max(1, chunkSize))
+        self.encodePipeBytes = max(1, encodePipeBytes)
         self.noAckTimeout = noAckTimeout
         self.maxResidentInlineBytes = max(0, maxResidentInlineBytes)
         self.onTransferTimed = onTransferTimed
@@ -398,7 +405,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
     private func openArchive(
         _ source: ClipboardArchiveSource, _ transfer: OutboundTransfer
     ) -> CancellableChunkReader {
-        let reader = archiveSource(source, "\(transfer.transferID)", windowBytes)
+        let reader = archiveSource(source, "\(transfer.transferID)", encodePipeBytes)
         if transfer.setAbortHook({ [weak reader] in reader?.close() }) {
             reader.close()
         }

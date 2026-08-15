@@ -46,16 +46,16 @@ func patternedBytes(count: Int, multiplier: Int, offset: Int) -> Data {
 /// wired to the guard the receiver handed its factory, so the ceiling and
 /// free-space checks still fire through the double.
 ///
-/// `capacityBytes`/`pacingBytes` mirror what the receiver passes its own
-/// factory — the harness window — so a wrapped sink paces its guard exactly as
-/// an unwrapped one does.
+/// `capacityBytes`/`pacingBytes` are passed through unchanged from what the
+/// receiver would hand its own factory, so a wrapped sink paces its guard
+/// exactly as an unwrapped one does.
 func makeExtractSink(
-    destinationURL: URL, label: String, windowBytes: Int,
+    destinationURL: URL, label: String, capacityBytes: Int, pacingBytes: Int,
     onOutputAdvanced: @escaping @Sendable (Int) throws -> Void
 ) -> ClipboardArchiveExtractSink {
     ClipboardArchiveExtractSink(
         destinationURL: destinationURL, label: label,
-        capacityBytes: windowBytes, pacingBytes: windowBytes,
+        capacityBytes: capacityBytes, pacingBytes: pacingBytes,
         onOutputAdvanced: onOutputAdvanced)
 }
 
@@ -464,6 +464,12 @@ final class StreamHarness: @unchecked Sendable {
         senderClock: (any EngineClock)? = nil,
         chunkSize: Int,
         windowBytes: Int,
+        // Each defaults to the injected window, so a test pinning a tiny window
+        // to pace its guard or park its encoder gets that from `windowBytes`
+        // alone.
+        encodePipeBytes: Int? = nil,
+        extractPipeBytes: Int? = nil,
+        extractPacingBytes: Int? = nil,
         noAckTimeout: TimeInterval = 10,
         ackLatencyBound: TimeInterval = ClipboardStreamTuning.ackLatencyBound,
         stallTimeout: TimeInterval = ClipboardStreamTuning.inboundStallTimeout,
@@ -489,6 +495,7 @@ final class StreamHarness: @unchecked Sendable {
         sender = ClipboardStreamSender(
             clock: senderClock ?? clock,
             channel: a, chunkSize: chunkSize, windowBytes: windowBytes,
+            encodePipeBytes: encodePipeBytes ?? windowBytes,
             noAckTimeout: noAckTimeout, maxResidentInlineBytes: maxResidentInlineBytes,
             onTransferTimed: { metrics in collector.timedOutbound(metrics) },
             onCreditWait: { id in creditWaitHook.fire(id) },
@@ -496,6 +503,8 @@ final class StreamHarness: @unchecked Sendable {
         receiver = ClipboardStreamReceiver(
             clock: clock,
             channel: b, staging: staging, windowBytes: windowBytes,
+            extractPipeBytes: extractPipeBytes ?? windowBytes,
+            extractPacingBytes: extractPacingBytes ?? windowBytes,
             ackLatencyBound: ackLatencyBound, stallTimeout: stallTimeout,
             maxResidentInlineBytes: maxResidentInlineBytes,
             minimumExtractAllowance: minimumExtractAllowance,

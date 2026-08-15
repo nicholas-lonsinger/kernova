@@ -9,18 +9,55 @@ public enum ClipboardStreamTuning {
     /// Default per-chunk payload size: 64 KiB (the shared vsock packet cap).
     public static let defaultChunkPayloadSize = 64 * 1024
 
-    /// Default in-flight credit window: 1 MiB (16 chunks).
+    /// Default in-flight credit window: 4 MiB (64 chunks).
     ///
     /// Deeper than the native 256 KiB credit-window default (Linux `buf_alloc`)
     /// because a same-host vsock is bounded by per-chunk ack round-trip latency,
-    /// not bandwidth.
-    public static let defaultWindowBytes = 1024 * 1024
+    /// not bandwidth: the window over that round trip is the stream's rate
+    /// ceiling, so this is how much ack latency the transport absorbs before the
+    /// sender starts parking on credit.
+    ///
+    /// It is free on the sending side, which frames and releases each chunk, and
+    /// not on the receiving one: `handleChunk` hands a chunk to the write lane
+    /// without blocking, so a sink slower than the wire retains up to this much
+    /// per transfer. Size it for the round trip, but as memory a slow volume can
+    /// hold, not as a number with no cost.
+    public static let defaultWindowBytes = 4 * 1024 * 1024
 
-    /// Hard cap on the credit window: 2 MiB.
-    public static let maxWindowBytes = 2 * 1024 * 1024
+    /// Hard cap on the credit window: 8 MiB.
+    ///
+    /// Every ack carries the receiver's window and each side clamps what it
+    /// receives to its own compiled value here, so a default above this cap is
+    /// silently undone by the first ack: the two move together. Clamping the
+    /// receiver's own window is also what bounds `maxBacklogBytes`; a peer's
+    /// advertisement is clamped on the sending side and reaches neither.
+    public static let maxWindowBytes = 8 * 1024 * 1024
+
+    /// How far the archive encoder may run ahead of the transport: 1 MiB.
+    ///
+    /// Sized apart from the credit window because they bound different stages —
+    /// this one parks the encoder, the window parks the wire — and because this
+    /// one is resident memory that the window is not: a pipe holds its capacity
+    /// plus one callback buffer, on every concurrent transfer.
+    public static let encodePipeBytes = 1024 * 1024
+
+    /// How far arriving wire bytes may run ahead of extraction: 1 MiB.
+    ///
+    /// Sized apart from the credit window because the receiver acks only once
+    /// the sink has taken the bytes: sized *from* the window, this would let
+    /// credit reopen no faster than the extract drains.
+    public static let extractPipeBytes = 1024 * 1024
+
+    /// Output granularity at which a streamed extract re-checks its guards:
+    /// 1 MiB.
+    ///
+    /// How far an extract can overrun its free-space and payload ceilings
+    /// before the next check catches it, which is why it is sized against
+    /// `freeSpaceMargin`.
+    public static let extractPacingBytes = 1024 * 1024
 
     /// Cumulative-ack coalescing quantum for a credit window: window/4 (at
-    /// least 1 byte) — 256 KiB at the production 1 MiB window.
+    /// least 1 byte).
     ///
     /// The receiver acks once at least this many durably-written bytes have
     /// accumulated since its last ack, rather than after every 64 KiB chunk.
@@ -34,9 +71,9 @@ public enum ClipboardStreamTuning {
     /// quantum: 1 s.
     ///
     /// Without it the quantum stretches the gap between credit-opening acks to
-    /// four chunk-write times, so under degraded I/O sustained per-chunk writes
-    /// in the 2.5–10 s range trip the sender's 10 s no-ack deadline and abort a
-    /// live transfer.
+    /// a quarter-window of chunk writes — 16 of them at the shipped window — so
+    /// under degraded I/O a sustained per-chunk write above 0.625 s trips the
+    /// sender's 10 s no-ack deadline and aborts a live transfer.
     public static let ackLatencyBound: TimeInterval = 1
 
     /// Upper bound on how much an inline reassembly buffer pre-reserves: 64 MiB.
