@@ -175,19 +175,9 @@ final class VsockControlService {
     /// sharing turned on.
     private var guestSupportsClipboardStreamingStorage = false
 
-    /// Whether the guest advertised `clipboard.stream.v1` — the capability the
+    /// Whether the guest advertised `clipboard.stream.v2` — the capability the
     /// clipboard-channel admission check requires.
     var guestSupportsClipboardStreaming: Bool { guestSupportsClipboardStreamingStorage }
-
-    /// Whether the connected guest agent advertised
-    /// `clipboard.stream.directory.v1` in its `Hello`.
-    ///
-    /// Set on Hello, reset on stop. An agent without it cannot receive a folder
-    /// streamed with an undeclared size, so the host does not offer one.
-    private var guestSupportsDirectoryStreamingStorage = false
-
-    /// Whether the guest can receive a folder archived straight onto the wire.
-    var guestSupportsDirectoryStreaming: Bool { guestSupportsDirectoryStreamingStorage }
 
     /// Whether the connected guest agent advertised `clipboard.paste.limit.v1`
     /// in its `Hello`.
@@ -200,7 +190,7 @@ final class VsockControlService {
     /// Whether the guest can honor a pushed `clipboard_max_paste_bytes`.
     var guestSupportsPasteLimit: Bool { guestSupportsPasteLimitStorage }
 
-    /// Whether the connected guest agent advertised `drop.files.v1` in its
+    /// Whether the connected guest agent advertised `drop.files.v2` in its
     /// `Hello`.
     ///
     /// Set on Hello, reset on stop. An agent without it runs no drop client, so
@@ -328,7 +318,6 @@ final class VsockControlService {
         isUnresponsive = false
         lastInboundFrame = nil
         guestSupportsClipboardStreamingStorage = false
-        guestSupportsDirectoryStreamingStorage = false
         guestSupportsPasteLimitStorage = false
         guestSupportsDropFilesStorage = false
         Self.logger.info("Vsock control service stopped for '\(self.label, privacy: .public)'")
@@ -388,7 +377,7 @@ final class VsockControlService {
         let clipboardEnabled = policy.clipboardSharingEnabled && guestSupportsClipboardStreaming
         if policy.clipboardSharingEnabled && !guestSupportsClipboardStreaming {
             Self.logger.notice(
-                "Clipboard sharing requested but guest agent for '\(self.label, privacy: .public)' lacks the \(KernovaCapability.clipboardStreamV1, privacy: .public) capability — keeping clipboard disabled (agent needs updating)"
+                "Clipboard sharing requested but guest agent for '\(self.label, privacy: .public)' lacks the \(KernovaCapability.clipboardStreamV2, privacy: .public) capability — keeping clipboard disabled (agent needs updating)"
             )
         }
         // An agent that can't honor a pushed ceiling enforces its own built-in
@@ -530,13 +519,11 @@ final class VsockControlService {
             agentVersion = reportedVersion
             let reportedOSVersion = ObservedAgentInfo.boundedField(hello.agentInfo.osVersion)
             guestSupportsClipboardStreamingStorage = hello.capabilities.contains(
-                KernovaCapability.clipboardStreamV1)
-            guestSupportsDirectoryStreamingStorage = hello.capabilities.contains(
-                KernovaCapability.clipboardStreamDirectoryV1)
+                KernovaCapability.clipboardStreamV2)
             guestSupportsPasteLimitStorage = hello.capabilities.contains(
                 KernovaCapability.clipboardPasteLimitV1)
             guestSupportsDropFilesStorage = hello.capabilities.contains(
-                KernovaCapability.dropFilesV1)
+                KernovaCapability.dropFilesV2)
             // Every peer-supplied piece of this line is filtered first — the
             // version by `boundedField`, the capability tags by
             // `logDescription` — so none of them can write arbitrary content

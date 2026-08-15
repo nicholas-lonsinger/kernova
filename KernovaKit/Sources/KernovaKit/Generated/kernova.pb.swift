@@ -385,10 +385,10 @@ public nonisolated struct Kernova_V1_ClipboardRepresentationInfo: Sendable {
   /// size from a stat — the bytes themselves are never read to build the offer.
   /// For a directory rep (`is_directory`) it is the producer's stat-walk size
   /// ESTIMATE of the *uncompressed* source tree, which is what a streamed
-  /// extract writes, so the receiver's paste cap and free-space preflight gate
-  /// on it. The stream layer re-enforces reality: `max_accept_byte_count` on the
-  /// request, a per-chunk disk check, and the End frame's size + SHA-256
-  /// verification.
+  /// extract writes. The receiver's paste cap, free-space pre-flight and
+  /// extract ceiling all gate on it; the stream layer re-enforces reality with
+  /// `max_accept_byte_count` on the request, the extract's own output guard,
+  /// and the End frame's size + SHA-256 verification.
   public var byteCount: UInt64 = 0
 
   /// Suggested filename when this representation is a file payload (e.g. a
@@ -412,14 +412,14 @@ public nonisolated struct Kernova_V1_ClipboardRepresentationInfo: Sendable {
   /// package such as .app/.rtfd). Implies a non-empty `filename` (the folder
   /// name, without an archive suffix) and `is_inline = false`.
   ///
-  /// A directory rep rides the plain-file stream path, carrying an in-process
-  /// AppleArchive (LZFSE) of the tree. The producer encodes the source tree
-  /// straight onto the wire when the representation is *requested* — never at
-  /// copy time, and never through an archive file — and the receiver extracts
-  /// the arriving bytes straight into a real directory. Its compressed size is
-  /// therefore unknown when the transfer starts, so the reply's
-  /// `ClipboardStreamBegin.total_bytes` is 0 and the End frame carries the true
-  /// count.
+  /// A directory rep streams as an archive of its tree — the same
+  /// `ClipboardStreamBegin.is_archive` encoding every file representation
+  /// uses — encoded straight onto the wire when the representation is
+  /// *requested*, never at copy time and never through an archive file, and
+  /// extracted by the receiver straight into a real directory. What this flag
+  /// adds is that the receiver extracts into a folder of `filename`'s name
+  /// rather than delivering the archive's single file entry, and that
+  /// `byte_count` is an estimate.
   ///
   /// The stream layer is offer-agnostic: the requester tells its own receiver
   /// that a transfer carries a directory when it sends the `ClipboardRequest`,
@@ -527,22 +527,30 @@ public nonisolated struct Kernova_V1_ClipboardStreamBegin: Sendable {
   /// The representation's UTI.
   public var uti: String = String()
 
-  /// Total payload size in bytes, or 0 for a payload whose size is only known
-  /// once it has been produced — a directory archived onto the wire. When
-  /// declared, the receiver bounds the arriving bytes by it and sizes its
-  /// free-space pre-flight check from it for a file rep. When 0, the requester's
-  /// free-space pre-flight against the offer's uncompressed estimate and a
-  /// per-window disk re-check stand in, and `ClipboardStreamEnd` carries the
-  /// authoritative count.
+  /// Total payload size in bytes for a raw payload, which the receiver bounds
+  /// the arriving bytes by. 0 for an archive (`is_archive`), whose compressed
+  /// size is only known once it has been produced: the offer's `byte_count`,
+  /// which the requester already read, stands in for the receiver's pre-flight
+  /// and extract ceiling, and `ClipboardStreamEnd` carries the authoritative
+  /// wire count.
   public var totalBytes: UInt64 = 0
 
   /// Suggested filename for a file rep (see `ClipboardRepresentationInfo`);
   /// empty for an inline rep.
   public var filename: String = String()
 
-  /// Whether the receiver should reassemble in memory (inline) or stream to a
-  /// temp file. Mirrors `ClipboardRepresentationInfo.is_inline`.
+  /// Whether the receiver delivers the payload as pasteboard bytes (inline) or
+  /// as a file. Mirrors `ClipboardRepresentationInfo.is_inline`.
   public var isInline: Bool = false
+
+  /// Whether the payload is an AppleArchive (LZ4) the receiver extracts, rather
+  /// than the representation's own bytes. Every representation that lands on
+  /// the receiver's disk crosses as an archive — a file as a one-entry archive,
+  /// a folder as an archive of its tree, and an inline representation larger
+  /// than `ClipboardStreamTuning.maxResidentInlineBytes`, which the receiver
+  /// extracts and maps back into memory. Only an inline representation at or
+  /// below that size crosses raw, reassembled in RAM.
+  public var isArchive: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1469,7 +1477,7 @@ nonisolated extension Kernova_V1_ClipboardRelease: SwiftProtobuf.Message, SwiftP
 
 nonisolated extension Kernova_V1_ClipboardStreamBegin: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ClipboardStreamBegin"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{3}transfer_id\0\u{1}uti\0\u{3}total_bytes\0\u{1}filename\0\u{3}is_inline\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{3}transfer_id\0\u{1}uti\0\u{3}total_bytes\0\u{1}filename\0\u{3}is_inline\0\u{3}is_archive\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1483,6 +1491,7 @@ nonisolated extension Kernova_V1_ClipboardStreamBegin: SwiftProtobuf.Message, Sw
       case 4: try { try decoder.decodeSingularUInt64Field(value: &self.totalBytes) }()
       case 5: try { try decoder.decodeSingularStringField(value: &self.filename) }()
       case 6: try { try decoder.decodeSingularBoolField(value: &self.isInline) }()
+      case 7: try { try decoder.decodeSingularBoolField(value: &self.isArchive) }()
       default: break
       }
     }
@@ -1507,6 +1516,9 @@ nonisolated extension Kernova_V1_ClipboardStreamBegin: SwiftProtobuf.Message, Sw
     if self.isInline != false {
       try visitor.visitSingularBoolField(value: self.isInline, fieldNumber: 6)
     }
+    if self.isArchive != false {
+      try visitor.visitSingularBoolField(value: self.isArchive, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1517,6 +1529,7 @@ nonisolated extension Kernova_V1_ClipboardStreamBegin: SwiftProtobuf.Message, Sw
     if lhs.totalBytes != rhs.totalBytes {return false}
     if lhs.filename != rhs.filename {return false}
     if lhs.isInline != rhs.isInline {return false}
+    if lhs.isArchive != rhs.isArchive {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

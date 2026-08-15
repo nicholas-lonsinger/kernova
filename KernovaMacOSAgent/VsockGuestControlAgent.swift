@@ -51,13 +51,6 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     /// every inbound `PolicyUpdate`, symmetric with the host's own gate.
     private var hostSupportsClipboardStreaming = false
 
-    /// Whether the host advertised the streamed-folder capability.
-    ///
-    /// Guarded by `lock` and reset per connection; a host without it cannot
-    /// receive a folder streamed with an undeclared size, so the guest does not
-    /// offer one.
-    private var hostSupportsDirectoryStreamingStorage = false
-
     /// Whether the host advertised the display-drop capability.
     ///
     /// Guarded by `lock` and reset per connection; a host without it runs no drop
@@ -115,12 +108,6 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         lock.withLock { hostBundledAgentVersionStorage }
     }
 
-    /// Thread-safe read of whether the host can receive a folder archived
-    /// straight onto the wire.
-    var hostSupportsDirectoryStreaming: Bool {
-        lock.withLock { hostSupportsDirectoryStreamingStorage }
-    }
-
     /// Thread-safe read of whether the host takes files dropped on the VM
     /// display.
     var hostSupportsDropFiles: Bool {
@@ -165,7 +152,6 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             lastInboundFrame = nil
             unresponsiveLogged = false
             hostSupportsClipboardStreaming = false
-            hostSupportsDirectoryStreamingStorage = false
             hostSupportsDropFilesStorage = false
         }
         // The clearing is a capability change like any other: a client enabled by
@@ -237,13 +223,10 @@ final class VsockGuestControlAgent: @unchecked Sendable {
 
         switch frame.payload {
         case .hello(let hello):
-            let hostStreams = hello.capabilities.contains(KernovaCapability.clipboardStreamV1)
-            let hostStreamsDirectories = hello.capabilities.contains(
-                KernovaCapability.clipboardStreamDirectoryV1)
-            let hostTakesDrops = hello.capabilities.contains(KernovaCapability.dropFilesV1)
+            let hostStreams = hello.capabilities.contains(KernovaCapability.clipboardStreamV2)
+            let hostTakesDrops = hello.capabilities.contains(KernovaCapability.dropFilesV2)
             lock.withLock {
                 hostSupportsClipboardStreaming = hostStreams
-                hostSupportsDirectoryStreamingStorage = hostStreamsDirectories
                 hostSupportsDropFilesStorage = hostTakesDrops
                 hostBundledAgentVersionStorage = hello.bundledAgentVersion
             }
@@ -268,7 +251,7 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             effective.clipboardSharingEnabled = policy.clipboardSharingEnabled && hostStreams
             if policy.clipboardSharingEnabled && !hostStreams {
                 Self.logger.notice(
-                    "Host enabled clipboard but didn't advertise \(KernovaCapability.clipboardStreamV1, privacy: .public) — keeping clipboard disabled"
+                    "Host enabled clipboard but didn't advertise \(KernovaCapability.clipboardStreamV2, privacy: .public) — keeping clipboard disabled"
                 )
             }
             Self.logger.notice(

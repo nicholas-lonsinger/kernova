@@ -73,6 +73,15 @@ public enum ClipboardStreamTuning {
     /// still bounding one whose advertised size is a fabrication.
     public static let minimumExtractAllowance = 64 * 1024 * 1024
 
+    /// Headroom above a file's advertised size that its one-entry archive may
+    /// unpack to: 1 MiB.
+    ///
+    /// The extract counts uncompressed archive bytes — the entry's header plus
+    /// the file's data — against a ceiling stated in file bytes, and a file's
+    /// advertised size is exact where a folder's is an estimate, so the header
+    /// is all the slack a file needs.
+    public static let fileExtractAllowance = 1024 * 1024
+
     /// The most a receiver lets arrive ahead of what it has written: one credit
     /// window plus one maximum-size chunk.
     ///

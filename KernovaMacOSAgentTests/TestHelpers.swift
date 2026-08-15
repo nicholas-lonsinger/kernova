@@ -251,9 +251,13 @@ func makeRequestFrame(
 }
 
 /// A `ClipboardStreamBegin` opening an inbound transfer to the agent.
+///
+/// `isArchive` says the chunks that follow are an LZ4 AppleArchive the receiver
+/// extracts as they arrive, in which case `totalBytes` is the wire size — which
+/// the real sender never knows at Begin, so it declares 0.
 func makeBeginFrame(
     generation: UInt64, transferID: UInt64, uti: String, totalBytes: Int, filename: String = "",
-    isInline: Bool
+    isInline: Bool, isArchive: Bool = false
 ) -> Frame {
     var frame = Frame()
     frame.protocolVersion = 1
@@ -264,6 +268,7 @@ func makeBeginFrame(
         $0.totalBytes = UInt64(totalBytes)
         $0.filename = filename
         $0.isInline = isInline
+        $0.isArchive = isArchive
     }
     return frame
 }

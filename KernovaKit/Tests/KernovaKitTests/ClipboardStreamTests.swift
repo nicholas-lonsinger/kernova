@@ -37,6 +37,69 @@ struct ClipboardStreamTests {
         return url
     }
 
+    /// The priming a requester performs before its `ClipboardRequest` goes out,
+    /// funnelling delivery into the harness collector.
+    ///
+    /// Every archived transfer — a file, a folder, an oversize inline payload —
+    /// is refused at Begin unless a pull is awaiting it, and `advertised` is the
+    /// figure its extract is held to.
+    private func prime(
+        _ harness: StreamHarness, id: UInt64, advertised: Int,
+        extractsDirectoryNamed: String? = nil
+    ) {
+        let collector = harness.collector
+        harness.receiver.awaitTransfer(
+            id, extractsDirectoryNamed: extractsDirectoryNamed, advertisedByteCount: advertised,
+            onComplete: { collector.complete(id, $0) },
+            onAbort: { collector.abort($0) })
+    }
+
+    /// Announces an archived transfer, exactly as the sender does for one.
+    private func beginArchive(
+        _ harness: StreamHarness, id: UInt64, uti: String = "public.data",
+        filename: String = "", isInline: Bool = false
+    ) {
+        harness.receiver.handleBegin(
+            .with {
+                $0.generation = 1
+                $0.transferID = id
+                $0.uti = uti
+                $0.totalBytes = 0
+                $0.filename = filename
+                $0.isInline = isInline
+                $0.isArchive = true
+            })
+    }
+
+    /// Feeds `bytes` to a transfer in `chunkSize` slices, as the wire does.
+    private func feed(
+        _ harness: StreamHarness, id: UInt64, bytes: Data, chunkSize: Int = Self.chunk
+    ) {
+        var offset = 0
+        while offset < bytes.count {
+            let upper = min(offset + chunkSize, bytes.count)
+            let slice = Data(bytes[bytes.startIndex + offset..<bytes.startIndex + upper])
+            let at = offset
+            harness.receiver.handleChunk(
+                .with {
+                    $0.transferID = id
+                    $0.offset = UInt64(at)
+                    $0.data = slice
+                })
+            offset = upper
+        }
+    }
+
+    /// Closes a transfer with the End frame its wire bytes imply.
+    private func endTransfer(_ harness: StreamHarness, id: UInt64, bytes: Data) {
+        harness.receiver.handleEnd(
+            .with {
+                $0.transferID = id
+                $0.totalBytes = UInt64(bytes.count)
+                $0.sha256 = Data(SHA256.hash(data: bytes))
+            })
+    }
+
     // MARK: - Round trips
 
     @Test("an inline multi-chunk payload round-trips on the macOS 12 fallback clock")
@@ -112,19 +175,19 @@ struct ClipboardStreamTests {
         #expect(harness.collector.abortCount == 0)
     }
 
-    @Test("a file payload round-trips to a temp file with the streamed sha256")
+    @Test("a file payload crosses as a one-entry archive and lands under its own name")
     func fileRoundTrip() async throws {
         let harness = try roomyHarness()
         defer { harness.tearDown() }
 
         var bytes = Data()
         for i in 0..<(Self.chunk * 7 + 50) { bytes.append(UInt8((i * 17 + 3) & 0xFF)) }
-        let expectedDigest = Data(SHA256.hash(data: bytes))
         let source = try tempFile(bytes: bytes)
         defer { try? FileManager.default.removeItem(at: source) }
         let rep = ClipboardContent.Representation(
             uti: "public.data", fileURL: source, byteCount: bytes.count, filename: "big.bin")
 
+        prime(harness, id: 2, advertised: bytes.count)
         harness.sender.startTransfer(
             transferID: 2, generation: 1, representation: rep, maxAcceptByteCount: .max,
             isInline: false, isCurrent: { _ in true })
@@ -135,14 +198,28 @@ struct ClipboardStreamTests {
         #expect(try Data(contentsOf: url) == bytes)
         #expect(received.byteCount == bytes.count)
         #expect(received.filename == "big.bin")
-        if case .file(_, _, let sha256) = received.source {
-            #expect(sha256 == expectedDigest)
-        } else {
+        // The one entry keeps its exact name inside a scratch directory of its
+        // own, under the staging root.
+        #expect(url.lastPathComponent == "big.bin")
+        #expect(harness.staging.isInStagingRoot(url))
+
+        // The wire is the archive: no size is declared up front, and the count
+        // and digest that close the transfer describe the archive rather than
+        // the file.
+        let begin = try #require(harness.collector.begin(2))
+        #expect(begin.isArchive)
+        #expect(begin.totalBytes == 0)
+        let end = try #require(harness.collector.end(2))
+        #expect(end.totalBytes > 0)
+        guard case .file(_, _, let sha256) = received.source else {
             Issue.record("Expected a .file representation")
+            return
         }
+        #expect(sha256 == end.sha256)
+        #expect(sha256 != Data(SHA256.hash(data: bytes)))
     }
 
-    @Test("a zero-byte file payload round-trips: Begin, no chunks, the empty-input digest")
+    @Test("a zero-byte file round-trips as a one-entry archive carrying an empty entry")
     func zeroByteFileRoundTrip() async throws {
         let harness = try roomyHarness()
         defer { harness.tearDown() }
@@ -152,6 +229,7 @@ struct ClipboardStreamTests {
         let rep = ClipboardContent.Representation(
             uti: "public.data", fileURL: source, byteCount: 0, filename: "empty.bin")
 
+        prime(harness, id: 3, advertised: 0)
         harness.sender.startTransfer(
             transferID: 3, generation: 1, representation: rep, maxAcceptByteCount: .max,
             isInline: false, isCurrent: { _ in true })
@@ -162,11 +240,38 @@ struct ClipboardStreamTests {
         #expect(try Data(contentsOf: url).isEmpty)
         #expect(received.byteCount == 0)
         #expect(received.filename == "empty.bin")
+        #expect(url.lastPathComponent == "empty.bin")
+        // A file carrying no bytes still has an archive around it, so the wire
+        // is never empty.
+        let end = try #require(harness.collector.end(3))
+        #expect(end.totalBytes > 0)
         if case .file(_, _, let sha256) = received.source {
-            #expect(sha256 == Data(SHA256.hash(data: Data())))
+            #expect(sha256 == end.sha256)
         } else {
             Issue.record("Expected a .file representation")
         }
+        #expect(harness.collector.abortCount == 0)
+    }
+
+    @Test("a zero-byte inline payload round-trips raw: Begin, no chunks, the empty-input digest")
+    func zeroByteInlineRoundTrip() async throws {
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+
+        let rep = ClipboardContent.Representation(uti: "public.utf8-plain-text", data: Data())
+        harness.sender.startTransfer(
+            transferID: 3, generation: 1, representation: rep, maxAcceptByteCount: .max,
+            isInline: true, isCurrent: { _ in true })
+
+        try await harness.collector.gate.wait { harness.collector.representation(3) != nil }
+        let received = try #require(harness.collector.representation(3))
+        #expect(received.inMemoryData == Data())
+        #expect(received.fileURL == nil)
+        let begin = try #require(harness.collector.begin(3))
+        #expect(!begin.isArchive)
+        let end = try #require(harness.collector.end(3))
+        #expect(end.totalBytes == 0)
+        #expect(end.sha256 == Data(SHA256.hash(data: Data())))
         #expect(harness.collector.abortCount == 0)
     }
 
@@ -175,10 +280,7 @@ struct ClipboardStreamTests {
         let harness = try roomyHarness()
         defer { harness.tearDown() }
 
-        let source = try tempFile(bytes: Data())
-        defer { try? FileManager.default.removeItem(at: source) }
-        let rep = ClipboardContent.Representation(
-            uti: "public.data", fileURL: source, byteCount: 0, filename: "empty.bin")
+        let rep = ClipboardContent.Representation(uti: "public.utf8-plain-text", data: Data())
 
         // Every abort and supersession check used to sit inside the chunk loop,
         // which a zero-byte payload never enters — so an already-retired empty
@@ -187,7 +289,7 @@ struct ClipboardStreamTests {
         // the gap between registration and this transfer's queue.
         harness.sender.startTransfer(
             transferID: 4, generation: 1, representation: rep, maxAcceptByteCount: .max,
-            isInline: false, isCurrent: { _ in false })
+            isInline: true, isCurrent: { _ in false })
 
         try await harness.collector.gate.wait { harness.collector.abortCount == 1 }
         #expect(harness.collector.abortInfos.first?.code == "superseded")
@@ -211,6 +313,7 @@ struct ClipboardStreamTests {
         let inlineRep = ClipboardContent.Representation(
             uti: "public.utf8-plain-text", data: inlineBytes)
 
+        prime(harness, id: 1, advertised: bytes.count)
         harness.sender.startTransfer(
             transferID: 1, generation: 1, representation: fileRep, maxAcceptByteCount: .max,
             isInline: false, isCurrent: { _ in true })
@@ -223,7 +326,13 @@ struct ClipboardStreamTests {
 
         let fileMetrics = try #require(
             harness.collector.timedMetrics.first { $0.transferID == 1 })
+        // The logical payload is the file; the archive that carried it is the
+        // wire count, and the summary names it only because the two differ.
+        let fileEnd = try #require(harness.collector.end(1))
         #expect(fileMetrics.byteCount == bytes.count)
+        #expect(fileMetrics.wireByteCount == Int(fileEnd.totalBytes))
+        #expect(fileMetrics.wireByteCount != fileMetrics.byteCount)
+        #expect(fileMetrics.logSummary.contains("\(fileMetrics.wireByteCount) wire bytes"))
         #expect(fileMetrics.uti == "public.data")
         #expect(fileMetrics.streamedToDisk)
         #expect(fileMetrics.duration > .zero)
@@ -234,6 +343,10 @@ struct ClipboardStreamTests {
         let inlineMetrics = try #require(
             harness.collector.timedMetrics.first { $0.transferID == 2 })
         #expect(inlineMetrics.byteCount == inlineBytes.count)
+        // Raw: the wire bytes *are* the payload, so the summary stays silent
+        // about them.
+        #expect(inlineMetrics.wireByteCount == inlineBytes.count)
+        #expect(!inlineMetrics.logSummary.contains("wire bytes"))
         #expect(!inlineMetrics.streamedToDisk)
         #expect(harness.collector.abortCount == 0)
     }
@@ -262,19 +375,10 @@ struct ClipboardStreamTests {
         }
         try writeHandle.close()
         defer { try? FileManager.default.removeItem(at: source) }
-        let expectedDigest: Data = {
-            var hasher = SHA256()
-            if let h = try? FileHandle(forReadingFrom: source) {
-                while let block = try? h.read(upToCount: 1 << 20), !block.isEmpty {
-                    hasher.update(data: block)
-                }
-                try? h.close()
-            }
-            return Data(hasher.finalize())
-        }()
 
         let rep = ClipboardContent.Representation(
             uti: "public.data", fileURL: source, byteCount: size, filename: "huge.bin")
+        prime(harness, id: 3, advertised: size)
         harness.sender.startTransfer(
             transferID: 3, generation: 1, representation: rep, maxAcceptByteCount: .max,
             isInline: false, isCurrent: { _ in true })
@@ -282,13 +386,19 @@ struct ClipboardStreamTests {
         try await harness.collector.gate.wait(timeout: 60) {
             harness.collector.representation(3) != nil || harness.collector.abortCount > 0
         }
+        #expect(harness.collector.abortInfos.map(\.code) == [])
         let received = try #require(harness.collector.representation(3))
         let url = try #require(received.fileURL)
         let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
         #expect((attrs[.size] as? Int) == size)
+        #expect(received.byteCount == size)
+        // The digest covers the archive that crossed, which for a repeating
+        // pattern is a fraction of the file it unpacked to.
+        let end = try #require(harness.collector.end(3))
         if case .file(_, _, let sha256) = received.source {
-            #expect(sha256 == expectedDigest)
+            #expect(sha256 == end.sha256)
         }
+        #expect(Int(end.totalBytes) < size)
     }
 
     @Test("two interleaved transfers are correlated by transfer_id")
@@ -461,46 +571,41 @@ struct ClipboardStreamTests {
 
     // MARK: - Write-lane pipelining (#615)
 
-    /// A harness whose disk-streamed transfers append through a `GatedSink` the
-    /// test releases by hand, plus the box that sink lands in once Begin opens
-    /// it.
+    /// A harness whose archived transfers extract through a `GatedSink` the test
+    /// releases by hand, plus the box that sink lands in once Begin opens it.
     ///
-    /// The ack latency bound is pushed out of reach so every ack schedule below
-    /// is a pure function of which writes the test released — never of how long
-    /// a loaded CI runner took to run them.
+    /// The gate wraps the production extract sink and passes the receiver's own
+    /// output guard through to it, so the ceiling and free-space checks still
+    /// fire while the test owns when each write lands. The ack latency bound is
+    /// pushed out of reach so every ack schedule below is a pure function of
+    /// which writes the test released — never of how long a loaded CI runner
+    /// took to run them.
     private func gatedHarness(freeSpace: @escaping @Sendable () -> Int64 = { 100 << 30 }) throws
         -> (harness: StreamHarness, sink: Box<GatedSink?>)
     {
-        let stagingBox = Box<ClipboardFileStaging?>(nil)
         let sinkBox = Box<GatedSink?>(nil)
         let harness = try StreamHarness(
             chunkSize: Self.chunk, windowBytes: Self.window,
             ackLatencyBound: 600,
             freeSpaceProvider: { _ in freeSpace() },
-            sinkFactory: { generation, filename in
-                guard let staging = stagingBox.value else {
-                    throw StreamTestFailure("Sink requested before the harness was wired")
-                }
+            sinkFactory: { destination, label, onOutputAdvanced in
                 let sink = GatedSink(
-                    wrapping: try staging.makeSink(generation: generation, filename: filename))
+                    wrapping: makeExtractSink(
+                        destinationURL: destination, label: label, windowBytes: Self.window,
+                        onOutputAdvanced: onOutputAdvanced))
                 sinkBox.value = sink
                 return sink
             })
-        // Set before any transfer can begin — the factory runs on `handleBegin`.
-        stagingBox.value = harness.staging
         return (harness, sinkBox)
     }
 
-    /// Opens an inbound file transfer of `totalBytes` and waits for its
-    /// go-signal ack, so the staging sink is open before the test drives chunks.
-    private func beginFileTransfer(
-        _ harness: StreamHarness, id: UInt64, totalBytes: Int, filename: String
+    /// Opens an inbound archived transfer for an already-primed pull and waits
+    /// for its go-signal ack, so the extract sink is open before the test drives
+    /// chunks.
+    private func openArchivedTransfer(
+        _ harness: StreamHarness, id: UInt64, filename: String
     ) async throws {
-        harness.receiver.handleBegin(
-            .with {
-                $0.generation = 1; $0.transferID = id; $0.uti = "public.data"
-                $0.totalBytes = UInt64(totalBytes); $0.isInline = false; $0.filename = filename
-            })
+        beginArchive(harness, id: id, filename: filename)
         try await harness.collector.gate.wait { harness.collector.ackedByteCounts(id) == [0] }
     }
 
@@ -509,15 +614,17 @@ struct ClipboardStreamTests {
     ///
     /// Progress is the receive lane's own signal — it fires per *accepted*
     /// chunk, before those bytes reach the sink — which is what makes the write
-    /// lane's independence observable.
-    private func trackProgress(_ harness: StreamHarness, _ id: UInt64) -> (
+    /// lane's independence observable. A gated sink is not the extract sink the
+    /// receiver would read an unpacked count from, so the figure recorded here
+    /// is the wire count.
+    private func trackProgress(_ harness: StreamHarness, _ id: UInt64, advertised: Int) -> (
         received: Box<Int>, gate: AsyncGate
     ) {
         let received = Box<Int>(0)
         let gate = AsyncGate()
         let collector = harness.collector
         harness.receiver.awaitTransfer(
-            id,
+            id, advertisedByteCount: advertised,
             onComplete: { collector.complete(id, $0) },
             onAbort: { collector.abort($0) },
             onProgress: { bytes, _ in
@@ -527,33 +634,46 @@ struct ClipboardStreamTests {
         return (received, gate)
     }
 
-    @Test("the receive lane keeps accepting and hashing chunks while every staging write is parked")
+    /// Random bytes drawn from `symbols` distinct values.
+    ///
+    /// The full alphabet is incompressible, so a payload's archive is about the
+    /// size of the payload and the chunk framing a test picks is the framing it
+    /// gets. A small alphabet compresses a few-fold instead, which is what puts
+    /// many chunks on the wire for a progress readout to climb through.
+    private func randomBytes(_ count: Int, symbols: Int = 256) -> Data {
+        var generator = SystemRandomNumberGenerator()
+        let highest = UInt8(clamping: max(2, symbols) - 1)
+        var bytes = Data(count: count)
+        bytes.withUnsafeMutableBytes { raw in
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return }
+            for index in 0..<raw.count {
+                base[index] = UInt8.random(in: 0...highest, using: &generator)
+            }
+        }
+        return bytes
+    }
+
+    @Test("the receive lane keeps accepting and hashing chunks while every extract write is parked")
     func receiveLaneRunsAheadOfParkedWrites() async throws {
         // The point of #615: a chunk's staging write no longer sits between it
-        // and the next chunk. With every write parked, all four chunks must
-        // still be validated, hashed, and progress-reported — while the ack
-        // ledger stays at the go-signal, because credit still tracks only
-        // durably-written bytes.
+        // and the next chunk. With every write parked, every chunk must still be
+        // validated, hashed, and progress-reported — while the ack ledger stays
+        // at the go-signal, because credit still tracks only durably-written
+        // bytes.
         let (harness, sinkBox) = try gatedHarness()
         defer { harness.tearDown() }
         let id: UInt64 = 601
-        let chunkCount = 4
-        let total = Self.chunk * chunkCount
 
-        let progress = trackProgress(harness, id)
-        try await beginFileTransfer(harness, id: id, totalBytes: total, filename: "parked.bin")
+        let payload = randomBytes(Self.chunk * 4)
+        let source = try tempFile(bytes: payload)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let wire = try clipboardArchiveBytes(ofFileAt: source, named: "parked.bin")
 
-        let bytes = Data((0..<total).map { UInt8((($0 &* 29) &+ 3) & 0xFF) })
-        for i in 0..<chunkCount {
-            harness.receiver.handleChunk(
-                .with {
-                    $0.transferID = id
-                    $0.offset = UInt64(i * Self.chunk)
-                    $0.data = bytes[(i * Self.chunk)..<((i + 1) * Self.chunk)]
-                })
-        }
+        let progress = trackProgress(harness, id, advertised: payload.count)
+        try await openArchivedTransfer(harness, id: id, filename: "parked.bin")
+        feed(harness, id: id, bytes: wire)
 
-        try await progress.gate.wait { progress.received.value == total }
+        try await progress.gate.wait { progress.received.value == wire.count }
         let sink = try #require(sinkBox.value)
         // Nothing has been made durable: the first write is parked in the gate
         // and the rest are queued behind it.
@@ -562,14 +682,10 @@ struct ClipboardStreamTests {
 
         // Releasing the backlog completes the transfer with the right bytes.
         sink.allowAll()
-        harness.receiver.handleEnd(
-            .with {
-                $0.transferID = id; $0.totalBytes = UInt64(total)
-                $0.sha256 = Data(SHA256.hash(data: bytes))
-            })
+        endTransfer(harness, id: id, bytes: wire)
         try await harness.collector.gate.wait { harness.collector.representation(id) != nil }
         let url = try #require(harness.collector.representation(id)?.fileURL)
-        #expect(try Data(contentsOf: url) == bytes)
+        #expect(try Data(contentsOf: url) == payload)
         #expect(harness.collector.abortCount == 0)
     }
 
@@ -578,23 +694,24 @@ struct ClipboardStreamTests {
         // A 4 KiB chunk under a 16 KiB window is exactly one ack quantum, so
         // each released write produces exactly one ack — the schedule is a pure
         // function of how many writes the test let through, and the chunks the
-        // receiver has accepted but not written must contribute nothing.
+        // receiver has accepted but not written must contribute nothing. The
+        // archive is fed as four whole chunks and left unfinished; what the
+        // extract makes of them is another test's subject.
         let (harness, sinkBox) = try gatedHarness()
         defer { harness.tearDown() }
         let id: UInt64 = 602
         let chunkCount = 4
         let total = Self.chunk * chunkCount
 
-        let progress = trackProgress(harness, id)
-        try await beginFileTransfer(harness, id: id, totalBytes: total, filename: "durable.bin")
-        for i in 0..<chunkCount {
-            harness.receiver.handleChunk(
-                .with {
-                    $0.transferID = id
-                    $0.offset = UInt64(i * Self.chunk)
-                    $0.data = Data(repeating: UInt8(i), count: Self.chunk)
-                })
-        }
+        let payload = randomBytes(Self.chunk * 5)
+        let source = try tempFile(bytes: payload)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let wire = try clipboardArchiveBytes(ofFileAt: source, named: "durable.bin")
+        #expect(wire.count >= total)
+
+        let progress = trackProgress(harness, id, advertised: payload.count)
+        try await openArchivedTransfer(harness, id: id, filename: "durable.bin")
+        feed(harness, id: id, bytes: Data(wire.prefix(total)))
         try await progress.gate.wait { progress.received.value == total }
         let sink = try #require(sinkBox.value)
 
@@ -608,6 +725,8 @@ struct ClipboardStreamTests {
         sink.allowAll()
         try await harness.collector.gate.wait { harness.collector.ackedByteCounts(id).count == 5 }
         #expect(harness.collector.ackedByteCounts(id) == [0, 4096, 8192, 12288, 16384])
+        // Unwind the extract pipeline this transfer never finished feeding.
+        harness.receiver.cancel(generation: 1)
     }
 
     @Test("End completes only once the write backlog has drained and committed")
@@ -615,26 +734,19 @@ struct ClipboardStreamTests {
         let (harness, sinkBox) = try gatedHarness()
         defer { harness.tearDown() }
         let id: UInt64 = 603
-        let chunkCount = 4
-        let total = Self.chunk * chunkCount
-        let bytes = Data((0..<total).map { UInt8((($0 &* 37) &+ 11) & 0xFF) })
 
-        try await beginFileTransfer(harness, id: id, totalBytes: total, filename: "drain.bin")
-        for i in 0..<chunkCount {
-            harness.receiver.handleChunk(
-                .with {
-                    $0.transferID = id
-                    $0.offset = UInt64(i * Self.chunk)
-                    $0.data = bytes[(i * Self.chunk)..<((i + 1) * Self.chunk)]
-                })
-        }
+        let payload = randomBytes(Self.chunk * 3)
+        let source = try tempFile(bytes: payload)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let wire = try clipboardArchiveBytes(ofFileAt: source, named: "drain.bin")
+        let chunkCount = (wire.count + Self.chunk - 1) / Self.chunk
+
+        prime(harness, id: id, advertised: payload.count)
+        try await openArchivedTransfer(harness, id: id, filename: "drain.bin")
+        feed(harness, id: id, bytes: wire)
         let sink = try #require(sinkBox.value)
         sink.allow(chunkCount - 1)
-        harness.receiver.handleEnd(
-            .with {
-                $0.transferID = id; $0.totalBytes = UInt64(total)
-                $0.sha256 = Data(SHA256.hash(data: bytes))
-            })
+        endTransfer(harness, id: id, bytes: wire)
 
         // Wait until the write lane is parked *inside* the last chunk's write.
         // The completion barrier is queued behind that write, so while it is
@@ -650,109 +762,88 @@ struct ClipboardStreamTests {
         try await harness.collector.gate.wait { harness.collector.representation(id) != nil }
         let received = try #require(harness.collector.representation(id))
         let url = try #require(received.fileURL)
-        #expect(try Data(contentsOf: url) == bytes)
+        #expect(try Data(contentsOf: url) == payload)
         if case .file(_, _, let sha256) = received.source {
-            #expect(sha256 == Data(SHA256.hash(data: bytes)))
+            #expect(sha256 == Data(SHA256.hash(data: wire)))
         } else {
             Issue.record("Expected a .file representation")
         }
     }
 
-    @Test("a staging write that fails mid-backlog aborts the transfer and deletes the partial")
+    @Test("an extract write that fails mid-backlog aborts the transfer and deletes the partial")
     func writeErrorMidBacklogAborts() async throws {
-        let stagingBox = Box<ClipboardFileStaging?>(nil)
         let harness = try StreamHarness(
             chunkSize: Self.chunk, windowBytes: Self.window,
             freeSpaceProvider: { _ in 100 << 30 },
-            sinkFactory: { generation, filename in
-                guard let staging = stagingBox.value else {
-                    throw StreamTestFailure("Sink requested before the harness was wired")
-                }
-                return FailingSink(
-                    wrapping: try staging.makeSink(generation: generation, filename: filename),
+            sinkFactory: { destination, label, onOutputAdvanced in
+                FailingSink(
+                    wrapping: makeExtractSink(
+                        destinationURL: destination, label: label, windowBytes: Self.window,
+                        onOutputAdvanced: onOutputAdvanced),
                     failingWrite: 2)
             })
         defer { harness.tearDown() }
-        stagingBox.value = harness.staging
         let id: UInt64 = 604
 
-        try await beginFileTransfer(
-            harness, id: id, totalBytes: Self.chunk * 3, filename: "failing.bin")
-        for i in 0..<3 {
-            harness.receiver.handleChunk(
-                .with {
-                    $0.transferID = id
-                    $0.offset = UInt64(i * Self.chunk)
-                    $0.data = Data(repeating: UInt8(i), count: Self.chunk)
-                })
-        }
+        let payload = randomBytes(Self.chunk * 3)
+        let source = try tempFile(bytes: payload)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let wire = try clipboardArchiveBytes(ofFileAt: source, named: "failing.bin")
+
+        prime(harness, id: id, advertised: payload.count)
+        try await openArchivedTransfer(harness, id: id, filename: "failing.bin")
+        feed(harness, id: id, bytes: wire)
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.contains { $0.code == "write.error" })
+        // The sink names its own failure, and the sink is an extract.
+        #expect(harness.collector.abortInfos.contains { $0.code == "extract.error" })
         #expect(harness.collector.representation(id) == nil)
         // Timing metrics report successful transfers only.
         #expect(harness.collector.timedMetrics.isEmpty)
         // RATIONALE: filesystem-appearance poll (mirrors `cancelDeletesPartial`)
         // — the partial's deletion runs on the write lane after the abort has
         // already been delivered, so there is no test-owned signal to gate on.
-        try await waitUntil {
-            !materializedFiles(under: harness.stagingTempRoot).contains {
-                $0.lastPathComponent == "failing.bin"
-            }
-        }
+        try await waitUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
     }
 
-    @Test("a staging sink that silently short-writes is caught at End instead of committing a truncated file")
-    func shortWriteIsCaughtAtEnd() async throws {
+    @Test("a sink that silently drops archive bytes fails the extract instead of delivering a truncated payload")
+    func droppedArchiveBytesAreCaughtAtCommit() async throws {
         // The digest is taken over the bytes that *arrive*, so a sink that
-        // accepts a chunk without storing it would sail through both the size
-        // and SHA-256 checks — the receive lane counted those bytes. Only the
-        // written-vs-expected comparison catches it (CLIPBOARD.md §7).
-        let stagingBox = Box<ClipboardFileStaging?>(nil)
+        // accepts a chunk without storing it sails through both the size and
+        // SHA-256 checks — the receive lane counted those bytes. What catches it
+        // is the extract: an archive missing a chunk cannot be unpacked
+        // (CLIPBOARD.md §7).
         let harness = try StreamHarness(
             chunkSize: Self.chunk, windowBytes: Self.window,
             freeSpaceProvider: { _ in 100 << 30 },
-            sinkFactory: { generation, filename in
-                guard let staging = stagingBox.value else {
-                    throw StreamTestFailure("Sink requested before the harness was wired")
-                }
-                return SilentlyDroppingSink(
-                    wrapping: try staging.makeSink(generation: generation, filename: filename),
+            sinkFactory: { destination, label, onOutputAdvanced in
+                SilentlyDroppingSink(
+                    wrapping: makeExtractSink(
+                        destinationURL: destination, label: label, windowBytes: Self.window,
+                        onOutputAdvanced: onOutputAdvanced),
                     droppingWrite: 2)
             })
         defer { harness.tearDown() }
-        stagingBox.value = harness.staging
         let id: UInt64 = 608
-        let total = Self.chunk * 3
-        let bytes = Data((0..<total).map { UInt8((($0 &* 23) &+ 5) & 0xFF) })
 
-        try await beginFileTransfer(harness, id: id, totalBytes: total, filename: "short.bin")
-        for i in 0..<3 {
-            harness.receiver.handleChunk(
-                .with {
-                    $0.transferID = id
-                    $0.offset = UInt64(i * Self.chunk)
-                    $0.data = bytes[(i * Self.chunk)..<((i + 1) * Self.chunk)]
-                })
-        }
+        let payload = randomBytes(Self.chunk * 3)
+        let source = try tempFile(bytes: payload)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let wire = try clipboardArchiveBytes(ofFileAt: source, named: "short.bin")
+
+        prime(harness, id: id, advertised: payload.count)
+        try await openArchivedTransfer(harness, id: id, filename: "short.bin")
+        feed(harness, id: id, bytes: wire)
         // Correct total, correct digest — both computed over what arrived.
-        harness.receiver.handleEnd(
-            .with {
-                $0.transferID = id; $0.totalBytes = UInt64(total)
-                $0.sha256 = Data(SHA256.hash(data: bytes))
-            })
+        endTransfer(harness, id: id, bytes: wire)
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.contains { $0.code == "write.short" })
+        #expect(harness.collector.abortInfos.contains { $0.code == "extract.error" })
         #expect(harness.collector.representation(id) == nil)
         #expect(harness.collector.timedMetrics.isEmpty)
-        // The truncated file was already committed when the size check caught
-        // it, so `Sink.abort()` can no longer remove it — the check deletes it
-        // itself, synchronously, before the abort this test just observed.
-        #expect(
-            !materializedFiles(under: harness.stagingTempRoot).contains {
-                $0.lastPathComponent == "short.bin"
-            })
+        // A streamed extract has always written part of its output by the time
+        // anything can be verified, so the failure takes it with it.
+        try await waitUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
     }
 
     @Test("a transfer torn down with a write backlog still deletes its partial")
@@ -761,16 +852,14 @@ struct ClipboardStreamTests {
         defer { harness.tearDown() }
         let id: UInt64 = 605
 
-        try await beginFileTransfer(
-            harness, id: id, totalBytes: 1_000_000, filename: "superseded.bin")
-        for i in 0..<3 {
-            harness.receiver.handleChunk(
-                .with {
-                    $0.transferID = id
-                    $0.offset = UInt64(i * Self.chunk)
-                    $0.data = Data(repeating: 0xC3, count: Self.chunk)
-                })
-        }
+        let payload = randomBytes(Self.chunk * 4)
+        let source = try tempFile(bytes: payload)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let wire = try clipboardArchiveBytes(ofFileAt: source, named: "superseded.bin")
+
+        prime(harness, id: id, advertised: payload.count)
+        try await openArchivedTransfer(harness, id: id, filename: "superseded.bin")
+        feed(harness, id: id, bytes: Data(wire.prefix(Self.chunk * 3)))
         let sink = try #require(sinkBox.value)
         // Pin the lane inside the first write, so the teardown below lands with
         // a genuine backlog queued behind it.
@@ -784,11 +873,7 @@ struct ClipboardStreamTests {
         // RATIONALE: filesystem-appearance poll (mirrors `cancelDeletesPartial`)
         // — supersession is silent on the channel-wide path, so no collector
         // signal fires for it.
-        try await waitUntil {
-            !materializedFiles(under: harness.stagingTempRoot).contains {
-                $0.lastPathComponent == "superseded.bin"
-            }
-        }
+        try await waitUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
         #expect(harness.collector.representation(id) == nil)
     }
 
@@ -801,9 +886,10 @@ struct ClipboardStreamTests {
         defer { harness.tearDown() }
         let id: UInt64 = 707
         let ceiling = ClipboardStreamTuning.maxBacklogBytes(forWindowBytes: Self.window)
-        // Declared far past the ceiling, so the overrun guard can't fire first.
-        try await beginFileTransfer(
-            harness, id: id, totalBytes: ceiling * 4, filename: "flood.bin")
+        // An archive declares no total, so the backlog bound is the only thing
+        // holding this stream to anything.
+        prime(harness, id: id, advertised: ceiling * 4)
+        try await openArchivedTransfer(harness, id: id, filename: "flood.bin")
 
         // The gated sink parks the write lane, so nothing drains the backlog.
         let flood = Data(repeating: 0x11, count: ClipboardStreamTuning.maxChunkBytes / 2)
@@ -823,35 +909,35 @@ struct ClipboardStreamTests {
         try #require(sinkBox.value).allowAll()
     }
 
-    @Test("a volume that fills mid-stream aborts from the write lane with disk.full")
+    @Test("a volume that fills mid-stream aborts from the extract guard with disk.full")
     func midStreamDiskFullOnWriteLane() async throws {
-        // Roomy at Begin, then nearly full: the write lane's once-per-window
-        // re-check (keyed on written bytes) must catch it and abort cleanly.
+        // Roomy at Begin, then nearly full: the extract's own guard — paced by
+        // the payload it writes, not by the archive arriving — must catch it and
+        // abort cleanly, naming what the offer said the payload needs.
         let free = Box<Int64>(100 << 30)
-        let (harness, sinkBox) = try gatedHarness(freeSpace: { free.value })
+        let harness = try StreamHarness(
+            chunkSize: Self.chunk, windowBytes: Self.window,
+            freeSpaceProvider: { _ in free.value })
         defer { harness.tearDown() }
         let id: UInt64 = 606
-        let total = Self.chunk * 6
 
-        try await beginFileTransfer(harness, id: id, totalBytes: total, filename: "filling.bin")
+        // Compressible, so the whole archive is a fraction of a window while the
+        // file it unpacks to is many windows long.
+        let payload = Data(repeating: 0x5E, count: 512 * 1024)
+        let source = try tempFile(bytes: payload)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let wire = try clipboardArchiveBytes(ofFileAt: source, named: "filling.bin")
+
+        prime(harness, id: id, advertised: payload.count)
+        try await openArchivedTransfer(harness, id: id, filename: "filling.bin")
         free.value = 1024
-
-        // Four chunks == one full window of written bytes, which is when the
-        // re-check fires, with bytes still outstanding.
-        for i in 0..<4 {
-            harness.receiver.handleChunk(
-                .with {
-                    $0.transferID = id
-                    $0.offset = UInt64(i * Self.chunk)
-                    $0.data = Data(repeating: 0x5E, count: Self.chunk)
-                })
-        }
-        try #require(sinkBox.value).allowAll()
+        feed(harness, id: id, bytes: wire)
+        endTransfer(harness, id: id, bytes: wire)
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         let info = try #require(harness.collector.abortInfos.first)
         #expect(info.code == "disk.full")
-        #expect(info.neededBytes == total)
+        #expect(info.neededBytes == payload.count)
         #expect(harness.collector.representation(id) == nil)
     }
 
@@ -865,29 +951,34 @@ struct ClipboardStreamTests {
         defer { harness.tearDown() }
         let id: UInt64 = 607
         let piece = 1024
-        let total = piece * 2
-        let bytes = Data((0..<total).map { UInt8((($0 &* 19) &+ 7) & 0xFF) })
 
-        let progress = trackProgress(harness, id)
-        try await beginFileTransfer(harness, id: id, totalBytes: total, filename: "dup.bin")
+        let payload = randomBytes(8 * 1024)
+        let source = try tempFile(bytes: payload)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let wire = try clipboardArchiveBytes(ofFileAt: source, named: "dup.bin")
+        #expect(wire.count > 2 * piece)
+
+        let progress = trackProgress(harness, id, advertised: payload.count)
+        try await openArchivedTransfer(harness, id: id, filename: "dup.bin")
 
         harness.receiver.handleChunk(
             .with {
-                $0.transferID = id; $0.offset = 0; $0.data = bytes.prefix(piece)
+                $0.transferID = id; $0.offset = 0; $0.data = wire.prefix(piece)
             })
         // Duplicate of chunk 0 — its re-ack queues behind chunk 0's write.
         harness.receiver.handleChunk(
             .with {
-                $0.transferID = id; $0.offset = 0; $0.data = bytes.prefix(piece)
+                $0.transferID = id; $0.offset = 0; $0.data = wire.prefix(piece)
             })
         harness.receiver.handleChunk(
             .with {
-                $0.transferID = id; $0.offset = UInt64(piece); $0.data = bytes.suffix(piece)
+                $0.transferID = id; $0.offset = UInt64(piece)
+                $0.data = wire[(wire.startIndex + piece)..<(wire.startIndex + 2 * piece)]
             })
 
         // Both real chunks are accepted before any write is released, so
         // `receivedBytes` is already the full 2 KiB when the re-ack runs.
-        try await progress.gate.wait { progress.received.value == total }
+        try await progress.gate.wait { progress.received.value == 2 * piece }
         let sink = try #require(sinkBox.value)
         sink.allow(1)
 
@@ -895,13 +986,21 @@ struct ClipboardStreamTests {
         #expect(harness.collector.ackedByteCounts(id) == [0, UInt64(piece)])
 
         sink.allowAll()
-        harness.receiver.handleEnd(
-            .with {
-                $0.transferID = id; $0.totalBytes = UInt64(total)
-                $0.sha256 = Data(SHA256.hash(data: bytes))
-            })
+        var offset = 2 * piece
+        while offset < wire.count {
+            let upper = min(offset + piece, wire.count)
+            let slice = Data(wire[(wire.startIndex + offset)..<(wire.startIndex + upper)])
+            let at = offset
+            harness.receiver.handleChunk(
+                .with {
+                    $0.transferID = id; $0.offset = UInt64(at); $0.data = slice
+                })
+            offset = upper
+        }
+        endTransfer(harness, id: id, bytes: wire)
         try await harness.collector.gate.wait { harness.collector.representation(id) != nil }
-        #expect(try Data(contentsOf: #require(harness.collector.representation(id)?.fileURL)) == bytes)
+        let url = try #require(harness.collector.representation(id)?.fileURL)
+        #expect(try Data(contentsOf: url) == payload)
     }
 
     // MARK: - Receiver robustness (driven directly)
@@ -970,32 +1069,31 @@ struct ClipboardStreamTests {
         #expect(harness.collector.abortInfos.contains { $0.code == "offset.gap" })
     }
 
-    @Test("cancelling a generation deletes the in-flight partial temp file")
+    @Test("cancelling a generation deletes the in-flight partial extract")
     func cancelDeletesPartial() async throws {
         let harness = try roomyHarness()
         defer { harness.tearDown() }
+        let id: UInt64 = 1
 
-        harness.receiver.handleBegin(
-            .with {
-                $0.generation = 1
-                $0.transferID = 1
-                $0.uti = "public.data"
-                $0.totalBytes = 1_000_000
-                $0.isInline = false
-                $0.filename = "partial.bin"
-            })
-        harness.receiver.handleChunk(
-            .with {
-                $0.transferID = 1; $0.offset = 0; $0.data = Data(count: Self.chunk)
-            })
+        let payload = randomBytes(512 * 1024)
+        let source = try tempFile(bytes: payload)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let wire = try clipboardArchiveBytes(ofFileAt: source, named: "partial.bin")
+
+        // Every byte but the End frame: the extract has written the entry and
+        // the transfer is still in flight, which is the state a supersession
+        // has to clean up after.
+        prime(harness, id: id, advertised: payload.count)
+        beginArchive(harness, id: id, filename: "partial.bin")
+        feed(harness, id: id, bytes: wire)
 
         // RATIONALE: Filesystem-appearance polls with no gate-able signal. The
-        // receiver creates and deletes the staging partial on its private
-        // per-transfer DispatchQueue; the only test-owned signal
-        // (StreamCollector.gate) fires on onComplete/onAbort, never on partial-file
+        // receiver extracts into (and deletes) the staging destination on its
+        // private per-transfer DispatchQueue; the only test-owned signal
+        // (StreamCollector.gate) fires on onComplete/onAbort, never on partial
         // I/O. Per docs/TESTING.md "Async waits in tests", a filesystem-appearance poll is
         // a sanctioned `waitUntil` use.
-        // The partial temp file is created off the transfer queue.
+        // The partial is written off the transfer queue.
         try await waitUntil {
             materializedFiles(under: harness.stagingTempRoot).contains {
                 $0.lastPathComponent == "partial.bin"
@@ -1003,12 +1101,8 @@ struct ClipboardStreamTests {
         }
         // A superseding cancel deletes the partial rather than leaking it.
         harness.receiver.cancel(generation: 1)
-        try await waitUntil {
-            !materializedFiles(under: harness.stagingTempRoot).contains {
-                $0.lastPathComponent == "partial.bin"
-            }
-        }
-        #expect(harness.collector.representation(1) == nil)
+        try await waitUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
+        #expect(harness.collector.representation(id) == nil)
     }
 
     @Test("an orphan chunk for an unknown transfer is ignored")
@@ -1095,6 +1189,10 @@ struct ClipboardStreamTests {
         let rep = ClipboardContent.Representation(
             uti: "public.data", fileURL: source, byteCount: bytes.count, filename: "big.bin")
 
+        // The pull advertised the file's size, which is the figure the volume is
+        // measured against — the archive's own size is unknown until its last
+        // byte.
+        prime(harness, id: 1, advertised: bytes.count)
         harness.sender.startTransfer(
             transferID: 1, generation: 1, representation: rep, maxAcceptByteCount: .max,
             isInline: false, isCurrent: { _ in true })
@@ -1106,28 +1204,187 @@ struct ClipboardStreamTests {
         #expect(harness.collector.representation(1) == nil)
     }
 
-    @Test("a Begin declaring an impossible total is bounded and fails the disk guard")
+    // MARK: - What may cross raw
+
+    @Test("a raw Begin declaring more than fits in memory is refused")
     func absurdBeginTotalRejected() async throws {
         // 100 GiB free: nothing local makes this fail — the declared total does.
+        // Raw is how a peer sends what the receiver can hold resident, and
+        // nothing else, so `UInt64.max` has to be refused at Begin rather than
+        // reach arithmetic that kills the process or a buffer that grows without
+        // bound.
         let harness = try StreamHarness(
             chunkSize: Self.chunk, windowBytes: Self.window,
             freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
         defer { harness.tearDown() }
 
-        // A sender's `total_bytes` is never cross-checked against the chunks that
-        // follow, so `UInt64.max` has to reach the free-space guard as a size
-        // that fails rather than as arithmetic that kills the process.
         harness.receiver.handleBegin(
             .with {
                 $0.generation = 1; $0.transferID = 9; $0.uti = "public.data"
-                $0.totalBytes = .max; $0.isInline = false; $0.filename = "absurd.bin"
+                $0.totalBytes = .max; $0.isInline = true; $0.filename = "absurd.bin"
             })
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        let info = try #require(harness.collector.abortInfos.first)
-        #expect(info.code == "disk.full")
-        #expect(info.neededBytes == Int(ClipboardOfferBounds.maxDeclaredByteCount))
+        #expect(harness.collector.abortInfos.first?.code == "payload.unsupported")
         #expect(harness.collector.representation(9) == nil)
+    }
+
+    @Test("a raw Begin that is not inline is refused")
+    func nonInlineRawBeginRejected() async throws {
+        // A payload that lands on disk crosses as an archive; raw bytes claiming
+        // otherwise have no sink to stream into.
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+
+        harness.receiver.handleBegin(
+            .with {
+                $0.generation = 1; $0.transferID = 10; $0.uti = "public.data"
+                $0.totalBytes = 4096; $0.isInline = false; $0.filename = "raw.bin"
+            })
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.abortInfos.first?.code == "payload.unsupported")
+        #expect(harness.collector.representation(10) == nil)
+        #expect(materializedFiles(under: harness.stagingTempRoot).isEmpty)
+    }
+
+    @Test("a raw inline Begin answering a folder pull is refused")
+    func rawBeginForAPrimedFolderRejected() async throws {
+        // The requester primed a folder; a peer claiming a small inline payload
+        // must not have that request answered with bytes in RAM.
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+        prime(harness, id: 12, advertised: 4096, extractsDirectoryNamed: "Folder")
+
+        harness.receiver.handleBegin(
+            .with {
+                $0.generation = 1; $0.transferID = 12; $0.uti = "public.folder"
+                $0.totalBytes = 16; $0.isInline = true; $0.filename = "Folder"
+            })
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.abortInfos.first?.code == "payload.unsupported")
+        #expect(harness.collector.representation(12) == nil)
+        #expect(materializedFiles(under: harness.stagingTempRoot).isEmpty)
+    }
+
+    @Test("an archived Begin nobody is awaiting is refused before anything is staged")
+    func unawaitedArchiveBeginRejected() async throws {
+        // An archive carries neither a name to unpack it under nor a size to
+        // hold it to — both ride the pull that asked for it.
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+
+        beginArchive(harness, id: 11, filename: "unasked.bin")
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.abortInfos.first?.code == "payload.unexpected")
+        #expect(harness.collector.representation(11) == nil)
+        #expect(materializedFiles(under: harness.stagingTempRoot).isEmpty)
+    }
+
+    @Test("a file's extract ceiling is its advertised size plus one entry's allowance")
+    func fileExtractCeilingIsTighterThanAFolders() throws {
+        // A file's advertised size is exact, so its slack is the entry header's;
+        // a folder's is a stat-walk estimate that the archive's per-entry
+        // headers sit on top of, so its ceiling doubles and never falls below
+        // the floor.
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+        let advertised = 1024
+
+        #expect(
+            harness.receiver.extractCeiling(forAdvertisedByteCount: advertised, isDirectory: false)
+                == advertised + ClipboardStreamTuning.fileExtractAllowance)
+        #expect(
+            harness.receiver.extractCeiling(forAdvertisedByteCount: advertised, isDirectory: true)
+                == ClipboardStreamTuning.minimumExtractAllowance)
+        #expect(
+            harness.receiver.extractCeiling(
+                forAdvertisedByteCount: 128 << 20, isDirectory: true) == 256 << 20)
+    }
+
+    @Test("a file that unpacks past what its offer advertised is refused")
+    func fileExtractIsHeldToTheAdvertisedSize() async throws {
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+        let id: UInt64 = 12
+
+        // Two megabytes against a kilobyte offer: more than the one-entry
+        // allowance covers, so the guard fires while the file is being written.
+        let payload = Data(repeating: 0x7B, count: 2 * 1024 * 1024)
+        let source = try tempFile(bytes: payload)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let wire = try clipboardArchiveBytes(ofFileAt: source, named: "overrun.bin")
+
+        prime(harness, id: id, advertised: 1024)
+        beginArchive(harness, id: id, filename: "overrun.bin")
+        feed(harness, id: id, bytes: wire)
+        endTransfer(harness, id: id, bytes: wire)
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.abortInfos.first?.code == "size.overrun")
+        #expect(harness.collector.representation(id) == nil)
+        // RATIONALE: filesystem-appearance poll (docs/TESTING.md) — the partial
+        // output is removed on the write lane after the abort is delivered.
+        try await waitUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
+    }
+
+    @Test("a file that unpacks to more than its offer said, within the header allowance, is still refused")
+    func fileExtractIsHeldToTheAdvertisedSizeExactly() async throws {
+        // The allowance is for the entry header, not for payload: a peer must
+        // not get to spend it on bytes the offer never declared.
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+        let id: UInt64 = 13
+
+        let payload = Data(repeating: 0x2A, count: 4096 + 512)
+        let source = try tempFile(bytes: payload)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let wire = try clipboardArchiveBytes(ofFileAt: source, named: "padded.bin")
+
+        prime(harness, id: id, advertised: 4096)
+        beginArchive(harness, id: id, filename: "padded.bin")
+        feed(harness, id: id, bytes: wire)
+        endTransfer(harness, id: id, bytes: wire)
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.abortInfos.first?.code == "size.overrun")
+        #expect(harness.collector.representation(id) == nil)
+        // RATIONALE: filesystem-appearance poll (docs/TESTING.md) — the output
+        // is removed on the write lane after the abort is delivered.
+        try await waitUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
+    }
+
+    @Test("an archive unpacking to more than one file is refused as a payload that was never offered")
+    func multiEntryArchiveForAFileIsRefused() async throws {
+        // A file's archive holds exactly one regular-file entry. A tree arriving
+        // for a pull that never primed a folder name is a payload that does not
+        // match what the offer described.
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+        let id: UInt64 = 13
+
+        let fm = FileManager.default
+        let scratch = fm.temporaryDirectory.appendingPathComponent(
+            "multi-entry-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: scratch) }
+        try Data("one".utf8).write(to: scratch.appendingPathComponent("a.txt"))
+        try Data("two".utf8).write(to: scratch.appendingPathComponent("b.txt"))
+        let wire = try clipboardArchiveBytes(ofDirectoryAt: scratch)
+
+        prime(harness, id: id, advertised: 4096)
+        beginArchive(harness, id: id, filename: "a.txt")
+        feed(harness, id: id, bytes: wire)
+        endTransfer(harness, id: id, bytes: wire)
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.abortInfos.first?.code == "payload.invalid")
+        #expect(harness.collector.representation(id) == nil)
+        // RATIONALE: filesystem-appearance poll (docs/TESTING.md) — the rejected
+        // extract is removed after the abort is delivered.
+        try await waitUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
     }
 
     // MARK: - Liveness & untrusted-input bounds
@@ -1161,11 +1418,8 @@ struct ClipboardStreamTests {
             freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
         defer { harness.tearDown() }
 
-        harness.receiver.handleBegin(
-            .with {
-                $0.generation = 1; $0.transferID = 1; $0.uti = "public.data"
-                $0.totalBytes = 1_000_000; $0.isInline = false; $0.filename = "stalled.bin"
-            })
+        prime(harness, id: 1, advertised: 1_000_000)
+        beginArchive(harness, id: 1, filename: "stalled.bin")
         // No chunks ever arrive — the inactivity deadline must abort and clean up.
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         #expect(harness.collector.abortInfos.contains { $0.code == "stall.timeout" })
@@ -1175,11 +1429,7 @@ struct ClipboardStreamTests {
         // abort this test just observed is delivered *before* the deletion runs
         // — deliberately, so a wedged write can't delay waking a blocked pull.
         // There is no test-owned signal for the deletion itself.
-        try await waitUntil {
-            !materializedFiles(under: harness.stagingTempRoot).contains {
-                $0.lastPathComponent == "stalled.bin"
-            }
-        }
+        try await waitUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
     }
 
     @Test("a sender that goes silent after streaming chunks aborts with stall.timeout")
@@ -1193,16 +1443,14 @@ struct ClipboardStreamTests {
             freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
         defer { harness.tearDown() }
 
-        harness.receiver.handleBegin(
-            .with {
-                $0.generation = 1; $0.transferID = 8; $0.uti = "public.data"
-                $0.totalBytes = 1_000_000; $0.isInline = false; $0.filename = "mid-stall.bin"
-            })
-        harness.receiver.handleChunk(
-            .with {
-                $0.transferID = 8; $0.offset = 0
-                $0.data = Data(repeating: 0x7C, count: Self.chunk)
-            })
+        let payload = randomBytes(512 * 1024)
+        let source = try tempFile(bytes: payload)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let wire = try clipboardArchiveBytes(ofFileAt: source, named: "mid-stall.bin")
+
+        prime(harness, id: 8, advertised: payload.count)
+        beginArchive(harness, id: 8, filename: "mid-stall.bin")
+        feed(harness, id: 8, bytes: Data(wire.prefix(Self.chunk)))
         // One chunk landed, then silence — the watchdog must still fire and
         // clean up the partial.
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
@@ -1210,11 +1458,7 @@ struct ClipboardStreamTests {
         #expect(harness.collector.representation(8) == nil)
         // RATIONALE: filesystem-appearance poll — see `inboundStallTimesOut`.
         // The partial's deletion runs on the write lane, after the abort.
-        try await waitUntil {
-            !materializedFiles(under: harness.stagingTempRoot).contains {
-                $0.lastPathComponent == "mid-stall.bin"
-            }
-        }
+        try await waitUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
     }
 
     @Test("each arriving chunk advances the stall watchdog's activity anchor")
@@ -1257,7 +1501,7 @@ struct ClipboardStreamTests {
         #expect(anchorAfterSecond > anchorAfterFirst)
     }
 
-    @Test("an inline rep past the residency threshold spills to disk, then mmaps back identically")
+    @Test("an inline rep past the residency threshold crosses archived, then mmaps back identically")
     func inlineSpillsAboveThreshold() async throws {
         // Tiny residency threshold so a few KiB exercises the spill path without
         // moving 256 MiB. The rep is inline (no filename) — the large-image case
@@ -1273,6 +1517,7 @@ struct ClipboardStreamTests {
         #expect(bytes.count > 8192)  // above the threshold → must spill
         let rep = ClipboardContent.Representation(uti: "public.png", data: bytes)
 
+        prime(harness, id: 1, advertised: bytes.count)
         harness.sender.startTransfer(
             transferID: 1, generation: 1, representation: rep, maxAcceptByteCount: .max,
             isInline: true, isCurrent: { _ in true })
@@ -1285,6 +1530,11 @@ struct ClipboardStreamTests {
         #expect(received.fileURL == nil)
         #expect(received.uti == "public.png")
         #expect(harness.collector.abortCount == 0)
+        // It crossed as an archive while still asking to be delivered inline.
+        let begin = try #require(harness.collector.begin(1))
+        #expect(begin.isArchive)
+        #expect(begin.isInline)
+        #expect(begin.totalBytes == 0)
         // It really spilled: a staging file backs the mapping.
         #expect(!materializedFiles(under: harness.stagingTempRoot).isEmpty)
         // The digest is byte-based (tag 0), identical to the same bytes assembled
@@ -1313,32 +1563,94 @@ struct ClipboardStreamTests {
         try await harness.collector.gate.wait { harness.collector.representation(1) != nil }
         let received = try #require(harness.collector.representation(1))
         #expect(received.inMemoryData == bytes)
+        #expect(try #require(harness.collector.begin(1)).isArchive == false)
         #expect(harness.collector.abortCount == 0)
         // Stayed resident: nothing was staged to disk.
         #expect(materializedFiles(under: harness.stagingTempRoot).isEmpty)
     }
 
-    @Test("a spilled inline transfer cancelled mid-stream deletes its partial staging file")
+    @Test("an inline file rep at/below the threshold crosses raw and arrives as resident bytes")
+    func inlineFileBelowThresholdCrossesRaw() async throws {
+        // An inline payload is resident bytes on both ends, so a file small
+        // enough to hold is read here rather than streamed from disk — the
+        // pasteboard flavor the receiver serves is unchanged either way.
+        let harness = try StreamHarness(
+            chunkSize: Self.chunk, windowBytes: Self.window,
+            maxResidentInlineBytes: 1 << 20,
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { harness.tearDown() }
+
+        let bytes = Data((0..<(Self.chunk * 3)).map { UInt8((($0 &* 41) &+ 13) & 0xFF) })
+        let source = try tempFile(bytes: bytes)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let rep = ClipboardContent.Representation(
+            uti: "public.png", fileURL: source, byteCount: bytes.count, filename: "")
+
+        harness.sender.startTransfer(
+            transferID: 1, generation: 1, representation: rep, maxAcceptByteCount: .max,
+            isInline: true, isCurrent: { _ in true })
+
+        try await harness.collector.gate.wait { harness.collector.representation(1) != nil }
+        let received = try #require(harness.collector.representation(1))
+        #expect(received.inMemoryData == bytes)
+        #expect(received.fileURL == nil)
+        let begin = try #require(harness.collector.begin(1))
+        #expect(!begin.isArchive)
+        #expect(begin.totalBytes == UInt64(bytes.count))
+        #expect(materializedFiles(under: harness.stagingTempRoot).isEmpty)
+    }
+
+    @Test("an inline file rep above the threshold crosses archived and arrives byte-identical")
+    func inlineFileAboveThresholdCrossesArchived() async throws {
+        let harness = try StreamHarness(
+            chunkSize: Self.chunk, windowBytes: Self.window,
+            maxResidentInlineBytes: 8192,
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { harness.tearDown() }
+
+        let bytes = Data((0..<(Self.chunk * 5 + 31)).map { UInt8((($0 &* 47) &+ 9) & 0xFF) })
+        let source = try tempFile(bytes: bytes)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let rep = ClipboardContent.Representation(
+            uti: "public.png", fileURL: source, byteCount: bytes.count, filename: "")
+
+        prime(harness, id: 1, advertised: bytes.count)
+        harness.sender.startTransfer(
+            transferID: 1, generation: 1, representation: rep, maxAcceptByteCount: .max,
+            isInline: true, isCurrent: { _ in true })
+
+        try await harness.collector.gate.wait { harness.collector.representation(1) != nil }
+        let received = try #require(harness.collector.representation(1))
+        // Still an inline flavor: the extract's one entry is mapped back rather
+        // than offered as a file URL.
+        #expect(received.inMemoryData == bytes)
+        #expect(received.fileURL == nil)
+        let begin = try #require(harness.collector.begin(1))
+        #expect(begin.isArchive)
+        #expect(begin.isInline)
+        #expect(harness.collector.abortCount == 0)
+    }
+
+    @Test("a spilled inline transfer cancelled mid-stream deletes its partial")
     func spilledInlineCancelDeletesPartial() async throws {
         let harness = try StreamHarness(
             chunkSize: Self.chunk, windowBytes: Self.window,
             maxResidentInlineBytes: 4096,
             freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
         defer { harness.tearDown() }
+        let id: UInt64 = 1
 
-        // An inline rep declaring more than the threshold spills to a staging
-        // sink; drive Begin + one partial chunk directly so the transfer is left
-        // in flight.
-        harness.receiver.handleBegin(
-            .with {
-                $0.generation = 1; $0.transferID = 1; $0.uti = "public.png"
-                $0.totalBytes = 1_000_000; $0.isInline = true
-            })
-        harness.receiver.handleChunk(
-            .with {
-                $0.transferID = 1; $0.offset = 0
-                $0.data = Data(repeating: 0xAB, count: Self.chunk)
-            })
+        // An oversize inline rep crosses as an archive like any other spilled
+        // payload; drive Begin and its bytes but no End, so the transfer is left
+        // in flight over an extract that has already written.
+        let payload = randomBytes(512 * 1024)
+        let source = try tempFile(bytes: payload)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let wire = try clipboardArchiveBytes(ofFileAt: source, named: "image.png")
+
+        prime(harness, id: id, advertised: payload.count)
+        beginArchive(harness, id: id, uti: "public.png", isInline: true)
+        feed(harness, id: id, bytes: wire)
         // The sink was created and a partial written.
         try await waitUntil { !materializedFiles(under: harness.stagingTempRoot).isEmpty }
         // Supersede the generation: the spilled partial must be deleted, exactly
@@ -1461,6 +1773,59 @@ struct ClipboardStreamTests {
         #expect(sent.last == bytes.count)  // final == total
         #expect(recorder.total == bytes.count)  // total constant across callbacks
         #expect(harness.collector.abortCount == 0)
+    }
+
+    @Test("an archived file reports progress in payload bytes on both ends, with no total")
+    func archivedFileReportsProgressInPayloadBytes() async throws {
+        // Every readout's denominator is the offer's figure — the file's own
+        // size — so a numerator counting compressed wire bytes crawls to a
+        // fraction and then snaps, which reads as a hung paste. Both ends report
+        // what the archive holds, not what the wire carried, and an archive
+        // declares no total so the tracker keeps the offer's.
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+        let id: UInt64 = 71
+
+        // A four-symbol alphabet compresses several-fold, so the wire count is
+        // well below the file's — a readout that slipped back to it would be
+        // unmistakable — while still putting many chunks on the wire for both
+        // readouts to climb through.
+        let payload = randomBytes(4 * 1024 * 1024, symbols: 4)
+        let source = try tempFile(bytes: payload)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let rep = ClipboardContent.Representation(
+            uti: "public.data", fileURL: source, byteCount: payload.count, filename: "log.txt")
+
+        let recorder = SenderProgressRecorder()
+        let received = Box(0)
+        let collector = harness.collector
+        harness.receiver.awaitTransfer(
+            id, advertisedByteCount: payload.count,
+            onComplete: { collector.complete(id, $0) },
+            onAbort: { collector.abort($0) },
+            onProgress: { bytes, _ in received.value = max(received.value, bytes) })
+        harness.sender.startTransfer(
+            transferID: id, generation: 1, representation: rep, maxAcceptByteCount: .max,
+            isInline: false, isCurrent: { _ in true },
+            onProgress: { sent, total in recorder.progress(sent: sent, total: total) },
+            onComplete: { success in recorder.complete(success) })
+
+        try await harness.collector.gate.wait { harness.collector.representation(id) != nil }
+        try await recorder.gate.wait { recorder.completion != nil }
+        let wireByteCount = Int(try #require(harness.collector.end(id)).totalBytes)
+        #expect(wireByteCount < payload.count)
+
+        let sent = recorder.sent
+        #expect(sent == sent.sorted())  // non-decreasing
+        // The archive's own container is the only thing above the file's bytes.
+        let last = try #require(sent.last)
+        #expect(last >= payload.count)
+        #expect(last <= payload.count + ClipboardStreamTuning.fileExtractAllowance)
+        #expect(recorder.total == 0)
+        // The receiver reports what the extract has written, which likewise
+        // outruns the compressed count long before the transfer ends.
+        #expect(received.value > wireByteCount)
+        #expect(received.value <= payload.count + ClipboardStreamTuning.fileExtractAllowance)
     }
 
     @Test("startTransfer fires onComplete(false) when the requester can't accept the payload")

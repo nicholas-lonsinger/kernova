@@ -64,10 +64,10 @@ mechanisms, in order:
 **Kernova's own on-disk footprint for a transfer must approach zero beyond the destination file** —
 which the destination write does not violate, since native pays it too. An intermediate that
 scales with payload size is a defect to dissolve, and a serialized container is no exception:
-serializing a tree (§6, §11) must *itself* stream, source tree → archive bytes → wire → extracted
-destination tree, with no full-size archive landing whole on disk at either end and no extracted
-tree left coexisting with its archive. Integrity (§7) is kept by hashing **inline** as bytes
-stream.
+serializing a file or a tree (§6, §11) must *itself* stream, source → archive bytes → wire →
+extracted destination, with no full-size archive landing whole on disk at either end and no
+extracted payload left coexisting with its archive. Integrity (§7) is kept by hashing **inline**
+as bytes stream.
 
 Caveats this does **not** waive:
 
@@ -104,9 +104,9 @@ or materialize a payload before that moment.
   What squares those is the unconditional `.currentHostOnly` scope (§10): the advertiser never
   processes the write, so no fetch fires without a real paste. A flavor that cannot ride that
   protection must not be registered.
-- **Serializing a directory into an archive is materialization.** The offer carries the source
-  folder's stat-walk estimate and retains the folder itself; the archive is built only when a
-  paste requests the representation, bounded by the cap (§2).
+- **Serializing a file or directory into an archive is materialization.** The offer carries the
+  file's stat size or the folder's stat-walk estimate and retains the source itself; the archive
+  is built only when a paste requests the representation, bounded by the cap (§2).
 - **Do not evict a served artifact after its paste**; removal stays scoped to supersession. A
   fulfilled provider never re-fires, so deleting the staged file behind a vended `public.file-url`
   dangles the pasteboard's cached URL and breaks a second paste of the same content.
@@ -146,15 +146,14 @@ defect; round-trip equality with a native copy/paste is the bar.
   already replaced. Only a release clears the peer's pasteboard write; an empty offer retires
   the promise and leaves that write behind it unservable. A snapshot an `org.nspasteboard.*`
   marker suppressed is not a copy and releases nothing.
-- **Directory fidelity rides the archive's field-key set.** A folder crosses as an archive of its
-  tree, and what survives the round trip is exactly what `ClipboardDirectoryArchive`'s key set
-  carries. Changing directory fidelity means changing that key set, never bolting metadata on
-  through a side channel.
+- **File and folder fidelity rides the archive's field-key set.** Every file and folder crosses
+  as an archive — a folder of its tree, a file of its one entry — and what survives the round
+  trip is exactly what `ClipboardArchive`'s key set carries. Changing that fidelity means
+  changing the key set, never bolting metadata on through a side channel.
 - **Accepted gap: extended attributes cross on *no* paste path** — Finder tags,
-  `com.apple.quarantine`, `kMDItemWhereFroms`. A plain file streams content bytes into a freshly
-  created destination file, which cannot carry them, and the directory archive deliberately omits
-  them to match. Keep that uniform; one path carrying them alone would be a worse inconsistency
-  than dropping them everywhere.
+  `com.apple.quarantine`, `kMDItemWhereFroms`: the key set omits `XAT`, so the gap is uniform by
+  construction and closes, if it closes, for every path at once. One path carrying them alone
+  would be a worse inconsistency than dropping them everywhere.
 - **Do not chase destination-added metadata as a Kernova fidelity bug.** Finder stamps
   `com.apple.FinderInfo` on bundle-named directories it creates during a copy, which
   `codesign --verify --strict` reports as detritus on an otherwise byte-identical bundle (verified

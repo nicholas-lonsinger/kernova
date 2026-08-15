@@ -45,11 +45,6 @@ enum ClipboardActivity: Equatable, Sendable {
     /// open, so a ceiling raised after the refusal would otherwise rewrite the
     /// figure a past refusal names. `nil` for reasons no ceiling explains.
     case pasteRefused(ClipboardErrorCode, pasteLimitBytes: Int?)
-    /// Copied folders were left out of what the host was offered, because it
-    /// cannot receive one; `offeringAnything` is whether the rest still went.
-    ///
-    /// The copy was made in this guest, so the shortfall is reported here.
-    case copyShortened(offeringAnything: Bool)
     /// A copy left nothing that could be offered to the host at all.
     ///
     /// The copy was made in this guest, so the outcome is reported here.
@@ -61,11 +56,10 @@ enum ClipboardActivity: Equatable, Sendable {
     /// leaving it for the next time the user opens the dropdown.
     ///
     /// True for the outcomes of a gesture made in this guest that produces no
-    /// other signal — a paste that yields nothing, a copy that crosses short or
-    /// not at all.
+    /// other signal — a paste that yields nothing, a copy that crosses nothing.
     var isNotice: Bool {
         switch self {
-        case .pasteRefused, .copyShortened, .copyCarriedNothing:
+        case .pasteRefused, .copyCarriedNothing:
             return true
         case .enabled, .offeredToHost, .offeredFromHost, .sentToHost, .receivedFromHost, .disabled:
             return false

@@ -15,13 +15,13 @@ struct ClipboardDirectoryTransferTests {
     private func harness(
         windowBytes: Int = window, freeSpace: @escaping @Sendable () -> Int64 = { 100 << 30 },
         minimumExtractAllowance: Int = ClipboardStreamTuning.minimumExtractAllowance,
-        directorySource: ClipboardDirectorySourceFactory? = nil
+        archiveSource: ClipboardArchiveSourceFactory? = nil
     ) throws -> StreamHarness {
         try StreamHarness(
             chunkSize: Self.chunk, windowBytes: windowBytes,
             minimumExtractAllowance: minimumExtractAllowance,
             freeSpaceProvider: { _ in freeSpace() },
-            directorySource: directorySource)
+            archiveSource: archiveSource)
     }
 
     private func makeScratch() -> URL {
@@ -51,37 +51,44 @@ struct ClipboardDirectoryTransferTests {
 
     /// Every archive byte a real transfer of `source` puts on the wire.
     private func archiveBytes(of source: URL) throws -> Data {
-        let reader = ClipboardDirectoryArchiveReader(directoryURL: source, label: "test")
-        var bytes = Data()
-        while true {
-            let chunk = try reader.read(upTo: 64 << 10)
-            if chunk.isEmpty { break }
-            bytes.append(chunk)
-        }
-        return bytes
+        try clipboardArchiveBytes(ofDirectoryAt: source)
+    }
+
+    /// A folder representation the sender streams as its tree, carrying the
+    /// stat-walk estimate the offer would have advertised.
+    private func folderRepresentation(_ source: URL, named name: String, estimate: Int? = nil)
+        -> ClipboardContent.Representation
+    {
+        ClipboardContent.Representation(
+            directorySourceURL: source,
+            estimatedByteCount: estimate ?? ClipboardArchive.estimatedByteCount(at: source),
+            filename: name)
     }
 
     /// The priming a requester performs before it sends its `ClipboardRequest`,
     /// funnelling delivery into the harness collector.
-    private func prime(_ harness: StreamHarness, id: UInt64, named name: String) {
+    private func prime(
+        _ harness: StreamHarness, id: UInt64, named name: String, advertised: Int = 0
+    ) {
         let collector = harness.collector
         harness.receiver.awaitTransfer(
-            id, extractsDirectoryNamed: name,
+            id, extractsDirectoryNamed: name, advertisedByteCount: advertised,
             onComplete: { collector.complete(id, $0) },
             onAbort: { collector.abort($0) })
     }
 
-    /// Announces a folder transfer with no declared total, exactly as
-    /// `startDirectoryTransfer` does.
+    /// Announces a folder transfer with no declared total, exactly as the sender
+    /// does for any archived payload.
     private func begin(_ harness: StreamHarness, id: UInt64, named name: String) {
         harness.receiver.handleBegin(
             .with {
                 $0.generation = 1
                 $0.transferID = id
-                $0.uti = ClipboardDirectoryArchive.directoryUTI
+                $0.uti = ClipboardArchive.directoryUTI
                 $0.totalBytes = 0
                 $0.filename = name
                 $0.isInline = false
+                $0.isArchive = true
             })
     }
 
@@ -112,10 +119,10 @@ struct ClipboardDirectoryTransferTests {
 
         let id: UInt64 = 41
         prime(harness, id: id, named: "Project")
-        harness.sender.startDirectoryTransfer(
-            transferID: id, generation: 1, sourceDirectoryURL: source, folderName: "Project",
-            uti: ClipboardDirectoryArchive.directoryUTI, maxAcceptByteCount: .max,
-            isCurrent: { _ in true })
+        harness.sender.startTransfer(
+            transferID: id, generation: 1,
+            representation: folderRepresentation(source, named: "Project"),
+            maxAcceptByteCount: .max, isInline: false, isCurrent: { _ in true })
 
         try await harness.collector.gate.wait { harness.collector.representation(id) != nil }
         let rep = try #require(harness.collector.representation(id))
@@ -159,10 +166,10 @@ struct ClipboardDirectoryTransferTests {
 
         let id: UInt64 = 42
         prime(harness, id: id, named: "Empty")
-        harness.sender.startDirectoryTransfer(
-            transferID: id, generation: 1, sourceDirectoryURL: source, folderName: "Empty",
-            uti: ClipboardDirectoryArchive.directoryUTI, maxAcceptByteCount: .max,
-            isCurrent: { _ in true })
+        harness.sender.startTransfer(
+            transferID: id, generation: 1,
+            representation: folderRepresentation(source, named: "Empty"),
+            maxAcceptByteCount: .max, isInline: false, isCurrent: { _ in true })
 
         try await harness.collector.gate.wait { harness.collector.representation(id) != nil }
         let rep = try #require(harness.collector.representation(id))
@@ -180,7 +187,7 @@ struct ClipboardDirectoryTransferTests {
         defer { try? fm.removeItem(at: scratch) }
         let source = scratch.appendingPathComponent("Big", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
-        // Random, so LZFSE cannot shrink it and the archive runs to many
+        // Random, so LZ4 cannot shrink it and the archive runs to many
         // windows: the encode side then parks on credit repeatedly.
         var generator = SystemRandomNumberGenerator()
         var payload = Data(count: 512 * 1024)
@@ -192,10 +199,10 @@ struct ClipboardDirectoryTransferTests {
 
         let id: UInt64 = 43
         prime(harness, id: id, named: "Big")
-        harness.sender.startDirectoryTransfer(
-            transferID: id, generation: 1, sourceDirectoryURL: source, folderName: "Big",
-            uti: ClipboardDirectoryArchive.directoryUTI, maxAcceptByteCount: .max,
-            isCurrent: { _ in true })
+        harness.sender.startTransfer(
+            transferID: id, generation: 1,
+            representation: folderRepresentation(source, named: "Big"),
+            maxAcceptByteCount: .max, isInline: false, isCurrent: { _ in true })
 
         try await harness.collector.gate.wait {
             harness.collector.representation(id) != nil || harness.collector.abortCount > 0
@@ -207,21 +214,18 @@ struct ClipboardDirectoryTransferTests {
 
     // MARK: - Failure and cleanup
 
-    @Test("an unprimed transfer declaring no total aborts on its first chunk")
+    @Test("an unprimed folder transfer is refused at Begin, before anything is staged")
     func unprimedUndeclaredTotalAborts() async throws {
-        // The version-skew failure mode: a peer that has not been told the
-        // transfer is a folder bounds it by the declared total and refuses,
-        // rather than accepting an unbounded stream.
+        // Directory-ness and the size to hold the extract to both ride the pull
+        // that asked for the folder, so an archive nobody primed has no name to
+        // unpack under and no bound to enforce.
         let harness = try harness()
         defer { harness.tearDown() }
         let id: UInt64 = 44
         begin(harness, id: id, named: "Project")
-        harness.receiver.handleChunk(
-            .with {
-                $0.transferID = id; $0.offset = 0; $0.data = Data([1, 2, 3])
-            })
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.first?.code == "size.overrun")
+        #expect(harness.collector.abortInfos.first?.code == "payload.unexpected")
+        #expect(materializedFiles(under: harness.stagingTempRoot).isEmpty)
     }
 
     @Test("a digest mismatch at End deletes the extracted tree")
@@ -337,7 +341,7 @@ struct ClipboardDirectoryTransferTests {
         // transfer stayed registered, and the peer's retry (transfer ids are
         // derivable, so it reuses this one) was dropped as a duplicate.
         let source = ParkingChunkReader()
-        let first = try harness(directorySource: { _, _, _ in source })
+        let first = try harness(archiveSource: { _, _, _ in source })
         defer { first.tearDown() }
         let fm = FileManager.default
         let (scratch, tree) = try makeSourceTree()
@@ -347,10 +351,10 @@ struct ClipboardDirectoryTransferTests {
         let firstOutcome = Box<Bool?>(nil)
         let firstGate = AsyncGate()
         prime(first, id: id, named: "Project")
-        first.sender.startDirectoryTransfer(
-            transferID: id, generation: 1, sourceDirectoryURL: tree, folderName: "Project",
-            uti: ClipboardDirectoryArchive.directoryUTI, maxAcceptByteCount: .max,
-            isCurrent: { _ in true },
+        first.sender.startTransfer(
+            transferID: id, generation: 1,
+            representation: folderRepresentation(tree, named: "Project"),
+            maxAcceptByteCount: .max, isInline: false, isCurrent: { _ in true },
             onComplete: { success in
                 firstOutcome.value = success
                 firstGate.notify()
@@ -366,13 +370,13 @@ struct ClipboardDirectoryTransferTests {
         // The id is free again, so the peer's retry is served rather than
         // swallowed by the duplicate-transfer guard.
         let retry = ParkingChunkReader()
-        let retryHarness = try self.harness(directorySource: { _, _, _ in retry })
+        let retryHarness = try self.harness(archiveSource: { _, _, _ in retry })
         defer { retryHarness.tearDown() }
         prime(retryHarness, id: id, named: "Project")
-        retryHarness.sender.startDirectoryTransfer(
-            transferID: id, generation: 1, sourceDirectoryURL: tree, folderName: "Project",
-            uti: ClipboardDirectoryArchive.directoryUTI, maxAcceptByteCount: .max,
-            isCurrent: { _ in true })
+        retryHarness.sender.startTransfer(
+            transferID: id, generation: 1,
+            representation: folderRepresentation(tree, named: "Project"),
+            maxAcceptByteCount: .max, isInline: false, isCurrent: { _ in true })
         try await retry.parked.wait { retry.parkedReads > 0 }
         retry.close()
     }
@@ -382,7 +386,7 @@ struct ClipboardDirectoryTransferTests {
         let source = ParkingChunkReader()
         let second = ParkingChunkReader()
         let sources = Box<[ParkingChunkReader]>([second, source])
-        let rig = try harness(directorySource: { _, _, _ in
+        let rig = try harness(archiveSource: { _, _, _ in
             var remaining = sources.value
             let next = remaining.removeLast()
             sources.value = remaining
@@ -397,10 +401,10 @@ struct ClipboardDirectoryTransferTests {
         let done = AsyncGate()
         let outcome = Box<Bool?>(nil)
         prime(rig, id: id, named: "Project")
-        rig.sender.startDirectoryTransfer(
-            transferID: id, generation: 1, sourceDirectoryURL: tree, folderName: "Project",
-            uti: ClipboardDirectoryArchive.directoryUTI, maxAcceptByteCount: .max,
-            isCurrent: { _ in true },
+        rig.sender.startTransfer(
+            transferID: id, generation: 1,
+            representation: folderRepresentation(tree, named: "Project"),
+            maxAcceptByteCount: .max, isInline: false, isCurrent: { _ in true },
             onComplete: { success in
                 outcome.value = success
                 done.notify()
@@ -412,10 +416,10 @@ struct ClipboardDirectoryTransferTests {
         // Same sender, same id: the table entry has to be gone, or this call is
         // silently dropped and the peer waits for a Begin that never comes.
         prime(rig, id: id, named: "Project")
-        rig.sender.startDirectoryTransfer(
-            transferID: id, generation: 1, sourceDirectoryURL: tree, folderName: "Project",
-            uti: ClipboardDirectoryArchive.directoryUTI, maxAcceptByteCount: .max,
-            isCurrent: { _ in true })
+        rig.sender.startTransfer(
+            transferID: id, generation: 1,
+            representation: folderRepresentation(tree, named: "Project"),
+            maxAcceptByteCount: .max, isInline: false, isCurrent: { _ in true })
         try await second.parked.wait { second.parkedReads > 0 }
         second.close()
     }
@@ -425,15 +429,15 @@ struct ClipboardDirectoryTransferTests {
         let harness = try harness(freeSpace: { 1024 })
         defer { harness.tearDown() }
         let id: UInt64 = 49
-        prime(harness, id: id, named: "Project")
+        prime(harness, id: id, named: "Project", advertised: 4096)
         begin(harness, id: id, named: "Project")
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         let info = try #require(harness.collector.abortInfos.first)
         #expect(info.code == "disk.full")
-        // A streamed folder declares no size, so there is no honest figure to
-        // report as "needed".
-        #expect(info.neededBytes == nil)
+        // A streamed folder declares no size on the wire, so the estimate its
+        // offer advertised is the honest figure to report as "needed".
+        #expect(info.neededBytes == 4096)
     }
 
     @Test("the sender aborts a folder that outgrows the requester's ceiling")
@@ -448,10 +452,12 @@ struct ClipboardDirectoryTransferTests {
         prime(harness, id: id, named: "Project")
         // The ceiling can only be enforced as bytes are produced: the archive's
         // size is not knowable when the transfer starts.
-        harness.sender.startDirectoryTransfer(
-            transferID: id, generation: 1, sourceDirectoryURL: source, folderName: "Project",
-            uti: ClipboardDirectoryArchive.directoryUTI, maxAcceptByteCount: 64,
-            isCurrent: { _ in true })
+        harness.sender.startTransfer(
+            transferID: id, generation: 1,
+            // A stale estimate of zero passes the up-front check, so the ceiling
+            // can only be enforced as bytes are produced — which is the point.
+            representation: folderRepresentation(source, named: "Project", estimate: 0),
+            maxAcceptByteCount: 64, isInline: false, isCurrent: { _ in true })
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         #expect(harness.collector.abortInfos.first?.code == "disk.full")

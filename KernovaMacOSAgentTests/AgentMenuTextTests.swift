@@ -96,16 +96,6 @@ struct AgentMenuTextTests {
                 == "Clipboard: too large to paste")
     }
 
-    @Test("a copy that crossed short names what was left out and what fixes it")
-    func clipboardCopyShortenedLines() {
-        #expect(
-            AgentMenuText.clipboardLine(.copyShortened(offeringAnything: true))
-                == "Clipboard: shared without folders — Kernova on the Mac needs updating")
-        #expect(
-            AgentMenuText.clipboardLine(.copyShortened(offeringAnything: false))
-                == "Clipboard: folders not shared — Kernova on the Mac needs updating")
-    }
-
     @Test("a copy that carried nothing says so rather than naming a cause it can't know")
     func clipboardCopyCarriedNothingLine() {
         // Unreadable items, an all-filtered flavor set and a pasteboard whose
@@ -121,8 +111,6 @@ struct AgentMenuTextTests {
     @Test("Only the outcomes of a gesture made in this guest reveal themselves")
     func noticeActivities() {
         #expect(ClipboardActivity.pasteRefused(.pasteFailed, pasteLimitBytes: nil).isNotice)
-        #expect(ClipboardActivity.copyShortened(offeringAnything: true).isNotice)
-        #expect(ClipboardActivity.copyShortened(offeringAnything: false).isNotice)
         #expect(ClipboardActivity.copyCarriedNothing.isNotice)
         for activity: ClipboardActivity in [
             .enabled, .offeredToHost, .offeredFromHost, .sentToHost, .receivedFromHost, .disabled,

@@ -1,28 +1,39 @@
 import CryptoKit
 import Foundation
 
-/// Opens the append-only staging sink for one disk-streamed transfer.
-public typealias ClipboardSinkFactory =
-    @Sendable (_ generation: UInt64, _ filename: String) throws ->
-    StagingSink
-
-/// Reassembles streamed clipboard representations from a peer, choosing its sink
-/// by representation role and size.
+/// Opens the extract sink for one archived transfer.
 ///
-/// A small inline representation accumulates in memory; a file representation —
-/// and an inline one past `maxResidentInlineBytes` — streams to a temp file
-/// under the free-space guard, never resident whole. A spilled inline rep is
-/// mmapped back at End and delivered as a resident `.inMemory` payload, so
-/// inline content has no Kernova-imposed size cap. A transfer primed as a folder
-/// (`awaitTransfer(_:extractsDirectoryNamed:…)`) streams into an extract pipeline
-/// instead, so the tree grows as the archive arrives and no archive is staged.
+/// `onOutputAdvanced` is the receiver's output guard, consulted with the running
+/// uncompressed total on the sink's own thread; a sink that stands in for
+/// ``ClipboardArchiveExtractSink`` must still route it, since throwing from it is
+/// how a transfer that outgrows its ceiling or its volume is stopped. Progress
+/// in payload units is read off a ``ClipboardArchiveExtractSink`` directly, so
+/// a stand-in reports wire bytes instead.
+public typealias ClipboardSinkFactory =
+    @Sendable (
+        _ destinationURL: URL, _ label: String,
+        _ onOutputAdvanced: @escaping @Sendable (Int) throws -> Void
+    ) throws -> StagingSink
+
+/// Reassembles streamed clipboard representations from a peer.
+///
+/// A raw payload — an inline representation at or below
+/// `maxResidentInlineBytes`, the only kind a peer sends raw — accumulates in
+/// memory. Everything else arrives as an archive
+/// (`ClipboardStreamBegin.is_archive`) and streams into an extract pipeline
+/// under the free-space guard, so the payload lands on disk as it arrives and
+/// no archive is staged: a file becomes the archive's one entry, a folder — the
+/// transfer having been primed as one by `awaitTransfer(_:extractsDirectoryNamed:…)`
+/// — becomes the extracted tree, and an oversize inline representation is
+/// mapped back at End and delivered as a resident `.inMemory` payload, so
+/// inline content has no Kernova-imposed size cap.
 ///
 /// One receiver drives all inbound transfers on a channel, keyed by
 /// `transfer_id`: the owning service routes `ClipboardStreamBegin` /
 /// `ClipboardChunk` / `ClipboardStreamEnd` / `ClipboardStreamAbort` frames here.
 /// Acks cover only durably written bytes, and size + SHA-256 are verified at End
 /// before anything is delivered. Per-transfer work runs on dedicated serial
-/// queues — a receive lane, plus a write lane for a disk-streamed transfer — so
+/// queues — a receive lane, plus a write lane for an archived transfer — so
 /// the owning actor is never blocked.
 ///
 /// `@unchecked Sendable`: the transfer table is guarded by `lock`; each
@@ -43,8 +54,9 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     private let stallTimeout: TimeInterval
     private let maxBacklogBytes: Int
 
-    /// Inline payloads at/below this size reassemble in RAM; larger ones spill to
-    /// the staging file and are mmapped back (so there is no inline size cap).
+    /// The most a raw inline payload may declare: a peer archives anything
+    /// larger, and one that streams more raw than this is refused rather than
+    /// let grow a RAM buffer without bound.
     private let maxResidentInlineBytes: Int
 
     /// Floor on what a streamed folder may extract whatever its offer advertised
@@ -101,12 +113,16 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         self.clock = clock
         self.channel = channel
         self.staging = staging
+        let boundedWindow = min(max(windowBytes, 1), ClipboardStreamTuning.maxWindowBytes)
+        self.windowBytes = boundedWindow
         self.makeSink =
             sinkFactory
-            ?? { generation, filename in
-                try staging.makeSink(generation: generation, filename: filename)
+            ?? { destinationURL, label, onOutputAdvanced in
+                ClipboardArchiveExtractSink(
+                    destinationURL: destinationURL, label: label,
+                    capacityBytes: boundedWindow, pacingBytes: boundedWindow,
+                    onOutputAdvanced: onOutputAdvanced)
             }
-        self.windowBytes = min(max(windowBytes, 1), ClipboardStreamTuning.maxWindowBytes)
         self.ackQuantum = ClipboardStreamTuning.ackQuantum(forWindowBytes: self.windowBytes)
         self.maxBacklogBytes = ClipboardStreamTuning.maxBacklogBytes(
             forWindowBytes: self.windowBytes)
@@ -122,18 +138,19 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     /// Begins an inbound transfer: free-space check, sink open, and the initial
     /// ack that tells the sender to go.
     public func handleBegin(_ begin: Kernova_V1_ClipboardStreamBegin) {
-        // Directory-ness rides the offer, not the wire: the side that registered
-        // this pull is the same side that sent the `ClipboardRequest`, so it
-        // primes the expectation here rather than the sender re-declaring it.
-        let expectation = lock.withLock { () -> (folder: String, advertised: Int)? in
-            guard let awaiter = awaiters[begin.transferID],
-                let name = awaiter.extractsDirectoryNamed
-            else { return nil }
-            return (name, awaiter.advertisedByteCount)
+        // What the payload is expected to unpack to rides the offer, not the
+        // wire: the side that registered this pull is the same side that sent
+        // the `ClipboardRequest`, so it primes the expectation here rather than
+        // the sender re-declaring it.
+        let expectation = lock.withLock { () -> Transfer.Expectation? in
+            guard let awaiter = awaiters[begin.transferID] else { return nil }
+            return Transfer.Expectation(
+                directoryName: awaiter.extractsDirectoryNamed,
+                advertisedByteCount: awaiter.advertisedByteCount)
         }
         // A pull this side cancelled leaves no awaiter, so refuse its reply
-        // rather than re-classify a folder as a plain file and then blame the
-        // peer for the first chunk. [cancelled-pull]
+        // rather than accept it as unsolicited and then blame the peer for the
+        // first chunk. [cancelled-pull]
         if expectation == nil, wasCancelled(begin.transferID) {
             sendAbortFrame(
                 begin.transferID, code: "request.cancelled",
@@ -146,18 +163,17 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             uti: begin.uti,
             filename: begin.filename,
             isInline: begin.isInline,
-            // The sender's declared total is peer-supplied and never
+            isArchive: begin.isArchive,
+            // A raw payload's declared total is peer-supplied and never
             // cross-checked against the chunks that follow: bound it here, the
-            // one place it enters, so the disk pre-flight and the inline reserve
-            // below are handed a size that can be reasoned about. A 0 means
-            // "unknown" only from a transfer this side primed as a folder; from
-            // anyone else it is a declared zero-byte payload, and holding it to
-            // that is what refuses an unbounded stream nobody asked for.
-            declaredTotalBytes: (expectation != nil && begin.totalBytes == 0)
+            // one place it enters, so the inline reserve below is handed a size
+            // that can be reasoned about. An archive declares none — its wire
+            // size is unknown until its last byte — and its output is bounded
+            // by the expectation instead.
+            declaredTotalBytes: begin.isArchive
                 ? nil
                 : Int(clamping: min(begin.totalBytes, ClipboardOfferBounds.maxDeclaredByteCount)),
-            maxResidentInlineBytes: maxResidentInlineBytes,
-            extractsDirectoryNamed: expectation?.folder,
+            expectation: expectation,
             now: self.clock.now
         )
         // Ignore a duplicate transfer_id rather than overwrite an in-flight
@@ -176,64 +192,32 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             // than open a sink nobody will close and start a stall timer that
             // outlives a transfer no longer reachable through the table. [L4]
             guard !transfer.isFinished else { return }
-            if let folderName = transfer.extractsDirectoryNamed {
-                // A streamed folder's compressed size isn't known until its last
-                // byte, so the up-front gate can only assert the margin; the tree
-                // it expands to is bounded as it is written, below.
-                guard self.staging.hasCapacity(forByteCount: 0) else {
-                    self.failDiskFull(transfer)
-                    return
-                }
-                let ceiling = self.extractCeiling(
-                    forAdvertisedByteCount: expectation?.advertised ?? 0)
-                let staging = self.staging
-                do {
-                    let destination = try self.staging.reserveDirectory(
-                        generation: transfer.generation, name: folderName)
-                    transfer.sink = ClipboardDirectoryExtractSink(
-                        destinationURL: destination, label: "\(transfer.transferID)",
-                        capacityBytes: self.windowBytes, pacingBytes: self.windowBytes
-                    ) { written in
-                        // Paced by the *tree* being written, not by the archive
-                        // arriving: LZFSE reaches ~100:1, so a guard clocked on
-                        // wire bytes lets ~100 MB of tree land between checks and
-                        // the margin never fires.
-                        guard written <= ceiling else {
-                            throw ClipboardArchiveStreamError.outputRefused(.overAdvertisedSize)
-                        }
-                        guard staging.hasCapacity(forByteCount: 0) else {
-                            throw ClipboardArchiveStreamError.outputRefused(.diskFull)
-                        }
-                    }
-                } catch {
-                    self.fail(
-                        transfer, code: "stage.error", message: "Cannot open the extract folder")
-                    return
-                }
-            } else if transfer.streamsToDisk {
-                // The disk free-space guard, not a heap ceiling, bounds a
-                // misbehaving peer's declared size: create no temp file when it
-                // can't fit. [H1]
-                guard self.staging.hasCapacity(forByteCount: transfer.declaredTotalBytes ?? 0)
-                else {
-                    self.failDiskFull(transfer)
-                    return
-                }
-                do {
-                    transfer.sink = try self.makeSink(transfer.generation, transfer.filename)
-                } catch {
-                    self.fail(transfer, code: "stage.error", message: "Cannot open staging file")
-                    return
-                }
+            if transfer.isArchive {
+                guard self.openExtractSink(transfer) else { return }
             } else {
+                // Raw is how a peer sends what fits in RAM, and nothing else:
+                // refusing anything larger, or anything not inline, is what
+                // bounds the buffer a misbehaving peer could otherwise grow
+                // without limit — there is no staging file to spill it to. A
+                // pull primed as a folder is refused too, so a peer claiming
+                // `is_inline` cannot divert it into the RAM buffer and have a
+                // folder's request answered with a file.
+                guard transfer.isInline,
+                    transfer.expectation?.directoryName == nil,
+                    let declared = transfer.declaredTotalBytes,
+                    declared <= self.maxResidentInlineBytes
+                else {
+                    self.fail(
+                        transfer, code: "payload.unsupported",
+                        message: "A raw payload must be inline, fit in memory, and answer no folder pull")
+                    return
+                }
                 // Reserve toward the declared size (capped) so the buffer grows
                 // in one allocation rather than geometric reallocations off the
                 // window size.
                 transfer.buffer = Data()
                 transfer.buffer?.reserveCapacity(
-                    min(
-                        transfer.declaredTotalBytes ?? 0,
-                        ClipboardStreamTuning.maxInlineReserveBytes))
+                    min(declared, ClipboardStreamTuning.maxInlineReserveBytes))
             }
             // Go-signal: tell the sender we're ready and advertise the window.
             self.sendAck(transfer, upTo: transfer.receivedBytes)
@@ -241,6 +225,61 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             // Begin must not pin this transfer's fd/partial forever. [H2]
             self.startStallTimer(transfer)
         }
+    }
+
+    /// Opens the extract pipeline an archived transfer streams into, on the
+    /// receive lane at Begin, reporting whether the transfer may proceed.
+    ///
+    /// The archive's wire size is unknown until its last byte, so the payload
+    /// is bounded in the unit the offer stated — the tree or file it unpacks to
+    /// — both up front, against the volume, and as it is written, against the
+    /// ceiling and the room left for what the offer said remains.
+    private func openExtractSink(_ transfer: Transfer) -> Bool {
+        // An archive with no expectation is one nobody on this side asked for:
+        // there is no name to unpack it under and no size to hold it to, so it
+        // is refused before a byte is staged rather than extracted and dropped.
+        guard let expectation = transfer.expectation else {
+            fail(
+                transfer, code: "payload.unexpected",
+                message: "No pull is awaiting this transfer")
+            return false
+        }
+        let advertised = expectation.advertisedByteCount
+        guard staging.hasCapacity(forByteCount: advertised) else {
+            failDiskFull(transfer)
+            return false
+        }
+        let ceiling = extractCeiling(
+            forAdvertisedByteCount: advertised, isDirectory: expectation.directoryName != nil)
+        let staging = self.staging
+        do {
+            let destination: URL
+            if let name = expectation.directoryName {
+                destination = try staging.reserveDirectory(
+                    generation: transfer.generation, name: name)
+            } else {
+                destination = try staging.reserveScratchDirectory(generation: transfer.generation)
+            }
+            transfer.sink = try makeSink(destination, "\(transfer.transferID)") { written in
+                // Paced by the payload being *written*, not by the archive
+                // arriving: compression can reach ~100:1, so a guard clocked on
+                // wire bytes would let ~100 MB land between checks and the
+                // margin would never fire. Runs on the extract's own thread.
+                guard written <= ceiling else {
+                    throw ClipboardArchiveStreamError.outputRefused(.overAdvertisedSize)
+                }
+                // Re-check the room left for what the offer said remains, so a
+                // volume another writer is filling stops the transfer early
+                // rather than at the margin.
+                guard staging.hasCapacity(forByteCount: max(0, advertised - written)) else {
+                    throw ClipboardArchiveStreamError.outputRefused(.diskFull)
+                }
+            }
+        } catch {
+            fail(transfer, code: "stage.error", message: "Cannot open the extract destination")
+            return false
+        }
+        return true
     }
 
     /// Accepts one chunk: validated and hashed on the receive lane, then
@@ -329,8 +368,8 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             // Tell a parked lazy pull the transfer is alive so it re-arms its
             // inactivity backstop instead of timing out a slow-but-progressing
             // large transfer. [large-paste]
-            // For a folder the wire count is compressed while every readout's
-            // denominator is the offer's uncompressed estimate, so report what the
+            // For an archive the wire count is compressed while every readout's
+            // denominator is the offer's uncompressed figure, so report what the
             // extract has actually written instead — same unit, same scale.
             self.deliverProgress(
                 transfer.transferID,
@@ -371,7 +410,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             // so it runs only once the whole backlog is durably written.
             writeQueue.async { [weak self] in
                 guard let self, !transfer.isFinished else { return }
-                self.finishStaged(transfer, byteCount: expected, digest: digest)
+                self.finishStaged(transfer, wireByteCount: expected, digest: digest)
             }
         }
     }
@@ -390,13 +429,13 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                 source: .inMemory(transfer.buffer ?? Data()),
                 filename: transfer.filename
             ),
-            byteCount: transfer.receivedBytes)
+            byteCount: transfer.receivedBytes, wireByteCount: transfer.receivedBytes)
     }
 
-    /// Commits a disk-streamed transfer's staging file — or the tree its extract
-    /// pipeline has been writing — and completes it, on the write lane behind the
-    /// transfer's whole write backlog.
-    private func finishStaged(_ transfer: Transfer, byteCount: Int, digest: Data) {
+    /// Commits an archived transfer's extract — the tree or the one file its
+    /// pipeline has been writing — and completes it, on the write lane behind
+    /// the transfer's whole write backlog.
+    private func finishStaged(_ transfer: Transfer, wireByteCount: Int, digest: Data) {
         // Final ack: every byte is durably written now, so this closes the
         // sender's cumulative credit ledger even if the tail sat below one
         // quantum.
@@ -407,70 +446,74 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             fail(transfer, code: "stage.error", message: "Missing staging sink at End")
             return
         }
-        if transfer.extractsDirectoryNamed != nil {
-            // Committing is what drains the extract pipeline, so this is where a
-            // truncated or corrupt archive surfaces — and it takes the partial
-            // tree with it. There is no staged file to stat afterwards: the
-            // payload's size lives in the tree, not in one file.
-            let url: URL
-            do {
-                url = try sink.commit()
-            } catch {
-                failSinkError(transfer, sink: sink, error: error)
-                return
-            }
-            // The rep's bytes are the tree at `url`, so its size is the tree's,
-            // not the compressed count the wire carried — which can be ~100×
-            // lower and disagrees with the uncompressed estimate the offer
-            // advertised for the same folder. `sha256` stays the wire digest:
-            // it is the transfer's integrity gate, already verified above.
-            let treeByteCount = transfer.extractedByteCount ?? byteCount
+        // Committing is what drains the extract pipeline, so this is where a
+        // truncated or corrupt archive surfaces — and it takes the partial
+        // output with it.
+        let destination: URL
+        do {
+            destination = try sink.commit()
+        } catch {
+            failSinkError(transfer, sink: sink, error: error)
+            return
+        }
+        // `sha256` stays the wire digest throughout: it is the transfer's
+        // integrity gate, already verified above.
+        if transfer.expectation?.directoryName != nil {
+            // The rep's bytes are the tree at `destination`, so its size is the
+            // tree's, not the compressed count the wire carried — which can be
+            // ~100× lower and disagrees with the uncompressed estimate the offer
+            // advertised for the same folder.
+            let treeByteCount = transfer.extractedByteCount ?? wireByteCount
             deliver(
                 transfer,
                 ClipboardContent.Representation(
-                    uti: transfer.uti, fileURL: url, byteCount: treeByteCount, sha256: digest,
-                    filename: transfer.filename, isDirectory: true),
-                byteCount: byteCount)
+                    uti: transfer.uti, fileURL: destination, byteCount: treeByteCount,
+                    sha256: digest, filename: transfer.filename, isDirectory: true),
+                byteCount: treeByteCount, wireByteCount: wireByteCount)
             return
         }
-        let url: URL
-        do {
-            url = try sink.commit()
-        } catch {
+        // A file's archive holds exactly one regular-file entry, extracted into
+        // a scratch directory of its own so it keeps its exact name. Anything
+        // else — a tree, a link, nothing — is a payload that does not match
+        // what the offer described, and the peer that produced it is not
+        // trusted to have meant well.
+        guard let file = Self.singleRegularFile(in: destination) else {
+            try? FileManager.default.removeItem(at: destination)
             fail(
-                transfer, code: "commit.error",
-                message: "Finalizing staged file failed: \(error.localizedDescription)")
+                transfer, code: "payload.invalid",
+                message: "The archive did not unpack to exactly one file")
             return
         }
-        // The SHA-256 covers the bytes that *arrived*, not the bytes that
-        // reached the volume — the staging write sits outside what the digest
-        // can see. Without this one `stat`, a staging file short of its payload
-        // would satisfy every check the receiver performs (CLIPBOARD.md §7). [L3]
-        let stagedSize = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size]
-        if let stagedSize = (stagedSize as? NSNumber)?.intValue, stagedSize != byteCount {
-            // Committed, so `Sink.abort()` is already a no-op — drop the
-            // truncated file here rather than leave it for generation rotation.
-            try? FileManager.default.removeItem(at: url)
+        // A file's advertised size is exact and the sender writes exactly that
+        // many bytes, so the ceiling's header allowance is not payload a peer
+        // may spend: hold a file to its offer to the byte. An inline payload is
+        // exempt — one resolved from a file that grew since its offer is
+        // legitimately larger, and it is bounded by the ceiling instead.
+        if !transfer.isInline, let advertised = transfer.expectation?.advertisedByteCount,
+            file.byteCount != advertised
+        {
+            try? FileManager.default.removeItem(at: destination)
             fail(
-                transfer, code: "write.short",
-                message: "Staged file is \(stagedSize) bytes, expected \(byteCount)")
+                transfer, code: "size.overrun",
+                message: "The file unpacked to \(file.byteCount) bytes, its offer said \(advertised)")
             return
         }
         let representation: ClipboardContent.Representation
         if transfer.isInline {
-            // A large inline rep spilled to disk: serve its bytes back as a
-            // resident `.inMemory` payload through a memory-mapped read, so the
+            // An oversize inline rep: serve its bytes back as a resident
+            // `.inMemory` payload through a memory-mapped read, so the
             // pasteboard flavor is unchanged while Kernova's added RAM stays
             // near zero (CLIPBOARD.md §1/§2/§8). On Darwin a `.mappedIfSafe`
             // mapping stays valid after the staged file is unlinked by a later
             // generation sweep, so the mapped rep needs no lifetime tracking.
             let mapped: Data
             do {
-                mapped = try Data(contentsOf: url, options: .mappedIfSafe)
+                mapped = try Data(contentsOf: file.url, options: .mappedIfSafe)
             } catch {
                 fail(
                     transfer, code: "map.error",
-                    message: "Mapping staged inline file failed: \(error.localizedDescription)")
+                    message: "Mapping the extracted inline file failed: \(error.localizedDescription)"
+                )
                 return
             }
             representation = ClipboardContent.Representation(
@@ -481,13 +524,28 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         } else {
             representation = ClipboardContent.Representation(
                 uti: transfer.uti,
-                fileURL: url,
-                byteCount: byteCount,
+                fileURL: file.url,
+                byteCount: file.byteCount,
                 sha256: digest,
                 filename: transfer.filename
             )
         }
-        deliver(transfer, representation, byteCount: byteCount)
+        deliver(transfer, representation, byteCount: file.byteCount, wireByteCount: wireByteCount)
+    }
+
+    /// The one regular file directly inside `directory`, with its size, or `nil`
+    /// when the directory holds anything else.
+    private static func singleRegularFile(in directory: URL) -> (url: URL, byteCount: Int)? {
+        guard
+            let entries = try? FileManager.default.contentsOfDirectory(
+                at: directory, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+                options: []),
+            entries.count == 1,
+            let entry = entries.first,
+            let values = try? entry.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+            values.isRegularFile == true
+        else { return nil }
+        return (entry, values.fileSize ?? 0)
     }
 
     /// Claims the terminal transition, reports timing, and delivers a completed
@@ -497,7 +555,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     /// actor — the contract the delivery closures are written against.
     private func deliver(
         _ transfer: Transfer, _ representation: ClipboardContent.Representation,
-        byteCount: Int
+        byteCount: Int, wireByteCount: Int
     ) {
         guard transfer.finishOnce() else { return }
         remove(transfer.transferID)
@@ -508,6 +566,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                     transferID: transfer.transferID,
                     uti: transfer.uti,
                     byteCount: byteCount,
+                    wireByteCount: wireByteCount,
                     streamedToDisk: transfer.streamsToDisk,
                     duration: transfer.beganAt.seconds(to: completedAt),
                     streamingDuration: transfer.firstChunkAt.map {
@@ -568,13 +627,13 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     /// `onComplete`/`onAbort`, and is one-shot — removed when it fires, or via
     /// `cancelAwait`.
     ///
-    /// `extractsDirectoryNamed` primes the transfer: the bytes are a folder
-    /// archive to extract into a folder of that name as they stream, rather than
-    /// a file to stage. Directory-ness rides the `ClipboardOffer`, and this
+    /// `extractsDirectoryNamed` primes the transfer: the archive is a folder's
+    /// tree, extracted into a folder of that name as it streams, rather than a
+    /// file's one entry. Directory-ness rides the `ClipboardOffer`, and this
     /// registration happens on the same side that read the offer and sent the
     /// request, so the stream layer never needs it on the wire.
-    /// `advertisedByteCount` is that offer's uncompressed estimate, which the
-    /// extract is then held to — nothing on the wire states a folder's size.
+    /// `advertisedByteCount` is that offer's `byte_count`, which the extract is
+    /// then held to — nothing on the wire states an archive's unpacked size.
     public func awaitTransfer(
         _ transferID: UInt64,
         extractsDirectoryNamed: String? = nil,
@@ -767,23 +826,9 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             return
         }
         transfer.writtenBytes += data.count
-
-        // Incremental disk guard for a payload whose size is declared: re-check
-        // the remaining bytes once per window, keyed on written bytes because
-        // writes, not arrivals, consume the volume. A folder's guard cannot live
-        // here — these are compressed bytes — so it rides the extract's own
-        // output pacing instead.
-        transfer.bytesSinceCheck += data.count
-        if transfer.bytesSinceCheck >= windowBytes {
-            transfer.bytesSinceCheck = 0
-            if let declared = transfer.declaredTotalBytes {
-                let remaining = declared - transfer.writtenBytes
-                if remaining > 0 && !staging.hasCapacity(forByteCount: remaining) {
-                    failDiskFull(transfer)
-                    return
-                }
-            }
-        }
+        // No disk guard here: these are compressed bytes, and the sink's own
+        // output guard paces the check by what is written to the volume, off
+        // this lane, so nothing sits between the append and its ack.
         ackIfDue(transfer, upTo: transfer.writtenBytes, now: clock.now)
     }
 
@@ -835,18 +880,23 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             })
     }
 
-    /// How much tree an extract may write for a folder the offer advertised at
+    /// How much an extract may write for a payload the offer advertised at
     /// `advertisedByteCount`.
     ///
-    /// Nothing on the wire states a folder's size, so the estimate the paste
-    /// ceiling and the free-space pre-flight were computed from is the only
-    /// figure to hold it to. The allowance is generous on purpose: the archive
-    /// container adds a header per entry to the file bytes the estimate sums, and
-    /// a tree can legitimately grow a little between the copy-time walk and the
-    /// paste-time encode. Doubling covers header overhead for any tree whose file
-    /// bytes dominate, and the floor covers one whose estimate is zero or tiny —
-    /// a scaffold of empty files — while staying far below any paste ceiling.
-    func extractCeiling(forAdvertisedByteCount advertisedByteCount: Int) -> Int {
+    /// Nothing on the wire states an archive's unpacked size, so the figure the
+    /// paste ceiling and the free-space pre-flight were computed from is the
+    /// only one to hold it to. A file's is exact, so its ceiling is that plus
+    /// the one entry header's allowance. A folder's is a stat-walk estimate,
+    /// and its allowance is generous on purpose: the archive adds a header per
+    /// entry to the file bytes the estimate sums, and a tree can legitimately
+    /// grow a little between the copy-time walk and the paste-time encode.
+    /// Doubling covers header overhead for any tree whose file bytes dominate,
+    /// and the floor covers one whose estimate is zero or tiny — a scaffold of
+    /// empty files — while staying far below any paste ceiling.
+    func extractCeiling(forAdvertisedByteCount advertisedByteCount: Int, isDirectory: Bool) -> Int {
+        guard isDirectory else {
+            return advertisedByteCount.saturatingAdding(ClipboardStreamTuning.fileExtractAllowance)
+        }
         let doubled = advertisedByteCount.saturatingAdding(advertisedByteCount)
         return max(doubled, minimumExtractAllowance)
     }
@@ -863,7 +913,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             case .overAdvertisedSize:
                 fail(
                     transfer, code: "size.overrun",
-                    message: "The folder unpacked to more than its offer advertised")
+                    message: "The payload unpacked to more than its offer advertised")
             }
             return
         }
@@ -884,9 +934,10 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             info: ClipboardStreamAbortInfo(
                 transferID: transfer.transferID, code: "disk.full",
                 message: "Not enough disk space",
-                // A payload that declared no total has no honest figure to
-                // report as "needed".
-                neededBytes: transfer.declaredTotalBytes,
+                // What the offer advertised is the honest "needed" figure for
+                // an archive, exact for a file and an estimate for a folder.
+                neededBytes: transfer.declaredTotalBytes
+                    ?? transfer.expectation?.advertisedByteCount,
                 availableBytes: available))
     }
 
@@ -970,9 +1021,15 @@ public struct ClipboardTransferMetrics: Sendable, Equatable {
     public let transferID: UInt64
     /// UTI of the transferred representation.
     public let uti: String
-    /// Total payload bytes received and digest-verified.
+    /// Payload bytes delivered — the file, tree or inline bytes the transfer
+    /// unpacked to — in the unit every readout and the offer's `byte_count`
+    /// use.
     public let byteCount: Int
-    /// Whether the payload streamed to a staging file (vs. reassembling in RAM).
+    /// Bytes that crossed the wire and were digest-verified: the archive for an
+    /// archived payload, `byteCount` itself for a raw one.
+    public let wireByteCount: Int
+    /// Whether the payload streamed through the extract pipeline (vs.
+    /// reassembling in RAM).
     public let streamedToDisk: Bool
     /// Begin processed → digest verified and committed, in seconds.
     public let duration: TimeInterval
@@ -982,11 +1039,18 @@ public struct ClipboardTransferMetrics: Sendable, Equatable {
     public let streamingDuration: TimeInterval?
 
     /// One-line human-readable rendering for the throughput log line, e.g.
-    /// `"10485760 bytes (public.data) in 0.052 s — 192.3 MiB/s (disk, streamed 0.049 s)"`.
+    /// `"10485760 bytes (public.data) in 0.052 s — 192.3 MiB/s (disk, 4194304 wire bytes, streamed 0.049 s)"`.
+    ///
+    /// The rate is in payload bytes — what the user sees move — and the wire
+    /// count is stated when it differs, so the compression ratio is one
+    /// division away.
     public var logSummary: String {
         let seconds = duration
         let rate = seconds > 0 ? Double(byteCount) / 1_048_576 / seconds : 0
         var detail = streamedToDisk ? "disk" : "memory"
+        if wireByteCount != byteCount {
+            detail += ", \(wireByteCount) wire bytes"
+        }
         if let streamingDuration {
             detail += String(format: ", streamed %.3f s", streamingDuration)
         }
@@ -1026,9 +1090,9 @@ private struct Awaiter {
     /// The folder name a streamed directory archive extracts into, or `nil` for
     /// an ordinary file/inline transfer.
     let extractsDirectoryNamed: String?
-    /// The uncompressed size the offer advertised for that folder — the figure
-    /// the paste ceiling and the free-space pre-flight were computed from, and
-    /// so the figure the extract is held to.
+    /// The size the offer advertised — the figure the paste ceiling and the
+    /// free-space pre-flight were computed from, and so the figure the extract
+    /// is held to.
     let advertisedByteCount: Int
     let onComplete: @Sendable (ClipboardContent.Representation) -> Void
     let onAbort: @Sendable (ClipboardStreamAbortInfo) -> Void
@@ -1050,39 +1114,50 @@ private struct Awaiter {
 /// that moves the work across. The one contended decision — which path reaches
 /// the terminal state first — goes through `finishOnce()`.
 private final class InboundTransfer: @unchecked Sendable {
+    /// What the pull that requested this transfer expects it to unpack to.
+    ///
+    /// Set from the pull's own registration, never from the wire.
+    struct Expectation {
+        /// The folder name the archive extracts into, or `nil` when the payload
+        /// is a file or inline rep.
+        let directoryName: String?
+        /// The size the offer advertised — exact for a file, a stat-walk
+        /// estimate for a folder — which the extract is held to.
+        let advertisedByteCount: Int
+    }
+
     let transferID: UInt64
     let generation: UInt64
     let uti: String
     let filename: String
     let isInline: Bool
-    /// The size the sender declared, or `nil` when it declared none — a folder
-    /// compressed straight onto the wire cannot know its own size until its last
-    /// byte (`total_bytes = 0` on the wire means unknown).
+    /// Whether the payload is an archive to extract rather than raw bytes to
+    /// buffer — the axis every sink decision branches on.
+    let isArchive: Bool
+    /// The size a raw payload declared; `nil` for an archive, whose wire size
+    /// is unknown until its last byte.
     ///
     /// The one axis the size-dependent guards branch on, so none of them has to
     /// re-derive "unknown" from what kind of payload this is.
     let declaredTotalBytes: Int?
-    /// The folder name this transfer's archive extracts into, or `nil` when the
-    /// payload is an ordinary file or inline rep.
-    ///
-    /// Set from the pull's own registration, never from the wire.
-    let extractsDirectoryNamed: String?
+    /// The requesting pull's expectation, or `nil` for a transfer nobody on this
+    /// side asked for.
+    let expectation: Expectation?
     /// Receive lane: validation, hashing, the stall anchor, progress delivery.
     let queue: DispatchQueue
-    /// Write lane: staging appends and the acks that open credit for them.
+    /// Write lane: extract appends and the acks that open credit for them.
     ///
-    /// `nil` for a RAM-resident inline rep, which has no sink and runs entirely
-    /// on `queue`.
+    /// `nil` for a raw payload, which has no sink and runs entirely on `queue`.
     let writeQueue: DispatchQueue?
 
-    /// Uncompressed bytes the extract has written, or `nil` when the sink is not
-    /// an extract — the progress figure in the offer's own unit.
+    /// Uncompressed bytes the extract has written, or `nil` for a raw payload
+    /// — the progress figure in the offer's own unit.
     var extractedByteCount: Int? {
-        (sink as? ClipboardDirectoryExtractSink)?.uncompressedByteCount
+        (sink as? ClipboardArchiveExtractSink)?.uncompressedByteCount
     }
 
-    /// Whether this transfer streams to a staging file instead of a RAM buffer:
-    /// every file rep, plus an inline rep past `maxResidentInlineBytes`.
+    /// Whether this transfer streams through the extract pipeline instead of a
+    /// RAM buffer.
     var streamsToDisk: Bool { writeQueue != nil }
 
     /// When `handleBegin` created this transfer.
@@ -1114,8 +1189,6 @@ private final class InboundTransfer: @unchecked Sendable {
     ///
     /// Same lane ownership as `ackedBytes`.
     var lastAckAt: EngineInstant
-    /// Write lane: bytes written since the last free-space re-check.
-    var bytesSinceCheck = 0
     /// Receive lane: running SHA-256 over the accepted bytes.
     var hasher = SHA256()
     /// Receive lane: RAM reassembly buffer for a resident inline rep.
@@ -1181,29 +1254,26 @@ private final class InboundTransfer: @unchecked Sendable {
 
     init(
         transferID: UInt64, generation: UInt64, uti: String, filename: String, isInline: Bool,
-        declaredTotalBytes: Int?, maxResidentInlineBytes: Int, extractsDirectoryNamed: String?,
-        now: EngineInstant
+        isArchive: Bool, declaredTotalBytes: Int?, expectation: Expectation?, now: EngineInstant
     ) {
         self.transferID = transferID
         self.generation = generation
         self.uti = uti
         self.filename = filename
         self.isInline = isInline
+        self.isArchive = isArchive
         self.declaredTotalBytes = declaredTotalBytes
-        self.extractsDirectoryNamed = extractsDirectoryNamed
+        self.expectation = expectation
         self.beganAt = now
         self.lastAckAt = now
         self.lastChunkAt = now
         self.queue = DispatchQueue(
             label: "app.kernova.clipboard.stream-recv.\(transferID)", qos: .userInitiated)
-        // A primed directory transfer always takes the write lane: its sink is
-        // the extract pipeline, so a peer claiming `is_inline` must not divert it
-        // into the RAM buffer, where nothing would ever unpack it. An undeclared
-        // size spills for the same reason a large one does — nothing bounds what
-        // would accumulate in RAM.
+        // An archive always takes the write lane: its sink is the extract
+        // pipeline, so a peer claiming `is_inline` must not divert it into the
+        // RAM buffer, where nothing would ever unpack it.
         self.writeQueue =
-            (extractsDirectoryNamed != nil || !isInline
-                || (declaredTotalBytes.map { $0 > maxResidentInlineBytes } ?? true))
+            isArchive
             ? DispatchQueue(
                 label: "app.kernova.clipboard.stream-recv.write.\(transferID)", qos: .userInitiated)
             : nil

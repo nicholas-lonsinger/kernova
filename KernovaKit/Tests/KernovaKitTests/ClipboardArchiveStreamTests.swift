@@ -6,11 +6,11 @@ import Testing
 
 @testable import KernovaKit
 
-/// The folder-transfer pipeline with no archive file anywhere: a source tree is
-/// encoded on demand by `ClipboardDirectoryArchiveReader` and extracted as it
-/// arrives by `ClipboardDirectoryExtractSink`.
-@Suite("ClipboardDirectoryStream")
-struct ClipboardDirectoryStreamTests {
+/// The archive pipeline with no archive file anywhere: a source — a folder, one
+/// file, or resident bytes — is encoded on demand by `ClipboardArchiveReader`
+/// and extracted as it arrives by `ClipboardArchiveExtractSink`.
+@Suite("ClipboardArchiveStream")
+struct ClipboardArchiveStreamTests {
     /// A unique scratch directory removed when the test ends.
     private func makeScratch() throws -> URL {
         let url = FileManager.default.temporaryDirectory
@@ -27,7 +27,7 @@ struct ClipboardDirectoryStreamTests {
 
     /// Every byte the encoder produces for `directory`.
     private func archiveBytes(of directory: URL, chunkSize: Int = 64 << 10) throws -> Data {
-        let reader = ClipboardDirectoryArchiveReader(directoryURL: directory, label: "test")
+        let reader = ClipboardArchiveReader(source: .directory(directory), label: "test")
         var bytes = Data()
         while true {
             let chunk = try reader.read(upTo: chunkSize)
@@ -42,7 +42,7 @@ struct ClipboardDirectoryStreamTests {
     private func extract(_ bytes: Data, into destination: URL, chunkSize: Int = 64 << 10) throws
         -> URL
     {
-        let sink = ClipboardDirectoryExtractSink(destinationURL: destination, label: "test")
+        let sink = ClipboardArchiveExtractSink(destinationURL: destination, label: "test")
         do {
             var offset = 0
             while offset < bytes.count {
@@ -64,9 +64,9 @@ struct ClipboardDirectoryStreamTests {
         from source: URL, into destination: URL, chunkSize: Int = 64 << 10,
         capacityBytes: Int = 1 << 20
     ) throws -> Int {
-        let reader = ClipboardDirectoryArchiveReader(
-            directoryURL: source, label: "test", capacityBytes: capacityBytes)
-        let sink = ClipboardDirectoryExtractSink(
+        let reader = ClipboardArchiveReader(
+            source: .directory(source), label: "test", capacityBytes: capacityBytes)
+        let sink = ClipboardArchiveExtractSink(
             destinationURL: destination, label: "test", capacityBytes: capacityBytes)
         var streamed = 0
         do {
@@ -253,7 +253,7 @@ struct ClipboardDirectoryStreamTests {
             withIntermediateDirectories: true)
         try Data().write(to: source.appendingPathComponent(".keep"))
         try Data().write(to: source.appendingPathComponent("sub/.keep"))
-        #expect(ClipboardDirectoryArchive.estimatedByteCount(at: source) == 0)
+        #expect(ClipboardArchive.estimatedByteCount(at: source) == 0)
 
         let dest = try makeDestination(in: scratch)
         try stream(from: source, into: dest)
@@ -305,6 +305,167 @@ struct ClipboardDirectoryStreamTests {
         #expect(try Data(contentsOf: dest.appendingPathComponent("random.bin")) == payload)
     }
 
+    // MARK: - One-entry sources
+
+    @Test("a file source round-trips byte-identically under its entry name, with mode and mtime")
+    func fileSourceRoundTrips() throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+
+        let file = scratch.appendingPathComponent("payload.bin")
+        let payload = patternedBytes(count: 256 * 1024, multiplier: 7, offset: 3)
+        try payload.write(to: file)
+        try fm.setAttributes([.posixPermissions: 0o640], ofItemAtPath: file.path)
+        let sourceAttributes: [FileAttributeKey: Any] = try fm.attributesOfItem(atPath: file.path)
+        let modified: Date = try #require(sourceAttributes[.modificationDate] as? Date)
+
+        // The entry is named by the offer, not by the file: the receiver
+        // extracts it under exactly this name.
+        let out = try extractedClipboardArchive(
+            try clipboardArchiveBytes(of: .file(file, name: "renamed.bin", byteCount: payload.count))
+        )
+        defer { try? fm.removeItem(at: out.deletingLastPathComponent()) }
+
+        #expect(try fm.contentsOfDirectory(atPath: out.path) == ["renamed.bin"])
+        let entry = out.appendingPathComponent("renamed.bin")
+        #expect(try Data(contentsOf: entry) == payload)
+        let attributes: [FileAttributeKey: Any] = try fm.attributesOfItem(atPath: entry.path)
+        let mode: Int? = (attributes[.posixPermissions] as? NSNumber)?.intValue
+        #expect(mode == 0o640)
+        let restored: Date = try #require(attributes[.modificationDate] as? Date)
+        let drift: TimeInterval = abs(restored.timeIntervalSince(modified))
+        #expect(drift < 0.001)
+    }
+
+    @Test("a file source carries exactly the byte count its offer declared")
+    func fileSourceCarriesTheDeclaredByteCount() throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+
+        let file = scratch.appendingPathComponent("grew.bin")
+        let payload = patternedBytes(count: 8192, multiplier: 1, offset: 0)
+        try payload.write(to: file)
+
+        // A file that grew between the offer's stat and the paste is sent as the
+        // prefix the offer described, so the entry can never disagree with the
+        // size its header declares.
+        let out = try extractedClipboardArchive(
+            try clipboardArchiveBytes(of: .file(file, name: "grew.bin", byteCount: 1024)))
+        defer { try? fm.removeItem(at: out.deletingLastPathComponent()) }
+        #expect(try Data(contentsOf: out.appendingPathComponent("grew.bin")) == payload.prefix(1024))
+    }
+
+    @Test("a file source that ends before its declared byte count fails the read")
+    func fileSourceShorterThanDeclaredFails() throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+
+        let file = scratch.appendingPathComponent("shrank.bin")
+        try Data(repeating: 0x11, count: 4096).write(to: file)
+
+        // The entry's header has already declared the larger size, so the
+        // archive can only be abandoned — never quietly closed short.
+        let reader = ClipboardArchiveReader(
+            source: .file(file, name: "shrank.bin", byteCount: 8192), label: "test")
+        #expect(throws: (any Error).self) {
+            while try !reader.read(upTo: 64 << 10).isEmpty {}
+        }
+    }
+
+    @Test("a locked file source extracts unlocked, so staging can move and remove it")
+    func lockedFileSourceExtractsUnlocked() throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+
+        let file = scratch.appendingPathComponent("locked.bin")
+        try Data(repeating: 0x5C, count: 2048).write(to: file)
+        try fm.setAttributes([.immutable: true], ofItemAtPath: file.path)
+        defer { try? fm.setAttributes([.immutable: false], ofItemAtPath: file.path) }
+
+        let out = try extractedClipboardArchive(
+            try clipboardArchiveBytes(of: .file(file, name: "locked.bin", byteCount: 2048)))
+        defer { try? fm.removeItem(at: out.deletingLastPathComponent()) }
+        let entry = out.appendingPathComponent("locked.bin")
+        let attributes: [FileAttributeKey: Any] = try fm.attributesOfItem(atPath: entry.path)
+        let immutable: Bool? = attributes[.immutable] as? Bool
+        #expect(immutable != true)
+        // The proof that matters: the staged file can be renamed and deleted.
+        let moved = out.appendingPathComponent("moved.bin")
+        try fm.moveItem(at: entry, to: moved)
+        try fm.removeItem(at: moved)
+    }
+
+    @Test("a blob source round-trips as one entry")
+    func blobSourceRoundTrips() throws {
+        let fm = FileManager.default
+        let payload = patternedBytes(count: 64 * 1024, multiplier: 13, offset: 5)
+        let out = try extractedClipboardArchive(
+            try clipboardArchiveBytes(of: .blob(payload, name: "clip.png")))
+        defer { try? fm.removeItem(at: out.deletingLastPathComponent()) }
+        #expect(try fm.contentsOfDirectory(atPath: out.path) == ["clip.png"])
+        #expect(try Data(contentsOf: out.appendingPathComponent("clip.png")) == payload)
+    }
+
+    @Test("a file source naming a directory or a missing path fails rather than ending the stream")
+    func fileSourceRequiresARegularFile() throws {
+        let scratch = try makeScratch()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+
+        let directory = ClipboardArchiveReader(
+            source: .file(scratch, name: "dir", byteCount: 0), label: "test")
+        #expect(throws: (any Error).self) {
+            while try !directory.read(upTo: 64 << 10).isEmpty {}
+        }
+        let missing = ClipboardArchiveReader(
+            source: .file(
+                scratch.appendingPathComponent("nope.bin"), name: "nope.bin", byteCount: 16),
+            label: "test")
+        #expect(throws: (any Error).self) {
+            while try !missing.read(upTo: 64 << 10).isEmpty {}
+        }
+    }
+
+    @Test("uncompressedByteCount counts the payload's own bytes, not the compressed wire")
+    func uncompressedCountIsInThePayloadsUnit() throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+
+        // One repeated byte, so the wire is a fraction of the payload and a
+        // count that slipped to wire bytes would be unmistakable.
+        let file = scratch.appendingPathComponent("big.log")
+        let payload = Data(repeating: 0x41, count: 1 << 20)
+        try payload.write(to: file)
+
+        let reader = ClipboardArchiveReader(
+            source: .file(file, name: "big.log", byteCount: payload.count), label: "test")
+        var wire = 0
+        while true {
+            let chunk = try reader.read(upTo: 64 << 10)
+            if chunk.isEmpty { break }
+            wire += chunk.count
+        }
+        #expect(wire < payload.count)
+        #expect(reader.uncompressedByteCount >= payload.count)
+        #expect(
+            reader.uncompressedByteCount
+                <= payload.count + ClipboardStreamTuning.fileExtractAllowance)
+    }
+
+    @Test("the wire carries an LZ4-compressed archive")
+    func wireBytesAreLZ4Compressed() throws {
+        // The codec is stamped in the compression stream's first four bytes. The
+        // decompressor auto-detects it, so only the producing side pins it —
+        // which is what keeps the receiver working whatever it is handed.
+        let bytes = try clipboardArchiveBytes(
+            of: .blob(Data(repeating: 0x5A, count: 64 * 1024), name: "b.bin"))
+        #expect(bytes.prefix(4) == Data("pbz4".utf8))
+    }
+
     // MARK: - Failure and cleanup
 
     @Test("encoding a nonexistent folder fails rather than ending the stream")
@@ -312,7 +473,7 @@ struct ClipboardDirectoryStreamTests {
         let scratch = try makeScratch()
         defer { try? FileManager.default.removeItem(at: scratch) }
         let missing = scratch.appendingPathComponent("nope", isDirectory: true)
-        let reader = ClipboardDirectoryArchiveReader(directoryURL: missing, label: "test")
+        let reader = ClipboardArchiveReader(source: .directory(missing), label: "test")
         #expect(throws: (any Error).self) {
             // Drains until the encode pipeline reports its failure; an end of
             // stream here would mean a valid empty archive.
@@ -368,7 +529,7 @@ struct ClipboardDirectoryStreamTests {
 
         let bytes = try archiveBytes(of: source)
         let dest = try makeDestination(in: scratch)
-        let sink = ClipboardDirectoryExtractSink(destinationURL: dest, label: "test")
+        let sink = ClipboardArchiveExtractSink(destinationURL: dest, label: "test")
         try sink.write(bytes.prefix(bytes.count / 2))
         // Blocks until the extract pipeline has unwound, so the assertion below
         // needs no wait of its own.
@@ -393,7 +554,7 @@ struct ClipboardDirectoryStreamTests {
             to: source.appendingPathComponent("sub/a.txt"), atomically: true, encoding: .utf8)
 
         let dest = try makeDestination(in: scratch)
-        let sink = ClipboardDirectoryExtractSink(destinationURL: dest, label: "test")
+        let sink = ClipboardArchiveExtractSink(destinationURL: dest, label: "test")
         try sink.write(try archiveBytes(of: source))
         let url = try sink.commit()
 
@@ -414,7 +575,7 @@ struct ClipboardDirectoryStreamTests {
         defer { try? fm.removeItem(at: scratch) }
         let dest = try makeDestination(in: scratch)
 
-        let sink = ClipboardDirectoryExtractSink(destinationURL: dest, label: "test")
+        let sink = ClipboardArchiveExtractSink(destinationURL: dest, label: "test")
         try sink.write(Data("not a valid archive".utf8))
         #expect(throws: (any Error).self) { _ = try sink.commit() }
         // A failed pipeline has nothing to feed, so the refusal has to stand.
@@ -438,7 +599,7 @@ struct ClipboardDirectoryStreamTests {
         let bytes = try archiveBytes(of: source)
 
         let dest = try makeDestination(in: scratch)
-        let sink = ClipboardDirectoryExtractSink(destinationURL: dest, label: "test")
+        let sink = ClipboardArchiveExtractSink(destinationURL: dest, label: "test")
         try sink.write(bytes.prefix(bytes.count / 2))
         sink.abort()
         #expect(!fm.fileExists(atPath: dest.path))
@@ -454,7 +615,7 @@ struct ClipboardDirectoryStreamTests {
         defer { try? fm.removeItem(at: scratch) }
         let dest = try makeDestination(in: scratch)
 
-        let sink = ClipboardDirectoryExtractSink(destinationURL: dest, label: "test")
+        let sink = ClipboardArchiveExtractSink(destinationURL: dest, label: "test")
         sink.cancel()
         #expect(throws: (any Error).self) { try sink.write(Data(repeating: 0, count: 4096)) }
         #expect(throws: (any Error).self) { _ = try sink.commit() }
@@ -535,8 +696,8 @@ struct ClipboardDirectoryStreamTests {
         try Data(repeating: 0x5A, count: 4 * 1024 * 1024)
             .write(to: source.appendingPathComponent("big.bin"))
 
-        let reader = ClipboardDirectoryArchiveReader(
-            directoryURL: source, label: "test", capacityBytes: 4096)
+        let reader = ClipboardArchiveReader(
+            source: .directory(source), label: "test", capacityBytes: 4096)
         #expect(try !reader.read(upTo: 512).isEmpty)
         reader.cancel()
         // Never an empty result, which would mean a complete archive.

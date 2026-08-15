@@ -313,10 +313,10 @@ enum ClipboardPasteboardIntake {
     ) -> ClipboardContent.Representation? {
         let uti =
             (try? url.resourceValues(forKeys: [.contentTypeKey]))?.contentType?.identifier
-            ?? ClipboardDirectoryArchive.directoryUTI
+            ?? ClipboardArchive.directoryUTI
         return ClipboardContent.Representation(
             directorySourceURL: url,
-            estimatedByteCount: ClipboardDirectoryArchive.estimatedByteCount(at: url),
+            estimatedByteCount: ClipboardArchive.estimatedByteCount(at: url),
             filename: url.lastPathComponent, uti: uti)
     }
 }

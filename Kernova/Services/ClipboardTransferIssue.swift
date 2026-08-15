@@ -120,27 +120,13 @@ extension ClipboardTransferIssue {
             date: Date())
     }
 
-    /// Raised when a copied folder is left out of the offer because the guest
-    /// agent predates streamed folders.
-    ///
-    /// The copy itself is fine — nothing else about it changed — so the message
-    /// names the one thing the user can act on.
-    static func folderSkippedForOutdatedGuest() -> ClipboardTransferIssue {
-        ClipboardTransferIssue(
-            kind: .localFailure(
-                code: ClipboardErrorCode.folderPeerOutdated.rawValue,
-                message:
-                    "The guest agent needs updating before a folder can be copied to this VM."),
-            date: Date())
-    }
-
-    /// Raised when a copied folder's archive arrived but could not be unpacked
-    /// into a real folder for the paste to create.
-    static func pasteFolderUnpackFailed() -> ClipboardTransferIssue {
+    /// Raised when a copied item's archive arrived but could not be unpacked
+    /// into the file or folder the paste would create.
+    static func pasteUnpackFailed() -> ClipboardTransferIssue {
         ClipboardTransferIssue(
             kind: .localFailure(
                 code: ClipboardErrorCode.pasteFailed.rawValue,
-                message: "The copied folder couldn't be unpacked, so nothing was pasted."),
+                message: "The copied item couldn't be unpacked, so nothing was pasted."),
             date: Date())
     }
 
@@ -255,7 +241,7 @@ extension ClipboardTransferIssue {
             case .pasteTimeout:
                 return "The clipboard transfer to the guest timed out"
             case .pasteFailed, .copyTooLarge, .pasteIncompleteSet, .forwardItemsSkipped,
-                .folderPeerOutdated, .dropDiskFull, .dropDownloadsDenied, .dropFailed, .none:
+                .dropDiskFull, .dropDownloadsDenied, .dropFailed, .none:
                 return "Clipboard transfer failed on the guest side"
             }
         case .localFailure(_, let message):
@@ -279,7 +265,7 @@ extension ClipboardTransferIssue {
             switch ClipboardErrorCode(rawValue: code) {
             case .copyTooLarge:
                 return "Clipboard not copied from \(Self.quoted(vmName))."
-            case .folderPeerOutdated, .forwardItemsSkipped:
+            case .forwardItemsSkipped:
                 return "Clipboard not copied to \(Self.quoted(vmName))."
             case .pasteIncompleteSet, .pasteTimeout, .pasteFailed:
                 return "Clipboard not pasted from \(Self.quoted(vmName))."
@@ -333,12 +319,12 @@ extension ClipboardTransferIssue {
             case .copyTooLarge: return "Clipboard: too large to copy to your Mac"
             case .pasteTimeout: return "Clipboard: paste from the guest timed out"
             case .pasteIncompleteSet, .pasteFailed: return "Clipboard: paste from the guest failed"
-            case .folderPeerOutdated: return "Clipboard: folder copy needs a guest agent update"
             case .forwardItemsSkipped: return "Clipboard: some items weren't forwarded"
             case .dropDiskFull: return "Drop: the VM ran out of disk space"
             case .dropDownloadsDenied: return "Drop: the VM's Downloads folder is off limits"
             case .dropFailed: return "Drop: the files didn't reach the VM"
-            case .pasteDiskFull, .pasteTooLarge, .none: return "Clipboard: transfer didn't complete"
+            case .pasteDiskFull, .pasteTooLarge, .none:
+                return "Clipboard: transfer didn't complete"
             }
         }
     }

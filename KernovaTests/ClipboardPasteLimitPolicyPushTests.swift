@@ -36,7 +36,7 @@ struct ClipboardPasteLimitPolicyPushTests {
                 ? KernovaCapability.controlChannelDefaults
                 : [
                     KernovaCapability.controlV1, KernovaCapability.controlHeartbeatV1,
-                    KernovaCapability.clipboardStreamV1,
+                    KernovaCapability.clipboardStreamV2,
                 ]
             $0.agentInfo = Kernova_V1_AgentInfo.with {
                 $0.os = "macOS"

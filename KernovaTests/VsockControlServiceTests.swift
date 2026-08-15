@@ -21,17 +21,14 @@ struct VsockControlServiceTests {
     /// this to drive the `agentStatus` numeric-comparison matrix.
     private func makeGuestHello(
         agentVersion: String, osVersion: String = "26.0", streamingCapable: Bool = true,
-        directoryStreamCapable: Bool = true, pasteLimitCapable: Bool = true
+        pasteLimitCapable: Bool = true
     ) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.hello = Kernova_V1_Hello.with {
             $0.serviceVersion = 1
             var capabilities = [KernovaCapability.controlV1, KernovaCapability.controlHeartbeatV1]
-            if streamingCapable { capabilities.append(KernovaCapability.clipboardStreamV1) }
-            if directoryStreamCapable {
-                capabilities.append(KernovaCapability.clipboardStreamDirectoryV1)
-            }
+            if streamingCapable { capabilities.append(KernovaCapability.clipboardStreamV2) }
             if pasteLimitCapable { capabilities.append(KernovaCapability.clipboardPasteLimitV1) }
             $0.capabilities = capabilities
             $0.agentInfo = Kernova_V1_AgentInfo.with {
@@ -167,7 +164,7 @@ struct VsockControlServiceTests {
         #expect(hello.capabilities.contains("control.heartbeat.v1"))
         // The host advertises streaming-clipboard support so the guest can
         // symmetrically gate clipboard on it.
-        #expect(hello.capabilities.contains(KernovaCapability.clipboardStreamV1))
+        #expect(hello.capabilities.contains(KernovaCapability.clipboardStreamV2))
     }
 
     @Test("Host Hello reports agent_info with a numeric os_version")
@@ -1146,7 +1143,7 @@ struct VsockControlServiceTests {
         defer { service.stop() }
 
         _ = try await nextFrame(from: guest)  // host hello
-        // Guest that predates streaming: no clipboard.stream.v1.
+        // Guest that predates streaming: no clipboard.stream.v2.
         try guest.send(makeGuestHello(agentVersion: "0.15.0", streamingCapable: false))
 
         service.sendPolicyUpdate(
@@ -1268,38 +1265,6 @@ struct VsockControlServiceTests {
         #expect(result.pushedBytes == UInt64(ClipboardPasteLimit.defaultBytes))
         #expect(result.guestSupportsPasteLimit == false)
         #expect(result.guestWillEnforce == ClipboardPasteLimit.defaultBytes)
-    }
-
-    // MARK: - Streamed-folder capability
-
-    /// Whether the service saw `clipboard.stream.directory.v1` in a guest Hello
-    /// advertising `directoryStreamCapable`.
-    private func observeDirectoryStreaming(directoryStreamCapable: Bool) async throws -> Bool {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = makeService(channel: host)
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)  // host hello
-        try guest.send(
-            makeGuestHello(
-                agentVersion: "0.58.0", directoryStreamCapable: directoryStreamCapable))
-        try await waitForChange { service.agentVersion != nil }
-        return service.guestSupportsDirectoryStreaming
-    }
-
-    @Test("a guest advertising the streamed-folder capability is recorded as supporting it")
-    func directoryStreamingObservedFromHello() async throws {
-        #expect(try await observeDirectoryStreaming(directoryStreamCapable: true))
-    }
-
-    @Test("a guest without the streamed-folder capability is recorded as lacking it")
-    func directoryStreamingAbsentFromHello() async throws {
-        #expect(try await observeDirectoryStreaming(directoryStreamCapable: false) == false)
     }
 
     // MARK: - ObservedAgentInfo.boundedField

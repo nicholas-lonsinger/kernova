@@ -94,16 +94,13 @@ struct ClipboardTransferIssueTests {
             ClipboardTransferIssue.overCopyBudget(limitBytes: limit).noticeHeadline(vmName: vm)
                 == "Clipboard not copied from \u{201C}Build VM\u{201D}.")
         #expect(
-            ClipboardTransferIssue.folderSkippedForOutdatedGuest().noticeHeadline(vmName: vm)
-                == "Clipboard not copied to \u{201C}Build VM\u{201D}.")
-        #expect(
             ClipboardTransferIssue.forwardSkippedItems(note: "skipped").noticeHeadline(vmName: vm)
                 == "Clipboard not copied to \u{201C}Build VM\u{201D}.")
         for issue in [
             ClipboardTransferIssue.partialFileSetUnservable(),
             .pasteTimedOut(),
             .pasteTransferFailed(),
-            .pasteFolderUnpackFailed(),
+            .pasteUnpackFailed(),
             .pasteFileStagingFailed(),
             ClipboardTransferIssue(kind: .diskFull(needed: 1, available: 0), date: Date()),
         ] {
@@ -135,7 +132,6 @@ struct ClipboardTransferIssueTests {
             ClipboardTransferIssue.partialFileSetUnservable(),
             .pasteTimedOut(),
             .pasteTransferFailed(),
-            .folderSkippedForOutdatedGuest(),
             .forwardSkippedItems(note: "skipped"),
             .staleCopyRetracted(hasSuccessor: true),
             ClipboardTransferIssue(kind: .diskFull(needed: 1, available: 0), date: Date()),
@@ -154,7 +150,6 @@ struct ClipboardTransferIssueTests {
             .partialFileSetUnservable(),
             .pasteTimedOut(),
             .pasteTransferFailed(),
-            .folderSkippedForOutdatedGuest(),
             .forwardSkippedItems(note: "skipped"),
             .staleCopyRetracted(hasSuccessor: true),
             ClipboardTransferIssue(kind: .diskFull(needed: 1, available: 0), date: Date()),
@@ -196,9 +191,6 @@ struct ClipboardTransferIssueTests {
             ClipboardTransferIssue.staleCopyRetracted(hasSuccessor: true).menuLineText
                 == "Clipboard: earlier copy was removed")
         #expect(
-            ClipboardTransferIssue.folderSkippedForOutdatedGuest().menuLineText
-                == "Clipboard: folder copy needs a guest agent update")
-        #expect(
             ClipboardTransferIssue.forwardSkippedItems(note: "skipped").menuLineText
                 == "Clipboard: some items weren't forwarded")
     }
@@ -210,7 +202,6 @@ struct ClipboardTransferIssueTests {
             .pasteTimedOut(),
             .pasteTransferFailed(),
             .staleCopyRetracted(hasSuccessor: true),
-            .folderSkippedForOutdatedGuest(),
             peerError(.pasteFailed),
         ] {
             #expect(!issue.menuLineText.hasSuffix("."))

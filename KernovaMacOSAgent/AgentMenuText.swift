@@ -33,10 +33,6 @@ enum AgentMenuText {
         case .receivedFromHost: return "Clipboard: received from host"
         case .pasteRefused(let code, let pasteLimitBytes):
             return "Clipboard: \(pasteRefusalDetail(code, pasteLimitBytes: pasteLimitBytes))"
-        case .copyShortened(let offeringAnything):
-            return offeringAnything
-                ? "Clipboard: shared without folders — Kernova on the Mac needs updating"
-                : "Clipboard: folders not shared — Kernova on the Mac needs updating"
         case .copyCarriedNothing: return "Clipboard: nothing in that copy could be shared"
         case .disabled: return "Clipboard: disabled"
         }
@@ -44,9 +40,9 @@ enum AgentMenuText {
 
     /// Why a paste of the host's clipboard did not happen, per failure code.
     ///
-    /// `copyTooLarge`, `pasteIncompleteSet`, `forwardItemsSkipped`,
-    /// `folderPeerOutdated` and the three drop codes are outcomes the guest
-    /// reports rather than receives, so they read as the generic failure.
+    /// `copyTooLarge`, `pasteIncompleteSet`, `forwardItemsSkipped` and the three
+    /// drop codes are outcomes the guest reports rather than receives, so they
+    /// read as the generic failure.
     private static func pasteRefusalDetail(
         _ code: ClipboardErrorCode, pasteLimitBytes: Int?
     ) -> String {
@@ -58,7 +54,7 @@ enum AgentMenuText {
         case .pasteDiskFull: return "not enough disk space to paste"
         case .pasteTimeout: return "paste timed out"
         case .pasteFailed, .copyTooLarge, .pasteIncompleteSet, .forwardItemsSkipped,
-            .folderPeerOutdated, .dropDiskFull, .dropDownloadsDenied, .dropFailed:
+            .dropDiskFull, .dropDownloadsDenied, .dropFailed:
             return "paste failed"
         }
     }

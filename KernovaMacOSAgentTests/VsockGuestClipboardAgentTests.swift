@@ -262,7 +262,6 @@ struct VsockGuestClipboardAgentTests {
         pasteboard: FakePasteboard, agentFd: Int32,
         clock: any EngineClock = MonotonicEngineClock(),
         stagingTempRoot: URL? = nil,
-        hostStreamsDirectories: Bool = true,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
@@ -286,9 +285,6 @@ struct VsockGuestClipboardAgentTests {
                     UUID().uuidString, isDirectory: true),
             progressRevealDelay: progressRevealDelay, progressIdleLinger: progressIdleLinger,
             onProgress: onProgress, onClipboardNotice: onClipboardNotice)
-        // Production reads this from the control agent's `Hello`; a test host is
-        // current unless it says otherwise.
-        agent.hostStreamsDirectories = { hostStreamsDirectories }
         return agent
     }
 
@@ -406,8 +402,15 @@ struct VsockGuestClipboardAgentTests {
             transferID: transferID, from: hostChannel)
         #expect(!transfer.begin.isInline)
         #expect(transfer.begin.filename == "notes.bin")
-        #expect(transfer.bytes == contents)
-        #expect(transfer.end.sha256 == Data(SHA256.hash(data: contents)))
+        // The file crosses as a one-entry archive, so its wire size is unknown
+        // at Begin and End carries the authoritative count and digest.
+        #expect(transfer.begin.isArchive)
+        #expect(transfer.begin.totalBytes == 0)
+        #expect(transfer.end.totalBytes == UInt64(transfer.bytes.count))
+        #expect(transfer.end.sha256 == Data(SHA256.hash(data: transfer.bytes)))
+        let unpacked = try extractedClipboardArchive(transfer.bytes)
+        defer { try? FileManager.default.removeItem(at: unpacked) }
+        #expect(try Data(contentsOf: unpacked.appendingPathComponent("notes.bin")) == contents)
     }
 
     @Test("outbound copied zero-byte file: offered and streamed as an empty payload")
@@ -440,8 +443,8 @@ struct VsockGuestClipboardAgentTests {
         #expect(info.filename == "empty.bin")
         #expect(!info.isInline)
 
-        // The whole stream path survives at zero bytes: Begin, no chunks, End
-        // carrying the empty-input SHA-256.
+        // The whole stream path survives at zero bytes: the archive of an
+        // empty entry still crosses and unpacks to an empty file.
         let transferID: UInt64 = (offer.generation << 16) | 0
         try hostChannel.send(
             makeRequestFrame(
@@ -451,8 +454,11 @@ struct VsockGuestClipboardAgentTests {
             transferID: transferID, from: hostChannel)
         #expect(transfer.begin.totalBytes == 0)
         #expect(transfer.begin.filename == "empty.bin")
-        #expect(transfer.bytes.isEmpty)
-        #expect(transfer.end.sha256 == Data(SHA256.hash(data: Data())))
+        #expect(transfer.begin.isArchive)
+        #expect(transfer.end.sha256 == Data(SHA256.hash(data: transfer.bytes)))
+        let unpacked = try extractedClipboardArchive(transfer.bytes)
+        defer { try? FileManager.default.removeItem(at: unpacked) }
+        #expect(try Data(contentsOf: unpacked.appendingPathComponent("empty.bin")).isEmpty)
     }
 
     @Test("serving a host pull publishes an outbound readout, cleared at the terminal")
@@ -491,7 +497,9 @@ struct VsockGuestClipboardAgentTests {
             makeRequestFrame(
                 generation: offer.generation, transferID: transferID, uti: info.uti))
         let transfer = try await collectOutboundTransfer(transferID: transferID, from: hostChannel)
-        #expect(transfer.bytes == contents)
+        let unpacked = try extractedClipboardArchive(transfer.bytes)
+        defer { try? FileManager.default.removeItem(at: unpacked) }
+        #expect(try Data(contentsOf: unpacked.appendingPathComponent("notes.bin")) == contents)
 
         try await log.gate.wait { log.wasCleared }
         let readout = try #require(log.all.last)
@@ -743,172 +751,6 @@ struct VsockGuestClipboardAgentTests {
                 atPath: scaffoldOut.appendingPathComponent("sub/.keep").path))
     }
 
-    @Test("outbound: a folder-only copy offers nothing rather than the pasteboard's leftovers")
-    func outboundFolderOnlyCopyOffersNothingToAnOlderHost() async throws {
-        let pasteboard = FakePasteboard()
-        let (agentFd, remoteFd) = try makeRawSocketPair()
-        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
-        hostChannel.start()
-        defer { hostChannel.close() }
-
-        let agent = makeAgent(
-            pasteboard: pasteboard, agentFd: agentFd, hostStreamsDirectories: false)
-        defer { agent.stop() }
-        try await startAgentAndWaitForLiveChannel(agent: agent)
-
-        let folder = try writeTempFolder(name: "Project", files: [("f.txt", Data("x".utf8))])
-        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
-        // A Finder folder copy leaves a file URL *plus* Finder's own private
-        // flavors. With the folder filtered out there is no file candidate left,
-        // and falling through to the raw snapshot would ship those leftovers to
-        // the host as if they were the copy.
-        pasteboard.setItems([
-            [
-                (type: .fileURL, data: Data(folder.absoluteString.utf8)),
-                (type: .init("com.apple.finder.node"), data: Data([0xDE, 0xAD])),
-            ]
-        ])
-        await MainActor.run { agent.checkClipboardChange() }
-
-        // A later, offerable copy: the first offer to reach the host proves what
-        // the folder-only snapshot did — anything it had sent would be sitting
-        // ahead of this one on the channel.
-        pasteboard.setItems([
-            [(type: .string, data: Data("plain".utf8))]
-        ])
-        await MainActor.run { agent.checkClipboardChange() }
-
-        let offer = try await awaitOffer(on: hostChannel)
-        #expect(offer.repInfo.map(\.uti) == [ClipboardContent.utf8TextUTI])
-        #expect(offer.repInfo.allSatisfy { !$0.isDirectory })
-    }
-
-    @Test("outbound: a copied folder is left out of the offer for a host that can't receive one")
-    func outboundFolderDroppedForAnOlderHost() async throws {
-        let pasteboard = FakePasteboard()
-        let (agentFd, remoteFd) = try makeRawSocketPair()
-        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
-        hostChannel.start()
-        defer { hostChannel.close() }
-
-        let capable = Box(false)
-        let notices = AtomicInt()
-        let agent = makeAgent(
-            pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
-        agent.hostStreamsDirectories = { capable.value }
-        defer { agent.stop() }
-        try await startAgentAndWaitForLiveChannel(agent: agent)
-
-        let folder = try writeTempFolder(name: "Project", files: [("f.txt", Data("x".utf8))])
-        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
-        let file = try writeTempFile(name: "note.txt", data: Data("hi".utf8))
-        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
-        pasteboard.setItems([
-            [(type: .fileURL, data: Data(folder.absoluteString.utf8))],
-            [(type: .fileURL, data: Data(file.absoluteString.utf8))],
-        ])
-        await MainActor.run { agent.checkClipboardChange() }
-
-        let offer = try await awaitOffer(on: hostChannel)
-        #expect(offer.repInfo.map(\.filename) == ["note.txt"])
-        #expect(offer.repInfo.allSatisfy { !$0.isDirectory })
-
-        // The copy was made in this guest, so its own menu says what was left
-        // out — and outranks the `.offeredToHost` the shortened offer records,
-        // which would otherwise read as a copy that fully crossed.
-        try await notices.changed.wait { notices.value == 1 }
-        #expect(
-            await MainActor.run { agent.clipboardActivity }
-                == .copyShortened(offeringAnything: true))
-
-        // A re-check of the same snapshot is not a second copy, so it is not
-        // owed a second interruption.
-        await MainActor.run { agent.checkClipboardChange() }
-        pasteboard.setItems([[(type: .string, data: Data("plain".utf8))]])
-        await MainActor.run { agent.checkClipboardChange() }
-        let plain = try await awaitOffer(on: hostChannel)
-        #expect(plain.repInfo.map(\.uti) == [ClipboardContent.utf8TextUTI])
-        #expect(notices.value == 1)
-
-        // Both dedup keys describe what was offered — the change count and the
-        // offered content's digest — so neither notices the host catching up.
-        // The dropped folder has to be re-offered once it can be received.
-        pasteboard.setItems([
-            [(type: .fileURL, data: Data(folder.absoluteString.utf8))],
-            [(type: .fileURL, data: Data(file.absoluteString.utf8))],
-        ])
-        capable.value = true
-        await MainActor.run { agent.checkClipboardChange() }
-        let second = try await awaitOffer(on: hostChannel)
-        #expect(second.repInfo.map(\.filename) == ["Project", "note.txt"])
-        #expect(second.repInfo.map(\.isDirectory) == [true, false])
-        #expect(second.generation > offer.generation)
-    }
-
-    @Test("outbound: a folder-only copy tells the guest's own menu nothing crossed")
-    func outboundFolderOnlyCopyRaisesTheGuestNotice() async throws {
-        let pasteboard = FakePasteboard()
-        let (agentFd, remoteFd) = try makeRawSocketPair()
-        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
-        hostChannel.start()
-        defer { hostChannel.close() }
-
-        let notices = AtomicInt()
-        let agent = makeAgent(
-            pasteboard: pasteboard, agentFd: agentFd, hostStreamsDirectories: false,
-            onClipboardNotice: { notices.increment() })
-        defer { agent.stop() }
-        try await startAgentAndWaitForLiveChannel(agent: agent)
-
-        let folder = try writeTempFolder(name: "Project", files: [("f.txt", Data("x".utf8))])
-        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
-        pasteboard.setItems([[(type: .fileURL, data: Data(folder.absoluteString.utf8))]])
-        await MainActor.run { agent.checkClipboardChange() }
-
-        // Nothing goes to the host, so the guest's menu is the only account of a
-        // copy that produced no offer at all.
-        try await notices.changed.wait { notices.value == 1 }
-        #expect(
-            await MainActor.run { agent.clipboardActivity }
-                == .copyShortened(offeringAnything: false))
-    }
-
-    @Test("outbound: a folder-only copy releases the offer an older host is still holding, once")
-    func outboundFolderOnlyCopyReleasesThePreviousOffer() async throws {
-        let pasteboard = FakePasteboard()
-        let (agentFd, remoteFd) = try makeRawSocketPair()
-        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
-        hostChannel.start()
-        defer { hostChannel.close() }
-
-        let agent = makeAgent(
-            pasteboard: pasteboard, agentFd: agentFd, hostStreamsDirectories: false)
-        defer { agent.stop() }
-        try await startAgentAndWaitForLiveChannel(agent: agent)
-
-        pasteboard.setString("carried", forType: .string)
-        await MainActor.run { agent.checkClipboardChange() }
-        let offer = try await awaitOffer(on: hostChannel)
-
-        let folder = try writeTempFolder(name: "Project", files: [("f.txt", Data("x".utf8))])
-        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
-        pasteboard.setItems([[(type: .fileURL, data: Data(folder.absoluteString.utf8))]])
-        await MainActor.run { agent.checkClipboardChange() }
-
-        // Nothing about this copy can cross, but the pasteboard still moved on:
-        // leaving the offer standing would keep a paste on the Mac serving
-        // "carried", which the user has already replaced.
-        let release = try await awaitRelease(on: hostChannel)
-        #expect(release.generation == offer.generation)
-
-        // This branch is re-entered on every poll tick (its change count is
-        // deliberately not advanced, so the copy can still be offered once the
-        // host advertises the capability); the release must not repeat with it.
-        await MainActor.run { agent.checkClipboardChange() }
-        let extra = try await maybeNextFrame(from: hostChannel, skippingAcks: true)
-        #expect(extra == nil)
-    }
-
     @Test("outbound: a copy nothing survives releases the host's previous offer")
     func outboundUnreadableCopyReleasesThePreviousOffer() async throws {
         let pasteboard = FakePasteboard()
@@ -1133,7 +975,7 @@ struct VsockGuestClipboardAgentTests {
         let pull = lazyPull(pasteboard, forType: .fileURL)
         try await driveInboundStream(
             generation: 7, uti: UTType.folder.identifier, filename: "Shared", payload: aarBytes,
-            isInline: false, on: hostChannel)
+            isInline: false, payloadIsArchived: true, on: hostChannel)
         let folderURL = try #require(
             (await pull.value).flatMap { String(data: $0, encoding: .utf8) }
                 .flatMap(URL.init(string:)))
@@ -1190,7 +1032,7 @@ struct VsockGuestClipboardAgentTests {
         let emptyPull = lazyPull(pasteboard, forType: .fileURL, itemIndex: 0)
         try await driveInboundStream(
             generation: 13, uti: UTType.folder.identifier, filename: "Empty",
-            payload: emptyBytes, isInline: false, on: hostChannel)
+            payload: emptyBytes, isInline: false, payloadIsArchived: true, on: hostChannel)
         let emptyURL = try #require(
             (await emptyPull.value).flatMap { String(data: $0, encoding: .utf8) }
                 .flatMap(URL.init(string:)))
@@ -1204,7 +1046,7 @@ struct VsockGuestClipboardAgentTests {
         let scaffoldPull = lazyPull(pasteboard, forType: .fileURL, itemIndex: 1)
         try await driveInboundStream(
             generation: 13, uti: UTType.folder.identifier, filename: "Scaffold",
-            payload: scaffoldBytes, isInline: false, on: hostChannel)
+            payload: scaffoldBytes, isInline: false, payloadIsArchived: true, on: hostChannel)
         let scaffoldURL = try #require(
             (await scaffoldPull.value).flatMap { String(data: $0, encoding: .utf8) }
                 .flatMap(URL.init(string:)))
@@ -1246,7 +1088,7 @@ struct VsockGuestClipboardAgentTests {
         try hostChannel.send(
             makeBeginFrame(
                 generation: 9, transferID: req.transferID, uti: UTType.folder.identifier,
-                totalBytes: aarBytes.count, filename: "Broken", isInline: false))
+                totalBytes: 0, filename: "Broken", isInline: false, isArchive: true))
         try hostChannel.send(
             makeChunkFrame(transferID: req.transferID, offset: 0, data: aarBytes))
         // End carries the right byte count but the digest of DIFFERENT bytes —
@@ -3552,7 +3394,7 @@ struct VsockGuestClipboardAgentTests {
     /// frames and let it reassemble.
     private func driveInboundStream(
         generation: UInt64, uti: String, filename: String, payload: Data, isInline: Bool,
-        declaredTotalBytes: Int? = nil,
+        payloadIsArchived: Bool = false,
         chunkSize: Int = 64 * 1024, on channel: VsockChannel,
         validate: (Kernova_V1_ClipboardRequest) -> Void = { _ in }
     ) async throws {
@@ -3560,33 +3402,47 @@ struct VsockGuestClipboardAgentTests {
         validate(req)
         try streamInbound(
             generation: generation, transferID: req.transferID, uti: uti, filename: filename,
-            payload: payload, isInline: isInline, declaredTotalBytes: declaredTotalBytes,
+            payload: payload, isInline: isInline, payloadIsArchived: payloadIsArchived,
             chunkSize: chunkSize, on: channel)
     }
 
     /// Streams `Begin`/`Chunk`(s)/`End` for one inbound transfer to the agent.
+    ///
+    /// `payload` is what the user sees: an inline rep crosses raw, everything
+    /// else crosses as the archive the host's sender would encode. Pass
+    /// `payloadIsArchived` when `payload` is already that archive — a folder's
+    /// tree, or bytes a test wants the extract itself to reject.
     ///
     /// Chunked rather than sent as one frame so a large payload can't outrun the
     /// receiver's flow-control window — the host's sender chunks for the same
     /// reason.
     private func streamInbound(
         generation: UInt64, transferID: UInt64, uti: String, filename: String = "", payload: Data,
-        isInline: Bool, declaredTotalBytes: Int? = nil, chunkSize: Int = 64 * 1024,
+        isInline: Bool, payloadIsArchived: Bool = false, chunkSize: Int = 64 * 1024,
         on channel: VsockChannel
     ) throws {
+        let isArchive = !isInline
+        let wire: Data
+        if !isArchive || payloadIsArchived {
+            wire = payload
+        } else {
+            wire = try clipboardArchiveBytes(
+                of: .blob(payload, name: filename.isEmpty ? "data" : filename))
+        }
         try channel.send(
             makeBeginFrame(
                 generation: generation, transferID: transferID, uti: uti,
-                totalBytes: declaredTotalBytes ?? payload.count, filename: filename,
-                isInline: isInline))
+                // An archive's wire size isn't known until its last byte.
+                totalBytes: isArchive ? 0 : wire.count, filename: filename,
+                isInline: isInline, isArchive: isArchive))
         var offset = 0
-        while offset < payload.count {
-            let end = min(offset + chunkSize, payload.count)
-            let slice = payload.subdata(in: offset..<end)
+        while offset < wire.count {
+            let end = min(offset + chunkSize, wire.count)
+            let slice = wire.subdata(in: offset..<end)
             try channel.send(makeChunkFrame(transferID: transferID, offset: offset, data: slice))
             offset = end
         }
-        try channel.send(makeEndFrame(transferID: transferID, payload: payload))
+        try channel.send(makeEndFrame(transferID: transferID, payload: wire))
     }
 
     // MARK: - Negative-wait helpers

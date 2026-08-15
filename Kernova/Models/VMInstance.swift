@@ -799,9 +799,9 @@ final class VMInstance {
     enum FeatureChannelRequirement {
         /// Log forwarding — the handshake alone.
         case none
-        /// The clipboard channel: `clipboard.stream.v1`.
+        /// The clipboard channel: `clipboard.stream.v2`.
         case clipboardStreaming
-        /// The drop channel: `drop.files.v1`.
+        /// The drop channel: `drop.files.v2`.
         case dropFiles
 
         /// The capability tag a guest must advertise, or `nil` when none is
@@ -809,8 +809,8 @@ final class VMInstance {
         var capability: String? {
             switch self {
             case .none: return nil
-            case .clipboardStreaming: return KernovaCapability.clipboardStreamV1
-            case .dropFiles: return KernovaCapability.dropFilesV1
+            case .clipboardStreaming: return KernovaCapability.clipboardStreamV2
+            case .dropFiles: return KernovaCapability.dropFilesV2
             }
         }
     }
@@ -984,9 +984,6 @@ final class VMInstance {
                 channel: channel, label: self.name, instanceID: self.instanceID,
                 maxPasteBytes: { [weak self] in
                     self?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes
-                },
-                peerStreamsDirectories: { [weak self] in
-                    self?.vsockControlService?.guestSupportsDirectoryStreaming ?? false
                 })
             let publisher = self.hostClipboardPublisher
             service.hostPasteboardHoldsOurWrite = { publisher.pasteboardHoldsLastWrite }
