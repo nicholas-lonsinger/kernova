@@ -148,7 +148,15 @@ final class VsockDropService {
         guard consumeTask == nil else { return }
         isConnected = true
 
-        let sender = ClipboardStreamSender(channel: channel)
+        let sender = ClipboardStreamSender(
+            channel: channel,
+            // The only measured throughput number for a drop, so it logs at
+            // `.notice` (persisted) rather than `.debug`.
+            onTransferTimed: { [label = self.label, tag = self.connectionTag] metrics in
+                Self.logger.notice(
+                    "Host→guest drop \(metrics.transferID, privacy: .public) ('\(label, privacy: .public)', conn=\(tag, privacy: .public)) sent: \(metrics.logSummary, privacy: .public)"
+                )
+            })
         self.sender = sender
 
         let channel = self.channel

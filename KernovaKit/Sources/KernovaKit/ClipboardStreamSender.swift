@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import os
 
 /// Streams one clipboard representation at a time to a peer in reply to a
 /// `ClipboardRequest`, with windowed flow control and a streaming SHA-256.
@@ -22,11 +23,21 @@ public final class ClipboardStreamSender: @unchecked Sendable {
     private let maxResidentInlineBytes: Int
 
     private let archiveSource: ClipboardArchiveSourceFactory
+    private let clock: any EngineClock
+    private let onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)?
+    private let onCreditWait: (@Sendable (_ transferID: UInt64) -> Void)?
 
     private let lock = NSLock()
     private var transfers: [UInt64: OutboundTransfer] = [:]
 
+    /// The archive source every production transfer reads through; a test
+    /// substitutes one that parks or paces.
+    static let defaultArchiveSource: ClipboardArchiveSourceFactory = { source, label, capacity in
+        ArchiveChunkReader(source: source, label: label, capacityBytes: capacity)
+    }
+
     /// - Parameters:
+    ///   - clock: the timeline the stage timings are measured on.
     ///   - channel: the wire to write frames on (`writeFramed` is thread-safe).
     ///   - chunkSize: per-chunk payload size; defaults to 64 KiB.
     ///   - windowBytes: in-flight credit window; clamped up to at least one
@@ -35,38 +46,54 @@ public final class ClipboardStreamSender: @unchecked Sendable {
     ///     aborting a hung peer.
     ///   - maxResidentInlineBytes: the largest inline payload streamed raw; a
     ///     larger one is archived so the receiver never has to hold it whole.
+    ///   - onTransferTimed: fired off the caller's actor once per *successful*
+    ///     transfer, carrying its stage timings for the owner's throughput log
+    ///     line. A transfer that aborts reports nothing.
     public convenience init(
-        channel: VsockChannel,
-        chunkSize: Int = ClipboardStreamTuning.defaultChunkPayloadSize,
-        windowBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
-        noAckTimeout: TimeInterval = 10,
-        maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes
-    ) {
-        self.init(
-            channel: channel, chunkSize: chunkSize, windowBytes: windowBytes,
-            noAckTimeout: noAckTimeout, maxResidentInlineBytes: maxResidentInlineBytes,
-            archiveSource: { source, label, capacity in
-                ArchiveChunkReader(source: source, label: label, capacityBytes: capacity)
-            })
-    }
-
-    /// Creates a sender whose archived transfers read through `archiveSource`.
-    ///
-    /// A test stands in a source that parks, which is the only way to exercise
-    /// an abort landing while the transfer thread is inside a read.
-    init(
+        clock: any EngineClock = makePlatformEngineClock(),
         channel: VsockChannel,
         chunkSize: Int = ClipboardStreamTuning.defaultChunkPayloadSize,
         windowBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
         noAckTimeout: TimeInterval = 10,
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
+        onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)? = nil
+    ) {
+        self.init(
+            clock: clock,
+            channel: channel, chunkSize: chunkSize, windowBytes: windowBytes,
+            noAckTimeout: noAckTimeout, maxResidentInlineBytes: maxResidentInlineBytes,
+            onTransferTimed: onTransferTimed,
+            archiveSource: Self.defaultArchiveSource)
+    }
+
+    /// Creates a sender whose archived transfers read through `archiveSource`,
+    /// and which announces each credit wait before parking on it.
+    ///
+    /// A test stands in a source that parks, which is the only way to exercise
+    /// an abort landing while the transfer thread is inside a read; and hooks
+    /// `onCreditWait` — called on the transfer's own queue with the sender's
+    /// stall reading already taken — to advance a test clock and release the
+    /// peer's acks, which brackets the measured stall exactly rather than
+    /// racing the park.
+    init(
+        clock: any EngineClock = makePlatformEngineClock(),
+        channel: VsockChannel,
+        chunkSize: Int = ClipboardStreamTuning.defaultChunkPayloadSize,
+        windowBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
+        noAckTimeout: TimeInterval = 10,
+        maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
+        onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)? = nil,
+        onCreditWait: (@Sendable (_ transferID: UInt64) -> Void)? = nil,
         archiveSource: @escaping ClipboardArchiveSourceFactory
     ) {
+        self.clock = clock
         self.channel = channel
         self.chunkSize = max(1, chunkSize)
         self.windowBytes = max(windowBytes, max(1, chunkSize))
         self.noAckTimeout = noAckTimeout
         self.maxResidentInlineBytes = max(0, maxResidentInlineBytes)
+        self.onTransferTimed = onTransferTimed
+        self.onCreditWait = onCreditWait
         self.archiveSource = archiveSource
     }
 
@@ -115,7 +142,8 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         onComplete: (@Sendable (_ success: Bool) -> Void)? = nil
     ) {
         let transfer = OutboundTransfer(
-            transferID: transferID, generation: generation, windowBytes: windowBytes)
+            transferID: transferID, generation: generation, windowBytes: windowBytes,
+            beganAt: clock.now)
         // Ignore a duplicate transfer_id rather than overwrite an in-flight
         // transfer, which would orphan its open reader.
         let inserted = lock.withLock { () -> Bool in
@@ -206,6 +234,12 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         onProgress: (@Sendable (_ bytesSent: Int, _ totalBytes: Int) -> Void)?,
         onComplete: (@Sendable (_ success: Bool) -> Void)?
     ) {
+        // Declared first so it ends last: the interval covers the whole
+        // transfer, `onComplete` included.
+        let signpostState = ClipboardSignposts.transfers.beginInterval(
+            "Clipboard send", id: ClipboardSignposts.transfers.makeSignpostID())
+        defer { ClipboardSignposts.transfers.endInterval("Clipboard send", signpostState) }
+
         // `onComplete` must fire on every exit path so the owner can clear any
         // progress UI; it runs *after* `remove` (defers run LIFO).
         var didComplete = false
@@ -302,10 +336,33 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         // callback that has no timeout.
         defer { reader.close() }
 
-        didComplete = stream(
+        let timings = stream(
             transfer: transfer, reader: reader, declaredByteCount: declaredByteCount,
             uti: representation.uti, filename: representation.filename, isInline: isInline,
             maxAcceptByteCount: maxAcceptByteCount, isCurrent: isCurrent, onProgress: onProgress)
+        didComplete = timings != nil
+
+        // Successful transfers only, mirroring the receive side: an abort — a
+        // refusal, a supersession, a read failure, a dead channel — reports no
+        // timing at all, since a partial figure would read as a rate.
+        if let timings, let onTransferTimed {
+            onTransferTimed(
+                ClipboardTransferMetrics(
+                    transferID: transfer.transferID,
+                    uti: representation.uti,
+                    byteCount: timings.payloadByteCount,
+                    wireByteCount: timings.wireByteCount,
+                    duration: transfer.beganAt.seconds(to: clock.now),
+                    detail: .outbound(
+                        .init(
+                            isArchived: declaredByteCount == nil,
+                            chunkCount: timings.chunkCount,
+                            timeToFirstChunk: timings.firstChunkAt.map {
+                                transfer.beganAt.seconds(to: $0)
+                            },
+                            creditStall: timings.creditStall,
+                            sourceWait: timings.sourceWait))))
+        }
     }
 
     /// The archive entry name for a one-entry payload: the representation's
@@ -334,8 +391,27 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         return reader
     }
 
+    /// Stage timings accumulated while one transfer streams.
+    ///
+    /// Lives on the transfer's own queue as a local of `stream`, never on
+    /// `OutboundTransfer` — whose mutable state is `condition`-guarded, and
+    /// whose lock the per-chunk accumulation must stay out of.
+    private struct OutboundStageTimings {
+        var firstChunkAt: EngineInstant?
+        var chunkCount = 0
+        var creditStall: TimeInterval = 0
+        var sourceWait: TimeInterval = 0
+        /// Bytes handed to the socket — what the `ClipboardStreamEnd` declares.
+        var wireByteCount = 0
+        /// The same figure the accept ceiling and the progress readout are
+        /// stated in: the payload the offer described, which for an archive is
+        /// the uncompressed archive rather than the compressed wire bytes.
+        var payloadByteCount = 0
+    }
+
     /// Announces a transfer and streams its source to the peer under the credit
-    /// window, returning whether every byte was handed to the socket.
+    /// window, returning its stage timings once every byte has been handed to
+    /// the socket, or `nil` if it ended early.
     ///
     /// `declaredByteCount` is `nil` for an archived payload, whose size is only
     /// known once it has been produced. Such a transfer announces
@@ -351,7 +427,28 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         maxAcceptByteCount: UInt64,
         isCurrent: @escaping @Sendable (UInt64) -> Bool,
         onProgress: (@Sendable (_ bytesSent: Int, _ totalBytes: Int) -> Void)?
-    ) -> Bool {
+    ) -> OutboundStageTimings? {
+        var timings = OutboundStageTimings()
+        // Read once per transfer, never per chunk: the per-chunk intervals below
+        // are on the hot path, and `isEnabled` is false until an instrument
+        // attaches.
+        let stageSignposts = ClipboardSignposts.stages.isEnabled
+        let stageID = ClipboardSignposts.stages.makeSignpostID()
+
+        // Reads a chunk from the source, charging the wait to `sourceWait` —
+        // which for an archived payload is the time the encoder ran behind the
+        // transport.
+        func timedRead(upTo count: Int) -> Data? {
+            let startedAt = clock.now
+            let interval =
+                stageSignposts
+                ? ClipboardSignposts.stages.beginInterval("source read", id: stageID) : nil
+            let chunk = reader.read(upTo: count)
+            if let interval { ClipboardSignposts.stages.endInterval("source read", interval) }
+            timings.sourceWait += startedAt.seconds(to: clock.now)
+            return chunk
+        }
+
         // Retirement is checked per chunk in the loop below, which a zero-byte
         // payload never enters — so check once here, before anything is
         // announced. Every transfer then honors an abort or supersession that
@@ -360,12 +457,12 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         let retirement = transfer.retirement()
         if retirement.retired {
             notifyPeerOfRetirement(transfer, reason: retirement.reason)
-            return false
+            return nil
         }
         guard isCurrent(transfer.generation) else {
             transfer.markAborted(.superseded)
             notifyPeerOfRetirement(transfer, reason: .superseded)
-            return false
+            return nil
         }
 
         guard
@@ -382,7 +479,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
                         $0.isArchive = declaredByteCount == nil
                     }
                 })
-        else { return false }  // channel dead — nothing more to do
+        else { return nil }  // channel dead — nothing more to do
 
         var hasher = SHA256()
         var offset = 0
@@ -395,26 +492,26 @@ public final class ClipboardStreamSender: @unchecked Sendable {
             // tail is usually shorter than a chunk. Reserving a whole chunk's
             // credit for either would park the sender on credit for bytes it is
             // never going to send, which nothing else can then unblock.
-            guard var chunk = reader.read(upTo: nextChunkSize) else {
+            guard var chunk = timedRead(upTo: nextChunkSize) else {
                 // A retirement is what woke this read when it was parked, so it
                 // is the peer's news rather than a source failure.
                 let retirement = transfer.retirement()
                 if retirement.retired {
                     notifyPeerOfRetirement(transfer, reason: retirement.reason)
-                    return false
+                    return nil
                 }
                 sendAbort(transfer: transfer, code: .readError, message: "Source read failed at offset \(offset)")
-                return false
+                return nil
             }
             // Fill the chunk: a partial read otherwise puts one frame on the wire
             // per dribble from the source. A reader that satisfies the whole
             // request pays nothing here — the loop body never runs.
             while !chunk.isEmpty, chunk.count < nextChunkSize {
-                guard let more = reader.read(upTo: nextChunkSize - chunk.count) else {
+                guard let more = timedRead(upTo: nextChunkSize - chunk.count) else {
                     sendAbort(
                         transfer: transfer, code: .readError,
                         message: "Source read failed at offset \(offset + chunk.count)")
-                    return false
+                    return nil
                 }
                 if more.isEmpty { break }
                 chunk.append(more)
@@ -426,22 +523,33 @@ public final class ClipboardStreamSender: @unchecked Sendable {
                     sendAbort(
                         transfer: transfer, code: .readError,
                         message: "Source read failed at offset \(offset)")
-                    return false
+                    return nil
                 }
                 break
             }
 
             // Wait for the go-signal (first ack) and then for credit, bounded by
-            // the no-ack deadline; bail on abort.
+            // the no-ack deadline; bail on abort. The stall reading is taken
+            // before `onCreditWait` fires, so a test that advances its clock in
+            // that hook is bracketed by the measurement rather than racing it.
+            let creditStartedAt = clock.now
+            onCreditWait?(transfer.transferID)
+            let creditInterval =
+                stageSignposts
+                ? ClipboardSignposts.stages.beginInterval("credit wait", id: stageID) : nil
             let outcome = transfer.awaitCredit(
                 offset: offset, chunkSize: chunk.count, timeout: noAckTimeout)
+            if let creditInterval {
+                ClipboardSignposts.stages.endInterval("credit wait", creditInterval)
+            }
+            timings.creditStall += creditStartedAt.seconds(to: clock.now)
             switch outcome {
             case .aborted(let reason):
                 notifyPeerOfRetirement(transfer, reason: reason)
-                return false
+                return nil
             case .timedOut:
                 sendAbort(transfer: transfer, code: .ackTimeout, message: "Peer stopped acknowledging")
-                return false
+                return nil
             case .proceed:
                 break
             }
@@ -450,7 +558,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
             guard isCurrent(transfer.generation) else {
                 transfer.markAborted(.superseded)
                 notifyPeerOfRetirement(transfer, reason: .superseded)
-                return false
+                return nil
             }
 
             // The requester's ceiling, enforced as bytes are produced. A declared
@@ -469,21 +577,30 @@ public final class ClipboardStreamSender: @unchecked Sendable {
                     message:
                         "Requester cannot accept more than \(maxAcceptByteCount) bytes; the payload has produced \(producedBytes)"
                 )
-                return false
+                return nil
             }
             hasher.update(data: chunk)
 
-            guard
-                send(
-                    .with {
-                        $0.protocolVersion = 1
-                        $0.clipboardChunk = .with {
-                            $0.transferID = transfer.transferID
-                            $0.offset = UInt64(offset)
-                            $0.data = chunk
-                        }
-                    })
-            else { return false }  // channel dead
+            let writeInterval =
+                stageSignposts
+                ? ClipboardSignposts.stages.beginInterval("frame write", id: stageID) : nil
+            let wrote = send(
+                .with {
+                    $0.protocolVersion = 1
+                    $0.clipboardChunk = .with {
+                        $0.transferID = transfer.transferID
+                        $0.offset = UInt64(offset)
+                        $0.data = chunk
+                    }
+                })
+            if let writeInterval {
+                ClipboardSignposts.stages.endInterval("frame write", writeInterval)
+            }
+            guard wrote else { return nil }  // channel dead
+            // One clock read for the whole transfer: the ramp is the first
+            // chunk's, and every later chunk only bumps the count.
+            if timings.chunkCount == 0 { timings.firstChunkAt = clock.now }
+            timings.chunkCount += 1
             offset += chunk.count
             // Report bytes handed to the socket (not yet acked) so the owner can
             // surface outbound progress. A `0` total leaves the tracker on the
@@ -492,6 +609,9 @@ public final class ClipboardStreamSender: @unchecked Sendable {
             // the source has encoded, not what the wire has carried.
             onProgress?(reader.offerUnitProgress ?? offset, declaredByteCount ?? 0)
         }
+
+        timings.wireByteCount = offset
+        timings.payloadByteCount = reader.offerUnitProgress ?? offset
 
         let digest = Data(hasher.finalize())
         _ = send(
@@ -505,7 +625,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
             })
         // All bytes were streamed; a failed End-send still counts as success —
         // delivery is then the receiver's stall concern, not a send failure.
-        return true
+        return timings
     }
 
     /// Writes a frame; returns `false` if the channel is dead (the transfer
@@ -558,6 +678,9 @@ private final class OutboundTransfer: @unchecked Sendable {
     let generation: UInt64
     let queue: DispatchQueue
     let condition = NSCondition()
+    /// When `startTransfer` registered this transfer, the anchor every send-side
+    /// timing is measured from.
+    let beganAt: EngineInstant
 
     /// Cumulative bytes the receiver has acknowledged.
     var ackedBytes = 0
@@ -584,10 +707,11 @@ private final class OutboundTransfer: @unchecked Sendable {
         case superseded
     }
 
-    init(transferID: UInt64, generation: UInt64, windowBytes: Int) {
+    init(transferID: UInt64, generation: UInt64, windowBytes: Int, beganAt: EngineInstant) {
         self.transferID = transferID
         self.generation = generation
         self.windowBytes = windowBytes
+        self.beganAt = beganAt
         self.queue = DispatchQueue(
             label: "app.kernova.clipboard.stream-send.\(transferID)", qos: .userInitiated)
     }
