@@ -399,6 +399,70 @@ struct ClipboardArchiveStreamTests {
         try fm.removeItem(at: moved)
     }
 
+    @Test("a locked file inside a folder extracts unlocked, so the whole tree can be swept")
+    func lockedFileInsideAFolderExtractsUnlocked() throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+
+        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let nested = source.appendingPathComponent("sub", isDirectory: true)
+        try fm.createDirectory(at: nested, withIntermediateDirectories: true)
+        let locked = nested.appendingPathComponent("locked.bin")
+        try Data(repeating: 0x2A, count: 1024).write(to: locked)
+        try "plain".write(
+            to: source.appendingPathComponent("plain.txt"), atomically: true, encoding: .utf8)
+        try fm.setAttributes([.immutable: true], ofItemAtPath: locked.path)
+        defer { try? fm.setAttributes([.immutable: false], ofItemAtPath: locked.path) }
+
+        let dest = try makeDestination(in: scratch)
+        try stream(from: source, into: dest)
+
+        let entry = dest.appendingPathComponent("sub/locked.bin")
+        let immutable =
+            try fm.attributesOfItem(atPath: entry.path)[.immutable] as? Bool
+        #expect(immutable != true)
+        #expect(try Data(contentsOf: entry) == Data(repeating: 0x2A, count: 1024))
+        // The proof that matters: a locked entry blocks `unlink` on itself and on
+        // every directory above it, so an undeleted tree here is a staging
+        // generation — and the shared staging parent behind it — that no sweep
+        // can ever reclaim.
+        try fm.removeItem(at: dest)
+        #expect(!fm.fileExists(atPath: dest.path))
+    }
+
+    @Test("a locked directory extracts unlocked, so its children can still be swept")
+    func lockedDirectoryExtractsUnlocked() throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+
+        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let locked = source.appendingPathComponent("locked", isDirectory: true)
+        try fm.createDirectory(at: locked, withIntermediateDirectories: true)
+        try "inside".write(
+            to: locked.appendingPathComponent("child.txt"), atomically: true, encoding: .utf8)
+        // Locked last: an immutable directory takes no new entries.
+        try fm.setAttributes([.immutable: true], ofItemAtPath: locked.path)
+        defer { try? fm.setAttributes([.immutable: false], ofItemAtPath: locked.path) }
+
+        let dest = try makeDestination(in: scratch)
+        try stream(from: source, into: dest)
+
+        // The peer authors every entry's flags, and a locked *directory* is the
+        // damaging shape: it blocks `unlink` of everything inside it, so one in
+        // a staged tree is what makes the shared staging parent's reclaim fail
+        // for good.
+        let extracted = dest.appendingPathComponent("locked")
+        let immutable = try fm.attributesOfItem(atPath: extracted.path)[.immutable] as? Bool
+        #expect(immutable != true)
+        #expect(
+            try String(contentsOf: extracted.appendingPathComponent("child.txt"), encoding: .utf8)
+                == "inside")
+        try fm.removeItem(at: dest)
+        #expect(!fm.fileExists(atPath: dest.path))
+    }
+
     @Test("a blob source round-trips as one entry")
     func blobSourceRoundTrips() throws {
         let fm = FileManager.default
@@ -566,6 +630,38 @@ struct ClipboardArchiveStreamTests {
         #expect(
             try String(contentsOf: url.appendingPathComponent("sub/a.txt"), encoding: .utf8)
                 == "hello")
+    }
+
+    @Test("writes past the drop bound are refused rather than dropped forever")
+    func writesPastTheDropBoundAreRefused() throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+
+        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        try fm.createDirectory(at: source, withIntermediateDirectories: true)
+        try "hello".write(
+            to: source.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+
+        let capacity = 64 << 10
+        let dest = try makeDestination(in: scratch)
+        let sink = ClipboardArchiveExtractSink(
+            destinationURL: dest, label: "test", capacityBytes: capacity)
+        try sink.write(try archiveBytes(of: source))
+        _ = try sink.commit()
+
+        // A peer that never sends End keeps a transfer alive for as long as its
+        // writes are taken, so the accept-and-drop window has to end somewhere.
+        let block = Data(repeating: 0, count: 4096)
+        var accepted = 0
+        #expect(throws: (any Error).self) {
+            while accepted <= capacity * 2 {
+                try sink.write(block)
+                accepted += block.count
+            }
+        }
+        #expect(accepted > 0)
+        #expect(accepted <= capacity)
     }
 
     @Test("a write after the pipeline failed is still refused")

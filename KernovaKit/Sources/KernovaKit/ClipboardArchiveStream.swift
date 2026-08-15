@@ -42,8 +42,9 @@ enum ClipboardArchiveStreamError: Error, Equatable {
 /// an archive pipeline parked in a callback that has no timeout of its own:
 /// `finish()` declares a clean end of stream from the writing side, `fail(_:)`
 /// abandons the pipe, and `complete()` reports that the reading side has finished
-/// its work — after which further writes are accepted and dropped rather than
-/// refused, since there is no longer anything they could break.
+/// its work — after which one capacity's worth of further writes is accepted and
+/// dropped rather than refused, since a straggling tail can break nothing, and
+/// anything past that is refused.
 ///
 /// `@unchecked Sendable`: every field is guarded by `condition`.
 final class ClipboardArchiveBytePipe: @unchecked Sendable {
@@ -60,6 +61,8 @@ final class ClipboardArchiveBytePipe: @unchecked Sendable {
     ///
     /// Implies `finished`.
     private var completed = false
+    /// Bytes written since `complete()` and discarded, which `capacity` bounds.
+    private var droppedBytes = 0
     private var failure: Error?
 
     /// - Parameter capacity: how many undelivered bytes park the writer. A single
@@ -72,10 +75,13 @@ final class ClipboardArchiveBytePipe: @unchecked Sendable {
 
     /// Appends `data`, parking while the pipe is at capacity.
     ///
-    /// Accepted and discarded once `complete()` has been called.
+    /// Discarded once `complete()` has been called, up to `capacity` bytes in
+    /// total; past that the writer is feeding a reader that finished long ago
+    /// and is refused.
     ///
     /// - Throws: the failure that ended the pipe, or
-    ///   ``ClipboardArchiveStreamError/streamClosed`` after `finish()`.
+    ///   ``ClipboardArchiveStreamError/streamClosed`` after `finish()` and past
+    ///   the drop bound.
     func write(_ data: Data) throws {
         guard !data.isEmpty else { return }
         condition.lock()
@@ -84,7 +90,19 @@ final class ClipboardArchiveBytePipe: @unchecked Sendable {
             condition.wait()
         }
         if let failure { throw failure }
-        guard !completed else { return }
+        if completed {
+            // The tail a completed reader legitimately leaves unread is the
+            // codec's own trailer — bytes, not a window's worth — so a peer
+            // still streaming this far past a finished extract is sending
+            // payload that no longer has anywhere to go. Counting cumulatively
+            // keeps every write past the bound refused, not just the one that
+            // crossed it.
+            droppedBytes += data.count
+            guard droppedBytes <= capacity else {
+                throw ClipboardArchiveStreamError.streamClosed
+            }
+            return
+        }
         guard !finished else { throw ClipboardArchiveStreamError.streamClosed }
         chunks.append(data)
         pendingBytes += data.count
@@ -176,8 +194,8 @@ final class ClipboardArchiveBytePipe: @unchecked Sendable {
     }
 
     /// Ends the stream from the *reading* side, which has finished successfully:
-    /// a parked writer wakes, and every write from here on is accepted and
-    /// dropped instead of refused.
+    /// a parked writer wakes, and the next `capacity` bytes written are dropped
+    /// instead of refused.
     ///
     /// Distinct from `fail(_:)`, which reports that the pipeline gave up and so
     /// must keep refusing writes.
@@ -624,11 +642,7 @@ public final class ClipboardArchiveReader: @unchecked Sendable {
         header.append(.uint(key: .init("UID"), value: UInt64(status.st_uid)))
         header.append(.uint(key: .init("GID"), value: UInt64(status.st_gid)))
         header.append(.uint(key: .init("MOD"), value: UInt64(status.st_mode & 0o7777)))
-        // Immutability stays behind: a Finder-locked source would otherwise
-        // extract as a locked staging file that neither a move into its final
-        // destination nor generation cleanup can touch.
-        let flags = UInt64(status.st_flags & ~UInt32(UF_IMMUTABLE | SF_IMMUTABLE | UF_APPEND | SF_APPEND))
-        header.append(.uint(key: .init("FLG"), value: flags))
+        header.append(.uint(key: .init("FLG"), value: UInt64(status.st_flags)))
         header.append(.timespec(key: .init("MTM"), value: status.st_mtimespec))
         // `CTM` is the entry's creation time (AADefs.h), not the inode change time.
         header.append(.timespec(key: .init("CTM"), value: status.st_birthtimespec))
@@ -772,10 +786,12 @@ public final class ClipboardArchiveExtractSink: StagingSink, @unchecked Sendable
             // Both endings wake a writer parked on a pipeline that has stopped
             // consuming, and differ in what a *later* write means: after a
             // failure it must be refused, but after a complete extract the
-            // archive is already unpacked, so trailing bytes are dropped rather
-            // than made to fail a good transfer. Dropping them loses no integrity
-            // check — the receiver takes the digest over what arrives on the
-            // wire, outside this sink.
+            // archive is already unpacked, so a trailing tail is dropped rather
+            // than made to fail a good transfer — bounded by the pipe's capacity,
+            // since a peer streaming past that is holding the transfer open
+            // rather than finishing one. Dropping the tail loses no integrity
+            // check: the receiver takes the digest over what arrives on the wire,
+            // outside this sink.
             if let failure {
                 pipe.fail(failure)
             } else {
@@ -788,7 +804,9 @@ public final class ClipboardArchiveExtractSink: StagingSink, @unchecked Sendable
     /// Hands `data` to the extract pipeline, parking while it is a window behind.
     ///
     /// Bytes offered after the pipeline has unpacked the whole archive are
-    /// accepted and dropped, not refused.
+    /// dropped rather than refused, up to one window of them; past that the
+    /// write is refused, so a peer cannot keep a finished transfer alive by
+    /// streaming into it.
     ///
     /// - Throws: whatever failed the pipeline, so the transfer aborts on the
     ///   receiver's own write lane instead of running to completion over output
@@ -910,7 +928,8 @@ public final class ClipboardArchiveExtractSink: StagingSink, @unchecked Sendable
             // one — `/etc/hosts`, another user's document — must still extract.
             guard
                 let extractStream = ArchiveStream.extractStream(
-                    extractingTo: FilePath(destinationURL.path), flags: .ignoreOperationNotPermitted)
+                    extractingTo: FilePath(destinationURL.path),
+                    selectUsing: Self.clearImmutability, flags: .ignoreOperationNotPermitted)
             else { throw ClipboardArchive.ArchiveError.openExtractStream }
             defer { closes.close { try extractStream.close() } }
 
@@ -919,5 +938,29 @@ public final class ClipboardArchiveExtractSink: StagingSink, @unchecked Sendable
             failure = error
         }
         return failure ?? closes.failure
+    }
+
+    /// Clears the immutable and append-only bits from each entry's flags as the
+    /// extract applies them.
+    ///
+    /// Either bit blocks `unlink` on the entry *and* on every directory above
+    /// it, so one locked entry makes `removeItem` fail for the whole extracted
+    /// tree — taking out the generation sweep with it, and, since
+    /// `ClipboardFileStaging.reclaimAll` is a single `removeItem` on the shared
+    /// staging parent, every later reclaim of that parent too. The peer chooses
+    /// what an entry's `FLG` carries, so the receiver is the only place the
+    /// guarantee can hold; the sender writes the source's flags unaltered.
+    ///
+    /// Cleared here rather than off a walk of the finished tree because an
+    /// extract that stops part-way removes its output immediately, leaving no
+    /// point at which a walk could run.
+    private static func clearImmutability(
+        _: ArchiveHeader.EntryMessage, _: FilePath, _ data: ArchiveHeader.EntryFilterData?
+    ) -> ArchiveHeader.EntryMessageStatus {
+        if case .entryAttributes(let attributes)? = data, let flags = attributes.flg {
+            attributes.flg =
+                flags & ~UInt32(UF_IMMUTABLE | SF_IMMUTABLE | UF_APPEND | SF_APPEND)
+        }
+        return .ok
     }
 }

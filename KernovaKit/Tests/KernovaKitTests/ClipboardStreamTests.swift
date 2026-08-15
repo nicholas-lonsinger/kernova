@@ -806,6 +806,44 @@ struct ClipboardStreamTests {
         try await waitUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
     }
 
+    @Test("an extract refusing bytes past its drop bound aborts the transfer as an overrun")
+    func writeRefusedPastTheDropBoundAborts() async throws {
+        // Where a peer that streams a whole valid archive and then keeps sending
+        // chunks without an End frame lands: the extract has already unpacked
+        // everything, drops the tail up to its bound, and refuses past it. The
+        // refusal is injected rather than streamed, because how much of that
+        // tail AppleArchive's decompressor buffers before the pipeline exits is
+        // its business, not this receiver's — the bound itself is covered by
+        // `ClipboardArchiveStreamTests`.
+        let harness = try StreamHarness(
+            chunkSize: Self.chunk, windowBytes: Self.window,
+            freeSpaceProvider: { _ in 100 << 30 },
+            sinkFactory: { destination, label, onOutputAdvanced in
+                FailingSink(
+                    wrapping: makeExtractSink(
+                        destinationURL: destination, label: label, windowBytes: Self.window,
+                        onOutputAdvanced: onOutputAdvanced),
+                    failingWrite: 2, throwing: ClipboardArchiveStreamError.streamClosed)
+            })
+        defer { harness.tearDown() }
+        let id: UInt64 = 605
+
+        let payload = randomBytes(Self.chunk * 3)
+        let source = try tempFile(bytes: payload)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let wire = try clipboardArchiveBytes(ofFileAt: source, named: "overrun.bin")
+
+        prime(harness, id: id, advertised: payload.count)
+        try await openArchivedTransfer(harness, id: id, filename: "overrun.bin")
+        feed(harness, id: id, bytes: wire)
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        // Named as the overrun it is: the extract itself succeeded, so
+        // `extract.error` would send the user off retrying a good transfer.
+        #expect(harness.collector.abortInfos.contains { $0.code == "size.overrun" })
+        #expect(harness.collector.representation(id) == nil)
+    }
+
     @Test("a sink that silently drops archive bytes fails the extract instead of delivering a truncated payload")
     func droppedArchiveBytesAreCaughtAtCommit() async throws {
         // The digest is taken over the bytes that *arrive*, so a sink that
@@ -1043,6 +1081,32 @@ struct ClipboardStreamTests {
 
         try await harness.collector.gate.wait { harness.collector.representation(99) != nil }
         #expect(harness.collector.representation(99)?.inMemoryData == all)
+    }
+
+    @Test("a chunk carrying no bytes aborts the transfer")
+    func emptyChunkAborts() async throws {
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+
+        harness.receiver.handleBegin(
+            .with {
+                $0.generation = 1
+                $0.transferID = 8
+                $0.uti = "public.data"
+                $0.totalBytes = 8192
+                $0.isInline = true
+            })
+        // Accepted, it would refresh the stall clock and the pull's backstop
+        // while advancing nothing — the one way to hold a transfer open that
+        // costs the peer no bytes at all.
+        harness.receiver.handleChunk(
+            .with {
+                $0.transferID = 8; $0.offset = 0; $0.data = Data()
+            })
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.representation(8) == nil)
+        #expect(harness.collector.abortInfos.contains { $0.code == "chunk.empty" })
     }
 
     @Test("an out-of-order (gapped) chunk aborts the transfer")

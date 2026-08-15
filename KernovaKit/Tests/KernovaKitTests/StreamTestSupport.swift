@@ -177,15 +177,21 @@ final class SilentlyDroppingSink: StagingSink, @unchecked Sendable {
 /// A `StagingSink` that throws on its `failingWrite`-th write (1-based),
 /// wrapping a real staging sink otherwise — models a volume that fails an
 /// append mid-stream.
+///
+/// `throwing` names the failure, so a test can inject one the receiver reads as
+/// something other than a plain write error — a
+/// ``ClipboardArchiveStreamError`` the extract raises on its own terms.
 final class FailingSink: StagingSink, @unchecked Sendable {
     private let wrapped: any StagingSink
     private let failingWrite: Int
+    private let injected: (any Error)?
     private let lock = NSLock()
     private var attempts = 0
 
-    init(wrapping sink: any StagingSink, failingWrite: Int) {
+    init(wrapping sink: any StagingSink, failingWrite: Int, throwing error: (any Error)? = nil) {
         wrapped = sink
         self.failingWrite = failingWrite
+        injected = error
     }
 
     func write(_ data: Data) throws {
@@ -194,7 +200,8 @@ final class FailingSink: StagingSink, @unchecked Sendable {
             return attempts
         }
         guard attempt != failingWrite else {
-            throw StreamTestFailure("Injected staging write failure on write \(attempt)")
+            throw injected
+                ?? StreamTestFailure("Injected staging write failure on write \(attempt)")
         }
         try wrapped.write(data)
     }
