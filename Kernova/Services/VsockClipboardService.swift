@@ -1377,11 +1377,6 @@ final class VsockClipboardService: ClipboardServicing {
             receiver: receiver, channel: channel, staging: staging, timeout: lazyPullTimeout)
     }
 
-    /// Abort codes that retire a pull rather than fail it: the local teardown or
-    /// supersession `ClipboardStreamReceiver` reports, the sending side dropping
-    /// a superseded offer, and the peer rejecting a request for a generation it
-    /// has moved past.
-    ///
     /// Records a user-visible issue for a paste-time fire that will serve
     /// nothing.
     ///

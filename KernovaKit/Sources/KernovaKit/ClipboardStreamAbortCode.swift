@@ -105,7 +105,10 @@ public enum ClipboardStreamAbortCode: String, CaseIterable, Sendable {
 }
 
 extension ClipboardStreamAbortCode {
-    /// Codes that retire a transfer quietly rather than reporting a failure.
+    /// Codes that retire a transfer quietly rather than reporting a failure: a
+    /// local teardown or supersession the receiver reports, the sending side
+    /// dropping a superseded offer, and the peer rejecting a request for a
+    /// generation it has moved past.
     ///
     /// Neither side raises an issue for these — whatever superseded the offer
     /// publishes its own explainer, and a teardown is not the user's problem to
