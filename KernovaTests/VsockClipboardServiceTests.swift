@@ -885,7 +885,7 @@ struct VsockClipboardServiceTests {
             Issue.record("Expected clipboardStreamAbort")
             return
         }
-        #expect(abort.code == "request.stale")
+        #expect(abort.code == ClipboardStreamAbortCode.requestStale.rawValue)
         // No Begin is ever sent for the stale request.
         #expect(
             recorder.first {
@@ -949,7 +949,7 @@ struct VsockClipboardServiceTests {
             Issue.record("Expected clipboardStreamAbort")
             return
         }
-        #expect(abort.code == "request.range")
+        #expect(abort.code == ClipboardStreamAbortCode.requestRange.rawValue)
         #expect(
             recorder.first {
                 if case .clipboardStreamBegin = $0.payload { return true }; return false
@@ -1001,7 +1001,7 @@ struct VsockClipboardServiceTests {
             Issue.record("Expected clipboardStreamAbort")
             return
         }
-        #expect(abort.code == "request.uti")
+        #expect(abort.code == ClipboardStreamAbortCode.requestUTI.rawValue)
         // No Begin is ever sent for the mismatched request (catches a dropped
         // `return` that would Abort *and* start the transfer). Asserted before
         // the valid request below, whose Begin shares this xid.
@@ -3557,7 +3557,7 @@ struct VsockClipboardServiceTests {
         abort.protocolVersion = 1
         abort.clipboardStreamAbort = Kernova_V1_ClipboardStreamAbort.with {
             $0.transferID = xid
-            $0.code = "cancelled"
+            $0.code = ClipboardStreamAbortCode.cancelled.rawValue
             $0.message = "test: first pull aborted"
         }
         try guest.send(abort)
@@ -3649,7 +3649,7 @@ struct VsockClipboardServiceTests {
         abort.protocolVersion = 1
         abort.clipboardStreamAbort = Kernova_V1_ClipboardStreamAbort.with {
             $0.transferID = xid
-            $0.code = "disk.full"
+            $0.code = ClipboardStreamAbortCode.diskFull.rawValue
             $0.message = "volume filled"
         }
         try guest.send(abort)
@@ -3671,7 +3671,7 @@ struct VsockClipboardServiceTests {
     /// only account of why the paste produced nothing. It is recorded before the
     /// fire returns, so the value read here is not racing it.
     private func pasteFireAbortedByGuest(
-        code: String
+        code: ClipboardStreamAbortCode
     ) async throws -> (url: URL?, issue: ClipboardTransferIssue?) {
         let (guest, host) = try makePair()
         guest.start()
@@ -3709,7 +3709,7 @@ struct VsockClipboardServiceTests {
         abort.protocolVersion = 1
         abort.clipboardStreamAbort = Kernova_V1_ClipboardStreamAbort.with {
             $0.transferID = xid
-            $0.code = code
+            $0.code = code.rawValue
             $0.message = "aborted"
         }
         try guest.send(abort)
@@ -3752,15 +3752,15 @@ struct VsockClipboardServiceTests {
     func pasteBlockingPullAbortSurfacesIssue() async throws {
         // `read.error` is what the sending side raises when the source file it
         // was streaming can't be read — a failure, not a supersession.
-        let (url, issue) = try await pasteFireAbortedByGuest(code: "read.error")
+        let (url, issue) = try await pasteFireAbortedByGuest(code: .readError)
         #expect(url == nil)
         #expect(issue?.kind == ClipboardTransferIssue.pasteTransferFailed().kind)
     }
 
     @Test(
         "a paste-time pull retired by a teardown or supersession reports nothing",
-        arguments: ["cancelled", "superseded", "request.stale"])
-    func pasteBlockingPullRetiredAbortStaysQuiet(code: String) async throws {
+        arguments: [ClipboardStreamAbortCode.cancelled, .superseded, .requestStale, .userCancelled])
+    func pasteBlockingPullRetiredAbortStaysQuiet(code: ClipboardStreamAbortCode) async throws {
         // Whatever superseded the offer publishes its own explainer; a paste that
         // served nothing because the offer moved on must not also claim a
         // transfer failure.
@@ -3771,7 +3771,7 @@ struct VsockClipboardServiceTests {
 
     @Test("a paste-time pull aborted for a full volume reports the disk, not a generic failure")
     func pasteBlockingPullDiskFullAbortSurfacesIssue() async throws {
-        let (url, issue) = try await pasteFireAbortedByGuest(code: "disk.full")
+        let (url, issue) = try await pasteFireAbortedByGuest(code: .diskFull)
         #expect(url == nil)
         guard case .diskFull = issue?.kind else {
             Issue.record("Expected a diskFull issue, got \(String(describing: issue))")
@@ -4484,7 +4484,7 @@ struct VsockClipboardServiceTests {
             let frame = try await nextFrame(from: guest)
             if case .clipboardStreamAbort(let abort) = frame.payload, abort.transferID == secondID {
                 // Refused as stale, which the guest already retires quietly.
-                #expect(abort.code == "request.stale")
+                #expect(abort.code == ClipboardStreamAbortCode.requestStale.rawValue)
                 break
             }
             if case .clipboardStreamBegin(let begin) = frame.payload, begin.transferID == secondID {

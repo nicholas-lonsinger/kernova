@@ -1246,7 +1246,7 @@ struct VsockGuestClipboardAgentTests {
             throw TestFailure("Expected Abort for stale request, got \(String(describing: staleAbort.payload))")
         }
         #expect(a1.transferID == staleXID)
-        #expect(a1.code == "request.stale")
+        #expect(a1.code == ClipboardStreamAbortCode.requestStale.rawValue)
 
         // 2. Out-of-range rep index (low 16 bits select a rep the offer lacks).
         let rangeXID = (gen << 16) | 5
@@ -1256,7 +1256,7 @@ struct VsockGuestClipboardAgentTests {
             throw TestFailure("Expected Abort for out-of-range request, got \(String(describing: rangeAbort.payload))")
         }
         #expect(a2.transferID == rangeXID)
-        #expect(a2.code == "request.range")
+        #expect(a2.code == ClipboardStreamAbortCode.requestRange.rawValue)
 
         // 3. UTI mismatch.
         let utiXID = (gen << 16) | 0
@@ -1267,7 +1267,7 @@ struct VsockGuestClipboardAgentTests {
             throw TestFailure("Expected Abort for uti-mismatch request, got \(String(describing: utiAbort.payload))")
         }
         #expect(a3.transferID == utiXID)
-        #expect(a3.code == "request.uti")
+        #expect(a3.code == ClipboardStreamAbortCode.requestUTI.rawValue)
     }
 
     // MARK: - Echo suppression
@@ -1808,7 +1808,9 @@ struct VsockGuestClipboardAgentTests {
         let req = try await awaitRequest(on: hostChannel)
         #expect(req.generation == 14)
         try hostChannel.send(
-            makeAbortFrame(transferID: req.transferID, code: "request.stale", message: "superseded"))
+            makeAbortFrame(
+                transferID: req.transferID, code: ClipboardStreamAbortCode.requestStale.rawValue, message: "superseded")
+        )
         let provided = await pull.value
         #expect(provided == nil)
     }
@@ -2102,8 +2104,10 @@ struct VsockGuestClipboardAgentTests {
     @Test(
         "a mid-transfer abort reports its mapped failure on the guest's own menu, not only to the host",
         arguments: [
-            ("disk.full", ClipboardErrorCode.pasteDiskFull),
-            ("stall.timeout", ClipboardErrorCode.pasteTimeout),
+            (ClipboardStreamAbortCode.diskFull.rawValue, ClipboardErrorCode.pasteDiskFull),
+            (ClipboardStreamAbortCode.stallTimeout.rawValue, ClipboardErrorCode.pasteTimeout),
+            // Deliberately not a `ClipboardStreamAbortCode`: a code this build
+            // cannot read must still be reported, on the generic failure.
             ("archive.error", ClipboardErrorCode.pasteFailed),
         ])
     func abortReportsOnTheGuestMenuToo(

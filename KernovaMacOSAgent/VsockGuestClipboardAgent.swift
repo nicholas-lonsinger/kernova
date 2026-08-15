@@ -472,7 +472,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             },
             onAbort: { info in
                 Self.logger.debug(
-                    "Unawaited inbound clipboard transfer \(info.transferID, privacy: .public) (conn=\(connectionTag, privacy: .public)) aborted (\(info.code, privacy: .public))"
+                    "Unawaited inbound clipboard transfer \(info.transferID, privacy: .public) (conn=\(connectionTag, privacy: .public)) aborted (\(info.rawCode, privacy: .public))"
                 )
             })
         await MainActor.run {
@@ -872,7 +872,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             // Refused as stale, which the host already retires quietly: its paste
             // comes back empty and neither side reports a failure.
             sender?.rejectRequest(
-                transferID: request.transferID, code: "request.stale",
+                transferID: request.transferID, code: .requestStale,
                 message: "The transfer for generation \(request.generation) was cancelled")
             return
         }
@@ -883,7 +883,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             // Abort every dropped request so the host's parked pull wakes
             // immediately instead of stalling to its lazyPullTimeout backstop.
             sender?.rejectRequest(
-                transferID: request.transferID, code: "request.stale",
+                transferID: request.transferID, code: .requestStale,
                 message: "Request for superseded generation \(request.generation)")
             return
         }
@@ -893,7 +893,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 "Clipboard request transfer_id \(request.transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) out of range"
             )
             sender?.rejectRequest(
-                transferID: request.transferID, code: "request.range",
+                transferID: request.transferID, code: .requestRange,
                 message: "Representation index \(repIndex) out of range")
             return
         }
@@ -903,7 +903,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 "Clipboard request uti '\(request.uti, privacy: .public)' doesn't match offered rep \(repIndex, privacy: .public) (conn=\(self.connectionTag, privacy: .public))"
             )
             sender?.rejectRequest(
-                transferID: request.transferID, code: "request.uti",
+                transferID: request.transferID, code: .requestUTI,
                 message: "Requested UTI '\(request.uti)' does not match offered representation")
             return
         }
@@ -1116,7 +1116,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 coordinator.abort(
                     transferID,
                     ClipboardStreamAbortInfo(
-                        transferID: transferID, code: "send.failed",
+                        transferID: transferID, code: .sendFailed,
                         message: "Failed to send clipboard request", neededBytes: nil,
                         availableBytes: nil))
             }
@@ -1205,11 +1205,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return representation
         case .aborted(let abort):
             Self.logger.warning(
-                "Inbound clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) aborted (\(abort.code, privacy: .public))"
+                "Inbound clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) aborted (\(abort.rawCode, privacy: .public))"
             )
             // Report a genuine receive failure; stay quiet for a normal
             // supersession/teardown (the user simply copied something new).
-            if !Self.benignAbortCodes.contains(abort.code) {
+            if !abort.isRetiring {
                 reportPasteFailure(
                     code: Self.pasteErrorCode(forAbortCode: abort.code),
                     message: abort.message, promise: promise, on: channel)
@@ -1222,7 +1222,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             // Stop any stream the host is still sending for this abandoned pull,
             // then report the failure.
             sendStreamAbort(
-                transferID: transferID, code: "paste.timeout",
+                transferID: transferID, code: .pasteTimeout,
                 message: "Receiver gave up waiting for the clipboard transfer", on: channel)
             reportPasteFailure(
                 code: .pasteTimeout,
@@ -1291,18 +1291,14 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         return true
     }
 
-    /// Abort codes that are a normal supersession/teardown, not a failure worth
-    /// surfacing to the user.
-    private static let benignAbortCodes: Set<String> = [
-        "superseded", "cancelled", "request.stale", "user.cancelled",
-    ]
-
     /// Maps a receiver/peer abort code to the user-facing paste code the host
     /// renders.
-    private static func pasteErrorCode(forAbortCode code: String) -> ClipboardErrorCode {
+    private static func pasteErrorCode(
+        forAbortCode code: ClipboardStreamAbortCode?
+    ) -> ClipboardErrorCode {
         switch code {
-        case "disk.full": return .pasteDiskFull
-        case "stall.timeout": return .pasteTimeout
+        case .diskFull: return .pasteDiskFull
+        case .stallTimeout: return .pasteTimeout
         default: return .pasteFailed
         }
     }
@@ -1327,13 +1323,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// Sends a `ClipboardStreamAbort` for an inbound transfer the receiver is
     /// abandoning, so the host's sender stops streaming the remaining bytes.
     private func sendStreamAbort(
-        transferID: UInt64, code: String, message: String, on channel: VsockChannel
+        transferID: UInt64, code: ClipboardStreamAbortCode, message: String, on channel: VsockChannel
     ) {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.clipboardStreamAbort = .with {
             $0.transferID = transferID
-            $0.code = code
+            $0.code = code.rawValue
             $0.message = message
         }
         try? channel.send(frame)

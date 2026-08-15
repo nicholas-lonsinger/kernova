@@ -20,7 +20,7 @@ struct ClipboardStreamRoutingTests {
         frame.protocolVersion = 1
         frame.clipboardStreamAbort = .with {
             $0.transferID = transferID
-            $0.code = "superseded"
+            $0.code = ClipboardStreamAbortCode.superseded.rawValue
         }
         return frame
     }

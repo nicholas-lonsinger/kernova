@@ -478,7 +478,7 @@ final class VsockDropService {
             // Abort every dropped request so the guest's parked pull wakes
             // immediately instead of stalling to its backstop timeout.
             sender?.rejectRequest(
-                transferID: request.transferID, code: "request.stale",
+                transferID: request.transferID, code: .requestStale,
                 message: "No live drop for generation \(request.generation)")
             return
         }
@@ -488,7 +488,7 @@ final class VsockDropService {
                 "Drop request transfer_id \(request.transferID, privacy: .public) out of range for gen=\(request.generation, privacy: .public) (conn=\(self.connectionTag, privacy: .public))"
             )
             sender?.rejectRequest(
-                transferID: request.transferID, code: "request.range",
+                transferID: request.transferID, code: .requestRange,
                 message: "Item index \(repIndex) out of range")
             return
         }
@@ -498,7 +498,7 @@ final class VsockDropService {
                 "Drop request uti '\(request.uti, privacy: .public)' doesn't match offered item \(repIndex, privacy: .public) (conn=\(self.connectionTag, privacy: .public))"
             )
             sender?.rejectRequest(
-                transferID: request.transferID, code: "request.uti",
+                transferID: request.transferID, code: .requestUTI,
                 message: "Requested UTI '\(request.uti)' does not match the dropped item")
             return
         }

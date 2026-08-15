@@ -636,8 +636,7 @@ public nonisolated struct Kernova_V1_ClipboardStreamAbort: Sendable {
 
   public var transferID: UInt64 = 0
 
-  /// Stable machine-readable code, e.g. "disk.full", "read.error",
-  /// "superseded", "format.unavailable".
+  /// Stable machine-readable code; the vocabulary is ClipboardStreamAbortCode.
   public var code: String = String()
 
   /// Human-readable detail for logs / user-facing messages.

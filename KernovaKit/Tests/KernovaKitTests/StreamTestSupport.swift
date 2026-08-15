@@ -135,7 +135,7 @@ final class GatedSink: StagingSink, @unchecked Sendable {
 
     func cancel() { wrapped.cancel() }
 
-    var writeErrorCode: String { wrapped.writeErrorCode }
+    var writeErrorCode: ClipboardStreamAbortCode { wrapped.writeErrorCode }
 }
 
 /// A `StagingSink` that silently discards its `droppingWrite`-th write
@@ -171,7 +171,7 @@ final class SilentlyDroppingSink: StagingSink, @unchecked Sendable {
 
     func cancel() { wrapped.cancel() }
 
-    var writeErrorCode: String { wrapped.writeErrorCode }
+    var writeErrorCode: ClipboardStreamAbortCode { wrapped.writeErrorCode }
 }
 
 /// A `StagingSink` that throws on its `failingWrite`-th write (1-based),
@@ -213,7 +213,7 @@ final class FailingSink: StagingSink, @unchecked Sendable {
 
     func cancel() { wrapped.cancel() }
 
-    var writeErrorCode: String { wrapped.writeErrorCode }
+    var writeErrorCode: ClipboardStreamAbortCode { wrapped.writeErrorCode }
 }
 
 /// A `ChunkReader` that parks every read until it is closed.

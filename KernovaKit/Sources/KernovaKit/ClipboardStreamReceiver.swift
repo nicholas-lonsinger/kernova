@@ -153,7 +153,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         // first chunk. [cancelled-pull]
         if expectation == nil, wasCancelled(begin.transferID) {
             sendAbortFrame(
-                begin.transferID, code: "request.cancelled",
+                begin.transferID, code: .requestCancelled,
                 message: "The pull for this transfer was cancelled")
             return
         }
@@ -208,7 +208,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                     declared <= self.maxResidentInlineBytes
                 else {
                     self.fail(
-                        transfer, code: "payload.unsupported",
+                        transfer, code: .payloadUnsupported,
                         message: "A raw payload must be inline, fit in memory, and answer no folder pull")
                     return
                 }
@@ -240,7 +240,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         // is refused before a byte is staged rather than extracted and dropped.
         guard let expectation = transfer.expectation else {
             fail(
-                transfer, code: "payload.unexpected",
+                transfer, code: .payloadUnexpected,
                 message: "No pull is awaiting this transfer")
             return false
         }
@@ -276,7 +276,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                 }
             }
         } catch {
-            fail(transfer, code: "stage.error", message: "Cannot open the extract destination")
+            fail(transfer, code: .stageError, message: "Cannot open the extract destination")
             return false
         }
         return true
@@ -305,7 +305,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             guard offset == transfer.receivedBytes else {
                 // Gap — the reliable stream should never reorder; treat as fatal.
                 self.fail(
-                    transfer, code: "offset.gap",
+                    transfer, code: .offsetGap,
                     message: "Out-of-order chunk at \(offset), expected \(transfer.receivedBytes)")
                 return
             }
@@ -318,14 +318,14 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             // a Begin and an End with no chunk between them.
             guard !chunk.data.isEmpty else {
                 self.fail(
-                    transfer, code: "chunk.empty", message: "Chunk carries no bytes")
+                    transfer, code: .chunkEmpty, message: "Chunk carries no bytes")
                 return
             }
             // Bound a single chunk — a frame can carry up to 128 MiB, but the
             // negotiated chunk is 64 KiB. [M3]
             guard chunk.data.count <= ClipboardStreamTuning.maxChunkBytes else {
                 self.fail(
-                    transfer, code: "chunk.too.large",
+                    transfer, code: .chunkTooLarge,
                     message: "Chunk of \(chunk.data.count) bytes exceeds limit")
                 return
             }
@@ -337,7 +337,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                 transfer.receivedBytes + chunk.data.count > declared
             {
                 self.fail(
-                    transfer, code: "size.overrun",
+                    transfer, code: .sizeOverrun,
                     message: "Chunk exceeds declared total of \(declared)")
                 return
             }
@@ -355,7 +355,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                 // heap ran out.
                 guard transfer.addBacklog(chunk.data.count) <= self.maxBacklogBytes else {
                     self.fail(
-                        transfer, code: "flow.overrun",
+                        transfer, code: .flowOverrun,
                         message:
                             "Peer streamed more than \(self.maxBacklogBytes) bytes past its credit window"
                     )
@@ -405,13 +405,13 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             let expected = Int(clamping: end.totalBytes)
             guard transfer.receivedBytes == expected else {
                 self.fail(
-                    transfer, code: "size.mismatch",
+                    transfer, code: .sizeMismatch,
                     message: "Got \(transfer.receivedBytes) bytes, expected \(expected)")
                 return
             }
             let digest = Data(transfer.hasher.finalize())
             guard digest == end.sha256 else {
-                self.fail(transfer, code: "digest.mismatch", message: "SHA-256 mismatch at End")
+                self.fail(transfer, code: .digestMismatch, message: "SHA-256 mismatch at End")
                 return
             }
             guard let writeQueue = transfer.writeQueue else {
@@ -455,7 +455,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             sendAck(transfer, upTo: transfer.writtenBytes)
         }
         guard let sink = transfer.sink else {
-            fail(transfer, code: "stage.error", message: "Missing staging sink at End")
+            fail(transfer, code: .stageError, message: "Missing staging sink at End")
             return
         }
         // Committing is what drains the extract pipeline, so this is where a
@@ -492,7 +492,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         guard let file = Self.singleRegularFile(in: destination) else {
             try? FileManager.default.removeItem(at: destination)
             fail(
-                transfer, code: "payload.invalid",
+                transfer, code: .payloadInvalid,
                 message: "The archive did not unpack to exactly one file")
             return
         }
@@ -506,7 +506,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         {
             try? FileManager.default.removeItem(at: destination)
             fail(
-                transfer, code: "size.overrun",
+                transfer, code: .sizeOverrun,
                 message: "The file unpacked to \(file.byteCount) bytes, its offer said \(advertised)")
             return
         }
@@ -523,7 +523,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                 mapped = try Data(contentsOf: file.url, options: .mappedIfSafe)
             } catch {
                 fail(
-                    transfer, code: "map.error",
+                    transfer, code: .mapError,
                     message: "Mapping the extracted inline file failed: \(error.localizedDescription)"
                 )
                 return
@@ -597,7 +597,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             // awaiting it, which would otherwise park to its timeout.
             deliverAbort(
                 ClipboardStreamAbortInfo(
-                    transferID: abort.transferID, code: abort.code, message: abort.message,
+                    transferID: abort.transferID, rawCode: abort.code, message: abort.message,
                     neededBytes: nil, availableBytes: nil))
             return
         }
@@ -608,7 +608,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             self.remove(transfer.transferID)
             self.deliverAbort(
                 ClipboardStreamAbortInfo(
-                    transferID: abort.transferID, code: abort.code, message: abort.message,
+                    transferID: abort.transferID, rawCode: abort.code, message: abort.message,
                     neededBytes: nil, availableBytes: nil))
         }
     }
@@ -759,7 +759,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         for id in ids {
             deliverAbortToAwaiterOnly(
                 ClipboardStreamAbortInfo(
-                    transferID: id, code: "cancelled",
+                    transferID: id, code: .cancelled,
                     message: "Transfer superseded or channel closed",
                     neededBytes: nil, availableBytes: nil))
         }
@@ -780,7 +780,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             // abort the way a peer/disk failure is.
             self.deliverAbortToAwaiterOnly(
                 ClipboardStreamAbortInfo(
-                    transferID: transfer.transferID, code: "cancelled",
+                    transferID: transfer.transferID, code: .cancelled,
                     message: "Transfer superseded or channel closed",
                     neededBytes: nil, availableBytes: nil))
         }
@@ -797,7 +797,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         timer.setEventHandler { [weak self, weak transfer] in
             guard let self, let transfer, !transfer.isFinished else { return }
             guard self.clock.seconds(since: transfer.lastChunkAt) >= self.stallTimeout else { return }
-            self.fail(transfer, code: "stall.timeout", message: "Sender stopped sending")
+            self.fail(transfer, code: .stallTimeout, message: "Sender stopped sending")
         }
         // The timeout is a dead-sender backstop, not a precise deadline:
         // checking at `stallTimeout` cadence with a half-interval leeway detects
@@ -828,7 +828,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             // already folded them into `receivedBytes` and the digest, so a
             // silent skip would let End verify a payload the staging file never
             // received and commit a truncated result. [L3]
-            fail(transfer, code: "stage.error", message: "Missing staging sink for chunk")
+            fail(transfer, code: .stageError, message: "Missing staging sink for chunk")
             return
         }
         do {
@@ -924,7 +924,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                 failDiskFull(transfer)
             case .overAdvertisedSize:
                 fail(
-                    transfer, code: "size.overrun",
+                    transfer, code: .sizeOverrun,
                     message: "The payload unpacked to more than its offer advertised")
             }
             return
@@ -935,7 +935,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         // rather than as a failure of the extract, which succeeded.
         if case ClipboardArchiveStreamError.streamClosed = error {
             fail(
-                transfer, code: "size.overrun",
+                transfer, code: .sizeOverrun,
                 message: "The peer streamed past the end of a complete archive")
             return
         }
@@ -950,11 +950,11 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
 
     private func failDiskFull(_ transfer: Transfer) {
         let available = staging.availableCapacity().map { Int(clamping: $0) }
-        sendAbortFrame(transfer.transferID, code: "disk.full", message: "Not enough disk space")
+        sendAbortFrame(transfer.transferID, code: .diskFull, message: "Not enough disk space")
         finishFailed(
             transfer,
             info: ClipboardStreamAbortInfo(
-                transferID: transfer.transferID, code: "disk.full",
+                transferID: transfer.transferID, code: .diskFull,
                 message: "Not enough disk space",
                 // What the offer advertised is the honest "needed" figure for
                 // an archive, exact for a file and an estimate for a folder.
@@ -965,7 +965,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
 
     /// Fails a transfer from **either** lane: sends the abort frame and tears
     /// down whatever local state exists.
-    private func fail(_ transfer: Transfer, code: String, message: String) {
+    private func fail(_ transfer: Transfer, code: ClipboardStreamAbortCode, message: String) {
         sendAbortFrame(transfer.transferID, code: code, message: message)
         finishFailed(
             transfer,
@@ -1002,13 +1002,13 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         writeQueue.async { transfer.sink?.abort() }
     }
 
-    private func sendAbortFrame(_ transferID: UInt64, code: String, message: String) {
+    private func sendAbortFrame(_ transferID: UInt64, code: ClipboardStreamAbortCode, message: String) {
         send(
             .with {
                 $0.protocolVersion = 1
                 $0.clipboardStreamAbort = .with {
                     $0.transferID = transferID
-                    $0.code = code
+                    $0.code = code.rawValue
                     $0.message = message
                 }
             })
@@ -1086,8 +1086,11 @@ public struct ClipboardTransferMetrics: Sendable, Equatable {
 public struct ClipboardStreamAbortInfo: Sendable, Equatable {
     /// Identifies the transfer that aborted.
     public let transferID: UInt64
-    /// Machine-readable abort reason (e.g. `disk.full`, `superseded`).
-    public let code: String
+    /// The abort reason, or `nil` for a code this build does not define.
+    public let code: ClipboardStreamAbortCode?
+    /// Exactly what the aborting side spelled, so a log line names an
+    /// undefined code rather than losing it.
+    public let rawCode: String
     /// Human-readable description of the failure.
     public let message: String
     /// Bytes the transfer needed, for a `disk.full` abort.
@@ -1095,12 +1098,39 @@ public struct ClipboardStreamAbortInfo: Sendable, Equatable {
     /// Bytes available on the staging volume, for a `disk.full` abort.
     public let availableBytes: Int?
 
-    /// Creates abort info describing why an inbound transfer failed.
+    /// Whether the abort retires the transfer quietly instead of reporting a
+    /// failure.
+    ///
+    /// An undefined code is never retiring: an abort spelled in a way this
+    /// build cannot read is a failure to surface, not one to swallow.
+    public var isRetiring: Bool {
+        guard let code else { return false }
+        return ClipboardStreamAbortCode.retiring.contains(code)
+    }
+
+    /// Creates abort info for a failure this side raised, whose code is known
+    /// by construction.
     public init(
-        transferID: UInt64, code: String, message: String, neededBytes: Int?, availableBytes: Int?
+        transferID: UInt64, code: ClipboardStreamAbortCode, message: String, neededBytes: Int?,
+        availableBytes: Int?
     ) {
         self.transferID = transferID
         self.code = code
+        self.rawCode = code.rawValue
+        self.message = message
+        self.neededBytes = neededBytes
+        self.availableBytes = availableBytes
+    }
+
+    /// Creates abort info from a peer's frame — the one construction that takes
+    /// an arbitrary string, since the peer's spelling is untrusted.
+    init(
+        transferID: UInt64, rawCode: String, message: String, neededBytes: Int?,
+        availableBytes: Int?
+    ) {
+        self.transferID = transferID
+        self.code = ClipboardStreamAbortCode(rawValue: rawCode)
+        self.rawCode = rawCode
         self.message = message
         self.neededBytes = neededBytes
         self.availableBytes = availableBytes

@@ -113,14 +113,14 @@ struct LazyPullCoordinatorTests {
         coordinator.abort(
             3,
             ClipboardStreamAbortInfo(
-                transferID: 3, code: "disk.full", message: "no space",
+                transferID: 3, code: .diskFull, message: "no space",
                 neededBytes: 10, availableBytes: 1))
 
         guard case .aborted(let info) = await outcome else {
             Issue.record("Expected .aborted")
             return
         }
-        #expect(info.code == "disk.full")
+        #expect(info.code == .diskFull)
         #expect(coordinator.pendingSlotCountForTesting == 0)
     }
 
@@ -232,7 +232,7 @@ struct LazyPullCoordinatorTests {
         coordinator.abort(
             200,
             ClipboardStreamAbortInfo(
-                transferID: 200, code: "peer.error", message: "x", neededBytes: nil,
+                transferID: 200, code: .readError, message: "x", neededBytes: nil,
                 availableBytes: nil))
 
         guard case .delivered(let rep) = await first else {
@@ -244,7 +244,7 @@ struct LazyPullCoordinatorTests {
             Issue.record("Expected .aborted for 200")
             return
         }
-        #expect(info.code == "peer.error")
+        #expect(info.code == .readError)
     }
 
     @Test("a duplicate delivery after the slot resolves is a no-op")
@@ -258,7 +258,7 @@ struct LazyPullCoordinatorTests {
         coordinator.abort(
             9,
             ClipboardStreamAbortInfo(
-                transferID: 9, code: "late", message: "x", neededBytes: nil, availableBytes: nil))
+                transferID: 9, code: .cancelled, message: "x", neededBytes: nil, availableBytes: nil))
 
         guard case .delivered(let rep) = await outcome else {
             Issue.record("Expected .delivered")
@@ -504,7 +504,7 @@ struct LazyPullCoordinatorTests {
             isInline: false, isCurrent: { _ in true })
 
         try await gate.wait { box.abortInfo != nil }
-        #expect(box.abortInfo?.code == "disk.full")
+        #expect(box.abortInfo?.code == .diskFull)
         #expect(harness.collector.abortCount == 0)
     }
 
@@ -535,12 +535,12 @@ struct LazyPullCoordinatorTests {
         harness.receiver.handleAbort(
             .with {
                 $0.transferID = transferID
-                $0.code = "disk.full"
+                $0.code = ClipboardStreamAbortCode.diskFull.rawValue
                 $0.message = "refused before begin"
             })
 
         try await gate.wait { box.abortInfo != nil }
-        #expect(box.abortInfo?.code == "disk.full")
+        #expect(box.abortInfo?.code == .diskFull)
     }
 
     @Test("cancel(generation:) wakes an awaiter whose transfer never produced a Begin")
@@ -567,7 +567,7 @@ struct LazyPullCoordinatorTests {
         harness.receiver.cancel(generation: 7)
 
         try await gate.wait { box.abortInfo != nil }
-        #expect(box.abortInfo?.code == "cancelled")
+        #expect(box.abortInfo?.code == .cancelled)
     }
 
     @Test("cancelAll() wakes an awaiter whose transfer never produced a Begin")
@@ -594,7 +594,7 @@ struct LazyPullCoordinatorTests {
         harness.receiver.cancelAll()
 
         try await gate.wait { box.abortInfo != nil }
-        #expect(box.abortInfo?.code == "cancelled")
+        #expect(box.abortInfo?.code == .cancelled)
     }
 
     @Test(
@@ -643,12 +643,12 @@ struct LazyPullCoordinatorTests {
         harness.receiver.handleAbort(
             .with {
                 $0.transferID = transferID
-                $0.code = "cancelled"
+                $0.code = ClipboardStreamAbortCode.cancelled.rawValue
                 $0.message = "stale abort from attempt #1"
             })
 
         try await secondGate.wait { secondBox.abortInfo != nil }
-        #expect(secondBox.abortInfo?.code == "cancelled")
+        #expect(secondBox.abortInfo?.code == .cancelled)
         #expect(firstBox.abortInfo == nil)  // #1's own onAbort never fired — it was already overwritten
 
         // The table is left fully consistent: a THIRD attempt reusing the
