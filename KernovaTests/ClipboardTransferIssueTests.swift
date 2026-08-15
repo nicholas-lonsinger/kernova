@@ -4,17 +4,62 @@ import Testing
 
 @testable import Kernova
 
-/// Unit tests for the display copy on `ClipboardTransferIssue`.
+/// Unit tests for `ClipboardTransferIssue` — the classification an aborted
+/// inbound pull lands on, and the display copy each outcome reads as.
 ///
 /// One source of wording for the clipboard window's banner, the status-item
 /// notice popover, and the dropdown's per-VM line.
-@Suite("Clipboard Transfer Issue Copy Tests")
+@Suite("Clipboard Transfer Issue Tests")
 struct ClipboardTransferIssueTests {
     private let limit = ClipboardPasteLimit.defaultBytes
 
     private func peerError(_ code: ClipboardErrorCode) -> ClipboardTransferIssue {
         ClipboardTransferIssue(
             kind: .peerReportedError(code: code.rawValue, message: "wire text"), date: Date())
+    }
+
+    private func abortInfo(_ code: ClipboardStreamAbortCode) -> ClipboardStreamAbortInfo {
+        ClipboardStreamAbortInfo(
+            transferID: 1, code: code, message: "aborted", neededBytes: nil, availableBytes: nil)
+    }
+
+    // MARK: - inboundPullAborted
+
+    @Test(
+        "An abort that retires the transfer classifies to no issue",
+        arguments: Array(ClipboardStreamAbortCode.retiring))
+    func retiringAbortsClassifyToNothing(code: ClipboardStreamAbortCode) {
+        #expect(ClipboardTransferIssue.inboundPullAborted(abortInfo(code)) == nil)
+    }
+
+    /// Runs over `allCases` and spells every one of them, with no `default:`, so
+    /// a code added to `ClipboardStreamAbortCode` fails to compile here until
+    /// someone states what it classifies to. The implementation's own `default:`
+    /// keeps an unstated code reported rather than swallowed; this is what makes
+    /// falling into it a decision rather than an oversight.
+    @Test(
+        "Every abort that is not a retirement classifies to a reportable issue",
+        arguments: ClipboardStreamAbortCode.allCases.filter {
+            !ClipboardStreamAbortCode.retiring.contains($0)
+        })
+    func failedAbortsClassifyToAnIssue(code: ClipboardStreamAbortCode) {
+        let kind = ClipboardTransferIssue.inboundPullAborted(abortInfo(code))?.kind
+        switch code {
+        case .diskFull:
+            guard case .diskFull = kind else {
+                Issue.record("\(code.rawValue) should report the disk, got \(String(describing: kind))")
+                return
+            }
+        case .extractError:
+            #expect(kind == ClipboardTransferIssue.pasteUnpackFailed().kind)
+        case .requestRange, .requestUTI, .requestCancelled, .readError, .sendFailed, .ackTimeout,
+            .offsetGap, .chunkEmpty, .chunkTooLarge, .sizeOverrun, .flowOverrun, .sizeMismatch,
+            .digestMismatch, .payloadUnsupported, .payloadUnexpected, .payloadInvalid, .writeError,
+            .stageError, .mapError, .stallTimeout, .pasteTimeout:
+            #expect(kind == ClipboardTransferIssue.pasteTransferFailed().kind)
+        case .cancelled, .superseded, .requestStale, .userCancelled:
+            Issue.record("\(code.rawValue) retires the transfer and is covered by the case above")
+        }
     }
 
     // MARK: - displayMessage
