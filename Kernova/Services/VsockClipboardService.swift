@@ -323,7 +323,7 @@ final class VsockClipboardService: ClipboardServicing {
             },
             onAbort: { [tag = self.connectionTag] info in
                 Self.logger.debug(
-                    "Unawaited inbound clipboard transfer \(info.transferID, privacy: .public) (conn=\(tag, privacy: .public)) aborted (\(info.code, privacy: .public))"
+                    "Unawaited inbound clipboard transfer \(info.transferID, privacy: .public) (conn=\(tag, privacy: .public)) aborted (\(info.rawCode, privacy: .public))"
                 )
             })
         self.sender = sender
@@ -463,7 +463,7 @@ final class VsockClipboardService: ClipboardServicing {
         for index in promise.inFlight.keys {
             let transferID = ClipboardTransferID.make(
                 generation: generation, repIndex: index, hostMinted: true)
-            sendStreamAbort(transferID: transferID, code: "user.cancelled")
+            sendStreamAbort(transferID: transferID, code: .userCancelled)
         }
         receiver?.cancel(generation: generation)
         Self.logger.notice(
@@ -473,12 +473,12 @@ final class VsockClipboardService: ClipboardServicing {
 
     /// Tells the peer's sender to stop streaming a transfer this side is
     /// abandoning.
-    private func sendStreamAbort(transferID: UInt64, code: String) {
+    private func sendStreamAbort(transferID: UInt64, code: ClipboardStreamAbortCode) {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.clipboardStreamAbort = .with {
             $0.transferID = transferID
-            $0.code = code
+            $0.code = code.rawValue
             $0.message = "Cancelled by the user"
         }
         try? channel.send(frame)
@@ -710,7 +710,7 @@ final class VsockClipboardService: ClipboardServicing {
             // Refused as stale, which the peer already retires quietly: its paste
             // comes back empty and neither side reports a failure.
             sender?.rejectRequest(
-                transferID: request.transferID, code: "request.stale",
+                transferID: request.transferID, code: .requestStale,
                 message: "The transfer for generation \(request.generation) was cancelled")
             return
         }
@@ -721,7 +721,7 @@ final class VsockClipboardService: ClipboardServicing {
             // Abort every dropped request so the guest's parked pull wakes
             // immediately instead of stalling to its backstop timeout.
             sender?.rejectRequest(
-                transferID: request.transferID, code: "request.stale",
+                transferID: request.transferID, code: .requestStale,
                 message: "Request for superseded generation \(request.generation)")
             return
         }
@@ -731,7 +731,7 @@ final class VsockClipboardService: ClipboardServicing {
                 "Clipboard request transfer_id \(request.transferID, privacy: .public) out of range for gen=\(request.generation, privacy: .public) (conn=\(self.connectionTag, privacy: .public))"
             )
             sender?.rejectRequest(
-                transferID: request.transferID, code: "request.range",
+                transferID: request.transferID, code: .requestRange,
                 message: "Representation index \(repIndex) out of range")
             return
         }
@@ -741,7 +741,7 @@ final class VsockClipboardService: ClipboardServicing {
                 "Clipboard request uti '\(request.uti, privacy: .public)' doesn't match offered rep \(repIndex, privacy: .public) (conn=\(self.connectionTag, privacy: .public))"
             )
             sender?.rejectRequest(
-                transferID: request.transferID, code: "request.uti",
+                transferID: request.transferID, code: .requestUTI,
                 message: "Requested UTI '\(request.uti)' does not match offered representation")
             return
         }
@@ -1242,9 +1242,9 @@ final class VsockClipboardService: ClipboardServicing {
                 onAbort: { [weak self] info in
                     // A volume that fills *during* the transfer; the pre-flight
                     // above covers the up-front case. Fires off the main actor.
-                    if info.code == "disk.full" {
+                    if info.code == .diskFull {
                         Task { @MainActor [weak self] in self?.recordPullDiskFull(info) }
-                    } else if info.code == "extract.error" {
+                    } else if info.code == .extractError {
                         Task { @MainActor [weak self] in
                             self?.raiseIssue(.pasteUnpackFailed())
                         }
@@ -1382,14 +1382,6 @@ final class VsockClipboardService: ClipboardServicing {
     /// a superseded offer, and the peer rejecting a request for a generation it
     /// has moved past.
     ///
-    /// A paste fire raises no issue for these — whatever superseded the offer
-    /// publishes its own explainer, and a teardown is not the user's problem to
-    /// act on.
-    // `nonisolated` so the blocking pull can read it off the main actor.
-    nonisolated private static let retiringAbortCodes: Set<String> = [
-        "cancelled", "superseded", "request.stale", "user.cancelled",
-    ]
-
     /// Records a user-visible issue for a paste-time fire that will serve
     /// nothing.
     ///
@@ -1473,7 +1465,7 @@ final class VsockClipboardService: ClipboardServicing {
                 coordinator.abort(
                     transferID,
                     ClipboardStreamAbortInfo(
-                        transferID: transferID, code: "send.failed",
+                        transferID: transferID, code: .sendFailed,
                         message: "Failed to send clipboard request", neededBytes: nil,
                         availableBytes: nil))
             }
@@ -1483,13 +1475,13 @@ final class VsockClipboardService: ClipboardServicing {
             return rep
         case .aborted(let abort):
             Self.logger.warning(
-                "File clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) aborted (\(abort.code, privacy: .public))"
+                "File clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) aborted (\(abort.rawCode, privacy: .public))"
             )
-            if abort.code == "disk.full" {
+            if abort.code == .diskFull {
                 recordPasteIssue(.diskFull(from: abort))
-            } else if abort.code == "extract.error" {
+            } else if abort.code == .extractError {
                 recordPasteIssue(.pasteUnpackFailed())
-            } else if !Self.retiringAbortCodes.contains(abort.code) {
+            } else if !abort.isRetiring {
                 recordPasteIssue(.pasteTransferFailed())
             }
             return nil

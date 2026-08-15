@@ -300,6 +300,10 @@ func makeEndFrame(transferID: UInt64, payload: Data) -> Frame {
 
 /// A `ClipboardStreamAbort` failing an inbound transfer the agent is receiving
 /// (we are the host sender aborting a lazy pull mid-flight).
+///
+/// `code` is the bare wire string rather than a `ClipboardStreamAbortCode` so a
+/// test can inject one this build does not define; pass
+/// `ClipboardStreamAbortCode.<case>.rawValue` when the code is meant to be read.
 func makeAbortFrame(transferID: UInt64, code: String, message: String) -> Frame {
     var frame = Frame()
     frame.protocolVersion = 1

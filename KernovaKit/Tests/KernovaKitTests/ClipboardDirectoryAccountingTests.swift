@@ -145,7 +145,7 @@ struct ClipboardDirectoryAccountingTests {
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         let info = try #require(harness.collector.abortInfos.first)
-        #expect(info.code == "disk.full")
+        #expect(info.code == .diskFull)
         #expect(harness.collector.representation(id) == nil)
         // RATIONALE: filesystem-appearance poll (docs/TESTING.md) — the tree is
         // removed on the write lane after the abort is delivered.
@@ -178,7 +178,7 @@ struct ClipboardDirectoryAccountingTests {
             })
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.first?.code == "size.overrun")
+        #expect(harness.collector.abortInfos.first?.code == .sizeOverrun)
         #expect(harness.collector.representation(id) == nil)
         // RATIONALE: filesystem-appearance poll (docs/TESTING.md) — same ordering
         // as the disk-full case.
@@ -311,7 +311,7 @@ struct ClipboardDirectoryAccountingTests {
             maxAcceptByteCount: UInt64(ceiling), isInline: false, isCurrent: { _ in true })
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.first?.code == "disk.full")
+        #expect(harness.collector.abortInfos.first?.code == .diskFull)
         #expect(harness.collector.representation(id) == nil)
     }
 
@@ -390,7 +390,7 @@ struct ClipboardDirectoryAccountingTests {
             })
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.first?.code == "disk.full")
+        #expect(harness.collector.abortInfos.first?.code == .diskFull)
     }
 
     @Test("a Begin for a pull this side cancelled is refused, not restaged as a file")

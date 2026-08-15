@@ -345,8 +345,7 @@ message ClipboardStreamAck {
 message ClipboardStreamAbort {
   uint64 transfer_id = 1;
 
-  // Stable machine-readable code, e.g. "disk.full", "read.error",
-  // "superseded", "format.unavailable".
+  // Stable machine-readable code; the vocabulary is ClipboardStreamAbortCode.
   string code = 2;
 
   // Human-readable detail for logs / user-facing messages.

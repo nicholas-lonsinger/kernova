@@ -183,7 +183,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
     ///
     /// No `OutboundTransfer` is ever registered — the request is dropped before
     /// any transfer exists.
-    public func rejectRequest(transferID: UInt64, code: String, message: String) {
+    public func rejectRequest(transferID: UInt64, code: ClipboardStreamAbortCode, message: String) {
         sendAbort(transferID: transferID, code: code, message: message)
     }
 
@@ -223,7 +223,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
             && UInt64(advertisedByteCount) > maxAcceptByteCount
         {
             sendAbort(
-                transfer: transfer, code: "disk.full",
+                transfer: transfer, code: .diskFull,
                 message: "Requester cannot accept \(advertisedByteCount) bytes")
             return
         }
@@ -266,7 +266,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
             }
             guard let data = try? Data(contentsOf: url), data.count <= maxResidentInlineBytes
             else {
-                sendAbort(transfer: transfer, code: "read.error", message: "Cannot read source file")
+                sendAbort(transfer: transfer, code: .readError, message: "Cannot read source file")
                 return
             }
             payload = .raw(data)
@@ -275,7 +275,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
             // not-yet-pulled placeholder has no bytes to stream.
             assertionFailure("Cannot stream a pending-remote representation")
             sendAbort(
-                transfer: transfer, code: "read.error",
+                transfer: transfer, code: .readError,
                 message: "Cannot stream a pending-remote representation")
             return
         case .inMemory(let data):
@@ -403,7 +403,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
                     notifyPeerOfRetirement(transfer, reason: retirement.reason)
                     return false
                 }
-                sendAbort(transfer: transfer, code: "read.error", message: "Source read failed at offset \(offset)")
+                sendAbort(transfer: transfer, code: .readError, message: "Source read failed at offset \(offset)")
                 return false
             }
             // Fill the chunk: a partial read otherwise puts one frame on the wire
@@ -412,7 +412,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
             while !chunk.isEmpty, chunk.count < nextChunkSize {
                 guard let more = reader.read(upTo: nextChunkSize - chunk.count) else {
                     sendAbort(
-                        transfer: transfer, code: "read.error",
+                        transfer: transfer, code: .readError,
                         message: "Source read failed at offset \(offset + chunk.count)")
                     return false
                 }
@@ -424,7 +424,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
                 // undeclared one has simply reached its end.
                 guard declaredByteCount == nil else {
                     sendAbort(
-                        transfer: transfer, code: "read.error",
+                        transfer: transfer, code: .readError,
                         message: "Source read failed at offset \(offset)")
                     return false
                 }
@@ -440,7 +440,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
                 notifyPeerOfRetirement(transfer, reason: reason)
                 return false
             case .timedOut:
-                sendAbort(transfer: transfer, code: "ack.timeout", message: "Peer stopped acknowledging")
+                sendAbort(transfer: transfer, code: .ackTimeout, message: "Peer stopped acknowledging")
                 return false
             case .proceed:
                 break
@@ -465,7 +465,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
                 UInt64(producedBytes) > maxAcceptByteCount
             {
                 sendAbort(
-                    transfer: transfer, code: "disk.full",
+                    transfer: transfer, code: .diskFull,
                     message:
                         "Requester cannot accept more than \(maxAcceptByteCount) bytes; the payload has produced \(producedBytes)"
                 )
@@ -520,7 +520,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         }
     }
 
-    private func sendAbort(transfer: OutboundTransfer, code: String, message: String) {
+    private func sendAbort(transfer: OutboundTransfer, code: ClipboardStreamAbortCode, message: String) {
         sendAbort(transferID: transfer.transferID, code: code, message: message)
     }
 
@@ -533,17 +533,17 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         _ transfer: OutboundTransfer, reason: OutboundTransfer.AbortReason?
     ) {
         guard reason == .superseded else { return }
-        sendAbort(transfer: transfer, code: "superseded", message: "Offer superseded")
+        sendAbort(transfer: transfer, code: .superseded, message: "Offer superseded")
     }
 
     /// Writes a `ClipboardStreamAbort` for `transferID`.
-    private func sendAbort(transferID: UInt64, code: String, message: String) {
+    private func sendAbort(transferID: UInt64, code: ClipboardStreamAbortCode, message: String) {
         _ = send(
             .with {
                 $0.protocolVersion = 1
                 $0.clipboardStreamAbort = .with {
                     $0.transferID = transferID
-                    $0.code = code
+                    $0.code = code.rawValue
                     $0.message = message
                 }
             })

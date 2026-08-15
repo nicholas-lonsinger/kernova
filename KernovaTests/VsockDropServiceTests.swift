@@ -366,14 +366,14 @@ struct VsockDropServiceTests {
             makeRequest(
                 generation: 99, transferID: transferID(generation: 99, repIndex: 0), uti: uti))
         try await harness.recorder.wait { !harness.recorder.aborts.isEmpty }
-        #expect(harness.recorder.aborts.first?.code == "request.stale")
+        #expect(harness.recorder.aborts.first?.code == ClipboardStreamAbortCode.requestStale.rawValue)
 
         // An index past the offer's items.
         try harness.guest.send(
             makeRequest(
                 generation: 1, transferID: transferID(generation: 1, repIndex: 5), uti: uti))
         try await harness.recorder.wait { harness.recorder.aborts.count >= 2 }
-        #expect(harness.recorder.aborts[1].code == "request.range")
+        #expect(harness.recorder.aborts[1].code == ClipboardStreamAbortCode.requestRange.rawValue)
 
         // The right item, the wrong type.
         try harness.guest.send(
@@ -381,7 +381,7 @@ struct VsockDropServiceTests {
                 generation: 1, transferID: transferID(generation: 1, repIndex: 0),
                 uti: "public.mpeg-4"))
         try await harness.recorder.wait { harness.recorder.aborts.count >= 3 }
-        #expect(harness.recorder.aborts[2].code == "request.uti")
+        #expect(harness.recorder.aborts[2].code == ClipboardStreamAbortCode.requestUTI.rawValue)
         // Nothing was streamed for any of them.
         #expect(harness.recorder.begins.isEmpty)
     }
@@ -410,7 +410,9 @@ struct VsockDropServiceTests {
 
         try await harness.recorder.wait { !harness.recorder.releases.isEmpty }
         #expect(harness.recorder.releases.first?.generation == 1)
-        try await harness.recorder.wait { harness.recorder.aborts.contains { $0.code == "superseded" } }
+        try await harness.recorder.wait {
+            harness.recorder.aborts.contains { $0.code == ClipboardStreamAbortCode.superseded.rawValue }
+        }
         // A cancel is not a failure: nothing is raised on either surface.
         #expect(harness.issue == nil)
     }

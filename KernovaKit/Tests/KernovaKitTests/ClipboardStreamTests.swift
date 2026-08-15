@@ -292,7 +292,7 @@ struct ClipboardStreamTests {
             isInline: true, isCurrent: { _ in false })
 
         try await harness.collector.gate.wait { harness.collector.abortCount == 1 }
-        #expect(harness.collector.abortInfos.first?.code == "superseded")
+        #expect(harness.collector.abortInfos.first?.code == .superseded)
         #expect(harness.collector.representation(4) == nil)
         #expect(harness.collector.completedCount == 0)
     }
@@ -796,7 +796,7 @@ struct ClipboardStreamTests {
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         // The sink names its own failure, and the sink is an extract.
-        #expect(harness.collector.abortInfos.contains { $0.code == "extract.error" })
+        #expect(harness.collector.abortInfos.contains { $0.code == .extractError })
         #expect(harness.collector.representation(id) == nil)
         // Timing metrics report successful transfers only.
         #expect(harness.collector.timedMetrics.isEmpty)
@@ -840,7 +840,7 @@ struct ClipboardStreamTests {
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         // Named as the overrun it is: the extract itself succeeded, so
         // `extract.error` would send the user off retrying a good transfer.
-        #expect(harness.collector.abortInfos.contains { $0.code == "size.overrun" })
+        #expect(harness.collector.abortInfos.contains { $0.code == .sizeOverrun })
         #expect(harness.collector.representation(id) == nil)
     }
 
@@ -876,7 +876,7 @@ struct ClipboardStreamTests {
         endTransfer(harness, id: id, bytes: wire)
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.contains { $0.code == "extract.error" })
+        #expect(harness.collector.abortInfos.contains { $0.code == .extractError })
         #expect(harness.collector.representation(id) == nil)
         #expect(harness.collector.timedMetrics.isEmpty)
         // A streamed extract has always written part of its output by the time
@@ -943,7 +943,7 @@ struct ClipboardStreamTests {
         }
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.first?.code == "flow.overrun")
+        #expect(harness.collector.abortInfos.first?.code == .flowOverrun)
         try #require(sinkBox.value).allowAll()
     }
 
@@ -974,7 +974,7 @@ struct ClipboardStreamTests {
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         let info = try #require(harness.collector.abortInfos.first)
-        #expect(info.code == "disk.full")
+        #expect(info.code == .diskFull)
         #expect(info.neededBytes == payload.count)
         #expect(harness.collector.representation(id) == nil)
     }
@@ -1106,7 +1106,7 @@ struct ClipboardStreamTests {
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         #expect(harness.collector.representation(8) == nil)
-        #expect(harness.collector.abortInfos.contains { $0.code == "chunk.empty" })
+        #expect(harness.collector.abortInfos.contains { $0.code == .chunkEmpty })
     }
 
     @Test("an out-of-order (gapped) chunk aborts the transfer")
@@ -1130,7 +1130,7 @@ struct ClipboardStreamTests {
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         #expect(harness.collector.representation(7) == nil)
-        #expect(harness.collector.abortInfos.contains { $0.code == "offset.gap" })
+        #expect(harness.collector.abortInfos.contains { $0.code == .offsetGap })
     }
 
     @Test("cancelling a generation deletes the in-flight partial extract")
@@ -1206,7 +1206,7 @@ struct ClipboardStreamTests {
             })
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.contains { $0.code == "size.mismatch" })
+        #expect(harness.collector.abortInfos.contains { $0.code == .sizeMismatch })
     }
 
     @Test("a digest mismatch at End aborts the transfer")
@@ -1231,7 +1231,7 @@ struct ClipboardStreamTests {
             })
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.contains { $0.code == "digest.mismatch" })
+        #expect(harness.collector.abortInfos.contains { $0.code == .digestMismatch })
         #expect(harness.collector.representation(6) == nil)
         // Timing metrics report successful transfers only.
         #expect(harness.collector.timedMetrics.isEmpty)
@@ -1263,7 +1263,7 @@ struct ClipboardStreamTests {
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         let info = try #require(harness.collector.abortInfos.first)
-        #expect(info.code == "disk.full")
+        #expect(info.code == .diskFull)
         #expect(info.neededBytes == bytes.count)
         #expect(harness.collector.representation(1) == nil)
     }
@@ -1289,7 +1289,7 @@ struct ClipboardStreamTests {
             })
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.first?.code == "payload.unsupported")
+        #expect(harness.collector.abortInfos.first?.code == .payloadUnsupported)
         #expect(harness.collector.representation(9) == nil)
     }
 
@@ -1307,7 +1307,7 @@ struct ClipboardStreamTests {
             })
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.first?.code == "payload.unsupported")
+        #expect(harness.collector.abortInfos.first?.code == .payloadUnsupported)
         #expect(harness.collector.representation(10) == nil)
         #expect(materializedFiles(under: harness.stagingTempRoot).isEmpty)
     }
@@ -1327,7 +1327,7 @@ struct ClipboardStreamTests {
             })
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.first?.code == "payload.unsupported")
+        #expect(harness.collector.abortInfos.first?.code == .payloadUnsupported)
         #expect(harness.collector.representation(12) == nil)
         #expect(materializedFiles(under: harness.stagingTempRoot).isEmpty)
     }
@@ -1342,7 +1342,7 @@ struct ClipboardStreamTests {
         beginArchive(harness, id: 11, filename: "unasked.bin")
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.first?.code == "payload.unexpected")
+        #expect(harness.collector.abortInfos.first?.code == .payloadUnexpected)
         #expect(harness.collector.representation(11) == nil)
         #expect(materializedFiles(under: harness.stagingTempRoot).isEmpty)
     }
@@ -1387,7 +1387,7 @@ struct ClipboardStreamTests {
         endTransfer(harness, id: id, bytes: wire)
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.first?.code == "size.overrun")
+        #expect(harness.collector.abortInfos.first?.code == .sizeOverrun)
         #expect(harness.collector.representation(id) == nil)
         // RATIONALE: filesystem-appearance poll (docs/TESTING.md) — the partial
         // output is removed on the write lane after the abort is delivered.
@@ -1413,7 +1413,7 @@ struct ClipboardStreamTests {
         endTransfer(harness, id: id, bytes: wire)
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.first?.code == "size.overrun")
+        #expect(harness.collector.abortInfos.first?.code == .sizeOverrun)
         #expect(harness.collector.representation(id) == nil)
         // RATIONALE: filesystem-appearance poll (docs/TESTING.md) — the output
         // is removed on the write lane after the abort is delivered.
@@ -1444,7 +1444,7 @@ struct ClipboardStreamTests {
         endTransfer(harness, id: id, bytes: wire)
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.first?.code == "payload.invalid")
+        #expect(harness.collector.abortInfos.first?.code == .payloadInvalid)
         #expect(harness.collector.representation(id) == nil)
         // RATIONALE: filesystem-appearance poll (docs/TESTING.md) — the rejected
         // extract is removed after the abort is delivered.
@@ -1470,7 +1470,7 @@ struct ClipboardStreamTests {
             isInline: true, isCurrent: { _ in true })
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.contains { $0.code == "ack.timeout" })
+        #expect(harness.collector.abortInfos.contains { $0.code == .ackTimeout })
         #expect(harness.collector.representation(1) == nil)
     }
 
@@ -1486,7 +1486,7 @@ struct ClipboardStreamTests {
         beginArchive(harness, id: 1, filename: "stalled.bin")
         // No chunks ever arrive — the inactivity deadline must abort and clean up.
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.contains { $0.code == "stall.timeout" })
+        #expect(harness.collector.abortInfos.contains { $0.code == .stallTimeout })
         #expect(harness.collector.representation(1) == nil)
         // RATIONALE: filesystem-appearance poll (mirrors `cancelDeletesPartial`).
         // Since #615 the partial is deleted on the transfer's write lane, so the
@@ -1518,7 +1518,7 @@ struct ClipboardStreamTests {
         // One chunk landed, then silence — the watchdog must still fire and
         // clean up the partial.
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.contains { $0.code == "stall.timeout" })
+        #expect(harness.collector.abortInfos.contains { $0.code == .stallTimeout })
         #expect(harness.collector.representation(8) == nil)
         // RATIONALE: filesystem-appearance poll — see `inboundStallTimesOut`.
         // The partial's deletion runs on the write lane, after the abort.
@@ -1738,7 +1738,7 @@ struct ClipboardStreamTests {
                 $0.transferID = 1; $0.offset = 0; $0.data = Data(repeating: 0xAB, count: 100)
             })
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.contains { $0.code == "size.overrun" })
+        #expect(harness.collector.abortInfos.contains { $0.code == .sizeOverrun })
         #expect(harness.collector.representation(1) == nil)
     }
 
@@ -1756,12 +1756,12 @@ struct ClipboardStreamTests {
         // the abort surfaces on the channel-wide onAbort (the collector).
         let transferID = ClipboardTransferID.make(generation: 4, repIndex: 1, hostMinted: false)
         harness.sender.rejectRequest(
-            transferID: transferID, code: "request.stale", message: "superseded")
+            transferID: transferID, code: .requestStale, message: "superseded")
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         let info = try #require(harness.collector.abortInfos.first)
         #expect(info.transferID == transferID)
-        #expect(info.code == "request.stale")
+        #expect(info.code == .requestStale)
         #expect(info.message == "superseded")
         #expect(harness.collector.completedCount == 0)
     }
@@ -1781,10 +1781,10 @@ struct ClipboardStreamTests {
             onAbort: { collector.abort($0) })
 
         harness.sender.rejectRequest(
-            transferID: transferID, code: "request.uti", message: "uti mismatch")
+            transferID: transferID, code: .requestUTI, message: "uti mismatch")
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.first?.code == "request.uti")
+        #expect(harness.collector.abortInfos.first?.code == .requestUTI)
         #expect(harness.collector.completedCount == 0)
     }
 

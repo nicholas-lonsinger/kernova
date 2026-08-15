@@ -735,7 +735,7 @@ public final class ClipboardArchiveExtractSink: StagingSink, @unchecked Sendable
     public var uncompressedByteCount: Int { counted.value }
 
     /// An extract failure names the extract, not a disk write.
-    public var writeErrorCode: String { "extract.error" }
+    public var writeErrorCode: ClipboardStreamAbortCode { .extractError }
 
     /// Opens the extract pipeline, which begins consuming as soon as bytes are
     /// written.

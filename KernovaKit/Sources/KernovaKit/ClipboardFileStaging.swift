@@ -26,7 +26,7 @@ public protocol StagingSink: Sendable {
     ///
     /// The sink names its own failure, so a caller need not know which kind it
     /// holds to describe what went wrong.
-    var writeErrorCode: String { get }
+    var writeErrorCode: ClipboardStreamAbortCode { get }
 }
 
 extension StagingSink {
@@ -34,7 +34,7 @@ extension StagingSink {
     public func cancel() {}
 
     /// A sink that writes bytes to a file fails as a write.
-    public var writeErrorCode: String { "write.error" }
+    public var writeErrorCode: ClipboardStreamAbortCode { .writeError }
 }
 
 /// Materializes streamed file representations to real local temp files so a

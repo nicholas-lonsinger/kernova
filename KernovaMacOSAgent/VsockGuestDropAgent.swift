@@ -239,7 +239,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
             },
             onAbort: { info in
                 Self.logger.debug(
-                    "Unawaited dropped file \(info.transferID, privacy: .public) (conn=\(connectionTag, privacy: .public)) aborted (\(info.code, privacy: .public))"
+                    "Unawaited dropped file \(info.transferID, privacy: .public) (conn=\(connectionTag, privacy: .public)) aborted (\(info.rawCode, privacy: .public))"
                 )
             })
         await MainActor.run {
@@ -368,7 +368,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         coordinator.abort(
             transferID,
             ClipboardStreamAbortInfo(
-                transferID: transferID, code: "cancelled", message: "Cancelled by the user",
+                transferID: transferID, code: .cancelled, message: "Cancelled by the user",
                 neededBytes: nil, availableBytes: nil))
         Self.logger.notice(
             "Drop cancelled (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
@@ -383,7 +383,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         frame.protocolVersion = 1
         frame.clipboardStreamAbort = .with {
             $0.transferID = transferID
-            $0.code = "user.cancelled"
+            $0.code = ClipboardStreamAbortCode.userCancelled.rawValue
             $0.message = "Cancelled by the user"
         }
         try? channel.send(frame)
@@ -510,7 +510,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
                 coordinator.abort(
                     transferID,
                     ClipboardStreamAbortInfo(
-                        transferID: transferID, code: "send.failed",
+                        transferID: transferID, code: .sendFailed,
                         message: "Failed to request the dropped file", neededBytes: nil,
                         availableBytes: nil))
             }
@@ -534,10 +534,10 @@ final class VsockGuestDropAgent: @unchecked Sendable {
             tracker.unitEnded(session: session, id: transferID, succeeded: false)
             if job.isCancelled { return .cancelled }
             Self.logger.warning(
-                "Dropped file \(transferID, privacy: .public) aborted (\(abort.code, privacy: .public))"
+                "Dropped file \(transferID, privacy: .public) aborted (\(abort.rawCode, privacy: .public))"
             )
             return .failure(
-                abort.code == "disk.full" ? .dropDiskFull : .dropFailed, abort.message)
+                abort.code == .diskFull ? .dropDiskFull : .dropFailed, abort.message)
         case .timedOut:
             receiver.cancelAwait(transferID)
             tracker.unitEnded(session: session, id: transferID, succeeded: false)
@@ -562,7 +562,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         frame.protocolVersion = 1
         frame.clipboardStreamAbort = .with {
             $0.transferID = transferID
-            $0.code = "stall.timeout"
+            $0.code = ClipboardStreamAbortCode.stallTimeout.rawValue
             $0.message = "Receiver gave up waiting for the dropped file"
         }
         try? channel.send(frame)

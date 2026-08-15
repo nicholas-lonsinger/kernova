@@ -323,7 +323,7 @@ struct VsockGuestDropAgentTests {
             let frame = try await nextFrame(from: harness.host)
             switch frame.payload {
             case .clipboardStreamAbort(let abort):
-                #expect(abort.code == "user.cancelled")
+                #expect(abort.code == ClipboardStreamAbortCode.userCancelled.rawValue)
                 sawAbort = true
             case .dropComplete(let value):
                 complete = value

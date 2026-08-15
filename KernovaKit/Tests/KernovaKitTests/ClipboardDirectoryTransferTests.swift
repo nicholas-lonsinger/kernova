@@ -224,7 +224,7 @@ struct ClipboardDirectoryTransferTests {
         let id: UInt64 = 44
         begin(harness, id: id, named: "Project")
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.first?.code == "payload.unexpected")
+        #expect(harness.collector.abortInfos.first?.code == .payloadUnexpected)
         #expect(materializedFiles(under: harness.stagingTempRoot).isEmpty)
     }
 
@@ -249,7 +249,7 @@ struct ClipboardDirectoryTransferTests {
             })
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.first?.code == "digest.mismatch")
+        #expect(harness.collector.abortInfos.first?.code == .digestMismatch)
         #expect(harness.collector.representation(id) == nil)
         // The tree was already on disk when the digest — the only detector of a
         // corrupted archive — failed, so it has to be removed.
@@ -282,7 +282,7 @@ struct ClipboardDirectoryTransferTests {
             })
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.first?.code == "extract.error")
+        #expect(harness.collector.abortInfos.first?.code == .extractError)
         #expect(harness.collector.representation(id) == nil)
         #expect(materializedFiles(under: harness.stagingTempRoot).isEmpty)
     }
@@ -303,7 +303,7 @@ struct ClipboardDirectoryTransferTests {
         harness.receiver.cancel(generation: 1)
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.first?.code == "cancelled")
+        #expect(harness.collector.abortInfos.first?.code == .cancelled)
         // RATIONALE: filesystem-appearance poll (docs/TESTING.md) — the teardown
         // runs on the write lane after the abort is delivered.
         try await waitUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
@@ -324,7 +324,7 @@ struct ClipboardDirectoryTransferTests {
         feed(harness, id: id, bytes: Data(bytes.prefix(bytes.count / 2)))
         harness.receiver.handleAbort(
             .with {
-                $0.transferID = id; $0.code = "read.error"; $0.message = "gone"
+                $0.transferID = id; $0.code = ClipboardStreamAbortCode.readError.rawValue; $0.message = "gone"
             })
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
@@ -434,7 +434,7 @@ struct ClipboardDirectoryTransferTests {
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         let info = try #require(harness.collector.abortInfos.first)
-        #expect(info.code == "disk.full")
+        #expect(info.code == .diskFull)
         // A streamed folder declares no size on the wire, so the estimate its
         // offer advertised is the honest figure to report as "needed".
         #expect(info.neededBytes == 4096)
@@ -460,7 +460,7 @@ struct ClipboardDirectoryTransferTests {
             maxAcceptByteCount: 64, isInline: false, isCurrent: { _ in true })
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.first?.code == "disk.full")
+        #expect(harness.collector.abortInfos.first?.code == .diskFull)
         #expect(harness.collector.representation(id) == nil)
     }
 }
