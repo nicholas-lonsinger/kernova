@@ -28,7 +28,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     private let pullTimeout: TimeInterval
     private let revealInFinder: @Sendable ([URL]) -> Void
 
-    /// Whether the host advertised `drop.files.v1`, so the reconnect loop only
+    /// Whether the host advertised `drop.files.v2`, so the reconnect loop only
     /// dials a host that has a drop listener.
     var hostSupportsDrop: @Sendable () -> Bool = { false }
 

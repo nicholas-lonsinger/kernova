@@ -3,8 +3,8 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("ClipboardDirectoryArchive")
-struct ClipboardDirectoryArchiveTests {
+@Suite("ClipboardArchive")
+struct ClipboardArchiveTests {
     /// A unique scratch directory removed when the test ends.
     private func makeScratch() throws -> URL {
         let url = FileManager.default.temporaryDirectory
@@ -30,7 +30,7 @@ struct ClipboardDirectoryArchiveTests {
             atPath: root.appendingPathComponent("link").path, withDestinationPath: "a.txt")
 
         // a.txt (5) + sub/b.txt (6) = 11; dirs and symlinks contribute 0.
-        #expect(ClipboardDirectoryArchive.estimatedByteCount(at: root) == 11)
+        #expect(ClipboardArchive.estimatedByteCount(at: root) == 11)
     }
 
     @Test("estimatedByteCount is 0 for a tree carrying no file bytes")
@@ -41,16 +41,16 @@ struct ClipboardDirectoryArchiveTests {
 
         let empty = scratch.appendingPathComponent("empty", isDirectory: true)
         try fm.createDirectory(at: empty, withIntermediateDirectories: true)
-        #expect(ClipboardDirectoryArchive.estimatedByteCount(at: empty) == 0)
+        #expect(ClipboardArchive.estimatedByteCount(at: empty) == 0)
 
         // Only subdirectories and zero-byte files: nothing to sum, yet the tree
-        // is real and streams intact (ClipboardDirectoryStreamTests).
+        // is real and streams intact (ClipboardArchiveStreamTests).
         let scaffold = scratch.appendingPathComponent("scaffold", isDirectory: true)
         try fm.createDirectory(
             at: scaffold.appendingPathComponent("sub", isDirectory: true),
             withIntermediateDirectories: true)
         try Data().write(to: scaffold.appendingPathComponent(".keep"))
         try Data().write(to: scaffold.appendingPathComponent("sub/.keep"))
-        #expect(ClipboardDirectoryArchive.estimatedByteCount(at: scaffold) == 0)
+        #expect(ClipboardArchive.estimatedByteCount(at: scaffold) == 0)
     }
 }

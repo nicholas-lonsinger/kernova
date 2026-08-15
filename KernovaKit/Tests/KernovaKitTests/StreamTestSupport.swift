@@ -29,16 +29,33 @@ func makeStartedChannelPair() throws -> (a: VsockChannel, b: VsockChannel) {
 
 // MARK: - Staging sink doubles
 
+/// The extract sink a test double stands in front of: the production pipeline,
+/// wired to the guard the receiver handed its factory, so the ceiling and
+/// free-space checks still fire through the double.
+///
+/// `capacityBytes`/`pacingBytes` mirror what the receiver passes its own
+/// factory — the harness window — so a wrapped sink paces its guard exactly as
+/// an unwrapped one does.
+func makeExtractSink(
+    destinationURL: URL, label: String, windowBytes: Int,
+    onOutputAdvanced: @escaping @Sendable (Int) throws -> Void
+) -> ClipboardArchiveExtractSink {
+    ClipboardArchiveExtractSink(
+        destinationURL: destinationURL, label: label,
+        capacityBytes: windowBytes, pacingBytes: windowBytes,
+        onOutputAdvanced: onOutputAdvanced)
+}
+
 /// A `StagingSink` that parks every `write` until the test allows it through,
 /// wrapping a real staging sink so everything else (bytes on disk, commit,
 /// abort) behaves exactly as in production.
 ///
 /// The receiver's write lane holds a backlog only while an append is
-/// outstanding, which a real staging file never does long enough to observe —
+/// outstanding, which a real staging sink never does long enough to observe —
 /// this makes that window as wide as a test needs, so the pipelining (#615) can
 /// be asserted deterministically instead of by timing.
 final class GatedSink: StagingSink, @unchecked Sendable {
-    private let wrapped: ClipboardFileStaging.Sink
+    private let wrapped: any StagingSink
     private let condition = NSCondition()
     private var allowance = 0
     private var started = 0
@@ -47,7 +64,7 @@ final class GatedSink: StagingSink, @unchecked Sendable {
     /// wait event-driven.
     let gate = AsyncGate()
 
-    init(wrapping sink: ClipboardFileStaging.Sink) { wrapped = sink }
+    init(wrapping sink: any StagingSink) { wrapped = sink }
 
     /// Writes the receiver's write lane has entered — the last of them is
     /// parked in the gate whenever `startedWrites > completedWrites`, which
@@ -102,6 +119,10 @@ final class GatedSink: StagingSink, @unchecked Sendable {
     func commit() throws -> URL { try wrapped.commit() }
 
     func abort() { wrapped.abort() }
+
+    func cancel() { wrapped.cancel() }
+
+    var writeErrorCode: String { wrapped.writeErrorCode }
 }
 
 /// A `StagingSink` that silently discards its `droppingWrite`-th write
@@ -109,14 +130,14 @@ final class GatedSink: StagingSink, @unchecked Sendable {
 ///
 /// Models the one corruption the end-to-end digest cannot catch: the digest is
 /// taken over the bytes that *arrive*, so bytes lost between the receive lane
-/// and the file leave both the size and SHA-256 checks satisfied.
+/// and the sink leave both the size and SHA-256 checks satisfied.
 final class SilentlyDroppingSink: StagingSink, @unchecked Sendable {
-    private let wrapped: ClipboardFileStaging.Sink
+    private let wrapped: any StagingSink
     private let droppingWrite: Int
     private let lock = NSLock()
     private var attempts = 0
 
-    init(wrapping sink: ClipboardFileStaging.Sink, droppingWrite: Int) {
+    init(wrapping sink: any StagingSink, droppingWrite: Int) {
         wrapped = sink
         self.droppingWrite = droppingWrite
     }
@@ -134,18 +155,22 @@ final class SilentlyDroppingSink: StagingSink, @unchecked Sendable {
     func commit() throws -> URL { try wrapped.commit() }
 
     func abort() { wrapped.abort() }
+
+    func cancel() { wrapped.cancel() }
+
+    var writeErrorCode: String { wrapped.writeErrorCode }
 }
 
 /// A `StagingSink` that throws on its `failingWrite`-th write (1-based),
 /// wrapping a real staging sink otherwise — models a volume that fails an
 /// append mid-stream.
 final class FailingSink: StagingSink, @unchecked Sendable {
-    private let wrapped: ClipboardFileStaging.Sink
+    private let wrapped: any StagingSink
     private let failingWrite: Int
     private let lock = NSLock()
     private var attempts = 0
 
-    init(wrapping sink: ClipboardFileStaging.Sink, failingWrite: Int) {
+    init(wrapping sink: any StagingSink, failingWrite: Int) {
         wrapped = sink
         self.failingWrite = failingWrite
     }
@@ -165,6 +190,10 @@ final class FailingSink: StagingSink, @unchecked Sendable {
     func commit() throws -> URL { try wrapped.commit() }
 
     func abort() { wrapped.abort() }
+
+    func cancel() { wrapped.cancel() }
+
+    var writeErrorCode: String { wrapped.writeErrorCode }
 }
 
 /// A `ChunkReader` that parks every read until it is closed.
@@ -208,14 +237,31 @@ final class ParkingChunkReader: CancellableChunkReader, @unchecked Sendable {
 
 // MARK: - Collector
 
-/// Gathers the completed representations and aborts a receiver delivers.
+/// Gathers the completed representations and aborts a receiver delivers, plus
+/// the `Begin`/`End` frames that announced and closed each transfer.
+///
+/// An archived transfer's wire size and digest are only knowable from those two
+/// frames — the archive is never materialized, and its bytes are not the
+/// payload's — so a test reads them here rather than re-encoding the source and
+/// hoping the encoder is byte-deterministic.
 final class StreamCollector: @unchecked Sendable {
     private let lock = NSLock()
     private var completed: [UInt64: ClipboardContent.Representation] = [:]
     private var aborts: [ClipboardStreamAbortInfo] = []
     private var timings: [ClipboardTransferMetrics] = []
     private var acks: [Kernova_V1_ClipboardStreamAck] = []
+    private var begins: [UInt64: Kernova_V1_ClipboardStreamBegin] = [:]
+    private var ends: [UInt64: Kernova_V1_ClipboardStreamEnd] = [:]
     let gate = AsyncGate()
+
+    func began(_ begin: Kernova_V1_ClipboardStreamBegin) {
+        lock.withLock { begins[begin.transferID] = begin }
+        gate.notify()
+    }
+    func ended(_ end: Kernova_V1_ClipboardStreamEnd) {
+        lock.withLock { ends[end.transferID] = end }
+        gate.notify()
+    }
 
     func complete(_ id: UInt64, _ representation: ClipboardContent.Representation) {
         lock.withLock { completed[id] = representation }
@@ -241,6 +287,15 @@ final class StreamCollector: @unchecked Sendable {
     var abortInfos: [ClipboardStreamAbortInfo] { lock.withLock { aborts } }
     var abortCount: Int { lock.withLock { aborts.count } }
     var timedMetrics: [ClipboardTransferMetrics] { lock.withLock { timings } }
+    /// The `ClipboardStreamBegin` that announced one transfer.
+    func begin(_ id: UInt64) -> Kernova_V1_ClipboardStreamBegin? {
+        lock.withLock { begins[id] }
+    }
+    /// The `ClipboardStreamEnd` that closed one transfer — its `total_bytes` is
+    /// the wire size and its `sha256` the digest of the wire bytes.
+    func end(_ id: UInt64) -> Kernova_V1_ClipboardStreamEnd? {
+        lock.withLock { ends[id] }
+    }
     /// The `bytes_consumed` sequence of every recorded ack for one transfer.
     func ackedByteCounts(_ id: UInt64) -> [UInt64] {
         lock.withLock { acks.filter { $0.transferID == id }.map(\.bytesConsumed) }
@@ -277,7 +332,7 @@ final class StreamHarness: @unchecked Sendable {
         suppressAcks: Bool = false,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         sinkFactory: ClipboardSinkFactory? = nil,
-        directorySource: ClipboardDirectorySourceFactory? = nil
+        archiveSource: ClipboardArchiveSourceFactory? = nil
     ) throws {
         (a, b) = try makeStartedChannelPair()
         stagingTempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -287,14 +342,15 @@ final class StreamHarness: @unchecked Sendable {
             tempRoot: stagingTempRoot,
             freeSpaceProvider: freeSpaceProvider)
         let builtSender: ClipboardStreamSender
-        if let directorySource {
+        if let archiveSource {
             builtSender = ClipboardStreamSender(
                 channel: a, chunkSize: chunkSize, windowBytes: windowBytes,
-                noAckTimeout: noAckTimeout, directorySource: directorySource)
+                noAckTimeout: noAckTimeout, maxResidentInlineBytes: maxResidentInlineBytes,
+                archiveSource: archiveSource)
         } else {
             builtSender = ClipboardStreamSender(
                 channel: a, chunkSize: chunkSize, windowBytes: windowBytes,
-                noAckTimeout: noAckTimeout)
+                noAckTimeout: noAckTimeout, maxResidentInlineBytes: maxResidentInlineBytes)
         }
         sender = builtSender
         let collector = self.collector
@@ -318,9 +374,13 @@ final class StreamHarness: @unchecked Sendable {
                 do {
                     for try await frame in b.incoming {
                         switch frame.payload {
-                        case .clipboardStreamBegin(let x): receiver.handleBegin(x)
+                        case .clipboardStreamBegin(let x):
+                            collector.began(x)
+                            receiver.handleBegin(x)
                         case .clipboardChunk(let x): receiver.handleChunk(x)
-                        case .clipboardStreamEnd(let x): receiver.handleEnd(x)
+                        case .clipboardStreamEnd(let x):
+                            collector.ended(x)
+                            receiver.handleEnd(x)
                         case .clipboardStreamAbort(let x): receiver.handleAbort(x)
                         default: break
                         }

@@ -14,17 +14,31 @@ struct KernovaCapabilityTests {
                 == KernovaCapability.controlChannelDefaults.joined(separator: ","))
     }
 
+    @Test("The advertised defaults are the v2 clipboard and drop tags")
+    func defaultsAdvertiseTheCurrentProtocols() {
+        // A peer speaking either v1 would write an archive out as the file it
+        // was handed, so the tags are replaced rather than added to.
+        #expect(
+            KernovaCapability.controlChannelDefaults == [
+                "control.v1", "control.heartbeat.v1", "clipboard.stream.v2",
+                "clipboard.paste.limit.v1", "drop.files.v2",
+            ])
+        #expect(!KernovaCapability.recognized.contains("clipboard.stream.v1"))
+        #expect(!KernovaCapability.recognized.contains("clipboard.stream.directory.v1"))
+        #expect(!KernovaCapability.recognized.contains("drop.files.v1"))
+    }
+
     @Test("Unrecognized tags are reduced to a count")
     func unrecognizedTagsAreCounted() {
         let capabilities = [
             KernovaCapability.controlV1,
             "evil\ninjected line",
-            KernovaCapability.clipboardStreamV1,
+            KernovaCapability.clipboardStreamV2,
             "another-unknown",
         ]
         #expect(
             KernovaCapability.logDescription(of: capabilities)
-                == "control.v1,clipboard.stream.v1 +2 unrecognized")
+                == "control.v1,clipboard.stream.v2 +2 unrecognized")
     }
 
     @Test("An all-unrecognized list renders only the count")

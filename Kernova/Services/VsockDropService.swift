@@ -113,7 +113,7 @@ final class VsockDropService {
         progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
         progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
         directoryByteCount: @escaping @Sendable (URL) -> Int = {
-            ClipboardDirectoryArchive.estimatedByteCount(at: $0)
+            ClipboardArchive.estimatedByteCount(at: $0)
         },
         runOffMainActor: @escaping (@escaping @Sendable () -> Void) -> Void = { work in
             DispatchQueue.global(qos: .userInitiated).async(execute: work)
@@ -514,28 +514,6 @@ final class VsockDropService {
         tracker.unitBegan(
             session: session, id: xid, expectedBytes: UInt64(max(0, representation.byteCount)),
             name: representation.filename)
-        if case .directory(let sourceURL, let estimatedByteCount) = representation.source {
-            Self.logger.notice(
-                "Streaming dropped folder '\(representation.filename, privacy: .public)' to '\(self.label, privacy: .public)' (gen=\(request.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), estimate \(estimatedByteCount, privacy: .public) bytes)"
-            )
-            sender.startDirectoryTransfer(
-                transferID: xid,
-                generation: request.generation,
-                sourceDirectoryURL: sourceURL,
-                folderName: representation.filename,
-                uti: representation.uti,
-                maxAcceptByteCount: request.maxAcceptByteCount,
-                isCurrent: { live.isCurrent($0) },
-                onProgress: { sent, total in
-                    tracker.unitProgressed(
-                        session: session, id: xid, bytesTransferred: UInt64(max(0, sent)),
-                        totalBytes: UInt64(max(0, total)))
-                },
-                onComplete: { success in
-                    tracker.unitEnded(session: session, id: xid, succeeded: success)
-                })
-            return
-        }
         sender.startTransfer(
             transferID: xid,
             generation: request.generation,
@@ -554,7 +532,7 @@ final class VsockDropService {
                 tracker.unitEnded(session: session, id: xid, succeeded: success)
             })
         Self.logger.debug(
-            "Streaming dropped file \(repIndex, privacy: .public) to '\(self.label, privacy: .public)' (gen=\(request.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(representation.byteCount, privacy: .public) bytes)"
+            "Streaming dropped item \(repIndex, privacy: .public) to '\(self.label, privacy: .public)' (gen=\(request.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(representation.byteCount, privacy: .public) bytes offered)"
         )
     }
 

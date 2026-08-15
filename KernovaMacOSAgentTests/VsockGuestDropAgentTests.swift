@@ -120,15 +120,24 @@ struct VsockGuestDropAgentTests {
     }
 
     /// Reads frames until the agent's request for `transferID` arrives, then
-    /// streams `payload` back to it.
+    /// streams `payload` back to it as the archive a drop crosses as.
     ///
-    /// Returns the frames seen along the way, so a caller can assert on request
+    /// `payload` is the dropped file's own bytes, wrapped here in the one-entry
+    /// archive the host's sender would encode; pass `payloadIsArchived` when it
+    /// is already the archive — a folder's tree.
+    ///
+    /// Returns the request it answered, so a caller can assert on request
     /// ordering.
     @discardableResult
     private func serveRequest(
-        on channel: VsockChannel, generation: UInt64, repIndex: Int, payload: Data
+        on channel: VsockChannel, generation: UInt64, repIndex: Int, payload: Data,
+        payloadIsArchived: Bool = false
     ) async throws -> Kernova_V1_ClipboardRequest {
         let expected = transferID(generation: generation, repIndex: repIndex)
+        let wire =
+            payloadIsArchived
+            ? payload
+            : try clipboardArchiveBytes(of: .blob(payload, name: "data"))
         while true {
             let frame = try await nextFrame(from: channel)
             guard case .clipboardRequest(let request) = frame.payload,
@@ -137,9 +146,10 @@ struct VsockGuestDropAgentTests {
             try channel.send(
                 makeBeginFrame(
                     generation: generation, transferID: expected, uti: request.uti,
-                    totalBytes: payload.count, filename: "", isInline: false))
-            try channel.send(makeChunkFrame(transferID: expected, offset: 0, data: payload))
-            try channel.send(makeEndFrame(transferID: expected, payload: payload))
+                    // An archive's wire size isn't known until its last byte.
+                    totalBytes: 0, filename: "", isInline: false, isArchive: true))
+            try channel.send(makeChunkFrame(transferID: expected, offset: 0, data: wire))
+            try channel.send(makeEndFrame(transferID: expected, payload: wire))
             return request
         }
     }
@@ -178,6 +188,43 @@ struct VsockGuestDropAgentTests {
         #expect(harness.downloadNames == ["blob.bin", "notes.txt"])
         #expect(harness.downloadContents("notes.txt") == first)
         #expect(harness.downloadContents("blob.bin") == second)
+    }
+
+    @Test("a dropped folder lands in Downloads as a tree under its own name")
+    func landsADroppedFolder() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        try await harness.start()
+
+        let source = harness.root.appendingPathComponent("source/Photos", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: source.appendingPathComponent("sub", isDirectory: true),
+            withIntermediateDirectories: true)
+        try Data("one".utf8).write(to: source.appendingPathComponent("one.txt"))
+        try Data("deep".utf8).write(to: source.appendingPathComponent("sub/deep.txt"))
+        let tree = try clipboardArchiveBytes(ofDirectoryAt: source)
+
+        // The folder's own name rides the offer, not the archive: its entries are
+        // relative to it, so the guest is what recreates the folder itself.
+        try harness.host.send(
+            makeDropOffer(
+                generation: 1,
+                reps: [
+                    RepInfo(
+                        uti: ClipboardArchive.directoryUTI, byteCount: 7, filename: "Photos",
+                        isInline: false, isDirectory: true)
+                ]))
+        try await serveRequest(
+            on: harness.host, generation: 1, repIndex: 0, payload: tree, payloadIsArchived: true)
+        let complete = try await awaitCompletion(on: harness.host)
+
+        #expect(complete.outcome == .completed)
+        #expect(harness.downloadNames == ["Photos"])
+        let landed = harness.downloads.appendingPathComponent("Photos", isDirectory: true)
+        #expect(try Data(contentsOf: landed.appendingPathComponent("one.txt")) == Data("one".utf8))
+        #expect(
+            try Data(contentsOf: landed.appendingPathComponent("sub/deep.txt"))
+                == Data("deep".utf8))
     }
 
     @Test("a completed drop reveals exactly the files it landed")

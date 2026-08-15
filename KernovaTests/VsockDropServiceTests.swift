@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import KernovaKit
 import KernovaTestSupport
@@ -266,7 +267,7 @@ struct VsockDropServiceTests {
 
     // MARK: - Serving the guest's pulls
 
-    @Test("the guest's request streams the dropped file's bytes end to end")
+    @Test("the guest's request streams the dropped file as a one-entry archive")
     func streamsTheRequestedFile() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
@@ -286,15 +287,66 @@ struct VsockDropServiceTests {
         let begin = try #require(harness.recorder.begins.first)
         #expect(begin.transferID == xid)
         #expect(begin.filename == "blob.bin")
-        #expect(begin.totalBytes == UInt64(payload.count))
+        #expect(begin.isArchive)
+        // An archive's compressed size isn't known until its last byte.
+        #expect(begin.totalBytes == 0)
         #expect(!begin.isInline)
 
         // The first ack is the sender's go-signal.
         try harness.guest.send(makeAck(transferID: xid))
         try await harness.recorder.wait { harness.recorder.end(for: xid) != nil }
 
-        #expect(harness.recorder.chunkBytes(for: xid) == payload)
-        #expect(harness.recorder.end(for: xid)?.totalBytes == UInt64(payload.count))
+        let wire = harness.recorder.chunkBytes(for: xid)
+        let unpacked = try extractedClipboardArchive(wire)
+        defer { try? FileManager.default.removeItem(at: unpacked) }
+        #expect(
+            try FileManager.default.contentsOfDirectory(atPath: unpacked.path) == ["blob.bin"])
+        #expect(try Data(contentsOf: unpacked.appendingPathComponent("blob.bin")) == payload)
+
+        let end = try #require(harness.recorder.end(for: xid))
+        #expect(end.totalBytes == UInt64(wire.count))
+        #expect(end.sha256 == Data(SHA256.hash(data: wire)))
+    }
+
+    @Test("the guest's request streams a dropped folder as its tree archive")
+    func streamsTheRequestedFolder() async throws {
+        let harness = try Harness(directoryByteCount: { _ in 8 })
+        defer { harness.tearDown() }
+        let scratch = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let folder = scratch.appendingPathComponent("Photos", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        _ = try makeFile(in: folder, named: "one.txt", bytes: Data("hello".utf8))
+
+        #expect(harness.service.startDrop(urls: [folder]))
+        try await harness.recorder.wait { !harness.recorder.offers.isEmpty }
+
+        let xid = transferID(generation: 1, repIndex: 0)
+        let rep = try #require(harness.recorder.offers.first?.repInfo.first)
+        #expect(rep.isDirectory)
+        try harness.guest.send(makeRequest(generation: 1, transferID: xid, uti: rep.uti))
+        try await harness.recorder.wait { !harness.recorder.begins.isEmpty }
+
+        let begin = try #require(harness.recorder.begins.first)
+        #expect(begin.isArchive)
+        #expect(begin.totalBytes == 0)
+
+        try harness.guest.send(makeAck(transferID: xid))
+        try await harness.recorder.wait { harness.recorder.end(for: xid) != nil }
+
+        let wire = harness.recorder.chunkBytes(for: xid)
+        // The tree's entries are relative to the folder, so its own name is not
+        // in the archive — the receiver supplies it.
+        let unpacked = try extractedClipboardArchive(wire, named: "Photos")
+        defer { try? FileManager.default.removeItem(at: unpacked) }
+        #expect(unpacked.lastPathComponent == "Photos")
+        #expect(
+            try Data(contentsOf: unpacked.appendingPathComponent("one.txt"))
+                == Data("hello".utf8))
+
+        let end = try #require(harness.recorder.end(for: xid))
+        #expect(end.totalBytes == UInt64(wire.count))
+        #expect(end.sha256 == Data(SHA256.hash(data: wire)))
     }
 
     @Test("a request naming an unknown drop, index, or type is rejected rather than served")

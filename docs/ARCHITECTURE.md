@@ -183,7 +183,7 @@ The vsock stack (macOS guests only):
   dragged onto `VMDisplayBackingView` become a `DropOffer` the guest pulls representation by
   representation over the same streaming engine the clipboard uses; the guest writes them into its
   Downloads folder and replies `DropComplete`. Installed for every guest with a socket device,
-  gated only on the guest's `drop.files.v1`. `VMInstance.displayDropAvailability` is the single
+  gated only on the guest's `drop.files.v2`. `VMInstance.displayDropAvailability` is the single
   read site deciding whether the display registers as a drag destination at all.
 
 The log and clipboard listeners are gated on their configuration toggles and re-evaluated at
@@ -436,7 +436,7 @@ kernel resources until relaunch — hence one owner (`RuntimeFileAccess`) and on
 | **AppKit** | All UI |
 | **Observation** | `@Observable` models and view models |
 | **ServiceManagement** | `SMAppService.mainApp` — the login-item registration behind Open at Login |
-| **AppleArchive** | In-process archiving for clipboard folder transfers, encoded onto the wire |
+| **AppleArchive** | In-process LZ4 archiving for every file and folder transfer, encoded onto the wire |
 | **UniformTypeIdentifiers** | The `.kernova` bundle's `UTType` |
 | **AVFoundation** | Microphone permission status |
 | **ImageIO** | Thumbnail-only decoding for clipboard previews |

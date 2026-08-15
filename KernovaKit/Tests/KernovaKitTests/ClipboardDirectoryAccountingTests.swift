@@ -7,8 +7,8 @@ import Testing
 
 /// What a folder transfer is measured in.
 ///
-/// Its wire bytes are compressed and its tree is not, and LZFSE reaches ~100:1
-/// on text — so every guard and every readout that reasons about "how big is
+/// Its wire bytes are compressed and its tree is not, and compression reaches ~100:1
+/// on repetitive data — so every guard and every readout that reasons about "how big is
 /// this" has to be expressed in the tree's unit, not the wire's. These are the
 /// tests that fail when one of them slips back to counting wire bytes.
 @Suite("ClipboardDirectoryAccounting")
@@ -78,22 +78,25 @@ struct ClipboardDirectoryAccountingTests {
             .with {
                 $0.generation = 1
                 $0.transferID = id
-                $0.uti = ClipboardDirectoryArchive.directoryUTI
+                $0.uti = ClipboardArchive.directoryUTI
                 $0.totalBytes = 0
                 $0.filename = name
                 $0.isInline = false
+                $0.isArchive = true
             })
     }
 
     private func archiveBytes(of source: URL) throws -> Data {
-        let reader = ClipboardDirectoryArchiveReader(directoryURL: source, label: "test")
-        var bytes = Data()
-        while true {
-            let chunk = try reader.read(upTo: 64 << 10)
-            if chunk.isEmpty { break }
-            bytes.append(chunk)
-        }
-        return bytes
+        try clipboardArchiveBytes(ofDirectoryAt: source)
+    }
+
+    /// A folder representation the sender streams as its tree, carrying the
+    /// stat-walk estimate the offer would have advertised.
+    private func folderRepresentation(_ source: URL, named name: String, estimate: Int)
+        -> ClipboardContent.Representation
+    {
+        ClipboardContent.Representation(
+            directorySourceURL: source, estimatedByteCount: estimate, filename: name)
     }
 
     private func feed(_ harness: StreamHarness, id: UInt64, bytes: Data) {
@@ -114,8 +117,10 @@ struct ClipboardDirectoryAccountingTests {
     @Test("a volume that fills is caught while the tree is being written, not per wire byte")
     func diskGuardIsPacedByTheTreeNotTheWire() async throws {
         let fm = FileManager.default
-        // Below the free-space margin, so any check that actually runs refuses.
-        let harness = try harness(freeSpace: { 1024 })
+        // Roomy at Begin and below the margin from the first extracted byte, so
+        // the only check that can refuse is the one the extract runs.
+        let free = Box<Int64>(100 << 30)
+        let harness = try harness(freeSpace: { free.value })
         defer { harness.tearDown() }
         let (scratch, source) = try makeCompressibleTree(uncompressedBytes: 512 * 1024)
         defer { try? fm.removeItem(at: scratch) }
@@ -128,6 +133,8 @@ struct ClipboardDirectoryAccountingTests {
         let id: UInt64 = 61
         prime(harness, id: id, named: "Logs", advertised: 512 * 1024)
         begin(harness, id: id, named: "Logs")
+        try await harness.collector.gate.wait { harness.collector.ackedByteCounts(id) == [0] }
+        free.value = 1024
         feed(harness, id: id, bytes: bytes)
         harness.receiver.handleEnd(
             .with {
@@ -227,10 +234,10 @@ struct ClipboardDirectoryAccountingTests {
             onComplete: { collector.complete(id, $0) },
             onAbort: { collector.abort($0) },
             onProgress: { bytes, _ in received.value = max(received.value, bytes) })
-        harness.sender.startDirectoryTransfer(
-            transferID: id, generation: 1, sourceDirectoryURL: source, folderName: "Logs",
-            uti: ClipboardDirectoryArchive.directoryUTI, maxAcceptByteCount: .max,
-            isCurrent: { _ in true },
+        harness.sender.startTransfer(
+            transferID: id, generation: 1,
+            representation: folderRepresentation(source, named: "Logs", estimate: 4 * 1024 * 1024),
+            maxAcceptByteCount: .max, isInline: false, isCurrent: { _ in true },
             onProgress: { bytes, _ in sent.value = max(sent.value, bytes) })
 
         try await harness.collector.gate.wait { harness.collector.representation(id) != nil }
@@ -239,7 +246,7 @@ struct ClipboardDirectoryAccountingTests {
         // snaps — which reads as a hung paste. Both ends must exceed what
         // actually crossed the wire, which the transfer metrics report.
         let wireBytes = try #require(
-            harness.collector.timedMetrics.first { $0.transferID == id }?.byteCount)
+            harness.collector.timedMetrics.first { $0.transferID == id }?.wireByteCount)
         #expect(wireBytes < 4 * 1024 * 1024)
         #expect(sent.value > wireBytes)
         #expect(received.value > wireBytes)
@@ -296,10 +303,12 @@ struct ClipboardDirectoryAccountingTests {
 
         let id: UInt64 = 69
         prime(harness, id: id, named: "Logs", advertised: 512 * 1024)
-        harness.sender.startDirectoryTransfer(
-            transferID: id, generation: 1, sourceDirectoryURL: source, folderName: "Logs",
-            uti: ClipboardDirectoryArchive.directoryUTI, maxAcceptByteCount: UInt64(ceiling),
-            isCurrent: { _ in true })
+        harness.sender.startTransfer(
+            transferID: id, generation: 1,
+            // A stale estimate of zero passes the up-front check, so the ceiling
+            // can only be enforced against what the archive produces.
+            representation: folderRepresentation(source, named: "Logs", estimate: 0),
+            maxAcceptByteCount: UInt64(ceiling), isInline: false, isCurrent: { _ in true })
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         #expect(harness.collector.abortInfos.first?.code == "disk.full")
@@ -316,10 +325,10 @@ struct ClipboardDirectoryAccountingTests {
 
         let id: UInt64 = 70
         prime(harness, id: id, named: "Logs", advertised: 512 * 1024)
-        harness.sender.startDirectoryTransfer(
-            transferID: id, generation: 1, sourceDirectoryURL: source, folderName: "Logs",
-            uti: ClipboardDirectoryArchive.directoryUTI, maxAcceptByteCount: 4 * 1024 * 1024,
-            isCurrent: { _ in true })
+        harness.sender.startTransfer(
+            transferID: id, generation: 1,
+            representation: folderRepresentation(source, named: "Logs", estimate: 512 * 1024),
+            maxAcceptByteCount: 4 * 1024 * 1024, isInline: false, isCurrent: { _ in true })
 
         try await harness.collector.gate.wait { harness.collector.representation(id) != nil }
         let tree = try #require(harness.collector.representation(id)?.fileURL)
@@ -363,11 +372,14 @@ struct ClipboardDirectoryAccountingTests {
         // Once the margin is outrun the extract's own writes are what fail, and
         // AppleArchive reports that as an archive error. Calling it a corrupt
         // folder sends the user off to retry instead of to free space.
-        let harness = try harness(freeSpace: { 1024 })
+        let free = Box<Int64>(100 << 30)
+        let harness = try harness(freeSpace: { free.value })
         defer { harness.tearDown() }
         let id: UInt64 = 66
         prime(harness, id: id, named: "Logs", advertised: 4096)
         begin(harness, id: id, named: "Logs")
+        try await harness.collector.gate.wait { harness.collector.ackedByteCounts(id) == [0] }
+        free.value = 1024
         let garbage = Data("not an archive".utf8)
         feed(harness, id: id, bytes: garbage)
         harness.receiver.handleEnd(

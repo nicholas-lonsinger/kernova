@@ -13,19 +13,16 @@ public enum KernovaCapability {
     public static let controlHeartbeatV1 = "control.heartbeat.v1"
 
     /// The chunk-streamed clipboard protocol (offer → request → begin/chunk/end
-    /// with windowed flow control).
+    /// with windowed flow control), version 2: every representation that lands
+    /// on disk — a file, a folder, an oversize inline payload — crosses as an
+    /// LZ4 AppleArchive (`ClipboardStreamBegin.is_archive`), and only a small
+    /// inline payload crosses raw.
     ///
-    /// Required on both sides for clipboard sharing to be enabled.
-    public static let clipboardStreamV1 = "clipboard.stream.v1"
-
-    /// Receiving a folder as an archive streamed straight into the destination
-    /// tree, announced with `ClipboardStreamBegin.total_bytes = 0` because the
-    /// compressed size is not known when the transfer starts.
-    ///
-    /// A peer without it bounds arriving bytes by that declared total and aborts
-    /// the transfer on the first chunk, so a folder is simply not offered to one
-    /// — every other representation is unaffected.
-    public static let clipboardStreamDirectoryV1 = "clipboard.stream.directory.v1"
+    /// Required on both sides for clipboard sharing to be enabled. Version 1
+    /// streamed a file's raw bytes and needed a separate tag for folders; a peer
+    /// speaking it would write an archive out as the file, so there is no
+    /// interoperating with one.
+    public static let clipboardStreamV2 = "clipboard.stream.v2"
 
     /// Honoring `PolicyUpdate.clipboard_max_paste_bytes` — the user-selected
     /// ceiling on a paste's file-representation total.
@@ -36,19 +33,19 @@ public enum KernovaCapability {
     public static let clipboardPasteLimitV1 = "clipboard.paste.limit.v1"
 
     /// Files dragged onto the VM display, streamed on their own vsock channel
-    /// and written into the guest's Downloads folder.
+    /// in the `clipboardStreamV2` payload encoding and written into the guest's
+    /// Downloads folder.
     ///
     /// Independent of clipboard sharing: the drop channel carries its own offer
     /// and never touches a pasteboard. A peer without it has no drop listener or
     /// drop client at all, so the display refuses the gesture rather than
     /// starting a transfer nothing will answer.
-    public static let dropFilesV1 = "drop.files.v1"
+    public static let dropFilesV2 = "drop.files.v2"
 
     /// The capabilities advertised by both the host control service and the
     /// guest control agent today.
     public static let controlChannelDefaults = [
-        controlV1, controlHeartbeatV1, clipboardStreamV1, clipboardStreamDirectoryV1,
-        clipboardPasteLimitV1, dropFilesV1,
+        controlV1, controlHeartbeatV1, clipboardStreamV2, clipboardPasteLimitV1, dropFilesV2,
     ]
 
     /// Every capability tag this build recognizes — the allowlist for

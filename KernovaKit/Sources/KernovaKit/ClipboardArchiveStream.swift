@@ -4,13 +4,13 @@ import System
 
 /// Why an extract was stopped by the consumer rather than by the archive.
 enum ClipboardArchiveOutputRefusal: Equatable, Sendable {
-    /// The staging volume no longer has room for the tree being written.
+    /// The staging volume no longer has room for the payload being written.
     case diskFull
-    /// The tree outgrew the size the offer advertised for it.
+    /// The payload outgrew the size the offer advertised for it.
     case overAdvertisedSize
 }
 
-/// Why a streamed directory archive stopped.
+/// Why a streamed archive stopped.
 enum ClipboardArchiveStreamError: Error, Equatable {
     /// A seek or random-access operation on a purely sequential stream.
     ///
@@ -296,10 +296,11 @@ final class ClipboardArchivePipeSource: ClipboardSequentialArchiveStream, @unche
 /// it.
 ///
 /// Interposed between the encode/decode stage and the compression stage, so what
-/// it counts is **uncompressed** archive bytes — the unit the offer's stat-walk
-/// estimate, the paste ceiling and the free-space guard are all expressed in.
-/// Compressed wire bytes answer none of those questions: LZFSE reaches ~100:1 on
-/// text, so a guard paced by them admits ~100× the tree it thinks it does.
+/// it counts is **uncompressed** archive bytes — the unit the offer's figure,
+/// the paste ceiling and the free-space guard are all expressed in. Compressed
+/// wire bytes answer none of those questions: compression can reach ~100:1 on
+/// repetitive data, so a guard paced by them admits ~100× the payload it
+/// thinks it does.
 ///
 /// Every operation forwards, including the random-access ones: staying
 /// transparent means an unexpected seek from the codec still works and only
@@ -453,8 +454,8 @@ private final class ClipboardArchivePipelineOutcome: @unchecked Sendable {
 
 // MARK: - Producer
 
-/// Streams a source directory as LZFSE archive bytes, with no archive ever
-/// landing on disk.
+/// Streams a payload — a folder's tree, one file, or resident bytes — as LZ4
+/// archive bytes, with no archive ever landing on disk.
 ///
 /// The AppleArchive encode pipeline runs on its own queue and pushes into a
 /// bounded pipe; the caller pulls chunks off the other end with `read(upTo:)`,
@@ -466,28 +467,27 @@ private final class ClipboardArchivePipelineOutcome: @unchecked Sendable {
 /// AppleArchive surfaces a failed write — succeeded. Any failure surfaces as a
 /// throw instead, so a truncated archive can never be mistaken for a complete
 /// one.
-public final class ClipboardDirectoryArchiveReader: @unchecked Sendable {
+public final class ClipboardArchiveReader: @unchecked Sendable {
     private let pipe: ClipboardArchiveBytePipe
     private let outcome = ClipboardArchivePipelineOutcome()
     /// Counts uncompressed archive bytes, so a caller reporting progress has a
-    /// figure in the same unit as the offer's stat-walk estimate.
+    /// figure in the same unit as the offer's figure.
     private let counted = ArchiveByteCounter()
 
     /// Uncompressed archive bytes encoded so far.
     ///
     /// The honest progress numerator: compressed wire bytes are in a different
-    /// unit from the estimate every readout's denominator comes from.
+    /// unit from the figure every readout's denominator comes from.
     public var uncompressedByteCount: Int { counted.value }
 
-    /// Starts archiving `directoryURL` immediately.
+    /// Starts archiving `source` immediately.
     ///
     /// - Parameters:
-    ///   - directoryURL: the source folder; its entries are stored relative to
-    ///     it, so the folder's own name is not embedded.
+    ///   - source: what to encode.
     ///   - label: distinguishes this transfer's worker queue in a stack trace.
     ///   - capacityBytes: how far the encoder may run ahead of the transport.
     public init(
-        directoryURL: URL, label: String,
+        source: ClipboardArchiveSource, label: String,
         capacityBytes: Int = ClipboardStreamTuning.defaultWindowBytes
     ) {
         let pipe = ClipboardArchiveBytePipe(capacity: capacityBytes)
@@ -497,7 +497,7 @@ public final class ClipboardDirectoryArchiveReader: @unchecked Sendable {
         let queue = DispatchQueue(
             label: "app.kernova.clipboard.archive-encode.\(label)", qos: .userInitiated)
         queue.async {
-            let failure = Self.encode(directoryAt: directoryURL, into: pipe, counted: counted)
+            let failure = Self.encode(source, into: pipe, counted: counted)
             // Declare the end of stream only after every close has been checked,
             // so the reader's end of stream means "complete and flushed".
             if let failure {
@@ -533,7 +533,8 @@ public final class ClipboardDirectoryArchiveReader: @unchecked Sendable {
     /// block, not to this function, so every close has already run and recorded
     /// itself by the time the result below is computed.
     private static func encode(
-        directoryAt directoryURL: URL, into pipe: ClipboardArchiveBytePipe, counted: ArchiveByteCounter
+        _ source: ClipboardArchiveSource, into pipe: ClipboardArchiveBytePipe,
+        counted: ArchiveByteCounter
     ) -> Error? {
         var closes = ArchiveCloseTracker()
         var failure: Error?
@@ -541,26 +542,26 @@ public final class ClipboardDirectoryArchiveReader: @unchecked Sendable {
             guard
                 let writeStream = ArchiveByteStream.customStream(
                     instance: ClipboardArchivePipeSink(pipe: pipe))
-            else { throw ClipboardDirectoryArchive.ArchiveError.openWriteStream }
+            else { throw ClipboardArchive.ArchiveError.openWriteStream }
             defer { closes.close { try writeStream.close() } }
 
             guard
                 let compressStream = ArchiveByteStream.compressionStream(
-                    using: .lzfse, writingTo: writeStream)
-            else { throw ClipboardDirectoryArchive.ArchiveError.openCompressionStream }
+                    using: .lz4, writingTo: writeStream)
+            else { throw ClipboardArchive.ArchiveError.openCompressionStream }
             defer { closes.close { try compressStream.close() } }
 
             // Above the compressor, so what it sees is the uncompressed archive.
             // Unpaced, because the closure is a store and the count is read as a
             // live figure — the sender's ceiling is enforced against it, and a
-            // paced snapshot would sit a whole quantum of tree behind.
+            // paced snapshot would sit a whole quantum of payload behind.
             let counter = ClipboardArchiveCountingStream(
                 upstream: compressStream, pacingBytes: 1
             ) { total in
                 counted.value = total
             }
             guard let countedStream = ArchiveByteStream.customStream(instance: counter) else {
-                throw ClipboardDirectoryArchive.ArchiveError.openWriteStream
+                throw ClipboardArchive.ArchiveError.openWriteStream
             }
             defer {
                 closes.close { try countedStream.close() }
@@ -568,40 +569,129 @@ public final class ClipboardDirectoryArchiveReader: @unchecked Sendable {
             }
 
             guard let encodeStream = ArchiveStream.encodeStream(writingTo: countedStream)
-            else { throw ClipboardDirectoryArchive.ArchiveError.openEncodeStream }
+            else { throw ClipboardArchive.ArchiveError.openEncodeStream }
             defer { closes.close { try encodeStream.close() } }
 
-            guard let keySet = ArchiveHeader.FieldKeySet(ClipboardDirectoryArchive.fieldKeys)
-            else { throw ClipboardDirectoryArchive.ArchiveError.invalidFieldKeySet }
-
-            try encodeStream.writeDirectoryContents(
-                archiveFrom: FilePath(directoryURL.path), keySet: keySet)
+            switch source {
+            case .directory(let url):
+                guard let keySet = ArchiveHeader.FieldKeySet(ClipboardArchive.fieldKeys)
+                else { throw ClipboardArchive.ArchiveError.invalidFieldKeySet }
+                try encodeStream.writeDirectoryContents(
+                    archiveFrom: FilePath(url.path), keySet: keySet)
+            case .file(let url, let name, let byteCount):
+                try writeFileEntry(url, name: name, byteCount: byteCount, to: encodeStream)
+            case .blob(let data, let name):
+                try writeBlobEntry(data, name: name, to: encodeStream)
+            }
         } catch {
             failure = error
         }
         // The pipe's own failure outranks a pipeline that returned normally: a
-        // transport that died mid-archive can leave `writeDirectoryContents`
-        // looking successful.
+        // transport that died mid-archive can leave the encode looking
+        // successful.
         return failure ?? closes.failure ?? pipe.failureError
+    }
+
+    /// The largest read issued against a file source, and the largest piece a
+    /// blob is handed to the encoder in: 4 MiB.
+    ///
+    /// Big enough that the device, not the syscall, is the cost — kernel
+    /// readahead overlaps the next block's I/O with this one's encode.
+    private static let fileReadBlockSize = 4 * 1024 * 1024
+
+    /// Writes one regular-file entry named `name` carrying exactly `byteCount`
+    /// bytes of the file at `url`, with the attribute fields
+    /// `writeDirectoryContents` gives an entry of the archive's key set.
+    ///
+    /// The file is opened and read here — the one place a single-file archive
+    /// touches the volume — so the read policy is this method's: plain, cached
+    /// reads in `fileReadBlockSize` blocks, the policy AppleArchive itself
+    /// applies to a folder's entries.
+    private static func writeFileEntry(
+        _ url: URL, name: String, byteCount: Int, to encodeStream: ArchiveStream
+    ) throws {
+        let descriptor = Darwin.open(url.path, O_RDONLY)
+        guard descriptor >= 0 else { throw ClipboardArchive.ArchiveError.sourceRead }
+        defer { Darwin.close(descriptor) }
+        var status = stat()
+        guard fstat(descriptor, &status) == 0, (status.st_mode & S_IFMT) == S_IFREG else {
+            throw ClipboardArchive.ArchiveError.sourceRead
+        }
+        let header = ArchiveHeader()
+        header.append(
+            .uint(key: .init("TYP"), value: UInt64(ArchiveHeader.EntryType.regularFile.rawValue)))
+        header.append(.string(key: .init("PAT"), value: name))
+        header.append(.uint(key: .init("UID"), value: UInt64(status.st_uid)))
+        header.append(.uint(key: .init("GID"), value: UInt64(status.st_gid)))
+        header.append(.uint(key: .init("MOD"), value: UInt64(status.st_mode & 0o7777)))
+        header.append(.uint(key: .init("FLG"), value: UInt64(status.st_flags)))
+        header.append(.timespec(key: .init("MTM"), value: status.st_mtimespec))
+        header.append(.timespec(key: .init("CTM"), value: status.st_ctimespec))
+        header.append(.blob(key: .init("DAT"), size: UInt64(byteCount)))
+        try encodeStream.writeHeader(header)
+
+        var remaining = byteCount
+        let buffer = UnsafeMutableRawBufferPointer.allocate(
+            byteCount: min(fileReadBlockSize, max(1, byteCount)), alignment: 16)
+        defer { buffer.deallocate() }
+        while remaining > 0 {
+            let got = Darwin.read(descriptor, buffer.baseAddress, min(buffer.count, remaining))
+            // Zero is the file ending before the byte count its offer declared;
+            // negative is a read error. Both would leave the entry short of the
+            // size its header declared.
+            guard got > 0 else { throw ClipboardArchive.ArchiveError.sourceRead }
+            try encodeStream.writeBlob(
+                key: .init("DAT"), from: UnsafeRawBufferPointer(rebasing: buffer[..<got]))
+            remaining -= got
+        }
+    }
+
+    /// Writes one regular-file entry named `name` carrying `data`, with an
+    /// owner-writable mode and the current time — resident bytes have no
+    /// attributes of their own to preserve.
+    private static func writeBlobEntry(_ data: Data, name: String, to encodeStream: ArchiveStream)
+        throws
+    {
+        var now = timespec()
+        clock_gettime(CLOCK_REALTIME, &now)
+        let header = ArchiveHeader()
+        header.append(
+            .uint(key: .init("TYP"), value: UInt64(ArchiveHeader.EntryType.regularFile.rawValue)))
+        header.append(.string(key: .init("PAT"), value: name))
+        header.append(.uint(key: .init("MOD"), value: 0o644))
+        header.append(.timespec(key: .init("MTM"), value: now))
+        header.append(.timespec(key: .init("CTM"), value: now))
+        header.append(.blob(key: .init("DAT"), size: UInt64(data.count)))
+        try encodeStream.writeHeader(header)
+        var offset = data.startIndex
+        while offset < data.endIndex {
+            let end = min(offset + fileReadBlockSize, data.endIndex)
+            try data[offset..<end].withUnsafeBytes { piece in
+                try encodeStream.writeBlob(key: .init("DAT"), from: piece)
+            }
+            offset = end
+        }
     }
 }
 
 // MARK: - Consumer
 
-/// A `StagingSink` that extracts a directory archive **as it arrives**, rather
-/// than spooling the archive and unpacking it afterwards.
+/// A `StagingSink` that extracts an archive **as it arrives**, rather than
+/// spooling the archive and unpacking it afterwards.
 ///
 /// Bytes written here feed an AppleArchive extract pipeline running on its own
-/// queue, which writes the tree straight into `destinationURL`. `write` parks
-/// while the pipeline is more than a window behind, so the receiver's ack — sent
-/// once `write` returns — follows extraction rather than arrival, and memory
-/// stays bounded however large the tree is.
+/// queue, which writes the payload — a folder's tree, or a file's one entry —
+/// straight into `destinationURL`. `write` parks while the pipeline is more than
+/// a window behind, so the receiver's ack — sent once `write` returns — follows
+/// extraction rather than arrival, and memory stays bounded however large the
+/// payload is.
 ///
-/// A streamed extract has always written part of the destination tree by the time
+/// A streamed extract has always written part of the destination by the time
 /// anything can be verified, so **every** failure path removes it: `commit()`
-/// deletes the tree when the pipeline failed, and `abort()` deletes it outright.
-public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendable {
-    /// The folder the tree is extracted into — the URL a paste is served.
+/// deletes the destination when the pipeline failed, and `abort()` deletes it
+/// outright.
+public final class ClipboardArchiveExtractSink: StagingSink, @unchecked Sendable {
+    /// The directory the archive is extracted into.
     public let destinationURL: URL
 
     /// Which of the two mutually exclusive endings a caller claimed.
@@ -618,7 +708,8 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
     /// AppleArchive rewrapping it.
     private let refusal = ArchiveRefusalBox()
     /// Uncompressed archive bytes consumed — what the extract has written, near
-    /// enough for a guard and a readout, and in the same unit as the estimate.
+    /// enough for a guard and a readout, and in the same unit as the offer's
+    /// figure.
     private let counted = ArchiveByteCounter()
 
     /// Uncompressed archive bytes extracted so far.
@@ -637,8 +728,8 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
     ///   - pacingBytes: how much output accumulates between `onOutputAdvanced`
     ///     calls.
     ///   - onOutputAdvanced: consulted with the running uncompressed total;
-    ///     throwing from it stops the extract and removes the tree. Runs on the
-    ///     pipeline's own thread, so it must not touch a lane's state.
+    ///     throwing from it stops the extract and removes the output. Runs on
+    ///     the pipeline's own thread, so it must not touch a lane's state.
     public init(
         destinationURL: URL, label: String,
         capacityBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
@@ -652,8 +743,8 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
         let counted = self.counted
         let refusal = self.refusal
         // Remember a refusal on the way out: the archive will rewrap it, and the
-        // caller needs to know the volume filled or the tree outgrew its offer,
-        // not merely that the extract failed.
+        // caller needs to know the volume filled or the payload outgrew its
+        // offer, not merely that the extract failed.
         let guarded: (@Sendable (Int) throws -> Void)?
         if let onOutputAdvanced {
             guarded = { total in
@@ -695,7 +786,7 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
     /// accepted and dropped, not refused.
     ///
     /// - Throws: whatever failed the pipeline, so the transfer aborts on the
-    ///   receiver's own write lane instead of running to completion over a tree
+    ///   receiver's own write lane instead of running to completion over output
     ///   that was never written.
     public func write(_ data: Data) throws {
         do {
@@ -706,21 +797,21 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
     }
 
     /// Ends the stream, waits for the pipeline to drain, and returns the
-    /// extracted folder.
+    /// destination directory.
     ///
     /// Idempotent: a repeat commit reports the same outcome the first one did.
     ///
     /// - Throws: whatever failed the pipeline — a truncated or corrupt archive, or
-    ///   the volume filling mid-extract. The partial tree is removed first.
+    ///   the volume filling mid-extract. The partial output is removed first.
     ///   ``ClipboardArchiveStreamError/cancelled`` when `abort()` got there
-    ///   first, since the folder this would otherwise name has been deleted.
+    ///   first, since the directory this would otherwise name has been deleted.
     @discardableResult
     public func commit() throws -> URL {
         if let claimed = claimTerminal(.committed) {
             guard claimed == .committed else { throw ClipboardArchiveStreamError.cancelled }
             // Re-read the latched outcome rather than assume success: a first
-            // commit that failed took the tree with it, so handing back its URL
-            // would name a folder that is gone.
+            // commit that failed took the output with it, so handing back its
+            // URL would name a directory that is gone.
             if let failure = outcome.wait() { throw refusal.value ?? failure }
             return destinationURL
         }
@@ -735,13 +826,13 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
     /// Wakes a writer parked in `write(_:)` and stops the pipeline, without
     /// waiting for it to unwind.
     ///
-    /// Idempotent, and safe from any thread. The tree is removed by `abort()`,
+    /// Idempotent, and safe from any thread. The output is removed by `abort()`,
     /// which can then run on the woken lane rather than queue behind it.
     public func cancel() {
         pipe.fail(ClipboardArchiveStreamError.cancelled)
     }
 
-    /// Tears the pipeline down and removes the partial tree.
+    /// Tears the pipeline down and removes the partial output.
     ///
     /// Idempotent, and a no-op once `commit()` has succeeded.
     public func abort() {
@@ -755,7 +846,7 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
     /// already claimed.
     ///
     /// The two endings are mutually exclusive rather than merely once-only:
-    /// `abort()` deletes the tree `commit()` would hand back, so a `commit()`
+    /// `abort()` deletes the output `commit()` would hand back, so a `commit()`
     /// that lost the race must not read as success.
     private func claimTerminal(_ kind: Terminal) -> Terminal? {
         terminalLock.withLock {
@@ -780,17 +871,17 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
             guard
                 let readStream = ArchiveByteStream.customStream(
                     instance: ClipboardArchivePipeSource(pipe: pipe))
-            else { throw ClipboardDirectoryArchive.ArchiveError.openReadStream }
+            else { throw ClipboardArchive.ArchiveError.openReadStream }
             defer { closes.close { try readStream.close() } }
 
             guard
                 let decompressStream = ArchiveByteStream.decompressionStream(
                     readingFrom: readStream)
-            else { throw ClipboardDirectoryArchive.ArchiveError.openDecompressionStream }
+            else { throw ClipboardArchive.ArchiveError.openDecompressionStream }
             defer { closes.close { try decompressStream.close() } }
 
             // Below the decompressor, so what it sees — and what the guard is
-            // paced by — is the uncompressed tree about to be written.
+            // paced by — is the uncompressed payload about to be written.
             let counter = ClipboardArchiveCountingStream(
                 upstream: decompressStream, pacingBytes: pacingBytes
             ) { total in
@@ -798,7 +889,7 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
                 try onOutputAdvanced?(total)
             }
             guard let countedStream = ArchiveByteStream.customStream(instance: counter) else {
-                throw ClipboardDirectoryArchive.ArchiveError.openReadStream
+                throw ClipboardArchive.ArchiveError.openReadStream
             }
             defer {
                 closes.close { try countedStream.close() }
@@ -806,13 +897,13 @@ public final class ClipboardDirectoryExtractSink: StagingSink, @unchecked Sendab
             }
 
             guard let decodeStream = ArchiveStream.decodeStream(readingFrom: countedStream)
-            else { throw ClipboardDirectoryArchive.ArchiveError.openDecodeStream }
+            else { throw ClipboardArchive.ArchiveError.openDecodeStream }
             defer { closes.close { try decodeStream.close() } }
 
             guard
                 let extractStream = ArchiveStream.extractStream(
                     extractingTo: FilePath(destinationURL.path))
-            else { throw ClipboardDirectoryArchive.ArchiveError.openExtractStream }
+            else { throw ClipboardArchive.ArchiveError.openExtractStream }
             defer { closes.close { try extractStream.close() } }
 
             _ = try ArchiveStream.process(readingFrom: decodeStream, writingTo: extractStream)

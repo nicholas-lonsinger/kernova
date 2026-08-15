@@ -125,7 +125,7 @@ public struct ClipboardContent: Equatable, Sendable {
         /// opens as a package.
         public init(
             directorySourceURL url: URL, estimatedByteCount: Int, filename: String,
-            uti: String = ClipboardDirectoryArchive.directoryUTI
+            uti: String = ClipboardArchive.directoryUTI
         ) {
             self.init(
                 uti: uti,

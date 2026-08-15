@@ -209,22 +209,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// `allowsFileURLPull` gate inside it — runs on the agent's main thread.
     private var maxPasteBytes: Int = ClipboardPasteLimit.defaultBytes
 
-    /// The pasteboard change count whose copied folders the host could not take —
-    /// whether that left nothing to offer or only shortened the offer.
-    ///
-    /// Two jobs: the skip is logged once rather than every poll tick, and the
-    /// snapshot is re-offered once the host advertises the capability it lacked,
-    /// which neither `lastPasteboardChangeCount` nor `lastSeenDigest` can notice.
-    private var folderSkippedChangeCount: Int?
-
-    /// Whether the connected host can receive a folder archived straight onto the
-    /// wire (`clipboard.stream.directory.v1`).
-    ///
-    /// Read at each offer, so a host upgraded between connections starts getting
-    /// folders without restarting the agent. Defaults to refusing, so a
-    /// connection whose `Hello` hasn't been read yet never offers one.
-    var hostStreamsDirectories: @Sendable () -> Bool = { false }
-
     #if DEBUG
     /// Test seam.
     var isEnabledForTesting: Bool { enabled }
@@ -502,7 +486,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             // A brand-new host has no record of prior offers; re-announce.
             self.lastSeenDigest = nil
             self.lastPasteboardChangeCount = Self.unobservedChangeCount
-            self.folderSkippedChangeCount = nil
         }
         Self.logger.notice(
             "Vsock clipboard connected to host (conn=\(connectionTag, privacy: .public))")
@@ -555,15 +538,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     func checkClipboardChange() {
         guard let channel = liveChannel else { return }
         let currentCount = pasteboard.changeCount
-        if currentCount == lastPasteboardChangeCount {
-            // Both dedup keys above describe what was *offered*, so neither can
-            // tell that the offer went out short of this snapshot's folders.
-            // Re-enter for exactly that case, once the host advertises the
-            // capability it lacked.
-            guard folderSkippedChangeCount == currentCount, hostStreamsDirectories() else {
-                return
-            }
-        }
+        guard currentCount != lastPasteboardChangeCount else { return }
 
         // Read once: the marker disposition, the flavors worth reading, and the
         // account an empty result owes the menu all have to describe the same
@@ -589,25 +564,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // Copied *files* (Finder ⌘C) leave one file URL per pasteboard item —
         // build a disk-backed rep from each (a stat, no read, no size cap); the
         // bytes stream later when the host requests them.
-        let expansion = fileExpansionCandidates()
-        let fileCandidates = expansion.candidates
-        if expansion.unsupportedFolders > 0 {
-            noteFoldersSkipped(
-                count: expansion.unsupportedFolders, offeringAnything: !fileCandidates.isEmpty,
-                changeCount: currentCount)
-        }
-        if fileCandidates.isEmpty, expansion.unsupportedFolders > 0 {
-            // Every copied item was a folder this host cannot receive. Falling
-            // through would offer the pasteboard's leftover non-file flavors —
-            // Finder's `com.apple.finder.node` and friends — so the host would
-            // get guest-local junk for what the user copied as a folder.
-            //
-            // The change count is deliberately *not* advanced: the capability is
-            // re-read from every `Hello`, so this copy becomes offerable the
-            // moment the host advertises it.
-            releaseOutboundOffer("every copied item is a folder this host can't take")
-            return
-        }
+        let fileCandidates = fileExpansionCandidates()
         if !fileCandidates.isEmpty {
             if fileCandidates.contains(where: { $0.isDirectory }) {
                 // A folder's stat-walk size estimate runs off the main queue
@@ -653,35 +610,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return
         }
         sendOfferIfNeeded(content, channel: channel, changeCount: currentCount)
-    }
-
-    /// Records, once per snapshot, that `count` copied folders were left out
-    /// because the host cannot receive one.
-    ///
-    /// The user's copy came up short whether that emptied the offer or only
-    /// shortened it, so both latch here — and the latch is what lets
-    /// `checkClipboardChange` re-offer the snapshot when the capability appears.
-    private func noteFoldersSkipped(count: Int, offeringAnything: Bool, changeCount: Int) {
-        guard folderSkippedChangeCount != changeCount else { return }
-        folderSkippedChangeCount = changeCount
-        if offeringAnything {
-            Self.logger.notice(
-                "Leaving \(count, privacy: .public) copied folder(s) out of the offer — the host lacks \(KernovaCapability.clipboardStreamDirectoryV1, privacy: .public)"
-            )
-        } else {
-            Self.logger.notice(
-                "Offering nothing — all \(count, privacy: .public) copied item(s) are folders and the host lacks \(KernovaCapability.clipboardStreamDirectoryV1, privacy: .public)"
-            )
-        }
-        // Deferred a turn so the shortfall outlives the offer this same snapshot
-        // still sends, which records `.offeredToHost` synchronously after this
-        // returns. The activity is written before the notice, so the dropdown it
-        // pops is rebuilt with the line already in it.
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.clipboardActivityStorage = .copyShortened(offeringAnything: offeringAnything)
-            self.onClipboardNotice()
-        }
     }
 
     /// Retires the host's offer for a snapshot that yielded nothing offerable,
@@ -830,13 +758,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// staging root (materialized from a prior inbound paste) is skipped so it
     /// can't be offered back to the host — that one is by design, so only the
     /// unreadable items below are counted and logged.
-    private func fileExpansionCandidates() -> (
-        candidates: [FileCandidate], unsupportedFolders: Int
-    ) {
+    private func fileExpansionCandidates() -> [FileCandidate] {
         var candidates: [FileCandidate] = []
         var unreadable = 0
-        var unsupportedFolders = 0
-        let hostTakesFolders = hostStreamsDirectories()
         for url in pasteboard.itemFileURLs where !staging.isInStagingRoot(url) {
             guard
                 let values = try? url.resourceValues(forKeys: [
@@ -847,13 +771,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 continue
             }
             if values.isDirectory == true {
-                // A host that predates `clipboard.stream.directory.v1` bounds
-                // arriving bytes by the declared total, which a streamed folder
-                // does not have — so don't offer one.
-                guard hostTakesFolders else {
-                    unsupportedFolders += 1
-                    continue
-                }
                 candidates.append(
                     FileCandidate(
                         url: url, type: values.contentType ?? .folder,
@@ -874,7 +791,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 "Skipped \(unreadable, privacy: .public) unreadable copied item(s) — not offered to the host"
             )
         }
-        return (candidates, unsupportedFolders)
+        return candidates
     }
 
     /// Sizes any folder candidate off the main queue — a stat-walk estimate, no
@@ -888,17 +805,12 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     ) {
         guard !estimateInFlight else { return }
         estimateInFlight = true
-        // A folder candidate reaching here means the host takes folders, so
-        // nothing is being left out of this snapshot any more. Cleared only once
-        // the walk is actually under way: clearing it earlier would strand a
-        // re-offer the guard above turned back.
-        folderSkippedChangeCount = nil
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let reps: [ClipboardContent.Representation] = candidates.map { candidate in
                 if candidate.isDirectory {
                     return ClipboardContent.Representation(
                         directorySourceURL: candidate.url,
-                        estimatedByteCount: ClipboardDirectoryArchive.estimatedByteCount(
+                        estimatedByteCount: ClipboardArchive.estimatedByteCount(
                             at: candidate.url),
                         filename: candidate.filename, uti: candidate.type.identifier)
                 }
@@ -1007,32 +919,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             session: session, id: xid, expectedBytes: UInt64(max(0, representation.byteCount)),
             name: name)
         let tracker = progressTracker
-        // A directory rep is offered as a source URL plus an estimate — no
-        // archive exists. Archive the tree straight onto the wire, so nothing
-        // larger than the credit window is ever held (docs/CLIPBOARD.md §2).
-        if case .directory(let sourceURL, let estimatedByteCount) = representation.source {
-            Self.logger.notice(
-                "Streaming clipboard folder '\(representation.filename, privacy: .public)' (gen=\(request.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), rep \(repIndex, privacy: .public), estimate \(estimatedByteCount, privacy: .public) bytes)"
-            )
-            sender.startDirectoryTransfer(
-                transferID: request.transferID,
-                generation: request.generation,
-                sourceDirectoryURL: sourceURL,
-                folderName: representation.filename,
-                uti: representation.uti,
-                maxAcceptByteCount: request.maxAcceptByteCount,
-                isCurrent: { value in generation.isCurrent(value) },
-                onProgress: { sent, total in
-                    tracker.unitProgressed(
-                        session: session, id: xid, bytesTransferred: UInt64(max(0, sent)),
-                        totalBytes: UInt64(max(0, total)))
-                },
-                onComplete: { success in
-                    tracker.unitEnded(session: session, id: xid, succeeded: success)
-                })
-            clipboardActivityStorage = .sentToHost
-            return
-        }
         sender.startTransfer(
             transferID: request.transferID,
             generation: request.generation,
@@ -1050,7 +936,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             })
         clipboardActivityStorage = .sentToHost
         Self.logger.debug(
-            "Streaming clipboard rep \(repIndex, privacy: .public) (gen=\(request.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(representation.byteCount, privacy: .public) bytes)"
+            "Streaming clipboard rep \(repIndex, privacy: .public) (gen=\(request.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(representation.byteCount, privacy: .public) bytes offered)"
         )
     }
 
