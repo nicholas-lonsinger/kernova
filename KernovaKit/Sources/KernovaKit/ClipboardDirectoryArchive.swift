@@ -24,13 +24,17 @@ public enum ClipboardDirectoryArchive {
         case invalidFieldKeySet
     }
 
-    /// Fidelity key set: type, path, link target, device id, data, uid, gid,
-    /// permissions, flags, mtime, ctime, and per-entry SHA-256.
+    /// The archive's fidelity key set — what a folder round trip preserves.
+    ///
+    /// AppleArchive writes a per-entry digest (`SH2`) into the entry *header*, so
+    /// carrying one makes the encoder read and hash each file in full before its
+    /// first payload byte can leave; the transfer's wire-level SHA-256
+    /// (CLIPBOARD.md §7) is the integrity check.
     ///
     /// RATIONALE: extended attributes (`XAT`) are deliberately omitted — the
     /// plain-file streaming path cannot carry them, and a folder carrying them
     /// alone would break CLIPBOARD.md §6's uniform xattr gap.
-    static let fieldKeys = "TYP,PAT,LNK,DEV,DAT,UID,GID,MOD,FLG,MTM,CTM,SH2"
+    static let fieldKeys = "TYP,PAT,LNK,DEV,DAT,UID,GID,MOD,FLG,MTM,CTM"
 }
 
 extension ClipboardDirectoryArchive {

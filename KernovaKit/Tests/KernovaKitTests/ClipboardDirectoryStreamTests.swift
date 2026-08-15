@@ -1,5 +1,7 @@
+import AppleArchive
 import Foundation
 import KernovaTestSupport
+import System
 import Testing
 
 @testable import KernovaKit
@@ -188,6 +190,39 @@ struct ClipboardDirectoryStreamTests {
             try String(
                 contentsOf: dest.appendingPathComponent("Ünïcødé 🎉/naïve — файл.txt"),
                 encoding: .utf8) == "ok")
+    }
+
+    @Test("archive entries carry no per-entry digest — the stream-level hash is the only one")
+    func entriesCarryNoDigest() throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+
+        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        try fm.createDirectory(at: source, withIntermediateDirectories: true)
+        try Data(repeating: 0xCD, count: 64 * 1024).write(to: source.appendingPathComponent("a.bin"))
+        try "b".write(to: source.appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)
+
+        let archive = scratch.appendingPathComponent("tree.aar")
+        try archiveBytes(of: source).write(to: archive)
+
+        let file = try #require(
+            ArchiveByteStream.fileStream(
+                path: FilePath(archive.path), mode: .readOnly, options: [], permissions: []))
+        defer { try? file.close() }
+        let decompress = try #require(ArchiveByteStream.decompressionStream(readingFrom: file))
+        defer { try? decompress.close() }
+        let decode = try #require(ArchiveStream.decodeStream(readingFrom: decompress))
+        defer { try? decode.close() }
+
+        var paths: Set<String> = []
+        while let header = try decode.readHeader() {
+            #expect(header.field(forKey: ArchiveHeader.FieldKey("SH2")) == nil)
+            if case .string(_, let path)? = header.field(forKey: ArchiveHeader.FieldKey("PAT")) {
+                paths.insert(path)
+            }
+        }
+        #expect(paths.isSuperset(of: ["a.bin", "b.txt"]))
     }
 
     @Test("an empty directory streams real bytes and extracts to an empty tree")
