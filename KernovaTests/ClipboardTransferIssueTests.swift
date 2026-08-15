@@ -32,8 +32,11 @@ struct ClipboardTransferIssueTests {
         #expect(ClipboardTransferIssue.inboundPullAborted(abortInfo(code)) == nil)
     }
 
-    /// Driven off `allCases` so a code added without a classification decision
-    /// is asserted against here rather than joining the generic branch unseen.
+    /// Runs over `allCases` and spells every one of them, with no `default:`, so
+    /// a code added to `ClipboardStreamAbortCode` fails to compile here until
+    /// someone states what it classifies to. The implementation's own `default:`
+    /// keeps an unstated code reported rather than swallowed; this is what makes
+    /// falling into it a decision rather than an oversight.
     @Test(
         "Every abort that is not a retirement classifies to a reportable issue",
         arguments: ClipboardStreamAbortCode.allCases.filter {
@@ -49,8 +52,13 @@ struct ClipboardTransferIssueTests {
             }
         case .extractError:
             #expect(kind == ClipboardTransferIssue.pasteUnpackFailed().kind)
-        default:
+        case .requestRange, .requestUTI, .requestCancelled, .readError, .sendFailed, .ackTimeout,
+            .offsetGap, .chunkEmpty, .chunkTooLarge, .sizeOverrun, .flowOverrun, .sizeMismatch,
+            .digestMismatch, .payloadUnsupported, .payloadUnexpected, .payloadInvalid, .writeError,
+            .stageError, .mapError, .stallTimeout, .pasteTimeout:
             #expect(kind == ClipboardTransferIssue.pasteTransferFailed().kind)
+        case .cancelled, .superseded, .requestStale, .userCancelled:
+            Issue.record("\(code.rawValue) retires the transfer and is covered by the case above")
         }
     }
 
