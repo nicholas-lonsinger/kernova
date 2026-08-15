@@ -251,16 +251,25 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         case .file(let url, let byteCount, _) where isInline && byteCount <= maxResidentInlineBytes:
             // An inline payload is resident bytes on both ends, so resolve the
             // file to bytes here — bounded by the threshold the receiver holds
-            // it resident under — rather than stream it raw from disk. A file
-            // that grew past the threshold since the offer's stat is archived,
-            // as any oversize inline payload is.
-            guard let data = try? Data(contentsOf: url) else {
+            // it resident under — rather than stream it raw from disk. The size
+            // is re-read first: a file that grew past the threshold since the
+            // offer's stat is archived from disk, as any oversize payload is,
+            // rather than loaded whole.
+            let currentByteCount =
+                (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? byteCount
+            if currentByteCount > maxResidentInlineBytes {
+                payload = .archived(
+                    .file(
+                        url, name: Self.entryName(for: representation),
+                        byteCount: currentByteCount))
+                break
+            }
+            guard let data = try? Data(contentsOf: url), data.count <= maxResidentInlineBytes
+            else {
                 sendAbort(transfer: transfer, code: "read.error", message: "Cannot read source file")
                 return
             }
-            payload =
-                data.count <= maxResidentInlineBytes
-                ? .raw(data) : .archived(.blob(data, name: Self.entryName(for: representation)))
+            payload = .raw(data)
         case .pendingRemote:
             // The sender is only ever handed materialized reps we offered; a
             // not-yet-pulled placeholder has no bytes to stream.

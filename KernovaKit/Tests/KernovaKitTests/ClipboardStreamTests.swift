@@ -1330,6 +1330,32 @@ struct ClipboardStreamTests {
         try await waitUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
     }
 
+    @Test("a file that unpacks to more than its offer said, within the header allowance, is still refused")
+    func fileExtractIsHeldToTheAdvertisedSizeExactly() async throws {
+        // The allowance is for the entry header, not for payload: a peer must
+        // not get to spend it on bytes the offer never declared.
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+        let id: UInt64 = 13
+
+        let payload = Data(repeating: 0x2A, count: 4096 + 512)
+        let source = try tempFile(bytes: payload)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let wire = try clipboardArchiveBytes(ofFileAt: source, named: "padded.bin")
+
+        prime(harness, id: id, advertised: 4096)
+        beginArchive(harness, id: id, filename: "padded.bin")
+        feed(harness, id: id, bytes: wire)
+        endTransfer(harness, id: id, bytes: wire)
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.abortInfos.first?.code == "size.overrun")
+        #expect(harness.collector.representation(id) == nil)
+        // RATIONALE: filesystem-appearance poll (docs/TESTING.md) — the output
+        // is removed on the write lane after the abort is delivered.
+        try await waitUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
+    }
+
     @Test("an archive unpacking to more than one file is refused as a payload that was never offered")
     func multiEntryArchiveForAFileIsRefused() async throws {
         // A file's archive holds exactly one regular-file entry. A tree arriving

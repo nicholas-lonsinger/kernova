@@ -484,6 +484,20 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                 message: "The archive did not unpack to exactly one file")
             return
         }
+        // A file's advertised size is exact and the sender writes exactly that
+        // many bytes, so the ceiling's header allowance is not payload a peer
+        // may spend: hold a file to its offer to the byte. An inline payload is
+        // exempt — one resolved from a file that grew since its offer is
+        // legitimately larger, and it is bounded by the ceiling instead.
+        if !transfer.isInline, let advertised = transfer.expectation?.advertisedByteCount,
+            file.byteCount != advertised
+        {
+            try? FileManager.default.removeItem(at: destination)
+            fail(
+                transfer, code: "size.overrun",
+                message: "The file unpacked to \(file.byteCount) bytes, its offer said \(advertised)")
+            return
+        }
         let representation: ClipboardContent.Representation
         if transfer.isInline {
             // An oversize inline rep: serve its bytes back as a resident

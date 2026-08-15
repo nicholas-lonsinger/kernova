@@ -375,6 +375,30 @@ struct ClipboardArchiveStreamTests {
         }
     }
 
+    @Test("a locked file source extracts unlocked, so staging can move and remove it")
+    func lockedFileSourceExtractsUnlocked() throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+
+        let file = scratch.appendingPathComponent("locked.bin")
+        try Data(repeating: 0x5C, count: 2048).write(to: file)
+        try fm.setAttributes([.immutable: true], ofItemAtPath: file.path)
+        defer { try? fm.setAttributes([.immutable: false], ofItemAtPath: file.path) }
+
+        let out = try extractedClipboardArchive(
+            try clipboardArchiveBytes(of: .file(file, name: "locked.bin", byteCount: 2048)))
+        defer { try? fm.removeItem(at: out.deletingLastPathComponent()) }
+        let entry = out.appendingPathComponent("locked.bin")
+        let attributes: [FileAttributeKey: Any] = try fm.attributesOfItem(atPath: entry.path)
+        let immutable: Bool? = attributes[.immutable] as? Bool
+        #expect(immutable != true)
+        // The proof that matters: the staged file can be renamed and deleted.
+        let moved = out.appendingPathComponent("moved.bin")
+        try fm.moveItem(at: entry, to: moved)
+        try fm.removeItem(at: moved)
+    }
+
     @Test("a blob source round-trips as one entry")
     func blobSourceRoundTrips() throws {
         let fm = FileManager.default

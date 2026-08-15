@@ -624,9 +624,14 @@ public final class ClipboardArchiveReader: @unchecked Sendable {
         header.append(.uint(key: .init("UID"), value: UInt64(status.st_uid)))
         header.append(.uint(key: .init("GID"), value: UInt64(status.st_gid)))
         header.append(.uint(key: .init("MOD"), value: UInt64(status.st_mode & 0o7777)))
-        header.append(.uint(key: .init("FLG"), value: UInt64(status.st_flags)))
+        // Immutability stays behind: a Finder-locked source would otherwise
+        // extract as a locked staging file that neither a move into its final
+        // destination nor generation cleanup can touch.
+        let flags = UInt64(status.st_flags & ~UInt32(UF_IMMUTABLE | SF_IMMUTABLE | UF_APPEND | SF_APPEND))
+        header.append(.uint(key: .init("FLG"), value: flags))
         header.append(.timespec(key: .init("MTM"), value: status.st_mtimespec))
-        header.append(.timespec(key: .init("CTM"), value: status.st_ctimespec))
+        // `CTM` is the entry's creation time (AADefs.h), not the inode change time.
+        header.append(.timespec(key: .init("CTM"), value: status.st_birthtimespec))
         header.append(.blob(key: .init("DAT"), size: UInt64(byteCount)))
         try encodeStream.writeHeader(header)
 
@@ -900,9 +905,12 @@ public final class ClipboardArchiveExtractSink: StagingSink, @unchecked Sendable
             else { throw ClipboardArchive.ArchiveError.openDecodeStream }
             defer { closes.close { try decodeStream.close() } }
 
+            // Ownership in the entries is the source's; the unprivileged
+            // receiver cannot `chown` to another account, and a file owned by
+            // one — `/etc/hosts`, another user's document — must still extract.
             guard
                 let extractStream = ArchiveStream.extractStream(
-                    extractingTo: FilePath(destinationURL.path))
+                    extractingTo: FilePath(destinationURL.path), flags: .ignoreOperationNotPermitted)
             else { throw ClipboardArchive.ArchiveError.openExtractStream }
             defer { closes.close { try extractStream.close() } }
 
