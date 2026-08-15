@@ -203,7 +203,7 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
   `NSPasteboard`.
 - `VsockClipboardService` — the macOS transport, over `VsockChannel`, driving `KernovaKit`'s
   `ClipboardStreamSender`/`ClipboardStreamReceiver`. Offers are metadata-only; bytes stream on
-  request. The receiver and the agent's watchdog types store `any EngineClock` — one `EngineInstant`
+  request. Both stream engines and the agent's watchdog types store `any EngineClock` — one `EngineInstant`
   timeline for every conformance, so the macOS 13+ and macOS 12 clocks (and a manually advanced
   test clock) are interchangeable at construction.
 - `HostClipboardPublisher`, `ClipboardPassthroughCoordinator` — host-side publication of inbound

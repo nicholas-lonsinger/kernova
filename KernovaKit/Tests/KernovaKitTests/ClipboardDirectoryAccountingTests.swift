@@ -246,7 +246,7 @@ struct ClipboardDirectoryAccountingTests {
         // snaps — which reads as a hung paste. Both ends must exceed what
         // actually crossed the wire, which the transfer metrics report.
         let wireBytes = try #require(
-            harness.collector.timedMetrics.first { $0.transferID == id }?.wireByteCount)
+            harness.collector.inboundMetrics.first { $0.transferID == id }?.wireByteCount)
         #expect(wireBytes < 4 * 1024 * 1024)
         #expect(sent.value > wireBytes)
         #expect(received.value > wireBytes)

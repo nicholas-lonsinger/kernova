@@ -322,10 +322,10 @@ struct ClipboardStreamTests {
             isInline: true, isCurrent: { _ in true })
 
         try await harness.collector.gate.wait { harness.collector.completedCount == 2 }
-        try await harness.collector.gate.wait { harness.collector.timedMetrics.count == 2 }
+        try await harness.collector.gate.wait { harness.collector.inboundMetrics.count == 2 }
 
         let fileMetrics = try #require(
-            harness.collector.timedMetrics.first { $0.transferID == 1 })
+            harness.collector.inboundMetrics.first { $0.transferID == 1 })
         // The logical payload is the file; the archive that carried it is the
         // wire count, and the summary names it only because the two differ.
         let fileEnd = try #require(harness.collector.end(1))
@@ -334,20 +334,23 @@ struct ClipboardStreamTests {
         #expect(fileMetrics.wireByteCount != fileMetrics.byteCount)
         #expect(fileMetrics.logSummary.contains("\(fileMetrics.wireByteCount) wire bytes"))
         #expect(fileMetrics.uti == "public.data")
-        #expect(fileMetrics.streamedToDisk)
+        let fileInbound = try #require(fileMetrics.inbound)
+        #expect(fileInbound.streamedToDisk)
+        #expect(fileMetrics.outbound == nil)
         #expect(fileMetrics.duration > .zero)
-        let streaming = try #require(fileMetrics.streamingDuration)
+        let streaming = try #require(fileInbound.streamingDuration)
         #expect(streaming > .zero)
         #expect(streaming <= fileMetrics.duration)
 
         let inlineMetrics = try #require(
-            harness.collector.timedMetrics.first { $0.transferID == 2 })
+            harness.collector.inboundMetrics.first { $0.transferID == 2 })
         #expect(inlineMetrics.byteCount == inlineBytes.count)
         // Raw: the wire bytes *are* the payload, so the summary stays silent
         // about them.
         #expect(inlineMetrics.wireByteCount == inlineBytes.count)
         #expect(!inlineMetrics.logSummary.contains("wire bytes"))
-        #expect(!inlineMetrics.streamedToDisk)
+        let inlineInbound = try #require(inlineMetrics.inbound)
+        #expect(!inlineInbound.streamedToDisk)
         #expect(harness.collector.abortCount == 0)
     }
 
@@ -799,7 +802,7 @@ struct ClipboardStreamTests {
         #expect(harness.collector.abortInfos.contains { $0.code == .extractError })
         #expect(harness.collector.representation(id) == nil)
         // Timing metrics report successful transfers only.
-        #expect(harness.collector.timedMetrics.isEmpty)
+        #expect(harness.collector.inboundMetrics.isEmpty)
         // RATIONALE: filesystem-appearance poll (mirrors `cancelDeletesPartial`)
         // — the partial's deletion runs on the write lane after the abort has
         // already been delivered, so there is no test-owned signal to gate on.
@@ -878,7 +881,7 @@ struct ClipboardStreamTests {
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         #expect(harness.collector.abortInfos.contains { $0.code == .extractError })
         #expect(harness.collector.representation(id) == nil)
-        #expect(harness.collector.timedMetrics.isEmpty)
+        #expect(harness.collector.inboundMetrics.isEmpty)
         // A streamed extract has always written part of its output by the time
         // anything can be verified, so the failure takes it with it.
         try await waitUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
@@ -1234,7 +1237,7 @@ struct ClipboardStreamTests {
         #expect(harness.collector.abortInfos.contains { $0.code == .digestMismatch })
         #expect(harness.collector.representation(6) == nil)
         // Timing metrics report successful transfers only.
-        #expect(harness.collector.timedMetrics.isEmpty)
+        #expect(harness.collector.inboundMetrics.isEmpty)
     }
 
     // MARK: - Free-space guard

@@ -255,6 +255,89 @@ final class ParkingChunkReader: CancellableChunkReader, @unchecked Sendable {
     }
 }
 
+/// A `ChunkReader` that vends prepared bytes, charging a fixed interval on an
+/// injected clock to each read.
+///
+/// Stands in for a source running behind the transport — an encoder that has
+/// produced nothing yet. The wait is real to the sender's accounting and
+/// instant in wall time, so a test asserts an exact figure instead of a
+/// measured one.
+final class ClockAdvancingChunkReader: CancellableChunkReader, @unchecked Sendable {
+    private let clock: TestEngineClock
+    private let secondsPerRead: TimeInterval
+    private let lock = NSLock()
+    private var remaining: Data
+    private var reads = 0
+
+    init(bytes: Data, clock: TestEngineClock, secondsPerRead: TimeInterval) {
+        self.remaining = bytes
+        self.clock = clock
+        self.secondsPerRead = secondsPerRead
+    }
+
+    /// Reads entered, including the empty one that ends the source.
+    var readCount: Int { lock.withLock { reads } }
+
+    func read(upTo count: Int) -> Data? {
+        clock.advance(seconds: secondsPerRead)
+        return lock.withLock {
+            reads += 1
+            let taken = remaining.prefix(count)
+            remaining = remaining.dropFirst(taken.count)
+            return Data(taken)
+        }
+    }
+
+    func close() {}
+}
+
+/// Holds the receiver's acks back from the sender, and can later let them go.
+///
+/// A test that measures a credit stall has to park the sender *and then* let it
+/// finish, which the plain never-ack model cannot do. Only the latest held ack
+/// per transfer is replayed: `handleAck` carries a cumulative figure and heals
+/// itself with `max`, so the earlier ones say nothing the last one does not.
+final class AckGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isOpen: Bool
+    private var held: [UInt64: Kernova_V1_ClipboardStreamAck] = [:]
+
+    init(isOpen: Bool) { self.isOpen = isOpen }
+
+    /// Returns the ack to forward, or `nil` when the gate holds it back.
+    func admit(_ ack: Kernova_V1_ClipboardStreamAck) -> Kernova_V1_ClipboardStreamAck? {
+        lock.withLock {
+            guard !isOpen else { return ack }
+            held[ack.transferID] = ack
+            return nil
+        }
+    }
+
+    /// Opens the gate, handing back the acks to replay.
+    func open() -> [Kernova_V1_ClipboardStreamAck] {
+        lock.withLock {
+            isOpen = true
+            let pending = Array(held.values)
+            held.removeAll()
+            return pending
+        }
+    }
+}
+
+/// A `@Sendable` closure slot that can be filled after the object firing it has
+/// been built — which a hook reaching back into its own harness has to be.
+final class SendableHook<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: (@Sendable (Value) -> Void)?
+
+    var value: (@Sendable (Value) -> Void)? {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+
+    func fire(_ value: Value) { self.value?(value) }
+}
+
 // MARK: - Collector
 
 /// Gathers the completed representations and aborts a receiver delivers, plus
@@ -268,7 +351,8 @@ final class StreamCollector: @unchecked Sendable {
     private let lock = NSLock()
     private var completed: [UInt64: ClipboardContent.Representation] = [:]
     private var aborts: [ClipboardStreamAbortInfo] = []
-    private var timings: [ClipboardTransferMetrics] = []
+    private var inboundTimings: [ClipboardTransferMetrics] = []
+    private var outboundTimings: [ClipboardTransferMetrics] = []
     private var acks: [Kernova_V1_ClipboardStreamAck] = []
     private var begins: [UInt64: Kernova_V1_ClipboardStreamBegin] = [:]
     private var ends: [UInt64: Kernova_V1_ClipboardStreamEnd] = [:]
@@ -291,8 +375,12 @@ final class StreamCollector: @unchecked Sendable {
         lock.withLock { aborts.append(info) }
         gate.notify()
     }
-    func timed(_ metrics: ClipboardTransferMetrics) {
-        lock.withLock { timings.append(metrics) }
+    func timedInbound(_ metrics: ClipboardTransferMetrics) {
+        lock.withLock { inboundTimings.append(metrics) }
+        gate.notify()
+    }
+    func timedOutbound(_ metrics: ClipboardTransferMetrics) {
+        lock.withLock { outboundTimings.append(metrics) }
         gate.notify()
     }
     func ack(_ ack: Kernova_V1_ClipboardStreamAck) {
@@ -306,7 +394,12 @@ final class StreamCollector: @unchecked Sendable {
     }
     var abortInfos: [ClipboardStreamAbortInfo] { lock.withLock { aborts } }
     var abortCount: Int { lock.withLock { aborts.count } }
-    var timedMetrics: [ClipboardTransferMetrics] { lock.withLock { timings } }
+    /// Metrics the *receiver* reported, kept apart from the sender's so a test
+    /// asserting one direction reported nothing cannot be satisfied by the
+    /// other.
+    var inboundMetrics: [ClipboardTransferMetrics] { lock.withLock { inboundTimings } }
+    /// Metrics the *sender* reported.
+    var outboundMetrics: [ClipboardTransferMetrics] { lock.withLock { outboundTimings } }
     /// The `ClipboardStreamBegin` that announced one transfer.
     func begin(_ id: UInt64) -> Kernova_V1_ClipboardStreamBegin? {
         lock.withLock { begins[id] }
@@ -339,9 +432,36 @@ final class StreamHarness: @unchecked Sendable {
     private let a: VsockChannel
     private let b: VsockChannel
     private var routeTasks: [Task<Void, Never>] = []
+    private let ackGate: AckGate
+    private let creditWaitHook: SendableHook<UInt64>
 
+    /// Runs on the transfer's own queue each time the sender is about to wait
+    /// for credit, with its stall reading already taken.
+    ///
+    /// Installed after construction, since a hook that releases this harness's
+    /// acks needs the harness the sender is being built into.
+    var onCreditWait: (@Sendable (_ transferID: UInt64) -> Void)? {
+        get { creditWaitHook.value }
+        set { creditWaitHook.value = newValue }
+    }
+
+    /// Lets through the acks `suppressAcks` held back, replaying the latest one
+    /// per transfer so a sender parked on credit resumes.
+    func releaseAcks() {
+        for ack in ackGate.open() {
+            sender.handleAck(
+                transferID: ack.transferID, bytesConsumed: ack.bytesConsumed,
+                windowBytes: ack.windowBytes)
+        }
+    }
+
+    // `senderClock` defaults to the receiver's `clock`. A test that freezes the
+    // sender's clock to assert an exact stage figure gives it its own, since a
+    // frozen receiver clock would also disable that side's ack-latency fallback
+    // and stall watchdog.
     init(
         clock: any EngineClock = makePlatformEngineClock(),
+        senderClock: (any EngineClock)? = nil,
         chunkSize: Int,
         windowBytes: Int,
         noAckTimeout: TimeInterval = 10,
@@ -361,19 +481,18 @@ final class StreamHarness: @unchecked Sendable {
             label: "harness-\(UUID().uuidString)",
             tempRoot: stagingTempRoot,
             freeSpaceProvider: freeSpaceProvider)
-        let builtSender: ClipboardStreamSender
-        if let archiveSource {
-            builtSender = ClipboardStreamSender(
-                channel: a, chunkSize: chunkSize, windowBytes: windowBytes,
-                noAckTimeout: noAckTimeout, maxResidentInlineBytes: maxResidentInlineBytes,
-                archiveSource: archiveSource)
-        } else {
-            builtSender = ClipboardStreamSender(
-                channel: a, chunkSize: chunkSize, windowBytes: windowBytes,
-                noAckTimeout: noAckTimeout, maxResidentInlineBytes: maxResidentInlineBytes)
-        }
-        sender = builtSender
         let collector = self.collector
+        let ackGate = AckGate(isOpen: !suppressAcks)
+        self.ackGate = ackGate
+        let creditWaitHook = SendableHook<UInt64>()
+        self.creditWaitHook = creditWaitHook
+        sender = ClipboardStreamSender(
+            clock: senderClock ?? clock,
+            channel: a, chunkSize: chunkSize, windowBytes: windowBytes,
+            noAckTimeout: noAckTimeout, maxResidentInlineBytes: maxResidentInlineBytes,
+            onTransferTimed: { metrics in collector.timedOutbound(metrics) },
+            onCreditWait: { id in creditWaitHook.fire(id) },
+            archiveSource: archiveSource ?? ClipboardStreamSender.defaultArchiveSource)
         receiver = ClipboardStreamReceiver(
             clock: clock,
             channel: b, staging: staging, windowBytes: windowBytes,
@@ -381,7 +500,7 @@ final class StreamHarness: @unchecked Sendable {
             maxResidentInlineBytes: maxResidentInlineBytes,
             minimumExtractAllowance: minimumExtractAllowance,
             sinkFactory: sinkFactory,
-            onTransferTimed: { metrics in collector.timed(metrics) },
+            onTransferTimed: { metrics in collector.timedInbound(metrics) },
             onComplete: { id, rep in collector.complete(id, rep) },
             onAbort: { info in collector.abort(info) })
 
@@ -414,10 +533,13 @@ final class StreamHarness: @unchecked Sendable {
                         switch frame.payload {
                         case .clipboardStreamAck(let x):
                             collector.ack(x)
-                            if suppressAcks { break }  // model a peer that never acks
+                            // Models a peer that never acks — until a test
+                            // opens the gate.
+                            guard let admitted = ackGate.admit(x) else { break }
                             sender.handleAck(
-                                transferID: x.transferID, bytesConsumed: x.bytesConsumed,
-                                windowBytes: x.windowBytes)
+                                transferID: admitted.transferID,
+                                bytesConsumed: admitted.bytesConsumed,
+                                windowBytes: admitted.windowBytes)
                         case .clipboardStreamAbort(let x):
                             sender.handleAbort(transferID: x.transferID)
                         default: break

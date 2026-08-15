@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import os
 
 /// Opens the extract sink for one archived transfer.
 ///
@@ -183,7 +184,12 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             transfers[begin.transferID] = transfer
             return true
         }
-        guard inserted else { return }
+        guard inserted else {
+            // The loser is dropped here and never reaches a terminal claim, so
+            // close its signpost interval through the one path that does.
+            _ = transfer.finishOnce()
+            return
+        }
 
         transfer.queue.async { [weak self] in
             guard let self else { return }
@@ -291,6 +297,12 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         }
         transfer.queue.async { [weak self] in
             guard let self else { return }
+            let interval =
+                transfer.stageSignposts
+                ? ClipboardSignposts.stages.beginInterval("inbound chunk", id: transfer.stageID) : nil
+            defer {
+                if let interval { ClipboardSignposts.stages.endInterval("inbound chunk", interval) }
+            }
             guard !transfer.isFinished else { return }
             // End was already accepted: the byte counts are final and a
             // completion barrier may be queued behind the write backlog. Drop
@@ -579,11 +591,13 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                     uti: transfer.uti,
                     byteCount: byteCount,
                     wireByteCount: wireByteCount,
-                    streamedToDisk: transfer.streamsToDisk,
                     duration: transfer.beganAt.seconds(to: completedAt),
-                    streamingDuration: transfer.firstChunkAt.map {
-                        $0.seconds(to: completedAt)
-                    }))
+                    detail: .inbound(
+                        .init(
+                            streamedToDisk: transfer.streamsToDisk,
+                            streamingDuration: transfer.firstChunkAt.map {
+                                $0.seconds(to: completedAt)
+                            }))))
         }
         deliverComplete(transfer.transferID, representation)
     }
@@ -819,6 +833,12 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     /// transfer, so `writtenBytes` is always a true durable *prefix* of the
     /// payload — which is what lets its ack carry credit.
     private func performWrite(_ transfer: Transfer, _ data: Data) {
+        let interval =
+            transfer.stageSignposts
+            ? ClipboardSignposts.stages.beginInterval("staging write", id: transfer.stageID) : nil
+        defer {
+            if let interval { ClipboardSignposts.stages.endInterval("staging write", interval) }
+        }
         // Paired with the receive lane's `addBacklog`, so the bound tracks bytes
         // still waiting to be written rather than bytes ever received.
         defer { transfer.drainBacklog(data.count) }
@@ -1032,56 +1052,6 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     #endif
 }
 
-/// Timing telemetry for one successfully completed inbound transfer, surfaced by
-/// the owning service as a `.notice` log line so a host↔guest throughput baseline
-/// can be read out of Console.app without a special build.
-///
-/// Successful transfers only — a failed transfer reports through
-/// `ClipboardStreamAbortInfo` instead.
-public struct ClipboardTransferMetrics: Sendable, Equatable {
-    /// Identifies the transfer these metrics describe.
-    public let transferID: UInt64
-    /// UTI of the transferred representation.
-    public let uti: String
-    /// Payload bytes delivered — the file, tree or inline bytes the transfer
-    /// unpacked to — in the unit every readout and the offer's `byte_count`
-    /// use.
-    public let byteCount: Int
-    /// Bytes that crossed the wire and were digest-verified: the archive for an
-    /// archived payload, `byteCount` itself for a raw one.
-    public let wireByteCount: Int
-    /// Whether the payload streamed through the extract pipeline (vs.
-    /// reassembling in RAM).
-    public let streamedToDisk: Bool
-    /// Begin processed → digest verified and committed, in seconds.
-    public let duration: TimeInterval
-    /// First chunk arrival → digest verified and committed, in seconds,
-    /// excluding the go-signal round-trip and the sender's source-open ramp.
-    /// `nil` for a zero-byte transfer, which never carries a chunk.
-    public let streamingDuration: TimeInterval?
-
-    /// One-line human-readable rendering for the throughput log line, e.g.
-    /// `"10485760 bytes (public.data) in 0.052 s — 192.3 MiB/s (disk, 4194304 wire bytes, streamed 0.049 s)"`.
-    ///
-    /// The rate is in payload bytes — what the user sees move — and the wire
-    /// count is stated when it differs, so the compression ratio is one
-    /// division away.
-    public var logSummary: String {
-        let seconds = duration
-        let rate = seconds > 0 ? Double(byteCount) / 1_048_576 / seconds : 0
-        var detail = streamedToDisk ? "disk" : "memory"
-        if wireByteCount != byteCount {
-            detail += ", \(wireByteCount) wire bytes"
-        }
-        if let streamingDuration {
-            detail += String(format: ", streamed %.3f s", streamingDuration)
-        }
-        return String(
-            format: "%ld bytes (%@) in %.3f s — %.1f MiB/s (%@)",
-            byteCount, uti, seconds, rate, detail)
-    }
-}
-
 /// Why an inbound transfer failed, surfaced to the owning service.
 public struct ClipboardStreamAbortInfo: Sendable, Equatable {
     /// Identifies the transfer that aborted.
@@ -1282,6 +1252,17 @@ private final class InboundTransfer: @unchecked Sendable {
         backlogLock.withLock { backlogBytes -= count }
     }
 
+    /// The whole-transfer signpost interval, ended by whichever lane claims the
+    /// terminal transition.
+    let signpostInterval: OSSignpostIntervalState
+    /// Whether the per-chunk stage intervals are worth emitting, read once when
+    /// the transfer is announced rather than on each of its chunks.
+    let stageSignposts: Bool
+    /// Identifies this transfer's stage intervals. Without it they would all
+    /// share `OSSignpostID.exclusive`, which only holds for intervals that
+    /// never overlap — and two transfers on their own queues do.
+    let stageID: OSSignpostID
+
     private let finishLock = NSLock()
     private var finished = false
 
@@ -1296,12 +1277,19 @@ private final class InboundTransfer: @unchecked Sendable {
     /// Completion, a failed append, a mid-stream disk-full, supersession, a peer
     /// abort, and a stalled sender all race for it; the winner tears the transfer
     /// down and every loser becomes a no-op.
+    /// It is also where the whole-transfer signpost interval is closed: routing
+    /// the end through the single exactly-once claim is what stops the racing
+    /// terminal paths from double-ending it.
     func finishOnce() -> Bool {
-        finishLock.withLock {
+        let claimed = finishLock.withLock { () -> Bool in
             if finished { return false }
             finished = true
             return true
         }
+        if claimed {
+            ClipboardSignposts.transfers.endInterval("Clipboard receive", signpostInterval)
+        }
+        return claimed
     }
 
     init(
@@ -1319,6 +1307,10 @@ private final class InboundTransfer: @unchecked Sendable {
         self.beganAt = now
         self.lastAckAt = now
         self.lastChunkAt = now
+        self.signpostInterval = ClipboardSignposts.transfers.beginInterval(
+            "Clipboard receive", id: ClipboardSignposts.transfers.makeSignpostID())
+        self.stageSignposts = ClipboardSignposts.stages.isEnabled
+        self.stageID = ClipboardSignposts.stages.makeSignpostID()
         self.queue = DispatchQueue(
             label: "app.kernova.clipboard.stream-recv.\(transferID)", qos: .userInitiated)
         // An archive always takes the write lane: its sink is the extract

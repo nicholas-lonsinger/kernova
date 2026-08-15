@@ -1,6 +1,7 @@
 import AppleArchive
 import Foundation
 import System
+import os
 
 /// Why an extract was stopped by the consumer rather than by the archive.
 enum ClipboardArchiveOutputRefusal: Equatable, Sendable {
@@ -515,6 +516,12 @@ public final class ClipboardArchiveReader: @unchecked Sendable {
         let queue = DispatchQueue(
             label: "app.kernova.clipboard.archive-encode.\(label)", qos: .userInitiated)
         queue.async {
+            // Begun and ended inside this block, so the interval never crosses a
+            // thread: it is the encode worker's whole lifetime, which is what a
+            // trace compares against the transport's own intervals.
+            let interval = ClipboardSignposts.stages.beginInterval(
+                "archive encode", id: ClipboardSignposts.stages.makeSignpostID())
+            defer { ClipboardSignposts.stages.endInterval("archive encode", interval) }
             let failure = Self.encode(source, into: pipe, counted: counted)
             // Declare the end of stream only after every close has been checked,
             // so the reader's end of stream means "complete and flushed".

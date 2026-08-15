@@ -453,7 +453,16 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         let connectionTag = ClipboardConnectionTag.nextGuest()
         // The engine is created off-main (its callbacks hop to main themselves);
         // only the published references are assigned on the main queue.
-        let sender = ClipboardStreamSender(channel: channel)
+        let sender = ClipboardStreamSender(
+            channel: channel,
+            // Reaches the host through log forwarding, which is what makes a
+            // guest→host send readable without attaching to the guest — so it
+            // logs at `.notice` (persisted) rather than `.debug`.
+            onTransferTimed: { metrics in
+                Self.logger.notice(
+                    "Guest→host clipboard transfer \(metrics.transferID, privacy: .public) (conn=\(connectionTag, privacy: .public)) sent: \(metrics.logSummary, privacy: .public)"
+                )
+            })
         let receiver = ClipboardStreamReceiver(
             channel: channel, staging: self.staging,
             // The only measured throughput number for the real vsock link, so it
