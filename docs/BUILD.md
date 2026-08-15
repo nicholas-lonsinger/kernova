@@ -93,7 +93,7 @@ Two parallel PRs that both picked the same next version rebase-merge cleanly, si
 
 ## Low-overhead Run scheme
 
-`Kernova (No Debugger)` is a second shared scheme for interactive Xcode use when the attached debugger's own overhead is the thing under test — clipboard and vsock throughput work. An Xcode-launched run moved ~45–52 MiB/s on the vsock clipboard pipeline versus ~175 MiB/s standalone.
+`Kernova (No Debugger)` is a second shared scheme for interactive Xcode use when the attached debugger's own overhead is the thing under test — clipboard and vsock throughput work. The post-#714 file paths are I/O-bound and move the same with and without an attached debugger ([docs/research/2026-08-14-post-714-pipeline-baseline.md](research/2026-08-14-post-714-pipeline-baseline.md)); the scheme matters when the stage under test is CPU-bound or being profiled.
 
 It builds the same Debug configuration as `Kernova` — same `SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG`, `-Onone`, `ENABLE_TESTABILITY` — but its `LaunchAction` attaches no debugger (`selectedDebuggerIdentifier=""`, `Xcode.IDEFoundation.Launcher.PosixSpawn` in place of LLDB), so Run launches via `posix_spawn` the way a command-line build does.
 
