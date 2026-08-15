@@ -314,11 +314,11 @@ struct ClipboardArchiveStreamTests {
         defer { try? fm.removeItem(at: scratch) }
 
         let file = scratch.appendingPathComponent("payload.bin")
-        let payload = Data((0..<(256 * 1024)).map { UInt8((($0 &* 7) &+ 3) & 0xFF) })
+        let payload = patternedBytes(count: 256 * 1024, multiplier: 7, offset: 3)
         try payload.write(to: file)
         try fm.setAttributes([.posixPermissions: 0o640], ofItemAtPath: file.path)
-        let modified = try #require(
-            fm.attributesOfItem(atPath: file.path)[.modificationDate] as? Date)
+        let sourceAttributes: [FileAttributeKey: Any] = try fm.attributesOfItem(atPath: file.path)
+        let modified: Date = try #require(sourceAttributes[.modificationDate] as? Date)
 
         // The entry is named by the offer, not by the file: the receiver
         // extracts it under exactly this name.
@@ -330,10 +330,12 @@ struct ClipboardArchiveStreamTests {
         #expect(try fm.contentsOfDirectory(atPath: out.path) == ["renamed.bin"])
         let entry = out.appendingPathComponent("renamed.bin")
         #expect(try Data(contentsOf: entry) == payload)
-        let attributes = try fm.attributesOfItem(atPath: entry.path)
-        #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o640)
-        let restored = try #require(attributes[.modificationDate] as? Date)
-        #expect(abs(restored.timeIntervalSince(modified)) < 0.001)
+        let attributes: [FileAttributeKey: Any] = try fm.attributesOfItem(atPath: entry.path)
+        let mode: Int? = (attributes[.posixPermissions] as? NSNumber)?.intValue
+        #expect(mode == 0o640)
+        let restored: Date = try #require(attributes[.modificationDate] as? Date)
+        let drift: TimeInterval = abs(restored.timeIntervalSince(modified))
+        #expect(drift < 0.001)
     }
 
     @Test("a file source carries exactly the byte count its offer declared")
@@ -343,7 +345,7 @@ struct ClipboardArchiveStreamTests {
         defer { try? fm.removeItem(at: scratch) }
 
         let file = scratch.appendingPathComponent("grew.bin")
-        let payload = Data((0..<8192).map { UInt8($0 & 0xFF) })
+        let payload = patternedBytes(count: 8192, multiplier: 1, offset: 0)
         try payload.write(to: file)
 
         // A file that grew between the offer's stat and the paste is sent as the
@@ -376,7 +378,7 @@ struct ClipboardArchiveStreamTests {
     @Test("a blob source round-trips as one entry")
     func blobSourceRoundTrips() throws {
         let fm = FileManager.default
-        let payload = Data((0..<(64 * 1024)).map { UInt8((($0 &* 13) &+ 5) & 0xFF) })
+        let payload = patternedBytes(count: 64 * 1024, multiplier: 13, offset: 5)
         let out = try extractedClipboardArchive(
             try clipboardArchiveBytes(of: .blob(payload, name: "clip.png")))
         defer { try? fm.removeItem(at: out.deletingLastPathComponent()) }

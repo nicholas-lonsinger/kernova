@@ -27,6 +27,19 @@ func makeStartedChannelPair() throws -> (a: VsockChannel, b: VsockChannel) {
     return (a, b)
 }
 
+// MARK: - Payloads
+
+/// `count` bytes following `(i * multiplier + offset) mod 256` — a fixed,
+/// incompressible-enough pattern built with a plain loop, so no test carries a
+/// closure the type checker has to unpick.
+func patternedBytes(count: Int, multiplier: Int, offset: Int) -> Data {
+    var bytes = Data(count: count)
+    for index in 0..<count {
+        bytes[index] = UInt8(truncatingIfNeeded: index &* multiplier &+ offset)
+    }
+    return bytes
+}
+
 // MARK: - Staging sink doubles
 
 /// The extract sink a test double stands in front of: the production pipeline,
