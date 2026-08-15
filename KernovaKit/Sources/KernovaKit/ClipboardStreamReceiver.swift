@@ -102,6 +102,8 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         channel: VsockChannel,
         staging: ClipboardFileStaging,
         windowBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
+        extractPipeBytes: Int = ClipboardStreamTuning.extractPipeBytes,
+        extractPacingBytes: Int = ClipboardStreamTuning.extractPacingBytes,
         ackLatencyBound: TimeInterval = ClipboardStreamTuning.ackLatencyBound,
         stallTimeout: TimeInterval = ClipboardStreamTuning.inboundStallTimeout,
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
@@ -116,12 +118,16 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         self.staging = staging
         let boundedWindow = min(max(windowBytes, 1), ClipboardStreamTuning.maxWindowBytes)
         self.windowBytes = boundedWindow
+        // The extract pipe and the guard quantum are local sizing that never
+        // rides the wire, so neither is clamped to `maxWindowBytes`.
+        let extractCapacity = max(1, extractPipeBytes)
+        let extractPacing = max(1, extractPacingBytes)
         self.makeSink =
             sinkFactory
             ?? { destinationURL, label, onOutputAdvanced in
                 ClipboardArchiveExtractSink(
                     destinationURL: destinationURL, label: label,
-                    capacityBytes: boundedWindow, pacingBytes: boundedWindow,
+                    capacityBytes: extractCapacity, pacingBytes: extractPacing,
                     onOutputAdvanced: onOutputAdvanced)
             }
         self.ackQuantum = ClipboardStreamTuning.ackQuantum(forWindowBytes: self.windowBytes)

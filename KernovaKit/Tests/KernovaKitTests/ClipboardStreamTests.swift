@@ -148,19 +148,23 @@ struct ClipboardStreamTests {
         #expect(harness.collector.abortCount == 0)
     }
 
-    @Test("an inline payload larger than the 2 MiB window round-trips (exercises the inline reserve cap)")
+    @Test(
+        "an inline payload larger than the credit window round-trips (exercises the inline reserve cap)"
+    )
     func largeInlineRoundTrip() async throws {
-        // Production 64 KiB chunks + 1 MiB window; a ~3 MiB inline rep stays RAM-
-        // resident (< maxResidentInlineBytes) and reassembles through the larger
-        // reserve path — min(totalBytes, maxInlineReserveBytes) — rather than the
-        // old 2 MiB window reserve. Also exercises the sender's slice-aliasing read.
+        // Production chunk and window. The rep stays RAM-resident
+        // (< maxResidentInlineBytes) and reassembles through the reserve path —
+        // min(totalBytes, maxInlineReserveBytes) — rather than a window-sized
+        // reserve. Also exercises the sender's slice-aliasing read.
         let harness = try StreamHarness(
             chunkSize: ClipboardStreamTuning.defaultChunkPayloadSize,
             windowBytes: ClipboardStreamTuning.defaultWindowBytes,
             freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
         defer { harness.tearDown() }
 
-        let count = 3 * 1024 * 1024 + 777  // > 2 MiB, deliberately not chunk-aligned
+        // Derived, so it keeps outgrowing the window whatever the window
+        // becomes; deliberately not chunk-aligned.
+        let count = 2 * ClipboardStreamTuning.defaultWindowBytes + 777
         let bytes = Data((0..<count).map { UInt8((($0 &* 31) &+ 7) & 0xFF) })
         let rep = ClipboardContent.Representation(uti: "public.utf8-plain-text", data: bytes)
 
@@ -356,8 +360,8 @@ struct ClipboardStreamTests {
 
     @Test("a payload far larger than the old 104 MiB cap streams successfully")
     func exceedsOldCap() async throws {
-        // Production 64 KiB chunks, 256 KiB window, ~105 MiB file rep — proves the
-        // size cap is gone and the transfer never resides whole in memory.
+        // Production chunk and window, ~105 MiB file rep — proves the size cap is
+        // gone and the transfer never resides whole in memory.
         let harness = try StreamHarness(
             chunkSize: ClipboardStreamTuning.defaultChunkPayloadSize,
             windowBytes: ClipboardStreamTuning.defaultWindowBytes,
@@ -594,7 +598,8 @@ struct ClipboardStreamTests {
             sinkFactory: { destination, label, onOutputAdvanced in
                 let sink = GatedSink(
                     wrapping: makeExtractSink(
-                        destinationURL: destination, label: label, windowBytes: Self.window,
+                        destinationURL: destination, label: label,
+                        capacityBytes: Self.window, pacingBytes: Self.window,
                         onOutputAdvanced: onOutputAdvanced))
                 sinkBox.value = sink
                 return sink
@@ -781,7 +786,8 @@ struct ClipboardStreamTests {
             sinkFactory: { destination, label, onOutputAdvanced in
                 FailingSink(
                     wrapping: makeExtractSink(
-                        destinationURL: destination, label: label, windowBytes: Self.window,
+                        destinationURL: destination, label: label,
+                        capacityBytes: Self.window, pacingBytes: Self.window,
                         onOutputAdvanced: onOutputAdvanced),
                     failingWrite: 2)
             })
@@ -824,7 +830,8 @@ struct ClipboardStreamTests {
             sinkFactory: { destination, label, onOutputAdvanced in
                 FailingSink(
                     wrapping: makeExtractSink(
-                        destinationURL: destination, label: label, windowBytes: Self.window,
+                        destinationURL: destination, label: label,
+                        capacityBytes: Self.window, pacingBytes: Self.window,
                         onOutputAdvanced: onOutputAdvanced),
                     failingWrite: 2, throwing: ClipboardArchiveStreamError.streamClosed)
             })
@@ -860,7 +867,8 @@ struct ClipboardStreamTests {
             sinkFactory: { destination, label, onOutputAdvanced in
                 SilentlyDroppingSink(
                     wrapping: makeExtractSink(
-                        destinationURL: destination, label: label, windowBytes: Self.window,
+                        destinationURL: destination, label: label,
+                        capacityBytes: Self.window, pacingBytes: Self.window,
                         onOutputAdvanced: onOutputAdvanced),
                     droppingWrite: 2)
             })

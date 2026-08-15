@@ -507,7 +507,7 @@ public final class ClipboardArchiveReader: @unchecked Sendable {
     ///   - capacityBytes: how far the encoder may run ahead of the transport.
     public init(
         source: ClipboardArchiveSource, label: String,
-        capacityBytes: Int = ClipboardStreamTuning.defaultWindowBytes
+        capacityBytes: Int = ClipboardStreamTuning.encodePipeBytes
     ) {
         let pipe = ClipboardArchiveBytePipe(capacity: capacityBytes)
         self.pipe = pipe
@@ -758,8 +758,8 @@ public final class ClipboardArchiveExtractSink: StagingSink, @unchecked Sendable
     ///     the pipeline's own thread, so it must not touch a lane's state.
     public init(
         destinationURL: URL, label: String,
-        capacityBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
-        pacingBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
+        capacityBytes: Int = ClipboardStreamTuning.extractPipeBytes,
+        pacingBytes: Int = ClipboardStreamTuning.extractPacingBytes,
         onOutputAdvanced: (@Sendable (Int) throws -> Void)? = nil
     ) {
         self.destinationURL = destinationURL
