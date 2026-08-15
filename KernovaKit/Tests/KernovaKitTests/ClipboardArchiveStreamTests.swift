@@ -431,6 +431,38 @@ struct ClipboardArchiveStreamTests {
         #expect(!fm.fileExists(atPath: dest.path))
     }
 
+    @Test("a locked directory extracts unlocked, so its children can still be swept")
+    func lockedDirectoryExtractsUnlocked() throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+
+        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let locked = source.appendingPathComponent("locked", isDirectory: true)
+        try fm.createDirectory(at: locked, withIntermediateDirectories: true)
+        try "inside".write(
+            to: locked.appendingPathComponent("child.txt"), atomically: true, encoding: .utf8)
+        // Locked last: an immutable directory takes no new entries.
+        try fm.setAttributes([.immutable: true], ofItemAtPath: locked.path)
+        defer { try? fm.setAttributes([.immutable: false], ofItemAtPath: locked.path) }
+
+        let dest = try makeDestination(in: scratch)
+        try stream(from: source, into: dest)
+
+        // The peer authors every entry's flags, and a locked *directory* is the
+        // damaging shape: it blocks `unlink` of everything inside it, so one in
+        // a staged tree is what makes the shared staging parent's reclaim fail
+        // for good.
+        let extracted = dest.appendingPathComponent("locked")
+        let immutable = try fm.attributesOfItem(atPath: extracted.path)[.immutable] as? Bool
+        #expect(immutable != true)
+        #expect(
+            try String(contentsOf: extracted.appendingPathComponent("child.txt"), encoding: .utf8)
+                == "inside")
+        try fm.removeItem(at: dest)
+        #expect(!fm.fileExists(atPath: dest.path))
+    }
+
     @Test("a blob source round-trips as one entry")
     func blobSourceRoundTrips() throws {
         let fm = FileManager.default

@@ -1083,6 +1083,32 @@ struct ClipboardStreamTests {
         #expect(harness.collector.representation(99)?.inMemoryData == all)
     }
 
+    @Test("a chunk carrying no bytes aborts the transfer")
+    func emptyChunkAborts() async throws {
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+
+        harness.receiver.handleBegin(
+            .with {
+                $0.generation = 1
+                $0.transferID = 8
+                $0.uti = "public.data"
+                $0.totalBytes = 8192
+                $0.isInline = true
+            })
+        // Accepted, it would refresh the stall clock and the pull's backstop
+        // while advancing nothing — the one way to hold a transfer open that
+        // costs the peer no bytes at all.
+        harness.receiver.handleChunk(
+            .with {
+                $0.transferID = 8; $0.offset = 0; $0.data = Data()
+            })
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.representation(8) == nil)
+        #expect(harness.collector.abortInfos.contains { $0.code == "chunk.empty" })
+    }
+
     @Test("an out-of-order (gapped) chunk aborts the transfer")
     func gappedChunkAborts() async throws {
         let harness = try roomyHarness()

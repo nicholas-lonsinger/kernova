@@ -309,6 +309,18 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                     message: "Out-of-order chunk at \(offset), expected \(transfer.receivedBytes)")
                 return
             }
+            // A chunk carrying nothing advances no counter — not the byte
+            // total, not the digest, not the extract's drop budget — while
+            // still refreshing the stall clock and the lazy pull's inactivity
+            // backstop below, so a stream of them holds a transfer open for
+            // free past every bound there is. A sender emits none: it breaks
+            // out of its read loop on an empty read, so a zero-byte transfer is
+            // a Begin and an End with no chunk between them.
+            guard !chunk.data.isEmpty else {
+                self.fail(
+                    transfer, code: "chunk.empty", message: "Chunk carries no bytes")
+                return
+            }
             // Bound a single chunk — a frame can carry up to 128 MiB, but the
             // negotiated chunk is 64 KiB. [M3]
             guard chunk.data.count <= ClipboardStreamTuning.maxChunkBytes else {
