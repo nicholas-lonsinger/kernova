@@ -148,17 +148,21 @@ struct ClipboardOutboundMetricsTests {
             maxAcceptByteCount: .max, isInline: false, isCurrent: { _ in true })
 
         try await harness.collector.gate.wait { harness.collector.outboundMetrics.count == 1 }
+        try await harness.collector.gate.wait { harness.collector.inboundMetrics.count == 1 }
         try await harness.collector.gate.wait { harness.collector.end(1) != nil }
         let metrics = try #require(harness.collector.outboundMetrics.first)
         let sent = try #require(metrics.outbound)
         let end = try #require(harness.collector.end(1))
+        let received = try #require(harness.collector.inboundMetrics.first)
 
         #expect(sent.isArchived)
         #expect(metrics.wireByteCount == Int(end.totalBytes))
         #expect(metrics.wireByteCount != metrics.byteCount)
-        // The payload figure is the uncompressed archive — the file plus its
-        // entry header — which is the unit the offer's estimate is in.
-        #expect(metrics.byteCount >= bytes.count)
+        // Both lines describe the same transfer, so both state the payload the
+        // file expands to — not the archive stream that carried it.
+        #expect(metrics.byteCount == bytes.count)
+        #expect(received.byteCount == metrics.byteCount)
+        #expect(received.wireByteCount == metrics.wireByteCount)
         #expect(metrics.logSummary.contains("archive"))
         #expect(metrics.logSummary.contains("\(metrics.wireByteCount) wire bytes"))
         #expect(sent.chunkCount > 0)

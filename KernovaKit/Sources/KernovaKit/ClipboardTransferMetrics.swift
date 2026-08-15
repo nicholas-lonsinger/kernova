@@ -17,6 +17,11 @@ public struct ClipboardTransferMetrics: Sendable, Equatable {
     public let uti: String
     /// Payload bytes — the file, tree or inline bytes the transfer carried — in
     /// the unit every readout and the offer's `byte_count` use.
+    ///
+    /// A sent folder is the one payload whose exact size is not known while it
+    /// streams, and reports its uncompressed archive stream instead: the tree
+    /// plus its per-entry headers, so it reads slightly above the count the
+    /// receiver reports for the same transfer.
     public let byteCount: Int
     /// Bytes that crossed the wire: the archive for an archived payload,
     /// `byteCount` itself for a raw one.

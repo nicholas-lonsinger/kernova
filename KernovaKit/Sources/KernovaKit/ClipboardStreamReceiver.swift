@@ -184,7 +184,12 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             transfers[begin.transferID] = transfer
             return true
         }
-        guard inserted else { return }
+        guard inserted else {
+            // The loser is dropped here and never reaches a terminal claim, so
+            // close its signpost interval through the one path that does.
+            _ = transfer.finishOnce()
+            return
+        }
 
         transfer.queue.async { [weak self] in
             guard let self else { return }
@@ -294,7 +299,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             guard let self else { return }
             let interval =
                 transfer.stageSignposts
-                ? ClipboardSignposts.stages.beginInterval("inbound chunk") : nil
+                ? ClipboardSignposts.stages.beginInterval("inbound chunk", id: transfer.stageID) : nil
             defer {
                 if let interval { ClipboardSignposts.stages.endInterval("inbound chunk", interval) }
             }
@@ -830,7 +835,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     private func performWrite(_ transfer: Transfer, _ data: Data) {
         let interval =
             transfer.stageSignposts
-            ? ClipboardSignposts.stages.beginInterval("staging write") : nil
+            ? ClipboardSignposts.stages.beginInterval("staging write", id: transfer.stageID) : nil
         defer {
             if let interval { ClipboardSignposts.stages.endInterval("staging write", interval) }
         }
@@ -1253,6 +1258,10 @@ private final class InboundTransfer: @unchecked Sendable {
     /// Whether the per-chunk stage intervals are worth emitting, read once when
     /// the transfer is announced rather than on each of its chunks.
     let stageSignposts: Bool
+    /// Identifies this transfer's stage intervals. Without it they would all
+    /// share `OSSignpostID.exclusive`, which only holds for intervals that
+    /// never overlap — and two transfers on their own queues do.
+    let stageID: OSSignpostID
 
     private let finishLock = NSLock()
     private var finished = false
@@ -1301,6 +1310,7 @@ private final class InboundTransfer: @unchecked Sendable {
         self.signpostInterval = ClipboardSignposts.transfers.beginInterval(
             "Clipboard receive", id: ClipboardSignposts.transfers.makeSignpostID())
         self.stageSignposts = ClipboardSignposts.stages.isEnabled
+        self.stageID = ClipboardSignposts.stages.makeSignpostID()
         self.queue = DispatchQueue(
             label: "app.kernova.clipboard.stream-recv.\(transferID)", qos: .userInitiated)
         // An archive always takes the write lane: its sink is the extract

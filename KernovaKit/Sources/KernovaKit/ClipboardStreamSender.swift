@@ -320,6 +320,20 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         case .directory(let url, _):
             payload = .archived(.directory(url))
         }
+        // What the peer will hold once it has unpacked this payload, where the
+        // source can say exactly — a one-entry archive expands to precisely the
+        // bytes that went in, so this is the same figure the receiver reports
+        // for the same transfer and the two log lines compare directly. A folder
+        // has no exact figure until it has been walked, so it falls back to the
+        // uncompressed archive stream, which carries per-entry headers too.
+        let knownPayloadByteCount: Int?
+        switch payload {
+        case .raw(let data): knownPayloadByteCount = data.count
+        case .archived(.file(_, _, let byteCount)): knownPayloadByteCount = byteCount
+        case .archived(.blob(let data, _)): knownPayloadByteCount = data.count
+        case .archived(.directory): knownPayloadByteCount = nil
+        }
+
         let reader: ChunkReader
         let declaredByteCount: Int?
         switch payload {
@@ -350,7 +364,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
                 ClipboardTransferMetrics(
                     transferID: transfer.transferID,
                     uti: representation.uti,
-                    byteCount: timings.payloadByteCount,
+                    byteCount: knownPayloadByteCount ?? timings.payloadByteCount,
                     wireByteCount: timings.wireByteCount,
                     duration: transfer.beganAt.seconds(to: clock.now),
                     detail: .outbound(
