@@ -824,6 +824,15 @@ final class VMInstance {
         guard let control = vsockControlService, control.isConnected else {
             return .notReady(reason: "no control channel has completed its handshake")
         }
+        // Ahead of the capability check, and covering every requirement
+        // including `.none`: an agent behind the bundled build is out of date
+        // rather than a peer to accommodate, and its missing capability — where
+        // it has one — is a symptom of that, not the actionable cause. The
+        // control channel stays admitted, so the sidebar and clipboard pane keep
+        // reporting the version and offering the update.
+        guard control.isGuestAgentCurrent else {
+            return .denied(reason: "the connected guest agent is out of date")
+        }
         let advertised: Bool
         switch requirement {
         case .none: advertised = true

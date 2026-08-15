@@ -105,9 +105,21 @@ final class VsockControlService {
         guard let bundled = bundledAgentVersion else {
             return .current(version: installed)
         }
-        return AgentStatus.isObservedVersionCurrent(installed, bundled: bundled)
+        return isGuestAgentCurrent
             ? .current(version: installed)
             : .outdated(installed: installed, bundled: bundled)
+    }
+
+    /// Whether the connected agent is at least the build this host bundles.
+    ///
+    /// `false` until a `Hello` names a version. An agent behind the bundle runs
+    /// an earlier release of the host's own `KernovaKit`, so what it does on the
+    /// far end of a transfer is not what this host is written against; it is
+    /// refused every feature channel rather than accommodated (AGENTS.md,
+    /// *Current-Only Surfaces*).
+    var isGuestAgentCurrent: Bool {
+        guard let installed = agentVersion else { return false }
+        return AgentStatus.isObservedVersionCurrent(installed, bundled: bundledAgentVersion)
     }
 
     // MARK: - Private state
@@ -348,11 +360,18 @@ final class VsockControlService {
     /// Called on Hello receipt and whenever the user flips a hot-toggleable setting while the VM
     /// is running.
     func sendPolicyUpdate(_ policy: AgentPolicySnapshot) {
-        // An agent that can't stream never gets clipboard turned on.
-        let clipboardEnabled = policy.clipboardSharingEnabled && guestSupportsClipboardStreaming
-        if policy.clipboardSharingEnabled && !guestSupportsClipboardStreaming {
+        // An agent that can't stream, or that predates the bundled build, never
+        // gets clipboard turned on: its channel is refused either way, and a
+        // guest told otherwise starts its clipboard agent and holds an App Nap
+        // assertion open for a session it will never be admitted to.
+        let clipboardBlocker: String? =
+            !guestSupportsClipboardStreaming
+            ? "lacks the \(KernovaCapability.clipboardStreamV2) capability"
+            : (isGuestAgentCurrent ? nil : "is out of date")
+        let clipboardEnabled = policy.clipboardSharingEnabled && clipboardBlocker == nil
+        if policy.clipboardSharingEnabled, let clipboardBlocker {
             Self.logger.notice(
-                "Clipboard sharing requested but guest agent for '\(self.label, privacy: .public)' lacks the \(KernovaCapability.clipboardStreamV2, privacy: .public) capability — keeping clipboard disabled (agent needs updating)"
+                "Clipboard sharing requested but guest agent for '\(self.label, privacy: .public)' \(clipboardBlocker, privacy: .public) — keeping clipboard disabled (agent needs updating)"
             )
         }
         var frame = Frame()

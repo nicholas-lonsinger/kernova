@@ -104,6 +104,38 @@ struct VMInstanceVsockAdmissionTests {
         try await waitForChange { admits(instance, clipboard: true) }
     }
 
+    @Test("An agent behind the bundled build is refused every feature channel")
+    func outdatedAgentIsRefusedEveryFeatureChannel() async throws {
+        let instance = makeInstance()
+        let (guestFd, hostFd) = try makeRawSocketPair()
+        let guest = VsockChannel(fileDescriptor: guestFd)
+        let host = VsockChannel(fileDescriptor: hostFd)
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // A bundled version above anything the Hello can name, so the version is
+        // the only thing that can decide the verdict.
+        let control = VsockControlService(
+            channel: host, label: "admission-test", bundledAgentVersion: "2.0.0")
+        instance.vsockControlService = control
+        control.start()
+        defer { control.stop() }
+
+        // Every capability advertised: the refusal is about the build, not a
+        // missing tag.
+        try guest.send(makeGuestHello(capabilities: KernovaCapability.controlChannelDefaults))
+        try await waitForChange { control.isConnected }
+
+        // Log forwarding included — the rule is the agent, not the feature.
+        #expect(isDenied(instance.featureChannelAdmission(.none)))
+        #expect(isDenied(instance.featureChannelAdmission(.clipboardStreaming)))
+        #expect(isDenied(instance.featureChannelAdmission(.dropFiles)))
+        // The control channel is never gated on this, so the version stays
+        // observable and the update affordance keeps its subject.
+        #expect(control.agentStatus == .outdated(installed: "1.0.0", bundled: "2.0.0"))
+    }
+
     @Test("Stopping the control service withdraws admission")
     func stopWithdrawsAdmission() async throws {
         let instance = makeInstance()

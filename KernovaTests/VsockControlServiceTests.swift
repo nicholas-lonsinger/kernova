@@ -1196,6 +1196,43 @@ struct VsockControlServiceTests {
         #expect(service.guestSupportsClipboardStreaming == true)
     }
 
+    @Test("clipboard stays off for an agent behind the bundled build")
+    func clipboardDisabledForAnOutdatedAgent() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = makeService(
+            channel: host,
+            bundledAgentVersion: "2.0.0",
+            policyProvider: {
+                AgentPolicySnapshot(
+                    logForwardingEnabled: false, clipboardSharingEnabled: true,
+                    clipboardMaxPasteBytes: ClipboardPasteLimit.defaultBytes)
+            })
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)  // host hello
+        try guest.send(makeGuestHello(agentVersion: "1.0.0", streamingCapable: true))
+
+        var policy: Kernova_V1_PolicyUpdate?
+        for _ in 0..<6 where policy == nil {
+            let next = try await nextFrame(from: guest)
+            if case .policyUpdate(let p) = next.payload {
+                policy = p
+            }
+        }
+        // The capability is advertised and the user asked for clipboard, so the
+        // build is the only thing holding it off — and it has to, since the
+        // channel is refused. A guest told otherwise starts its clipboard agent
+        // and holds an App Nap assertion open for a session it never gets.
+        #expect(try #require(policy).clipboardSharingEnabled == false)
+        #expect(service.guestSupportsClipboardStreaming == true)
+        #expect(service.isGuestAgentCurrent == false)
+    }
+
     // MARK: - Paste ceiling
 
     private func pushCeiling(requested: Int) async throws -> UInt64 {
