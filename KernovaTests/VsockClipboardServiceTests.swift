@@ -3610,8 +3610,15 @@ struct VsockClipboardServiceTests {
         #expect(responder.requests.isEmpty)
     }
 
-    @Test("A disk-full abort on an in-flight pull surfaces a .diskFull transfer issue")
-    func pullDiskFullAbortSurfacesIssue() async throws {
+    // MARK: - Lazy preview pull failures
+
+    /// Drives one lazy preview pull whose transfer the guest opens and then
+    /// aborts with `rawCode`, returning the issue it raised.
+    ///
+    /// The preview pull has no return path to the window either — the rep stays
+    /// a placeholder chip — so the issue is the only account of why it never
+    /// filled in.
+    private func previewPullAbortedByGuest(rawCode: String) async throws -> ClipboardTransferIssue? {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -3621,11 +3628,10 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        // beginOnly opens a transfer the host can then abort with disk.full —
-        // exercising the awaiter's onAbort issue-surfacing (the same handler the
-        // host's own mid-stream disk-full detection drives via deliverAbort). An
-        // image rep is used because the preview pulls it through the async `pull`;
-        // the paste-time blocking pull's own reporting is covered below.
+        // `beginOnly` opens a transfer the guest can then abort, exercising the
+        // awaiter's onAbort classification (the same handler the host's own
+        // mid-stream disk-full detection drives via deliverAbort). An image rep
+        // is used because the preview pulls it through the async `pull`.
         let responder = FakeGuestResponder(guest: guest)
         defer { responder.cancel() }
         responder.register(
@@ -3649,16 +3655,69 @@ struct VsockClipboardServiceTests {
         abort.protocolVersion = 1
         abort.clipboardStreamAbort = Kernova_V1_ClipboardStreamAbort.with {
             $0.transferID = xid
-            $0.code = ClipboardStreamAbortCode.diskFull.rawValue
-            $0.message = "volume filled"
+            $0.code = rawCode
+            $0.message = "aborted"
         }
         try guest.send(abort)
 
         await previewTask.value
-        try await waitForChange {
-            if case .diskFull = service.lastTransferIssue?.kind { return true }
-            return false
+        // The raise is enqueued with `Task { @MainActor … }` synchronously,
+        // before the resume `previewTask` awaited, so a task enqueued here lands
+        // behind it — a deterministic hand-off, not a poll, and the one way a
+        // "raised nothing" expectation can be read without racing the raise.
+        await Task { @MainActor in }.value
+        return service.lastTransferIssue
+    }
+
+    private func previewPullAbortedByGuest(
+        code: ClipboardStreamAbortCode
+    ) async throws -> ClipboardTransferIssue? {
+        try await previewPullAbortedByGuest(rawCode: code.rawValue)
+    }
+
+    @Test("A disk-full abort on an in-flight pull surfaces a .diskFull transfer issue")
+    func pullDiskFullAbortSurfacesIssue() async throws {
+        let issue = try await previewPullAbortedByGuest(code: .diskFull)
+        guard case .diskFull = issue?.kind else {
+            Issue.record("Expected a diskFull issue, got \(String(describing: issue))")
+            return
         }
+    }
+
+    @Test(
+        "a preview pull aborted mid-stream reports the failed transfer",
+        arguments: [
+            ClipboardStreamAbortCode.readError, .digestMismatch, .sizeMismatch, .stallTimeout,
+            .flowOverrun, .ackTimeout, .sendFailed,
+        ])
+    func previewPullAbortSurfacesIssue(code: ClipboardStreamAbortCode) async throws {
+        let issue = try await previewPullAbortedByGuest(code: code)
+        #expect(issue?.kind == ClipboardTransferIssue.pasteTransferFailed().kind)
+    }
+
+    @Test("a preview pull whose archive can't be unpacked names the unpack failure")
+    func previewPullExtractAbortSurfacesUnpackFailure() async throws {
+        let issue = try await previewPullAbortedByGuest(code: .extractError)
+        #expect(issue?.kind == ClipboardTransferIssue.pasteUnpackFailed().kind)
+    }
+
+    @Test(
+        "a preview pull retired by a teardown or supersession reports nothing",
+        arguments: [ClipboardStreamAbortCode.cancelled, .superseded, .requestStale, .userCancelled])
+    func previewPullRetiredAbortStaysQuiet(code: ClipboardStreamAbortCode) async throws {
+        // Whatever superseded the offer publishes its own explainer; a preview
+        // that filled in nothing because the offer moved on must not also claim
+        // a transfer failure.
+        let issue = try await previewPullAbortedByGuest(code: code)
+        #expect(issue == nil)
+    }
+
+    @Test("a pull aborted with a code this build doesn't define reports a failure")
+    func previewPullUndefinedAbortCodeSurfacesIssue() async throws {
+        // An abort spelled in a way this build cannot read is a failure to
+        // surface, not one to swallow.
+        let issue = try await previewPullAbortedByGuest(rawCode: "future.unknown")
+        #expect(issue?.kind == ClipboardTransferIssue.pasteTransferFailed().kind)
     }
 
     // MARK: - Paste-time pull failures

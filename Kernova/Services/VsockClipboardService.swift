@@ -1248,14 +1248,10 @@ final class VsockClipboardService: ClipboardServicing {
                 advertisedByteCount: Int(clamping: info.byteCount),
                 onComplete: { pull.resume($0) },
                 onAbort: { [weak self] info in
-                    // A volume that fills *during* the transfer; the pre-flight
-                    // above covers the up-front case. Fires off the main actor.
-                    if info.code == .diskFull {
-                        Task { @MainActor [weak self] in self?.recordPullDiskFull(info) }
-                    } else if info.code == .extractError {
-                        Task { @MainActor [weak self] in
-                            self?.raiseIssue(.pasteUnpackFailed())
-                        }
+                    // Fires off the main actor, so the raise hops rather than
+                    // blocking the receive lane.
+                    if let issue = ClipboardTransferIssue.inboundPullAborted(info) {
+                        Task { @MainActor [weak self] in self?.raiseIssue(issue) }
                     }
                     pull.resume(nil)
                 },
@@ -1313,12 +1309,6 @@ final class VsockClipboardService: ClipboardServicing {
             }
         }
         return rep
-    }
-
-    /// Records a disk-full transfer issue for a pull that aborted mid-stream
-    /// because the staging volume filled (the up-front case is set in `pull`).
-    private func recordPullDiskFull(_ info: ClipboardStreamAbortInfo) {
-        raiseIssue(.diskFull(from: info))
     }
 
     // MARK: - Synchronous blocking pull (paste-time provider)
@@ -1480,12 +1470,8 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.warning(
                 "File clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) aborted (\(abort.rawCode, privacy: .public))"
             )
-            if abort.code == .diskFull {
-                recordPasteIssue(.diskFull(from: abort))
-            } else if abort.code == .extractError {
-                recordPasteIssue(.pasteUnpackFailed())
-            } else if !abort.isRetiring {
-                recordPasteIssue(.pasteTransferFailed())
+            if let issue = ClipboardTransferIssue.inboundPullAborted(abort) {
+                recordPasteIssue(issue)
             }
             return nil
         case .timedOut:

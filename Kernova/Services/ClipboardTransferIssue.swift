@@ -130,6 +130,22 @@ extension ClipboardTransferIssue {
             date: Date())
     }
 
+    /// What an aborted inbound pull reports — one classification for every pull
+    /// of a guest offer, the paste-time blocking fire and the lazy preview pull
+    /// alike — or `nil` when the abort retires the transfer quietly.
+    ///
+    /// A code this build does not define is a failure to surface, not one to
+    /// swallow: `isRetiring` is false for it, so it lands on the generic
+    /// failure alongside every read, integrity, staging, and timeout code.
+    static func inboundPullAborted(_ info: ClipboardStreamAbortInfo) -> ClipboardTransferIssue? {
+        guard !info.isRetiring else { return nil }
+        switch info.code {
+        case .diskFull: return .diskFull(from: info)
+        case .extractError: return .pasteUnpackFailed()
+        default: return .pasteTransferFailed()
+        }
+    }
+
     /// Raised when an automatic passthrough forward left unreadable items out of
     /// the offer; `note` is the intake's own wording, the same sentence the
     /// window's own paste/drop gestures show inline.
