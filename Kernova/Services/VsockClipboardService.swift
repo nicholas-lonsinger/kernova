@@ -94,18 +94,17 @@ final class VsockClipboardService: ClipboardServicing {
     @ObservationIgnored
     private var previewOperation: ClipboardTransferOperation?
 
-    /// Synchronous pull machinery for representations served inside a pasteboard
-    /// `provideData` callback, on whichever thread the pasteboard server fires it
-    /// (usually main, where the wait runs the event loop rather than parking).
+    /// The one place an inbound pull lives, for both the preview loop and the
+    /// synchronous pulls served inside a pasteboard `provideData` callback (on
+    /// whichever thread the pasteboard server fires it — usually main, where the
+    /// wait runs the event loop rather than parking).
     ///
-    /// A paste-time pull can target a rep the async preview `pull` has in
-    /// flight under the same `transfer_id`; that is safe by construction: the
-    /// receiver's newest awaiter wins delivery, the guest sender ignores a
-    /// duplicate-id request while one is streaming (and re-streams after it
-    /// finished), and the displaced preview resolves at its inactivity backstop,
-    /// retrying into the cache the paste pull populated. The reverse order is
-    /// closed off instead: `materialize` never starts a pull for a rep a paste
-    /// fire is pulling (`InboundPromise.pasteFires`).
+    /// A paste-time fire and a preview fetch for the same rep share one slot, one
+    /// awaiter and one request: whichever arrives first starts the pull and the
+    /// other joins it, in either order. What keeps a joined paste's wait short is
+    /// the preview side's own bounds — only `isEagerPreviewable` reps are pulled
+    /// at all, capped by `ClipboardPreviewPolicy.maxEagerPreviewBytes` — plus the
+    /// inactivity backstop below.
     private let lazyCoordinator = LazyPullCoordinator()
 
     private var sender: ClipboardStreamSender?
@@ -135,8 +134,14 @@ final class VsockClipboardService: ClipboardServicing {
     /// per-representation materialization cache.
     private var inboundPromise: InboundPromise?
 
-    /// Generation for which preview materialization has already been started, so
-    /// the window can call `materializeForPreview()` freely without re-pulling.
+    /// Generation whose preview materialization loop has already run, so the
+    /// window can call `materializeForPreview()` freely without re-pulling.
+    ///
+    /// Latched before the loop's first pull, not after its last: a pull that
+    /// fails raises a report, the report is an observation change, and the window
+    /// answers an observation change with another trigger — so latching on
+    /// success alone re-requests the rep on every notice. One loop per generation;
+    /// a later paste or Copy to Mac is a fresh gesture with its own path.
     private var previewMaterializationStarted: UInt64 = 0
 
     /// The inbound generation whose materialization loop the user cancelled.
@@ -190,8 +195,12 @@ final class VsockClipboardService: ClipboardServicing {
     /// offer / `stop()` into that exact gap deterministically.
     var afterInboundPullForTesting: (@MainActor () async -> Void)?
 
-    /// Rep indexes of the live offer a paste-time provider fire is pulling.
-    var pasteFiringRepsForTesting: Set<Int> { inboundPromise?.pasteFiringReps ?? [] }
+    /// Waiters sharing the inbound pull for `(generation, repIndex)` — a preview
+    /// loop and a paste fire on the one transfer read as 2.
+    nonisolated func inboundPullWaiterCountForTesting(generation: UInt64, repIndex: Int) -> Int {
+        lazyCoordinator.waiterCountForTesting(
+            Self.inboundTransferID(generation: generation, repIndex: repIndex))
+    }
     #endif
 
     // `nonisolated` so the off-main `consume` loop can log; `Logger` is Sendable.
@@ -221,18 +230,10 @@ final class VsockClipboardService: ClipboardServicing {
         /// content is never eagerly pulled for preview.
         let isConcealed: Bool
         var materialized: [Int: ClipboardContent.Representation] = [:]
-        /// Pulls in flight, keyed by rep index, so concurrent preview/copy callers
-        /// share one pull per rep instead of minting a duplicate (same-transfer_id)
-        /// request that would orphan a continuation.
-        var inFlight: [Int: Task<ClipboardContent.Representation?, Never>] = [:]
-        /// Paste-time provider fires pulling right now, as a count per rep
-        /// index. Such a pull owns its `transfer_id`'s awaiter, and its wait runs
-        /// the event loop, so a preview trigger landing inside it must not
-        /// register a second awaiter and take delivery away from the paste. A
-        /// count, not a set: two fires for one rep (a sibling flavor, a nested
-        /// or concurrent fire) exit in either order, and the guard must outlive
-        /// the last of them.
-        private var pasteFires: [Int: Int] = [:]
+        /// The preview loop's waiter on each rep it currently has in flight, so a
+        /// Cancel on the readout can leave those pulls — and only those — rather
+        /// than tearing down a transfer a paste is also waiting on.
+        var previewWaiters: [Int: LazyPullCoordinator.Waiter] = [:]
         /// Monotonic count of materializations cached into `materialized`, bumped
         /// on each pulled rep so `republishOffActor` can detect one that landed
         /// during its off-actor hash.
@@ -244,19 +245,6 @@ final class VsockClipboardService: ClipboardServicing {
             self.generation = generation
             self.reps = reps
             self.isConcealed = isConcealed
-        }
-
-        /// Whether a paste-time fire is pulling rep `index`.
-        func isPasteFiring(_ index: Int) -> Bool { pasteFires[index] != nil }
-
-        /// Rep indexes a paste-time fire is pulling.
-        var pasteFiringReps: Set<Int> { Set(pasteFires.keys) }
-
-        func beginPasteFire(_ index: Int) { pasteFires[index, default: 0] += 1 }
-
-        func endPasteFire(_ index: Int) {
-            guard let count = pasteFires[index] else { return }
-            pasteFires[index] = count > 1 ? count - 1 : nil
         }
     }
 
@@ -471,24 +459,26 @@ final class VsockClipboardService: ClipboardServicing {
     /// Stops the pulls the materialization loop has in flight for `generation`.
     ///
     /// Two halves, because the transfer spans both sides: an abort frame per
-    /// in-flight id tells the guest's sender to stop producing bytes, and the
+    /// abandoned id tells the guest's sender to stop producing bytes, and the
     /// local cancel deletes each partial temp file and wakes the parked pull with
     /// the benign `cancelled` code, so the loop ends without raising an issue.
+    ///
+    /// The loop leaves its pulls rather than ending them: a rep a paste fire is
+    /// also waiting on keeps streaming, since this Cancel is on the preview
+    /// readout and the paste is a gesture of its own.
     private func cancelInboundPulls(generation: UInt64) {
         guard let promise = livePromise(generation: generation) else { return }
         cancelledInboundGeneration = generation
-        // A paste fire's pull shares the generation — and, for a rep the preview
-        // also has in flight, the very transfer id — but belongs to a paste in
-        // progress, which this Cancel is not.
-        let pasteOwned = Set(
-            promise.pasteFiringReps.map { Self.inboundTransferID(generation: generation, repIndex: $0) })
-        let inFlight = promise.inFlight.keys.map {
-            Self.inboundTransferID(generation: generation, repIndex: $0)
+        var kept: Set<UInt64> = []
+        for (repIndex, waiter) in promise.previewWaiters {
+            let transferID = Self.inboundTransferID(generation: generation, repIndex: repIndex)
+            if lazyCoordinator.leave(waiter) {
+                kept.insert(transferID)
+            } else {
+                sendStreamAbort(transferID: transferID, code: .userCancelled)
+            }
         }
-        for transferID in inFlight where !pasteOwned.contains(transferID) {
-            sendStreamAbort(transferID: transferID, code: .userCancelled)
-        }
-        receiver?.cancel(generation: generation, except: pasteOwned)
+        receiver?.cancel(generation: generation, except: kept)
         Self.logger.notice(
             "User cancelled the inbound clipboard transfer from '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
         )
@@ -1032,6 +1022,7 @@ final class VsockClipboardService: ClipboardServicing {
             previewMaterializationStarted = promise.generation
             return
         }
+        previewMaterializationStarted = promise.generation
         // A pull that failed has already finished the operation with its own
         // reason; this terminal is what ends a loop that ran to its end or was
         // stopped, and it is dropped for one already finished.
@@ -1039,22 +1030,14 @@ final class VsockClipboardService: ClipboardServicing {
             operation.finish(
                 cancelledInboundGeneration == promise.generation ? .cancelled : .completed)
         }
-        var allSucceeded = true
         for (index, info) in promise.reps.enumerated() {
             guard inboundPromise === promise else { return }  // superseded
             // The user stopped the whole operation, not the one file that
             // happened to be in flight when they clicked.
             guard cancelledInboundGeneration != promise.generation else { return }
             guard Self.isEagerPreviewable(info), !Self.shouldSkip(info) else { continue }
-            if await materialize(index: index, info: info, promise: promise, operation: operation)
-                == nil
-            {
-                allSucceeded = false
-            }
+            _ = await materialize(index: index, info: info, promise: promise, operation: operation)
         }
-        // Latch only on full success, so a transient pull failure is retried on the
-        // next display trigger instead of leaving a rich rep as a chip.
-        if allSucceeded { previewMaterializationStarted = promise.generation }
     }
 
     /// Prepares the "Copy to Mac" items — metadata only, synchronously; nothing
@@ -1182,48 +1165,25 @@ final class VsockClipboardService: ClipboardServicing {
         return snapshot
     }
 
-    /// Pulls representation `index` at most once across concurrent preview
-    /// callers, caching and republishing on success.
+    /// Pulls representation `index`, caching and republishing on success.
     ///
-    /// A second caller for an in-flight rep awaits the existing pull rather than
-    /// minting a duplicate same-`transfer_id` request that would orphan a
-    /// continuation.
+    /// A rep a paste fire already has in flight is not re-requested: the pull
+    /// joins that transfer and both callers take its bytes.
     private func materialize(
         index: Int, info: Kernova_V1_ClipboardRepresentationInfo, promise: InboundPromise,
         operation: ClipboardTransferOperation
     ) async -> ClipboardContent.Representation? {
-        // None of the early returns moves a byte on this operation's behalf, so
-        // none of them begins a transfer: one declared but never fed would sit in
-        // the denominator waiting on events that never arrive.
+        // The cache read moves no byte on this operation's behalf, so it begins no
+        // transfer: one declared but never fed would sit in the denominator
+        // waiting on events that never arrive.
         if let cached = promise.materialized[index] {
             return cached
         }
-        if promise.isPasteFiring(index) {
-            // The paste caches what it pulls, and `materializeForPreview` latches
-            // only on full success, so the next display trigger serves this rep
-            // from `materialized` instead.
-            return nil
-        }
-        if let existing = promise.inFlight[index] {
-            let rep = await existing.value
-            // The owning call writes the cache after its own continuation resumes,
-            // which may be after this coalescing caller — populate it here too so a
-            // reader between the two resumptions doesn't miss the rep.
-            if let rep, inboundPromise === promise, promise.materialized[index] == nil {
-                promise.materialized[index] = rep
-            }
-            return rep
-        }
-        let task = Task { @MainActor in
-            await self.pull(
-                repIndex: index, info: info, generation: promise.generation, operation: operation)
-        }
-        promise.inFlight[index] = task
-        let rep = await task.value
+        let rep = await pull(
+            repIndex: index, info: info, promise: promise, operation: operation)
         #if DEBUG
         await afterInboundPullForTesting?()
         #endif
-        promise.inFlight[index] = nil
         guard inboundPromise === promise else { return rep }
         if let rep {
             promise.materialized[index] = rep
@@ -1233,13 +1193,15 @@ final class VsockClipboardService: ClipboardServicing {
         return rep
     }
 
-    /// Streams one representation, bridging the off-actor receiver delivery to an
-    /// async result.
+    /// Starts or joins the pull for one representation, bridging the coordinator's
+    /// off-thread resolution to an async result.
     ///
     /// Runs the free-space pre-flight first so an over-budget file rep never
-    /// starts a transfer [Safeguard 4].
+    /// starts a transfer [Safeguard 4]. The waiter is held on the promise for the
+    /// duration, so a Cancel on the readout can leave this pull without touching
+    /// a paste fire sharing it.
     private func pull(
-        repIndex: Int, info: Kernova_V1_ClipboardRepresentationInfo, generation: UInt64,
+        repIndex: Int, info: Kernova_V1_ClipboardRepresentationInfo, promise: InboundPromise,
         operation: ClipboardTransferOperation
     ) async -> ClipboardContent.Representation? {
         guard let receiver else { return nil }
@@ -1252,82 +1214,120 @@ final class VsockClipboardService: ClipboardServicing {
                     .diskFull(needed: info.byteCount, available: staging.availableCapacity())))
             return nil
         }
+        let generation = promise.generation
         let transferID = Self.inboundTransferID(generation: generation, repIndex: repIndex)
-        let maxAccept =
-            staging.availableCapacity().map { UInt64(clamping: $0) }
-            ?? ClipboardStreamTuning.unlimitedAcceptByteCount
-        let channel = self.channel
-        let backstop = lazyPullTimeout
-        let label = info.filename.isEmpty ? nil : info.filename
-        operation.unitBegan(id: UInt64(repIndex), expectedBytes: info.byteCount, name: label)
-        let rep: ClipboardContent.Representation? = await withCheckedContinuation { continuation in
-            // Single-resume: the off-main awaiter, the on-main send-failure catch,
-            // and the backstop timeout can all race a channel teardown, and a
-            // double resume is a continuation-misuse crash.
-            let pull = PullContinuation(
-                continuation,
-                onLiveRecord: { bytes, total in
+        let request = InboundPullRequest(
+            transferID: transferID, generation: generation, uti: info.uti,
+            extractsDirectoryNamed: info.isDirectory ? info.filename : nil,
+            advertisedByteCount: Int(clamping: info.byteCount),
+            maxAcceptByteCount: staging.availableCapacity().map { UInt64(clamping: $0) }
+                ?? ClipboardStreamTuning.unlimitedAcceptByteCount,
+            receiver: receiver, channel: channel)
+        let coordinator = lazyCoordinator
+        operation.unitBegan(
+            id: UInt64(repIndex), expectedBytes: info.byteCount,
+            name: info.filename.isEmpty ? nil : info.filename)
+        let outcome: LazyPullOutcome = await withCheckedContinuation { continuation in
+            let waiter = coordinator.join(
+                transferID: transferID, timeout: lazyPullTimeout,
+                onProgress: { bytes, total in
                     operation.unitProgressed(
                         id: UInt64(repIndex), bytesTransferred: UInt64(max(0, bytes)),
                         totalBytes: UInt64(max(0, total)))
-                })
-            receiver.awaitTransfer(
-                transferID,
-                // A folder's bytes are an archive of its tree, extracted as they
-                // arrive: the stream layer learns that here, from the offer this
-                // side already read, rather than from the wire — including the
-                // size the extract is held to.
-                extractsDirectoryNamed: info.isDirectory ? info.filename : nil,
-                advertisedByteCount: Int(clamping: info.byteCount),
-                onComplete: { pull.resume($0) },
-                onAbort: { info in
-                    // A retiring abort names no failure of its own — the loop
-                    // simply ends and its own terminal stands.
-                    if let failure = ClipboardTransferFailure.inboundPullAborted(info) {
-                        operation.finish(.failed(failure))
-                    }
-                    pull.resume(nil)
                 },
-                // Re-arm the inactivity backstop on each chunk so a large
-                // still-progressing transfer is never cut off mid-stream.
-                // [large-paste]
-                onProgress: { bytes, total in
-                    pull.noteProgress(bytesReceived: bytes, totalBytes: total)
-                })
-            pull.armTimeout(
-                Task {
-                    // Inactivity window, not an absolute deadline: re-arm while
-                    // chunks keep arriving, fire only after a full window of
-                    // silence. A cancelled sleep (the pull resolved first) must
-                    // NOT resume.
-                    while true {
-                        do { try await Task.sleep(for: .seconds(backstop)) } catch { return }
-                        if pull.consumeProgress() { continue }
-                        receiver.cancelAwait(transferID)
-                        pull.resume(nil)
-                        return
-                    }
-                })
-            var request = Frame()
-            request.protocolVersion = 1
-            request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
-                $0.generation = generation
-                $0.transferID = transferID
-                $0.uti = info.uti
-                $0.maxAcceptByteCount = maxAccept
+                retire: { receiver.cancelAwait(transferID) },
+                start: { Self.beginInboundPull(request, coordinator: coordinator) },
+                // Resumed from whichever thread resolved the pull — never routed
+                // through main, which a paste fire may be holding (§8).
+                onResolve: { continuation.resume(returning: $0) })
+            promise.previewWaiters[repIndex] = waiter
+        }
+        promise.previewWaiters[repIndex] = nil
+        let rep: ClipboardContent.Representation?
+        switch outcome {
+        case .delivered(let delivered):
+            rep = delivered
+        case .aborted(let abort):
+            // A retiring abort names no failure of its own — the loop simply ends
+            // and its own terminal stands.
+            if let failure = ClipboardTransferFailure.inboundPullAborted(abort) {
+                operation.finish(.failed(failure))
             }
-            do {
-                try channel.send(request)
-            } catch {
-                receiver.cancelAwait(transferID)
-                Self.logger.error(
-                    "Failed to send clipboard request: \(error.localizedDescription, privacy: .public)"
-                )
-                pull.resume(nil)
-            }
+            rep = nil
+        case .timedOut, .cancelled:
+            rep = nil
         }
         operation.unitEnded(id: UInt64(repIndex), succeeded: rep != nil)
         return rep
+    }
+
+    /// Everything one inbound pull's `start` needs, captured on the main actor so
+    /// the request can go out from whichever thread starts the pull.
+    private struct InboundPullRequest: Sendable {
+        let transferID: UInt64
+        let generation: UInt64
+        let uti: String
+        /// Non-`nil` for a folder rep: the archive is its tree, extracted into a
+        /// folder of that name as it streams.
+        let extractsDirectoryNamed: String?
+        let advertisedByteCount: Int
+        let maxAcceptByteCount: UInt64
+        let receiver: ClipboardStreamReceiver
+        let channel: VsockChannel
+    }
+
+    /// Opens one inbound pull: registers the transfer's awaiter, then sends the
+    /// `ClipboardRequest`.
+    ///
+    /// The single place a pull begins, for the preview loop and a paste-time fire
+    /// alike — the coordinator runs it for whichever of them arrives first, so
+    /// one awaiter and one request cover both. A send that fails resolves the
+    /// pull immediately rather than leaving it to the backstop.
+    nonisolated private static func beginInboundPull(
+        _ request: InboundPullRequest, coordinator: LazyPullCoordinator
+    ) {
+        let transferID = request.transferID
+        let receiver = request.receiver
+        receiver.awaitTransfer(
+            transferID,
+            // A folder's bytes are an archive of its tree, extracted as they
+            // arrive: the stream layer learns that here, from the offer this side
+            // already read, rather than from the wire — including the size the
+            // extract is held to.
+            extractsDirectoryNamed: request.extractsDirectoryNamed,
+            advertisedByteCount: request.advertisedByteCount,
+            onComplete: { rep in coordinator.deliver(transferID, rep) },
+            onAbort: { abort in coordinator.abort(transferID, abort) },
+            // Re-arms the inactivity backstop and feeds every waiter's readout, so
+            // a large still-streaming transfer is never cut off mid-flight.
+            // [large-paste]
+            onProgress: { bytes, total in
+                coordinator.progress(transferID, bytesReceived: bytes, totalBytes: total)
+            })
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.clipboardRequest = Kernova_V1_ClipboardRequest.with {
+            $0.generation = request.generation
+            $0.transferID = transferID
+            $0.uti = request.uti
+            $0.maxAcceptByteCount = request.maxAcceptByteCount
+        }
+        do {
+            try request.channel.send(frame)
+        } catch {
+            // No request went out, so no reply will arrive — resolve the pull now
+            // instead of blocking to the backstop timeout.
+            receiver.cancelAwait(transferID)
+            logger.error(
+                "Failed to send clipboard request: \(error.localizedDescription, privacy: .public)"
+            )
+            coordinator.abort(
+                transferID,
+                ClipboardStreamAbortInfo(
+                    transferID: transferID, code: .sendFailed,
+                    message: "Failed to send clipboard request", neededBytes: nil,
+                    availableBytes: nil))
+        }
     }
 
     // MARK: - Synchronous pull (paste-time provider)
@@ -1432,58 +1432,24 @@ final class VsockClipboardService: ClipboardServicing {
         }
         let transferID = Self.inboundTransferID(
             generation: snapshot.generation, repIndex: snapshot.repIndex)
-        let maxAccept =
-            snapshot.staging.availableCapacity().map { UInt64(clamping: $0) }
-            ?? ClipboardStreamTuning.unlimitedAcceptByteCount
         let coordinator = lazyCoordinator
         let receiver = snapshot.receiver
-        let channel = snapshot.channel
-        let uti = snapshot.uti
-        let generation = snapshot.generation
-        receiver.awaitTransfer(
-            transferID,
-            // A folder's bytes are an archive of its tree, extracted as they
-            // arrive: the stream layer learns that here, from the offer this side
-            // already read, rather than from the wire — including the size the
-            // extract is held to.
+        let request = InboundPullRequest(
+            transferID: transferID, generation: snapshot.generation, uti: snapshot.uti,
             extractsDirectoryNamed: snapshot.isDirectory ? snapshot.filename : nil,
             advertisedByteCount: Int(clamping: snapshot.byteCount),
-            onComplete: { rep in coordinator.deliver(transferID, rep) },
-            onAbort: { abort in coordinator.abort(transferID, abort) },
-            // Re-arm the inactivity backstop on each chunk so a large still-
-            // streaming file is never timed out mid-transfer. [large-paste]
+            maxAcceptByteCount: snapshot.staging.availableCapacity().map { UInt64(clamping: $0) }
+                ?? ClipboardStreamTuning.unlimitedAcceptByteCount,
+            receiver: receiver, channel: snapshot.channel)
+        let outcome = coordinator.pull(
+            transferID: transferID, timeout: snapshot.timeout,
             onProgress: { bytes, total in
-                coordinator.heartbeat(transferID)
                 operation.unitProgressed(
                     id: UInt64(snapshot.repIndex), bytesTransferred: UInt64(max(0, bytes)),
                     totalBytes: UInt64(max(0, total)))
-            })
-        let outcome = coordinator.pull(transferID: transferID, timeout: snapshot.timeout) {
-            var request = Frame()
-            request.protocolVersion = 1
-            request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
-                $0.generation = generation
-                $0.transferID = transferID
-                $0.uti = uti
-                $0.maxAcceptByteCount = maxAccept
-            }
-            do {
-                try channel.send(request)
-            } catch {
-                // No request went out, so no reply will arrive — resolve the pull
-                // now instead of blocking to the backstop timeout.
-                receiver.cancelAwait(transferID)
-                Self.logger.error(
-                    "Failed to send clipboard request for file pull: \(error.localizedDescription, privacy: .public)"
-                )
-                coordinator.abort(
-                    transferID,
-                    ClipboardStreamAbortInfo(
-                        transferID: transferID, code: .sendFailed,
-                        message: "Failed to send clipboard request", neededBytes: nil,
-                        availableBytes: nil))
-            }
-        }
+            },
+            retire: { receiver.cancelAwait(transferID) },
+            start: { Self.beginInboundPull(request, coordinator: coordinator) })
         switch outcome {
         case .delivered(let rep):
             return rep
@@ -1500,7 +1466,6 @@ final class VsockClipboardService: ClipboardServicing {
             }
             return nil
         case .timedOut:
-            receiver.cancelAwait(transferID)
             Self.logger.warning(
                 "File clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) timed out"
             )
@@ -1513,18 +1478,6 @@ final class VsockClipboardService: ClipboardServicing {
             // A supersession or release raises its own explainer; the end of
             // this connection has none but this.
             recordPasteInterruption(operation)
-            // Nothing will ever deliver or abort this transferID now, so release
-            // the registered awaiter rather than leaking it.
-            receiver.cancelAwait(transferID)
-            return nil
-        case .superseded:
-            // A newer pull for this id has taken over the awaiter/slot
-            // registration — touch nothing keyed by `transferID`; the retry owns
-            // it, must resolve on its own, and raises the issue for both fires if
-            // it fails.
-            Self.logger.debug(
-                "File clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) superseded by a newer fetch"
-            )
             return nil
         }
     }
@@ -1638,30 +1591,19 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
     ) -> ClipboardContent.Representation? {
         let repIndex = snapshot.repIndex
         let generation = snapshot.generation
-        let peerName = onMain { () -> String in
-            self.livePromise(generation: generation)?.beginPasteFire(repIndex)
-            return self.label
-        }
-        let operation = makeOperation(gesture: .paste, direction: .inbound, peerName: peerName)
+        let operation = makeOperation(gesture: .paste, direction: .inbound, peerName: label)
         operation.unitBegan(
             id: UInt64(repIndex), expectedBytes: snapshot.byteCount,
             name: snapshot.filename.isEmpty ? nil : snapshot.filename)
         let pulled = performBlockingPull(snapshot, operation: operation)
         let rep = onMain { () -> ClipboardContent.Representation? in
+            guard let pulled else { return nil }
             guard let promise = self.livePromise(generation: generation) else { return pulled }
-            promise.endPasteFire(repIndex)
-            if let pulled {
-                if promise.materialized[repIndex] == nil {
-                    promise.materialized[repIndex] = pulled
-                    promise.materializeEpoch += 1
-                }
-                return pulled
+            if promise.materialized[repIndex] == nil {
+                promise.materialized[repIndex] = pulled
+                promise.materializeEpoch += 1
             }
-            // A nested fire for the same rep — a second consumer asking for a
-            // sibling flavor while this pull ran the event loop — supersedes this
-            // pull and fills the cache on its way out; serve from it rather than
-            // leaving this flavor empty.
-            return promise.materialized[repIndex]
+            return pulled
         }
         operation.unitEnded(id: UInt64(repIndex), succeeded: rep != nil)
         if rep != nil {
@@ -1742,82 +1684,5 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
         Thread.isMainThread
             ? MainActor.assumeIsolated { body() }
             : DispatchQueue.main.sync { MainActor.assumeIsolated { body() } }
-    }
-}
-
-/// Single-resume bridge from one inbound pull's three possible resumers — the
-/// off-actor receiver delivery, the on-main send-failure `catch`, and the
-/// backstop timeout — to its `CheckedContinuation`.
-///
-/// All three can race a channel teardown; the first `resume` wins and cancels the
-/// timeout, so the continuation is resumed exactly once. `@unchecked Sendable`:
-/// `lock` guards the continuation and the timer.
-private final class PullContinuation: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<ClipboardContent.Representation?, Never>?
-    private var timeout: Task<Void, Never>?
-    /// Set by `noteProgress` (a chunk landed), consumed by the backstop loop at
-    /// each window boundary to re-arm instead of firing.
-    private var progressed = false
-    /// Records byte progress into the progress tracker *under `lock`*, atomically
-    /// with the resolved check, so a chunk landing after the pull resolves can't
-    /// resurrect a readout its terminal already ended.
-    private let onLiveRecord: (@Sendable (Int, Int) -> Void)?
-
-    init(
-        _ continuation: CheckedContinuation<ClipboardContent.Representation?, Never>,
-        onLiveRecord: (@Sendable (Int, Int) -> Void)? = nil
-    ) {
-        self.continuation = continuation
-        self.onLiveRecord = onLiveRecord
-    }
-
-    /// Records that the transfer made progress, so the backstop loop keeps waiting
-    /// past the next window boundary.
-    ///
-    /// Does nothing once the pull has resolved, so no late chunk reopens a unit
-    /// its terminal already closed.
-    func noteProgress(bytesReceived: Int, totalBytes: Int) {
-        lock.withLock {
-            guard continuation != nil else { return }
-            progressed = true
-            onLiveRecord?(bytesReceived, totalBytes)
-        }
-    }
-
-    /// Returns (and clears) whether progress occurred since the last check, so
-    /// the backstop loop re-arms only when a chunk actually landed in the window.
-    func consumeProgress() -> Bool {
-        lock.withLock {
-            guard progressed else { return false }
-            progressed = false
-            return true
-        }
-    }
-
-    /// Stores the backstop timer so the winning `resume` can cancel it; if the
-    /// pull already resolved before this ran, cancels the timer immediately.
-    func armTimeout(_ task: Task<Void, Never>) {
-        let alreadyResolved = lock.withLock { () -> Bool in
-            guard continuation != nil else { return true }
-            timeout = task
-            return false
-        }
-        if alreadyResolved { task.cancel() }
-    }
-
-    /// Resumes the continuation once; later calls are no-ops.
-    func resume(_ value: ClipboardContent.Representation?) {
-        let pending: CheckedContinuation<ClipboardContent.Representation?, Never>?
-        let timer: Task<Void, Never>?
-        (pending, timer) = lock.withLock {
-            let continuation = self.continuation
-            let timeout = self.timeout
-            self.continuation = nil
-            self.timeout = nil
-            return (continuation, timeout)
-        }
-        timer?.cancel()
-        pending?.resume(returning: value)
     }
 }

@@ -40,6 +40,14 @@ struct LazyPullCoordinatorTests {
         var isMonotonic: Bool { lock.withLock { monotonic } }
     }
 
+    /// A `Sendable` call counter for a closure two joining pulls share.
+    private final class Tally: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        func bump() { lock.withLock { count += 1 } }
+        var value: Int { lock.withLock { count } }
+    }
+
     /// Runs the blocking `pull` on a dedicated thread so the test's
     /// cooperative thread stays free to deliver/abort/failAll and `await` the
     /// outcome.
@@ -58,22 +66,24 @@ struct LazyPullCoordinatorTests {
     ///
     /// That semaphore is a raw backstop the stopwatch helpers never see, so
     /// this arms the test session's OS activity itself. `timeout` is a
-    /// *competing* clock rather than a stuck-condition one: `pull` latches
-    /// `.timedOut` and deregisters the slot under the same lock its outcome is
-    /// read through, so a runner stall that outlasts the window turns a sound
-    /// expectation into a failure.
+    /// *competing* clock rather than a stuck-condition one: the slot's backstop
+    /// timer latches `.timedOut` and deregisters the slot, so a runner stall that
+    /// outlasts the window turns a sound expectation into a failure.
     private func runPull(
         _ coordinator: LazyPullCoordinator,
         transferID: UInt64,
         timeout: TimeInterval = testWaitBackstop,
-        send: @escaping @Sendable () -> Void = {}
+        onProgress: (@Sendable (Int, Int) -> Void)? = nil,
+        retire: @escaping @Sendable () -> Void = {},
+        start: @escaping @Sendable () -> Void = {}
     ) async -> LazyPullOutcome {
         armTestSessionActivity()
         return await withCheckedContinuation { (cont: CheckedContinuation<LazyPullOutcome, Never>) in
             let thread = Thread {
                 cont.resume(
                     returning: coordinator.pull(
-                        transferID: transferID, timeout: timeout, send: send))
+                        transferID: transferID, timeout: timeout, onProgress: onProgress,
+                        retire: retire, start: start))
             }
             thread.name = "LazyPullCoordinatorTests.runPull(\(transferID))"
             thread.start()
@@ -87,8 +97,9 @@ struct LazyPullCoordinatorTests {
     // MARK: - Slot machinery
 
     // RATIONALE: sanctioned no-signal polls (docs/TESTING.md "Async waits in
-    // tests") — `pendingSlotCountForTesting` is NSLock-guarded SUT state, not
-    // @Observable, and no test-owned signal fires on slot registration.
+    // tests") — `pendingSlotCountForTesting` and `waiterCountForTesting` are
+    // NSLock-guarded SUT state, not @Observable, and no test-owned signal fires
+    // on slot or waiter registration.
 
     @Test("pull blocks until deliver wakes it with the representation")
     func deliverWakesPull() async throws {
@@ -135,68 +146,59 @@ struct LazyPullCoordinatorTests {
         #expect(coordinator.pendingSlotCountForTesting == 0)
     }
 
-    @Test("heartbeats re-arm the inactivity window so a slow-but-live pull is not timed out")
-    func heartbeatExtendsTimeout() async throws {
-        // Drives the window boundary via `windowWaitForTesting` instead of a
-        // real wall-clock wait, so the test proves the re-arm branch in `pull`
-        // fires deterministically — not that a `Task.sleep` producer happens
-        // to beat a real semaphore timeout on a shared CI runner (#571: the
-        // prior version raced real time and flaked under scheduler jitter).
+    @Test("progress re-arms the inactivity window so a slow-but-live pull is not timed out")
+    func progressReArmsTheBackstop() async throws {
+        // Drives the window boundary through the seam instead of a real
+        // wall-clock wait, so the test proves the re-arm branch fires
+        // deterministically — not that a producer happens to beat a real timer
+        // on a shared CI runner (#571: the prior version raced real time and
+        // flaked under scheduler jitter).
         let coordinator = LazyPullCoordinator()
-        let window1Entered = AsyncGate()
-        let window2Entered = AsyncGate()
-        let releaseWindow1 = DispatchSemaphore(value: 0)
-        let releaseWindow2 = DispatchSemaphore(value: 0)
-        let sawFirstWindow = Box(false)
-        let sawSecondWindow = Box(false)
-
-        // Neither branch touches the real semaphore/timeout: `pull`'s outcome
-        // is decided purely by `slot.resolved`/`slot.outcome` under its lock
-        // once this closure returns, so parking on a test-owned semaphore
-        // instead is enough to control both boundaries with no wall-clock
-        // dependency anywhere in the test.
-        coordinator.windowWaitForTesting = { _, _ in
-            if !sawFirstWindow.value {
-                sawFirstWindow.value = true
-                window1Entered.notify()
-                releaseWindow1.wait()
-            } else {
-                // Second boundary reached: the first window re-armed rather
-                // than resolving `.timedOut` — the invariant under test
-                // (#500 — a slow-but-live transfer must not time out).
-                sawSecondWindow.value = true
-                window2Entered.notify()
-                releaseWindow2.wait()
-            }
-        }
         async let outcome = runPull(coordinator, transferID: 11)
-        try await window1Entered.wait { sawFirstWindow.value }
-        coordinator.heartbeat(11)
-        releaseWindow1.signal()
-        try await window2Entered.wait { sawSecondWindow.value }
-        // `deliver` must run before `releaseWindow2.signal()` lets `pull`'s
-        // loop past this boundary, so `slot.resolved` is already true by the
-        // time it re-checks — no race with the real semaphore's signal.
-        coordinator.deliver(11, inlineRep("slow but alive"))
-        releaseWindow2.signal()
+        try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
 
+        coordinator.progress(11, bytesReceived: 4096, totalBytes: 1 << 20)
+        // The window that saw the chunk re-arms rather than giving the pull up
+        // (#500 — a slow-but-live transfer must not time out).
+        coordinator.elapseBackstopWindowForTesting(11)
+        #expect(coordinator.pendingSlotCountForTesting == 1)
+
+        coordinator.deliver(11, inlineRep("slow but alive"))
         guard case .delivered(let rep) = await outcome else {
-            Issue.record("Expected .delivered — heartbeats should have prevented the timeout")
+            Issue.record("Expected .delivered — progress should have prevented the timeout")
             return
         }
         #expect(rep.inMemoryData == Data("slow but alive".utf8))
         #expect(coordinator.pendingSlotCountForTesting == 0)
     }
 
-    @Test("a heartbeat for an unknown or resolved pull is a harmless no-op")
-    func heartbeatNoOpWhenAbsent() async throws {
+    @Test("a window that saw no chunk gives the pull up")
+    func idleBackstopWindowTimesOut() async throws {
         let coordinator = LazyPullCoordinator()
-        coordinator.heartbeat(404)  // nobody waiting
+        let retires = Tally()
+        async let outcome = runPull(coordinator, transferID: 13, retire: { retires.bump() })
+        try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
+
+        coordinator.elapseBackstopWindowForTesting(13)
+
+        guard case .timedOut = await outcome else {
+            Issue.record("Expected .timedOut from an idle window")
+            return
+        }
+        // Nothing will fire the awaiter now, so the slot releases it.
+        #expect(retires.value == 1)
+        #expect(coordinator.pendingSlotCountForTesting == 0)
+    }
+
+    @Test("progress for an unknown or resolved pull is a harmless no-op")
+    func progressNoOpWhenAbsent() async throws {
+        let coordinator = LazyPullCoordinator()
+        coordinator.progress(404, bytesReceived: 1, totalBytes: 2)  // nobody waiting
         async let outcome = runPull(coordinator, transferID: 12)
         try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
         coordinator.deliver(12, inlineRep("done"))
-        // A late heartbeat after the slot resolves must not crash or hang.
-        coordinator.heartbeat(12)
+        // Late progress after the slot resolves must not crash or hang.
+        coordinator.progress(12, bytesReceived: 1, totalBytes: 2)
         guard case .delivered = await outcome else {
             Issue.record("Expected .delivered")
             return
@@ -276,67 +278,204 @@ struct LazyPullCoordinatorTests {
         #expect(coordinator.pendingSlotCountForTesting == 0)
     }
 
-    @Test(
-        "a second pull for the same id supersedes the first, waking it immediately instead of parking it to its own timeout (#500)"
-    )
-    func pullSupersedesInFlightPullForSameID() async throws {
+    // MARK: - Joining
+
+    @Test("a second pull for the same id joins the first: one start, one slot, one outcome for both")
+    func secondPullJoinsTheFirst() async throws {
         let coordinator = LazyPullCoordinator()
-        async let first = runPull(coordinator, transferID: 7)
+        let starts = Tally()
+        let retires = Tally()
+        async let first = runPull(
+            coordinator, transferID: 7, retire: { retires.bump() }, start: { starts.bump() })
         try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
 
-        async let second = runPull(coordinator, transferID: 7)
-        // The registration itself resolves the displaced pull — no need to
-        // wait for a timeout window (CLIPBOARD.md §9: wake immediately).
-        guard case .superseded = await first else {
-            Issue.record("Expected .superseded for the displaced first pull")
-            return
-        }
-        // The dict still holds exactly one entry for the id — the
-        // successor's, not the displaced one's.
+        async let second = runPull(
+            coordinator, transferID: 7, retire: { retires.bump() }, start: { starts.bump() })
+        try await waitUntil { coordinator.waiterCountForTesting(7) == 2 }
+        // Two waiters, one pull: the joiner neither displaced the starter nor
+        // opened a second registration.
         #expect(coordinator.pendingSlotCountForTesting == 1)
 
-        coordinator.deliver(7, inlineRep("from the retry"))
-        guard case .delivered(let rep) = await second else {
-            Issue.record("Expected .delivered for the surviving second pull")
-            return
+        coordinator.deliver(7, inlineRep("shared"))
+        for outcome in await [first, second] {
+            guard case .delivered(let rep) = outcome else {
+                Issue.record("Expected .delivered for both waiters, got \(outcome)")
+                return
+            }
+            #expect(rep.inMemoryData == Data("shared".utf8))
         }
-        #expect(rep.inMemoryData == Data("from the retry".utf8))
+        #expect(starts.value == 1)
+        // The awaiter itself fired, so there was nothing left to deregister.
+        #expect(retires.value == 0)
         #expect(coordinator.pendingSlotCountForTesting == 0)
     }
 
-    @Test("a chain of supersessions never evicts the final survivor's registration (#500)")
-    func supersededPullCleanupDoesNotEvictSuccessor() async throws {
-        // Regression guard for the identity-checked removal: without it, each
-        // displaced pull's own wait-loop cleanup (`slots[transferID] = nil`)
-        // would unconditionally evict whatever slot currently occupies that
-        // key — including a later successor's — leaving `deliver` unable to
-        // reach anyone.
+    @Test("an async join and a sync pull share one pull: one outcome, both progress hooks fed")
+    func asyncJoinSharesTheSyncPull() async throws {
         let coordinator = LazyPullCoordinator()
-        async let first = runPull(coordinator, transferID: 7)
+        let starts = Tally()
+        let syncProgress = ProgressCounter()
+        let asyncProgress = ProgressCounter()
+        async let syncOutcome = runPull(
+            coordinator, transferID: 21,
+            onProgress: { syncProgress.bump(bytes: $0, total: $1) },
+            start: { starts.bump() })
         try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
 
-        async let second = runPull(coordinator, transferID: 7)
-        guard case .superseded = await first else {
-            Issue.record("Expected .superseded for the first pull")
-            return
-        }
+        let resolved = Box<LazyPullOutcome?>(nil)
+        let joinResolved = AsyncGate()
+        coordinator.join(
+            transferID: 21,
+            onProgress: { asyncProgress.bump(bytes: $0, total: $1) },
+            retire: {}, start: { starts.bump() },
+            onResolve: {
+                resolved.value = $0
+                joinResolved.notify()
+            })
+        try await waitUntil { coordinator.waiterCountForTesting(21) == 2 }
 
-        async let third = runPull(coordinator, transferID: 7)
-        guard case .superseded = await second else {
-            Issue.record("Expected .superseded for the second pull")
+        coordinator.progress(21, bytesReceived: 64, totalBytes: 128)
+        coordinator.deliver(21, inlineRep("both"))
+
+        guard case .delivered(let syncRep) = await syncOutcome else {
+            Issue.record("Expected .delivered for the synchronous waiter")
             return
         }
-        // Two supersessions have each run their own identity-checked cleanup;
-        // the dict must still hold exactly the third (surviving) slot.
+        try await joinResolved.wait { resolved.value != nil }
+        guard case .delivered(let asyncRep) = resolved.value else {
+            Issue.record("Expected .delivered for the asynchronous waiter")
+            return
+        }
+        #expect(syncRep.inMemoryData == Data("both".utf8))
+        #expect(asyncRep.inMemoryData == Data("both".utf8))
+        #expect(starts.value == 1)
+        // One chunk, fanned out to each waiter's own readout.
+        #expect(syncProgress.value == 1)
+        #expect(asyncProgress.value == 1)
+        #expect(asyncProgress.lastBytesReceived == 64)
+    }
+
+    @Test("one waiter leaving keeps the pull running for the other")
+    func leaveKeepsThePullForTheRemainingWaiter() async throws {
+        let coordinator = LazyPullCoordinator()
+        let retires = Tally()
+        async let held = runPull(coordinator, transferID: 33, retire: { retires.bump() })
+        try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
+
+        let leftOutcome = Box<LazyPullOutcome?>(nil)
+        let waiter = coordinator.join(
+            transferID: 33, retire: { retires.bump() }, start: {},
+            onResolve: { leftOutcome.value = $0 })
+        try await waitUntil { coordinator.waiterCountForTesting(33) == 2 }
+
+        #expect(coordinator.leave(waiter))
+        guard case .cancelled = leftOutcome.value else {
+            Issue.record("Expected the departing waiter to resolve .cancelled")
+            return
+        }
+        // The transfer is still the other waiter's, so nothing was retired.
         #expect(coordinator.pendingSlotCountForTesting == 1)
+        #expect(coordinator.waiterCountForTesting(33) == 1)
+        #expect(retires.value == 0)
 
-        coordinator.deliver(7, inlineRep("the survivor"))
-        guard case .delivered(let rep) = await third else {
-            Issue.record("Expected .delivered for the surviving third pull")
+        coordinator.deliver(33, inlineRep("still mine"))
+        guard case .delivered(let rep) = await held else {
+            Issue.record("Expected the remaining waiter to be delivered")
             return
         }
-        #expect(rep.inMemoryData == Data("the survivor".utf8))
+        #expect(rep.inMemoryData == Data("still mine".utf8))
+    }
+
+    @Test("the last waiter leaving abandons the pull: the slot goes and retire runs once")
+    func lastWaiterOutRetiresThePull() async throws {
+        let coordinator = LazyPullCoordinator()
+        let retires = Tally()
+        let outcome = Box<LazyPullOutcome?>(nil)
+        let resolved = AsyncGate()
+        let waiter = coordinator.join(
+            transferID: 34, retire: { retires.bump() }, start: {},
+            onResolve: {
+                outcome.value = $0
+                resolved.notify()
+            })
+
+        #expect(coordinator.leave(waiter) == false)
+        try await resolved.wait { outcome.value != nil }
+        guard case .cancelled = outcome.value else {
+            Issue.record("Expected .cancelled for the last waiter out")
+            return
+        }
         #expect(coordinator.pendingSlotCountForTesting == 0)
+        #expect(retires.value == 1)
+
+        // Leaving twice changes nothing: the pull is already over.
+        #expect(coordinator.leave(waiter))
+        #expect(retires.value == 1)
+    }
+
+    @Test("the backstop times every waiter of a shared pull out at once, retiring it once")
+    func backstopFansOutToEveryWaiter() async throws {
+        let coordinator = LazyPullCoordinator()
+        let retires = Tally()
+        async let first = runPull(coordinator, transferID: 41, retire: { retires.bump() })
+        try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
+        async let second = runPull(coordinator, transferID: 41, retire: { retires.bump() })
+        try await waitUntil { coordinator.waiterCountForTesting(41) == 2 }
+
+        coordinator.elapseBackstopWindowForTesting(41)
+
+        for outcome in await [first, second] {
+            guard case .timedOut = outcome else {
+                Issue.record("Expected .timedOut for both waiters, got \(outcome)")
+                return
+            }
+        }
+        #expect(retires.value == 1)
+        #expect(coordinator.pendingSlotCountForTesting == 0)
+    }
+
+    @Test("failAll cancels every waiter of a shared pull and retires it once")
+    func failAllCancelsEveryWaiterOfAJoinedPull() async throws {
+        let coordinator = LazyPullCoordinator()
+        let retires = Tally()
+        async let first = runPull(coordinator, transferID: 42, retire: { retires.bump() })
+        try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
+        async let second = runPull(coordinator, transferID: 42, retire: { retires.bump() })
+        try await waitUntil { coordinator.waiterCountForTesting(42) == 2 }
+
+        coordinator.failAll()
+
+        for outcome in await [first, second] {
+            guard case .cancelled = outcome else {
+                Issue.record("Expected .cancelled for both waiters, got \(outcome)")
+                return
+            }
+        }
+        #expect(retires.value == 1)
+        #expect(coordinator.pendingSlotCountForTesting == 0)
+    }
+
+    @Test("a pull for an id whose slot already resolved starts a fresh one")
+    func resolvedIDStartsAFreshPull() async throws {
+        let coordinator = LazyPullCoordinator()
+        let starts = Tally()
+        async let first = runPull(coordinator, transferID: 55, start: { starts.bump() })
+        try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
+        coordinator.deliver(55, inlineRep("one"))
+        guard case .delivered = await first else {
+            Issue.record("Expected .delivered for the first pull")
+            return
+        }
+
+        async let second = runPull(coordinator, transferID: 55, start: { starts.bump() })
+        try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
+        coordinator.deliver(55, inlineRep("two"))
+        guard case .delivered(let rep) = await second else {
+            Issue.record("Expected .delivered for the fresh pull")
+            return
+        }
+        #expect(rep.inMemoryData == Data("two".utf8))
+        #expect(starts.value == 2)
     }
 
     // MARK: - Receiver wiring
@@ -377,14 +516,13 @@ struct LazyPullCoordinatorTests {
     }
 
     @Test(
-        "end-to-end: a retried fetch for the same transfer id supersedes the original attempt and streams to completion (#500)"
+        "end-to-end: a second fetch for the same transfer id joins the streaming transfer and both complete"
     )
-    func concurrentPullsForSameIDSupersedeCleanly() async throws {
-        // Mirrors the real #500 trigger: a paste re-fired for the same
-        // representation runs a second `awaitTransfer` + `pull` for the
-        // identical id while the first attempt is still parked — exercised here
-        // through the real receiver and sender, not just the coordinator in
-        // isolation.
+    func concurrentPullsForSameIDJoin() async throws {
+        // Mirrors the real trigger: a second consumer asks for the same
+        // representation — a sibling flavor, or the window's preview — while the
+        // first pull is still parked. Exercised through the real receiver and
+        // sender, not just the coordinator in isolation.
         let harness = try StreamHarness(
             chunkSize: 4096, windowBytes: 16384,
             freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
@@ -392,28 +530,26 @@ struct LazyPullCoordinatorTests {
 
         let coordinator = LazyPullCoordinator()
         let transferID = ClipboardTransferID.make(generation: 1, repIndex: 0, hostMinted: true)
-
-        // Both attempts' awaiters simply forward to the coordinator, exactly
-        // like `VsockGuestClipboardAgent.pullRepresentation` /
-        // `VsockClipboardService.performBlockingPull`.
-        harness.receiver.awaitTransfer(
-            transferID,
-            onComplete: { rep in coordinator.deliver(transferID, rep) },
-            onAbort: { info in coordinator.abort(transferID, info) })
-
-        async let firstAttempt = runPull(coordinator, transferID: transferID)
-        try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
-
-        // The retry: a second concurrent pull for the identical id.
-        async let secondAttempt = runPull(coordinator, transferID: transferID)
-        guard case .superseded = await firstAttempt else {
-            Issue.record("Expected .superseded for the displaced first attempt")
-            return
+        let starts = Tally()
+        // The starter registers the awaiter inside `start`, exactly like
+        // `VsockGuestClipboardAgent.awaitPull` /
+        // `VsockClipboardService.beginInboundPull`.
+        let receiver = harness.receiver
+        let start: @Sendable () -> Void = {
+            starts.bump()
+            receiver.awaitTransfer(
+                transferID,
+                onComplete: { rep in coordinator.deliver(transferID, rep) },
+                onAbort: { info in coordinator.abort(transferID, info) })
         }
 
-        // Only now does the stream actually run — the retry is the sole live
-        // pull, and its awaiter (still registered under the same id) delivers
-        // the real transfer to the coordinator.
+        async let firstAttempt = runPull(coordinator, transferID: transferID, start: start)
+        try await waitUntil { coordinator.pendingSlotCountForTesting == 1 }
+
+        // The second consumer: a concurrent pull for the identical id.
+        async let secondAttempt = runPull(coordinator, transferID: transferID, start: start)
+        try await waitUntil { coordinator.waiterCountForTesting(transferID) == 2 }
+
         var bytes = Data()
         for i in 0..<(4096 * 2 + 9) { bytes.append(UInt8((i * 29 + 3) & 0xFF)) }
         let rep = ClipboardContent.Representation(uti: ClipboardContent.utf8TextUTI, data: bytes)
@@ -421,11 +557,16 @@ struct LazyPullCoordinatorTests {
             transferID: transferID, generation: 1, representation: rep, maxAcceptByteCount: .max,
             isInline: true, isCurrent: { _ in true })
 
-        guard case .delivered(let received) = await secondAttempt else {
-            Issue.record("Expected .delivered for the surviving second attempt")
-            return
+        for outcome in await [firstAttempt, secondAttempt] {
+            guard case .delivered(let received) = outcome else {
+                Issue.record("Expected .delivered for both waiters, got \(outcome)")
+                return
+            }
+            #expect(received.inMemoryData == bytes)
         }
-        #expect(received.inMemoryData == bytes)
+        // One registration and one Begin covered both.
+        #expect(starts.value == 1)
+        #expect(harness.collector.completedCount == 0)
         #expect(coordinator.pendingSlotCountForTesting == 0)
     }
 
@@ -603,15 +744,14 @@ struct LazyPullCoordinatorTests {
     func staleAbortCollidesWithReusedAwaiterButTableStaysConsistent() async throws {
         // `ClipboardTransferID` is intentionally reproducible from
         // (generation, repIndex, direction), so a retried pull of the identical
-        // offer/rep registers under the SAME id as the attempt it's retrying.
-        // `awaitTransfer` has no existence guard, so attempt #2's registration
-        // silently overwrites attempt #1's — and a delayed abort meant for #1
-        // (a reordered wire frame, or a local cancel that raced the retry) is
-        // keyed purely on that id, so it lands on #2 instead. This test pins
-        // the CURRENT, accepted behavior — a bounded, benign collision (#2
-        // observes a spurious abort it can retry from), not a crash, hang, or
-        // corrupted registration table. See `ClipboardTransferID`'s doc for why
-        // a per-attempt discriminator was deferred rather than implemented.
+        // offer/rep registers under the SAME id as the attempt it's retrying —
+        // after that attempt's own pull retired its awaiter. A delayed abort
+        // meant for #1 (a reordered wire frame, or a local cancel that raced the
+        // retry) is keyed purely on that id, so it lands on #2 instead. This
+        // test pins the CURRENT, accepted behavior — a bounded, benign collision
+        // (#2 observes a spurious abort it can retry from), not a crash, hang,
+        // or corrupted registration table. See `ClipboardTransferID`'s doc for
+        // why a per-attempt discriminator was deferred rather than implemented.
         let harness = try StreamHarness(
             chunkSize: 4096, windowBytes: 16384,
             freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
@@ -622,8 +762,11 @@ struct LazyPullCoordinatorTests {
         let firstBox = RepBox()
         harness.receiver.awaitTransfer(
             transferID,
-            onComplete: { _ in Issue.record("attempt #1's awaiter was overwritten — must never fire") },
+            onComplete: { _ in Issue.record("attempt #1's awaiter was retired — must never fire") },
             onAbort: { firstBox.setAbort($0) })
+        // Attempt #1 gives up, retiring its registration — the one live awaiter
+        // per id the receiver expects.
+        harness.receiver.cancelAwait(transferID)
 
         let secondBox = RepBox()
         let secondGate = AsyncGate()
@@ -649,7 +792,7 @@ struct LazyPullCoordinatorTests {
 
         try await secondGate.wait { secondBox.abortInfo != nil }
         #expect(secondBox.abortInfo?.code == .cancelled)
-        #expect(firstBox.abortInfo == nil)  // #1's own onAbort never fired — it was already overwritten
+        #expect(firstBox.abortInfo == nil)  // #1's own onAbort never fired — it was already retired
 
         // The table is left fully consistent: a THIRD attempt reusing the
         // identical id — the normal "restart after abort is cheap, no

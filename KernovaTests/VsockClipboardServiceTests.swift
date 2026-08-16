@@ -2977,9 +2977,9 @@ struct VsockClipboardServiceTests {
     }
 
     @Test(
-        "A preview trigger landing inside a paste pull neither displaces the pull nor re-requests its rep (#860)"
+        "A preview trigger landing inside a paste pull joins it: one request, and both take its bytes (#860)"
     )
-    func previewTriggerInsidePastePullLeavesThePullAlone() async throws {
+    func previewTriggerInsidePastePullJoinsIt() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -2992,11 +2992,10 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        // A previewable rep: the one kind a preview trigger would pull itself. The
-        // paste-fires guard is the same for either wait branch, so this drives the
-        // pull off-main (`offCooperativePool`, as every other blocking-pull test
-        // does) and keeps main free to fire the preview promptly, then release End
-        // — no dependence on the nested loop's timing.
+        // A previewable rep: the one kind a preview trigger would pull itself.
+        // The paste runs off-main (`offCooperativePool`, as every other
+        // blocking-pull test does) so main stays free to fire the preview and
+        // then release End — no dependence on the nested loop's timing.
         let text = "shared by paste and preview"
         let bytes = Data(text.utf8)
         let responder = FakeGuestResponder(guest: guest)
@@ -3019,23 +3018,29 @@ struct VsockClipboardServiceTests {
             }
         }
         // Wait until the paste's transfer is live (its progress revealed), then
-        // trigger the preview into the parked pull and let the paste finish.
+        // trigger the preview into the parked pull.
         try await reports.wait { reports.snapshot?.direction == .inbound }
-        await service.materializeForPreview()
+        let preview = Task { await service.materializeForPreview() }
+        // RATIONALE: sanctioned no-signal poll (docs/TESTING.md "Async waits in
+        // tests") — the waiter count is NSLock-guarded SUT state, not
+        // @Observable, and nothing the test owns fires when a pull is joined.
+        try await waitUntil {
+            service.inboundPullWaiterCountForTesting(generation: 44, repIndex: 0) == 2
+        }
         responder.releaseEnd()
         let data = await pull.value
+        await preview.value
 
-        // The paste kept its awaiter and served the bytes; the preview minted no
-        // second request for the same transfer id.
+        // One request covered both: the paste served the bytes, and the preview
+        // took the same pull's rep into the cache and republished it.
         #expect(data == bytes)
         #expect(responder.requests.count == 1)
-        // The paste cached what it pulled, so the next trigger serves from there.
-        await service.materializeForPreview()
-        #expect(responder.requests.count == 1)
+        #expect(service.clipboardContent.text == text)
+        #expect(service.clipboardContent.representations.first?.isPendingRemote == false)
     }
 
-    @Test("a second paste fire that bails before its pull leaves the first fire's guard standing")
-    func bailingSecondPasteFireLeavesTheGuardStanding() async throws {
+    @Test("a second paste fire that bails before its pull leaves the first fire's pull alone")
+    func bailingSecondPasteFireLeavesTheFirstPullAlone() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -3043,7 +3048,7 @@ struct VsockClipboardServiceTests {
 
         // Generous until the first fire has passed its pre-flight, then too small
         // for the second fire's — the one path a fire takes out of
-        // `performBlockingPull` before it registers a pull.
+        // `performBlockingPull` before it reaches the coordinator.
         let freeSpace = Box<Int64>(1 << 40)
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter(),
@@ -3060,8 +3065,8 @@ struct VsockClipboardServiceTests {
             isInline: false)
         responder.start()
 
-        // A previewable image file: paste-bound (named), pre-flighted (not
-        // inline), and the kind a preview trigger would pull itself.
+        // A paste-bound image file: named, and pre-flighted because it is not
+        // inline.
         try guest.send(
             makeOffer(
                 generation: 45,
@@ -3072,26 +3077,23 @@ struct VsockClipboardServiceTests {
             await offCooperativePool { service.copyToMacFileURL(generation: 45, repIndex: 0) }
         }
         try await responder.requested.wait { responder.requests.count == 1 }
-        #expect(service.pasteFiringRepsForTesting == [0])
 
         freeSpace.value = 1024 * 1024
         let secondFire = await offCooperativePool {
             service.copyToMacFileURL(generation: 45, repIndex: 0)
         }
+        // Refused at its own pre-flight, having touched neither the pull nor the
+        // wire.
         #expect(secondFire == nil)
-        // The bailed fire took only its own claim back.
-        #expect(service.pasteFiringRepsForTesting == [0])
-        // So a preview trigger still leaves the live pull's transfer id alone.
-        await service.materializeForPreview()
         #expect(responder.requests.count == 1)
 
         responder.releaseEnd()
         #expect(await firstFire.value != nil)
-        #expect(service.pasteFiringRepsForTesting.isEmpty)
+        #expect(responder.requests.count == 1)
     }
 
-    @Test("a preview Cancel leaves a concurrent paste fire's transfer alone")
-    func previewCancelSparesAConcurrentPasteFire() async throws {
+    @Test("a preview Cancel leaves a paste fire sharing the pull alone")
+    func previewCancelSparesAPasteFireSharingThePull() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -3104,58 +3106,56 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        // The paste pulls a small file whose bytes all land before End is held;
-        // the preview pulls a large text rep that only ever Begins. The paste's
-        // operation carries no Cancel — the pasteboard drives a paste one item at
-        // a time — so the Cancel reaches the preview, and the paste's transfer is
-        // the one it must not touch.
-        let fileBytes = Data([0xCA, 0xFE, 0xBA, 0xBE])
-        let previewSize = 200_000
+        // One rep both gestures want: a small image file — previewable (an image
+        // under the eager cap) and paste-bound (named). The preview starts the
+        // pull, the paste joins it, and the Cancel reaches the preview because
+        // the paste's operation carries none: the pasteboard drives a paste one
+        // item at a time.
+        let fileBytes = Data(repeating: 0xAB, count: 4096)
         let responder = FakeGuestResponder(guest: guest)
         defer { responder.cancel() }
         responder.holdEnd = true
         responder.register(
-            generation: 46, repIndex: 0, uti: "public.data", bytes: fileBytes, filename: "f.bin",
+            generation: 46, repIndex: 0, uti: "public.png", bytes: fileBytes, filename: "shot.png",
             isInline: false)
-        responder.register(
-            generation: 46, repIndex: 1, uti: ClipboardContent.utf8TextUTI,
-            bytes: Data(count: previewSize), isInline: true, beginOnly: true)
         responder.start()
 
         try guest.send(
             makeOffer(
                 generation: 46,
-                reps: [
-                    (uti: "public.data", byteCount: fileBytes.count, filename: "f.bin", isInline: false),
-                    (uti: ClipboardContent.utf8TextUTI, byteCount: previewSize, filename: "", isInline: true),
-                ]))
-        try await waitForChange { service.clipboardContent.representations.count == 2 }
+                reps: [(uti: "public.png", byteCount: fileBytes.count, filename: "shot.png", isInline: false)]))
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
 
-        // Preview first: the responder answers one request at a time, and the
-        // paste's reply is the one that parks.
         let preview = Task { await service.materializeForPreview() }
-        try await responder.answered.wait { responder.requests.count == 1 }
+        try await responder.requested.wait { responder.requests.count == 1 }
         let paste = Task {
             await offCooperativePool { service.copyToMacFileURL(generation: 46, repIndex: 0) }
         }
-        try await responder.requested.wait { responder.requests.count == 2 }
-        // The paste fire is the newer operation, so it takes the readout — and it
-        // carries no Cancel.
-        try await reports.wait { reports.snapshot?.isCancellable == false }
+        // RATIONALE: sanctioned no-signal poll (docs/TESTING.md "Async waits in
+        // tests") — the waiter count is NSLock-guarded SUT state, not
+        // @Observable, and nothing the test owns fires when a pull is joined.
+        try await waitUntil {
+            service.inboundPullWaiterCountForTesting(generation: 46, repIndex: 0) == 2
+        }
+        // The paste fire carries no Cancel, which is what routes `cancelRunning`
+        // to the preview underneath it.
+        #expect(reports.runningSnapshot?.isCancellable == false)
 
         reports.reporter.cancelRunning()
         await preview.value
-        #expect(service.clipboardContent.representations[1].isPendingRemote)
+        // The preview left the pull rather than ending it, so its own rep is
+        // still a placeholder.
+        #expect(service.clipboardContent.representations[0].isPendingRemote)
 
-        // The paste's awaiter and transfer survived: releasing End serves it.
+        // The shared transfer survived: releasing End serves the paste.
         responder.releaseEnd()
         let url = try #require(await paste.value)
         #expect(try Data(contentsOf: url) == fileBytes)
 
-        // On the wire, the preview's pull was aborted and nothing else was.
-        try await responder.answered.wait { !responder.aborts.isEmpty }
-        #expect(
-            responder.aborts.map(\.transferID) == [inboundTransferID(generation: 46, repIndex: 1)])
+        // One request on the wire, and nothing was aborted — the Cancel tore down
+        // no transfer another waiter still held.
+        #expect(responder.requests.count == 1)
+        #expect(responder.aborts.isEmpty)
     }
 
     @Test("stop() during a paste fire explains why the paste served nothing")
@@ -3735,8 +3735,8 @@ struct VsockClipboardServiceTests {
         }
     }
 
-    @Test("Concurrent preview pulls for the same rep send ONE request, and a later paste fire reads the cache")
-    func concurrentPullsForSameRepDedup() async throws {
+    @Test("A second preview trigger during an in-flight loop sends nothing, and a later paste fire reads the cache")
+    func concurrentPreviewTriggersSendOneRequest() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -3753,9 +3753,8 @@ struct VsockClipboardServiceTests {
 
         // Register the rep as Begin-ONLY: the responder opens the receiver
         // transfer (Begin) but never streams chunks/End, so the host's first
-        // pull parks. That parked window is exactly when a second caller must
-        // coalesce onto the in-flight pull instead of minting a second
-        // same-transfer_id request.
+        // pull parks. That parked window is exactly when a second display
+        // trigger must add nothing to the wire.
         let responder = FakeGuestResponder(guest: guest)
         defer { responder.cancel() }
         responder.register(
@@ -3781,26 +3780,22 @@ struct VsockClipboardServiceTests {
         }
         #expect(responder.requests.filter { $0.transferID == rep0XID }.count == 1)
 
-        // Second caller: another preview loop (a window re-display), while the
-        // first pull is still parked — it must observe `inFlight[0]` and await
-        // the existing pull.
-        let secondPreview = Task { await service.materializeForPreview() }
-        try await Task.sleep(for: .milliseconds(150))
+        // A second display trigger while the first loop is still parked: the
+        // generation latch is set before the loop's first pull, so this one
+        // returns without touching the wire.
+        await service.materializeForPreview()
         #expect(
             responder.requests.filter { $0.transferID == rep0XID }.count == 1,
-            "A concurrent preview pull must coalesce onto the in-flight one, not mint a second request")
+            "A second preview trigger must add no request while the loop runs")
 
         // Now complete the parked transfer: the Begin was already sent by the
         // responder, so stream the chunks + End directly for that transfer id.
-        // Both parked pulls resolve off the single resolved continuation — proving
-        // the coalesced caller didn't orphan a continuation or hang.
         try sendChunkAndEnd(from: guest, transferID: rep0XID, bytes: payload)
 
         await firstPreview.value
-        await secondPreview.value
 
-        // The rep was pulled exactly once across both callers, and the shared
-        // pull's bytes are committed to the cache (republished to the buffer).
+        // The rep was pulled exactly once, and its bytes are committed to the
+        // cache (republished to the buffer).
         #expect(responder.requests.filter { $0.transferID == rep0XID }.count == 1)
         #expect(service.clipboardContent.text == "shared payload")
         let rep = try #require(service.clipboardContent.representations.first)
@@ -3893,20 +3888,16 @@ struct VsockClipboardServiceTests {
         #expect(resolved.resolvedReps.allSatisfy { !$0.isPendingRemote })
     }
 
-    @Test("A failed preview pull is retried on the next call — the generation latch isn't set on failure")
-    func previewRetriesAfterFailedPull() async throws {
+    @Test("A failed preview pull is not retried — the generation latch is set before the loop (#879)")
+    func previewDoesNotRetryAfterFailedPull() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
         defer { guest.close() }
 
-        // The first pull is failed via an explicit abort (below), not the
-        // lazyPullTimeout backstop: the same injected timeout also governs the
-        // second pull whose SUCCESS this test asserts, so a small value races
-        // the responder's genuine delivery on a stalled runner (docs/TESTING.md's
-        // injected-timeout rule). The no-latch-on-failure property under test is
-        // failure-kind-agnostic — materializeForPreview skips the generation
-        // latch on any nil pull result, timeout and abort alike.
+        // The pull is failed via an explicit abort (below), not the
+        // lazyPullTimeout backstop, so no second clock races the test body
+        // (docs/TESTING.md's injected-timeout rule).
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter(),
             lazyPullTimeout: 60)
@@ -3915,14 +3906,14 @@ struct VsockClipboardServiceTests {
 
         let responder = FakeGuestResponder(guest: guest)
         defer { responder.cancel() }
-        // No reply registered yet → the first pull parks until aborted.
+        // No reply registered yet → the pull parks until aborted.
         responder.start()
 
         try guest.send(makeTextOffer(generation: 2, text: "retry me"))
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
-        // First attempt: park the pull, then abort it from the guest side. The
-        // pull resolves nil and the rep stays a placeholder.
+        // Park the pull, then abort it from the guest side: it resolves nil and
+        // the rep stays a placeholder.
         let firstPreview = Task { await service.materializeForPreview() }
         let xid = inboundTransferID(generation: 2, repIndex: 0)
         try await responder.answered.wait {
@@ -3933,19 +3924,21 @@ struct VsockClipboardServiceTests {
         abort.clipboardStreamAbort = Kernova_V1_ClipboardStreamAbort.with {
             $0.transferID = xid
             $0.code = ClipboardStreamAbortCode.cancelled.rawValue
-            $0.message = "test: first pull aborted"
+            $0.message = "test: pull aborted"
         }
         try guest.send(abort)
         await firstPreview.value
         #expect(service.clipboardContent.representations.first?.isPendingRemote == true)
 
-        // The guest can now answer; a second attempt must retry (not be blocked by
-        // a generation latch) and upgrade the placeholder.
+        // The failure raises a report, the report is an observation change, and
+        // the window answers one with another trigger — which must add nothing to
+        // the wire, however answerable the guest has since become.
         responder.register(
             generation: 2, repIndex: 0, uti: ClipboardContent.utf8TextUTI,
             bytes: Data("retry me".utf8), isInline: true)
         await service.materializeForPreview()
-        #expect(service.clipboardContent.text == "retry me")
+        #expect(responder.requests.filter { $0.transferID == xid }.count == 1)
+        #expect(service.clipboardContent.representations.first?.isPendingRemote == true)
     }
 
     @Test("An all-identity-skip offer publishes nothing and holds no promise")

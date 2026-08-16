@@ -144,7 +144,7 @@ public enum ClipboardStreamTuning {
     /// progress* before giving up: 120 s of **inactivity**.
     ///
     /// An inactivity window, never an absolute deadline — each arriving chunk
-    /// re-arms it (`LazyPullCoordinator.heartbeat`), so a healthy transfer of any
+    /// re-arms it (`LazyPullCoordinator.progress`), so a healthy transfer of any
     /// size never trips it. Made absolute, it silently kills large,
     /// still-progressing transfers that need more than one window to stream.
     public static let lazyPullTimeout: TimeInterval = 120
