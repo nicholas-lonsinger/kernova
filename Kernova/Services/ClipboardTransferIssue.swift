@@ -89,12 +89,27 @@ extension ClipboardTransferIssue {
     /// The refusal this host raises when a paste fires after the VM session
     /// ended with only part of the copied file set materialized: nothing is
     /// served rather than an incomplete set.
+    ///
+    /// The wording says the paste did not finish rather than that nothing was
+    /// pasted: the refusal cannot tell a fresh paste from the tail of one whose
+    /// earlier files landed before the VM went.
     static func partialFileSetUnservable() -> ClipboardTransferIssue {
         ClipboardTransferIssue(
             kind: .localFailure(
                 code: ClipboardErrorCode.pasteIncompleteSet.rawValue,
                 message:
-                    "The VM disconnected before every copied file transferred, so nothing was pasted."
+                    "The VM disconnected before every copied file transferred, so the paste didn't finish."
+            ),
+            date: Date())
+    }
+
+    /// Raised when the VM session ends while a paste-time pull is running: the
+    /// fire serves nothing, and unlike a supersession nothing else explains it.
+    static func pasteInterrupted() -> ClipboardTransferIssue {
+        ClipboardTransferIssue(
+            kind: .localFailure(
+                code: ClipboardErrorCode.pasteFailed.rawValue,
+                message: "The VM disconnected while the clipboard was transferring, so the paste didn't finish."
             ),
             date: Date())
     }

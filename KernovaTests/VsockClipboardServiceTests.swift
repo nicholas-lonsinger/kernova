@@ -1100,10 +1100,16 @@ struct VsockClipboardServiceTests {
         private var replies: [UInt64: Reply] = [:]
         private var consumeTask: Task<Void, Never>?
 
-        /// Fires after each request is answered; await it to observe progress.
+        /// Fires after each request is answered and each abort is recorded; await
+        /// it to observe progress.
         let answered = AsyncGate()
+        /// Fires as each request arrives, before its reply streams — for a request
+        /// whose reply then parks on `holdEnd`.
+        let requested = AsyncGate()
         /// Every `ClipboardRequest` the host sent, in arrival order.
         private(set) var requests: [Kernova_V1_ClipboardRequest] = []
+        /// Every `ClipboardStreamAbort` the host sent, in arrival order.
+        private(set) var aborts: [Kernova_V1_ClipboardStreamAbort] = []
 
         /// When `true`, the stream sends Begin + all chunks but parks before `End`
         /// until `releaseEnd()` — so a test can observe a live, mid-flight transfer
@@ -1174,8 +1180,14 @@ struct VsockClipboardServiceTests {
                 guard let self else { return }
                 do {
                     for try await frame in self.guest.incoming {
+                        if case .clipboardStreamAbort(let abort) = frame.payload {
+                            self.aborts.append(abort)
+                            self.answered.notify()
+                            continue
+                        }
                         guard case .clipboardRequest(let req) = frame.payload else { continue }
                         self.requests.append(req)
+                        self.requested.notify()
                         if let reply = self.replies[req.transferID] {
                             try await self.stream(req: req, reply: reply)
                         }
@@ -2998,6 +3010,246 @@ struct VsockClipboardServiceTests {
         #expect(responder.requests.count == 1)
     }
 
+    @Test("a second paste fire that bails before its pull leaves the first fire's guard standing")
+    func bailingSecondPasteFireLeavesTheGuardStanding() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // Generous until the first fire has passed its pre-flight, then too small
+        // for the second fire's — the one path a fire takes out of
+        // `performBlockingPull` before it registers a pull.
+        let freeSpace = Box<Int64>(1 << 40)
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
+            freeSpaceProvider: { _ in freeSpace.value }, issueCenter: ClipboardIssueCenter())
+        service.start()
+        defer { service.stop() }
+
+        let fileBytes = Data(count: 4096)
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.holdEnd = true
+        responder.register(
+            generation: 45, repIndex: 0, uti: "public.png", bytes: fileBytes, filename: "shot.png",
+            isInline: false)
+        responder.start()
+
+        // A previewable image file: paste-bound (named), pre-flighted (not
+        // inline), and the kind a preview trigger would pull itself.
+        try guest.send(
+            makeOffer(
+                generation: 45,
+                reps: [(uti: "public.png", byteCount: fileBytes.count, filename: "shot.png", isInline: false)]))
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        let firstFire = Task {
+            await offCooperativePool { service.copyToMacFileURL(generation: 45, repIndex: 0) }
+        }
+        try await responder.requested.wait { responder.requests.count == 1 }
+        #expect(service.pasteFiringRepsForTesting == [0])
+
+        freeSpace.value = 1024 * 1024
+        let secondFire = await offCooperativePool {
+            service.copyToMacFileURL(generation: 45, repIndex: 0)
+        }
+        #expect(secondFire == nil)
+        // The bailed fire took only its own claim back.
+        #expect(service.pasteFiringRepsForTesting == [0])
+        // So a preview trigger still leaves the live pull's transfer id alone.
+        await service.materializeForPreview()
+        #expect(responder.requests.count == 1)
+
+        responder.releaseEnd()
+        #expect(await firstFire.value != nil)
+        #expect(service.pasteFiringRepsForTesting.isEmpty)
+    }
+
+    @Test("a preview Cancel leaves a concurrent paste fire's transfer alone")
+    func previewCancelSparesAConcurrentPasteFire() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
+            progressRevealDelay: 0, progressIdleLinger: 0)
+        service.start()
+        defer { service.stop() }
+
+        // The paste pulls a small file whose bytes all land before End is held;
+        // the preview pulls a large text rep that only ever Begins — so the
+        // preview session, with everything still remaining, is the readout the
+        // Cancel reaches, and the paste's transfer is the one it must not touch.
+        let fileBytes = Data([0xCA, 0xFE, 0xBA, 0xBE])
+        let previewSize = 200_000
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.holdEnd = true
+        responder.register(
+            generation: 46, repIndex: 0, uti: "public.data", bytes: fileBytes, filename: "f.bin",
+            isInline: false)
+        responder.register(
+            generation: 46, repIndex: 1, uti: ClipboardContent.utf8TextUTI,
+            bytes: Data(count: previewSize), isInline: true, beginOnly: true)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 46,
+                reps: [
+                    (uti: "public.data", byteCount: fileBytes.count, filename: "f.bin", isInline: false),
+                    (uti: ClipboardContent.utf8TextUTI, byteCount: previewSize, filename: "", isInline: true),
+                ]))
+        try await waitForChange { service.clipboardContent.representations.count == 2 }
+
+        // Preview first: the responder answers one request at a time, and the
+        // paste's reply is the one that parks.
+        let preview = Task { await service.materializeForPreview() }
+        try await responder.answered.wait { responder.requests.count == 1 }
+        let paste = Task {
+            await offCooperativePool { service.copyToMacFileURL(generation: 46, repIndex: 0) }
+        }
+        try await responder.requested.wait { responder.requests.count == 2 }
+        // The paste's session carries no Cancel; the readout showing one is the
+        // preview's.
+        try await waitForChange { service.transferProgress?.isCancellable == true }
+
+        service.requestCancelOfShownOperation()
+        await preview.value
+        #expect(service.clipboardContent.representations[1].isPendingRemote)
+
+        // The paste's awaiter and transfer survived: releasing End serves it.
+        responder.releaseEnd()
+        let url = try #require(await paste.value)
+        #expect(try Data(contentsOf: url) == fileBytes)
+
+        // On the wire, the preview's pull was aborted and nothing else was.
+        try await responder.answered.wait { !responder.aborts.isEmpty }
+        #expect(
+            responder.aborts.map(\.transferID) == [inboundTransferID(generation: 46, repIndex: 1)])
+    }
+
+    @Test("stop() during a paste fire explains why the paste served nothing")
+    func stopDuringPasteFireRaisesTheExplainer() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let issues = ClipboardIssueCenter()
+        let vmID = UUID()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: vmID,
+            issueCenter: issues)
+        service.start()
+        defer { service.stop() }
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 47, repIndex: 0, uti: "public.data", bytes: Data(count: 64),
+            filename: "cut.bin", isInline: false, beginOnly: true)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 47,
+                reps: [(uti: "public.data", byteCount: 64, filename: "cut.bin", isInline: false)]))
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
+
+        let paste = Task {
+            await offCooperativePool { service.copyToMacFileURL(generation: 47, repIndex: 0) }
+        }
+        try await responder.answered.wait { responder.requests.count == 1 }
+
+        service.stop()
+
+        #expect(await paste.value == nil)
+        // The fire's `.cancelled` outcome raises nothing itself; the stop that
+        // caused it is what explains the empty paste, on the center too.
+        #expect(service.lastTransferIssue?.kind == ClipboardTransferIssue.pasteInterrupted().kind)
+        #expect(issues.latestByInstance[vmID]?.issue == service.lastTransferIssue)
+    }
+
+    @Test("stop() with no paste fire in flight explains nothing")
+    func stopWithoutAPasteFireRaisesNothing() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
+            issueCenter: ClipboardIssueCenter())
+        service.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 48,
+                reps: [(uti: "public.data", byteCount: 64, filename: "idle.bin", isInline: false)]))
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
+
+        service.stop()
+        #expect(service.lastTransferIssue == nil)
+    }
+
+    @Test("a release delivered while a paste fire is pulling resolves it to nothing")
+    func releaseDuringPasteFireResolvesItEmpty() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
+            issueCenter: ClipboardIssueCenter())
+        service.start()
+        defer { service.stop() }
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 49, repIndex: 0, uti: "public.data", bytes: Data(count: 64),
+            filename: "gone.bin", isInline: false, beginOnly: true)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 49,
+                reps: [(uti: "public.data", byteCount: 64, filename: "gone.bin", isInline: false)]))
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
+        // Wired once the offer is promised, as a Copy to Mac would leave it: the
+        // retract a release performs on the host pasteboard, which in production
+        // reaches the very provider whose fire is running.
+        let retracts = Box(0)
+        service.retractStaleHostWrite = {
+            retracts.value += 1
+            return true
+        }
+
+        let paste = Task {
+            await offCooperativePool { service.copyToMacFileURL(generation: 49, repIndex: 0) }
+        }
+        try await responder.answered.wait { responder.requests.count == 1 }
+
+        var release = Frame()
+        release.protocolVersion = 1
+        release.clipboardRelease = Kernova_V1_ClipboardRelease.with { $0.generation = 49 }
+        try guest.send(release)
+
+        // The fire returns empty rather than parking to its backstop, and the
+        // release's own explainer is what stands.
+        #expect(await paste.value == nil)
+        try await waitForChange { service.lastTransferIssue != nil }
+        #expect(
+            service.lastTransferIssue?.kind
+                == ClipboardTransferIssue.staleCopyRetracted(hasSuccessor: false).kind)
+        #expect(retracts.value == 1)
+    }
+
     @Test(
         "A control frame arriving while a paste pull holds main does not stall stream-frame routing (#458)"
     )
@@ -3007,20 +3259,11 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        // RATIONALE: deliberately far BELOW `testWaitBackstop`, not ≥60 s. This
-        // test calls `copyToMacFileURL` on the real main thread from this
-        // main-queue job, where the pull's nested event loop cannot drain the
-        // main queue (docs/TESTING.md), so this injected timeout is the ceiling on
-        // how long the whole bundle's MainActor can be held hostage if the fast
-        // path loses — every concurrently running test's waits freeze for
-        // exactly this long. A 60 s value once froze the bundle wall-to-wall and
-        // mass-failed 17 tests whose 60 s backstops could not outlast it; 5 s
-        // bounds the blast radius while staying orders of magnitude above the
-        // genuine ms-scale delivery (the responder runs on the now-unpoisoned
-        // cooperative pool — see `offCooperativePool`). Under a #458 regression
-        // the pull resolves to nothing when this fires, so the test fails either
-        // way and the value's size never masks it. Re-checked 2026-08-15 with
-        // the event-loop wait.
+        // RATIONALE: 5 s — a hostage-window bound (docs/TESTING.md), not the
+        // ≥60 s default: `copyToMacFileURL` runs on the real main thread from
+        // this main-queue job, so this timeout caps how long the bundle's
+        // MainActor freezes if the fast path loses; a #458 regression resolves to
+        // nothing whichever way it lands, so the value never masks one.
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), lazyPullTimeout: 5)
         service.start()

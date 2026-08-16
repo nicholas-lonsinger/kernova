@@ -1748,6 +1748,43 @@ struct VsockGuestClipboardAgentTests {
         #expect(DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 9)
     }
 
+    @Test("a ClipboardRelease landing while provideData is pulling returns nil and retracts the promise")
+    func inboundPullReleasedMidPullReturnsNil() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        try hostChannel.send(makeTextOfferFrame(generation: 16, text: "released"))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.string) }
+
+        // The host opens the transfer, then releases the offer instead of
+        // streaming: the release cancels the live transfer and fails the pull,
+        // and its retract clears the promise the fire was serving.
+        let pull = lazyPull(pasteboard, forType: .string)
+        let req = try await awaitRequest(on: hostChannel)
+        #expect(req.generation == 16)
+        try hostChannel.send(
+            makeBeginFrame(
+                generation: 16, transferID: req.transferID, uti: ClipboardContent.utf8TextUTI,
+                totalBytes: 8, filename: "", isInline: true))
+        var release = Frame()
+        release.protocolVersion = 1
+        release.clipboardRelease = Kernova_V1_ClipboardRelease.with { $0.generation = 16 }
+        try hostChannel.send(release)
+
+        let provided = await pull.value
+        #expect(provided == nil)
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.isEmpty }
+        #expect(DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == nil)
+    }
+
     @Test("a host abort makes the pulling provider return nil")
     func inboundPullAbortReturnsNil() async throws {
         let pasteboard = FakePasteboard()

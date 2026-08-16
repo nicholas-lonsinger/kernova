@@ -508,10 +508,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                     frame, role: .guest, sender: sender, receiver: receiver,
                     senderAbortDelivery: .direct,
                     onControlFrame: { frame in
-                        // Control frames are serialized on the main queue, so
-                        // while a synchronous `provideData` pull blocks main they
-                        // queue behind it; a pull is woken by its off-main Abort,
-                        // not by these.
+                        // Fire-and-forget: the consume loop must never wait on
+                        // main, which a `provideData` pull may hold — and the
+                        // stream frames routed here are what resolve that pull.
+                        // Serial `DispatchQueue.main` preserves control-frame
+                        // FIFO order; a per-frame Task would not.
                         DispatchQueue.main.async { [weak self] in
                             self?.handleControlFrame(frame)
                         }

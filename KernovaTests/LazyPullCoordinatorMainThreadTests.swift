@@ -1,7 +1,8 @@
 import Foundation
-import KernovaKit
 import KernovaTestSupport
 import Testing
+
+@testable import KernovaKit
 
 /// The main-thread branch of `LazyPullCoordinator.pull` — the wait that runs the
 /// application's event loop instead of parking. It needs a live `NSApplication`,
@@ -85,11 +86,17 @@ struct LazyPullCoordinatorMainThreadTests {
         #expect(clock.now - started < .seconds(2))
     }
 
-    @Test("a resolve from another thread breaks the wait at once, not at the window boundary")
+    @Test("a resolve from another thread breaks the wait at once, not at the next slice")
     func offThreadDeliverWakesPull() {
         let coordinator = LazyPullCoordinator()
         let rep = inlineRep("woken")
         let clock = ContinuousClock()
+        // Stretch the re-check slice to the whole window: without the wake the
+        // loop still returns `.delivered`, but only once a slice elapses, so the
+        // duration is the assertion — the deadline itself (docs/TESTING.md), and
+        // the 2 s bound leaves the ms-scale wake room under scheduling jitter.
+        NestedEventLoopWait.sliceSecondsForTesting = Self.window
+        defer { NestedEventLoopWait.sliceSecondsForTesting = nil }
         let started = clock.now
 
         let outcome = coordinator.pull(transferID: 9, timeout: Self.window) {
@@ -103,8 +110,6 @@ struct LazyPullCoordinatorMainThreadTests {
             return
         }
         #expect(delivered.inMemoryData == Data("woken".utf8))
-        // Without the wake the loop still returns `.delivered` — but only when the
-        // window elapses, so the duration is the assertion.
-        #expect(clock.now - started < .seconds(Self.window))
+        #expect(clock.now - started < .seconds(2))
     }
 }

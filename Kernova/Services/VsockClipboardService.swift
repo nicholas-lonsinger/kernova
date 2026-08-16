@@ -195,6 +195,9 @@ final class VsockClipboardService: ClipboardServicing {
     /// resolving and the supersession re-check, so a test can drive a newer
     /// offer / `stop()` into that exact gap deterministically.
     var afterInboundPullForTesting: (@MainActor () async -> Void)?
+
+    /// Rep indexes of the live offer a paste-time provider fire is pulling.
+    var pasteFiringRepsForTesting: Set<Int> { inboundPromise?.pasteFiringReps ?? [] }
     #endif
 
     // `nonisolated` so the off-main `consume` loop can log; `Logger` is Sendable.
@@ -228,11 +231,14 @@ final class VsockClipboardService: ClipboardServicing {
         /// share one pull per rep instead of minting a duplicate (same-transfer_id)
         /// request that would orphan a continuation.
         var inFlight: [Int: Task<ClipboardContent.Representation?, Never>] = [:]
-        /// Reps a paste-time provider fire is pulling right now. That pull owns
-        /// its `transfer_id`'s awaiter, and its wait runs the event loop, so a
-        /// preview trigger landing inside it must not register a second awaiter
-        /// and take delivery away from the paste.
-        var pasteFires: Set<Int> = []
+        /// Paste-time provider fires pulling right now, as a count per rep
+        /// index. Such a pull owns its `transfer_id`'s awaiter, and its wait runs
+        /// the event loop, so a preview trigger landing inside it must not
+        /// register a second awaiter and take delivery away from the paste. A
+        /// count, not a set: two fires for one rep (a sibling flavor, a nested
+        /// or concurrent fire) exit in either order, and the guard must outlive
+        /// the last of them.
+        private var pasteFires: [Int: Int] = [:]
         /// Monotonic count of materializations cached into `materialized`, bumped
         /// on each pulled rep so `republishOffActor` can detect one that landed
         /// during its off-actor hash.
@@ -248,6 +254,19 @@ final class VsockClipboardService: ClipboardServicing {
             self.generation = generation
             self.reps = reps
             self.isConcealed = isConcealed
+        }
+
+        /// Whether a paste-time fire is pulling rep `index`.
+        func isPasteFiring(_ index: Int) -> Bool { pasteFires[index] != nil }
+
+        /// Rep indexes a paste-time fire is pulling.
+        var pasteFiringReps: Set<Int> { Set(pasteFires.keys) }
+
+        func beginPasteFire(_ index: Int) { pasteFires[index, default: 0] += 1 }
+
+        func endPasteFire(_ index: Int) {
+            guard let count = pasteFires[index] else { return }
+            pasteFires[index] = count > 1 ? count - 1 : nil
         }
     }
 
@@ -376,6 +395,11 @@ final class VsockClipboardService: ClipboardServicing {
         consumeTask = nil
         sender?.cancelAll()
         receiver?.cancelAll()
+        // A paste fire this teardown cancels serves nothing, and unlike a
+        // supersession nothing else explains that to the user.
+        if let promise = inboundPromise, !promise.pasteFiringReps.isEmpty {
+            raiseIssue(.pasteInterrupted())
+        }
         // Unblock any synchronous file pull parked on the coordinator, so it
         // returns empty instead of blocking to its backstop timeout.
         lazyCoordinator.failAll()
@@ -474,14 +498,21 @@ final class VsockClipboardService: ClipboardServicing {
     /// local cancel deletes each partial temp file and wakes the parked pull with
     /// the benign `cancelled` code, so the loop ends without raising an issue.
     private func cancelInboundPulls(generation: UInt64) {
-        guard let promise = inboundPromise, promise.generation == generation else { return }
+        guard let promise = livePromise(generation: generation) else { return }
         cancelledInboundGeneration = generation
-        for index in promise.inFlight.keys {
+        // A paste fire's pull shares the generation — and, for a rep the preview
+        // also has in flight, the very transfer id — but belongs to a paste in
+        // progress, which this Cancel is not.
+        let pasteOwned = Set(
+            promise.pasteFiringReps.map {
+                ClipboardTransferID.make(generation: generation, repIndex: $0, hostMinted: true)
+            })
+        for index in promise.inFlight.keys where !promise.isPasteFiring(index) {
             let transferID = ClipboardTransferID.make(
                 generation: generation, repIndex: index, hostMinted: true)
             sendStreamAbort(transferID: transferID, code: .userCancelled)
         }
-        receiver?.cancel(generation: generation)
+        receiver?.cancel(generation: generation, except: pasteOwned)
         Self.logger.notice(
             "User cancelled the inbound clipboard transfer from '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
         )
@@ -1122,8 +1153,7 @@ final class VsockClipboardService: ClipboardServicing {
     /// and staged files, and inline flavors keep serving regardless.
     @MainActor
     private func refusesPasteBoundFire(generation: UInt64) -> Bool {
-        guard receiver == nil, let promise = inboundPromise, promise.generation == generation
-        else { return false }
+        guard receiver == nil, let promise = livePromise(generation: generation) else { return false }
         let fileSet = promise.reps.indices.filter { Self.servesFileURL(promise.reps[$0]) }
         guard fileSet.contains(where: { promise.materialized[$0] == nil }) else { return false }
         if !promise.partialSetRefusalReported {
@@ -1172,7 +1202,7 @@ final class VsockClipboardService: ClipboardServicing {
             if let session { progress.discardUnit(session: session, id: UInt64(index)) }
             return cached
         }
-        if promise.pasteFires.contains(index) {
+        if promise.isPasteFiring(index) {
             // The paste caches what it pulls, and `materializeForPreview` latches
             // only on full success, so the next display trigger serves this rep
             // from `materialized` instead.
@@ -1501,8 +1531,8 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.debug(
                 "File clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) cancelled"
             )
-            // No issue: a teardown or release retired the pull, and the
-            // supersession that caused it raises its own explainer.
+            // No issue here: whatever retired the pull — a supersession, a
+            // release, `stop()` — raises its own explainer.
             // Nothing will ever deliver or abort this transferID now, so release
             // the registered awaiter rather than leaking it.
             receiver.cancelAwait(transferID)
@@ -1543,7 +1573,7 @@ final class VsockClipboardService: ClipboardServicing {
     }
 
     private func handleRelease(_ release: Kernova_V1_ClipboardRelease) {
-        guard let promise = inboundPromise, promise.generation == release.generation else { return }
+        guard livePromise(generation: release.generation) != nil else { return }
         // The placeholder content stays in the window; a later Copy-to-Mac resolves
         // nothing.
         receiver?.cancel(generation: release.generation)
@@ -1639,7 +1669,7 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
         let tracker = onMain { self.progress }
         let repIndex = snapshot.repIndex
         let generation = snapshot.generation
-        onMain { self.livePromise(generation: generation)?.pasteFires.insert(repIndex) }
+        onMain { self.livePromise(generation: generation)?.beginPasteFire(repIndex) }
         let session = tracker.openSession(
             direction: .inbound, peerName: onMain { self.label },
             units: [
@@ -1655,7 +1685,7 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
         }
         let rep = onMain { () -> ClipboardContent.Representation? in
             guard let promise = self.livePromise(generation: generation) else { return pulled }
-            promise.pasteFires.remove(repIndex)
+            promise.endPasteFire(repIndex)
             if let pulled {
                 if promise.materialized[repIndex] == nil {
                     promise.materialized[repIndex] = pulled

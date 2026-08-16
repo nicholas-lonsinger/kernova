@@ -130,6 +130,26 @@ struct ClipboardTransferIssueTests {
         #expect(unreplaced.hasSuffix("removed from the Mac clipboard."))
     }
 
+    @Test("A paste the VM's disconnect cut short says it did not finish, not that nothing landed")
+    func interruptedPastesClaimOnlyWhatIsKnown() {
+        // Neither refusal can tell a fresh paste from the tail of one whose
+        // earlier files already landed, so neither says nothing was pasted.
+        for issue in [
+            ClipboardTransferIssue.partialFileSetUnservable(), .pasteInterrupted(),
+        ] {
+            let message = issue.displayMessage(pasteLimitBytes: limit)
+            #expect(message.hasPrefix("The VM disconnected"), "\(issue.kind)")
+            #expect(message.hasSuffix("so the paste didn't finish."), "\(issue.kind)")
+            #expect(!message.contains("nothing was pasted"), "\(issue.kind)")
+        }
+        #expect(
+            ClipboardTransferIssue.pasteInterrupted().kind
+                == .localFailure(
+                    code: ClipboardErrorCode.pasteFailed.rawValue,
+                    message: ClipboardTransferIssue.pasteInterrupted()
+                        .displayMessage(pasteLimitBytes: limit)))
+    }
+
     // MARK: - noticeHeadline
 
     @Test("The headline names the VM and the direction the clipboard didn't move")
@@ -144,6 +164,7 @@ struct ClipboardTransferIssueTests {
         for issue in [
             ClipboardTransferIssue.partialFileSetUnservable(),
             .pasteTimedOut(),
+            .pasteInterrupted(),
             .pasteTransferFailed(),
             .pasteUnpackFailed(),
             .pasteFileStagingFailed(),
@@ -176,6 +197,7 @@ struct ClipboardTransferIssueTests {
         for issue in [
             ClipboardTransferIssue.partialFileSetUnservable(),
             .pasteTimedOut(),
+            .pasteInterrupted(),
             .pasteTransferFailed(),
             .forwardSkippedItems(note: "skipped"),
             .staleCopyRetracted(hasSuccessor: true),
@@ -194,6 +216,7 @@ struct ClipboardTransferIssueTests {
             ClipboardTransferIssue.overCopyBudget(limitBytes: limit),
             .partialFileSetUnservable(),
             .pasteTimedOut(),
+            .pasteInterrupted(),
             .pasteTransferFailed(),
             .forwardSkippedItems(note: "skipped"),
             .staleCopyRetracted(hasSuccessor: true),
@@ -245,6 +268,7 @@ struct ClipboardTransferIssueTests {
         for issue in [
             ClipboardTransferIssue.overCopyBudget(limitBytes: limit),
             .pasteTimedOut(),
+            .pasteInterrupted(),
             .pasteTransferFailed(),
             .staleCopyRetracted(hasSuccessor: true),
             peerError(.pasteFailed),

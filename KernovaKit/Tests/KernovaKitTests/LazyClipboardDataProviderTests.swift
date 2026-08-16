@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaKit
@@ -61,6 +62,90 @@ struct LazyClipboardDataProviderTests {
 
         provider.pasteboardFinishedWithDataProvider(NSPasteboard.withUniqueName())
         #expect(box.finished === provider)
+    }
+
+    /// A provider whose `provide` runs `insideFire` with the provider itself, the
+    /// way a fire's event loop reaches back into it, then serves `bytes`; its
+    /// finish releases it from `registry` and counts on `finishes`.
+    private func makeRetainedProvider(
+        registry: LazyClipboardProviderRegistry, finishes: Box<Int>, finished: AsyncGate,
+        bytes: Data, insideFire: @escaping (LazyClipboardDataProvider) -> Void
+    ) -> LazyClipboardDataProvider {
+        let holder = Box<LazyClipboardDataProvider?>(nil)
+        let provider = LazyClipboardDataProvider(
+            provide: { _ in
+                if let provider = holder.value { insideFire(provider) }
+                return bytes
+            },
+            onFinished: {
+                registry.release($0)
+                finishes.value += 1
+                finished.notify()
+            })
+        holder.value = provider
+        registry.retain([provider])
+        return provider
+    }
+
+    @Test("a finish landing inside a fire is held until the fire returns, then delivered once")
+    func finishInsideFireIsHeldUntilTheFireReturns() async throws {
+        let bytes = Data("served".utf8)
+        let registry = LazyClipboardProviderRegistry()
+        let finished = AsyncGate()
+        let finishes = Box(0)
+        let finishesSeenInsideFire = Box(-1)
+        let pasteboard = NSPasteboard.withUniqueName()
+        let provider = makeRetainedProvider(
+            registry: registry, finishes: finishes, finished: finished, bytes: bytes
+        ) { provider in
+            // What a retract of the write being served does from inside the
+            // fire's event loop: the pasteboard finishes with the provider, whose
+            // owner — the only strong reference in production — would let go.
+            provider.pasteboardFinishedWithDataProvider(pasteboard)
+            finishesSeenInsideFire.value = finishes.value
+        }
+
+        let item = NSPasteboardItem()
+        provider.pasteboard(nil, item: item, provideDataForType: textType)
+
+        // The fire ran to completion still owned; the finish came after it.
+        #expect(item.data(forType: textType) == bytes)
+        #expect(finishesSeenInsideFire.value == 0)
+        try await finished.wait { finishes.value == 1 }
+        #expect(registry.countForTesting == 0)
+    }
+
+    @Test("a finish inside a nested fire waits for the outermost fire to return")
+    func finishInsideNestedFireWaitsForTheOuterFire() async throws {
+        let bytes = Data("served".utf8)
+        let registry = LazyClipboardProviderRegistry()
+        let finished = AsyncGate()
+        let finishes = Box(0)
+        let finishesSeenAfterNestedFire = Box(-1)
+        let pasteboard = NSPasteboard.withUniqueName()
+        let depth = Box(0)
+        let provider = makeRetainedProvider(
+            registry: registry, finishes: finishes, finished: finished, bytes: bytes
+        ) { provider in
+            depth.value += 1
+            defer { depth.value -= 1 }
+            if depth.value == 1 {
+                // The outer fire's event loop runs a sibling flavor's fire, and the
+                // finish lands inside that nested one.
+                provider.pasteboard(nil, item: NSPasteboardItem(), provideDataForType: .fileURL)
+                finishesSeenAfterNestedFire.value = finishes.value
+            } else {
+                provider.pasteboardFinishedWithDataProvider(pasteboard)
+            }
+        }
+
+        let item = NSPasteboardItem()
+        provider.pasteboard(nil, item: item, provideDataForType: textType)
+
+        #expect(item.data(forType: textType) == bytes)
+        #expect(finishesSeenAfterNestedFire.value == 0)
+        try await finished.wait { finishes.value == 1 }
+        #expect(registry.countForTesting == 0)
     }
 
     /// Reference box so an escaping callback can record what type it saw without

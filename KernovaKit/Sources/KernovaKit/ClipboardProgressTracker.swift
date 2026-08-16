@@ -262,8 +262,9 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
     /// the one readout allowed to interrupt with an automatic dropdown, because
     /// the app the user pasted into sits blocked until the bytes land and
     /// nothing else explains the wait. A paste *this* side performs never sets
-    /// it: that paste parks this process's main thread, so no readout of it can
-    /// repaint before it is over.
+    /// it: its promise callback is what runs the event loop, so a dropdown
+    /// opened for it would hold the paste inside the menu's tracking loop until
+    /// the menu closed.
     ///
     /// `onCancelRequested` stops what the session measures — the transfers, not
     /// the offer behind them — and is what puts a Cancel button on the readout.
