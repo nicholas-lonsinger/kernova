@@ -28,10 +28,14 @@ struct StatusMenuVMSectionTests {
         StatusMenuVMRow(instanceID: id, title: title, noticeText: notice)
     }
 
-    private func notice(for id: UUID, _ issue: ClipboardTransferIssue) -> ClipboardIssueCenter.Notice {
-        ClipboardIssueCenter.Notice(
-            instanceID: id, vmName: "VM", issue: issue,
-            pasteLimitBytes: ClipboardPasteLimit.defaultBytes)
+    /// Stands a refusal on `instance`'s transfer report, as a producer would.
+    private func reportRefusal(
+        _ failure: ClipboardTransferFailure, gesture: ClipboardTransferGesture,
+        on instance: VMInstance
+    ) {
+        instance.clipboardTransfers.finish(
+            ClipboardTransferFinish(
+                gesture: gesture, outcome: .failed(failure), peerName: instance.name))
     }
 
     /// Builds a menu shaped like the real dropdown — items above and below the
@@ -68,25 +72,42 @@ struct StatusMenuVMSectionTests {
             ])
     }
 
-    @Test("A VM with an outstanding clipboard issue carries its dropdown line")
+    @Test("A VM with an outstanding clipboard refusal carries its dropdown line")
     func rowModelCarriesTheClipboardLine() {
         let running = makeInstance(name: "Build VM", status: .running)
         let quiet = makeInstance(name: "CI VM", status: .running)
-        let issue = ClipboardTransferIssue.overCopyBudget(limitBytes: ClipboardPasteLimit.defaultBytes)
+        reportRefusal(
+            .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes), gesture: .copy, on: running)
 
-        let rows = StatusMenuVMSection.rows(
-            for: [running, quiet], issues: [running.instanceID: notice(for: running.instanceID, issue)])
+        let rows = StatusMenuVMSection.rows(for: [running, quiet])
 
-        #expect(rows.map(\.noticeText) == [issue.menuLineText, nil])
+        #expect(rows.map(\.noticeText) == ["Clipboard: too large to copy to your Mac", nil])
     }
 
-    @Test("A stopped VM's issue never reaches the dropdown — it has no row to sit under")
+    @Test("A running transfer draws no dropdown line — the readout is its surface")
+    func rowModelSkipsRunningReports() {
+        let running = makeInstance(name: "Build VM", status: .running)
+        let operation = ClipboardTransferOperation(
+            gesture: .paste, direction: .inbound, peerName: running.name, revealDelay: 0,
+            now: { 0 }, schedule: { _, _ in }, reporter: running.clipboardTransfers)
+        running.clipboardTransfers.publish(
+            from: operation,
+            .running(
+                ClipboardProgressSnapshot(
+                    direction: .inbound, peerName: running.name, currentItemName: nil,
+                    filesCompleted: 0, fileCount: 1, bytesTransferred: 1, totalBytes: 2,
+                    bytesPerSecond: nil, secondsRemaining: nil, gesture: .paste,
+                    elapsedSeconds: 1), since: Date()))
+
+        #expect(StatusMenuVMSection.rows(for: [running]).map(\.noticeText) == [nil])
+    }
+
+    @Test("A stopped VM's refusal never reaches the dropdown — it has no row to sit under")
     func rowModelSkipsIssuesOfVMsWithoutRows() {
         let stopped = makeInstance(name: "Idle VM", status: .stopped)
-        let issue = ClipboardTransferIssue.pasteTimedOut()
+        reportRefusal(.timedOut, gesture: .paste, on: stopped)
 
-        let rows = StatusMenuVMSection.rows(
-            for: [stopped], issues: [stopped.instanceID: notice(for: stopped.instanceID, issue)])
+        let rows = StatusMenuVMSection.rows(for: [stopped])
 
         #expect(rows.isEmpty)
     }

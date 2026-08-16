@@ -80,18 +80,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// Quiet period before a keystroke burst commits off-actor.
     private let editDebounceInterval: Duration
 
-    /// This VM's outstanding transfer problem, whichever of its clipboard
-    /// services raised it — including one superseded by a reconnect, which still
-    /// raises the failures of the pasteboard promises it published.
-    ///
-    /// Not `clipboardService`'s own record: the center's notice stands down for
-    /// as long as this window is up, so a report this window skipped would reach
-    /// no surface at all.
-    private let issueCenter: ClipboardIssueCenter
-
-    /// Last transfer issue already shown as a transient, so re-observation
-    /// doesn't re-show it.
-    private var lastShownIssue: ClipboardTransferIssue?
+    /// Last refusal already shown as a transient, so re-observation doesn't
+    /// re-show it; a repeat of the same kind carries a newer `date` and does
+    /// re-show.
+    private var lastShownFinish: ClipboardTransferFinish?
 
     private var serviceObservation: ObservationLoop?
     /// Drives only the bottom transfer bar, separate from `serviceObservation`.
@@ -129,13 +121,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         readPasteboard: NSPasteboard = .general,
         providerRegistry: LazyClipboardProviderRegistry = .shared,
         publisher: HostClipboardPublisher? = nil,
-        issueCenter: ClipboardIssueCenter = .shared,
         editDebounceInterval: Duration = .milliseconds(200)
     ) {
         self.instance = instance
         self.viewModel = viewModel
         self.readPasteboard = readPasteboard
-        self.issueCenter = issueCenter
         self.publisher =
             publisher
             ?? HostClipboardPublisher(
@@ -415,6 +405,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// transient message while one is up.
     var indicatorTextForTesting: String { indicatorView.stringValue }
 
+    /// The bottom transfer bar's fraction, or `nil` while it is collapsed.
+    var transferBarFractionForTesting: Double? {
+        transferProgressBar.isHidden ? nil : transferProgressBar.doubleValue
+    }
+
     /// Fires once a "Copy to Mac" publish outcome has been rendered.
     var onCopyOutcomeForTesting: (@MainActor () -> Void)?
     #endif
@@ -429,7 +424,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 let clipService = self.instance.clipboardService
                 _ = clipService?.clipboardContent
                 _ = clipService?.isConnected
-                _ = self.issueCenter.latestByInstance[self.instance.instanceID]
+                _ = self.instance.clipboardTransferReport
                 _ = self.instance.vsockControlService?.agentStatus
                 _ = self.instance.agentStatus
                 _ = self.instance.configuration.clipboardPassthroughEnabled
@@ -443,18 +438,18 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         // for a multi-GB transfer. Its own loop keeps a progress flush from
         // running the full `updateUI()` (content re-diff, preview materialization).
         transferProgressObservation = observeRecurring(
-            track: { [weak self] in _ = self?.instance.clipboardService?.transferProgress },
-            apply: { [weak self] in
-                guard let self else { return }
-                self.updateTransferProgress(service: self.instance.clipboardService)
-            }
+            track: { [weak self] in _ = self?.instance.clipboardTransferReport },
+            apply: { [weak self] in self?.updateTransferProgress() }
         )
     }
 
-    /// Shows the bottom transfer bar from `transferProgress`; `nil` collapses it,
-    /// so the bar can never get stuck.
-    private func updateTransferProgress(service: ClipboardServicing?) {
-        guard let progress = service?.transferProgress else {
+    /// Shows the bottom transfer bar from this VM's transfer report; a report
+    /// with no bar collapses it, so the bar can never get stuck.
+    ///
+    /// A drop's progress shows here too: the report is per VM, and both of its
+    /// producers move files between the same two machines.
+    private func updateTransferProgress() {
+        guard let progress = Self.barSnapshot(of: instance.clipboardTransferReport) else {
             // Hide first, then reset the value while hidden so the next transfer
             // starts from 0 instead of animating down from a stale 100%.
             transferProgressBar.isHidden = true
@@ -475,6 +470,18 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         ClipboardProgressFormat.summary(progress)
     }
 
+    /// The readout the bar renders — the live one while an operation runs, its
+    /// last one while a completed or cancelled operation dwells, none otherwise.
+    private static func barSnapshot(of report: ClipboardTransferReport)
+        -> ClipboardProgressSnapshot?
+    {
+        switch report {
+        case .running(let snapshot, _): return snapshot
+        case .finished(let finish): return finish.finalSnapshot
+        case .idle: return nil
+        }
+    }
+
     private func updateUI() {
         let service = instance.clipboardService
         let status = instance.agentStatus
@@ -486,7 +493,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         commandBar.copyButton.isEnabled = hasContent && !isCopyingToMac
         commandBar.clearButton.isEnabled = hasContent
 
-        updateTransferProgress(service: service)
+        updateTransferProgress()
 
         if let service {
             let content = service.clipboardContent
@@ -500,11 +507,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             }
         }
 
-        if let notice = issueCenter.latestByInstance[instance.instanceID],
-            notice.issue != lastShownIssue
+        if case .finished(let finish) = instance.clipboardTransferReport, finish != lastShownFinish,
+            let wording = ClipboardTransferWording.wording(for: finish, vmName: instance.name)
         {
-            lastShownIssue = notice.issue
-            indicatorView.showTransientMessage(message(for: notice), style: .error)
+            lastShownFinish = finish
+            indicatorView.showTransientMessage(wording.message, style: .error)
         }
 
         applyStatus(status, canInstallKernovaAgent: canInstallKernovaAgent)
@@ -615,16 +622,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
     }
 
-    private func message(for notice: ClipboardIssueCenter.Notice) -> String {
-        notice.issue.displayMessage(pasteLimitBytes: notice.pasteLimitBytes)
-    }
-
     /// The message shown when "Copy to Mac" placed nothing on the pasteboard.
     private func dropMessage(for reasons: [CopyToMacDropReason]) -> String {
         guard reasons.contains(.overPasteBudget) else {
             return "Couldn't fetch the clipboard content to copy"
         }
-        return ClipboardTransferIssue.overCopyBudgetMessage(
+        return ClipboardTransferWording.overCopyBudgetMessage(
             limitBytes: instance.effectiveClipboardMaxPasteBytes)
     }
 

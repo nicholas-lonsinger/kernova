@@ -74,7 +74,7 @@ public struct ClipboardProgressMenuAutoOpener: Equatable, Sendable {
         // Must stay ahead of the `menuIsOpen` branch: a non-paste readout must not
         // spend the open, or a preview fetch overlapping a paste would answer the
         // paste's one chance with a dropdown the user never saw.
-        guard readout.isPasteSession else { return .none }
+        guard readout.gesture == .peerPaste else { return .none }
         if menuIsOpen {
             // The readout goes straight into the already-open dropdown, so the
             // paste has had its showing — spending the open here is what stops the

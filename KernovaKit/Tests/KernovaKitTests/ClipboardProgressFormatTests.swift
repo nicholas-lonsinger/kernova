@@ -11,13 +11,14 @@ struct ClipboardProgressFormatTests {
     private static func snapshot(
         direction: ClipboardProgressSnapshot.Direction = .outbound, peerName: String = "VM",
         currentItemName: String? = nil, filesCompleted: Int = 0, fileCount: Int = 1,
-        bytesTransferred: UInt64 = 0, totalBytes: UInt64 = 1_000, isPaste: Bool = true
+        bytesTransferred: UInt64 = 0, totalBytes: UInt64 = 1_000,
+        gesture: ClipboardTransferGesture = .peerPaste
     ) -> ClipboardProgressSnapshot {
         ClipboardProgressSnapshot(
             direction: direction, peerName: peerName, currentItemName: currentItemName,
             filesCompleted: filesCompleted, fileCount: fileCount,
             bytesTransferred: bytesTransferred, totalBytes: totalBytes, bytesPerSecond: nil,
-            secondsRemaining: nil, isPasteSession: isPaste, elapsedSeconds: 1)
+            secondsRemaining: nil, gesture: gesture, elapsedSeconds: 1)
     }
 
     @Test("the headline names the peer in quotes and says what is happening")
@@ -27,15 +28,15 @@ struct ClipboardProgressFormatTests {
         // readout interrupted.
         #expect(
             ClipboardProgressFormat.headline(
-                direction: .outbound, peerName: "macOS TEST", isPaste: true)
+                direction: .outbound, peerName: "macOS TEST", gesture: .peerPaste)
                 == "Pasting into “macOS TEST”…")
         #expect(
             ClipboardProgressFormat.headline(
-                direction: .outbound, peerName: "macOS TEST", isPaste: false)
+                direction: .outbound, peerName: "macOS TEST", gesture: .paste)
                 == "Sending to “macOS TEST”…")
         #expect(
             ClipboardProgressFormat.headline(
-                direction: .inbound, peerName: "macOS TEST", isPaste: false)
+                direction: .inbound, peerName: "macOS TEST", gesture: .paste)
                 == "Receiving from “macOS TEST”…")
     }
 
@@ -118,7 +119,7 @@ struct ClipboardProgressFormatTests {
     func summaryNonPaste() {
         let snapshot = Self.snapshot(
             direction: .inbound, currentItemName: "big.mov", bytesTransferred: 250,
-            isPaste: false)
+            gesture: .paste)
         #expect(ClipboardProgressFormat.summary(snapshot) == "Receiving from “VM”… — 25% — big.mov")
     }
 }

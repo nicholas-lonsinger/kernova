@@ -263,9 +263,9 @@ struct VsockGuestClipboardAgentTests {
         clock: any EngineClock = MonotonicEngineClock(),
         stagingTempRoot: URL? = nil,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
-        progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
-        progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
-        onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void = { _ in },
+        progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
+        progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
+        reporter: ClipboardTransferReporter = ClipboardTransferReporter(),
         onClipboardNotice: @escaping @Sendable () -> Void = {}
     ) -> VsockGuestClipboardAgent {
         let provided = AtomicInt()
@@ -283,8 +283,9 @@ struct VsockGuestClipboardAgentTests {
             stagingTempRoot: stagingTempRoot
                 ?? FileManager.default.temporaryDirectory.appendingPathComponent(
                     UUID().uuidString, isDirectory: true),
-            progressRevealDelay: progressRevealDelay, progressIdleLinger: progressIdleLinger,
-            onProgress: onProgress, onClipboardNotice: onClipboardNotice)
+            reporter: reporter,
+            progressRevealDelay: progressRevealDelay, progressIdleGap: progressIdleGap,
+            onClipboardNotice: onClipboardNotice)
         return agent
     }
 
@@ -469,13 +470,15 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        // Reveal instantly and linger not at all, so one in-flight transfer both
-        // surfaces and clears inside the test — the emissions the app delegate
-        // hands to `AgentStatusItemController.materializationProgressChanged`.
+        // Reveal instantly and dwell not at all, so one in-flight transfer both
+        // surfaces and clears inside the test — the reports the app delegate
+        // hands to `AgentStatusItemController.transferReportChanged`.
         let log = ProgressLog()
+        let reporter = ClipboardTransferReporter(dwell: 0)
+        await MainActor.run { reporter.onReportChanged = { log.record($0) } }
         let agent = makeAgent(
-            pasteboard: pasteboard, agentFd: agentFd, progressRevealDelay: 0, progressIdleLinger: 0,
-            onProgress: { log.record($0) })
+            pasteboard: pasteboard, agentFd: agentFd, progressRevealDelay: 0, progressIdleGap: 0,
+            reporter: reporter)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -510,10 +513,9 @@ struct VsockGuestClipboardAgentTests {
         // The terminal credits the transfer in full, so the last readout before
         // the clear reads as complete rather than stopping short.
         #expect(readout.bytesTransferred == UInt64(contents.count))
-        // Never a paste session, unlike the host's outbound readout: a host pull
-        // serves a preview or a paste on the Mac, and a dropdown inside the VM is
-        // not where a user pasting on the Mac would look.
-        #expect(!readout.isPasteSession)
+        // The Mac's user is the one pasting, so this side's readout is serving
+        // their paste — which is what may open the dropdown in this guest.
+        #expect(readout.gesture == .peerPaste)
     }
 
     @Test("a copied image file is offered inline with the image UTI")
@@ -2944,7 +2946,8 @@ struct VsockGuestClipboardAgentTests {
             return .success(fd)
         }
 
-        let agent = VsockGuestClipboardAgent(pasteboard: pasteboard, client: client)
+        let agent = VsockGuestClipboardAgent(
+            pasteboard: pasteboard, client: client, reporter: ClipboardTransferReporter())
         defer { agent.stop() }
 
         agent.start()
@@ -3015,7 +3018,8 @@ struct VsockGuestClipboardAgentTests {
             return .success(fd)
         }
 
-        let agent = VsockGuestClipboardAgent(pasteboard: pasteboard, client: client)
+        let agent = VsockGuestClipboardAgent(
+            pasteboard: pasteboard, client: client, reporter: ClipboardTransferReporter())
         defer { agent.stop() }
 
         agent.start()
@@ -3131,7 +3135,8 @@ struct VsockGuestClipboardAgentTests {
             provideCount.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no more fds"))
         }
 
-        let agent = VsockGuestClipboardAgent(pasteboard: pasteboard, client: client)
+        let agent = VsockGuestClipboardAgent(
+            pasteboard: pasteboard, client: client, reporter: ClipboardTransferReporter())
         defer { agent.stop() }
         agent.start()
         // Production agents are default-disabled until host policy enables them.
@@ -3625,12 +3630,15 @@ final class ProgressLog: @unchecked Sendable {
     private var snapshots: [ClipboardProgressSnapshot] = []
     private var cleared = false
 
-    func record(_ snapshot: ClipboardProgressSnapshot?) {
+    /// Records what a surface would render for `report` — the live readout, the
+    /// final one a completed operation leaves, or a clear.
+    func record(_ report: ClipboardTransferReport) {
         lock.withLock {
-            if let snapshot {
-                snapshots.append(snapshot)
-            } else {
-                cleared = true
+            switch report {
+            case .running(let snapshot, _): snapshots.append(snapshot)
+            case .finished(let finish):
+                if let final = finish.finalSnapshot { snapshots.append(final) }
+            case .idle: cleared = true
             }
         }
         gate.notify()

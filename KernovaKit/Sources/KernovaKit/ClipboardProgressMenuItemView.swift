@@ -156,7 +156,7 @@ public final class ClipboardProgressMenuItemView: NSView {
     public func apply(_ snapshot: ClipboardProgressSnapshot) {
         headline.stringValue = ClipboardProgressFormat.headline(
             direction: snapshot.direction, peerName: snapshot.peerName,
-            isPaste: snapshot.isPasteSession)
+            gesture: snapshot.gesture)
         pendingFraction = snapshot.fractionComplete
         // Off screen, the value is only recorded — see `viewDidMoveToWindow`.
         if window != nil { bar.doubleValue = pendingFraction }

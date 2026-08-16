@@ -26,6 +26,10 @@ final class ClipboardPassthroughCoordinator {
     /// The pasteboard polled for outbound changes and written for inbound offers.
     private let pasteboard: NSPasteboard
 
+    /// This VM's transfer report, where an intake outcome this poll cannot answer
+    /// inline is recorded.
+    private let reporter: ClipboardTransferReporter
+
     /// Poll cadence — matches `VsockGuestClipboardAgent.pollingInterval` so both
     /// ends of the boundary sample their pasteboards at the same rate.
     private static let pollInterval: TimeInterval = 0.5
@@ -86,10 +90,12 @@ final class ClipboardPassthroughCoordinator {
 
     init(
         instance: VMInstance, publisher: HostClipboardPublisher,
+        reporter: ClipboardTransferReporter,
         pasteboard: NSPasteboard = .general
     ) {
         self.instance = instance
         self.publisher = publisher
+        self.reporter = reporter
         self.pasteboard = pasteboard
     }
 
@@ -167,7 +173,7 @@ final class ClipboardPassthroughCoordinator {
         case .pendingFiles(let urls, let unresolved):
             resolveAndForward(urls, unresolved: unresolved, allowsBinary: allowsBinary)
         case .rejected(let message, let unreadable):
-            report(rejection: message, unreadable: unreadable, to: service)
+            report(rejection: message, unreadable: unreadable)
         }
     }
 
@@ -188,7 +194,7 @@ final class ClipboardPassthroughCoordinator {
             case .content(let content, let note):
                 self.offer(content, note: note, to: service)
             case .rejected(let message, let unreadable):
-                self.report(rejection: message, unreadable: unreadable, to: service)
+                self.report(rejection: message, unreadable: unreadable)
             case .pendingFiles:
                 break
             }
@@ -201,11 +207,9 @@ final class ClipboardPassthroughCoordinator {
     /// A policy verdict — an empty clipboard, a privacy marker, a text-only
     /// transport refusing a file copy — leaves nothing to report, and the
     /// text-only one would otherwise fire on every file the user copies.
-    private func report(
-        rejection message: String, unreadable: Bool, to service: any ClipboardServicing
-    ) {
+    private func report(rejection message: String, unreadable: Bool) {
         guard unreadable else { return }
-        reportUnforwarded(message, to: service)
+        reportUnforwarded(message)
     }
 
     /// Offers intake output to the guest, raising the intake's skip note when it
@@ -218,19 +222,22 @@ final class ClipboardPassthroughCoordinator {
         service.clipboardContent = content
         service.grabIfChanged()
         guard let note else { return }
-        reportUnforwarded(note, to: service)
+        reportUnforwarded(note)
     }
 
     /// Raises an intake outcome the user is owed — a partial copy's skip note,
-    /// or the rejection when nothing resolved at all — as a transfer issue.
+    /// or the rejection when nothing resolved at all — as a finished forward.
     ///
     /// The window shows these inline for its own paste/drop gestures; this poll
-    /// has no gesture to answer, so the issue is the only surface they get.
-    private func reportUnforwarded(_ note: String, to service: any ClipboardServicing) {
+    /// has no gesture to answer, so the report is the only surface they get.
+    private func reportUnforwarded(_ note: String) {
+        let name = instance?.name ?? "?"
         Self.logger.warning(
-            "Clipboard passthrough could not forward every copied item for '\(self.instance?.name ?? "?", privacy: .public)': \(note, privacy: .public)"
+            "Clipboard passthrough could not forward every copied item for '\(name, privacy: .public)': \(note, privacy: .public)"
         )
-        service.reportIssue(.forwardSkippedItems(note: note))
+        reporter.finish(
+            ClipboardTransferFinish(
+                gesture: .forward, outcome: .failed(.itemsSkipped(note: note)), peerName: name))
     }
 
     // MARK: - Guest → host (inbound)

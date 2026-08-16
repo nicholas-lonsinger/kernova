@@ -23,26 +23,22 @@ final class VsockDropService {
     /// `true` between `start()` and `stop()`.
     private(set) var isConnected: Bool = false
 
-    /// The drop currently being shown (most-significant in-flight session past
-    /// the reveal delay), or `nil`.
-    private(set) var transferProgress: ClipboardProgressSnapshot?
-
     // MARK: - Private state
 
     private let channel: VsockChannel
     private let label: String
-    private let instanceID: UUID
 
     /// Log coordinate for this connection: generations and transfer ids restart
     /// with every accepted channel, and one instance serves exactly one.
     private let connectionTag = ClipboardConnectionTag.nextHost()
 
-    private let progressCenter: ClipboardProgressCenter
-    private let issueCenter: ClipboardIssueCenter
+    /// This VM's transfer report, which every surface renders. Shared with the
+    /// VM's clipboard service, so one readout covers both.
+    private let reporter: ClipboardTransferReporter
 
-    /// The paste ceiling in force, recorded on any issue this service raises so
-    /// every surface renders one VM's notices the same way.
-    private let maxPasteBytes: @MainActor () -> Int
+    /// Reveal and idle seams handed to every operation this service opens.
+    private let progressRevealDelay: TimeInterval
+    private let progressIdleGap: TimeInterval
 
     /// Sizes a dropped folder's tree without reading it.
     ///
@@ -55,8 +51,6 @@ final class VsockDropService {
     /// A tree of any size would otherwise freeze the app for the length of the
     /// walk (docs/CLIPBOARD.md §8). Injected so a test can run it inline.
     private let runOffMainActor: (@escaping @Sendable () -> Void) -> Void
-
-    @ObservationIgnored private var progress = ClipboardProgressTracker { _ in }
 
     private var sender: ClipboardStreamSender?
     private var consumeTask: Task<Void, Never>?
@@ -75,7 +69,7 @@ final class VsockDropService {
     private final class DropJob {
         let generation: UInt64
         let content: ClipboardContent
-        let session: ClipboardProgressTracker.SessionToken
+        let operation: ClipboardTransferOperation
         /// Read from the sender's transfer queues to decide whether the job is
         /// still wanted; zeroed by a cancel, which aborts every transfer under it.
         let liveGeneration = AtomicGeneration()
@@ -84,12 +78,11 @@ final class VsockDropService {
         var isCancelled = false
 
         init(
-            generation: UInt64, content: ClipboardContent,
-            session: ClipboardProgressTracker.SessionToken
+            generation: UInt64, content: ClipboardContent, operation: ClipboardTransferOperation
         ) {
             self.generation = generation
             self.content = content
-            self.session = session
+            self.operation = operation
             liveGeneration.set(generation)
         }
     }
@@ -108,38 +101,23 @@ final class VsockDropService {
     // MARK: - Init
 
     init(
-        channel: VsockChannel, label: String, instanceID: UUID,
-        maxPasteBytes: @escaping @MainActor () -> Int = { ClipboardPasteLimit.defaultBytes },
-        progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
-        progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
+        channel: VsockChannel, label: String, reporter: ClipboardTransferReporter,
+        progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
+        progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
         directoryByteCount: @escaping @Sendable (URL) -> Int = {
             ClipboardArchive.estimatedByteCount(at: $0)
         },
         runOffMainActor: @escaping (@escaping @Sendable () -> Void) -> Void = { work in
             DispatchQueue.global(qos: .userInitiated).async(execute: work)
-        },
-        progressCenter: ClipboardProgressCenter = .shared,
-        issueCenter: ClipboardIssueCenter = .shared
+        }
     ) {
         self.channel = channel
         self.label = label
-        self.instanceID = instanceID
-        self.maxPasteBytes = maxPasteBytes
+        self.reporter = reporter
+        self.progressRevealDelay = progressRevealDelay
+        self.progressIdleGap = progressIdleGap
         self.directoryByteCount = directoryByteCount
         self.runOffMainActor = runOffMainActor
-        self.progressCenter = progressCenter
-        self.issueCenter = issueCenter
-        // Emissions hop to main on a serial (FIFO) queue, not an unordered
-        // `Task { @MainActor }`: two snapshots arriving out of order would make
-        // the progress bar jump backwards.
-        progress = ClipboardProgressTracker(
-            revealDelay: progressRevealDelay, idleLinger: progressIdleLinger
-        ) { [weak self] snapshot in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                MainActor.assumeIsolated { self.publishProgress(snapshot) }
-            }
-        }
     }
 
     // MARK: - Lifecycle
@@ -209,36 +187,24 @@ final class VsockDropService {
         for job in abandoned { job.liveGeneration.set(0) }
         jobs.removeAll()
         if !abandoned.isEmpty {
-            raiseIssue(
-                .dropInterrupted(
-                    fileCount: abandoned.reduce(0) { $0 + $1.content.representations.count }))
+            let fileCount = abandoned.reduce(0) { $0 + $1.content.representations.count }
+            for job in abandoned {
+                job.operation.finish(.failed(.interrupted(fileCount: fileCount)))
+            }
         }
-        progress.clearAll()
-        // Synchronously, not via the tracker's emission hop: a readout still
-        // standing for a VM that has gone is the stuck indicator §13 forbids.
-        publishProgress(nil)
-        // Unconditional, unlike `publishProgress`'s change-guarded push: a stopped
-        // VM's last snapshot would otherwise pin the status item's readout.
-        progressCenter.progressChanged(from: self, nil)
         Self.logger.notice(
             "Vsock drop service stopped for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )
     }
 
-    // MARK: - Progress and issues
+    // MARK: - Refusals
 
-    private func publishProgress(_ snapshot: ClipboardProgressSnapshot?) {
-        // A stopped service shows nothing: emissions reach here through a queue
-        // hop, so one dispatched just before teardown can land just after it.
-        let next = isConnected ? snapshot : nil
-        guard next != transferProgress else { return }
-        transferProgress = next
-        progressCenter.progressChanged(from: self, next)
-    }
-
-    private func raiseIssue(_ issue: ClipboardTransferIssue) {
-        issueCenter.report(
-            issue, instanceID: instanceID, vmName: label, pasteLimitBytes: maxPasteBytes())
+    /// Reports a refusal no operation is measuring — a drop that never got as far
+    /// as opening one.
+    private func reportRefusal(_ failure: ClipboardTransferFailure) {
+        reporter.finish(
+            ClipboardTransferFinish(
+                gesture: .drop, outcome: .failed(failure), peerName: label))
     }
 
     // MARK: - Starting a drop
@@ -286,7 +252,7 @@ final class VsockDropService {
         guard !candidates.isEmpty else {
             // The gesture happened on this Mac and produced nothing, so the
             // silence has to be explained here.
-            raiseIssue(.dropItemsUnreadable())
+            reportRefusal(.itemsUnreadable)
             return false
         }
 
@@ -313,7 +279,7 @@ final class VsockDropService {
                         // sized. The drop was accepted, so its disappearance is
                         // owed the same answer an interrupted transfer gets —
                         // there is no job yet for `settle()` to have reported.
-                        self.raiseIssue(.dropInterrupted(fileCount: dropped.count))
+                        self.reportRefusal(.interrupted(fileCount: dropped.count))
                         return
                     }
                     self.offer(
@@ -355,21 +321,22 @@ final class VsockDropService {
         let content = capped.content
         guard !content.representations.isEmpty else { return }
 
-        // One session for the whole drop, declared up front, so the bar's
-        // denominator is every dropped file rather than each in turn (§13).
-        let units = content.representations.enumerated().map { index, rep in
-            ClipboardProgressTracker.PlannedUnit(
-                id: ClipboardTransferID.make(
-                    generation: generation, repIndex: index, hostMinted: false),
-                expectedBytes: UInt64(max(0, rep.byteCount)), name: rep.filename)
-        }
-        let session = progress.openSession(
-            direction: .outbound, peerName: label, units: units,
+        // One operation for the whole drop, with the set's totals as the floor,
+        // so the bar's denominator is every dropped file rather than each in
+        // turn (§13).
+        let operation = ClipboardTransferOperation(
+            gesture: .drop, direction: .outbound, peerName: label,
+            expectedBytes: content.representations.reduce(UInt64(0)) {
+                $0 &+ UInt64(max(0, $1.byteCount))
+            },
+            expectedItems: content.representations.count,
+            revealDelay: progressRevealDelay, idleGap: progressIdleGap,
             onCancelRequested: { [weak self] in
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated { self?.cancelDrop(generation: generation) }
                 }
-            })
+            },
+            reporter: reporter)
 
         var frame = Frame()
         frame.protocolVersion = 1
@@ -380,14 +347,14 @@ final class VsockDropService {
         do {
             try channel.send(frame)
         } catch {
-            progress.closeSession(session, immediately: true)
             Self.logger.error(
                 "Failed to offer a drop to '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            raiseIssue(.dropSendFailed())
+            operation.finish(.failed(.sendFailed))
             return
         }
-        jobs[generation] = DropJob(generation: generation, content: content, session: session)
+        jobs[generation] = DropJob(
+            generation: generation, content: content, operation: operation)
         Self.logger.notice(
             "Offered a drop to '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(content.representations.count, privacy: .public) item(s), \(content.totalByteCount, privacy: .public) bytes)"
         )
@@ -408,9 +375,9 @@ final class VsockDropService {
         frame.protocolVersion = 1
         frame.dropRelease = Kernova_V1_DropRelease.with { $0.generation = generation }
         try? channel.send(frame)
-        // Not `immediately`: the linger is what leaves the readout on screen at
-        // the fraction it stopped on, so the cancel is visibly what happened.
-        progress.closeSession(job.session)
+        // The readout dwells at the fraction it stopped on, so the cancel is
+        // visibly what happened.
+        job.operation.finish(.cancelled)
         jobs[generation] = nil
         Self.logger.notice(
             "User cancelled the drop to '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
@@ -516,11 +483,10 @@ final class VsockDropService {
         guard let sender else { return }
 
         let xid = request.transferID
-        let session = job.session
-        let tracker = progress
+        let operation = job.operation
         let live = job.liveGeneration
-        tracker.unitBegan(
-            session: session, id: xid, expectedBytes: UInt64(max(0, representation.byteCount)),
+        operation.unitBegan(
+            id: xid, expectedBytes: UInt64(max(0, representation.byteCount)),
             name: representation.filename)
         sender.startTransfer(
             transferID: xid,
@@ -532,12 +498,12 @@ final class VsockDropService {
             isInline: false,
             isCurrent: { live.isCurrent($0) },
             onProgress: { sent, total in
-                tracker.unitProgressed(
-                    session: session, id: xid, bytesTransferred: UInt64(max(0, sent)),
+                operation.unitProgressed(
+                    id: xid, bytesTransferred: UInt64(max(0, sent)),
                     totalBytes: UInt64(max(0, total)))
             },
             onComplete: { success in
-                tracker.unitEnded(session: session, id: xid, succeeded: success)
+                operation.unitEnded(id: xid, succeeded: success)
             })
         Self.logger.debug(
             "Streaming dropped item \(repIndex, privacy: .public) to '\(self.label, privacy: .public)' (gen=\(request.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(representation.byteCount, privacy: .public) bytes offered)"
@@ -551,34 +517,23 @@ final class VsockDropService {
         job.liveGeneration.set(0)
         switch complete.outcome {
         case .completed:
-            progress.closeSession(job.session)
+            job.operation.finish(.completed)
             Self.logger.notice(
                 "Drop to '\(self.label, privacy: .public)' completed (gen=\(complete.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(job.content.representations.count, privacy: .public) item(s))"
             )
         case .cancelled:
-            progress.closeSession(job.session)
+            job.operation.finish(.cancelled)
             Self.logger.notice(
                 "Drop to '\(self.label, privacy: .public)' cancelled (gen=\(complete.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
             )
         case .failed, .unspecified, .UNRECOGNIZED:
-            progress.closeSession(job.session)
             // The code is matched, never the message: `message` is guest-supplied
             // text and the sentence the user reads is composed here.
             let code = ClipboardErrorCode(rawValue: complete.code)
             Self.logger.error(
                 "Drop to '\(self.label, privacy: .public)' failed (gen=\(complete.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), code=\(complete.code, privacy: .public)): \(complete.message, privacy: .public)"
             )
-            raiseIssue(.dropFailed(code: code))
+            job.operation.finish(.failed(.peerReported(code)))
         }
-    }
-}
-
-// MARK: - Cancelling the shown transfer
-
-extension VsockDropService: TransferCancelling {
-    /// Routes a Cancel on the app-wide readout to whichever drop that readout is
-    /// showing.
-    func requestCancelOfShownOperation() {
-        progress.requestCancelOfPublishedSession()
     }
 }

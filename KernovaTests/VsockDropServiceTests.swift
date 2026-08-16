@@ -21,9 +21,8 @@ struct VsockDropServiceTests {
     private final class Harness {
         let service: VsockDropService
         let guest: VsockChannel
-        let issueCenter = ClipboardIssueCenter()
-        let progressCenter = ClipboardProgressCenter()
-        let instanceID = UUID()
+        /// This VM's transfer report, as every surface reads it.
+        let reports = ClipboardTransferReports()
         let recorder: FrameRecorder
         private let host: VsockChannel
 
@@ -35,13 +34,12 @@ struct VsockDropServiceTests {
             guest.start()
             recorder = FrameRecorder(channel: guest)
             service = VsockDropService(
-                channel: host, label: "Drop VM", instanceID: instanceID,
+                channel: host, label: "Drop VM", reporter: reports.reporter,
                 // Zeroed so a transfer's readout is on screen while it runs.
-                progressRevealDelay: 0, progressIdleLinger: 0,
+                progressRevealDelay: 0, progressIdleGap: 0,
                 directoryByteCount: directoryByteCount,
                 // Inline, so the folder walk needs no cross-thread wait.
-                runOffMainActor: { work in work() },
-                progressCenter: progressCenter, issueCenter: issueCenter)
+                runOffMainActor: { work in work() })
             service.start()
         }
 
@@ -51,7 +49,13 @@ struct VsockDropServiceTests {
             guest.close()
         }
 
-        var issue: ClipboardTransferIssue? { issueCenter.latestByInstance[instanceID]?.issue }
+        /// The refusal standing on this VM's report, or `nil` when none is.
+        var failure: ClipboardTransferFailure? { reports.failure }
+
+        /// The wording every surface renders for the standing refusal.
+        var wording: ClipboardTransferWording? {
+            reports.finish.flatMap { ClipboardTransferWording.wording(for: $0, vmName: "Drop VM") }
+        }
     }
 
     /// Collects frames arriving on the guest end, with a gate to await them.
@@ -262,7 +266,7 @@ struct VsockDropServiceTests {
         #expect(harness.recorder.offers.isEmpty)
         // The gesture happened on this Mac and produced nothing, so the silence
         // is explained here.
-        #expect(harness.issue != nil)
+        #expect(harness.failure != nil)
     }
 
     // MARK: - Serving the guest's pulls
@@ -414,7 +418,7 @@ struct VsockDropServiceTests {
             harness.recorder.aborts.contains { $0.code == ClipboardStreamAbortCode.superseded.rawValue }
         }
         // A cancel is not a failure: nothing is raised on either surface.
-        #expect(harness.issue == nil)
+        #expect(harness.failure == nil)
     }
 
     @Test("cancelling a drop that is already over does nothing")
@@ -434,7 +438,7 @@ struct VsockDropServiceTests {
         harness.service.cancelDrop(generation: 1)
 
         #expect(harness.recorder.releases.isEmpty)
-        #expect(harness.issue == nil)
+        #expect(harness.failure == nil)
     }
 
     // MARK: - The guest's verdict
@@ -452,7 +456,7 @@ struct VsockDropServiceTests {
         try harness.guest.send(makeComplete(generation: 1, outcome: .completed))
         try await Task.sleep(for: .milliseconds(50))
 
-        #expect(harness.issue == nil)
+        #expect(harness.failure == nil)
     }
 
     @Test("a failed drop raises an issue whose sentence the host composes")
@@ -467,16 +471,15 @@ struct VsockDropServiceTests {
         try await harness.recorder.wait { !harness.recorder.offers.isEmpty }
         try harness.guest.send(
             makeComplete(generation: 1, outcome: .failed, code: .dropDownloadsDenied))
-        try await waitUntil { harness.issue != nil }
+        try await harness.reports.waitForFailure()
 
-        let issue = try #require(harness.issue)
-        let message = issue.displayMessage(pasteLimitBytes: ClipboardPasteLimit.defaultBytes)
-        #expect(message.contains("Downloads"))
+        let wording = try #require(harness.wording)
+        #expect(wording.message.contains("Downloads"))
         // The guest's own message text never reaches a surface.
-        #expect(!message.contains("detail the host must not render"))
+        #expect(!wording.message.contains("detail the host must not render"))
         // The specific code reaches every surface, so the dropdown line names
         // the same outcome the notice body does rather than the generic one.
-        #expect(issue.menuLineText == "Drop: the VM's Downloads folder is off limits")
+        #expect(wording.menuLine == "Drop: the VM's Downloads folder is off limits")
     }
 
     @Test("a drop that fails partway never claims the files it already moved weren't saved")
@@ -490,13 +493,12 @@ struct VsockDropServiceTests {
         #expect(harness.service.startDrop(urls: [file]))
         try await harness.recorder.wait { !harness.recorder.offers.isEmpty }
         try harness.guest.send(makeComplete(generation: 1, outcome: .failed, code: .dropDiskFull))
-        try await waitUntil { harness.issue != nil }
+        try await harness.reports.waitForFailure()
 
         // The guest moves each file as it lands, so a batch that fails on file 3
         // leaves 1 and 2 in Downloads. A message saying nothing was saved would
         // send the user looking for files that are there.
-        let message = try #require(harness.issue).displayMessage(
-            pasteLimitBytes: ClipboardPasteLimit.defaultBytes)
+        let message = try #require(harness.wording).message
         #expect(message.contains("disk space"))
         #expect(!message.contains("weren't saved"))
     }
@@ -518,11 +520,10 @@ struct VsockDropServiceTests {
         harness.guest.close()
 
         #expect(!harness.service.isConnected)
-        #expect(harness.service.transferProgress == nil)
-        #expect(harness.progressCenter.materializationProgress == nil)
         // The files never landed and the gesture was made here, so the silence
-        // is owed an answer.
-        #expect(harness.issue != nil)
+        // is owed an answer — and that answer, not a stuck bar, is the readout.
+        try await harness.reports.waitForFailure()
+        #expect(harness.reports.runningSnapshot == nil)
     }
 
     @Test("stopping after a cancelled drop reports nothing — the user already knows")
@@ -540,7 +541,7 @@ struct VsockDropServiceTests {
         harness.service.stop()
         harness.guest.close()
 
-        #expect(harness.issue == nil)
+        #expect(harness.failure == nil)
     }
 
     @Test("the channel ending settles the service, so the display stops offering drops")
@@ -561,10 +562,9 @@ struct VsockDropServiceTests {
 
         try await waitForChange { !harness.service.isConnected }
         #expect(!harness.service.startDrop(urls: [file]))
-        #expect(harness.service.transferProgress == nil)
-        #expect(harness.progressCenter.materializationProgress == nil)
         // The drop in flight when the channel went is owed an answer.
-        #expect(harness.issue != nil)
+        try await harness.reports.waitForFailure()
+        #expect(harness.reports.runningSnapshot == nil)
     }
 
     @Test("a folder still being sized when the channel goes reports the interruption")
@@ -585,7 +585,7 @@ struct VsockDropServiceTests {
 
         // No job was ever registered, so `settle()` had nothing to report: only
         // the discarded walk can account for the drop the user made.
-        try await waitForChange { harness.issue != nil }
+        try await harness.reports.waitForFailure()
         #expect(harness.recorder.offers.isEmpty)
     }
 

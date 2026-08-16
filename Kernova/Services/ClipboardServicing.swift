@@ -26,21 +26,6 @@ protocol ClipboardServicing: AnyObject {
     /// that would silently never send.
     var supportsBinaryRepresentations: Bool { get }
 
-    /// Records a problem an *automatic* path produced, for the transport to
-    /// publish to `ClipboardIssueCenter` — the one record every surface renders.
-    ///
-    /// A window gesture reports its own outcome inline; a passthrough forward has
-    /// no return path, so the issue is the only account it can give. Default
-    /// no-op: a transport that never surfaces an issue drops it.
-    func reportIssue(_ issue: ClipboardTransferIssue)
-
-    /// The clipboard transfer currently being shown, or `nil` when none is.
-    ///
-    /// Aggregate per *operation*, never per file: a multi-file paste fills one bar
-    /// once. Set once the operation crosses the reveal delay, cleared at its
-    /// terminal. `nil` for transports without byte-level progress.
-    var transferProgress: ClipboardProgressSnapshot? { get }
-
     /// Monotonically increases each time a **new inbound guest offer** is
     /// published to `clipboardContent` — not on our own outbound writes, and not
     /// on the per-representation preview/copy materialization of an
@@ -145,13 +130,9 @@ enum CopyToMacDropReason: Sendable, Equatable {
 extension ClipboardServicing {
     func reserveDropDestination() -> URL? { nil }
     func materializeForPreview() async {}
-    func reportIssue(_ issue: ClipboardTransferIssue) {}
     func materializeForCopy() -> [CopyToMacItem] {
         clipboardContent.representations.map { .resolved($0) }
     }
-
-    /// Transports without byte-level progress never show a transfer bar.
-    var transferProgress: ClipboardProgressSnapshot? { nil }
 
     /// Transports that never receive report no inbound offers.
     var inboundOfferSeq: UInt64 { 0 }

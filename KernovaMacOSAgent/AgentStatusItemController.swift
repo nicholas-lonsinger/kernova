@@ -66,10 +66,9 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
 
     // MARK: - Paste progress
 
-    /// Applies the paste readout the clipboard agent's progress tracker just
-    /// published — a snapshot to render, or `nil` to clear it.
-    func materializationProgressChanged(_ snapshot: ClipboardProgressSnapshot?) {
-        pasteProgressPresenter.apply(snapshot)
+    /// Applies the transfer report this agent's reporter just published.
+    func transferReportChanged(_ report: ClipboardTransferReport) {
+        pasteProgressPresenter.apply(report)
         setIcon(for: connectionState())
     }
 

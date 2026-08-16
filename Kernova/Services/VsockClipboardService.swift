@@ -22,21 +22,6 @@ final class VsockClipboardService: ClipboardServicing {
     /// `true` once `start()` has been called.
     private(set) var isConnected: Bool = false
 
-    /// This VM's outstanding user-visible transfer problem, cleared by the next
-    /// successful transfer in either direction.
-    ///
-    /// Reads through to `ClipboardIssueCenter` rather than storing a copy: a
-    /// promise this connection published outlives it, so a superseded service
-    /// still raises problems for this VM, and a per-connection record would
-    /// disagree with the one every surface renders.
-    var lastTransferIssue: ClipboardTransferIssue? {
-        issueCenter.latestByInstance[instanceID]?.issue
-    }
-
-    /// The clipboard operation currently being shown (most-significant in-flight
-    /// session past the reveal delay), or `nil`.
-    private(set) var transferProgress: ClipboardProgressSnapshot?
-
     var supportsBinaryRepresentations: Bool { true }
 
     /// Bumped once per new inbound guest offer, never by preview/copy
@@ -71,40 +56,43 @@ final class VsockClipboardService: ClipboardServicing {
     /// it.
     private var dropDirectories: [DropDirectory] = []
 
-    /// App-level aggregate this VM's readout feeds, so the menu-bar status item
-    /// shows one progress readout across every live VM.
-    private let progressCenter: ClipboardProgressCenter
-
-    /// App-level aggregate this VM's transfer problems feed, so a refusal raised
-    /// with no clipboard window open still reaches a surface.
-    private let issueCenter: ClipboardIssueCenter
-
-    /// The VM this service belongs to, as the issue center keys its notices.
-    private let instanceID: UUID
+    /// This VM's transfer report, which every surface renders.
+    ///
+    /// It outlives this connection deliberately: a promise this service published
+    /// outlives it too, so a service superseded by a reconnect still reports the
+    /// failures of those promises (docs/CLIPBOARD.md §13).
+    ///
+    /// `nonisolated` so a paste-time provider fire can hand it to the operation
+    /// it opens from whichever thread the pasteboard server fired on; every call
+    /// on it still crosses to the main actor.
+    nonisolated private let reporter: ClipboardTransferReporter
 
     /// Backstop for a lazy pull the peer never answers while the channel stays
     /// open.
     private let lazyPullTimeout: TimeInterval
 
+    /// Reveal and idle seams handed to every operation this service opens; tests
+    /// zero them so a transfer surfaces while in flight.
+    nonisolated private let progressRevealDelay: TimeInterval
+    nonisolated private let progressIdleGap: TimeInterval
+
     /// The ceiling on a paste's file-representation total, read at each budget
     /// check rather than captured, so a Settings change reaches a live session.
     private let maxPasteBytes: @MainActor () -> Int
 
-    /// Off-main authority for this VM's clipboard progress, aggregating every
-    /// transfer of one operation into the snapshot each surface renders.
-    ///
-    /// The initializer replaces this placeholder: the real tracker's `emit`
-    /// closure captures `self`.
-    @ObservationIgnored private var progress = ClipboardProgressTracker { _ in }
-
-    /// The outbound session serving the guest's pulls of `pendingOutbound`, if one
-    /// is live, with the generation it measures.
+    /// The operation serving the guest's pulls of `pendingOutbound`, if one is
+    /// live, with the generation it measures.
     ///
     /// The guest decides what it pulls and when — a paste can take two waves
     /// minutes apart — so transfers are declared as they are asked for, never up
     /// front.
     @ObservationIgnored
-    private var outboundSession: (generation: UInt64, token: ClipboardProgressTracker.SessionToken)?
+    private var outboundOperation: (generation: UInt64, operation: ClipboardTransferOperation)?
+
+    /// The operation covering the current preview materialization loop, held so a
+    /// teardown can retire it.
+    @ObservationIgnored
+    private var previewOperation: ClipboardTransferOperation?
 
     /// Synchronous pull machinery for representations served inside a pasteboard
     /// `provideData` callback, on whichever thread the pasteboard server fires it
@@ -249,13 +237,6 @@ final class VsockClipboardService: ClipboardServicing {
         /// on each pulled rep so `republishOffActor` can detect one that landed
         /// during its off-actor hash.
         var materializeEpoch = 0
-        /// Whether the post-stop partial-file-set refusal was already surfaced
-        /// for this offer, so the N provider fires of one multi-file paste raise
-        /// one issue rather than N.
-        var partialSetRefusalReported = false
-        /// Whether a paste fire cut short by the connection's end was already
-        /// explained for this offer, so concurrent fires raise one issue.
-        var pasteInterruptionReported = false
 
         init(
             generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo], isConcealed: Bool
@@ -286,40 +267,27 @@ final class VsockClipboardService: ClipboardServicing {
     /// Tests pass `stagingTempRoot` to isolate the staging directory between
     /// parallel runs.
     init(
-        channel: VsockChannel, label: String, instanceID: UUID,
+        channel: VsockChannel, label: String, reporter: ClipboardTransferReporter,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         maxPasteBytes: @escaping @MainActor () -> Int = { ClipboardPasteLimit.defaultBytes },
         lazyPullTimeout: TimeInterval = ClipboardStreamTuning.lazyPullTimeout,
-        progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
-        progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
-        stagingTempRoot: URL = FileManager.default.temporaryDirectory,
-        progressCenter: ClipboardProgressCenter = .shared,
-        issueCenter: ClipboardIssueCenter = .shared
+        progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
+        progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
+        stagingTempRoot: URL = FileManager.default.temporaryDirectory
     ) {
         self.channel = channel
         self.label = label
         self.maxPasteBytes = maxPasteBytes
         self.lazyPullTimeout = lazyPullTimeout
-        self.progressCenter = progressCenter
-        self.issueCenter = issueCenter
-        self.instanceID = instanceID
+        self.reporter = reporter
+        self.progressRevealDelay = progressRevealDelay
+        self.progressIdleGap = progressIdleGap
         self.staging = ClipboardFileStaging(
             label: "host-\(label)", tempRoot: stagingTempRoot,
             freeSpaceProvider: freeSpaceProvider)
         self.dropStaging = ClipboardFileStaging(
             label: "host-drops-\(label)", tempRoot: stagingTempRoot,
             freeSpaceProvider: freeSpaceProvider)
-        // Emissions hop to main on a serial (FIFO) queue, not an unordered
-        // `Task { @MainActor }`: two snapshots arriving out of order would make
-        // the progress bar jump backwards.
-        progress = ClipboardProgressTracker(
-            revealDelay: progressRevealDelay, idleLinger: progressIdleLinger
-        ) { [weak self] snapshot in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                MainActor.assumeIsolated { self.publishProgress(snapshot) }
-            }
-        }
     }
 
     // MARK: - Lifecycle
@@ -327,10 +295,8 @@ final class VsockClipboardService: ClipboardServicing {
     func start() {
         guard consumeTask == nil else { return }
         // A fresh connection retires whatever the last one left standing: that
-        // problem described a transfer of a session that is over, and this
-        // service's own `lastTransferIssue` starts empty, so leaving it up would
-        // put the two surfaces in disagreement.
-        clearIssue()
+        // report described a transfer of a session that is over.
+        reporter.clearFinished()
         // Earlier sessions' receive and drop roots may still be serving the
         // pasteboard's current write (a stopped session's materialized reps stay
         // servable, and a dropped file's URL is copied as-is), so they are
@@ -420,21 +386,18 @@ final class VsockClipboardService: ClipboardServicing {
         // With the offer gone, a drop the buffer no longer shows has no reader
         // left on this side.
         retireUnreferencedDropDirectories()
-        // Every session, not just the outbound one: a materialization loop parked
-        // on a pull this teardown failed would leave its readout up for a gone VM.
-        outboundSession = nil
-        progress.clearAll()
-        // Synchronously, not via the tracker's emission hop: a readout still
-        // standing for a VM that has gone is the stuck indicator §13 forbids.
-        publishProgress(nil)
+        // Only this service's own operations, never the VM's whole report: a
+        // paste fire this teardown cut short still owes the VM its answer, and a
+        // superseded service's later failure belongs to the VM either way (§13).
+        outboundOperation?.operation.abandon()
+        outboundOperation = nil
+        previewOperation?.abandon()
+        previewOperation = nil
         // Nothing is swept here: the inbound promise and its receive staging
         // deliberately survive stop(), because the host pasteboard may still
         // advertise this offer and every materialized rep stays servable from the
         // cache and the staged files (docs/CLIPBOARD.md §3). Only supersession
         // retracts the write; the files then age out of the generation window.
-        // Unconditional, unlike `publishProgress`'s change-guarded push: a stopped
-        // VM's last snapshot would otherwise pin the status item's readout.
-        progressCenter.progressChanged(from: self, nil)
         Self.logger.notice(
             "Vsock clipboard service stopped for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )
@@ -442,44 +405,50 @@ final class VsockClipboardService: ClipboardServicing {
 
     // MARK: - Transfer progress
 
-    /// Publishes the tracker's latest snapshot to this service's own surfaces and
-    /// to the app-level center that drives the menu-bar status item.
-    private func publishProgress(_ snapshot: ClipboardProgressSnapshot?) {
-        // A stopped service shows nothing: emissions reach here through a queue
-        // hop, so one dispatched just before teardown can land just after it.
-        let next = isConnected ? snapshot : nil
-        guard next != transferProgress else { return }
-        transferProgress = next
-        progressCenter.progressChanged(from: self, next)
+    /// Opens one operation reporting to this VM's `reporter`.
+    ///
+    /// `nonisolated` because a paste-time provider fire opens one from whichever
+    /// thread the pasteboard server fired on.
+    nonisolated private func makeOperation(
+        gesture: ClipboardTransferGesture,
+        direction: ClipboardProgressSnapshot.Direction,
+        peerName: String,
+        expectedBytes: UInt64 = 0,
+        expectedItems: Int = 0,
+        onCancelRequested: (@Sendable () -> Void)? = nil
+    ) -> ClipboardTransferOperation {
+        ClipboardTransferOperation(
+            gesture: gesture, direction: direction, peerName: peerName,
+            expectedBytes: expectedBytes, expectedItems: expectedItems,
+            revealDelay: progressRevealDelay, idleGap: progressIdleGap,
+            onCancelRequested: onCancelRequested, reporter: reporter)
     }
 
-    /// The outbound session measuring what this side is streaming for `generation`,
+    /// The operation measuring what this side is streaming for `generation`,
     /// opening one if the guest's request is the first under that generation.
     ///
-    /// Every such session is a paste session: the guest asks for bytes only from
+    /// Every such operation is a `.peerPaste`: the guest asks for bytes only from
     /// the pasteboard promise callback of a paste inside it — it has no preview or
     /// copy surface of its own — so this readout is the only thing explaining why
     /// the app the user pasted into is waiting.
     ///
-    /// A session the tracker already ended is replaced rather than reused: the
-    /// waves can be minutes apart, far longer than the idle linger, and reusing
-    /// the ended token drops the second wave's progress entirely.
-    private func outboundSessionToken(for generation: UInt64)
-        -> ClipboardProgressTracker.SessionToken
-    {
-        if let existing = outboundSession, existing.generation == generation,
-            progress.isSessionLive(existing.token)
+    /// A finished operation is replaced rather than reused: the waves can be
+    /// minutes apart, far longer than the idle gap, and reusing an ended one
+    /// drops the second wave's progress entirely.
+    private func outboundOperation(for generation: UInt64) -> ClipboardTransferOperation {
+        if let existing = outboundOperation, existing.generation == generation,
+            existing.operation.isLive
         {
-            return existing.token
+            return existing.operation
         }
-        if let stale = outboundSession { progress.closeSession(stale.token, immediately: true) }
-        let token = progress.openSession(
-            direction: .outbound, peerName: label, isPaste: true,
+        outboundOperation?.operation.abandon()
+        let operation = makeOperation(
+            gesture: .peerPaste, direction: .outbound, peerName: label,
             onCancelRequested: { [weak self] in
                 Self.onMainQueue { self?.cancelOutboundTransfers(generation: generation) }
             })
-        outboundSession = (generation: generation, token: token)
-        return token
+        outboundOperation = (generation: generation, operation: operation)
+        return operation
     }
 
     /// Stops streaming what the guest is pulling for `generation`, because the
@@ -547,37 +516,28 @@ final class VsockClipboardService: ClipboardServicing {
         DispatchQueue.main.async { MainActor.assumeIsolated { body() } }
     }
 
-    // MARK: - Transfer issues
+    // MARK: - Transfer refusals
 
-    /// Publishes a user-visible transfer problem for this VM.
-    ///
-    /// The single write path behind `lastTransferIssue`: the clipboard window is
-    /// optional, so an issue kept on this service would have no surface at all on
-    /// the passthrough flows that raise most of them.
-    private func raiseIssue(_ issue: ClipboardTransferIssue) {
-        issueCenter.report(
-            issue, instanceID: instanceID, vmName: label, pasteLimitBytes: maxPasteBytes())
+    /// Reports a refusal no operation is measuring — a pre-flight check, a peer
+    /// error frame, a gesture that never opened a stream.
+    private func reportRefusal(
+        gesture: ClipboardTransferGesture, _ failure: ClipboardTransferFailure
+    ) {
+        reporter.finish(
+            ClipboardTransferFinish(
+                gesture: gesture, outcome: .failed(failure), peerName: label))
     }
 
-    /// Retires this VM's current problem from every surface.
-    private func clearIssue() {
-        issueCenter.clear(instanceID: instanceID)
-    }
-
-    /// Explains, once per offer, a paste fire this connection's end cut short:
-    /// the fire serves nothing, and unlike a supersession nothing else says why.
+    /// Explains a paste fire this connection's end cut short: the fire serves
+    /// nothing, and unlike a supersession nothing else says why.
     ///
     /// Called by the fire itself, off the outcome it saw — a fire the end never
-    /// touched (its bytes had already landed) has nothing to explain.
-    nonisolated private func recordPasteInterruption(generation: UInt64) {
+    /// touched (its bytes had already landed) has nothing to explain. The N fires
+    /// of one multi-file paste each report the same refusal; the reporter absorbs
+    /// the repeats into one message.
+    nonisolated private func recordPasteInterruption(_ operation: ClipboardTransferOperation) {
         guard sessionEnded.withLock({ $0 }) else { return }
-        onMain {
-            guard let promise = self.livePromise(generation: generation),
-                !promise.pasteInterruptionReported
-            else { return }
-            promise.pasteInterruptionReported = true
-            self.raiseIssue(.pasteInterrupted())
-        }
+        operation.finish(.failed(.interrupted(fileCount: nil)))
     }
 
     // MARK: - Public API
@@ -588,10 +548,6 @@ final class VsockClipboardService: ClipboardServicing {
         // The user emptied the buffer — any guest offer it was showing is stale.
         dropInboundPromise()
         retireUnreferencedDropDirectories()
-    }
-
-    func reportIssue(_ issue: ClipboardTransferIssue) {
-        raiseIssue(issue)
     }
 
     func reserveDropDestination() -> URL? {
@@ -682,7 +638,7 @@ final class VsockClipboardService: ClipboardServicing {
             pendingOutbound = (generation: generation, content: content)
             currentOutboundGeneration.set(generation)
             lastGrabbedDigest = clipboardContent.digest
-            clearIssue()
+            reporter.clearFinished()
             // The offer just replaced supersedes whatever drop it was reading
             // from, so that drop's files can go.
             retireUnreferencedDropDirectories()
@@ -746,10 +702,11 @@ final class VsockClipboardService: ClipboardServicing {
                 "Guest clipboard error for '\(self.label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
             if error.code.hasPrefix("clipboard.") {
-                raiseIssue(
-                    ClipboardTransferIssue(
-                        kind: .peerReportedError(code: error.code, message: error.message),
-                        date: Date()))
+                let code = ClipboardErrorCode(rawValue: error.code)
+                reportRefusal(
+                    gesture: .peerPaste,
+                    code == .pasteTooLarge
+                        ? .tooLarge(limitBytes: maxPasteBytes()) : .peerReported(code))
             }
         case .clipboardStreamAbort(let abort):
             // Only a sender-bound abort reaches here; see the routing in `consume`.
@@ -823,11 +780,10 @@ final class VsockClipboardService: ClipboardServicing {
         // transfer announced here would never see a terminal and its readout would
         // stick on screen.
         guard let sender else { return }
-        // Declared as the guest asks for it — see `outboundSession`.
-        let session = outboundSessionToken(for: request.generation)
-        progress.unitBegan(
-            session: session, id: xid, expectedBytes: UInt64(max(0, representation.byteCount)), name: label)
-        let tracker = progress
+        // Declared as the guest asks for it — see `outboundOperation(for:)`.
+        let operation = outboundOperation(for: request.generation)
+        operation.unitBegan(
+            id: xid, expectedBytes: UInt64(max(0, representation.byteCount)), name: label)
         sender.startTransfer(
             transferID: request.transferID,
             generation: request.generation,
@@ -836,12 +792,15 @@ final class VsockClipboardService: ClipboardServicing {
             isInline: representation.shouldInlineOnPasteboard,
             isCurrent: { generationValue in generation.isCurrent(generationValue) },
             onProgress: { sent, total in
-                tracker.unitProgressed(
-                    session: session, id: xid, bytesTransferred: UInt64(max(0, sent)),
+                operation.unitProgressed(
+                    id: xid, bytesTransferred: UInt64(max(0, sent)),
                     totalBytes: UInt64(max(0, total)))
             },
             onComplete: { success in
-                tracker.unitEnded(session: session, id: xid, succeeded: success)
+                operation.unitEnded(id: xid, succeeded: success)
+                // Nothing on this side knows the guest has stopped asking, so the
+                // idle gap is what calls the operation over.
+                operation.finishWhenIdle()
             })
         Self.logger.debug(
             "Streaming clipboard rep \(repIndex, privacy: .public) to '\(self.label, privacy: .public)' (gen=\(request.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(representation.byteCount, privacy: .public) bytes offered)"
@@ -877,7 +836,9 @@ final class VsockClipboardService: ClipboardServicing {
         }
 
         guard !offer.repInfo.isEmpty else {
-            if retracted { raiseIssue(.staleCopyRetracted(hasSuccessor: false)) }
+            if retracted {
+                reportRefusal(gesture: .copy, .supersededCopyRetracted(hasSuccessor: false))
+            }
             dropInboundPromise()
             return
         }
@@ -908,7 +869,9 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.warning(
                 "Dropped the guest clipboard offer for '\(self.label, privacy: .public)' (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)): none of its \(bounded.reps.count, privacy: .public) representation(s) survived receive-side filtering"
             )
-            if retracted { raiseIssue(.staleCopyRetracted(hasSuccessor: false)) }
+            if retracted {
+                reportRefusal(gesture: .copy, .supersededCopyRetracted(hasSuccessor: false))
+            }
             dropInboundPromise()
             return
         }
@@ -920,12 +883,12 @@ final class VsockClipboardService: ClipboardServicing {
             ClipboardContent(representations: placeholders, isConcealed: promise.isConcealed))
         inboundPromise = promise
         previewMaterializationStarted = 0
-        // A retraction's issue is the new offer's own explainer, so it replaces
+        // A retraction's report is the new offer's own explainer, so it replaces
         // whatever stood here rather than being cleared with it.
         if retracted {
-            raiseIssue(.staleCopyRetracted(hasSuccessor: true))
+            reportRefusal(gesture: .copy, .supersededCopyRetracted(hasSuccessor: true))
         } else {
-            clearIssue()
+            reporter.clearFinished()
         }
         // Bumped after the promise is live, so the passthrough coordinator's
         // `materializeForCopy` sees it.
@@ -1022,27 +985,25 @@ final class VsockClipboardService: ClipboardServicing {
 
     // MARK: - Lazy materialization (we are the receiver)
 
-    /// Opens the progress session covering one materialization loop, or `nil` when
-    /// the loop has nothing to pull.
+    /// Opens the operation covering one materialization loop, or `nil` when the
+    /// loop has nothing to pull.
     ///
-    /// `pulling` is declared in full: another loop can claim a rep before this one
-    /// reaches it, so ownership is settled per rep in `materialize`.
-    private func openInboundSession(promise: InboundPromise, pulling indices: [Int])
-        -> ClipboardProgressTracker.SessionToken?
+    /// Transfers join as they begin rather than being declared up front: another
+    /// loop can claim a rep before this one reaches it, and a rep left in the
+    /// denominator waiting on events that never arrive would hold the bar short
+    /// of its total.
+    private func openPreviewOperation(promise: InboundPromise, pulling indices: [Int])
+        -> ClipboardTransferOperation?
     {
         guard !indices.isEmpty else { return nil }
-        let units = indices.map { index -> ClipboardProgressTracker.PlannedUnit in
-            let info = promise.reps[index]
-            return ClipboardProgressTracker.PlannedUnit(
-                id: UInt64(index), expectedBytes: info.byteCount,
-                name: info.filename.isEmpty ? nil : info.filename)
-        }
         let generation = promise.generation
-        return progress.openSession(
-            direction: .inbound, peerName: label, units: units,
+        let operation = makeOperation(
+            gesture: .preview, direction: .inbound, peerName: label,
             onCancelRequested: { [weak self] in
                 Self.onMainQueue { self?.cancelInboundPulls(generation: generation) }
             })
+        previewOperation = operation
+        return operation
     }
 
     /// Pulls the representations the window renders richly (text, inline RTF,
@@ -1060,12 +1021,24 @@ final class VsockClipboardService: ClipboardServicing {
         // explicit Copy-to-Mac.
         guard !promise.isConcealed else { return }
         guard previewMaterializationStarted != promise.generation else { return }
-        let session = openInboundSession(
-            promise: promise,
-            pulling: promise.reps.indices.filter { index in
-                Self.isEagerPreviewable(promise.reps[index]) && !Self.shouldSkip(promise.reps[index])
-            })
-        defer { if let session { progress.closeSession(session) } }
+        guard
+            let operation = openPreviewOperation(
+                promise: promise,
+                pulling: promise.reps.indices.filter { index in
+                    Self.isEagerPreviewable(promise.reps[index])
+                        && !Self.shouldSkip(promise.reps[index])
+                })
+        else {
+            previewMaterializationStarted = promise.generation
+            return
+        }
+        // A pull that failed has already finished the operation with its own
+        // reason; this terminal is what ends a loop that ran to its end or was
+        // stopped, and it is dropped for one already finished.
+        defer {
+            operation.finish(
+                cancelledInboundGeneration == promise.generation ? .cancelled : .completed)
+        }
         var allSucceeded = true
         for (index, info) in promise.reps.enumerated() {
             guard inboundPromise === promise else { return }  // superseded
@@ -1073,7 +1046,9 @@ final class VsockClipboardService: ClipboardServicing {
             // happened to be in flight when they clicked.
             guard cancelledInboundGeneration != promise.generation else { return }
             guard Self.isEagerPreviewable(info), !Self.shouldSkip(info) else { continue }
-            if await materialize(index: index, info: info, promise: promise, session: session) == nil {
+            if await materialize(index: index, info: info, promise: promise, operation: operation)
+                == nil
+            {
                 allSucceeded = false
             }
         }
@@ -1109,8 +1084,8 @@ final class VsockClipboardService: ClipboardServicing {
                 "Copy-to-Mac refused: \(ClipboardErrorCode.copyTooLarge.rawValue, privacy: .public) — paste-bound reps total \(pasteBoundTotal, privacy: .public) bytes, over the \(limit, privacy: .public)-byte cap; refusing the whole file set"
             )
             // The click reports its own outcome, but an automatic passthrough
-            // publish has no return path — the issue is the only surface it has.
-            raiseIssue(.overCopyBudget(limitBytes: limit))
+            // publish has no return path — the report is the only surface it has.
+            reportRefusal(gesture: .copy, .tooLarge(limitBytes: limit))
         }
 
         var items: [CopyToMacItem] = []
@@ -1171,21 +1146,20 @@ final class VsockClipboardService: ClipboardServicing {
     /// The file set is the offer's `.fileURL`-serving reps (every promisable rep
     /// with a filename, the ones a Finder paste creates files from). With the
     /// receiver gone the unmaterialized siblings can never arrive, so every
-    /// file fire of the generation serves nothing and the first raises the
-    /// transfer issue; a fully-materialized set keeps serving from the cache
-    /// and staged files, and inline flavors keep serving regardless.
+    /// file fire of the generation serves nothing and reports the refusal; a
+    /// fully-materialized set keeps serving from the cache and staged files, and
+    /// inline flavors keep serving regardless.
     @MainActor
     private func refusesPasteBoundFire(generation: UInt64) -> Bool {
         guard receiver == nil, let promise = livePromise(generation: generation) else { return false }
         let fileSet = promise.reps.indices.filter { Self.servesFileURL(promise.reps[$0]) }
         guard fileSet.contains(where: { promise.materialized[$0] == nil }) else { return false }
-        if !promise.partialSetRefusalReported {
-            promise.partialSetRefusalReported = true
-            Self.logger.warning(
-                "Clipboard paste fired for gen=\(generation, privacy: .public) of '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) after the service stopped with the file set partially materialized — \(ClipboardErrorCode.pasteIncompleteSet.rawValue, privacy: .public); serving nothing"
-            )
-            raiseIssue(.partialFileSetUnservable())
-        }
+        Self.logger.warning(
+            "Clipboard paste fired for gen=\(generation, privacy: .public) of '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) after the service stopped with the file set partially materialized — \(ClipboardErrorCode.pasteIncompleteSet.rawValue, privacy: .public); serving nothing"
+        )
+        // The N fires of one multi-file paste each report the same refusal; the
+        // reporter absorbs the repeats into one message.
+        reportRefusal(gesture: .paste, .incompleteFileSet)
         return true
     }
 
@@ -1202,7 +1176,7 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.warning(
                 "Paste refused: \(ClipboardErrorCode.copyTooLarge.rawValue, privacy: .public) — paste-bound reps total \(snapshot.pasteBoundTotal, privacy: .public) bytes, over the \(limit, privacy: .public)-byte cap"
             )
-            raiseIssue(.overCopyBudget(limitBytes: limit))
+            reportRefusal(gesture: .copy, .tooLarge(limitBytes: limit))
             return nil
         }
         return snapshot
@@ -1216,24 +1190,21 @@ final class VsockClipboardService: ClipboardServicing {
     /// continuation.
     private func materialize(
         index: Int, info: Kernova_V1_ClipboardRepresentationInfo, promise: InboundPromise,
-        session: ClipboardProgressTracker.SessionToken?
+        operation: ClipboardTransferOperation
     ) async -> ClipboardContent.Representation? {
-        // None of the early returns moves a byte on this session's behalf, so each
-        // gives the unit back: left declared, it would sit in the denominator
-        // waiting on events that never arrive.
+        // None of the early returns moves a byte on this operation's behalf, so
+        // none of them begins a transfer: one declared but never fed would sit in
+        // the denominator waiting on events that never arrive.
         if let cached = promise.materialized[index] {
-            if let session { progress.discardUnit(session: session, id: UInt64(index)) }
             return cached
         }
         if promise.isPasteFiring(index) {
             // The paste caches what it pulls, and `materializeForPreview` latches
             // only on full success, so the next display trigger serves this rep
             // from `materialized` instead.
-            if let session { progress.discardUnit(session: session, id: UInt64(index)) }
             return nil
         }
         if let existing = promise.inFlight[index] {
-            if let session { progress.discardUnit(session: session, id: UInt64(index)) }
             let rep = await existing.value
             // The owning call writes the cache after its own continuation resumes,
             // which may be after this coalescing caller — populate it here too so a
@@ -1245,7 +1216,7 @@ final class VsockClipboardService: ClipboardServicing {
         }
         let task = Task { @MainActor in
             await self.pull(
-                repIndex: index, info: info, generation: promise.generation, session: session)
+                repIndex: index, info: info, generation: promise.generation, operation: operation)
         }
         promise.inFlight[index] = task
         let rep = await task.value
@@ -1269,15 +1240,16 @@ final class VsockClipboardService: ClipboardServicing {
     /// starts a transfer [Safeguard 4].
     private func pull(
         repIndex: Int, info: Kernova_V1_ClipboardRepresentationInfo, generation: UInt64,
-        session: ClipboardProgressTracker.SessionToken?
+        operation: ClipboardTransferOperation
     ) async -> ClipboardContent.Representation? {
         guard let receiver else { return nil }
         if !info.isInline, !staging.hasCapacity(forByteCount: Int(clamping: info.byteCount)) {
             Self.logger.warning(
                 "Not enough disk space to receive clipboard rep '\(info.uti, privacy: .public)' (\(info.byteCount, privacy: .public) bytes)"
             )
-            raiseIssue(
-                .diskFull(needed: info.byteCount, available: staging.availableCapacity()))
+            operation.finish(
+                .failed(
+                    .diskFull(needed: info.byteCount, available: staging.availableCapacity())))
             return nil
         }
         let transferID = Self.inboundTransferID(generation: generation, repIndex: repIndex)
@@ -1287,21 +1259,17 @@ final class VsockClipboardService: ClipboardServicing {
         let channel = self.channel
         let backstop = lazyPullTimeout
         let label = info.filename.isEmpty ? nil : info.filename
-        if let session {
-            progress.unitBegan(
-                session: session, id: UInt64(repIndex), expectedBytes: info.byteCount, name: label)
-        }
+        operation.unitBegan(id: UInt64(repIndex), expectedBytes: info.byteCount, name: label)
         let rep: ClipboardContent.Representation? = await withCheckedContinuation { continuation in
             // Single-resume: the off-main awaiter, the on-main send-failure catch,
             // and the backstop timeout can all race a channel teardown, and a
             // double resume is a continuation-misuse crash.
             let pull = PullContinuation(
                 continuation,
-                onLiveRecord: { [tracker = progress] bytes, total in
-                    guard let session else { return }
-                    tracker.unitProgressed(
-                        session: session, id: UInt64(repIndex),
-                        bytesTransferred: UInt64(max(0, bytes)), totalBytes: UInt64(max(0, total)))
+                onLiveRecord: { bytes, total in
+                    operation.unitProgressed(
+                        id: UInt64(repIndex), bytesTransferred: UInt64(max(0, bytes)),
+                        totalBytes: UInt64(max(0, total)))
                 })
             receiver.awaitTransfer(
                 transferID,
@@ -1312,11 +1280,11 @@ final class VsockClipboardService: ClipboardServicing {
                 extractsDirectoryNamed: info.isDirectory ? info.filename : nil,
                 advertisedByteCount: Int(clamping: info.byteCount),
                 onComplete: { pull.resume($0) },
-                onAbort: { [weak self] info in
-                    // Fires off the main actor, so the raise hops rather than
-                    // blocking the receive lane.
-                    if let issue = ClipboardTransferIssue.inboundPullAborted(info) {
-                        Task { @MainActor [weak self] in self?.raiseIssue(issue) }
+                onAbort: { info in
+                    // A retiring abort names no failure of its own — the loop
+                    // simply ends and its own terminal stands.
+                    if let failure = ClipboardTransferFailure.inboundPullAborted(info) {
+                        operation.finish(.failed(failure))
                     }
                     pull.resume(nil)
                 },
@@ -1358,21 +1326,7 @@ final class VsockClipboardService: ClipboardServicing {
                 pull.resume(nil)
             }
         }
-        if let session {
-            progress.unitEnded(session: session, id: UInt64(repIndex), succeeded: rep != nil)
-        }
-        if rep != nil {
-            // A healthy pull clears a stale issue, except the two kinds a
-            // succeeding sibling does not disprove: a disk-full notice (another
-            // rep may still have failed to arrive) and an outcome this side
-            // produced (its own surface — an over-cap file set is refused, and a
-            // paste that timed out stays failed, while the same offer's small
-            // inline rep pulls fine).
-            switch lastTransferIssue?.kind {
-            case .diskFull, .localFailure: break
-            case .peerReportedError, .staleCopyRetracted, .none: clearIssue()
-            }
-        }
+        operation.unitEnded(id: UInt64(repIndex), succeeded: rep != nil)
         return rep
     }
 
@@ -1440,14 +1394,13 @@ final class VsockClipboardService: ClipboardServicing {
             receiver: receiver, channel: channel, staging: staging, timeout: lazyPullTimeout)
     }
 
-    /// Records a user-visible issue for a paste-time fire that will serve
-    /// nothing.
+    /// Reports a paste-time refusal raised with no operation measuring it.
     ///
-    /// A provider fire has no return path to the gesture, so the issue the
-    /// clipboard window renders is the only host-side account of why a paste
-    /// produced nothing.
-    nonisolated private func recordPasteIssue(_ issue: ClipboardTransferIssue) {
-        onMain { self.raiseIssue(issue) }
+    /// A provider fire has no return path to the gesture, so the report every
+    /// surface renders is the only host-side account of why a paste produced
+    /// nothing.
+    nonisolated private func reportPasteRefusal(_ failure: ClipboardTransferFailure) {
+        onMain { self.reportRefusal(gesture: .paste, failure) }
     }
 
     /// Synchronously pulls one rep, holding the calling thread until the streamed
@@ -1456,12 +1409,11 @@ final class VsockClipboardService: ClipboardServicing {
     /// Safe to call on main: the receiver's `awaitTransfer` handler fires off-main
     /// into the coordinator, never hopping to the thread this call holds — and on
     /// main that thread keeps running the event loop meanwhile
-    /// (`LazyPullCoordinator`). `onProgress` is the **only** progress this
-    /// function reports — the session
-    /// owning the pull ends its own unit, and reporting here would double-count.
+    /// (`LazyPullCoordinator`). Byte progress is reported through
+    /// `operation.unitProgressed` only — the caller ends the unit itself, and
+    /// recording a terminal here would double-count.
     nonisolated private func performBlockingPull(
-        _ snapshot: LazyPullSnapshot,
-        onProgress: @escaping @Sendable (UInt64, UInt64) -> Void = { _, _ in }
+        _ snapshot: LazyPullSnapshot, operation: ClipboardTransferOperation
     ) -> ClipboardContent.Representation? {
         // Free-space pre-flight before the request, so an over-budget rep never
         // starts a transfer [Safeguard 4].
@@ -1471,10 +1423,11 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.warning(
                 "Not enough disk space to stage clipboard file rep '\(snapshot.uti, privacy: .public)' (\(snapshot.byteCount, privacy: .public) bytes)"
             )
-            recordPasteIssue(
-                .diskFull(
-                    needed: snapshot.byteCount,
-                    available: snapshot.staging.availableCapacity()))
+            operation.finish(
+                .failed(
+                    .diskFull(
+                        needed: snapshot.byteCount,
+                        available: snapshot.staging.availableCapacity())))
             return nil
         }
         let transferID = Self.inboundTransferID(
@@ -1501,7 +1454,9 @@ final class VsockClipboardService: ClipboardServicing {
             // streaming file is never timed out mid-transfer. [large-paste]
             onProgress: { bytes, total in
                 coordinator.heartbeat(transferID)
-                onProgress(UInt64(bytes), UInt64(total))
+                operation.unitProgressed(
+                    id: UInt64(snapshot.repIndex), bytesTransferred: UInt64(max(0, bytes)),
+                    totalBytes: UInt64(max(0, total)))
             })
         let outcome = coordinator.pull(transferID: transferID, timeout: snapshot.timeout) {
             var request = Frame()
@@ -1536,12 +1491,12 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.warning(
                 "File clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) aborted (\(abort.rawCode, privacy: .public))"
             )
-            if let issue = ClipboardTransferIssue.inboundPullAborted(abort) {
-                recordPasteIssue(issue)
+            if let failure = ClipboardTransferFailure.inboundPullAborted(abort) {
+                operation.finish(.failed(failure))
             } else {
                 // A retiring abort names no failure of its own; the one this
                 // connection's end delivers is explained here.
-                recordPasteInterruption(generation: generation)
+                recordPasteInterruption(operation)
             }
             return nil
         case .timedOut:
@@ -1549,7 +1504,7 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.warning(
                 "File clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) timed out"
             )
-            recordPasteIssue(.pasteTimedOut())
+            operation.finish(.failed(.timedOut))
             return nil
         case .cancelled:
             Self.logger.debug(
@@ -1557,7 +1512,7 @@ final class VsockClipboardService: ClipboardServicing {
             )
             // A supersession or release raises its own explainer; the end of
             // this connection has none but this.
-            recordPasteInterruption(generation: generation)
+            recordPasteInterruption(operation)
             // Nothing will ever deliver or abort this transferID now, so release
             // the registered awaiter rather than leaking it.
             receiver.cancelAwait(transferID)
@@ -1610,7 +1565,7 @@ final class VsockClipboardService: ClipboardServicing {
         // files ride the grace window rather than being swept (docs/CLIPBOARD.md
         // §3), so a paste mid-copy survives.
         if retractStaleHostWrite?() == true {
-            raiseIssue(.staleCopyRetracted(hasSuccessor: false))
+            reportRefusal(gesture: .copy, .supersededCopyRetracted(hasSuccessor: false))
             staging.reclaimSiblingRoots()
             Self.logger.notice(
                 "Retracted the stale host-pasteboard promise for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) after the guest released gen=\(release.generation, privacy: .public)"
@@ -1619,16 +1574,6 @@ final class VsockClipboardService: ClipboardServicing {
         Self.logger.debug(
             "Guest released clipboard offer (gen=\(release.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)) for '\(self.label, privacy: .public)'"
         )
-    }
-}
-
-// MARK: - Cancelling the shown transfer
-
-extension VsockClipboardService: TransferCancelling {
-    /// Routes a Cancel on the app-wide readout to whichever of this VM's
-    /// operations that readout is showing.
-    func requestCancelOfShownOperation() {
-        progress.requestCancelOfPublishedSession()
     }
 }
 
@@ -1654,7 +1599,7 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
             let snapshot = onMain({
                 self.pasteBoundSnapshot(generation: generation, repIndex: repIndex)
             }),
-            let rep = pullWithOwnSession(snapshot)
+            let rep = pullWithOwnOperation(snapshot)
         else { return nil }
         return pasteFileURL(for: rep, generation: generation)
     }
@@ -1676,38 +1621,32 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
                 self.lazyPullSnapshot(generation: generation, repIndex: repIndex)
             }),
             snapshot.uti == uti,
-            let rep = pullWithOwnSession(snapshot)
+            let rep = pullWithOwnOperation(snapshot)
         else { return nil }
         return Self.residentBytes(of: rep)
     }
 
-    /// Runs one paste-time pull under its own single-transfer progress session
-    /// (a paste has no other session to join), caching the delivered rep so the
-    /// item's sibling flavors — and later fires — reuse it.
+    /// Runs one paste-time pull under its own operation (a paste has no other
+    /// operation to join), caching the delivered rep so the item's sibling
+    /// flavors — and later fires — reuse it.
     ///
-    /// The session is not cancellable: it spans one provider fire, and the
+    /// The operation is not cancellable: it spans one provider fire, and the
     /// pasteboard fires once per item, so a Cancel could stop only the item in
     /// flight while the consumer moves on to the next.
-    nonisolated private func pullWithOwnSession(
+    nonisolated private func pullWithOwnOperation(
         _ snapshot: LazyPullSnapshot
     ) -> ClipboardContent.Representation? {
-        let tracker = onMain { self.progress }
         let repIndex = snapshot.repIndex
         let generation = snapshot.generation
-        onMain { self.livePromise(generation: generation)?.beginPasteFire(repIndex) }
-        let session = tracker.openSession(
-            direction: .inbound, peerName: onMain { self.label },
-            units: [
-                ClipboardProgressTracker.PlannedUnit(
-                    id: UInt64(repIndex), expectedBytes: snapshot.byteCount,
-                    name: snapshot.filename.isEmpty ? nil : snapshot.filename)
-            ])
-        tracker.unitBegan(session: session, id: UInt64(repIndex))
-        let pulled = performBlockingPull(snapshot) { bytes, total in
-            tracker.unitProgressed(
-                session: session, id: UInt64(repIndex), bytesTransferred: bytes,
-                totalBytes: total)
+        let peerName = onMain { () -> String in
+            self.livePromise(generation: generation)?.beginPasteFire(repIndex)
+            return self.label
         }
+        let operation = makeOperation(gesture: .paste, direction: .inbound, peerName: peerName)
+        operation.unitBegan(
+            id: UInt64(repIndex), expectedBytes: snapshot.byteCount,
+            name: snapshot.filename.isEmpty ? nil : snapshot.filename)
+        let pulled = performBlockingPull(snapshot, operation: operation)
         let rep = onMain { () -> ClipboardContent.Representation? in
             guard let promise = self.livePromise(generation: generation) else { return pulled }
             promise.endPasteFire(repIndex)
@@ -1724,8 +1663,15 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
             // leaving this flavor empty.
             return promise.materialized[repIndex]
         }
-        tracker.unitEnded(session: session, id: UInt64(repIndex), succeeded: rep != nil)
-        tracker.closeSession(session)
+        operation.unitEnded(id: UInt64(repIndex), succeeded: rep != nil)
+        if rep != nil {
+            operation.finish(.completed)
+        } else {
+            // Every path that owes the user a reason has already finished this
+            // operation with it; what is left is a supersession or a benign
+            // retiring abort, which explain themselves elsewhere.
+            operation.abandon()
+        }
         return rep
     }
 
@@ -1761,7 +1707,7 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
             Self.logger.error(
                 "Failed to stage clipboard file '\(rep.filename, privacy: .public)' from '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)) — serving nothing"
             )
-            recordPasteIssue(.pasteFileStagingFailed())
+            reportPasteRefusal(.stagingFailed)
             return nil
         }
         do {
@@ -1773,7 +1719,7 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
             Self.logger.error(
                 "Failed to write staged clipboard file '\(rep.filename, privacy: .public)' from '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)): \(error.localizedDescription, privacy: .public)"
             )
-            recordPasteIssue(.pasteFileStagingFailed())
+            reportPasteRefusal(.stagingFailed)
             return nil
         }
     }

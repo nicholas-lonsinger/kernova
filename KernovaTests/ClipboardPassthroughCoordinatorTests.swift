@@ -26,21 +26,23 @@ struct ClipboardPassthroughCoordinatorTests {
         var clipboardContent: ClipboardContent = .empty
         var isConnected = true
         var supportsBinaryRepresentations = true
-        var lastTransferIssue: ClipboardTransferIssue?
         private(set) var inboundOfferSeq: UInt64 = 0
+
+        /// Where this stand-in reports its own refusals, as the real transport
+        /// does — the VM's transfer report.
+        @ObservationIgnored var reporter: ClipboardTransferReporter?
 
         /// Every content handed to `grabIfChanged()` by the poll, in order.
         var grabbed: [ClipboardContent] = []
 
         /// Makes `materializeForCopy` refuse the way `VsockClipboardService` does
-        /// over the deadline-safe cap: every rep dropped, and the transfer issue
-        /// raised in the same step.
+        /// over the deadline-safe cap: every rep dropped, and the refusal
+        /// reported in the same step.
         var refusesOverCopyBudget = false
 
-        /// Fires on each `grabIfChanged` / `reportIssue`, so a wait on the poll's
-        /// off-actor file resolve resolves on the event itself.
+        /// Fires on each `grabIfChanged`, so a wait on the poll's off-actor file
+        /// resolve resolves on the event itself.
         @ObservationIgnored let grabRecorded = AsyncGate()
-        @ObservationIgnored let issueReported = AsyncGate()
 
         func stop() {}
         func clearBuffer() { clipboardContent = .empty }
@@ -50,16 +52,16 @@ struct ClipboardPassthroughCoordinatorTests {
             grabRecorded.notify()
         }
 
-        func reportIssue(_ issue: ClipboardTransferIssue) {
-            lastTransferIssue = issue
-            issueReported.notify()
-        }
-
         func materializeForCopy() -> [CopyToMacItem] {
             guard refusesOverCopyBudget else {
                 return clipboardContent.representations.map { .resolved($0) }
             }
-            lastTransferIssue = .overCopyBudget(limitBytes: ClipboardPasteLimit.defaultBytes)
+            reporter?.finish(
+                ClipboardTransferFinish(
+                    gesture: .copy,
+                    outcome: .failed(
+                        .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes)),
+                    peerName: "Passthrough VM"))
             return [.droppedFile(.overPasteBudget)]
         }
 
@@ -77,6 +79,8 @@ struct ClipboardPassthroughCoordinatorTests {
         let service: FakePassthroughService
         let pasteboard: NSPasteboard
         let publisher: HostClipboardPublisher
+        /// This VM's transfer report, as every surface reads it.
+        let reports: ClipboardTransferReports
     }
 
     private func makeHarness(preferences: AppPreferences? = nil) -> Harness {
@@ -92,12 +96,15 @@ struct ClipboardPassthroughCoordinatorTests {
             preferences: preferences
                 ?? makeEphemeralPreferences(suiteName: "test.kernova.passthrough-instance"))
         let service = FakePassthroughService()
+        let reports = ClipboardTransferReports()
+        service.reporter = reports.reporter
         instance.clipboardService = service
         let coordinator = ClipboardPassthroughCoordinator(
-            instance: instance, publisher: publisher, pasteboard: pasteboard)
+            instance: instance, publisher: publisher, reporter: reports.reporter,
+            pasteboard: pasteboard)
         return Harness(
             coordinator: coordinator, instance: instance, service: service,
-            pasteboard: pasteboard, publisher: publisher)
+            pasteboard: pasteboard, publisher: publisher, reports: reports)
     }
 
     /// Places a plain-text item on `pasteboard`.
@@ -188,7 +195,7 @@ struct ClipboardPassthroughCoordinatorTests {
 
         #expect(h.service.grabbed.last?.representations.map(\.filename) == ["empty.txt"])
         #expect(h.service.grabbed.last?.representations.first?.byteCount == 0)
-        #expect(h.service.lastTransferIssue == nil)
+        #expect(h.reports.failure == nil)
     }
 
     @Test("a forward the intake could not fully read surfaces the skip as an issue")
@@ -211,14 +218,9 @@ struct ClipboardPassthroughCoordinatorTests {
         h.coordinator.pollHostClipboard()
         try FileManager.default.removeItem(at: doomed)
 
-        try await h.service.issueReported.wait { h.service.lastTransferIssue != nil }
+        try await h.reports.waitForFailure()
         #expect(h.service.grabbed.last?.representations.map(\.filename) == ["kept.txt"])
-        #expect(
-            h.service.lastTransferIssue?.kind
-                == .localFailure(
-                    code: ClipboardErrorCode.forwardItemsSkipped.rawValue,
-                    message: "Skipped 1 unreadable item")
-        )
+        #expect(h.reports.failure == .itemsSkipped(note: "Skipped 1 unreadable item"))
     }
 
     @Test("a forward whose every item went unreadable surfaces the rejection")
@@ -237,14 +239,9 @@ struct ClipboardPassthroughCoordinatorTests {
         h.coordinator.pollHostClipboard()
         try FileManager.default.removeItem(at: doomed)
 
-        try await h.service.issueReported.wait { h.service.lastTransferIssue != nil }
+        try await h.reports.waitForFailure()
         #expect(h.service.grabbed.isEmpty)
-        #expect(
-            h.service.lastTransferIssue?.kind
-                == .localFailure(
-                    code: ClipboardErrorCode.forwardItemsSkipped.rawValue,
-                    message: "Couldn't read the dropped item")
-        )
+        #expect(h.reports.failure == .itemsSkipped(note: "Couldn't read the dropped item"))
     }
 
     @Test("a file deleted before the poll reads the pasteboard is reported too")
@@ -266,14 +263,9 @@ struct ClipboardPassthroughCoordinatorTests {
         try FileManager.default.removeItem(at: doomed)
         h.coordinator.pollHostClipboard()
 
-        try await h.service.issueReported.wait { h.service.lastTransferIssue != nil }
+        try await h.reports.waitForFailure()
         #expect(h.service.grabbed.last?.representations.map(\.filename) == ["kept.txt"])
-        #expect(
-            h.service.lastTransferIssue?.kind
-                == .localFailure(
-                    code: ClipboardErrorCode.forwardItemsSkipped.rawValue,
-                    message: "Skipped 1 unreadable item")
-        )
+        #expect(h.reports.failure == .itemsSkipped(note: "Skipped 1 unreadable item"))
     }
 
     @Test("a copy whose every file vanished before the poll surfaces the rejection")
@@ -292,14 +284,9 @@ struct ClipboardPassthroughCoordinatorTests {
         try FileManager.default.removeItem(at: doomed)
         h.coordinator.pollHostClipboard()
 
-        try await h.service.issueReported.wait { h.service.lastTransferIssue != nil }
+        try await h.reports.waitForFailure()
         #expect(h.service.grabbed.isEmpty)
-        #expect(
-            h.service.lastTransferIssue?.kind
-                == .localFailure(
-                    code: ClipboardErrorCode.forwardItemsSkipped.rawValue,
-                    message: "Couldn't read the dropped item")
-        )
+        #expect(h.reports.failure == .itemsSkipped(note: "Couldn't read the dropped item"))
     }
 
     @Test("a text-only transport's blanket file rejection is not reported")
@@ -330,7 +317,7 @@ struct ClipboardPassthroughCoordinatorTests {
         // A Linux guest rejects every file copy by design, so reporting here
         // would fire on each one rather than on anything the user can act on.
         #expect(h.service.grabbed.isEmpty)
-        #expect(h.service.lastTransferIssue == nil)
+        #expect(h.reports.failure == nil)
     }
 
     @Test("A transient-marked snapshot is not forwarded")
@@ -390,17 +377,13 @@ struct ClipboardPassthroughCoordinatorTests {
         h.service.refusesOverCopyBudget = true
         h.service.simulateInboundOffer(ClipboardContent(text: "over the cap"))
 
-        try await published.wait { h.service.lastTransferIssue != nil }
+        try await published.wait { h.reports.failure != nil }
         #expect(h.pasteboard.changeCount == baseline)
         #expect(h.pasteboard.string(forType: .string) == "previous host content")
         // No gesture outcome exists on this path — the coordinator discards
-        // everything but the change count — so the issue is the whole report.
+        // everything but the change count — so the report is the whole account.
         #expect(
-            h.service.lastTransferIssue?.kind
-                == .localFailure(
-                    code: ClipboardErrorCode.copyTooLarge.rawValue,
-                    message: ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: ClipboardPasteLimit.defaultBytes))
-        )
+            h.reports.failure == .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes))
     }
 
     // MARK: - Replaying a refusal after the ceiling is raised
@@ -413,10 +396,10 @@ struct ClipboardPassthroughCoordinatorTests {
         let h = makeHarness(preferences: preferences)
         writeText(hostContent, to: h.pasteboard)
 
-        // Wait on the publish *completing*, not on `lastTransferIssue`: the
-        // service raises that inside `materializeForCopy`, while the coordinator
-        // records the refusal only once the publish returns. Keying on the issue
-        // lets the raise land before there is a refusal to replay.
+        // Wait on the publish *completing*, not on the transfer report: the
+        // service reports the refusal inside `materializeForCopy`, while the
+        // coordinator records it only once the publish returns. Keying on the
+        // report lets the raise land before there is a refusal to replay.
         var publishCompleted = false
         let published = AsyncGate()
         h.coordinator.onInboundPublishedForTesting = {
@@ -570,7 +553,8 @@ struct ClipboardPassthroughCoordinatorTests {
         let service = PromisedPassthroughService()
         instance.clipboardService = service
         let coordinator = ClipboardPassthroughCoordinator(
-            instance: instance, publisher: publisher, pasteboard: pasteboard)
+            instance: instance, publisher: publisher, reporter: instance.clipboardTransfers,
+            pasteboard: pasteboard)
 
         let published = AsyncGate()
         coordinator.onInboundPublishedForTesting = { published.notify() }

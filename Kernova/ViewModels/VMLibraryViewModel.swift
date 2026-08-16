@@ -2899,9 +2899,6 @@ final class VMLibraryViewModel {
     /// Drops `instance` from the library, moving the selection off it and
     /// releasing the app-level state keyed on it.
     ///
-    /// The single removal path: a clipboard problem left in the issue center
-    /// would otherwise keep drawing a menu line for a VM that no longer exists.
-    ///
     /// `bundleIsGone: false` drops the row but keeps the VM's DHCP reservation
     /// slot, for a bundle still on disk whose configuration could not be read —
     /// that VM still exists, so handing its address to somebody else would move
@@ -2911,7 +2908,6 @@ final class VMLibraryViewModel {
         if selectedID == instance.id {
             selectedID = instances.first?.id
         }
-        ClipboardIssueCenter.shared.clear(instanceID: instance.instanceID)
         // A VM out of the library stops claiming its host ports and its
         // address, so the next VM created can be handed both.
         withdrawPortForwardingRules(for: instance.configuration)

@@ -122,6 +122,21 @@ final class VMInstance {
     /// `refreshClipboardPassthrough()`.
     @ObservationIgnored private var clipboardPassthroughCoordinator: ClipboardPassthroughCoordinator?
 
+    /// Where this VM's clipboard and drop producers publish, and the owner of the
+    /// value below.
+    ///
+    /// One per VM rather than per connection: a promise a clipboard service
+    /// published outlives that service, so a refusal belongs to the VM
+    /// (docs/CLIPBOARD.md §13).
+    @ObservationIgnored let clipboardTransfers = ClipboardTransferReporter()
+
+    /// This VM's clipboard transfer state — running, finished, or idle — which
+    /// every surface renders.
+    ///
+    /// Mirrored from ``clipboardTransfers`` because KernovaKit deploys to
+    /// macOS 12 and cannot be `@Observable` itself.
+    private(set) var clipboardTransferReport: ClipboardTransferReport = .idle
+
     // MARK: - Vsock Channel (macOS guests)
 
     /// Listener for incoming guest log connections; populated for macOS guests
@@ -303,6 +318,9 @@ final class VMInstance {
         self.bundleLayout = VMBundleLayout(bundleURL: bundleURL)
         self.status = status
         self.preferences = preferences
+        clipboardTransfers.onReportChanged = { [weak self] report in
+            self?.clipboardTransferReport = report
+        }
     }
 
     // MARK: - VM Bundle Paths (forwarded from VMBundleLayout)
@@ -669,7 +687,9 @@ final class VMInstance {
         if shouldRun {
             let coordinator =
                 clipboardPassthroughCoordinator
-                ?? ClipboardPassthroughCoordinator(instance: self, publisher: hostClipboardPublisher)
+                ?? ClipboardPassthroughCoordinator(
+                    instance: self, publisher: hostClipboardPublisher,
+                    reporter: clipboardTransfers)
             clipboardPassthroughCoordinator = coordinator
             coordinator.start()
         } else {
@@ -954,10 +974,7 @@ final class VMInstance {
             }
             self.vsockDropService?.stop()
             let service = VsockDropService(
-                channel: channel, label: self.name, instanceID: self.instanceID,
-                maxPasteBytes: { [weak self] in
-                    self?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes
-                })
+                channel: channel, label: self.name, reporter: self.clipboardTransfers)
             self.vsockDropService = service
             service.start()
         }
@@ -981,7 +998,7 @@ final class VMInstance {
             // Read through `self` at each budget check, so a Settings change
             // lands on the live session without restarting the service.
             let service = VsockClipboardService(
-                channel: channel, label: self.name, instanceID: self.instanceID,
+                channel: channel, label: self.name, reporter: self.clipboardTransfers,
                 maxPasteBytes: { [weak self] in
                     self?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes
                 })

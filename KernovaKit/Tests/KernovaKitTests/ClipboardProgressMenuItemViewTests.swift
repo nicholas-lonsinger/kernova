@@ -11,7 +11,7 @@ struct ClipboardProgressMenuItemViewTests {
         ClipboardProgressSnapshot(
             direction: .outbound, peerName: "VM", currentItemName: "a.bin", filesCompleted: 0,
             fileCount: 1, bytesTransferred: 10, totalBytes: 100, bytesPerSecond: nil,
-            secondsRemaining: nil, isPasteSession: false, elapsedSeconds: 1,
+            secondsRemaining: nil, gesture: .paste, elapsedSeconds: 1,
             isCancellable: isCancellable)
     }
 

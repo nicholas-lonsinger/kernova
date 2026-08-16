@@ -609,7 +609,10 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
     @Test("an all-dropped over-cap copy reports the refusal")
     func nothingServedOverBudgetReportsTheRefusal() async throws {
         let message = try await copyMessage(copyItems: [.droppedFile(.overPasteBudget)])
-        #expect(message == ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: ClipboardPasteLimit.defaultBytes))
+        #expect(
+            message
+                == ClipboardTransferWording.overCopyBudgetMessage(
+                    limitBytes: ClipboardPasteLimit.defaultBytes))
     }
 
     @Test("nothing to serve and nothing dropped reports a fetch failure")
@@ -632,40 +635,39 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         #expect(try await copyMessage(failWrite: true) == "Couldn't write to the Mac clipboard")
     }
 
-    /// Publishes `issue` for `instance` the way a clipboard service does.
+    /// Stands a refusal on `instance`'s transfer report the way a producer does.
     private func report(
-        _ issue: ClipboardTransferIssue, to center: ClipboardIssueCenter, for instance: VMInstance
+        _ failure: ClipboardTransferFailure, gesture: ClipboardTransferGesture,
+        for instance: VMInstance
     ) {
-        center.report(
-            issue, instanceID: instance.instanceID, vmName: instance.name,
-            pasteLimitBytes: instance.effectiveClipboardMaxPasteBytes)
+        instance.clipboardTransfers.finish(
+            ClipboardTransferFinish(
+                gesture: gesture, outcome: .failed(failure), peerName: instance.name))
     }
 
     @Test("every error code the guest sends renders its own message")
     func peerReportedCodesRenderTheirOwnMessage() {
-        let center = ClipboardIssueCenter()
         let service = FakeClipboardService(content: ClipboardContent(text: "buffer bytes"))
         let instance = makeClipboardInstance()
         instance.clipboardService = service
         let vc = ClipboardContentViewController(
-            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
-            issueCenter: center)
+            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences))
 
-        let expected: [(ClipboardErrorCode, String)] = [
+        let expected: [(ClipboardTransferFailure, String)] = [
             (
-                .pasteTooLarge,
+                .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes),
                 "Too large to paste into the guest — over the \(ClipboardPasteLimit.displayLimit(ClipboardPasteLimit.defaultBytes)) clipboard transfer limit"
             ),
-            (.pasteDiskFull, "The guest ran out of disk space receiving the clipboard file"),
-            (.pasteTimeout, "The clipboard transfer to the guest timed out"),
-            (.pasteFailed, "Clipboard transfer failed on the guest side"),
+            (
+                .peerReported(.pasteDiskFull),
+                "The guest ran out of disk space receiving the clipboard file"
+            ),
+            (.peerReported(.pasteTimeout), "The clipboard transfer to the guest timed out"),
+            (.peerReported(.pasteFailed), "Clipboard transfer failed on the guest side"),
         ]
-        for (code, message) in expected {
-            // A fresh `date` is what re-fires the transient for a repeat issue.
-            report(
-                ClipboardTransferIssue(
-                    kind: .peerReportedError(code: code.rawValue, message: "wire text"),
-                    date: Date()), to: center, for: instance)
+        for (failure, message) in expected {
+            // A fresh `date` is what re-fires the transient for a repeat refusal.
+            report(failure, gesture: .peerPaste, for: instance)
             vc.simulateObservationForTesting()
             #expect(vc.indicatorTextForTesting == message)
         }
@@ -673,45 +675,69 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
 
     @Test("an outcome produced on this side shows the message it carries")
     func localFailureShowsItsOwnMessage() {
-        let center = ClipboardIssueCenter()
         let service = FakeClipboardService(content: ClipboardContent(text: "buffer bytes"))
         let instance = makeClipboardInstance()
         instance.clipboardService = service
         let vc = ClipboardContentViewController(
-            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
-            issueCenter: center)
+            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences))
 
         report(
-            .overCopyBudget(limitBytes: ClipboardPasteLimit.defaultBytes), to: center,
+            .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes), gesture: .copy,
             for: instance)
         vc.simulateObservationForTesting()
         #expect(
             vc.indicatorTextForTesting
-                == ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: ClipboardPasteLimit.defaultBytes))
+                == ClipboardTransferWording.overCopyBudgetMessage(
+                    limitBytes: ClipboardPasteLimit.defaultBytes))
     }
 
     @Test("a refusal from the superseded service the reconnect replaced still renders")
     func supersededServiceRefusalStillRenders() {
-        let center = ClipboardIssueCenter()
         let instance = makeClipboardInstance()
         let superseded = FakeClipboardService(content: ClipboardContent(text: "buffer bytes"))
-        superseded.issueReporter = { [self] in report($0, to: center, for: instance) }
+        // A real transport reports to the VM's reporter, which outlives it.
+        superseded.reporter = instance.clipboardTransfers
         instance.clipboardService = superseded
         let vc = ClipboardContentViewController(
-            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
-            issueCenter: center)
+            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences))
         // The clipboard channel reconnects: the window now shows a service that
         // knows nothing of the promise the old one left on the pasteboard.
         instance.clipboardService = FakeClipboardService(content: .empty)
 
         // That promise fires on a paste and fails against the dead channel.
-        superseded.reportIssue(.pasteTimedOut())
+        superseded.reportRefusal(.timedOut, gesture: .paste)
         vc.simulateObservationForTesting()
 
         #expect(
             vc.indicatorTextForTesting
-                == ClipboardTransferIssue.pasteTimedOut().displayMessage(
-                    pasteLimitBytes: instance.effectiveClipboardMaxPasteBytes))
+                == "The transfer from the guest timed out, so the paste didn't finish.")
+    }
+
+    @Test("the window's bar renders the VM's running readout, whichever producer opened it")
+    func transferBarRendersTheVMReport() throws {
+        let instance = makeClipboardInstance()
+        instance.clipboardService = FakeClipboardService(content: .empty)
+        let vc = ClipboardContentViewController(
+            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences))
+        // A drop is the other producer on this VM's report; the window's bar
+        // shows it too.
+        let operation = ClipboardTransferOperation(
+            gesture: .drop, direction: .outbound, peerName: instance.name, revealDelay: 0,
+            now: { 0 }, schedule: { _, _ in }, reporter: instance.clipboardTransfers)
+        instance.clipboardTransfers.publish(
+            from: operation,
+            .running(
+                ClipboardProgressSnapshot(
+                    direction: .outbound, peerName: instance.name, currentItemName: nil,
+                    filesCompleted: 0, fileCount: 1, bytesTransferred: 25, totalBytes: 100,
+                    bytesPerSecond: nil, secondsRemaining: nil, gesture: .drop,
+                    elapsedSeconds: 1), since: Date()))
+        vc.simulateObservationForTesting()
+        #expect(vc.transferBarFractionForTesting == 0.25)
+
+        instance.clipboardTransfers.retire(operation)
+        vc.simulateObservationForTesting()
+        #expect(vc.transferBarFractionForTesting == nil)
     }
 }
 
@@ -732,10 +758,16 @@ private final class FakeClipboardService: ClipboardServicing {
     var isConnected: Bool = true
     var supportsBinaryRepresentations: Bool = true
 
-    /// Where `reportIssue` publishes, as a real transport publishes to
-    /// `ClipboardIssueCenter` — so a test can raise an issue from a service the
-    /// window is no longer showing.
-    var issueReporter: ((ClipboardTransferIssue) -> Void)?
+    /// The VM's transfer report, as a real transport holds it — so a test can
+    /// raise a refusal from a service the window is no longer showing.
+    var reporter: ClipboardTransferReporter?
+
+    /// Reports a refusal the way a real transport does.
+    func reportRefusal(_ failure: ClipboardTransferFailure, gesture: ClipboardTransferGesture) {
+        reporter?.finish(
+            ClipboardTransferFinish(
+                gesture: gesture, outcome: .failed(failure), peerName: "Clipboard VM"))
+    }
 
     /// What `materializeForCopy` hands the publisher, or `nil` to resolve the
     /// buffer's own representations the way the protocol default does.
@@ -768,7 +800,6 @@ private final class FakeClipboardService: ClipboardServicing {
         announcedCount += 1
     }
     func clearBuffer() { clipboardContent = .empty }
-    func reportIssue(_ issue: ClipboardTransferIssue) { issueReporter?(issue) }
     // materializeForPreview uses the protocol-extension default (no-op).
 
     func materializeForCopy() -> [CopyToMacItem] {

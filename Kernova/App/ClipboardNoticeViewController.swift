@@ -7,13 +7,13 @@ import AppKit
 /// (`HostAgentStatusItemController`) owns the dismissal and the window summons.
 @MainActor
 final class ClipboardNoticeViewController: NSViewController {
-    private let notice: ClipboardIssueCenter.Notice
+    private let wording: ClipboardTransferWording
     private let onOpenClipboardWindow: () -> Void
 
     init(
-        notice: ClipboardIssueCenter.Notice, onOpenClipboardWindow: @escaping () -> Void
+        wording: ClipboardTransferWording, onOpenClipboardWindow: @escaping () -> Void
     ) {
-        self.notice = notice
+        self.wording = wording
         self.onOpenClipboardWindow = onOpenClipboardWindow
         super.init(nibName: nil, bundle: nil)
     }
@@ -25,11 +25,10 @@ final class ClipboardNoticeViewController: NSViewController {
 
     override func loadView() {
         var rows: [NSView] = [
-            makeCalloutHeadline(notice.issue.noticeHeadline(vmName: notice.vmName)),
-            makeCalloutBody(
-                notice.issue.displayMessage(pasteLimitBytes: notice.pasteLimitBytes)),
+            makeCalloutHeadline(wording.headline),
+            makeCalloutBody(wording.message),
         ]
-        if notice.issue.includesStaleClipboardContext {
+        if wording.mentionsMacClipboardKept {
             rows.append(makeCalloutBody("The Mac clipboard still has its previous contents."))
         }
         rows.append(
