@@ -178,6 +178,72 @@ struct ClipboardTransferReporterTests {
         }
     }
 
+    // MARK: - A refusal raised alongside another operation
+
+    @Test("a refusal raised during another operation survives that operation's completion")
+    func refusalOutlivesAConcurrentOperation() {
+        let scheduler = DwellScheduler()
+        let reporter = makeReporter(scheduler: scheduler)
+        let preview = makeOperation(reporter, gesture: .preview)
+        let since = Date(timeIntervalSince1970: 100)
+
+        // A preview is on screen...
+        reporter.publish(from: preview, .running(snapshot(bytes: 10), since: since))
+        guard case .running = reporter.report else {
+            Issue.record("expected the preview's readout")
+            return
+        }
+
+        // ...when a paste fire fails underneath it. The refusal shows at once, so
+        // the notice popover, the dropdown line and the window banner all fire.
+        let refusal = finish(.diskFull(needed: 4096, available: 0), at: since.addingTimeInterval(1))
+        reporter.finish(refusal)
+        #expect(reporter.report == .finished(refusal))
+
+        // The running operation's next emission takes the bar back; the refusal
+        // stands underneath rather than being dropped.
+        reporter.publish(from: preview, .running(snapshot(bytes: 20), since: since))
+        guard case .running = reporter.report else {
+            Issue.record("the running operation must take the readout back")
+            return
+        }
+
+        // Running to the end says nothing about the paste that failed alongside,
+        // so the completion must not clear it.
+        reporter.publish(
+            from: preview,
+            .finished(
+                ClipboardTransferFinish(
+                    gesture: .preview, outcome: .completed(final: snapshot(bytes: 100)),
+                    peerName: "macOS TEST")))
+        #expect(reporter.report == .finished(refusal))
+        // No dwell retires it either: a refusal stands until something displaces
+        // it, and this one is not the dwell's to clear.
+        scheduler.fire()
+        #expect(reporter.report == .finished(refusal))
+    }
+
+    @Test("a retry that succeeds clears a failure that stood before it began")
+    func aLaterSuccessClearsAnOlderFailure() {
+        let scheduler = DwellScheduler()
+        let reporter = makeReporter(scheduler: scheduler)
+        let retry = makeOperation(reporter)
+        let failedAt = Date(timeIntervalSince1970: 100)
+
+        reporter.finish(finish(.transferFailed, at: failedAt))
+        // The retry begins *after* the failure, so its completion disproves it.
+        let since = failedAt.addingTimeInterval(1)
+        reporter.publish(from: retry, .running(snapshot(bytes: 10), since: since))
+        let completed = ClipboardTransferFinish(
+            gesture: .paste, outcome: .completed(final: snapshot(bytes: 100)),
+            peerName: "macOS TEST")
+        reporter.publish(from: retry, .finished(completed))
+
+        #expect(reporter.report == .finished(completed))
+        scheduler.fire()
+        #expect(reporter.report == .idle)
+    }
+
     // MARK: - Absorbing repeats
 
     @Test("the repeated fires of one refused paste raise one report")

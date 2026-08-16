@@ -10,6 +10,13 @@ import Foundation
 /// superseded by a reconnect still reports the failures of the pasteboard
 /// promises it published, and they land here.
 ///
+/// **A refusal is never lost behind another operation.** It shows the moment it
+/// is recorded, over any running readout, so the surfaces that interrupt fire at
+/// once; the running operation's next emission takes the readout back. When that
+/// operation then completes, its terminal does **not** clear the refusal —
+/// a completion disproves only the failures that stood before it began, which is
+/// what still lets a retry clear the line it is retrying.
+///
 /// Not `@Observable` — KernovaKit deploys to macOS 12, which has no Observation.
 /// It notifies through ``onReportChanged`` instead, and the host mirrors that
 /// into an observed property on `VMInstance`.
@@ -43,6 +50,15 @@ public final class ClipboardTransferReporter {
     /// Cleared by any running readout, so the same refusal after another
     /// operation ran is news again.
     private var absorbsRepeats = false
+
+    /// Whether ``lastFinish`` is a refusal that has not yet been displaced by a
+    /// running readout.
+    ///
+    /// A refusal has to reach the surfaces that interrupt — the notice popover,
+    /// the dropdown line, the window banner — at the moment it is raised, even
+    /// while something else is still transferring. The next `.running` publish
+    /// clears this and the bar comes back.
+    private var failureAwaitsDisplacement = false
 
     /// Bumped on every change to ``report``, so an armed dwell can tell it was
     /// superseded.
@@ -106,10 +122,14 @@ public final class ClipboardTransferReporter {
                     Running(key: key, operation: operation, snapshot: snapshot, since: since))
             }
             absorbsRepeats = false
+            // The bar takes the readout back from a refusal that has had its
+            // moment on screen; it stays standing underneath.
+            failureAwaitsDisplacement = false
             recompute()
         case .finished(let finish):
+            let since = running.first { $0.key == ObjectIdentifier(operation) }?.since
             remove(operation)
-            record(finish)
+            record(finish, startedAt: since)
         case .idle:
             retire(operation)
         }
@@ -118,7 +138,7 @@ public final class ClipboardTransferReporter {
     /// Records a refusal raised without a transfer behind it — a pre-flight
     /// check, a peer error frame, a gesture that never opened a stream.
     public func finish(_ finish: ClipboardTransferFinish) {
-        record(finish)
+        record(finish, startedAt: nil)
     }
 
     /// Drops `operation` from the readout without a finished report.
@@ -137,6 +157,7 @@ public final class ClipboardTransferReporter {
         guard lastFinish != nil else { return }
         lastFinish = nil
         absorbsRepeats = false
+        failureAwaitsDisplacement = false
         recompute()
     }
 
@@ -167,13 +188,26 @@ public final class ClipboardTransferReporter {
     /// The N pasteboard fires of one refused multi-file paste each report the
     /// same refusal, and one message is what the user is owed. A running report
     /// in between is a new operation, so the next repeat is announced again.
-    private func record(_ finish: ClipboardTransferFinish) {
+    ///
+    /// `startedAt` is when the finishing operation began, for the one finish that
+    /// must not install itself: a completion or cancellation leaves a refusal
+    /// raised *during* it standing, since running to the end says nothing about a
+    /// transfer that failed alongside. A refusal older than the operation is one
+    /// the operation retried, so that one is cleared.
+    private func record(_ finish: ClipboardTransferFinish, startedAt: Date?) {
         if absorbsRepeats, let standing = lastFinish, standing.isSameNews(as: finish) {
+            recompute()
+            return
+        }
+        if finish.failure == nil, let standing = lastFinish, standing.failure != nil,
+            let startedAt, standing.date >= startedAt
+        {
             recompute()
             return
         }
         lastFinish = finish
         absorbsRepeats = true
+        failureAwaitsDisplacement = finish.failure != nil
         if let failure = finish.failure, finish.gesture.isMadeHere {
             Self.logger.notice(
                 "\(finish.gesture, privacy: .public) from '\(finish.peerName, privacy: .public)' failed: \(failure, privacy: .public)"
@@ -185,7 +219,9 @@ public final class ClipboardTransferReporter {
     /// Rebuilds ``report`` and notifies when it changed.
     private func recompute() {
         let next: ClipboardTransferReport
-        if let newest = running.last {
+        if failureAwaitsDisplacement, let lastFinish {
+            next = .finished(lastFinish)
+        } else if let newest = running.last {
             next = .running(newest.snapshot, since: newest.since)
         } else if let lastFinish {
             next = .finished(lastFinish)
@@ -207,7 +243,9 @@ public final class ClipboardTransferReporter {
         guard case .finished(let finish) = report, finish.failure == nil else { return }
         let epoch = dwellEpoch
         schedule(dwellSeconds) { [weak self] in
-            guard let self, self.dwellEpoch == epoch else { return }
+            // Retires only the report it was armed for: a refusal recorded in the
+            // meantime is not this dwell's to clear.
+            guard let self, self.dwellEpoch == epoch, self.lastFinish == finish else { return }
             self.clearFinished()
         }
     }
