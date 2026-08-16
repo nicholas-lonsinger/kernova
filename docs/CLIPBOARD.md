@@ -71,10 +71,10 @@ as bytes stream.
 
 Caveats this does **not** waive:
 
-- The **synchronous pasteboard provider API blocks and has no "still working" signal**: a promised
-  flavor's bytes are pulled inside the consumer's provide callback, against an OS paste deadline
-  nothing can signal into or extend. Reserve direct-to-RAM pulls for inline content that
-  comfortably fits.
+- The **synchronous pasteboard provider API has no "still working" signal**: a promised flavor's
+  bytes are pulled inside the consumer's provide callback, which cannot return until they exist,
+  against an OS paste deadline nothing can signal into or extend. Reserve direct-to-RAM pulls for
+  inline content that comfortably fits.
 - **That deadline derives the one residual cap §1 admits** — a bound on the **total** of one
   paste's file representations, identical in both directions. The OS clock sees one paste as one
   operation, not each file, so an over-cap offer is **refused whole**, at the Copy to Mac click
@@ -176,10 +176,17 @@ detector. **It stays.**
 ### 8. Keep the latency-sensitive thread free
 
 The host main actor and the guest run loop are latency-sensitive. **They must never block on work
-that scales with payload size** — hashing, copying, archiving, or disk I/O. The one sanctioned
-wait is serving the OS's synchronous promise callback (§2), which parks whichever thread the OS
-delivers it on until the pull resolves: parked is all it may be — the pull's payload-scaled stages
-still run elsewhere, and a failed or superseded transfer wakes it immediately (§9).
+that scales with payload size** — hashing, copying, archiving, or disk I/O. Serving the OS's
+synchronous promise callback (§2) occupies whichever thread the OS delivers it on until the pull
+resolves, and **on the main thread that wait runs the application's event loop** rather than
+parking: the app keeps drawing, dispatching input and running main-queue work — the readout §13
+owes included — while the pull's payload-scaled stages run elsewhere, and a failed or superseded
+transfer wakes it immediately (§9). That wait is reentrant by design: a supersession, a stop, or
+a second promise callback can land inside it, so a pull a callback owns must be visible to every
+other requester of its transfer id, and state captured before the wait is checked against the
+live offer after it. It nests only at the base of the main run loop — inside a tracking or modal
+loop, which owns the events, the callback parks as any off-main caller does, and nothing that
+resolves a parked wait may be routed through the parked thread.
 
 - Off-actor is the floor, not the ceiling: payload-proportional stages that gate the *protocol*
   need separating from each other too. A staging write sitting between a chunk's arrival and the

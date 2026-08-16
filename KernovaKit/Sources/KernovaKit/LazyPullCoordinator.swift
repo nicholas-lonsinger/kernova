@@ -20,26 +20,36 @@ public enum LazyPullOutcome: Sendable {
     case superseded
 }
 
-/// Bridges a synchronous, blocking consume (an `NSPasteboardItemDataProvider`
-/// callback) to the asynchronous, off-actor stream receive: the calling thread
-/// parks on a per-`transfer_id` semaphore until the transfer resolves.
+/// Bridges a synchronous consume (an `NSPasteboardItemDataProvider` callback)
+/// to the asynchronous, off-actor stream receive: the calling thread is held,
+/// per `transfer_id`, until the transfer resolves.
 ///
-/// `deliver`/`abort`/`failAll` MUST be invoked **off the blocked thread** — for
-/// the guest provider that means off the agent's main thread. Routed through the
-/// blocked thread, the wakeup could never run.
+/// How it is held depends on the thread. At the base of the main run loop the
+/// wait runs the application's event loop (`NestedEventLoopWait`), so the app
+/// keeps drawing, dispatching input and running main-queue work — a wait that
+/// is reentrant by design. Everywhere else it parks on a semaphore, and there
+/// `deliver`/`abort`/`failAll` MUST come from another thread: routed through the
+/// parked one, the wakeup could never run.
 public final class LazyPullCoordinator: @unchecked Sendable {
     /// One waiting consumer, keyed by `transfer_id`.
-    private final class Slot {
+    ///
+    /// `@unchecked Sendable`: the flags are read and written under the
+    /// coordinator's `lock`; `eventLoop` is set before the slot is registered.
+    private final class Slot: @unchecked Sendable {
         let semaphore = DispatchSemaphore(value: 0)
         var outcome: LazyPullOutcome = .cancelled
         var resolved = false
         /// Set by `heartbeat` when a chunk lands; consumed by `pull` at each
         /// window boundary to re-arm the inactivity backstop.
         var progressed = false
+        /// The event loop a main-thread `pull` is running, so a resolve can
+        /// break it; `nil` for a parked pull.
+        var eventLoop: NestedEventLoopWait?
     }
 
     #if DEBUG
-    /// Test seam: replaces the real timed semaphore wait at each window boundary in `pull`.
+    /// Test seam: replaces the real timed semaphore wait at each window boundary
+    /// of a parked `pull`.
     ///
     /// Test-only; defaults to a wait identical to the Release path below. Lets a
     /// test control when a window "elapses" instead of racing wall-clock
@@ -55,15 +65,16 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     /// Creates an idle coordinator.
     public init() {}
 
-    /// Sends a request (via `send`) and blocks the calling thread until the
+    /// Sends a request (via `send`) and holds the calling thread until the
     /// matching transfer is delivered, aborts, is cancelled, or the pull goes a
     /// full `timeout` window without progress.
     ///
     /// The slot is registered **before** `send` runs so a fast completion can't
-    /// be missed. MUST be called off the thread that `deliver`/`abort`/`failAll`
-    /// run on (e.g. off the guest agent's main thread), or the wakeup deadlocks.
-    /// `timeout` is an **inactivity** window, not an absolute deadline: each
-    /// `heartbeat` re-arms it, so a healthy transfer of any size never times out.
+    /// be missed. On the main thread the wait runs the event loop, so a resolve
+    /// may arrive from main-queue work; on any other thread it parks, and the
+    /// resolve MUST come from elsewhere or the wakeup deadlocks. `timeout` is an
+    /// **inactivity** window, not an absolute deadline: each `heartbeat` re-arms
+    /// it, so a healthy transfer of any size never times out.
     ///
     /// - Parameters:
     ///   - transferID: correlates this pull with its `ClipboardRequest` and the
@@ -78,6 +89,8 @@ public final class LazyPullCoordinator: @unchecked Sendable {
         send: () -> Void
     ) -> LazyPullOutcome {
         let slot = Slot()
+        // Decided before registration, so a resolve that races `send` finds it.
+        slot.eventLoop = NestedEventLoopWait.current()
         // A pre-existing slot for the same id is displaced rather than silently
         // overwritten: the retry is the live registration going forward, so the
         // displaced pull is woken immediately with `.superseded` instead of
@@ -94,14 +107,20 @@ public final class LazyPullCoordinator: @unchecked Sendable {
         }
         send()
         while true {
-            // The wait blocks one window; the slot's flags — not the wait result —
+            // The wait holds one window; the slot's flags — not the wait result —
             // decide the outcome, so a signal that races the deadline is still
             // honored via `resolved` below.
-            #if DEBUG
-            windowWaitForTesting(slot.semaphore, timeout)
-            #else
-            _ = slot.semaphore.wait(timeout: .now() + timeout)
-            #endif
+            if let eventLoop = slot.eventLoop {
+                eventLoop.wait(until: Date(timeIntervalSinceNow: timeout)) {
+                    lock.withLock { slot.resolved }
+                }
+            } else {
+                #if DEBUG
+                windowWaitForTesting(slot.semaphore, timeout)
+                #else
+                _ = slot.semaphore.wait(timeout: .now() + timeout)
+                #endif
+            }
             let outcome: LazyPullOutcome? = lock.withLock {
                 if slot.resolved {
                     // Identity-checked: removing unconditionally would evict a
@@ -174,11 +193,13 @@ public final class LazyPullCoordinator: @unchecked Sendable {
             slot.outcome = outcome
             return true
         }
-        if shouldSignal { slot.semaphore.signal() }
+        guard shouldSignal else { return }
+        slot.semaphore.signal()
+        slot.eventLoop?.wake()
     }
 
     #if DEBUG
-    /// Number of pulls currently blocked.
+    /// Number of pulls currently waiting.
     ///
     /// Test-only.
     var pendingSlotCountForTesting: Int { lock.withLock { slots.count } }

@@ -39,8 +39,11 @@ extension StagingSink {
 
 /// Materializes streamed file representations to real local temp files so a
 /// receiver can put a concrete `public.file-url` on the pasteboard — the only
-/// mechanism by which a Finder **Paste** creates a file (a pasteboard
-/// `NSFilePromiseProvider` is a drag-session API and is not fulfilled by paste).
+/// mechanism by which a Finder **Paste** creates a file. Verified 2026-08-15
+/// (macOS 26): an `NSFilePromiseProvider` written to `NSPasteboard.general`
+/// advertises its promise types, but ⌘V in Finder creates nothing and TextEdit
+/// pastes nothing, and neither calls the provider's delegate; a `public.file-url`
+/// on the same pasteboard pastes in both.
 ///
 /// One directory per offer generation; the last `maxGenerations` are retained so
 /// a paste still being copied out by Finder survives, and `sweep()` clears
