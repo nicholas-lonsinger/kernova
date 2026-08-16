@@ -90,9 +90,9 @@ extension ClipboardTransferIssue {
     /// ended with only part of the copied file set materialized: nothing is
     /// served rather than an incomplete set.
     ///
-    /// The wording says the paste did not finish rather than that nothing was
-    /// pasted: the refusal cannot tell a fresh paste from the tail of one whose
-    /// earlier files landed before sharing stopped. "Sharing stopped" covers
+    /// This and every paste-fire refusal below say the paste did not finish, not
+    /// that nothing was pasted: the pasteboard fires once per item, so an
+    /// earlier item's file may already have landed. "Sharing stopped" covers
     /// every way the session ends — the VM stopping, the toggle, a reconnect —
     /// where "the VM disconnected" would name only one.
     static func partialFileSetUnservable() -> ClipboardTransferIssue {
@@ -123,7 +123,7 @@ extension ClipboardTransferIssue {
         ClipboardTransferIssue(
             kind: .localFailure(
                 code: ClipboardErrorCode.pasteTimeout.rawValue,
-                message: "The transfer from the guest timed out, so nothing was pasted."),
+                message: "The transfer from the guest timed out, so the paste didn't finish."),
             date: Date())
     }
 
@@ -134,7 +134,7 @@ extension ClipboardTransferIssue {
         ClipboardTransferIssue(
             kind: .localFailure(
                 code: ClipboardErrorCode.pasteFailed.rawValue,
-                message: "The transfer from the guest failed, so nothing was pasted."),
+                message: "The transfer from the guest failed, so the paste didn't finish."),
             date: Date())
     }
 
@@ -144,7 +144,7 @@ extension ClipboardTransferIssue {
         ClipboardTransferIssue(
             kind: .localFailure(
                 code: ClipboardErrorCode.pasteFailed.rawValue,
-                message: "The copied item couldn't be unpacked, so nothing was pasted."),
+                message: "The copied item couldn't be unpacked, so the paste didn't finish."),
             date: Date())
     }
 
@@ -239,7 +239,7 @@ extension ClipboardTransferIssue {
         ClipboardTransferIssue(
             kind: .localFailure(
                 code: ClipboardErrorCode.pasteFailed.rawValue,
-                message: "The copied file couldn't be saved to disk, so nothing was pasted."),
+                message: "The copied file couldn't be saved to disk, so the paste didn't finish."),
             date: Date())
     }
 }

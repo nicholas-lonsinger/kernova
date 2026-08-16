@@ -9,7 +9,8 @@ import os
 /// outlives the code that wrote it. The set is never proactively cleared — a
 /// destination may still read a prior copy's promise. Thread-safe via a lock,
 /// not actor isolation: the host calls from `@MainActor`, the guest agent from
-/// its main-queue-confined run loop, and a provider is not `Sendable`.
+/// its main-queue-confined run loop, and a provider's deferred finish from the
+/// main queue.
 public final class LazyClipboardProviderRegistry: @unchecked Sendable {
     /// Shared registry used by the host in production, one per process.
     ///

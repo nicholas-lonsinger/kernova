@@ -137,6 +137,12 @@ final class VsockClipboardService: ClipboardServicing {
     /// off-actor supersession check.
     private let currentOutboundGeneration = AtomicGeneration()
 
+    /// Set once this connection is over — by `stop()`, or by the channel closing
+    /// under it — before the pulls it cancels are woken, so a paste fire that
+    /// wakes cancelled can tell the end of its session from a supersession or
+    /// release, which raise their own explainer.
+    private let sessionEnded = OSAllocatedUnfairLock(initialState: false)
+
     /// The guest offer currently promised in `clipboardContent`, with its
     /// per-representation materialization cache.
     private var inboundPromise: InboundPromise?
@@ -248,8 +254,7 @@ final class VsockClipboardService: ClipboardServicing {
         /// one issue rather than N.
         var partialSetRefusalReported = false
         /// Whether a paste fire cut short by the connection's end was already
-        /// explained for this offer — `stop()` and the channel's own close both
-        /// reach for it, one behind the other.
+        /// explained for this offer, so concurrent fires raise one issue.
         var pasteInterruptionReported = false
 
         init(
@@ -385,9 +390,9 @@ final class VsockClipboardService: ClipboardServicing {
                     }
                 })
             // Channel closed — wake any parked pull so a materialize doesn't hang
-            // forever. The explainer hops rather than waits (this loop must never
-            // wait on main); queued ahead of the wake, it reads the fire as live.
-            Self.onMainQueue { self?.explainInterruptedPasteFires() }
+            // forever. Marked ended first, so a paste fire that wakes here can
+            // tell this teardown from a supersession and explain itself.
+            self?.sessionEnded.withLock { $0 = true }
             receiver.cancelAll()
             self?.lazyCoordinator.failAll()
         }
@@ -399,9 +404,10 @@ final class VsockClipboardService: ClipboardServicing {
     func stop() {
         consumeTask?.cancel()
         consumeTask = nil
+        // Marked before any wake, so a paste fire this cancels explains itself.
+        sessionEnded.withLock { $0 = true }
         sender?.cancelAll()
         receiver?.cancelAll()
-        explainInterruptedPasteFires()
         // Unblock any synchronous file pull parked on the coordinator, so it
         // returns empty instead of blocking to its backstop timeout.
         lazyCoordinator.failAll()
@@ -506,12 +512,11 @@ final class VsockClipboardService: ClipboardServicing {
         // also has in flight, the very transfer id — but belongs to a paste in
         // progress, which this Cancel is not.
         let pasteOwned = Set(
-            promise.pasteFiringReps.map {
-                ClipboardTransferID.make(generation: generation, repIndex: $0, hostMinted: true)
-            })
-        for index in promise.inFlight.keys where !promise.isPasteFiring(index) {
-            let transferID = ClipboardTransferID.make(
-                generation: generation, repIndex: index, hostMinted: true)
+            promise.pasteFiringReps.map { Self.inboundTransferID(generation: generation, repIndex: $0) })
+        let inFlight = promise.inFlight.keys.map {
+            Self.inboundTransferID(generation: generation, repIndex: $0)
+        }
+        for transferID in inFlight where !pasteOwned.contains(transferID) {
             sendStreamAbort(transferID: transferID, code: .userCancelled)
         }
         receiver?.cancel(generation: generation, except: pasteOwned)
@@ -559,14 +564,20 @@ final class VsockClipboardService: ClipboardServicing {
         issueCenter.clear(instanceID: instanceID)
     }
 
-    /// Explains, once per offer, a paste fire the end of this connection cancels:
+    /// Explains, once per offer, a paste fire this connection's end cut short:
     /// the fire serves nothing, and unlike a supersession nothing else says why.
-    private func explainInterruptedPasteFires() {
-        guard let promise = inboundPromise, !promise.pasteFiringReps.isEmpty,
-            !promise.pasteInterruptionReported
-        else { return }
-        promise.pasteInterruptionReported = true
-        raiseIssue(.pasteInterrupted())
+    ///
+    /// Called by the fire itself, off the outcome it saw — a fire the end never
+    /// touched (its bytes had already landed) has nothing to explain.
+    nonisolated private func recordPasteInterruption(generation: UInt64) {
+        guard sessionEnded.withLock({ $0 }) else { return }
+        onMain {
+            guard let promise = self.livePromise(generation: generation),
+                !promise.pasteInterruptionReported
+            else { return }
+            promise.pasteInterruptionReported = true
+            self.raiseIssue(.pasteInterrupted())
+        }
     }
 
     // MARK: - Public API
@@ -1269,9 +1280,7 @@ final class VsockClipboardService: ClipboardServicing {
                 .diskFull(needed: info.byteCount, available: staging.availableCapacity()))
             return nil
         }
-        // The host is the receiver here, so it sets the direction bit. [H3]
-        let transferID = ClipboardTransferID.make(
-            generation: generation, repIndex: repIndex, hostMinted: true)
+        let transferID = Self.inboundTransferID(generation: generation, repIndex: repIndex)
         let maxAccept =
             staging.availableCapacity().map { UInt64(clamping: $0) }
             ?? ClipboardStreamTuning.unlimitedAcceptByteCount
@@ -1468,9 +1477,8 @@ final class VsockClipboardService: ClipboardServicing {
                     available: snapshot.staging.availableCapacity()))
             return nil
         }
-        // The host is the receiver here, so it sets the direction bit. [H3]
-        let transferID = ClipboardTransferID.make(
-            generation: snapshot.generation, repIndex: snapshot.repIndex, hostMinted: true)
+        let transferID = Self.inboundTransferID(
+            generation: snapshot.generation, repIndex: snapshot.repIndex)
         let maxAccept =
             snapshot.staging.availableCapacity().map { UInt64(clamping: $0) }
             ?? ClipboardStreamTuning.unlimitedAcceptByteCount
@@ -1530,6 +1538,10 @@ final class VsockClipboardService: ClipboardServicing {
             )
             if let issue = ClipboardTransferIssue.inboundPullAborted(abort) {
                 recordPasteIssue(issue)
+            } else {
+                // A retiring abort names no failure of its own; the one this
+                // connection's end delivers is explained here.
+                recordPasteInterruption(generation: generation)
             }
             return nil
         case .timedOut:
@@ -1543,8 +1555,9 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.debug(
                 "File clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) cancelled"
             )
-            // No issue here: whatever retired the pull — a supersession, a
-            // release, `stop()` — raises its own explainer.
+            // A supersession or release raises its own explainer; the end of
+            // this connection has none but this.
+            recordPasteInterruption(generation: generation)
             // Nothing will ever deliver or abort this transferID now, so release
             // the registered awaiter rather than leaking it.
             receiver.cancelAwait(transferID)
@@ -1714,6 +1727,12 @@ extension VsockClipboardService: ClipboardPasteboardRepProviding {
         tracker.unitEnded(session: session, id: UInt64(repIndex), succeeded: rep != nil)
         tracker.closeSession(session)
         return rep
+    }
+
+    /// The `transfer_id` of an inbound pull: the host is the receiver, so it
+    /// sets the direction bit. [H3]
+    nonisolated private static func inboundTransferID(generation: UInt64, repIndex: Int) -> UInt64 {
+        ClipboardTransferID.make(generation: generation, repIndex: repIndex, hostMinted: true)
     }
 
     /// The inbound promise when it is still the one `generation` addresses.

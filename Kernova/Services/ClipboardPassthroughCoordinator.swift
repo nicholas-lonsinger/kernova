@@ -127,9 +127,9 @@ final class ClipboardPassthroughCoordinator {
     // MARK: - Host → guest (poll)
 
     private func startPolling() {
-        // Default mode only: a poll that lands inside a tracking or modal loop
-        // would park the main thread on the fire instead of servicing it, and a
-        // tick skipped while a menu is open costs nothing.
+        // Default mode only: a tick that would land inside a tracking or modal
+        // loop waits for the loop to end — the forward is late by that much —
+        // rather than parking the main thread on the fire it reaches.
         pollTimer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) {
             [weak self] _ in
             // The main run loop fires this on the main thread.

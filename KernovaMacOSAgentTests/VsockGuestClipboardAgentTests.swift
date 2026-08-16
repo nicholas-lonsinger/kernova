@@ -701,6 +701,51 @@ struct VsockGuestClipboardAgentTests {
                 == "nested")
     }
 
+    @Test("a host offer landing during a copied folder's estimate walk is not read back as a copy")
+    func hostOfferDuringFolderWalkIsNotReadBackAsACopy() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let folder = try writeTempFolder(name: "Walked", files: [("a.txt", Data("a".utf8))])
+        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
+        let walked = AsyncGate()
+        let walks = Box(0)
+        await MainActor.run {
+            agent.onFolderEstimateCompletedForTesting = {
+                walks.value += 1
+                walked.notify()
+            }
+        }
+        pasteboard.setItem([(type: .fileURL, data: Data(folder.absoluteString.utf8))])
+
+        // The poll starts the folder's off-main walk; on the same main-queue
+        // turn a host offer lands and the agent's own promise replaces the
+        // folder on the pasteboard — so the walk's completion, which hops back
+        // to main, necessarily runs after that write.
+        await MainActor.run {
+            agent.checkClipboardChange()
+            agent.handleControlFrameForTesting(makeTextOfferFrame(generation: 31, text: "from host"))
+        }
+        try await walked.wait { walks.value == 1 }
+        #expect(pasteboard.promisedTypesForTesting.contains(.string))
+
+        // The next poll finds nothing new: the promise this agent wrote is not
+        // read back as a copy — nothing offered, no copy blamed for coming up
+        // empty, the menu still on the host's offer.
+        await MainActor.run { agent.checkClipboardChange() }
+        try await expectNoOffer(from: hostChannel)
+        let activity = await MainActor.run { agent.clipboardActivity }
+        #expect(activity == .offeredFromHost)
+        #expect(pasteboard.promisedTypesForTesting.contains(.string))
+    }
+
     @Test(
         "outbound: a folder carrying no file bytes is offered at 0 bytes and still streams its tree"
     )
