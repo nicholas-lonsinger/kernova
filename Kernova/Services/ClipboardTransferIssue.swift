@@ -92,24 +92,27 @@ extension ClipboardTransferIssue {
     ///
     /// The wording says the paste did not finish rather than that nothing was
     /// pasted: the refusal cannot tell a fresh paste from the tail of one whose
-    /// earlier files landed before the VM went.
+    /// earlier files landed before sharing stopped. "Sharing stopped" covers
+    /// every way the session ends — the VM stopping, the toggle, a reconnect —
+    /// where "the VM disconnected" would name only one.
     static func partialFileSetUnservable() -> ClipboardTransferIssue {
         ClipboardTransferIssue(
             kind: .localFailure(
                 code: ClipboardErrorCode.pasteIncompleteSet.rawValue,
                 message:
-                    "The VM disconnected before every copied file transferred, so the paste didn't finish."
+                    "Clipboard sharing with the VM stopped before every copied file transferred, so the paste didn't finish."
             ),
             date: Date())
     }
 
-    /// Raised when the VM session ends while a paste-time pull is running: the
-    /// fire serves nothing, and unlike a supersession nothing else explains it.
+    /// Raised when the clipboard session ends while a paste-time pull is
+    /// running: the fire serves nothing, and unlike a supersession nothing else
+    /// explains it.
     static func pasteInterrupted() -> ClipboardTransferIssue {
         ClipboardTransferIssue(
             kind: .localFailure(
                 code: ClipboardErrorCode.pasteFailed.rawValue,
-                message: "The VM disconnected while the clipboard was transferring, so the paste didn't finish."
+                message: "Clipboard sharing with the VM stopped mid-transfer, so the paste didn't finish."
             ),
             date: Date())
     }

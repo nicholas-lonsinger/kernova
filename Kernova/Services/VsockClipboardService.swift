@@ -247,6 +247,10 @@ final class VsockClipboardService: ClipboardServicing {
         /// for this offer, so the N provider fires of one multi-file paste raise
         /// one issue rather than N.
         var partialSetRefusalReported = false
+        /// Whether a paste fire cut short by the connection's end was already
+        /// explained for this offer — `stop()` and the channel's own close both
+        /// reach for it, one behind the other.
+        var pasteInterruptionReported = false
 
         init(
             generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo], isConcealed: Bool
@@ -381,7 +385,9 @@ final class VsockClipboardService: ClipboardServicing {
                     }
                 })
             // Channel closed — wake any parked pull so a materialize doesn't hang
-            // forever.
+            // forever. The explainer hops rather than waits (this loop must never
+            // wait on main); queued ahead of the wake, it reads the fire as live.
+            Self.onMainQueue { self?.explainInterruptedPasteFires() }
             receiver.cancelAll()
             self?.lazyCoordinator.failAll()
         }
@@ -395,11 +401,7 @@ final class VsockClipboardService: ClipboardServicing {
         consumeTask = nil
         sender?.cancelAll()
         receiver?.cancelAll()
-        // A paste fire this teardown cancels serves nothing, and unlike a
-        // supersession nothing else explains that to the user.
-        if let promise = inboundPromise, !promise.pasteFiringReps.isEmpty {
-            raiseIssue(.pasteInterrupted())
-        }
+        explainInterruptedPasteFires()
         // Unblock any synchronous file pull parked on the coordinator, so it
         // returns empty instead of blocking to its backstop timeout.
         lazyCoordinator.failAll()
@@ -555,6 +557,16 @@ final class VsockClipboardService: ClipboardServicing {
     /// Retires this VM's current problem from every surface.
     private func clearIssue() {
         issueCenter.clear(instanceID: instanceID)
+    }
+
+    /// Explains, once per offer, a paste fire the end of this connection cancels:
+    /// the fire serves nothing, and unlike a supersession nothing else says why.
+    private func explainInterruptedPasteFires() {
+        guard let promise = inboundPromise, !promise.pasteFiringReps.isEmpty,
+            !promise.pasteInterruptionReported
+        else { return }
+        promise.pasteInterruptionReported = true
+        raiseIssue(.pasteInterrupted())
     }
 
     // MARK: - Public API

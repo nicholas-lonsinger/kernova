@@ -130,15 +130,17 @@ struct ClipboardTransferIssueTests {
         #expect(unreplaced.hasSuffix("removed from the Mac clipboard."))
     }
 
-    @Test("A paste the VM's disconnect cut short says it did not finish, not that nothing landed")
+    @Test("A paste the end of sharing cut short says it did not finish, not that nothing landed")
     func interruptedPastesClaimOnlyWhatIsKnown() {
         // Neither refusal can tell a fresh paste from the tail of one whose
-        // earlier files already landed, so neither says nothing was pasted.
+        // earlier files already landed, so neither says nothing was pasted; and
+        // neither names the VM disconnecting, since the sharing toggle and a
+        // reconnect end the session the same way.
         for issue in [
             ClipboardTransferIssue.partialFileSetUnservable(), .pasteInterrupted(),
         ] {
             let message = issue.displayMessage(pasteLimitBytes: limit)
-            #expect(message.hasPrefix("The VM disconnected"), "\(issue.kind)")
+            #expect(message.hasPrefix("Clipboard sharing with the VM stopped"), "\(issue.kind)")
             #expect(message.hasSuffix("so the paste didn't finish."), "\(issue.kind)")
             #expect(!message.contains("nothing was pasted"), "\(issue.kind)")
         }

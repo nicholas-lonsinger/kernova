@@ -3196,6 +3196,48 @@ struct VsockClipboardServiceTests {
         #expect(service.lastTransferIssue == nil)
     }
 
+    @Test("the channel closing under a paste fire explains it, as stop() does")
+    func channelCloseDuringPasteFireRaisesTheExplainer() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+
+        let issues = ClipboardIssueCenter()
+        let vmID = UUID()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", instanceID: vmID,
+            issueCenter: issues)
+        service.start()
+        defer { service.stop() }
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 50, repIndex: 0, uti: "public.data", bytes: Data(count: 64),
+            filename: "dropped.bin", isInline: false, beginOnly: true)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 50,
+                reps: [(uti: "public.data", byteCount: 64, filename: "dropped.bin", isInline: false)]))
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
+
+        let paste = Task {
+            await offCooperativePool { service.copyToMacFileURL(generation: 50, repIndex: 0) }
+        }
+        try await responder.answered.wait { responder.requests.count == 1 }
+
+        // The peer goes away — an agent crash, not a stop on this side.
+        guest.close()
+
+        #expect(await paste.value == nil)
+        try await waitForChange { service.lastTransferIssue != nil }
+        let raised = try #require(service.lastTransferIssue)
+        #expect(raised.kind == ClipboardTransferIssue.pasteInterrupted().kind)
+        #expect(issues.latestByInstance[vmID]?.issue == raised)
+    }
+
     @Test("a release delivered while a paste fire is pulling resolves it to nothing")
     func releaseDuringPasteFireResolvesItEmpty() async throws {
         let (guest, host) = try makePair()
