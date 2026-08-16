@@ -208,15 +208,15 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
   test clock) are interchangeable at construction.
 - `HostClipboardPublisher`, `ClipboardPassthroughCoordinator` — host-side publication of inbound
   guest content, and the auto-publish path.
-- `ClipboardProgressCenter` — app-level singleton, not per VM: clipboard services are per-VM but
-  the menu-bar status item renders one readout, so each service pushes its snapshot here and the
-  center republishes the most significant.
-- `ClipboardIssueCenter` — the same shape for refusals, since a clipboard window is optional:
-  `VsockClipboardService` reports every user-visible transfer problem here, and every surface
-  reads the per-VM record back — `ClipboardContentViewController`'s banner (which is also why
-  `ClipboardWindowController` registers as a watcher for as long as its window is up) and
-  `HostAgentStatusItemController`'s popover for the notice no window claimed plus the line under
-  each VM's dropdown row.
+- `ClipboardTransferReporter` — one per `VMInstance`, fed by `VsockClipboardService`,
+  `VsockDropService` and `ClipboardPassthroughCoordinator`. `VMInstance.clipboardTransferReport`
+  mirrors it as the observable value every surface renders — the clipboard window's bar and
+  banner, the toolbar button's ring, and `HostAgentStatusItemController`'s dropdown line and
+  notice popover. The status item computes the newest running report across
+  `VMLibraryViewModel.instances` rather than holding a registry of its own.
+- `ClipboardTransferOperation` — KernovaKit's lock-based per-operation accumulator, opened by
+  both host services and by the guest agent's clipboard and drop agents, which drive it from
+  non-`@MainActor` callbacks and stream lanes.
 - `AgentStatus` — the enum driving install/update/reinstall affordances, sourced from
   `VsockControlService` (macOS) or `SpiceClipboardService` (Linux) and read through
   `VMInstance.agentStatus`.

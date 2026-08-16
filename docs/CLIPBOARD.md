@@ -253,27 +253,31 @@ gesture**, since the user owed the message is the one who acted. **A refusal bel
 to the connection that raised it** — a promise outlives the service that published it (§3), so every
 surface renders the per-VM record rather than a live service's own property.
 
-**Progress is aggregate per operation, never per file.** A session is one user-visible operation —
-a paste, a Copy to Mac, a preview fetch, one side serving a peer's pulls — and its bar climbs
-once, whether its transfers run sequentially or concurrently. One mechanism decides how much is
-done, when an indicator may appear, and when it comes down; every surface renders the snapshot it
-publishes.
+**Progress is aggregate per operation, never per file.** An operation is one
+user-visible gesture — a paste, a Copy to Mac, a preview fetch, a drop, one side
+serving a peer's pulls — and its bar climbs once, whether its transfers run
+sequentially or concurrently.
 
-- **Do not key a session by generation.** Inbound and outbound generations are independent counters
-  that both start at 1, and a preview fetch's generation equals the paste's exactly, so any
-  generation-keyed scheme merges unrelated operations. Key sessions on an opaque token.
-- **Evaluate the reveal delay on each event, not from a timer**, so an operation finishing inside
-  the gate never flashes UI and one stalled before its first byte shows nothing rather than a
-  frozen bar. **Linger briefly after the last transfer** so a long paste reads 100 % rather than
-  vanishing at 99 %; cancelled and partial operations end the same way below 100 %, and
-  supersession clears immediately.
-- **Only a surface that interrupts gets a stricter bar.** A menu that opens itself takes over the
-  screen: open it only for a paste, only once, only after the operation is worth interrupting for,
-  and only while enough work remains that the answer still matters when read. Never over an open
+- **One value per peer**, running or finished, that every surface renders. Both
+  directions and every producer for that peer publish into it, and an app-level
+  readout showing several peers picks the newest running one rather than keeping
+  a registry of its own.
+- **Evaluate the reveal delay on each event, not from a timer**, so an operation
+  finishing inside the gate never flashes UI and one stalled before its first
+  byte shows nothing rather than a frozen bar. Emission past the gate is
+  throttled, so a folder of thousands of small files repaints at a rate a screen
+  is worth.
+- **A terminal always clears the indicator.** Completion and cancellation leave
+  the bar where they stopped it for a beat, so a long paste reads 100 % rather
+  than vanishing at 99 % and a cancel is visibly what happened. A refusal is a
+  finished report carrying the gesture that produced it, and its wording is
+  derived once from that pair rather than composed per surface.
+- **Only a surface that interrupts gets a stricter bar.** A menu that opens
+  itself takes over the screen: open it only for a paste the *peer* performs,
+  only once, only after the operation is worth interrupting for, and only while
+  enough work remains that the answer still matters when read. Never over an open
   menu, never from a status item macOS has hidden.
-- **Render the readout on the side where the bytes land or leave**, and **keep tracker instances
-  per-scope** so two VMs measure independently — a pull reporting to the tracker it started under
-  even after its VM is superseded, or that VM's paste vanishes mid-transfer.
+- **Render the readout on the side where the bytes land or leave.**
 
 ---
 

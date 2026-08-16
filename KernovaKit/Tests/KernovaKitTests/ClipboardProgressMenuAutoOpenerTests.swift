@@ -13,12 +13,12 @@ struct ClipboardProgressMenuAutoOpenerTests {
     /// an app on the peer is blocked on.
     private static func readout(
         elapsed: TimeInterval = 5, secondsRemaining: Double? = 10, bytesTransferred: UInt64 = 100,
-        totalBytes: UInt64 = 1_000, isPaste: Bool = true
+        totalBytes: UInt64 = 1_000, gesture: ClipboardTransferGesture = .peerPaste
     ) -> ClipboardProgressSnapshot {
         ClipboardProgressSnapshot(
             direction: .outbound, peerName: "VM", currentItemName: nil, filesCompleted: 0,
             fileCount: 1, bytesTransferred: bytesTransferred, totalBytes: totalBytes,
-            bytesPerSecond: 100, secondsRemaining: secondsRemaining, isPasteSession: isPaste,
+            bytesPerSecond: 100, secondsRemaining: secondsRemaining, gesture: gesture,
             elapsedSeconds: elapsed)
     }
 
@@ -126,7 +126,7 @@ struct ClipboardProgressMenuAutoOpenerTests {
     func nonPasteNeverOpens() {
         var opener = ClipboardProgressMenuAutoOpener()
         #expect(
-            opener.readoutChanged(Self.readout(isPaste: false), menuIsOpen: false, canOpen: true)
+            opener.readoutChanged(Self.readout(gesture: .paste), menuIsOpen: false, canOpen: true)
                 == .none)
     }
 
@@ -138,7 +138,7 @@ struct ClipboardProgressMenuAutoOpenerTests {
         // readouts would never get its showing.
         opener.menuOpened(automatically: false)
         #expect(
-            opener.readoutChanged(Self.readout(isPaste: false), menuIsOpen: true, canOpen: true)
+            opener.readoutChanged(Self.readout(gesture: .paste), menuIsOpen: true, canOpen: true)
                 == .none)
         opener.menuClosed()
         #expect(opener.readoutChanged(Self.readout(), menuIsOpen: false, canOpen: true) == .open)

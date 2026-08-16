@@ -300,7 +300,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -321,7 +322,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -338,25 +340,22 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let issues = ClipboardIssueCenter()
-        let vmID = UUID()
+        let reports = ClipboardTransferReports()
         // What the previous session left on the dropdown before the VM restarted
         // or the agent reconnected.
-        issues.report(
-            .pasteTimedOut(), instanceID: vmID, vmName: "Build VM",
-            pasteLimitBytes: ClipboardPasteLimit.defaultBytes)
-        #expect(issues.latestByInstance[vmID] != nil)
+        reports.reporter.finish(
+            ClipboardTransferFinish(
+                gesture: .paste, outcome: .failed(.timedOut), peerName: "Build VM"))
+        #expect(reports.failure != nil)
 
         let service = VsockClipboardService(
-            channel: host, label: "Build VM", instanceID: vmID, issueCenter: issues)
+            channel: host, label: "Build VM", reporter: reports.reporter)
         service.start()
         defer { service.stop() }
 
-        // Both surfaces start empty together — the service's own readout has
-        // nothing to show for a transfer that belonged to a finished session.
-        #expect(service.lastTransferIssue == nil)
-        #expect(issues.latestByInstance[vmID] == nil)
-        #expect(issues.pendingNotice == nil)
+        // The report starts empty — a transfer that belonged to a finished
+        // session has nothing left to say.
+        #expect(reports.latest == .idle)
     }
 
     @Test("A control-plane payload on the clipboard channel closes it")
@@ -366,7 +365,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -388,7 +388,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -411,7 +412,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -439,7 +441,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -468,7 +471,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -549,7 +553,7 @@ struct VsockClipboardServiceTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: stagingRoot) }
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter(),
             stagingTempRoot: stagingRoot)
         service.start()
         defer { service.stop() }
@@ -650,7 +654,7 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -744,7 +748,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -792,7 +797,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -839,7 +845,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -909,7 +916,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -963,7 +971,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -1031,7 +1040,8 @@ struct VsockClipboardServiceTests {
         var noSigpipe: Int32 = 1
         _ = setsockopt(hostFd, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -1264,7 +1274,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -1305,7 +1316,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -1337,7 +1349,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -1377,7 +1390,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -1415,7 +1429,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -1468,7 +1483,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -1500,7 +1516,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -1540,7 +1557,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -1571,7 +1589,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -1632,7 +1651,8 @@ struct VsockClipboardServiceTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: stagingRoot) }
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), stagingTempRoot: stagingRoot)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter(),
+            stagingTempRoot: stagingRoot)
         service.start()
         defer { service.stop() }
 
@@ -1700,7 +1720,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -1771,7 +1792,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -1842,7 +1864,9 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let reports = ClipboardTransferReports()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         service.start()
         // The test calls stop() itself mid-flow (that is the action under test);
         // this defer is an idempotent safety net for the early-throw path.
@@ -1889,7 +1913,7 @@ struct VsockClipboardServiceTests {
             await offCooperativePool { service.copyToMacFileURL(generation: 9, repIndex: 1) })
         #expect(repeatURL == pulledURL)
         #expect(try Data(contentsOf: repeatURL) == fileBytes)
-        #expect(service.lastTransferIssue == nil)
+        #expect(reports.failure == nil)
     }
 
     @Test("after stop(), a partially-materialized file set serves nothing and raises one issue")
@@ -1899,7 +1923,9 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let reports = ClipboardTransferReports()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         service.start()
         defer { service.stop() }
 
@@ -1945,15 +1971,13 @@ struct VsockClipboardServiceTests {
         }
         #expect(neverURL == nil)
 
-        // One issue for the whole paste, not one per fire.
-        let issue = try #require(service.lastTransferIssue)
-        guard case .localFailure(let code, _) = issue.kind else {
-            Issue.record("Expected a localFailure issue, got \(issue.kind)")
-            return
-        }
-        #expect(code == ClipboardErrorCode.pasteIncompleteSet.rawValue)
+        // One report for the whole paste, not one per fire.
+        let refusal = try #require(reports.finish)
+        #expect(refusal.failure == .incompleteFileSet)
+        let announcements = reports.reports.count
         _ = await offCooperativePool { service.copyToMacFileURL(generation: 9, repIndex: 1) }
-        #expect(service.lastTransferIssue == issue)
+        #expect(reports.finish == refusal)
+        #expect(reports.reports.count == announcements)
 
         // Inline flavors keep serving regardless.
         let cachedData = await offCooperativePool {
@@ -1969,7 +1993,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -2025,7 +2050,9 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let reports = ClipboardTransferReports()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         service.start()
         defer { service.stop() }
 
@@ -2059,7 +2086,7 @@ struct VsockClipboardServiceTests {
         try guest.sendErrorFrame(
             code: "clipboard.barrier", message: "release processed",
             inReplyTo: "clipboard.release")
-        try await waitForChange { service.lastTransferIssue != nil }
+        try await reports.waitForFailure()
 
         let staleURL = await offCooperativePool {
             service.copyToMacFileURL(generation: 15, repIndex: 0)
@@ -2080,8 +2107,9 @@ struct VsockClipboardServiceTests {
             UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tempRoot) }
         let label = "vm-\(UUID().uuidString)"
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: label, instanceID: UUID(), stagingTempRoot: tempRoot)
+            channel: host, label: label, reporter: reports.reporter, stagingTempRoot: tempRoot)
 
         // An earlier session's receive root, still backing the pasteboard's
         // write at start — the retraction below is what frees it.
@@ -2103,19 +2131,15 @@ struct VsockClipboardServiceTests {
         try guest.send(makeTextOffer(generation: 1, text: "first"))
         try await waitForChange { service.clipboardContent.representations.count == 1 }
         #expect(retractionCalls == 1)
-        #expect(service.lastTransferIssue == nil)
+        #expect(reports.failure == nil)
         #expect(FileManager.default.fileExists(atPath: orphanURL.path))
 
         // Second offer supersedes a promised write still on the pasteboard: the
         // retraction is surfaced and older-session staging is reclaimed.
         try guest.send(makeTextOffer(generation: 2, text: "second"))
-        try await waitForChange { service.lastTransferIssue != nil }
+        try await reports.waitForFailure()
         #expect(retractionCalls == 2)
-        let issue = try #require(service.lastTransferIssue)
-        guard case .staleCopyRetracted = issue.kind else {
-            Issue.record("Expected a staleCopyRetracted issue, got \(issue.kind)")
-            return
-        }
+        #expect(reports.failure == .supersededCopyRetracted(hasSuccessor: true))
         #expect(!FileManager.default.fileExists(atPath: orphanURL.path))
     }
 
@@ -2126,7 +2150,9 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let reports = ClipboardTransferReports()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         // Nothing to retract at the offer; the release finds the stale write.
         var retractionResults: [Bool] = [false, true]
         var retractionCalls = 0
@@ -2140,15 +2166,14 @@ struct VsockClipboardServiceTests {
         try guest.send(makeTextOffer(generation: 4, text: "released"))
         try await waitForChange { service.clipboardContent.representations.count == 1 }
         #expect(retractionCalls == 1)
-        #expect(service.lastTransferIssue == nil)
+        #expect(reports.failure == nil)
 
         var release = Frame()
         release.protocolVersion = 1
         release.clipboardRelease = Kernova_V1_ClipboardRelease.with { $0.generation = 4 }
         try guest.send(release)
-        try await waitForChange {
-            if case .staleCopyRetracted = service.lastTransferIssue?.kind { return true }
-            return false
+        try await reports.wait {
+            reports.failure == .supersededCopyRetracted(hasSuccessor: false)
         }
         #expect(retractionCalls == 2)
     }
@@ -2160,7 +2185,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         var retractionCalls = 0
         service.retractStaleHostWrite = {
             retractionCalls += 1
@@ -2183,7 +2209,9 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let reports = ClipboardTransferReports()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
         pasteboard.clearContents()
         let publisher = HostClipboardPublisher(
@@ -2211,7 +2239,7 @@ struct VsockClipboardServiceTests {
             makeOffer(
                 generation: 2,
                 reps: [(uti: "public.data", byteCount: 64, filename: "b.bin", isInline: false)]))
-        try await waitForChange { service.lastTransferIssue != nil }
+        try await reports.waitForFailure()
         #expect(pasteboard.pasteboardItems?.isEmpty ?? true)
 
         // Publish gen=2, then the user copies their own content over it: the
@@ -2224,7 +2252,7 @@ struct VsockClipboardServiceTests {
             makeOffer(
                 generation: 3,
                 reps: [(uti: "public.data", byteCount: 32, filename: "c.bin", isInline: false)]))
-        try await waitForChange { service.lastTransferIssue == nil }
+        try await reports.wait { reports.failure == nil }
         #expect(pasteboard.changeCount == countBefore)
         #expect(pasteboard.string(forType: .string) == "mine")
     }
@@ -2236,7 +2264,9 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let reports = ClipboardTransferReports()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
         pasteboard.clearContents()
         let publisher = HostClipboardPublisher(
@@ -2264,7 +2294,7 @@ struct VsockClipboardServiceTests {
             service.clipboardContent.representations.first?.isPendingRemote == true
         }
         #expect(pasteboard.changeCount == countAfterWrite)
-        #expect(service.lastTransferIssue == nil)
+        #expect(reports.failure == nil)
     }
 
     @Test("start() reclaims an earlier session's receive root once the pasteboard no longer holds the VM's write")
@@ -2280,7 +2310,7 @@ struct VsockClipboardServiceTests {
         host1.start()
         defer { guest1.close() }
         let service1 = VsockClipboardService(
-            channel: host1, label: label, instanceID: UUID(), stagingTempRoot: tempRoot)
+            channel: host1, label: label, reporter: ClipboardTransferReporter(), stagingTempRoot: tempRoot)
         service1.start()
         let fileBytes = Data((0..<(16 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
         let responder = FakeGuestResponder(guest: guest1)
@@ -2306,7 +2336,7 @@ struct VsockClipboardServiceTests {
         host2.start()
         defer { guest2.close() }
         let service2 = VsockClipboardService(
-            channel: host2, label: label, instanceID: UUID(), stagingTempRoot: tempRoot)
+            channel: host2, label: label, reporter: ClipboardTransferReporter(), stagingTempRoot: tempRoot)
         service2.hostPasteboardHoldsOurWrite = { true }
         service2.start()
         #expect(FileManager.default.fileExists(atPath: stagedURL.path))
@@ -2318,7 +2348,7 @@ struct VsockClipboardServiceTests {
         host3.start()
         defer { guest3.close() }
         let service3 = VsockClipboardService(
-            channel: host3, label: label, instanceID: UUID(), stagingTempRoot: tempRoot)
+            channel: host3, label: label, reporter: ClipboardTransferReporter(), stagingTempRoot: tempRoot)
         service3.hostPasteboardHoldsOurWrite = { false }
         service3.start()
         defer { service3.stop() }
@@ -2332,7 +2362,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -2368,10 +2399,10 @@ struct VsockClipboardServiceTests {
         // Its own center rather than the process-wide `.shared` default: the
         // menu-bar surfaces render what lands *here*, so the assertions below
         // cover the service→center hop a closed clipboard window depends on.
-        let issues = ClipboardIssueCenter()
+        let reports = ClipboardTransferReports()
         let vmID = UUID()
         let service = VsockClipboardService(
-            channel: host, label: "Build VM", instanceID: vmID, issueCenter: issues)
+            channel: host, label: "Build VM", reporter: reports.reporter)
         service.start()
         defer { service.stop() }
 
@@ -2400,20 +2431,12 @@ struct VsockClipboardServiceTests {
         #expect(items.droppedReasons == [.overPasteBudget, .overPasteBudget])
         // The advisory is a metadata sum — nothing was pulled to decide it.
         #expect(responder.requests.isEmpty)
-        // The refusal is also raised as a transfer issue, the only surface an
-        // automatic passthrough publish — which discards the outcome — has.
+        // The refusal also lands on the VM's transfer report, the only surface
+        // an automatic passthrough publish — which discards the outcome — has.
         #expect(
-            service.lastTransferIssue?.kind
-                == .localFailure(
-                    code: ClipboardErrorCode.copyTooLarge.rawValue,
-                    message: ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: ClipboardPasteLimit.defaultBytes))
-        )
-        // ...and reaches the app-level center, which is what surfaces it when no
-        // clipboard window is open to render the issue.
-        #expect(issues.latestByInstance[vmID]?.issue == service.lastTransferIssue)
-        #expect(issues.latestByInstance[vmID]?.vmName == "Build VM")
-        #expect(issues.latestByInstance[vmID]?.pasteLimitBytes == ClipboardPasteLimit.defaultBytes)
-        #expect(issues.pendingNotice == issues.latestByInstance[vmID])
+            reports.failure == .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes))
+        #expect(reports.finish?.gesture == .copy)
+        #expect(reports.finish?.peerName == "Build VM")
     }
 
     @Test("a lowered ceiling refuses a file set the default would have served")
@@ -2424,8 +2447,9 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         let lowered = 512 * 1024 * 1024
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), maxPasteBytes: { lowered })
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter, maxPasteBytes: { lowered })
         service.start()
         defer { service.stop() }
 
@@ -2447,12 +2471,8 @@ struct VsockClipboardServiceTests {
         let items = service.materializeForCopy()
         #expect(items.droppedReasons == [.overPasteBudget])
         #expect(responder.requests.isEmpty)
-        // The message names the ceiling actually enforced, not the default.
-        #expect(
-            service.lastTransferIssue?.kind
-                == .localFailure(
-                    code: ClipboardErrorCode.copyTooLarge.rawValue,
-                    message: ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: lowered)))
+        // The refusal names the ceiling actually enforced, not the default.
+        #expect(reports.failure == .tooLarge(limitBytes: lowered))
     }
 
     @Test("a raised ceiling serves a file set the default would have refused")
@@ -2463,8 +2483,9 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         let raised = 16 * 1024 * 1024 * 1024
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), maxPasteBytes: { raised })
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter, maxPasteBytes: { raised })
         service.start()
         defer { service.stop() }
 
@@ -2486,7 +2507,7 @@ struct VsockClipboardServiceTests {
         #expect(items.promised.map(\.repIndex) == [0])
         // Still metadata-only: admitting the set pulls nothing at the click.
         #expect(responder.requests.isEmpty)
-        #expect(service.lastTransferIssue == nil)
+        #expect(reports.failure == nil)
     }
 
     @Test("a sibling rep pulling fine does not clear the refusal the file set raised")
@@ -2496,7 +2517,13 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let reports = ClipboardTransferReports()
+        // A reveal delay no scheduler stall can cross: the point is that the
+        // sibling pull finishing inside the gate publishes nothing, so it cannot
+        // displace the refusal — not how fast this machine happens to run.
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter,
+            progressRevealDelay: 3_600)
         service.start()
         defer { service.stop() }
 
@@ -2525,20 +2552,16 @@ struct VsockClipboardServiceTests {
         try await waitForChange { service.clipboardContent.representations.count == 3 }
 
         _ = service.materializeForCopy()
-        let refusal = try #require(service.lastTransferIssue)
-        #expect(
-            refusal.kind
-                == .localFailure(
-                    code: ClipboardErrorCode.copyTooLarge.rawValue,
-                    message: ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: ClipboardPasteLimit.defaultBytes))
-        )
+        let refusal = try #require(reports.finish)
+        #expect(refusal.failure == .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes))
 
         // The preview pulls the text rep successfully. That says nothing about
         // the refused file set, which is still the only thing the user must act
-        // on — so the refusal stays up rather than being cleared before it renders.
+        // on — and the pull finishes inside the reveal gate, so it publishes
+        // nothing and the refusal stays up.
         await service.materializeForPreview()
         #expect(service.clipboardContent.text == "note")
-        #expect(service.lastTransferIssue == refusal)
+        #expect(reports.finish == refusal)
     }
 
     @Test("a healthy pull leaves standing the refusal a superseded connection raised")
@@ -2548,10 +2571,13 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let vmID = UUID()
-        let issues = ClipboardIssueCenter()
+        let reports = ClipboardTransferReports()
+        // A reveal delay no scheduler stall can cross: the point is that a pull
+        // finishing inside the gate publishes nothing, so it cannot displace the
+        // refusal — not how fast this machine happens to run.
         let service = VsockClipboardService(
-            channel: host, label: "Build VM", instanceID: vmID, issueCenter: issues)
+            channel: host, label: "Build VM", reporter: reports.reporter,
+            progressRevealDelay: 3_600)
         service.start()
         defer { service.stop() }
 
@@ -2577,18 +2603,16 @@ struct VsockClipboardServiceTests {
         // The connection this one replaced: its pasteboard promise fires on a
         // paste and fails against the dead channel, well after the reconnect.
         // Reported under this VM, never seen by the live service.
-        let refusal = ClipboardTransferIssue.pasteTimedOut()
-        issues.report(
-            refusal, instanceID: vmID, vmName: "Build VM",
-            pasteLimitBytes: ClipboardPasteLimit.defaultBytes)
+        let refusal = ClipboardTransferFinish(
+            gesture: .paste, outcome: .failed(.timedOut), peerName: "Build VM")
+        reports.reporter.finish(refusal)
 
-        // This service's own pull succeeding says nothing about that paste, so
-        // the refusal stays up — the gate reads the record it would retire, not
-        // this connection's view of it.
+        // This service's own pull is small enough to finish inside the reveal
+        // gate, so it never displaces the refusal the superseded connection
+        // raised — the report belongs to the VM, not to either connection.
         await service.materializeForPreview()
         #expect(service.clipboardContent.text == "note")
-        #expect(issues.latestByInstance[vmID]?.issue == refusal)
-        #expect(service.lastTransferIssue == refusal)
+        #expect(reports.finish == refusal)
     }
 
     @Test("each promised file rep pastes through its own blocking pull")
@@ -2598,7 +2622,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -2643,7 +2668,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -2676,7 +2702,9 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let reports = ClipboardTransferReports()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         service.start()
         defer { service.stop() }
 
@@ -2701,12 +2729,7 @@ struct VsockClipboardServiceTests {
         #expect(responder.requests.isEmpty)
         // A provider fire has no return path to the gesture, so the refusal is
         // reported through the issue the clipboard window renders.
-        #expect(
-            service.lastTransferIssue?.kind
-                == .localFailure(
-                    code: ClipboardErrorCode.copyTooLarge.rawValue,
-                    message: ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: ClipboardPasteLimit.defaultBytes))
-        )
+        #expect(reports.failure == .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes))
     }
 
     @Test("an image file is paste-bound too — an over-cap image set is refused whole")
@@ -2716,7 +2739,9 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let reports = ClipboardTransferReports()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         service.start()
         defer { service.stop() }
 
@@ -2738,12 +2763,7 @@ struct VsockClipboardServiceTests {
         // All-or-nothing across the file set, reported on the surfaces a click
         // and an automatic passthrough publish each read.
         #expect(items.droppedReasons == [.overPasteBudget, .overPasteBudget])
-        #expect(
-            service.lastTransferIssue?.kind
-                == .localFailure(
-                    code: ClipboardErrorCode.copyTooLarge.rawValue,
-                    message: ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: ClipboardPasteLimit.defaultBytes))
-        )
+        #expect(reports.failure == .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes))
         // The cap governs the file flavor, not the inline one (§1): each rep
         // still promises, with `.fileURL` withheld from the item it plans.
         #expect(items.promised.map(\.repIndex) == [0, 1])
@@ -2779,7 +2799,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -2812,7 +2833,9 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let reports = ClipboardTransferReports()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         service.start()
         defer { service.stop() }
 
@@ -2837,12 +2860,7 @@ struct VsockClipboardServiceTests {
         let items = service.materializeForCopy()
         #expect(items.promised.isEmpty)
         #expect(items.droppedReasons == [.overPasteBudget])
-        #expect(
-            service.lastTransferIssue?.kind
-                == .localFailure(
-                    code: ClipboardErrorCode.copyTooLarge.rawValue,
-                    message: ClipboardTransferIssue.overCopyBudgetMessage(limitBytes: ClipboardPasteLimit.defaultBytes))
-        )
+        #expect(reports.failure == .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes))
         #expect(service.copyToMacFileURL(generation: 73, repIndex: 0) == nil)
         #expect(responder.requests.isEmpty)
     }
@@ -2854,7 +2872,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -2881,7 +2900,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -2909,9 +2929,10 @@ struct VsockClipboardServiceTests {
 
         // Reveal instantly so the mid-flight transfer surfaces (the sanctioned
         // "drive the shown path" test value; see VsockClipboardService's doc).
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), progressRevealDelay: 0,
-            progressIdleLinger: 0)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter, progressRevealDelay: 0,
+            progressIdleGap: 0)
         service.start()
         defer { service.stop() }
 
@@ -2938,19 +2959,21 @@ struct VsockClipboardServiceTests {
 
         // The readout reveals mid-flight: inbound, denominated by the rep's total,
         // and naming the file.
-        try await waitForChange { service.transferProgress?.direction == .inbound }
-        #expect(service.transferProgress?.totalBytes == UInt64(fileBytes.count))
-        #expect(service.transferProgress?.currentItemName == "big.bin")
-        // Not flagged a paste session: the readout appears, but a paste fires once
-        // per item, so its per-item session carries no Cancel to stop the rest.
-        #expect(service.transferProgress?.isPasteSession == false)
+        try await reports.wait { reports.snapshot?.direction == .inbound }
+        #expect(reports.snapshot?.totalBytes == UInt64(fileBytes.count))
+        #expect(reports.snapshot?.currentItemName == "big.bin")
+        // A paste this side performs: the readout appears, but a paste fires
+        // once per item, so its per-item operation carries no Cancel to stop the
+        // rest.
+        #expect(reports.snapshot?.gesture == .paste)
+        #expect(reports.snapshot?.isCancellable == false)
 
         // Releasing End resolves the pull; the terminal clears the readout (§13:
         // never leave a stuck bar).
         responder.releaseEnd()
         let url = await pull.value
         #expect(url != nil)
-        try await waitForChange { service.transferProgress == nil }
+        try await reports.wait { reports.snapshot == nil }
     }
 
     @Test(
@@ -2962,9 +2985,10 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
-            progressRevealDelay: 0, progressIdleLinger: 0)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter,
+            progressRevealDelay: 0, progressIdleGap: 0)
         service.start()
         defer { service.stop() }
 
@@ -2996,7 +3020,7 @@ struct VsockClipboardServiceTests {
         }
         // Wait until the paste's transfer is live (its progress revealed), then
         // trigger the preview into the parked pull and let the paste finish.
-        try await waitForChange { service.transferProgress?.direction == .inbound }
+        try await reports.wait { reports.snapshot?.direction == .inbound }
         await service.materializeForPreview()
         responder.releaseEnd()
         let data = await pull.value
@@ -3022,8 +3046,8 @@ struct VsockClipboardServiceTests {
         // `performBlockingPull` before it registers a pull.
         let freeSpace = Box<Int64>(1 << 40)
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
-            freeSpaceProvider: { _ in freeSpace.value }, issueCenter: ClipboardIssueCenter())
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter(),
+            freeSpaceProvider: { _ in freeSpace.value })
         service.start()
         defer { service.stop() }
 
@@ -3073,16 +3097,18 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
-            progressRevealDelay: 0, progressIdleLinger: 0)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter,
+            progressRevealDelay: 0, progressIdleGap: 0)
         service.start()
         defer { service.stop() }
 
         // The paste pulls a small file whose bytes all land before End is held;
-        // the preview pulls a large text rep that only ever Begins — so the
-        // preview session, with everything still remaining, is the readout the
-        // Cancel reaches, and the paste's transfer is the one it must not touch.
+        // the preview pulls a large text rep that only ever Begins. The paste's
+        // operation carries no Cancel — the pasteboard drives a paste one item at
+        // a time — so the Cancel reaches the preview, and the paste's transfer is
+        // the one it must not touch.
         let fileBytes = Data([0xCA, 0xFE, 0xBA, 0xBE])
         let previewSize = 200_000
         let responder = FakeGuestResponder(guest: guest)
@@ -3113,11 +3139,11 @@ struct VsockClipboardServiceTests {
             await offCooperativePool { service.copyToMacFileURL(generation: 46, repIndex: 0) }
         }
         try await responder.requested.wait { responder.requests.count == 2 }
-        // The paste's session carries no Cancel; the readout showing one is the
-        // preview's.
-        try await waitForChange { service.transferProgress?.isCancellable == true }
+        // The paste fire is the newer operation, so it takes the readout — and it
+        // carries no Cancel.
+        try await reports.wait { reports.snapshot?.isCancellable == false }
 
-        service.requestCancelOfShownOperation()
+        reports.reporter.cancelRunning()
         await preview.value
         #expect(service.clipboardContent.representations[1].isPendingRemote)
 
@@ -3139,11 +3165,9 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let issues = ClipboardIssueCenter()
-        let vmID = UUID()
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: vmID,
-            issueCenter: issues)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         service.start()
         defer { service.stop() }
 
@@ -3168,10 +3192,11 @@ struct VsockClipboardServiceTests {
         service.stop()
 
         #expect(await paste.value == nil)
-        // The fire's `.cancelled` outcome raises nothing itself; the stop that
-        // caused it is what explains the empty paste, on the center too.
-        #expect(service.lastTransferIssue?.kind == ClipboardTransferIssue.pasteInterrupted().kind)
-        #expect(issues.latestByInstance[vmID]?.issue == service.lastTransferIssue)
+        // The fire's `.cancelled` outcome says nothing itself; the stop that
+        // caused it is what explains the empty paste.
+        try await reports.waitForFailure()
+        #expect(reports.failure == .interrupted(fileCount: nil))
+        #expect(reports.finish?.gesture == .paste)
     }
 
     @Test("stop() with no paste fire in flight explains nothing")
@@ -3181,9 +3206,9 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
-            issueCenter: ClipboardIssueCenter())
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         service.start()
 
         try guest.send(
@@ -3193,7 +3218,7 @@ struct VsockClipboardServiceTests {
         try await waitForChange { service.clipboardContent.representations.count == 1 }
 
         service.stop()
-        #expect(service.lastTransferIssue == nil)
+        #expect(reports.latest == .idle)
     }
 
     @Test("the channel closing under a paste fire explains it, as stop() does")
@@ -3202,11 +3227,9 @@ struct VsockClipboardServiceTests {
         guest.start()
         host.start()
 
-        let issues = ClipboardIssueCenter()
-        let vmID = UUID()
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: vmID,
-            issueCenter: issues)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         service.start()
         defer { service.stop() }
 
@@ -3232,10 +3255,9 @@ struct VsockClipboardServiceTests {
         guest.close()
 
         #expect(await paste.value == nil)
-        try await waitForChange { service.lastTransferIssue != nil }
-        let raised = try #require(service.lastTransferIssue)
-        #expect(raised.kind == ClipboardTransferIssue.pasteInterrupted().kind)
-        #expect(issues.latestByInstance[vmID]?.issue == raised)
+        try await reports.waitForFailure()
+        #expect(reports.failure == .interrupted(fileCount: nil))
+        #expect(reports.finish?.gesture == .paste)
     }
 
     @Test("a release delivered while a paste fire is pulling resolves it to nothing")
@@ -3245,9 +3267,9 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
-            issueCenter: ClipboardIssueCenter())
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         service.start()
         defer { service.stop() }
 
@@ -3285,10 +3307,9 @@ struct VsockClipboardServiceTests {
         // The fire returns empty rather than parking to its backstop, and the
         // release's own explainer is what stands.
         #expect(await paste.value == nil)
-        try await waitForChange { service.lastTransferIssue != nil }
-        #expect(
-            service.lastTransferIssue?.kind
-                == ClipboardTransferIssue.staleCopyRetracted(hasSuccessor: false).kind)
+        try await reports.wait {
+            reports.failure == .supersededCopyRetracted(hasSuccessor: false)
+        }
         #expect(retracts.value == 1)
     }
 
@@ -3306,8 +3327,9 @@ struct VsockClipboardServiceTests {
         // this main-queue job, so this timeout caps how long the bundle's
         // MainActor freezes if the fast path loses; a #458 regression resolves to
         // nothing whichever way it lands, so the value never masks one.
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), lazyPullTimeout: 5)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter, lazyPullTimeout: 5)
         service.start()
         defer { service.stop() }
 
@@ -3396,12 +3418,11 @@ struct VsockClipboardServiceTests {
 
         // The interleaved control frame wasn't dropped — it's processed
         // fire-and-forget, so it surfaces once main frees up.
-        try await waitForChange { service.lastTransferIssue != nil }
-        if case .peerReportedError(let code, _) = service.lastTransferIssue?.kind {
-            #expect(code == "clipboard.interleaved")
-        } else {
-            Issue.record("Expected the interleaved control frame's error to surface")
-        }
+        try await reports.waitForFailure()
+        // The code is one this build does not define, so it reports as an
+        // unclassified peer failure rather than being swallowed.
+        #expect(reports.failure == .peerReported(nil))
+        #expect(reports.finish?.gesture == .peerPaste)
     }
 
     @Test("A newer offer supersedes an in-flight pull — the pull resolves to nothing, new placeholders publish")
@@ -3411,7 +3432,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -3472,7 +3494,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -3541,7 +3564,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         // The test calls stop() itself mid-flow (that is the action under test);
         // this defer is an idempotent safety net for the early-throw path.
@@ -3604,7 +3628,9 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let reports = ClipboardTransferReports()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         service.start()
         defer { service.stop() }
 
@@ -3626,12 +3652,12 @@ struct VsockClipboardServiceTests {
 
         // Barrier: send a clipboard error frame *after* the release. Both are
         // control frames on the single channel, processed in order, so once the
-        // error has surfaced as `lastTransferIssue`, `handleRelease(gen=8)` has
+        // error has surfaced on the VM's report, `handleRelease(gen=8)` has
         // already run and dropped the promise — making the copy below race-free.
         try guest.sendErrorFrame(
             code: "clipboard.barrier", message: "release processed",
             inReplyTo: "clipboard.release")
-        try await waitForChange { service.lastTransferIssue != nil }
+        try await reports.waitForFailure()
 
         // After release, the promise is gone: materializeForCopy promises nothing,
         // resolves nothing new, and never requests the rep.
@@ -3648,7 +3674,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -3684,7 +3711,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -3714,7 +3742,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -3797,7 +3826,7 @@ struct VsockClipboardServiceTests {
         // A tiny backstop so the parked pull resolves promptly instead of waiting
         // the production 120 s.
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter(),
             lazyPullTimeout: 0.2)
         service.start()
         defer { service.stop() }
@@ -3836,7 +3865,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -3878,7 +3908,8 @@ struct VsockClipboardServiceTests {
         // failure-kind-agnostic — materializeForPreview skips the generation
         // latch on any nil pull result, timeout and abort alike.
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), lazyPullTimeout: 60)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter(),
+            lazyPullTimeout: 60)
         service.start()
         defer { service.stop() }
 
@@ -3924,7 +3955,9 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let reports = ClipboardTransferReports()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         service.start()
         defer { service.stop() }
 
@@ -3943,7 +3976,7 @@ struct VsockClipboardServiceTests {
         // Barrier: an error frame after the offer; once it surfaces, handleOffer ran.
         try guest.sendErrorFrame(
             code: "clipboard.barrier", message: "offer processed", inReplyTo: "clipboard.offer")
-        try await waitForChange { service.lastTransferIssue != nil }
+        try await reports.waitForFailure()
 
         #expect(service.clipboardContent.isEmpty)
         // No promise is held: Copy-to-Mac resolves nothing and sends no request
@@ -3957,18 +3990,22 @@ struct VsockClipboardServiceTests {
     // MARK: - Lazy preview pull failures
 
     /// Drives one lazy preview pull whose transfer the guest opens and then
-    /// aborts with `rawCode`, returning the issue it raised.
+    /// aborts with `rawCode`, returning the refusal it reported.
     ///
     /// The preview pull has no return path to the window either — the rep stays
-    /// a placeholder chip — so the issue is the only account of why it never
+    /// a placeholder chip — so the report is the only account of why it never
     /// filled in.
-    private func previewPullAbortedByGuest(rawCode: String) async throws -> ClipboardTransferIssue? {
+    private func previewPullAbortedByGuest(
+        rawCode: String
+    ) async throws -> ClipboardTransferFinish? {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let reports = ClipboardTransferReports()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         service.start()
         defer { service.stop() }
 
@@ -4005,27 +4042,29 @@ struct VsockClipboardServiceTests {
         try guest.send(abort)
 
         await previewTask.value
-        // The raise is enqueued with `Task { @MainActor … }` synchronously,
-        // before the resume `previewTask` awaited, so a task enqueued here lands
+        // The refusal crosses the operation's serial main hop, enqueued before
+        // the resume `previewTask` awaited, so a block enqueued here lands
         // behind it — a deterministic hand-off, not a poll, and the one way a
-        // "raised nothing" expectation can be read without racing the raise.
+        // "reported nothing" expectation can be read without racing the report.
         await Task { @MainActor in }.value
-        return service.lastTransferIssue
+        await Task { @MainActor in }.value
+        return reports.finish
     }
 
     private func previewPullAbortedByGuest(
         code: ClipboardStreamAbortCode
-    ) async throws -> ClipboardTransferIssue? {
+    ) async throws -> ClipboardTransferFinish? {
         try await previewPullAbortedByGuest(rawCode: code.rawValue)
     }
 
-    @Test("A disk-full abort on an in-flight pull surfaces a .diskFull transfer issue")
+    @Test("A disk-full abort on an in-flight pull reports the disk")
     func pullDiskFullAbortSurfacesIssue() async throws {
-        let issue = try await previewPullAbortedByGuest(code: .diskFull)
-        guard case .diskFull = issue?.kind else {
-            Issue.record("Expected a diskFull issue, got \(String(describing: issue))")
+        let finish = try await previewPullAbortedByGuest(code: .diskFull)
+        guard case .diskFull = finish?.failure else {
+            Issue.record("Expected a diskFull refusal, got \(String(describing: finish))")
             return
         }
+        #expect(finish?.gesture == .preview)
     }
 
     @Test(
@@ -4035,14 +4074,17 @@ struct VsockClipboardServiceTests {
             .flowOverrun, .ackTimeout, .sendFailed,
         ])
     func previewPullAbortSurfacesIssue(code: ClipboardStreamAbortCode) async throws {
-        let issue = try await previewPullAbortedByGuest(code: code)
-        #expect(issue?.kind == ClipboardTransferIssue.pasteTransferFailed().kind)
+        let finish = try await previewPullAbortedByGuest(code: code)
+        #expect(finish?.failure == .transferFailed)
+        // #880: a failed preview never claims a paste happened.
+        #expect(finish?.gesture == .preview)
     }
 
     @Test("a preview pull whose archive can't be unpacked names the unpack failure")
     func previewPullExtractAbortSurfacesUnpackFailure() async throws {
-        let issue = try await previewPullAbortedByGuest(code: .extractError)
-        #expect(issue?.kind == ClipboardTransferIssue.pasteUnpackFailed().kind)
+        let finish = try await previewPullAbortedByGuest(code: .extractError)
+        #expect(finish?.failure == .unpackFailed)
+        #expect(finish?.gesture == .preview)
     }
 
     @Test(
@@ -4052,36 +4094,37 @@ struct VsockClipboardServiceTests {
         // Whatever superseded the offer publishes its own explainer; a preview
         // that filled in nothing because the offer moved on must not also claim
         // a transfer failure.
-        let issue = try await previewPullAbortedByGuest(code: code)
-        #expect(issue == nil)
+        let finish = try await previewPullAbortedByGuest(code: code)
+        #expect(finish?.failure == nil)
     }
 
     @Test("a pull aborted with a code this build doesn't define reports a failure")
     func previewPullUndefinedAbortCodeSurfacesIssue() async throws {
         // An abort spelled in a way this build cannot read is a failure to
         // surface, not one to swallow.
-        let issue = try await previewPullAbortedByGuest(rawCode: "future.unknown")
-        #expect(issue?.kind == ClipboardTransferIssue.pasteTransferFailed().kind)
+        let finish = try await previewPullAbortedByGuest(rawCode: "future.unknown")
+        #expect(finish?.failure == .transferFailed)
     }
 
     // MARK: - Paste-time pull failures
 
     /// Drives one paste-time `.fileURL` fire whose transfer the guest opens and
-    /// then aborts with `code`, returning what the fire served and the issue it
-    /// raised.
+    /// then aborts with `code`, returning what the fire served and the refusal it
+    /// reported.
     ///
-    /// A provider fire has no return path to the gesture, so the issue is the
-    /// only account of why the paste produced nothing. It is recorded before the
-    /// fire returns, so the value read here is not racing it.
+    /// A provider fire has no return path to the gesture, so the report is the
+    /// only account of why the paste produced nothing.
     private func pasteFireAbortedByGuest(
         code: ClipboardStreamAbortCode
-    ) async throws -> (url: URL?, issue: ClipboardTransferIssue?) {
+    ) async throws -> (url: URL?, finish: ClipboardTransferFinish?) {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let reports = ClipboardTransferReports()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         service.start()
         defer { service.stop() }
 
@@ -4116,7 +4159,11 @@ struct VsockClipboardServiceTests {
             $0.message = "aborted"
         }
         try guest.send(abort)
-        return (await fire.value, service.lastTransferIssue)
+        let url = await fire.value
+        // Settle the operation's serial main hop before reading the report.
+        await Task { @MainActor in }.value
+        await Task { @MainActor in }.value
+        return (url, reports.finish)
     }
 
     @Test("a paste-time pull the guest never answers reports the timeout")
@@ -4128,8 +4175,9 @@ struct VsockClipboardServiceTests {
 
         // A tiny backstop so the parked fire resolves promptly instead of waiting
         // the production window.
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter,
             lazyPullTimeout: 0.2)
         service.start()
         defer { service.stop() }
@@ -4148,16 +4196,18 @@ struct VsockClipboardServiceTests {
 
         let url = await offCooperativePool { service.copyToMacFileURL(generation: 17, repIndex: 0) }
         #expect(url == nil)
-        #expect(service.lastTransferIssue?.kind == ClipboardTransferIssue.pasteTimedOut().kind)
+        try await reports.waitForFailure()
+        #expect(reports.failure == .timedOut)
     }
 
     @Test("a paste-time pull aborted mid-stream reports the failed transfer")
     func pasteBlockingPullAbortSurfacesIssue() async throws {
         // `read.error` is what the sending side raises when the source file it
         // was streaming can't be read — a failure, not a supersession.
-        let (url, issue) = try await pasteFireAbortedByGuest(code: .readError)
+        let (url, finish) = try await pasteFireAbortedByGuest(code: .readError)
         #expect(url == nil)
-        #expect(issue?.kind == ClipboardTransferIssue.pasteTransferFailed().kind)
+        #expect(finish?.failure == .transferFailed)
+        #expect(finish?.gesture == .paste)
     }
 
     @Test(
@@ -4167,19 +4217,20 @@ struct VsockClipboardServiceTests {
         // Whatever superseded the offer publishes its own explainer; a paste that
         // served nothing because the offer moved on must not also claim a
         // transfer failure.
-        let (url, issue) = try await pasteFireAbortedByGuest(code: code)
+        let (url, finish) = try await pasteFireAbortedByGuest(code: code)
         #expect(url == nil)
-        #expect(issue == nil)
+        #expect(finish?.failure == nil)
     }
 
     @Test("a paste-time pull aborted for a full volume reports the disk, not a generic failure")
     func pasteBlockingPullDiskFullAbortSurfacesIssue() async throws {
-        let (url, issue) = try await pasteFireAbortedByGuest(code: .diskFull)
+        let (url, finish) = try await pasteFireAbortedByGuest(code: .diskFull)
         #expect(url == nil)
-        guard case .diskFull = issue?.kind else {
-            Issue.record("Expected a diskFull issue, got \(String(describing: issue))")
+        guard case .diskFull = finish?.failure else {
+            Issue.record("Expected a diskFull refusal, got \(String(describing: finish))")
             return
         }
+        #expect(finish?.gesture == .paste)
     }
 
     @Test("a paste-time pull with no room to stage reports it without starting a transfer")
@@ -4190,11 +4241,10 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         // 1 MiB free: the rep plus the free-space margin doesn't fit.
-        let issues = ClipboardIssueCenter()
-        let vmID = UUID()
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: vmID,
-            freeSpaceProvider: { _ in 1024 * 1024 }, issueCenter: issues)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter,
+            freeSpaceProvider: { _ in 1024 * 1024 })
         service.start()
         defer { service.stop() }
 
@@ -4215,17 +4265,16 @@ struct VsockClipboardServiceTests {
         #expect(url == nil)
         // The pre-flight runs before the request, so nothing was asked for.
         #expect(responder.requests.isEmpty)
-        guard case .diskFull(let needed, let available) = service.lastTransferIssue?.kind else {
-            Issue.record(
-                "Expected a diskFull issue, got \(String(describing: service.lastTransferIssue))")
+        try await reports.waitForFailure()
+        guard case .diskFull(let needed, let available) = reports.failure else {
+            Issue.record("Expected a diskFull refusal, got \(String(describing: reports.failure))")
             return
         }
-        #expect(needed == 4096)
-        #expect(available == 1024 * 1024)
-        // A provider fire has no return path to the gesture, so the center is
-        // what carries the refusal to a surface outside the clipboard window.
-        #expect(issues.latestByInstance[vmID]?.issue == service.lastTransferIssue)
-        #expect(issues.pendingNotice?.instanceID == vmID)
+        #expect(needed == UInt64(4096))
+        #expect(available == Int64(1024 * 1024))
+        // A provider fire has no return path to the gesture, so the VM's report
+        // is what carries the refusal to a surface outside the clipboard window.
+        #expect(reports.finish?.gesture == .paste)
     }
 
     @Test("a copied item whose archive can't be unpacked reports the unpack failure")
@@ -4238,8 +4287,9 @@ struct VsockClipboardServiceTests {
         let stagingRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: stagingRoot) }
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), stagingTempRoot: stagingRoot)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter, stagingTempRoot: stagingRoot)
         service.start()
         defer { service.stop() }
 
@@ -4266,9 +4316,8 @@ struct VsockClipboardServiceTests {
 
         let url = await offCooperativePool { service.copyToMacFileURL(generation: 23, repIndex: 0) }
         #expect(url == nil)
-        #expect(
-            service.lastTransferIssue?.kind
-                == ClipboardTransferIssue.pasteUnpackFailed().kind)
+        try await reports.waitForFailure()
+        #expect(reports.failure == .unpackFailed)
         // A streamed extract writes as it goes, so a failed one must leave
         // nothing behind for a later paste to pick up.
         #expect(materializedFiles(under: stagingRoot).isEmpty)
@@ -4296,7 +4345,8 @@ struct VsockClipboardServiceTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tempRoot) }
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), stagingTempRoot: tempRoot)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter(),
+            stagingTempRoot: tempRoot)
         service.start()
         defer { service.stop() }
 
@@ -4332,7 +4382,8 @@ struct VsockClipboardServiceTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tempRoot) }
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), stagingTempRoot: tempRoot)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter(),
+            stagingTempRoot: tempRoot)
         // A "Copy to Mac" of the dropped file put its own path on the pasteboard.
         service.hostPasteboardHoldsOurWrite = { true }
         service.start()
@@ -4367,7 +4418,8 @@ struct VsockClipboardServiceTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tempRoot) }
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), stagingTempRoot: tempRoot)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter(),
+            stagingTempRoot: tempRoot)
         service.start()
         defer { service.stop() }
 
@@ -4396,7 +4448,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -4434,7 +4487,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -4463,7 +4517,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -4491,7 +4546,9 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let reports = ClipboardTransferReports()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         service.start()
         defer { service.stop() }
 
@@ -4517,7 +4574,7 @@ struct VsockClipboardServiceTests {
         // Barrier: an error frame after the offer; once it surfaces, handleOffer ran.
         try guest.sendErrorFrame(
             code: "clipboard.barrier", message: "offer processed", inReplyTo: "clipboard.offer")
-        try await waitForChange { service.lastTransferIssue != nil }
+        try await reports.waitForFailure()
 
         // The drop leaves the shown content alone rather than publishing empty.
         #expect(service.clipboardContent.digest == shown.digest)
@@ -4531,14 +4588,16 @@ struct VsockClipboardServiceTests {
 
     // MARK: - Peer errors
 
-    @Test("Peer clipboard error frame surfaces as a peerReportedError issue")
+    @Test("Peer clipboard error frame surfaces as a peer-reported refusal")
     func peerErrorSurfacesAsIssue() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID())
+        let reports = ClipboardTransferReports()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
         service.start()
         defer { service.stop() }
 
@@ -4548,19 +4607,16 @@ struct VsockClipboardServiceTests {
             inReplyTo: "clipboard.request"
         )
 
-        try await waitForChange { service.lastTransferIssue != nil }
-        guard case .peerReportedError(let code, let message) = service.lastTransferIssue?.kind
-        else {
-            Issue.record("Expected peerReportedError issue, got \(String(describing: service.lastTransferIssue))")
-            return
-        }
-        #expect(code == "clipboard.transfer.send.failure")
-        #expect(message == "guest could not deliver")
+        try await reports.waitForFailure()
+        // The guest's own wording never reaches a surface: the code is what the
+        // host maps to a sentence.
+        #expect(reports.failure == .peerReported(nil))
+        #expect(reports.finish?.gesture == .peerPaste)
     }
 
     // MARK: - Transfer progress
 
-    @Test("an inbound transfer sets transferProgress while in flight and clears it on completion")
+    @Test("an inbound transfer shows a running readout and clears it on completion")
     func inboundTransferProgressSetThenCleared() async throws {
         let (guest, host) = try makePair()
         guest.start()
@@ -4568,9 +4624,10 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         // `.zero` reveal delay → the transfer shows as soon as a chunk lands.
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), progressRevealDelay: 0,
-            progressIdleLinger: 0)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter, progressRevealDelay: 0,
+            progressIdleGap: 0)
         service.start()
         defer { service.stop() }
 
@@ -4592,37 +4649,37 @@ struct VsockClipboardServiceTests {
         let previewTask = Task { await service.materializeForPreview() }
 
         // Chunks have landed but End is held → the bar shows, inbound.
-        try await waitForChange { (service.transferProgress?.bytesTransferred ?? 0) > 0 }
-        #expect(service.transferProgress?.direction == .inbound)
-        #expect(service.transferProgress?.totalBytes == UInt64(bytes.count))
+        try await reports.wait { (reports.snapshot?.bytesTransferred ?? 0) > 0 }
+        #expect(reports.snapshot?.direction == .inbound)
+        #expect(reports.snapshot?.totalBytes == UInt64(bytes.count))
 
         responder.releaseEnd()
         await previewTask.value
-        try await waitForChange { service.transferProgress == nil }
+        try await reports.wait { reports.snapshot == nil }
     }
 
     @Test(
-        "a rep another loop pulled first leaves the declaring session's readout, which still reaches 100% (#656)"
+        "a rep another loop pulled first never enters the preview's denominator, which still reaches 100% (#656)"
     )
-    func coalescedRepIsDisownedByTheSessionThatDeclaredIt() async throws {
+    func coalescedRepStaysOutOfThePreviewDenominator() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
         defer { guest.close() }
 
-        // Reveal instantly so each session's state is observable as it happens; the
-        // linger is sized past any scheduler stall instead of to a "tidy" value,
-        // because the sessions here span a gap between two transfers on purpose and
-        // an idle terminal firing inside it would end the very session under test.
-        // Nothing waits on the linger — `stop()` clears the readout at teardown.
+        // Reveal instantly so each operation's state is observable as it happens;
+        // the idle gap is sized past any scheduler stall instead of to a "tidy"
+        // value, because the operations here span a gap between two transfers on
+        // purpose. Nothing waits on it — `stop()` retires the readout at teardown.
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), progressRevealDelay: 0,
-            progressIdleLinger: 60)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter, progressRevealDelay: 0,
+            progressIdleGap: 60)
         service.start()
         defer { service.stop() }
 
-        // Two previewable reps: the preview loop declares BOTH; a paste-time fire
-        // will pull rep 1 first, leaving the preview to disown it.
+        // Two previewable reps: a paste-time fire pulls rep 1 first, so the
+        // preview never begins a transfer for it.
         let text = String(repeating: "x", count: 200_000)
         let rtf = Data(repeating: 0x41, count: 8_192)
         let responder = FakeGuestResponder(guest: guest)
@@ -4661,20 +4718,16 @@ struct VsockClipboardServiceTests {
             try? await release.wait { released }
         }
 
-        // The preview opens its session first and declares BOTH reps — rep 1 is
-        // neither materialized nor in flight yet, which is precisely the state an
-        // open-time filter cannot see past.
+        // The preview begins rep 0's transfer and parks in the seam.
         let previewTask = Task { await service.materializeForPreview() }
         try await entered.wait { didEnter }
 
-        // The preview's session is on screen, still counting both reps.
-        try await waitForChange {
-            service.transferProgress?.totalBytes == UInt64(text.utf8.count + rtf.count)
-        }
-        #expect(service.transferProgress?.fileCount == 2)
+        // Only what it actually started is in the denominator.
+        try await reports.wait { reports.snapshot?.totalBytes == UInt64(text.utf8.count) }
+        #expect(reports.snapshot?.fileCount == 1)
 
         // With it parked, a paste-time fire pulls rep 1 to completion under its
-        // own session — the rep the preview declared but will now never own.
+        // own operation — the rep the preview would otherwise have reached.
         let pasted = await offCooperativePool {
             service.copyToMacData(generation: 7, repIndex: 1, uti: "public.rtf")
         }
@@ -4684,17 +4737,17 @@ struct VsockClipboardServiceTests {
         release.notify()
         await previewTask.value
 
-        // Reaching rep 1 and finding it already pulled, the preview session
-        // disowns it, and the readout lands on the bytes it actually moved — at
-        // 100%, rather than stalling for the rest of the operation. The total is
-        // what identifies the session.
-        try await waitForChange { service.transferProgress?.totalBytes == UInt64(text.utf8.count) }
-        let final = try #require(service.transferProgress)
-        #expect(final.fileCount == 1)
+        // Reaching rep 1 and finding it already pulled, the preview begins no
+        // transfer for it, so its readout lands on the bytes it actually moved —
+        // at 100%, rather than stalling for the rest of the operation.
+        try await reports.wait { !reports.finalSnapshots.isEmpty }
+        let final = try #require(reports.finalSnapshots.last)
         #expect(final.fractionComplete == 1)
+        #expect(final.totalBytes == UInt64(text.utf8.count))
+        #expect(final.fileCount == 1)
     }
 
-    @Test("an outbound transfer sets transferProgress while streaming and clears it on completion")
+    @Test("an outbound transfer shows a running readout and clears it on completion")
     func outboundTransferProgressSetThenCleared() async throws {
         let (guest, host) = try makePair()
         guest.start()
@@ -4702,13 +4755,10 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         let label = "test-\(UUID().uuidString)"
-        // Its own center rather than the process-wide `.shared` default: the
-        // status item renders what lands *here*, so the assertions below cover the
-        // service→center hop the menu bar actually reads.
-        let center = ClipboardProgressCenter()
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: label, instanceID: UUID(), progressRevealDelay: 0, progressIdleLinger: 0,
-            progressCenter: center)
+            channel: host, label: label, reporter: reports.reporter, progressRevealDelay: 0,
+            progressIdleGap: 0)
         service.start()
         defer { service.stop() }
 
@@ -4743,28 +4793,22 @@ struct VsockClipboardServiceTests {
         // First ack: a one-chunk window → the host sends a single 64 KiB chunk
         // then blocks on credit, so progress shows but the transfer isn't done.
         try sendAck(from: guest, transferID: xid, bytesConsumed: 0, windowBytes: 64 * 1024)
-        try await waitForChange { (service.transferProgress?.bytesTransferred ?? 0) > 0 }
-        let readout = try #require(service.transferProgress)
+        try await reports.wait { (reports.snapshot?.bytesTransferred ?? 0) > 0 }
+        let readout = try #require(reports.snapshot)
         #expect(readout.direction == .outbound)
         #expect(readout.totalBytes == UInt64(expected.count))
         // A guest request is always a paste in the guest — its only originator is
         // the pasteboard promise callback — so this readout is the one allowed to
         // open the status-item dropdown, and it says whose paste it is serving.
-        #expect(readout.isPasteSession)
+        #expect(readout.gesture == .peerPaste)
         #expect(
             ClipboardProgressFormat.headline(
                 direction: readout.direction, peerName: readout.peerName,
-                isPaste: readout.isPasteSession) == "Pasting into “\(label)”…")
-
-        // The aggregate the status item renders, not just this service's own copy.
-        let aggregate = try #require(center.materializationProgress)
-        #expect(aggregate.isPasteSession)
-        #expect(aggregate.direction == .outbound)
+                gesture: readout.gesture) == "Pasting into “\(label)”…")
 
         // Open the window fully → the rest streams and the transfer completes.
         try sendAck(from: guest, transferID: xid, bytesConsumed: 0, windowBytes: 2 * 1024 * 1024)
-        try await waitForChange { service.transferProgress == nil }
-        try await waitForChange { center.materializationProgress == nil }
+        try await reports.wait { reports.snapshot == nil }
     }
 
     @Test("a transfer that finishes before the reveal delay never shows progress")
@@ -4775,9 +4819,10 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         // A reveal delay long enough that the fast transfer completes first.
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), progressRevealDelay: 3600,
-            progressIdleLinger: 0)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter, progressRevealDelay: 3600,
+            progressIdleGap: 0)
         service.start()
         defer { service.stop() }
 
@@ -4796,19 +4841,20 @@ struct VsockClipboardServiceTests {
 
         await service.materializeForPreview()
         #expect(service.clipboardContent.text == text)  // the transfer completed
-        #expect(service.transferProgress == nil)  // but it never crossed the reveal delay
+        #expect(reports.snapshot == nil)  // but it never crossed the reveal delay
     }
 
-    @Test("stop() clears an in-flight transferProgress")
+    @Test("stop() clears an in-flight readout")
     func stopClearsTransferProgress() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
         defer { guest.close() }
 
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(), progressRevealDelay: 0,
-            progressIdleLinger: 0)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter, progressRevealDelay: 0,
+            progressIdleGap: 0)
         service.start()
 
         let responder = FakeGuestResponder(guest: guest)
@@ -4825,10 +4871,10 @@ struct VsockClipboardServiceTests {
             service.clipboardContent.representations.first?.isPendingRemote == true
         }
         let previewTask = Task { await service.materializeForPreview() }
-        try await waitForChange { service.transferProgress != nil }
+        try await reports.wait { reports.snapshot != nil }
 
         service.stop()
-        #expect(service.transferProgress == nil)
+        try await reports.wait { reports.snapshot == nil }
 
         responder.releaseEnd()
         await previewTask.value
@@ -4843,10 +4889,10 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        let center = ClipboardProgressCenter()
+        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", instanceID: UUID(),
-            progressRevealDelay: 0, progressIdleLinger: 0, progressCenter: center)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter,
+            progressRevealDelay: 0, progressIdleGap: 0)
         service.start()
         defer { service.stop() }
 
@@ -4872,10 +4918,10 @@ struct VsockClipboardServiceTests {
         _ = try await nextFrame(from: guest)  // Begin
         // A one-chunk window parks the sender mid-transfer, with the readout up.
         try sendAck(from: guest, transferID: firstID, bytesConsumed: 0, windowBytes: 64 * 1024)
-        try await waitForChange { service.transferProgress != nil }
-        #expect(service.transferProgress?.isCancellable == true)
+        try await reports.wait { reports.snapshot != nil }
+        #expect(reports.snapshot?.isCancellable == true)
 
-        center.cancelCurrent()
+        reports.reporter.cancelRunning()
 
         // The guest's paste walks to the next representation regardless — the
         // peer decides what it pulls — so the cancel has to refuse that too, or

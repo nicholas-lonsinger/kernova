@@ -22,7 +22,9 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     private static let dropSourceName = "Mac"
 
     private let client: VsockGuestClient
-    private let progressTracker: ClipboardProgressTracker
+    private let reporter: ClipboardTransferReporter
+    private let progressRevealDelay: TimeInterval
+    private let progressIdleGap: TimeInterval
     private let downloadsDirectory: URL
     private let staging: ClipboardFileStaging
     private let pullTimeout: TimeInterval
@@ -66,7 +68,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     private final class DropJob: @unchecked Sendable {
         let generation: UInt64
         let reps: [Kernova_V1_ClipboardRepresentationInfo]
-        let session: ClipboardProgressTracker.SessionToken
+        let operation: ClipboardTransferOperation
 
         private let lock = NSLock()
         private var cancelledStorage = false
@@ -74,11 +76,11 @@ final class VsockGuestDropAgent: @unchecked Sendable {
 
         init(
             generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo],
-            session: ClipboardProgressTracker.SessionToken
+            operation: ClipboardTransferOperation
         ) {
             self.generation = generation
             self.reps = reps
-            self.session = session
+            self.operation = operation
         }
 
         var isCancelled: Bool { lock.withLock { cancelledStorage } }
@@ -121,10 +123,10 @@ final class VsockGuestDropAgent: @unchecked Sendable {
 
     /// Production init — the real drop port and the guest user's Downloads
     /// folder.
-    convenience init(progressTracker: ClipboardProgressTracker) {
+    convenience init(reporter: ClipboardTransferReporter) {
         self.init(
             client: VsockGuestClient(port: KernovaVsockPort.drop, label: "drop"),
-            progressTracker: progressTracker)
+            reporter: reporter)
     }
 
     /// Designated init; tests inject a socketpair-backed client, a Downloads
@@ -136,7 +138,9 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     /// resolves to the real `~/Downloads`.
     init(
         client: VsockGuestClient,
-        progressTracker: ClipboardProgressTracker,
+        reporter: ClipboardTransferReporter,
+        progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
+        progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
         downloadsDirectory: URL = FileManager.default.urls(
             for: .downloadsDirectory, in: .userDomainMask
         ).first
@@ -150,7 +154,9 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         }
     ) {
         self.client = client
-        self.progressTracker = progressTracker
+        self.reporter = reporter
+        self.progressRevealDelay = progressRevealDelay
+        self.progressIdleGap = progressIdleGap
         self.downloadsDirectory = downloadsDirectory
         self.pullTimeout = pullTimeout
         self.revealInFinder = revealInFinder
@@ -201,9 +207,9 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         liveChannel = nil
         for job in jobs.values {
             _ = job.cancel()
-            // Immediate: the transport measuring these is gone, so there is
-            // nothing left for the linger to show finishing.
-            progressTracker.closeSession(job.session, immediately: true)
+            // Retired, not finished: the transport measuring these is gone, so
+            // there is nothing left to show finishing.
+            job.operation.abandon()
         }
         jobs.removeAll()
     }
@@ -328,20 +334,19 @@ final class VsockGuestDropAgent: @unchecked Sendable {
             return
         }
 
-        let units = bounded.reps.enumerated().map { index, info in
-            ClipboardProgressTracker.PlannedUnit(
-                id: ClipboardTransferID.make(
-                    generation: offer.generation, repIndex: index, hostMinted: false),
-                expectedBytes: info.byteCount,
-                name: info.filename.isEmpty ? nil : info.filename)
-        }
         let generation = offer.generation
-        let session = progressTracker.openSession(
-            direction: .inbound, peerName: Self.dropSourceName, units: units,
+        // The whole drop's totals are the floor, so the bar's denominator is
+        // every dropped file rather than each in turn (§13).
+        let operation = ClipboardTransferOperation(
+            gesture: .drop, direction: .inbound, peerName: Self.dropSourceName,
+            expectedBytes: bounded.reps.reduce(UInt64(0)) { $0 &+ $1.byteCount },
+            expectedItems: bounded.reps.count,
+            revealDelay: progressRevealDelay, idleGap: progressIdleGap,
             onCancelRequested: { [weak self] in
                 DispatchQueue.main.async { self?.cancelJob(generation: generation) }
-            })
-        let job = DropJob(generation: generation, reps: bounded.reps, session: session)
+            },
+            reporter: reporter)
+        let job = DropJob(generation: generation, reps: bounded.reps, operation: operation)
         jobs[generation] = job
         Self.logger.notice(
             "Accepted a drop of \(bounded.reps.count, privacy: .public) item(s) (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
@@ -416,7 +421,11 @@ final class VsockGuestDropAgent: @unchecked Sendable {
 
         // The readout ends where it stopped: a cancelled or failed drop finishes
         // below 100 %, which is the whole of how those two read on screen.
-        progressTracker.closeSession(job.session)
+        switch outcome {
+        case .completed: job.operation.finish(.completed)
+        case .cancelled: job.operation.finish(.cancelled)
+        case .failed(let code, _): job.operation.finish(.failed(.peerReported(code)))
+        }
         if case .completed = outcome, !landed.isEmpty {
             revealInFinder(landed)
         }
@@ -466,8 +475,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
             staging.availableCapacity().map { UInt64(clamping: $0) }
             ?? ClipboardStreamTuning.unlimitedAcceptByteCount
         let coordinator = self.coordinator
-        let tracker = progressTracker
-        let session = job.session
+        let operation = job.operation
         guard let receiver = mainQueue({ self.receiver }) else { return .cancelled }
         receiver.awaitTransfer(
             transferID,
@@ -482,12 +490,12 @@ final class VsockGuestDropAgent: @unchecked Sendable {
                 // Re-arms the inactivity backstop so a large still-streaming file
                 // is never cut off mid-transfer.
                 coordinator.heartbeat(transferID)
-                tracker.unitProgressed(
-                    session: session, id: transferID, bytesTransferred: UInt64(max(0, bytes)),
+                operation.unitProgressed(
+                    id: transferID, bytesTransferred: UInt64(max(0, bytes)),
                     totalBytes: UInt64(max(0, total)))
             })
-        tracker.unitBegan(
-            session: session, id: transferID, expectedBytes: info.byteCount,
+        operation.unitBegan(
+            id: transferID, expectedBytes: info.byteCount,
             name: info.filename.isEmpty ? nil : info.filename)
 
         let uti = info.uti
@@ -520,10 +528,10 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         case .delivered(let representation):
             do {
                 let url = try land(representation, named: info.filename)
-                tracker.unitEnded(session: session, id: transferID, succeeded: true)
+                operation.unitEnded(id: transferID, succeeded: true)
                 return .success(url)
             } catch {
-                tracker.unitEnded(session: session, id: transferID, succeeded: false)
+                operation.unitEnded(id: transferID, succeeded: false)
                 let failure = Self.classify(error)
                 Self.logger.error(
                     "Failed to save a dropped file into Downloads: \(error.localizedDescription, privacy: .public)"
@@ -531,7 +539,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
                 return .failure(failure.0, failure.1)
             }
         case .aborted(let abort):
-            tracker.unitEnded(session: session, id: transferID, succeeded: false)
+            operation.unitEnded(id: transferID, succeeded: false)
             if job.isCancelled { return .cancelled }
             Self.logger.warning(
                 "Dropped file \(transferID, privacy: .public) aborted (\(abort.rawCode, privacy: .public))"
@@ -540,17 +548,17 @@ final class VsockGuestDropAgent: @unchecked Sendable {
                 abort.code == .diskFull ? .dropDiskFull : .dropFailed, abort.message)
         case .timedOut:
             receiver.cancelAwait(transferID)
-            tracker.unitEnded(session: session, id: transferID, succeeded: false)
+            operation.unitEnded(id: transferID, succeeded: false)
             sendStreamAbortFromWorker(transferID: transferID, on: channel)
             Self.logger.warning("Dropped file \(transferID, privacy: .public) timed out")
             return .failure(.dropFailed, "The transfer stopped making progress")
         case .cancelled:
             receiver.cancelAwait(transferID)
-            tracker.unitEnded(session: session, id: transferID, succeeded: false)
+            operation.unitEnded(id: transferID, succeeded: false)
             return .cancelled
         case .superseded:
             // A newer pull owns this id now; touch nothing keyed by it.
-            tracker.unitEnded(session: session, id: transferID, succeeded: false)
+            operation.unitEnded(id: transferID, succeeded: false)
             return .cancelled
         }
     }

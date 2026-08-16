@@ -21,7 +21,7 @@ struct VsockGuestDropAgentTests {
         let root: URL
         /// Every set of URLs handed to the Finder reveal, in order.
         let revealed = AtomicBox<[URL]>()
-        let tracker: ClipboardProgressTracker
+        let reporter: ClipboardTransferReporter
 
         init(freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil) throws {
             root = FileManager.default.temporaryDirectory
@@ -42,11 +42,12 @@ struct VsockGuestDropAgentTests {
             ) { _, _ in
                 provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
             }
-            // Zeroed delays so a live transfer's readout is observable.
-            tracker = ClipboardProgressTracker(revealDelay: 0, idleLinger: 0, emit: { _ in })
+            reporter = ClipboardTransferReporter(dwell: 0)
             let revealed = self.revealed
             agent = VsockGuestDropAgent(
-                client: client, progressTracker: tracker, downloadsDirectory: downloads,
+                client: client, reporter: reporter,
+                // Zeroed delays so a live transfer's readout is observable.
+                progressRevealDelay: 0, progressIdleGap: 0, downloadsDirectory: downloads,
                 stagingTempRoot: root.appendingPathComponent("staging", isDirectory: true),
                 freeSpaceProvider: freeSpaceProvider,
                 revealInFinder: { urls in revealed.set(urls) })
@@ -315,7 +316,8 @@ struct VsockGuestDropAgentTests {
             let frame = try await nextFrame(from: harness.host)
             if case .clipboardRequest = frame.payload { break }
         }
-        harness.tracker.requestCancelOfPublishedSession()
+        let reporter = harness.reporter
+        await MainActor.run { reporter.cancelRunning() }
 
         var sawAbort = false
         var complete: Kernova_V1_DropComplete?

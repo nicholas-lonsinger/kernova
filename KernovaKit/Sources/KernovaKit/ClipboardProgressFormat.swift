@@ -4,20 +4,23 @@ import Foundation
 public enum ClipboardProgressFormat {
     /// Headline naming the operation and the machine on the other end.
     ///
-    /// `isPaste` names what outbound bytes are for: an app on the peer is blocked
-    /// on them right now. Inbound reads the same either way — a paste this side
-    /// performs parks the thread that would repaint it, so one never shows a
-    /// readout at all.
+    /// `gesture` names what outbound bytes are for: under `.peerPaste` an app on
+    /// the peer is blocked on them right now. Inbound reads the same for every
+    /// gesture — a paste this side performs parks the thread that would repaint
+    /// it, so one never shows a readout at all.
     ///
     /// The trailing ellipsis marks work still under way, matching the system's own
     /// "Copying…" progress titles — not the HIG's gathers-more-input ellipsis,
     /// which applies to commands.
     public static func headline(
-        direction: ClipboardProgressSnapshot.Direction, peerName: String, isPaste: Bool
+        direction: ClipboardProgressSnapshot.Direction, peerName: String,
+        gesture: ClipboardTransferGesture
     ) -> String {
         switch direction {
         case .inbound: return "Receiving from “\(peerName)”…"
-        case .outbound: return isPaste ? "Pasting into “\(peerName)”…" : "Sending to “\(peerName)”…"
+        case .outbound:
+            return gesture == .peerPaste
+                ? "Pasting into “\(peerName)”…" : "Sending to “\(peerName)”…"
         }
     }
 
@@ -94,7 +97,7 @@ public enum ClipboardProgressFormat {
         var parts = [
             headline(
                 direction: snapshot.direction, peerName: snapshot.peerName,
-                isPaste: snapshot.isPasteSession)
+                gesture: snapshot.gesture)
         ]
         parts.append(percent(fraction: snapshot.fractionComplete))
         if let counter = itemCounter(

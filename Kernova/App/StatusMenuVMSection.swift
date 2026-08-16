@@ -1,11 +1,12 @@
 import AppKit
+import KernovaKit
 
 /// One row of the status-item dropdown's VM section.
 struct StatusMenuVMRow: Equatable {
     let instanceID: UUID
     let title: String
-    /// The clipboard-issue line to show indented under the row, or `nil` when the
-    /// VM has no outstanding issue.
+    /// The clipboard refusal line to show indented under the row, or `nil` when
+    /// the VM has none outstanding.
     let noticeText: String?
 
     init(instanceID: UUID, title: String, noticeText: String? = nil) {
@@ -44,18 +45,25 @@ final class StatusMenuVMSection {
     }
 
     /// The rows the section should show for `instances`, each carrying the
-    /// clipboard issue `issues` holds for it.
+    /// clipboard refusal that VM's transfer report holds.
     ///
-    /// Only VMs with rows can carry a notice, so a stopped VM's issue never
-    /// shows.
-    static func rows(
-        for instances: [VMInstance], issues: [UUID: ClipboardIssueCenter.Notice] = [:]
-    ) -> [StatusMenuVMRow] {
-        instances.filter(\.isKeepingAppAlive).map {
+    /// The `isKeepingAppAlive` filter is what keeps a stopped VM off the
+    /// dropdown, and with it that VM's report — the row is the only thing a
+    /// notice line can hang under.
+    static func rows(for instances: [VMInstance]) -> [StatusMenuVMRow] {
+        instances.filter(\.isKeepingAppAlive).map { instance in
             StatusMenuVMRow(
-                instanceID: $0.instanceID, title: "\($0.name) — \($0.statusDisplayName)",
-                noticeText: issues[$0.instanceID]?.issue.menuLineText)
+                instanceID: instance.instanceID,
+                title: "\(instance.name) — \(instance.statusDisplayName)",
+                noticeText: Self.noticeText(for: instance))
         }
+    }
+
+    /// The compact refusal line under a VM's row, or `nil` when its report is
+    /// running, idle, or a success.
+    private static func noticeText(for instance: VMInstance) -> String? {
+        guard case .finished(let finish) = instance.clipboardTransferReport else { return nil }
+        return ClipboardTransferWording.wording(for: finish, vmName: instance.name)?.menuLine
     }
 
     /// Appends the section's items at the menu's current end, dropping any

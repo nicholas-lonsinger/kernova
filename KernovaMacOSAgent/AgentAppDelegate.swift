@@ -47,10 +47,10 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     private var controlAgent: VsockGuestControlAgent?
     private var statusItemController: AgentStatusItemController?
 
-    /// This side's single transfer-readout authority, shared by every agent that
-    /// moves files, so the one status item never has two sources deciding what it
+    /// This side's single transfer report, shared by every agent that moves
+    /// files, so the one status item never has two sources deciding what it
     /// shows.
-    private var progressTracker: ClipboardProgressTracker?
+    private var transferReporter: ClipboardTransferReporter?
 
     /// Retained so the signal sources stay armed for the process lifetime.
     private var sigintSource: DispatchSourceSignal?
@@ -99,22 +99,18 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         // reach them; only this launch-time reclaim bounds their growth.
         ClipboardFileStaging.reclaimAll()
 
-        // Progress emissions arrive off-main and hop via `DispatchQueue.main`,
-        // not a `Task` — two independently scheduled hops carrying immutable
-        // snapshots have no ordering guarantee, and the ring would jump backwards.
-        let progressTracker = ClipboardProgressTracker { [weak self] snapshot in
-            DispatchQueue.main.async {
-                self?.statusItemController?.materializationProgressChanged(snapshot)
-            }
+        let transferReporter = ClipboardTransferReporter()
+        transferReporter.onReportChanged = { [weak self] report in
+            self?.statusItemController?.transferReportChanged(report)
         }
         let clipboardAgent = VsockGuestClipboardAgent(
-            progressTracker: progressTracker,
+            reporter: transferReporter,
             onClipboardNotice: { [weak self] in
                 DispatchQueue.main.async {
                     self?.statusItemController?.clipboardNoticeRaised()
                 }
             })
-        let dropAgent = VsockGuestDropAgent(progressTracker: progressTracker)
+        let dropAgent = VsockGuestDropAgent(reporter: transferReporter)
 
         // `onPolicy` gates the log + clipboard capabilities; `onStateChange`
         // drives the status-item icon; `onHostCapabilitiesChanged` is what tells
@@ -144,7 +140,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         dropAgent.hostSupportsDrop = { [weak controlAgent] in
             controlAgent?.hostSupportsDropFiles ?? false
         }
-        self.progressTracker = progressTracker
+        self.transferReporter = transferReporter
         self.clipboardAgent = clipboardAgent
         self.dropAgent = dropAgent
         self.controlAgent = controlAgent
@@ -157,8 +153,8 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
                 vsockConnection?.isLogForwardingEnabled ?? false
             },
             clipboardActivity: { [weak clipboardAgent] in clipboardAgent?.clipboardActivity ?? .disabled },
-            onCancelTransfer: { [weak progressTracker] in
-                progressTracker?.requestCancelOfPublishedSession()
+            onCancelTransfer: { [weak transferReporter] in
+                transferReporter?.cancelRunning()
             },
             onQuit: { NSApp.terminate(nil) }
         )

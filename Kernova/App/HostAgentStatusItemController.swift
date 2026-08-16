@@ -25,20 +25,19 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     private let viewModel: VMLibraryViewModel
     private let preferences: AppPreferences
-    private let issueCenter: ClipboardIssueCenter
     /// Summons the GUI — `nil` opens the library, a VM id opens just that VM.
     private let onOpen: (UUID?) -> Void
     /// Opens the clipboard window of the VM a notice names.
     private let onOpenClipboard: (UUID) -> Void
     private let onQuit: () -> Void
 
-    /// Keeps the tooltip — and, while the dropdown is open, its VM rows — in
-    /// sync with the running VMs.
-    private var runningObservation: ObservationLoop?
-    /// Keeps the paste readout in sync with the materializing transfer.
-    private var pasteProgressObservation: ObservationLoop?
-    /// Fires when a clipboard refusal is queued for an interrupting surface.
-    private var clipboardNoticeObservation: ObservationLoop?
+    /// Keeps the tooltip, the readout, the notice popover and — while the
+    /// dropdown is open — its VM rows in sync with the library.
+    ///
+    /// One loop, not several: every one of those renders from the same tracked
+    /// set (each VM's row model and its transfer report), so splitting them would
+    /// only let the tracked set drift from the rendered one.
+    private var libraryObservation: ObservationLoop?
 
     /// The dropdown readout, its one-shot automatic open, and the shared menu
     /// wiring for a materializing paste.
@@ -48,7 +47,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private lazy var pasteProgressPresenter = ClipboardProgressStatusItemPresenter(
         statusItem: statusItem, menu: menu,
         willAutoOpen: { [weak self] in self?.transientPopover.dismiss() },
-        onCancel: { ClipboardProgressCenter.shared.cancelCurrent() })
+        onCancel: { [weak self] in self?.newestRunning()?.instance.clipboardTransfers.cancelRunning() })
 
     /// The status item's one transient-popover slot, shared by the soft-quit
     /// reminder and the clipboard notice.
@@ -56,11 +55,15 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         statusItem: statusItem, menu: menu,
         isDropdownOpen: { [weak self] in self?.isMenuOpen ?? false })
 
-    /// The notice currently shown, or the last one declined.
+    /// The readout last handed to the presenter, so a library change that leaves
+    /// it alone doesn't re-run the automatic-open decision.
+    private var lastAppliedReadout: ClipboardTransferReport = .idle
+
+    /// When each VM's last presented refusal was raised.
     ///
     /// One refusal is presented once. A repeat of the same kind is a new notice,
-    /// since the issue's `date` is its identity.
-    private var lastPresentedNotice: ClipboardIssueCenter.Notice?
+    /// since a finish's `date` is its identity.
+    private var lastPresentedNoticeDates: [UUID: Date] = [:]
 
     /// How long a clipboard notice stays up unattended.
     private static let clipboardNoticeDuration: Duration = .seconds(6)
@@ -71,7 +74,6 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     init(
         viewModel: VMLibraryViewModel,
         preferences: AppPreferences = .shared,
-        issueCenter: ClipboardIssueCenter = .shared,
         onOpen: @escaping (UUID?) -> Void,
         onOpenClipboard: @escaping (UUID) -> Void,
         onQuit: @escaping () -> Void
@@ -79,7 +81,6 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.viewModel = viewModel
         self.preferences = preferences
-        self.issueCenter = issueCenter
         self.onOpen = onOpen
         self.onOpenClipboard = onOpenClipboard
         self.onQuit = onQuit
@@ -91,29 +92,23 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         setIcon()
         updateTooltip()
 
-        runningObservation = observeRecurring(
+        libraryObservation = observeRecurring(
             track: { [weak self] in
                 guard let self else { return }
                 // Evaluating the row model registers every property the rows
                 // (and the tooltip's running count) render, so the tracked set
                 // can't drift from the rendered set.
                 _ = self.currentRows()
+                for instance in self.viewModel.instances {
+                    _ = instance.clipboardTransferReport
+                }
             },
             apply: { [weak self] in
                 guard let self else { return }
-                self.updateTooltip()
+                self.transferReportsChanged()
                 self.syncMenuIfOpen()
+                self.presentPendingNotices()
             }
-        )
-
-        pasteProgressObservation = observeRecurring(
-            track: { _ = ClipboardProgressCenter.shared.materializationProgress },
-            apply: { [weak self] in self?.pasteProgressChanged() }
-        )
-
-        clipboardNoticeObservation = observeRecurring(
-            track: { [weak self] in _ = self?.issueCenter.pendingNotice },
-            apply: { [weak self] in self?.pendingClipboardNoticeChanged() }
         )
     }
 
@@ -123,52 +118,104 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// reference to a status item until it is removed, and a popover still up
     /// owns a live auto-dismiss task.
     func tearDown() {
-        runningObservation?.cancel()
-        pasteProgressObservation?.cancel()
-        clipboardNoticeObservation?.cancel()
+        libraryObservation?.cancel()
         transientPopover.dismiss()
         statusItem.menu = nil
         NSStatusBar.system.removeStatusItem(statusItem)
     }
 
-    /// The dropdown's VM rows for the current library and clipboard issues.
+    /// The dropdown's VM rows for the current library.
     private func currentRows() -> [StatusMenuVMRow] {
-        StatusMenuVMSection.rows(
-            for: viewModel.instances, issues: issueCenter.latestByInstance)
+        StatusMenuVMSection.rows(for: viewModel.instances)
     }
 
-    // MARK: - Paste progress
+    // MARK: - Transfer readout
 
-    private func pasteProgressChanged() {
-        pasteProgressPresenter.apply(ClipboardProgressCenter.shared.materializationProgress)
-        setIcon()
+    /// The VM whose transfer started most recently, with its readout — the one
+    /// the status item's single readout shows.
+    ///
+    /// Computed from the instances rather than kept in a registry: the report is
+    /// a per-VM value, so nothing has to be registered or unregistered as
+    /// services come and go.
+    private func newestRunning() -> (instance: VMInstance, snapshot: ClipboardProgressSnapshot, since: Date)? {
+        viewModel.instances
+            .compactMap { instance -> (instance: VMInstance, snapshot: ClipboardProgressSnapshot, since: Date)? in
+                guard case .running(let snapshot, let since) = instance.clipboardTransferReport
+                else { return nil }
+                return (instance, snapshot, since)
+            }
+            .max { $0.since < $1.since }
+    }
+
+    /// Applies the readout across every VM: the newest running transfer, else the
+    /// most recent VM report that still has a bar to dwell on.
+    ///
+    /// The tooltip is rebuilt every pass — it also carries the running-VM count —
+    /// while the readout itself is applied only when it changed, so a start or a
+    /// status transition doesn't re-run the automatic-open decision.
+    private func transferReportsChanged() {
+        let readout: ClipboardTransferReport
+        if let newest = newestRunning() {
+            readout = .running(newest.snapshot, since: newest.since)
+        } else {
+            readout = dwellingReport() ?? .idle
+        }
+        if readout != lastAppliedReadout {
+            lastAppliedReadout = readout
+            pasteProgressPresenter.apply(readout)
+            setIcon()
+        }
         updateTooltip()
+    }
+
+    /// The finished report still worth leaving a bar up for, or `nil`.
+    ///
+    /// A refusal has no bar — its surfaces are the notice popover and the
+    /// dropdown's per-VM line.
+    private func dwellingReport() -> ClipboardTransferReport? {
+        viewModel.instances
+            .compactMap { instance -> ClipboardTransferFinish? in
+                guard case .finished(let finish) = instance.clipboardTransferReport,
+                    finish.finalSnapshot != nil
+                else { return nil }
+                return finish
+            }
+            .max { $0.date < $1.date }
+            .map { .finished($0) }
     }
 
     // MARK: - Clipboard notice
 
-    /// Presents the clipboard refusal the issue center just queued, if the status
-    /// item can carry a popover right now.
+    /// Presents each VM's newly raised refusal, if the status item can carry a
+    /// popover right now.
     ///
     /// A notice that can't be shown is dropped rather than deferred: the
     /// dropdown's own line is the fallback, and a refusal replayed later would
-    /// interrupt for something the user has moved past.
-    private func pendingClipboardNoticeChanged() {
-        guard let notice = issueCenter.pendingNotice, notice != lastPresentedNotice else { return }
-        lastPresentedNotice = notice
-        issueCenter.consumePendingNotice()
-
-        let content = ClipboardNoticeViewController(notice: notice) { [weak self] in
-            guard let self else { return }
-            self.transientPopover.dismiss()
-            self.onOpenClipboard(notice.instanceID)
+    /// interrupt for something the user has moved past. A refusal the *guest*
+    /// user's gesture produced is not presented here at all — the guest's own
+    /// dropdown reveals it over there (docs/CLIPBOARD.md §13).
+    private func presentPendingNotices() {
+        for instance in viewModel.instances {
+            guard case .finished(let finish) = instance.clipboardTransferReport,
+                finish.failure != nil, finish.gesture.isMadeHere,
+                lastPresentedNoticeDates[instance.instanceID] != finish.date,
+                let wording = ClipboardTransferWording.wording(
+                    for: finish, vmName: instance.name)
+            else { continue }
+            lastPresentedNoticeDates[instance.instanceID] = finish.date
+            let instanceID = instance.instanceID
+            let content = ClipboardNoticeViewController(wording: wording) { [weak self] in
+                guard let self else { return }
+                self.transientPopover.dismiss()
+                self.onOpenClipboard(instanceID)
+            }
+            guard
+                transientPopover.show(
+                    content, for: Self.clipboardNoticeDuration, describedAs: "Clipboard notice")
+            else { continue }
+            Self.logger.notice(
+                "Showing a clipboard notice for '\(instance.name, privacy: .public)'")
         }
-        guard
-            transientPopover.show(
-                content, for: Self.clipboardNoticeDuration, describedAs: "Clipboard notice")
-        else { return }
-        Self.logger.notice(
-            "Showing a clipboard notice for '\(notice.vmName, privacy: .public)'")
     }
 
     // MARK: - Soft-quit reminder

@@ -52,9 +52,6 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
     override func showWindow(_ sender: Any?) {
         super.showWindow(sender)
         if statusObservation == nil { observeStatus() }
-        // On screen, the content controller renders this VM's transfer issues
-        // itself — the menu-bar notice stands down for as long as it is up.
-        ClipboardIssueCenter.shared.beginWatching(instanceID: instance.instanceID)
         Self.logger.debug("Clipboard window shown for VM '\(self.instance.name, privacy: .public)'")
     }
 
@@ -67,26 +64,11 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
         }
         statusObservation?.cancel()
         statusObservation = nil
-        ClipboardIssueCenter.shared.endWatching(instanceID: instance.instanceID)
         Self.logger.debug("Clipboard window closing for VM '\(self.instance.name, privacy: .public)'")
     }
 
     func windowDidResignKey(_ notification: Notification) {
         clipboardContentVC.flushAndAnnounceEdit()
-    }
-
-    /// Hands the interruption back to the menu bar while the window is in the
-    /// Dock: its own transfer-issue banner is a few-second transient, so a
-    /// minimized window renders a refusal to nobody.
-    ///
-    /// Deliberately tracks miniaturization only, not occlusion: a window covered
-    /// by other windows is still the surface the user chose for this VM.
-    func windowDidMiniaturize(_ notification: Notification) {
-        ClipboardIssueCenter.shared.endWatching(instanceID: instance.instanceID)
-    }
-
-    func windowDidDeminiaturize(_ notification: Notification) {
-        ClipboardIssueCenter.shared.beginWatching(instanceID: instance.instanceID)
     }
 
     // MARK: - Status Observation

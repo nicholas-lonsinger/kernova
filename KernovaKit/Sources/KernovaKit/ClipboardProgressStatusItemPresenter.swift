@@ -60,16 +60,33 @@ public final class ClipboardProgressStatusItemPresenter {
         self.onCancel = onCancel
     }
 
-    /// Applies the readout the domain host just published — a snapshot to render,
-    /// or `nil` to clear it.
-    public func apply(_ snapshot: ClipboardProgressSnapshot?) {
-        self.snapshot = snapshot
-        if let snapshot {
-            view.apply(snapshot)
-            view.onCancel = snapshot.isCancellable ? cancelHandler() : nil
+    /// Applies the transfer report the domain host just published.
+    ///
+    /// A running operation renders its live readout; one that completed or was
+    /// cancelled keeps its bar where it stopped, with no Cancel button — there is
+    /// nothing left to stop. A refusal has no bar at all: its surface is the
+    /// notice and the dropdown's per-VM line.
+    public func apply(_ report: ClipboardTransferReport) {
+        let rendered: ClipboardProgressSnapshot?
+        let allowsCancel: Bool
+        switch report {
+        case .running(let snapshot, _):
+            rendered = snapshot
+            allowsCancel = snapshot.isCancellable
+        case .finished(let finish):
+            rendered = finish.finalSnapshot
+            allowsCancel = false
+        case .idle:
+            rendered = nil
+            allowsCancel = false
+        }
+        self.snapshot = rendered
+        if let rendered {
+            view.apply(rendered)
+            view.onCancel = allowsCancel ? cancelHandler() : nil
         }
         syncItems()
-        applyAutoOpen(snapshot)
+        applyAutoOpen(rendered)
     }
 
     /// The click handler installed on the readout: dismiss the dropdown the user
@@ -229,7 +246,7 @@ public final class ClipboardProgressStatusItemPresenter {
             return
         }
         let record: KernovaLogMessage = """
-            Auto-open \(action, privacy: .public) — isPaste=\(readout.isPasteSession, privacy: .public), \
+            Auto-open \(action, privacy: .public) — gesture=\(readout.gesture, privacy: .public), \
             elapsed=\(ClipboardProgressFormat.logSeconds(readout.elapsedSeconds), privacy: .public), \
             remaining=\(ClipboardProgressFormat.logSeconds(readout.secondsRemaining), privacy: .public), \
             \(readout.bytesTransferred, privacy: .public)/\(readout.totalBytes, privacy: .public) bytes, \

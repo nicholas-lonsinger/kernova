@@ -37,10 +37,9 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
     /// Estimated seconds until the operation finishes, or `nil` when it can't be
     /// estimated (no rate yet, or nothing left to move).
     public let secondsRemaining: Double?
-    /// Whether this operation is serving a paste the user started on the machine
-    /// at the other end — the only one allowed to open a status-item dropdown by
-    /// itself.
-    public let isPasteSession: Bool
+    /// The user action this operation serves, which decides its headline and
+    /// whether its readout may open a status-item dropdown by itself.
+    public let gesture: ClipboardTransferGesture
     /// How long this operation has been running.
     public let elapsedSeconds: TimeInterval
     /// Whether the user can stop this operation — what puts a Cancel affordance
@@ -52,8 +51,8 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
     public init(
         direction: Direction, peerName: String, currentItemName: String?, filesCompleted: Int,
         fileCount: Int, bytesTransferred: UInt64, totalBytes: UInt64, bytesPerSecond: Double?,
-        secondsRemaining: Double?, isPasteSession: Bool, elapsedSeconds: TimeInterval,
-        isCancellable: Bool = false
+        secondsRemaining: Double?, gesture: ClipboardTransferGesture,
+        elapsedSeconds: TimeInterval, isCancellable: Bool = false
     ) {
         self.direction = direction
         self.peerName = peerName
@@ -64,7 +63,7 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
         self.totalBytes = totalBytes
         self.bytesPerSecond = bytesPerSecond
         self.secondsRemaining = secondsRemaining
-        self.isPasteSession = isPasteSession
+        self.gesture = gesture
         self.elapsedSeconds = elapsedSeconds
         self.isCancellable = isCancellable
     }

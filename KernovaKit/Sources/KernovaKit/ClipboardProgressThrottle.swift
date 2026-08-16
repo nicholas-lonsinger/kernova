@@ -33,9 +33,9 @@ enum FetchProgressThrottle {
 /// The stateful half of the throttle: owns one consumer's watermarks and
 /// answers "forward this update?" under its own lock.
 ///
-/// `ClipboardProgressTracker` holds one per *session* — the aggregate is a single
-/// byte stream even when several transfers feed it — so every progress surface
-/// republishes at one shared policy.
+/// `ClipboardTransferOperation` holds one per *operation* — the aggregate is a
+/// single byte stream even when several transfers feed it — so every progress
+/// surface republishes at one shared policy.
 ///
 /// `@unchecked Sendable`: every stored property is guarded by `lock`.
 final class FetchProgressCoalescer: @unchecked Sendable {

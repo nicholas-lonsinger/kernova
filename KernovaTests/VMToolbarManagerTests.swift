@@ -180,29 +180,24 @@ struct VMToolbarManagerTests {
 
     // MARK: - Clipboard item
 
-    /// In-memory `ClipboardServicing` whose `transferProgress` a test sets
-    /// directly to drive the toolbar item's transfer bar. `@Observable` so the
-    /// manager's `observeRecurring` arms against it like a real transport.
-    @MainActor
-    @Observable
-    final class FakeClipboardService: ClipboardServicing {
-        var clipboardContent: ClipboardContent = .empty
-        var isConnected = true
-        var supportsBinaryRepresentations = true
-        var transferProgress: ClipboardProgressSnapshot?
-
-        /// Builds a snapshot carrying just the fraction the bar renders.
-        static func progress(transferred: UInt64, total: UInt64) -> ClipboardProgressSnapshot {
-            ClipboardProgressSnapshot(
-                direction: .inbound, peerName: "VM", currentItemName: nil, filesCompleted: 0,
-                fileCount: 1, bytesTransferred: transferred, totalBytes: total,
-                bytesPerSecond: nil, secondsRemaining: nil, isPasteSession: false,
-                elapsedSeconds: 1)
-        }
-
-        func stop() {}
-        func grabIfChanged() {}
-        func clearBuffer() { clipboardContent = .empty }
+    /// Stands a running readout on `instance`, as a producer's operation would,
+    /// returning the operation — the reporter holds only a weak reference, so the
+    /// caller must keep it alive for the length of the test.
+    private func publishProgress(
+        transferred: UInt64, total: UInt64, on instance: VMInstance
+    ) -> ClipboardTransferOperation {
+        let operation = ClipboardTransferOperation(
+            gesture: .paste, direction: .inbound, peerName: instance.name, revealDelay: 0,
+            now: { 0 }, schedule: { _, _ in }, reporter: instance.clipboardTransfers)
+        instance.clipboardTransfers.publish(
+            from: operation,
+            .running(
+                ClipboardProgressSnapshot(
+                    direction: .inbound, peerName: instance.name, currentItemName: nil,
+                    filesCompleted: 0, fileCount: 1, bytesTransferred: transferred,
+                    totalBytes: total, bytesPerSecond: nil, secondsRemaining: nil, gesture: .paste,
+                    elapsedSeconds: 1), since: Date()))
+        return operation
     }
 
     private func clipboardButton(in toolbar: NSToolbar) -> ClipboardToolbarButton? {
@@ -282,30 +277,27 @@ struct VMToolbarManagerTests {
     @Test("Clipboard button shows the transfer fraction while a transfer is in flight")
     func clipboardBarShownDuringTransfer() {
         let instance = makeInstance(status: .running)
-        let service = FakeClipboardService()
-        service.transferProgress = FakeClipboardService.progress(transferred: 25, total: 100)
-        instance.clipboardService = service
+        let operation = publishProgress(transferred: 25, total: 100, on: instance)
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
         manager.updateToolbarItems(in: toolbar)
 
         #expect(clipboardButton(in: toolbar)?.transferFraction == 0.25)
+        withExtendedLifetime(operation) {}
     }
 
     @Test("Clipboard button hides the bar once the transfer reaches a terminal state")
     func clipboardBarHiddenAfterTerminal() {
         let instance = makeInstance(status: .running)
-        let service = FakeClipboardService()
-        service.transferProgress = FakeClipboardService.progress(transferred: 50, total: 100)
-        instance.clipboardService = service
+        let operation = publishProgress(transferred: 50, total: 100, on: instance)
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
         manager.updateToolbarItems(in: toolbar)
         #expect(clipboardButton(in: toolbar)?.transferFraction == 0.5)
 
-        // Terminal: the tracker clears the projection.
-        service.transferProgress = nil
+        // Terminal: the operation retires and the VM's report goes idle.
+        instance.clipboardTransfers.retire(operation)
         manager.updateToolbarItems(in: toolbar)
 
         #expect(clipboardButton(in: toolbar)?.transferFraction == nil)

@@ -42,8 +42,7 @@ struct VMInstanceDisplayDropTests {
         func attachDrop() throws {
             let (_, host) = try makePair()
             let service = VsockDropService(
-                channel: host, label: "Drop VM", instanceID: instance.instanceID,
-                progressCenter: ClipboardProgressCenter(), issueCenter: ClipboardIssueCenter())
+                channel: host, label: "Drop VM", reporter: instance.clipboardTransfers)
             instance.vsockDropService = service
             service.start()
         }

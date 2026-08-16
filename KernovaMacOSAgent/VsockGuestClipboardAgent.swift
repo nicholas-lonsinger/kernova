@@ -93,18 +93,20 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// tests, the platform clock in production.
     private let clock: any EngineClock
 
-    /// Aggregates what this side streams to the host into the status item's
-    /// readout.
-    private let progressTracker: ClipboardProgressTracker
+    /// Where what this side streams to the host is reported, and the seams every
+    /// operation opened here is built with.
+    private let reporter: ClipboardTransferReporter
+    private let progressRevealDelay: TimeInterval
+    private let progressIdleGap: TimeInterval
 
     /// Raised on the main queue when a refusal has just landed in
     /// `clipboardActivity`, so the menu-bar surface can reveal it instead of
     /// waiting for the user to open the dropdown.
     private let onClipboardNotice: @Sendable () -> Void
 
-    /// The outbound session serving the host's pulls of `pendingOutbound`, with
-    /// the generation it measures.
-    private var outboundSession: (generation: UInt64, token: ClipboardProgressTracker.SessionToken)?
+    /// The operation serving the host's pulls of `pendingOutbound`, with the
+    /// generation it measures.
+    private var outboundOperation: (generation: UInt64, operation: ClipboardTransferOperation)?
 
     // MARK: - Main-queue state
 
@@ -271,16 +273,16 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     // MARK: - Init
 
     /// Production init — uses real `NSPasteboard.general` on the clipboard port,
-    /// reporting progress through the agent-wide `progressTracker` and clipboard
+    /// reporting progress through the agent-wide `reporter` and clipboard
     /// refusals through `onClipboardNotice`.
     convenience init(
-        progressTracker: ClipboardProgressTracker,
+        reporter: ClipboardTransferReporter,
         onClipboardNotice: @escaping @Sendable () -> Void
     ) {
         self.init(
             pasteboard: NSPasteboard.general,
             client: VsockGuestClient(port: KernovaVsockPort.clipboard, label: "clipboard"),
-            progressTracker: progressTracker,
+            reporter: reporter,
             onClipboardNotice: onClipboardNotice
         )
     }
@@ -289,34 +291,30 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// client, and optionally a manually advanced `clock` to cross the
     /// refusal-burst window without waiting, a `freeSpaceProvider` to simulate a
     /// full disk, a `stagingTempRoot` to isolate the staging directory between
-    /// parallel tests, an `onProgress` sink to observe the readout the status
-    /// item renders, an `onClipboardNotice` sink to observe refusals, and zeroed
-    /// reveal/linger delays so a test transfer surfaces while in flight.
+    /// parallel tests, a `reporter` to observe the readout the status item
+    /// renders, an `onClipboardNotice` sink to observe refusals, and zeroed
+    /// reveal/idle delays so a test transfer surfaces while in flight.
     ///
-    /// `progressTracker` is the agent's single readout authority, shared with
-    /// every other agent that transfers files, so one status item never has two
-    /// sources deciding what it shows. A test that only cares about the clipboard
-    /// leaves it out and gets one built from `progressRevealDelay` /
-    /// `progressIdleLinger` / `onProgress`.
+    /// `reporter` is the agent's single readout authority, shared with every
+    /// other agent that transfers files, so one status item never has two sources
+    /// deciding what it shows.
     init(
         pasteboard: Pasteboard, client: VsockGuestClient,
         clock: any EngineClock = makePlatformEngineClock(),
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         stagingTempRoot: URL = FileManager.default.temporaryDirectory,
-        progressTracker: ClipboardProgressTracker? = nil,
-        progressRevealDelay: TimeInterval = ClipboardProgressTracker.defaultRevealDelay,
-        progressIdleLinger: TimeInterval = ClipboardProgressTracker.defaultIdleLinger,
-        onProgress: @escaping @Sendable (ClipboardProgressSnapshot?) -> Void = { _ in },
+        reporter: ClipboardTransferReporter,
+        progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
+        progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
         onClipboardNotice: @escaping @Sendable () -> Void = {}
     ) {
         self.pasteboard = pasteboard
         self.client = client
         self.clock = clock
         self.onClipboardNotice = onClipboardNotice
-        self.progressTracker =
-            progressTracker
-            ?? ClipboardProgressTracker(
-                revealDelay: progressRevealDelay, idleLinger: progressIdleLinger, emit: onProgress)
+        self.reporter = reporter
+        self.progressRevealDelay = progressRevealDelay
+        self.progressIdleGap = progressIdleGap
         self.staging = ClipboardFileStaging(
             label: "agent", tempRoot: stagingTempRoot, freeSpaceProvider: freeSpaceProvider)
         self.lastPasteboardChangeCount = pasteboard.changeCount
@@ -383,29 +381,28 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         Self.logger.notice("Vsock clipboard agent stopped")
     }
 
-    /// The outbound session measuring what this side is streaming for
-    /// `generation`, opening one if the host's request is the first under it.
+    /// The operation measuring what this side is streaming for `generation`,
+    /// opening one if the host's request is the first under it.
     ///
-    /// A session the tracker has already ended is replaced rather than reused:
-    /// the host's preview wave and its paste wave can be minutes apart, far
-    /// longer than the idle linger, and reusing an ended token drops the paste's
-    /// progress entirely.
-    private func outboundSessionToken(for generation: UInt64)
-        -> ClipboardProgressTracker.SessionToken
-    {
-        if let existing = outboundSession, existing.generation == generation,
-            progressTracker.isSessionLive(existing.token)
+    /// A finished operation is replaced rather than reused: the host's preview
+    /// wave and its paste wave can be minutes apart, far longer than the idle
+    /// gap, and reusing an ended one drops the paste's progress entirely.
+    private func outboundOperation(for generation: UInt64) -> ClipboardTransferOperation {
+        if let existing = outboundOperation, existing.generation == generation,
+            existing.operation.isLive
         {
-            return existing.token
+            return existing.operation
         }
-        if let stale = outboundSession { progressTracker.closeSession(stale.token, immediately: true) }
-        let token = progressTracker.openSession(
-            direction: .outbound, peerName: Self.pasteSourceName,
+        outboundOperation?.operation.abandon()
+        let operation = ClipboardTransferOperation(
+            gesture: .peerPaste, direction: .outbound, peerName: Self.pasteSourceName,
+            revealDelay: progressRevealDelay, idleGap: progressIdleGap,
             onCancelRequested: { [weak self] in
                 DispatchQueue.main.async { self?.cancelOutboundTransfers(generation: generation) }
-            })
-        outboundSession = (generation: generation, token: token)
-        return token
+            },
+            reporter: reporter)
+        outboundOperation = (generation: generation, operation: operation)
+        return operation
     }
 
     /// Stops streaming what the host is pulling for `generation`, because the
@@ -437,14 +434,12 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         pendingOutbound = nil
         currentOutboundGeneration.set(0)
         inboundPromise = nil
-        // Only this agent's own session is retired, never `clearAll()`: the
-        // tracker is the whole agent's readout authority and another agent's
-        // transfer may be live on it, which a clipboard teardown has no business
-        // wiping off the status item.
-        if let session = outboundSession {
-            progressTracker.closeSession(session.token, immediately: true)
-        }
-        outboundSession = nil
+        // Only this agent's own operation is retired: the reporter is the whole
+        // agent's readout authority and another agent's transfer may be live on
+        // it, which a clipboard teardown has no business wiping off the status
+        // item.
+        outboundOperation?.operation.abandon()
+        outboundOperation = nil
         // A stale in-flight estimate walk's completion checks `liveChannel` and
         // drops itself; clear the flag now so the next connection can walk again.
         estimateInFlight = false
@@ -950,12 +945,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // stay active forever and its readout would stick on screen.
         guard let sender else { return }
         let xid = request.transferID
-        let session = outboundSessionToken(for: request.generation)
+        let operation = outboundOperation(for: request.generation)
         let name = representation.filename.isEmpty ? nil : representation.filename
-        progressTracker.unitBegan(
-            session: session, id: xid, expectedBytes: UInt64(max(0, representation.byteCount)),
-            name: name)
-        let tracker = progressTracker
+        operation.unitBegan(
+            id: xid, expectedBytes: UInt64(max(0, representation.byteCount)), name: name)
         sender.startTransfer(
             transferID: request.transferID,
             generation: request.generation,
@@ -964,12 +957,15 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             isInline: representation.shouldInlineOnPasteboard,
             isCurrent: { value in generation.isCurrent(value) },
             onProgress: { sent, total in
-                tracker.unitProgressed(
-                    session: session, id: xid, bytesTransferred: UInt64(max(0, sent)),
+                operation.unitProgressed(
+                    id: xid, bytesTransferred: UInt64(max(0, sent)),
                     totalBytes: UInt64(max(0, total)))
             },
             onComplete: { success in
-                tracker.unitEnded(session: session, id: xid, succeeded: success)
+                operation.unitEnded(id: xid, succeeded: success)
+                // Nothing on this side knows the host has stopped asking, so the
+                // idle gap is what calls the operation over.
+                operation.finishWhenIdle()
             })
         clipboardActivityStorage = .sentToHost
         Self.logger.debug(

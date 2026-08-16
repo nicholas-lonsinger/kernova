@@ -69,9 +69,9 @@ final class VMToolbarManager: NSObject {
 
     // MARK: - Clipboard transfer-progress state
 
-    /// The VM whose `transferProgress` the clipboard item currently reflects;
-    /// weak so it never keeps an instance alive, and identity-compared to re-arm
-    /// the observation only on a real selection swap.
+    /// The VM whose transfer report the clipboard item currently reflects; weak
+    /// so it never keeps an instance alive, and identity-compared to re-arm the
+    /// observation only on a real selection swap.
     private weak var clipboardObservedInstance: VMInstance?
     private weak var clipboardProgressToolbar: NSToolbar?
     private var clipboardProgressObservation: ObservationLoop?
@@ -347,7 +347,7 @@ final class VMToolbarManager: NSObject {
                 ? nil
                 : observeRecurring(
                     track: { [weak self] in
-                        _ = self?.clipboardObservedInstance?.clipboardService?.transferProgress
+                        _ = self?.clipboardObservedInstance?.clipboardTransferReport
                     },
                     apply: { [weak self] in self?.refreshClipboardTransferBar() })
         }
@@ -361,8 +361,12 @@ final class VMToolbarManager: NSObject {
                 as? ClipboardToolbarButton
         else { return }
 
-        button.transferFraction =
-            clipboardObservedInstance?.clipboardService?.transferProgress?.fractionComplete
+        guard case .running(let snapshot, _) = clipboardObservedInstance?.clipboardTransferReport
+        else {
+            button.transferFraction = nil
+            return
+        }
+        button.transferFraction = snapshot.fractionComplete
     }
 
     private func updateSettingsToggleItem(in toolbar: NSToolbar, instance: VMInstance?) {
