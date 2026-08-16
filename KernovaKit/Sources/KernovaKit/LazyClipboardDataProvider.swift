@@ -9,10 +9,27 @@ import os
 /// promised type, the pasteboard server invokes
 /// `pasteboard(_:item:provideDataForType:)` on the owner's main thread/run loop,
 /// which delegates to `provide` (`nil` leaves the type empty). The owner must
-/// hold each provider until `pasteboardFinishedWithDataProvider(_:)` fires.
-public final class LazyClipboardDataProvider: NSObject, NSPasteboardItemDataProvider {
+/// hold each provider until `pasteboardFinishedWithDataProvider(_:)` fires. A
+/// finish landing inside a fire of this provider — `provide` can run the event
+/// loop, which drains a retract of the very write being served — is held until
+/// the fire returns, so the owner never lets go under the executing frame.
+///
+/// `@unchecked Sendable`: the registry holding a provider is shared across
+/// threads, the two callbacks arrive on the pasteboard server's thread for the
+/// owner, and the fire-depth bookkeeping they share is lock-guarded.
+public final class LazyClipboardDataProvider: NSObject, NSPasteboardItemDataProvider,
+    @unchecked Sendable
+{
     private let provide: (NSPasteboard.PasteboardType) -> Data?
     private let onFinished: (LazyClipboardDataProvider) -> Void
+
+    private let lock = NSLock()
+    /// Fires on the stack right now — a fire can nest another for a sibling
+    /// flavor of the same item.
+    private var fireDepth = 0
+    /// Whether the pasteboard finished with this provider inside a fire, so the
+    /// outermost fire's return owes `onFinished`.
+    private var finishedWhileFiring = false
 
     // Same category as `LazyClipboardProviderRegistry`, so a fire and the
     // release of the provider that served it read as one sequence.
@@ -38,17 +55,36 @@ public final class LazyClipboardDataProvider: NSObject, NSPasteboardItemDataProv
         item: NSPasteboardItem,
         provideDataForType type: NSPasteboard.PasteboardType
     ) {
+        lock.withLock { fireDepth += 1 }
         let data = provide(type)
         Self.logger.debug(
             "Provided \(data?.count ?? 0, privacy: .public) bytes for promised type '\(type.rawValue, privacy: .public)'"
         )
-        guard let data else { return }
-        item.setData(data, forType: type)
+        if let data { item.setData(data, forType: type) }
+        let owesFinish = lock.withLock { () -> Bool in
+            fireDepth -= 1
+            guard fireDepth == 0, finishedWhileFiring else { return false }
+            finishedWhileFiring = false
+            return true
+        }
+        guard owesFinish else { return }
+        // The pasteboard is not among this object's owners, so a finish drained
+        // inside `provide` would have let the owner free the object under its
+        // own executing frame; the block's capture carries it through the
+        // owner's release instead.
+        DispatchQueue.main.async { self.onFinished(self) }
     }
 
     /// Notifies the owner (via `onFinished`) that the pasteboard no longer needs
-    /// this provider, so its strong reference can be dropped.
+    /// this provider, so its strong reference can be dropped — after the fire in
+    /// progress returns, if there is one.
     public func pasteboardFinishedWithDataProvider(_ pasteboard: NSPasteboard) {
+        let deferred = lock.withLock { () -> Bool in
+            guard fireDepth > 0 else { return false }
+            finishedWhileFiring = true
+            return true
+        }
+        guard !deferred else { return }
         onFinished(self)
     }
 }

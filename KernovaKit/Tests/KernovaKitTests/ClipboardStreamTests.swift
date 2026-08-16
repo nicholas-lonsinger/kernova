@@ -1799,6 +1799,58 @@ struct ClipboardStreamTests {
         #expect(harness.collector.completedCount == 0)
     }
 
+    @Test("cancelling a generation spares the awaiters and transfers it is told to except")
+    func cancelGenerationSparesExceptedTransfers() async throws {
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+        let collector = harness.collector
+
+        // Two pulls of one generation: the preview's, which the cancel is for, and
+        // a paste fire's, which another caller owns.
+        let previewID = ClipboardTransferID.make(generation: 6, repIndex: 0, hostMinted: true)
+        let pasteID = ClipboardTransferID.make(generation: 6, repIndex: 1, hostMinted: true)
+        for id in [previewID, pasteID] {
+            harness.receiver.awaitTransfer(
+                id,
+                onComplete: { collector.complete(id, $0) },
+                onAbort: { collector.abort($0) })
+        }
+        // The paste's transfer is live on the wire, the state a generation-wide
+        // teardown would otherwise sweep up.
+        let payload = Data("kept".utf8)
+        harness.receiver.handleBegin(
+            .with {
+                $0.generation = 6
+                $0.transferID = pasteID
+                $0.uti = ClipboardContent.utf8TextUTI
+                $0.totalBytes = UInt64(payload.count)
+                $0.isInline = true
+            })
+
+        harness.receiver.cancel(generation: 6, except: [pasteID])
+
+        try await collector.gate.wait { collector.abortCount == 1 }
+        #expect(collector.abortInfos.first?.transferID == previewID)
+        #expect(collector.abortInfos.first?.code == .cancelled)
+
+        // The excepted transfer still delivers.
+        harness.receiver.handleChunk(
+            .with {
+                $0.transferID = pasteID
+                $0.offset = 0
+                $0.data = payload
+            })
+        harness.receiver.handleEnd(
+            .with {
+                $0.transferID = pasteID
+                $0.totalBytes = UInt64(payload.count)
+                $0.sha256 = Data(SHA256.hash(data: payload))
+            })
+        try await collector.gate.wait { collector.representation(pasteID) != nil }
+        #expect(collector.representation(pasteID)?.inMemoryData == payload)
+        #expect(collector.abortCount == 1)
+    }
+
     // MARK: - Sender progress
 
     /// `Sendable` recorder for the sender's `onProgress`/`onComplete` callbacks.

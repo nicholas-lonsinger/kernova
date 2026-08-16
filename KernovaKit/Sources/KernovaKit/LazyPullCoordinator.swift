@@ -111,9 +111,7 @@ public final class LazyPullCoordinator: @unchecked Sendable {
             // decide the outcome, so a signal that races the deadline is still
             // honored via `resolved` below.
             if let eventLoop = slot.eventLoop {
-                eventLoop.wait(until: Date(timeIntervalSinceNow: timeout)) {
-                    lock.withLock { slot.resolved }
-                }
+                eventLoop.wait(timeout: timeout) { lock.withLock { slot.resolved } }
             } else {
                 #if DEBUG
                 windowWaitForTesting(slot.semaphore, timeout)

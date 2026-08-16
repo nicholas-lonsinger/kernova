@@ -191,7 +191,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// same content.
     private var estimateInFlight = false
 
-    private var pollingTimer: DispatchSourceTimer?
+    /// A run-loop timer, not a dispatch timer on `.main`: the poll reads promised
+    /// flavors, and a fire it reaches — a promise this agent wrote — gets a wait
+    /// that can drain the main queue only from the run loop's base
+    /// (`NestedEventLoopWait`).
+    private var pollingTimer: Timer?
 
     /// Whether clipboard sync is currently allowed by host policy.
     ///
@@ -213,6 +217,19 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     #if DEBUG
     /// Test seam.
     var isEnabledForTesting: Bool { enabled }
+
+    /// Fires on the main queue once a copied folder's off-main estimate walk has
+    /// landed — whether or not it offered — so a test can await the walk instead
+    /// of polling for its side effects.
+    var onFolderEstimateCompletedForTesting: (() -> Void)?
+
+    /// Delivers a control frame as the consume loop's main-queue hop would, but
+    /// synchronously on the caller's main-queue turn, so a test can order it
+    /// against a poll's own asynchronous completion.
+    func handleControlFrameForTesting(_ frame: Frame) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        handleControlFrame(frame)
+    }
 
     /// Test seam for the applied ceiling, so a test can wait for a pushed policy
     /// to land instead of polling for its side effects.
@@ -341,7 +358,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             Self.logger.notice("Clipboard sharing enabled by host policy")
         } else {
             client.pause()
-            pollingTimer?.cancel()
+            pollingTimer?.invalidate()
             pollingTimer = nil
             teardownConnectionState()
             // Receive staging survives a disable: its files may still back
@@ -359,7 +376,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     func stop() {
         client.stop()
         DispatchQueue.main.async { [weak self] in
-            self?.pollingTimer?.cancel()
+            self?.pollingTimer?.invalidate()
             self?.pollingTimer = nil
             self?.teardownConnectionState()
         }
@@ -508,10 +525,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                     frame, role: .guest, sender: sender, receiver: receiver,
                     senderAbortDelivery: .direct,
                     onControlFrame: { frame in
-                        // Control frames are serialized on the main queue, so
-                        // while a synchronous `provideData` pull blocks main they
-                        // queue behind it; a pull is woken by its off-main Abort,
-                        // not by these.
+                        // Fire-and-forget: the consume loop must never wait on
+                        // main, which a `provideData` pull may hold — and the
+                        // stream frames routed here are what resolve that pull.
+                        // Serial `DispatchQueue.main` preserves control-frame
+                        // FIFO order; a per-frame Task would not.
                         DispatchQueue.main.async { [weak self] in
                             self?.handleControlFrame(frame)
                         }
@@ -536,13 +554,14 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     // MARK: - Pasteboard polling (main queue)
 
     private func startPolling() {
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + Self.pollingInterval, repeating: Self.pollingInterval)
-        timer.setEventHandler { [weak self] in
+        // Default mode only: a tick that would land inside a tracking or modal
+        // loop waits for the loop to end rather than parking the main thread on
+        // a fire it reaches.
+        pollingTimer = Timer.scheduledTimer(withTimeInterval: Self.pollingInterval, repeats: true) {
+            [weak self] _ in
+            // The main run loop fires this on the main thread.
             self?.checkClipboardChange()
         }
-        timer.resume()
-        pollingTimer = timer
     }
 
     func checkClipboardChange() {
@@ -835,10 +854,18 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 // `estimateInFlight` intact.
                 guard self.liveChannel === channel else { return }
                 self.estimateInFlight = false
+                #if DEBUG
+                defer { self.onFolderEstimateCompletedForTesting?() }
+                #endif
+                // A pasteboard that moved on during the walk is another poll's to
+                // read — or already this agent's own promise write, whose gate
+                // must not be wound back to a count that would make the next
+                // poll read the promise as a copy.
+                guard self.pasteboard.changeCount == changeCount else { return }
                 // Advance the change-count gate so the folder isn't re-walked
                 // every 0.5 s poll; a genuine new copy bumps the count.
                 self.lastPasteboardChangeCount = changeCount
-                guard self.pasteboard.changeCount == changeCount, !reps.isEmpty else { return }
+                guard !reps.isEmpty else { return }
                 self.sendOfferIfNeeded(
                     ClipboardContent(representations: reps), channel: channel,
                     changeCount: changeCount)

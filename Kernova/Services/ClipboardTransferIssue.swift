@@ -89,12 +89,30 @@ extension ClipboardTransferIssue {
     /// The refusal this host raises when a paste fires after the VM session
     /// ended with only part of the copied file set materialized: nothing is
     /// served rather than an incomplete set.
+    ///
+    /// This and every paste-fire refusal below say the paste did not finish, not
+    /// that nothing was pasted: the pasteboard fires once per item, so an
+    /// earlier item's file may already have landed. "Sharing stopped" covers
+    /// every way the session ends — the VM stopping, the toggle, a reconnect —
+    /// where "the VM disconnected" would name only one.
     static func partialFileSetUnservable() -> ClipboardTransferIssue {
         ClipboardTransferIssue(
             kind: .localFailure(
                 code: ClipboardErrorCode.pasteIncompleteSet.rawValue,
                 message:
-                    "The VM disconnected before every copied file transferred, so nothing was pasted."
+                    "Clipboard sharing with the VM stopped before every copied file transferred, so the paste didn't finish."
+            ),
+            date: Date())
+    }
+
+    /// Raised when the clipboard session ends while a paste-time pull is
+    /// running: the fire serves nothing, and unlike a supersession nothing else
+    /// explains it.
+    static func pasteInterrupted() -> ClipboardTransferIssue {
+        ClipboardTransferIssue(
+            kind: .localFailure(
+                code: ClipboardErrorCode.pasteFailed.rawValue,
+                message: "Clipboard sharing with the VM stopped mid-transfer, so the paste didn't finish."
             ),
             date: Date())
     }
@@ -105,7 +123,7 @@ extension ClipboardTransferIssue {
         ClipboardTransferIssue(
             kind: .localFailure(
                 code: ClipboardErrorCode.pasteTimeout.rawValue,
-                message: "The transfer from the guest timed out, so nothing was pasted."),
+                message: "The transfer from the guest timed out, so the paste didn't finish."),
             date: Date())
     }
 
@@ -116,7 +134,7 @@ extension ClipboardTransferIssue {
         ClipboardTransferIssue(
             kind: .localFailure(
                 code: ClipboardErrorCode.pasteFailed.rawValue,
-                message: "The transfer from the guest failed, so nothing was pasted."),
+                message: "The transfer from the guest failed, so the paste didn't finish."),
             date: Date())
     }
 
@@ -126,7 +144,7 @@ extension ClipboardTransferIssue {
         ClipboardTransferIssue(
             kind: .localFailure(
                 code: ClipboardErrorCode.pasteFailed.rawValue,
-                message: "The copied item couldn't be unpacked, so nothing was pasted."),
+                message: "The copied item couldn't be unpacked, so the paste didn't finish."),
             date: Date())
     }
 
@@ -221,7 +239,7 @@ extension ClipboardTransferIssue {
         ClipboardTransferIssue(
             kind: .localFailure(
                 code: ClipboardErrorCode.pasteFailed.rawValue,
-                message: "The copied file couldn't be saved to disk, so nothing was pasted."),
+                message: "The copied file couldn't be saved to disk, so the paste didn't finish."),
             date: Date())
     }
 }

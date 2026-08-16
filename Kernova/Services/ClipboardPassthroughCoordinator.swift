@@ -30,7 +30,11 @@ final class ClipboardPassthroughCoordinator {
     /// ends of the boundary sample their pasteboards at the same rate.
     private static let pollInterval: TimeInterval = 0.5
 
-    private var pollTimer: DispatchSourceTimer?
+    /// A run-loop timer, not a dispatch timer on `.main`: the poll reads promised
+    /// flavors, which fire another VM's provider synchronously, and that fire's
+    /// serviced wait can drain the main queue only when it is not itself inside
+    /// a main-queue callout (`NestedEventLoopWait`).
+    private var pollTimer: Timer?
 
     /// The last host-pasteboard change count this coordinator has forwarded or
     /// absorbed.
@@ -112,7 +116,7 @@ final class ClipboardPassthroughCoordinator {
     func stop() {
         guard isRunning else { return }
         isRunning = false
-        pollTimer?.cancel()
+        pollTimer?.invalidate()
         pollTimer = nil
         inboundObservation?.cancel()
         inboundObservation = nil
@@ -123,15 +127,14 @@ final class ClipboardPassthroughCoordinator {
     // MARK: - Host → guest (poll)
 
     private func startPolling() {
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + Self.pollInterval, repeating: Self.pollInterval)
-        timer.setEventHandler { [weak self] in
-            // The timer fires on the main queue, which is the main actor's
-            // executor.
+        // Default mode only: a tick that would land inside a tracking or modal
+        // loop waits for the loop to end — the forward is late by that much —
+        // rather than parking the main thread on the fire it reaches.
+        pollTimer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) {
+            [weak self] _ in
+            // The main run loop fires this on the main thread.
             MainActor.assumeIsolated { self?.pollHostClipboard() }
         }
-        timer.resume()
-        pollTimer = timer
     }
 
     /// Forwards a genuine host-clipboard change to the guest, skipping our own
