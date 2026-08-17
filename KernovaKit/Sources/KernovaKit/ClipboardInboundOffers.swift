@@ -35,15 +35,6 @@ public final class ClipboardInboundOffers {
         case released
     }
 
-    /// Something an inbound gesture did that a surface may want to render.
-    public enum Activity: Equatable, Sendable {
-        /// A pull delivered a representation's bytes.
-        case representationReceived
-        /// A paste on this side was refused. `limitBytes` is the ceiling that
-        /// refused it, for the codes a ceiling explains.
-        case pasteRefused(ClipboardErrorCode, limitBytes: Int?)
-    }
-
     /// How long a reported paste refusal silences further refusals of the same
     /// offer.
     ///
@@ -122,7 +113,7 @@ public final class ClipboardInboundOffers {
     public var onOfferRetracted: @MainActor (UInt64?, RetractReason) -> Void = { _, _ in }
 
     /// Called with what an inbound gesture just did, for a surface to render.
-    public var onActivity: @MainActor (Activity) -> Void = { _ in }
+    public var onActivity: @MainActor (ClipboardEndpoint.Activity) -> Void = { _ in }
 
     /// Called with every refusal this side raises for the peer's offer — a
     /// pre-flight check, a gate, or a transfer that failed under an operation
@@ -199,18 +190,6 @@ public final class ClipboardInboundOffers {
     /// itself and has nothing to send back.
     nonisolated private var sendsPasteRefusalsToPeer: Bool { session.role == .guest }
 
-    /// Whether the peer's `Error` frame becomes a refusal on this side's surface
-    /// — the other half of ``sendsPasteRefusalsToPeer``.
-    private var rendersPeerRefusals: Bool { session.role == .host }
-
-    /// Whether a new offer retires the last finished report.
-    ///
-    /// The host's reporter covers exactly this VM, so the offer the peer just
-    /// replaced takes its report with it. The guest's is the whole agent's
-    /// readout, shared with every other agent that transfers files, and a
-    /// clipboard offer has no standing to clear another transfer's news.
-    private var retiresFinishedReport: Bool { session.role == .host }
-
     // MARK: - Reading what is offered
 
     /// The clipboard offer the peer currently holds here, or `nil`.
@@ -222,7 +201,7 @@ public final class ClipboardInboundOffers {
     /// retires the offer *before* waking the pulls it aborts, so this is how a
     /// blocking caller tells a cancellation from a transfer that failed.
     nonisolated public func hasLiveOffer(generation: UInt64) -> Bool {
-        onMain { self.entries[generation] != nil }
+        MainActorBridge.sync { self.entries[generation] != nil }
     }
 
     /// The representation already pulled for `(generation, repIndex)`, or `nil`.
@@ -282,7 +261,7 @@ public final class ClipboardInboundOffers {
         }
         // Ahead of the retraction, whose own report explains this very offer and
         // must be what stands (docs/CLIPBOARD.md §13).
-        if retiresFinishedReport { reporter.clearFinished() }
+        reporter.clearFinished()
         retireCurrentOffer(reason: .superseded(hasSuccessor: true))
         let entry = Entry(
             generation: offer.generation, reps: reps, isConcealed: offer.isConcealed)
@@ -336,18 +315,18 @@ public final class ClipboardInboundOffers {
     /// landed.
     public func handleDropRelease(_ release: Kernova_V1_DropRelease) {
         cancelInbound(generation: release.generation)
+        onOfferRetracted(release.generation, .released)
     }
 
     /// Takes on what the peer reported about a gesture made on its side.
     ///
-    /// A `clipboard.*` code is the peer's paste refusing, which only the host
-    /// renders: the guest raised its own refusal on its own menu already, and the
-    /// frame it sent is what this turns back into a report.
+    /// A `clipboard.*` code is the peer's paste refusing; the refusal it becomes
+    /// lands wherever this side's surface puts one.
     public func handlePeerError(_ error: Kernova_V1_Error) {
         Self.logger.warning(
             "Clipboard error from '\(self.peerName, privacy: .public)' (conn=\(self.tag, privacy: .public)): \(error.code, privacy: .public) — \(error.message, privacy: .public)"
         )
-        guard rendersPeerRefusals, error.code.hasPrefix("clipboard.") else { return }
+        guard error.code.hasPrefix("clipboard.") else { return }
         let code = ClipboardErrorCode(rawValue: error.code)
         onRefusal(
             .peerPaste,
@@ -529,7 +508,7 @@ public final class ClipboardInboundOffers {
         generation: UInt64, repIndex: Int, operation: ClipboardTransferOperation
     ) -> LazyPullOutcome {
         let plan: PullPlan
-        switch onMain({
+        switch MainActorBridge.sync({
             self.resolve(generation: generation, repIndex: repIndex, servesFileURL: false)
         }) {
         case .cached(let representation, _): return .delivered(representation)
@@ -547,7 +526,7 @@ public final class ClipboardInboundOffers {
     /// Safe to call on the main thread even though it blocks.
     nonisolated public func serveFileURL(generation: UInt64, repIndex: Int) -> URL? {
         let plan: PullPlan
-        switch onMain({
+        switch MainActorBridge.sync({
             self.resolve(generation: generation, repIndex: repIndex, servesFileURL: true)
         }) {
         case .cached(let representation, let staged):
@@ -570,7 +549,7 @@ public final class ClipboardInboundOffers {
     /// Safe to call on the main thread even though it blocks.
     nonisolated public func serveData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
         let plan: PullPlan
-        switch onMain({
+        switch MainActorBridge.sync({
             self.resolve(
                 generation: generation, repIndex: repIndex, servesFileURL: false, expectedUTI: uti)
         }) {
@@ -879,7 +858,7 @@ public final class ClipboardInboundOffers {
         // it would only pin the staged copy it is about to move — and the hop
         // that cache costs is one a drop's pull then never pays.
         if session.kind == .clipboard {
-            onMain {
+            MainActorBridge.sync {
                 // The entry is re-read after the wait rather than captured before
                 // it: a supersession can land inside the nested event loop a
                 // main-thread fire runs, and caching into an offer nothing shows
@@ -973,7 +952,7 @@ public final class ClipboardInboundOffers {
     nonisolated private func raiseRefusal(
         _ gesture: ClipboardTransferGesture, _ failure: ClipboardTransferFailure
     ) {
-        onMain { self.onRefusal(gesture, failure) }
+        MainActorBridge.sync { self.onRefusal(gesture, failure) }
     }
 
     /// Maps a receiver or peer abort code to the user-facing paste code the peer
@@ -992,7 +971,7 @@ public final class ClipboardInboundOffers {
         _ code: ClipboardErrorCode, _ message: String, generation: UInt64, caller: PullCaller
     ) {
         guard caller == .paste else { return }
-        onMain {
+        MainActorBridge.sync {
             guard let entry = self.entries[generation] else { return }
             self.announceRefusal(code, message, entry: entry)
         }
@@ -1081,7 +1060,7 @@ public final class ClipboardInboundOffers {
         do {
             try sink.write(data)
             let url = try sink.commit()
-            onMain { self.entries[generation]?.stagedInlineURLs[repIndex] = url }
+            MainActorBridge.sync { self.entries[generation]?.stagedInlineURLs[repIndex] = url }
             return url
         } catch {
             // Don't offer a truncated file — abort the partial stage.
@@ -1120,15 +1099,6 @@ public final class ClipboardInboundOffers {
     nonisolated private func transferID(generation: UInt64, repIndex: Int) -> UInt64 {
         ClipboardTransferID.make(
             generation: generation, repIndex: repIndex, hostMinted: session.role == .host)
-    }
-
-    /// Runs `body` on the main actor synchronously, from either the main thread
-    /// or off it — the shared hop every blocking bridge reads its state through.
-    @discardableResult
-    nonisolated private func onMain<T: Sendable>(_ body: @MainActor () -> T) -> T {
-        Thread.isMainThread
-            ? MainActor.assumeIsolated { body() }
-            : DispatchQueue.main.sync { MainActor.assumeIsolated { body() } }
     }
 }
 

@@ -46,12 +46,9 @@ final class VsockGuestDropAgent: @unchecked Sendable {
 
     private var liveChannel: VsockChannel?
 
-    /// Engine, frame routing and control-frame delivery for the current
-    /// connection.
-    private var session: ClipboardStreamSession?
-
-    /// What the host has offered, and every pull that lands it.
-    private var inbound: ClipboardInboundOffers?
+    /// The current connection: what the host has offered, and every pull that
+    /// lands it.
+    private var endpoint: ClipboardEndpoint?
 
     /// The readout of every drop the host has offered and this side has not
     /// finished, by generation.
@@ -151,18 +148,16 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     private func teardownConnectionState() {
         dispatchPrecondition(condition: .onQueue(.main))
         MainActor.assumeIsolated {
-            session?.stop()
-            // Unblock any worker parked on a pull; it reads the dead session as a
-            // cancellation and ends its job.
-            inbound?.endSession()
+            // Unblocks any worker parked on a pull; it reads the dead connection
+            // as a cancellation and ends its job.
+            endpoint?.stop()
             for operation in jobs.values {
                 // Retired, not finished: the transport measuring these is gone, so
                 // there is nothing left to show finishing.
                 operation.abandon()
             }
         }
-        inbound = nil
-        session = nil
+        endpoint = nil
         liveChannel = nil
         jobs.removeAll()
     }
@@ -181,79 +176,38 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     // MARK: - Per-connection serve
 
     private func serve(channel: VsockChannel) async {
-        let session = await MainActor.run { () -> ClipboardStreamSession in
-            let session = ClipboardStreamSession(
-                channel: channel, role: .guest, kind: .drop, label: "drop", staging: self.staging)
+        let endpoint = await MainActor.run { () -> ClipboardEndpoint in
+            let endpoint = ClipboardEndpoint(
+                channel: channel,
+                configuration: ClipboardEndpoint.Configuration(
+                    role: .guest, kind: .drop, label: "drop", peerName: Self.dropSourceName,
+                    // A drop lands in Downloads, never on a pasteboard, so no OS
+                    // paste deadline bounds it and nothing is capped.
+                    maxPasteBytes: { .max },
+                    staging: self.staging,
+                    lazyPullTimeout: self.pullTimeout,
+                    progressRevealDelay: self.progressRevealDelay,
+                    progressIdleGap: self.progressIdleGap),
+                reporter: self.reporter)
             self.liveChannel = channel
-            self.session = session
-            let inbound = ClipboardInboundOffers(
-                session: session, reporter: self.reporter, staging: self.staging,
-                peerName: Self.dropSourceName,
-                // A drop lands in Downloads, never on a pasteboard, so no OS paste
-                // deadline bounds it and nothing is capped.
-                maxPasteBytes: { .max },
-                lazyPullTimeout: self.pullTimeout,
-                progressRevealDelay: self.progressRevealDelay,
-                progressIdleGap: self.progressIdleGap)
-            self.inbound = inbound
-            inbound.onOfferReceived = { [weak self, weak inbound] offer in
-                guard let self, let inbound else { return }
-                self.takeOn(offer, on: inbound, session: session)
-            }
-            session.start(
-                handleControlFrame: { [weak self] frame in
-                    self?.handleControlFrame(frame, from: channel)
-                },
-                // Wake any worker blocked on a now-dead transfer immediately,
-                // off-main — the teardown below runs on main.
-                onEnded: { [weak inbound] in inbound?.endSession() })
+            self.endpoint = endpoint
+            endpoint.delegate = self
+            endpoint.start()
             Self.logger.notice(
-                "Vsock drop connected to host (conn=\(session.connectionTag, privacy: .public))")
-            return session
+                "Vsock drop connected to host (conn=\(endpoint.connectionTag, privacy: .public))")
+            return endpoint
         }
 
-        await session.waitUntilEnded()
+        await endpoint.waitUntilEnded()
         await MainActor.run {
             self.teardownIfCurrent(channel)
         }
     }
 
-    // MARK: - Frame handlers (main queue)
-
-    private func handleControlFrame(_ frame: Frame, from channel: VsockChannel) {
-        dispatchPrecondition(condition: .onQueue(.main))
-        guard liveChannel === channel, let inbound else { return }
-        MainActor.assumeIsolated {
-            switch frame.payload {
-            case .dropOffer(let offer):
-                inbound.handleDropOffer(offer)
-            case .dropRelease(let release):
-                inbound.handleDropRelease(release)
-            case .error(let error):
-                Self.logger.warning(
-                    "Host drop error: \(error.code, privacy: .public) — \(error.message, privacy: .public)"
-                )
-            case .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck:
-                // Routed off-main by the serve loop; never reaches here.
-                break
-            case .clipboardStreamAbort:
-                // Only a sender-bound abort reaches here, and this side never sends
-                // on the drop channel — there is nothing to call off.
-                break
-            case .hello, .heartbeat, .policyUpdate, .logRecord, .clipboardOffer,
-                .clipboardRequest, .clipboardRelease, .dropComplete, .none:
-                Self.logger.warning("Unexpected payload on the drop channel — wrong port")
-            }
-        }
-    }
-
     /// Takes on one drop gesture: opens its readout and queues its files behind
     /// whatever is already running.
-    private func takeOn(
-        _ offer: ClipboardInboundOffers.InboundOffer, on inbound: ClipboardInboundOffers,
-        session: ClipboardStreamSession
-    ) {
-        dispatchPrecondition(condition: .onQueue(.main))
+    @MainActor
+    private func takeOn(_ offer: ClipboardEndpoint.InboundOffer, on endpoint: ClipboardEndpoint) {
         let generation = offer.generation
         // The whole drop's totals are the floor, so the bar's denominator is
         // every dropped file rather than each in turn (§13).
@@ -262,17 +216,19 @@ final class VsockGuestDropAgent: @unchecked Sendable {
             expectedBytes: offer.reps.reduce(UInt64(0)) { $0 &+ $1.byteCount },
             expectedItems: offer.reps.count,
             revealDelay: progressRevealDelay, idleGap: progressIdleGap,
-            onCancelRequested: { [weak inbound] in
+            onCancelRequested: { [weak endpoint] in
                 // The tracker calls this outside its own lock, on whichever
                 // thread noticed the click, so it hops before touching anything.
                 DispatchQueue.main.async {
-                    MainActor.assumeIsolated { inbound?.cancelInbound(generation: generation) }
+                    MainActor.assumeIsolated { endpoint?.cancelInbound(generation: generation) }
                 }
             },
             reporter: reporter)
         jobs[generation] = operation
+        // The job holds `endpoint` strongly: its pulls are what a teardown wakes,
+        // and a loop mid-file still has to read that wake and answer the host.
         jobQueue.async { [weak self] in
-            self?.run(offer, operation: operation, on: inbound, session: session)
+            self?.run(offer, operation: operation, on: endpoint)
         }
     }
 
@@ -280,8 +236,8 @@ final class VsockGuestDropAgent: @unchecked Sendable {
 
     /// Pulls each of the drop's files in order and lands it in Downloads.
     private func run(
-        _ offer: ClipboardInboundOffers.InboundOffer, operation: ClipboardTransferOperation,
-        on inbound: ClipboardInboundOffers, session: ClipboardStreamSession
+        _ offer: ClipboardEndpoint.InboundOffer, operation: ClipboardTransferOperation,
+        on endpoint: ClipboardEndpoint
     ) {
         dispatchPrecondition(condition: .notOnQueue(.main))
         let generation = offer.generation
@@ -289,7 +245,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         var outcome: JobOutcome = .completed
 
         for index in offer.reps.indices {
-            switch inbound.pull(generation: generation, repIndex: index, operation: operation) {
+            switch endpoint.pull(generation: generation, repIndex: index, operation: operation) {
             case .delivered(let representation):
                 do {
                     landed.append(try land(representation, named: offer.reps[index].filename))
@@ -306,7 +262,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
                 // channel's own end is why liveness cannot stand in for it: the
                 // session cancels every awaiter before its end reaches this loop,
                 // so the job's entry is still standing when the abort lands.
-                if abort.isRetiring || !inbound.hasLiveOffer(generation: generation) {
+                if abort.isRetiring || !endpoint.hasLiveInboundOffer(generation: generation) {
                     outcome = .cancelled
                 } else {
                     Self.logger.warning(
@@ -334,11 +290,11 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         if case .completed = outcome, !landed.isEmpty {
             revealInFinder(landed)
         }
-        send(completion: outcome, generation: generation, on: session)
+        send(completion: outcome, generation: generation, on: endpoint)
         DispatchQueue.main.async { [weak self] in
             // The offer goes with the job: a drop is landed in Downloads by this
             // loop and never served again, so nothing is left to pull from it.
-            MainActor.assumeIsolated { inbound.retire(generation: generation) }
+            MainActor.assumeIsolated { endpoint.retireInbound(generation: generation) }
             // Identity-checked, not just keyed: generations restart at 1 with
             // every accepted channel, so a worker that outlived a teardown would
             // otherwise clear the *next* connection's job of the same number —
@@ -403,16 +359,26 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     // MARK: - Reporting the outcome
 
     private func send(
-        completion: JobOutcome, generation: UInt64, on session: ClipboardStreamSession
+        completion: JobOutcome, generation: UInt64, on endpoint: ClipboardEndpoint
     ) {
         switch completion {
         case .completed:
-            session.sendDropComplete(generation: generation, outcome: .completed)
+            endpoint.sendDropComplete(generation: generation, outcome: .completed)
         case .cancelled:
-            session.sendDropComplete(generation: generation, outcome: .cancelled)
+            endpoint.sendDropComplete(generation: generation, outcome: .cancelled)
         case .failed(let code, let message):
-            session.sendDropComplete(
+            endpoint.sendDropComplete(
                 generation: generation, outcome: .failed, code: code, message: message)
         }
+    }
+}
+
+// MARK: - Endpoint delegate
+
+extension VsockGuestDropAgent: ClipboardEndpointDelegate {
+    func endpoint(
+        _ endpoint: ClipboardEndpoint, didReceiveOffer offer: ClipboardEndpoint.InboundOffer
+    ) {
+        takeOn(offer, on: endpoint)
     }
 }

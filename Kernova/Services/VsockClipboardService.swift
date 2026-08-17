@@ -33,26 +33,16 @@ final class VsockClipboardService: ClipboardServicing {
 
     private let label: String
 
-    /// This connection's engine, frame routing and control-frame delivery.
-    ///
-    /// `nonisolated` so a paste-time provider fire can reach the channel and the
-    /// receiver from whichever thread the pasteboard server fired on.
-    nonisolated private let session: ClipboardStreamSession
-
-    /// What this side has offered the guest, and the transfers answering its
-    /// pulls.
-    private let outbound: ClipboardOutboundOffers
-
-    /// What the guest has offered, its per-representation materialization cache,
-    /// and every pull that fills it.
+    /// This connection, as the clipboard protocol sees it: what each side has
+    /// offered the other, and every transfer between them.
     ///
     /// `nonisolated` so a paste-time provider fire can serve from whichever
     /// thread the pasteboard server fired on.
-    nonisolated private let inbound: ClipboardInboundOffers
+    nonisolated private let endpoint: ClipboardEndpoint
 
     /// Log coordinate for this connection: generations and transfer ids restart
     /// with every accepted channel, and one instance serves exactly one.
-    nonisolated private var connectionTag: ClipboardConnectionTag { session.connectionTag }
+    nonisolated private var connectionTag: ClipboardConnectionTag { endpoint.connectionTag }
 
     private let staging: ClipboardFileStaging
 
@@ -139,14 +129,14 @@ final class VsockClipboardService: ClipboardServicing {
     /// resolving and the supersession re-check, so a test can drive a newer
     /// offer / `stop()` into that exact gap deterministically.
     var afterInboundPullForTesting: (@MainActor () async -> Void)? {
-        get { inbound.afterInboundPullForTesting }
-        set { inbound.afterInboundPullForTesting = newValue }
+        get { endpoint.afterInboundPullForTesting }
+        set { endpoint.afterInboundPullForTesting = newValue }
     }
 
     /// Waiters sharing the inbound pull for `(generation, repIndex)` — a preview
     /// loop and a paste fire on the one transfer read as 2.
     nonisolated func inboundPullWaiterCountForTesting(generation: UInt64, repIndex: Int) -> Int {
-        inbound.inboundPullWaiterCountForTesting(generation: generation, repIndex: repIndex)
+        endpoint.inboundPullWaiterCountForTesting(generation: generation, repIndex: repIndex)
     }
     #endif
 
@@ -192,31 +182,21 @@ final class VsockClipboardService: ClipboardServicing {
         self.dropStaging = ClipboardFileStaging(
             label: "host-drops-\(label)", tempRoot: stagingTempRoot,
             freeSpaceProvider: freeSpaceProvider)
-        let session = ClipboardStreamSession(
-            channel: channel, role: .host, kind: .clipboard, label: label, staging: staging)
-        self.session = session
-        self.outbound = ClipboardOutboundOffers(
-            session: session, reporter: reporter, peerName: label,
-            progressRevealDelay: progressRevealDelay, progressIdleGap: progressIdleGap)
-        let inbound = ClipboardInboundOffers(
-            session: session, reporter: reporter, staging: staging, peerName: label,
-            maxPasteBytes: maxPasteBytes, lazyPullTimeout: lazyPullTimeout,
-            progressRevealDelay: progressRevealDelay, progressIdleGap: progressIdleGap)
-        self.inbound = inbound
-        inbound.onOfferReceived = { [weak self] offer in self?.publishOffer(offer) }
-        inbound.onOfferRetracted = { [weak self] _, reason in self?.retractOffer(reason: reason) }
-        inbound.onRefusal = { [weak self] gesture, failure in
-            self?.reportRefusal(gesture: gesture, failure)
-        }
+        self.endpoint = ClipboardEndpoint(
+            channel: channel,
+            configuration: ClipboardEndpoint.Configuration(
+                role: .host, kind: .clipboard, label: label, peerName: label,
+                maxPasteBytes: maxPasteBytes, staging: staging,
+                lazyPullTimeout: lazyPullTimeout, progressRevealDelay: progressRevealDelay,
+                progressIdleGap: progressIdleGap),
+            reporter: reporter)
+        endpoint.delegate = self
     }
 
     // MARK: - Lifecycle
 
     func start() {
         guard !isConnected else { return }
-        // A fresh connection retires whatever the last one left standing: that
-        // report described a transfer of a session that is over.
-        reporter.clearFinished()
         // Earlier sessions' receive and drop roots may still be serving the
         // pasteboard's current write (a stopped session's materialized reps stay
         // servable, and a dropped file's URL is copied as-is), so they are
@@ -226,29 +206,15 @@ final class VsockClipboardService: ClipboardServicing {
             dropStaging.reclaimSiblingRoots()
         }
         isConnected = true
-
-        session.start(
-            handleControlFrame: { [weak self] frame in self?.handleControlFrame(frame) },
-            // Wake any parked pull off the main actor the moment the channel is
-            // gone, so a materialize doesn't hang forever behind the very hop it
-            // is blocking.
-            onEnded: { [weak inbound] in inbound?.endSession() })
+        endpoint.start()
         Self.logger.notice(
             "Vsock clipboard service started for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )
     }
 
     func stop() {
-        session.stop()
-        // Unblock any synchronous file pull parked on the coordinator, so it
-        // returns empty instead of blocking to its backstop timeout. Nothing else
-        // is swept: the inbound offer and its receive staging deliberately
-        // survive stop(), because the host pasteboard may still advertise this
-        // offer and every materialized rep stays servable from the cache and the
-        // staged files (docs/CLIPBOARD.md §3).
-        inbound.endSession()
+        endpoint.stop()
         isConnected = false
-        outbound.endSession()
         // With the offer gone, a drop the buffer no longer shows has no reader
         // left on this side.
         retireUnreferencedDropDirectories()
@@ -282,9 +248,9 @@ final class VsockClipboardService: ClipboardServicing {
     /// The latch is what ends the loop; the pulls it holds are left rather than
     /// torn down, so a rep a paste fire is also waiting on keeps streaming.
     private func cancelInboundPulls(generation: UInt64) {
-        guard inbound.inboundOffer?.generation == generation else { return }
+        guard endpoint.inboundOffer?.generation == generation else { return }
         cancelledInboundGeneration = generation
-        inbound.cancelJoinedPulls(generation: generation)
+        endpoint.cancelJoinedPulls(generation: generation)
     }
 
     /// Runs `body` on the main actor on the next turn of the main queue.
@@ -312,7 +278,7 @@ final class VsockClipboardService: ClipboardServicing {
 
     func clearBuffer() {
         clipboardContent = .empty
-        outbound.resetDedup()
+        endpoint.resetOfferDedup()
         // The user emptied the buffer — any guest offer it was showing is stale.
         forgetInboundOffer()
         retireUnreferencedDropDirectories()
@@ -346,7 +312,7 @@ final class VsockClipboardService: ClipboardServicing {
         guard !dropDirectories.isEmpty else { return }
         let sourceURLs =
             clipboardContent.representations
-            + (outbound.currentContent?.representations ?? [])
+            + (endpoint.currentOutboundContent?.representations ?? [])
         let readableURLs = sourceURLs.compactMap { $0.fileURL ?? $0.directorySourceURL }
         func isRead(_ drop: DropDirectory) -> Bool {
             readableURLs.contains { ClipboardFileStaging.isURL($0, inside: drop.url) }
@@ -379,89 +345,13 @@ final class VsockClipboardService: ClipboardServicing {
         guard !clipboardContent.representations.contains(where: { $0.isPendingRemote }) else {
             return
         }
-        guard outbound.offer(clipboardContent) != nil else { return }
-        reporter.clearFinished()
+        guard case .sent = endpoint.offer(clipboardContent) else { return }
         // The offer just replaced supersedes whatever drop it was reading from,
         // so that drop's files can go.
         retireUnreferencedDropDirectories()
     }
 
-    // MARK: - Frame consumer
-
-    /// Handles the control frames the consume loop dispatches to the main actor.
-    private func handleControlFrame(_ frame: Frame) {
-        switch frame.payload {
-        case .clipboardOffer(let offer):
-            inbound.handleOffer(offer)
-        case .clipboardRequest(let request):
-            outbound.handleRequest(request)
-        case .clipboardRelease(let release):
-            inbound.handleRelease(release)
-        case .error(let error):
-            inbound.handlePeerError(error)
-        case .clipboardStreamAbort(let abort):
-            // Only a sender-bound abort reaches here; see `ClipboardStreamRouting`.
-            session.sender?.handleAbort(transferID: abort.transferID)
-        case .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck:
-            // Routed off-main by the consume loop; never reaches here.
-            break
-        case .hello, .heartbeat, .policyUpdate, .logRecord, .dropOffer, .dropComplete,
-            .dropRelease:
-            // Control-plane and log payloads belong on their own channels; a peer
-            // sending them here crossed wires. A conformant agent reconnects.
-            Self.logger.warning(
-                "Unexpected payload on clipboard channel for '\(self.label, privacy: .public)' — wrong port; closing the channel"
-            )
-            session.channel.close()
-        case .none:
-            Self.logger.debug("Frame with no payload for '\(self.label, privacy: .public)'")
-        }
-    }
-
     // MARK: - Inbound (we are the receiver)
-
-    /// Publishes a newly-received guest offer as metadata-only placeholders, so
-    /// the window shows the chips without waiting.
-    private func publishOffer(_ offer: ClipboardInboundOffers.InboundOffer) {
-        // A new offer is a new operation; whatever the user cancelled is over.
-        cancelledInboundGeneration = nil
-        previewMaterializationStarted = 0
-        // Byte-less placeholder reps hash trivially; once a pull has materialized
-        // real bytes, `republishOffActor` hashes off the main actor instead (§8).
-        apply(
-            ClipboardContent(
-                representations: rebuiltReps(from: offer), isConcealed: offer.isConcealed))
-        // Bumped after the offer is live, so the passthrough coordinator's
-        // `materializeForCopy` sees it.
-        inboundOfferSeq &+= 1
-    }
-
-    /// Answers a guest offer this side can no longer serve: the host pasteboard
-    /// may still hold this VM's own promised write for it, which the guest now
-    /// rejects as `request.stale`, so a paste through it would silently serve
-    /// nothing.
-    ///
-    /// The placeholder content stays in the window either way; only the
-    /// pasteboard write is withdrawn.
-    private func retractOffer(reason: ClipboardInboundOffers.RetractReason) {
-        previewMaterializationStarted = 0
-        lastInboundPublishedDigest = nil
-        guard retractStaleHostWrite?() == true else { return }
-        // With the write retracted, no earlier session's staging can be backing a
-        // live pasteboard item any more.
-        staging.reclaimSiblingRoots()
-        // A retraction's report is the successor offer's own explainer, so it
-        // stands where the successor would otherwise have cleared the last one.
-        let hasSuccessor: Bool
-        switch reason {
-        case .superseded(let successor): hasSuccessor = successor
-        case .released: hasSuccessor = false
-        }
-        reportRefusal(gesture: .copy, .supersededCopyRetracted(hasSuccessor: hasSuccessor))
-        Self.logger.notice(
-            "Retracted the stale host-pasteboard promise for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) — the guest offer it advertised is no longer servable"
-        )
-    }
 
     /// Republishes the offer with the content digest computed off the owning
     /// actor.
@@ -469,16 +359,16 @@ final class VsockClipboardService: ClipboardServicing {
     /// A pulled rep can be a memory-mapped inline payload of any size, and hashing
     /// it for the content digest is `O(payload)` — it must not stall the main
     /// actor (§8).
-    private func republishOffActor(_ offer: ClipboardInboundOffers.InboundOffer) async {
-        let epoch = inbound.materializationEpoch(generation: offer.generation)
+    private func republishOffActor(_ offer: ClipboardEndpoint.InboundOffer) async {
+        let epoch = endpoint.materializationEpoch(generation: offer.generation)
         let reps = rebuiltReps(from: offer)
         let content = await ClipboardContent.makeOffActor(
             representations: reps, isConcealed: offer.isConcealed)
         // A supersession or a newer materialization landed during the off-actor
         // hash; that pull republishes the complete set, so applying this snapshot
         // would revert a just-materialized rep back to a placeholder.
-        guard inbound.inboundOffer?.generation == offer.generation,
-            inbound.materializationEpoch(generation: offer.generation) == epoch
+        guard endpoint.inboundOffer?.generation == offer.generation,
+            endpoint.materializationEpoch(generation: offer.generation) == epoch
         else { return }
         apply(content)
     }
@@ -486,11 +376,11 @@ final class VsockClipboardService: ClipboardServicing {
     /// Builds the published representation list from the offer: each rep's
     /// materialized form when pulled, else a `.pendingRemote` placeholder.
     private func rebuiltReps(
-        from offer: ClipboardInboundOffers.InboundOffer
+        from offer: ClipboardEndpoint.InboundOffer
     ) -> [ClipboardContent.Representation] {
         offer.keptIndices.map { index in
             let info = offer.reps[index]
-            return inbound.materialized(generation: offer.generation, repIndex: index)
+            return endpoint.materialized(generation: offer.generation, repIndex: index)
                 ?? ClipboardContent.Representation(
                     pendingRemoteUTI: info.uti, byteCount: Int(clamping: info.byteCount),
                     filename: info.filename)
@@ -501,14 +391,14 @@ final class VsockClipboardService: ClipboardServicing {
     /// edit-detection and echo suppression.
     private func apply(_ content: ClipboardContent) {
         clipboardContent = content
-        outbound.latchDedup(content.digest)
+        endpoint.latchOfferDedup(content.digest)
         lastInboundPublishedDigest = content.digest
     }
 
     /// Drops the current inbound offer and its per-generation state, telling the
     /// guest nothing: what replaced it is a local gesture.
     private func forgetInboundOffer() {
-        inbound.discardInboundOffer()
+        endpoint.discardInboundOffer()
         previewMaterializationStarted = 0
         lastInboundPublishedDigest = nil
     }
@@ -533,7 +423,7 @@ final class VsockClipboardService: ClipboardServicing {
     func materializeForPreview() async {
         // Bail if there's no offer, or the user replaced the offered content with
         // their own edit (the promise is then stale).
-        guard let offer = inbound.inboundOffer,
+        guard let offer = endpoint.inboundOffer,
             clipboardContent.digest == lastInboundPublishedDigest
         else { return }
         // Concealed content is never previewed — the bytes are pulled only on an
@@ -562,7 +452,7 @@ final class VsockClipboardService: ClipboardServicing {
                 cancelledInboundGeneration == generation ? .cancelled : .completed)
         }
         for index in pulling {
-            guard inbound.inboundOffer?.generation == generation else { return }  // superseded
+            guard endpoint.inboundOffer?.generation == generation else { return }  // superseded
             // The user stopped the whole operation, not the one file that
             // happened to be in flight when they clicked.
             guard cancelledInboundGeneration != generation else { return }
@@ -583,14 +473,14 @@ final class VsockClipboardService: ClipboardServicing {
     func materializeForCopy() -> [CopyToMacItem] {
         // No active offer, or the user replaced the offered content with their
         // own edit: copy what's actually shown, never a stale placeholder.
-        guard let offer = inbound.inboundOffer,
+        guard let offer = endpoint.inboundOffer,
             clipboardContent.digest == lastInboundPublishedDigest
         else {
             forgetInboundOffer()
             return Self.withoutPlaceholders(clipboardContent).representations.map { .resolved($0) }
         }
 
-        let budget = inbound.pasteBudget(generation: offer.generation)
+        let budget = endpoint.pasteBudget(generation: offer.generation)
         let overBudget = budget?.exceeds == true
         if let budget, overBudget {
             Self.logger.warning(
@@ -628,18 +518,18 @@ final class VsockClipboardService: ClipboardServicing {
     /// A rep a paste fire already has in flight is not re-requested: the pull
     /// joins that transfer and both callers take its bytes.
     private func materialize(
-        index: Int, offer: ClipboardInboundOffers.InboundOffer,
+        index: Int, offer: ClipboardEndpoint.InboundOffer,
         operation: ClipboardTransferOperation
     ) async -> ClipboardContent.Representation? {
         // The cache read moves no byte on this operation's behalf, so it begins no
         // transfer: one declared but never fed would sit in the denominator
         // waiting on events that never arrive.
-        if let cached = inbound.materialized(generation: offer.generation, repIndex: index) {
+        if let cached = endpoint.materialized(generation: offer.generation, repIndex: index) {
             return cached
         }
-        let rep = await inbound.join(
+        let rep = await endpoint.join(
             generation: offer.generation, repIndex: index, operation: operation)
-        guard rep != nil, inbound.inboundOffer?.generation == offer.generation else { return rep }
+        guard rep != nil, endpoint.inboundOffer?.generation == offer.generation else { return rep }
         await republishOffActor(offer)
         return rep
     }
@@ -668,17 +558,76 @@ final class VsockClipboardService: ClipboardServicing {
     }
 }
 
+// MARK: - Endpoint delegate
+
+extension VsockClipboardService: ClipboardEndpointDelegate {
+    /// Publishes a newly-received guest offer as metadata-only placeholders, so
+    /// the window shows the chips without waiting.
+    func endpoint(
+        _ endpoint: ClipboardEndpoint, didReceiveOffer offer: ClipboardEndpoint.InboundOffer
+    ) {
+        // A new offer is a new operation; whatever the user cancelled is over.
+        cancelledInboundGeneration = nil
+        previewMaterializationStarted = 0
+        // Byte-less placeholder reps hash trivially; once a pull has materialized
+        // real bytes, `republishOffActor` hashes off the main actor instead (§8).
+        apply(
+            ClipboardContent(
+                representations: rebuiltReps(from: offer), isConcealed: offer.isConcealed))
+        // Bumped after the offer is live, so the passthrough coordinator's
+        // `materializeForCopy` sees it.
+        inboundOfferSeq &+= 1
+    }
+
+    /// Answers a guest offer this side can no longer serve: the host pasteboard
+    /// may still hold this VM's own promised write for it, which the guest now
+    /// rejects as `request.stale`, so a paste through it would silently serve
+    /// nothing.
+    ///
+    /// The placeholder content stays in the window either way; only the
+    /// pasteboard write is withdrawn.
+    func endpoint(
+        _ endpoint: ClipboardEndpoint, didRetractOffer generation: UInt64?,
+        reason: ClipboardEndpoint.RetractReason
+    ) {
+        previewMaterializationStarted = 0
+        lastInboundPublishedDigest = nil
+        guard retractStaleHostWrite?() == true else { return }
+        // With the write retracted, no earlier session's staging can be backing a
+        // live pasteboard item any more.
+        staging.reclaimSiblingRoots()
+        // A retraction's report is the successor offer's own explainer, so it
+        // stands where the successor would otherwise have cleared the last one.
+        let hasSuccessor: Bool
+        switch reason {
+        case .superseded(let successor): hasSuccessor = successor
+        case .released: hasSuccessor = false
+        }
+        reportRefusal(gesture: .copy, .supersededCopyRetracted(hasSuccessor: hasSuccessor))
+        Self.logger.notice(
+            "Retracted the stale host-pasteboard promise for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) — the guest offer it advertised is no longer servable"
+        )
+    }
+
+    func endpoint(
+        _ endpoint: ClipboardEndpoint, didRefuse gesture: ClipboardTransferGesture,
+        failure: ClipboardTransferFailure
+    ) {
+        reportRefusal(gesture: gesture, failure)
+    }
+}
+
 // MARK: - Paste-time representation serving
 
 extension VsockClipboardService: ClipboardPasteboardRepProviding {
     /// Serves the pasteboard `.fileURL` for a promised rep at paste time.
     nonisolated func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? {
-        inbound.serveFileURL(generation: generation, repIndex: repIndex)
+        endpoint.serveFileURL(generation: generation, repIndex: repIndex)
     }
 
     /// Serves an inline pasteboard flavor's bytes for a promised rep at paste
     /// time.
     nonisolated func copyToMacData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
-        inbound.serveData(generation: generation, repIndex: repIndex, uti: uti)
+        endpoint.serveData(generation: generation, repIndex: repIndex, uti: uti)
     }
 }

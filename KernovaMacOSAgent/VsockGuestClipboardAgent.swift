@@ -105,21 +105,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// ids restart with each one, and with the agent process itself.
     private var connectionTag = ClipboardConnectionTag.guestUnconnected
 
-    /// Engine, frame routing and control-frame delivery for the current
-    /// connection.
-    private var session: ClipboardStreamSession?
-
-    /// What this side has offered the host over the current connection, and the
-    /// transfers answering its pulls.
-    private var outbound: ClipboardOutboundOffers?
-
-    /// What the host has offered over the current connection, its materialization
-    /// cache, and every pull that fills it.
+    /// The current connection: what each side has offered the other, and every
+    /// transfer between them.
     ///
     /// Cleared with the connection, but the data providers still on the
     /// pasteboard hold it: a representation already pulled stays pastable after
     /// the host goes away (docs/CLIPBOARD.md §3).
-    private var inbound: ClipboardInboundOffers?
+    private var endpoint: ClipboardEndpoint?
 
     #if DEBUG
     /// Test seam.
@@ -127,7 +119,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     /// Test seam.
     var inboundPromiseGenerationForTesting: UInt64? {
-        MainActor.assumeIsolated { inbound?.inboundOffer?.generation }
+        MainActor.assumeIsolated { endpoint?.inboundOffer?.generation }
     }
     #endif
 
@@ -203,7 +195,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// against a poll's own asynchronous completion.
     func handleControlFrameForTesting(_ frame: Frame) {
         dispatchPrecondition(condition: .onQueue(.main))
-        handleControlFrame(frame)
+        MainActor.assumeIsolated { endpoint?.handleControlFrameForTesting(frame) }
     }
 
     /// Test seam for the applied ceiling, so a test can wait for a pushed policy
@@ -333,38 +325,19 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         Self.logger.notice("Vsock clipboard agent stopped")
     }
 
-    /// Runs `body` with main-actor isolation assumed, hopping first when the
-    /// caller is off-main.
-    ///
-    /// The agent's state is confined to the main dispatch queue, and the
-    /// `@MainActor` KernovaKit types it drives run on that same thread — this is
-    /// what tells the compiler so.
-    private func onMainActor<T: Sendable>(_ body: @MainActor () -> T) -> T {
-        Thread.isMainThread
-            ? MainActor.assumeIsolated(body)
-            : DispatchQueue.main.sync { MainActor.assumeIsolated(body) }
-    }
-
     /// Clears per-connection streaming + pending state on the main queue.
     private func teardownConnectionState() {
-        onMainActor {
-            session?.stop()
-            // Unblock any provider thread waiting on a pull (returns empty). The
-            // offers it holds stay servable from their cache, which is what the
-            // pasteboard's providers keep it alive for.
-            inbound?.endSession()
-            if let outbound {
-                nextLocalGeneration = outbound.nextGeneration
-                // Only this agent's own operations are retired: the reporter is
-                // the whole agent's readout authority and another agent's
-                // transfer may be live on it, which a clipboard teardown has no
-                // business wiping off the status item.
-                outbound.endSession()
-            }
+        MainActorBridge.sync {
+            guard let endpoint else { return }
+            nextLocalGeneration = endpoint.nextGeneration
+            // Unblocks any provider thread waiting on a pull (returns empty).
+            // The offers it holds stay servable from their cache, which is what
+            // the pasteboard's providers keep it alive for; only this agent's own
+            // operations are retired, since the reporter is the whole agent's
+            // readout authority and another agent's transfer may be live on it.
+            endpoint.stop()
         }
-        outbound = nil
-        inbound = nil
-        session = nil
+        endpoint = nil
         liveChannel = nil
         // A stale in-flight estimate walk's completion checks `liveChannel` and
         // drops itself; clear the flag now so the next connection can walk again.
@@ -389,75 +362,51 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     // MARK: - Per-connection serve
 
     private func serve(channel: VsockChannel) async {
-        let session = await MainActor.run { () -> ClipboardStreamSession in
-            let session = ClipboardStreamSession(
-                channel: channel, role: .guest, kind: .clipboard, label: "clipboard",
-                staging: self.staging)
-            self.connectionTag = session.connectionTag
+        let endpoint = await MainActor.run { () -> ClipboardEndpoint in
+            let endpoint = ClipboardEndpoint(
+                channel: channel,
+                configuration: ClipboardEndpoint.Configuration(
+                    role: .guest, kind: .clipboard, label: "clipboard",
+                    peerName: Self.pasteSourceName,
+                    maxPasteBytes: { [weak self] in
+                        self?.maxPasteBytes ?? ClipboardPasteLimit.defaultBytes
+                    },
+                    staging: self.staging,
+                    progressRevealDelay: self.progressRevealDelay,
+                    progressIdleGap: self.progressIdleGap,
+                    clock: self.clock,
+                    // A brand-new host has no record of prior offers; the fresh
+                    // dedup latch is what re-announces the standing snapshot.
+                    firstGeneration: self.nextLocalGeneration),
+                reporter: self.reporter)
+            self.connectionTag = endpoint.connectionTag
             self.liveChannel = channel
-            self.session = session
-            // A brand-new host has no record of prior offers; the fresh dedup
-            // latch is what re-announces the standing snapshot.
-            self.outbound = ClipboardOutboundOffers(
-                session: session, reporter: self.reporter, peerName: Self.pasteSourceName,
-                progressRevealDelay: self.progressRevealDelay,
-                progressIdleGap: self.progressIdleGap,
-                firstGeneration: self.nextLocalGeneration,
-                onActivity: { [weak self] activity in self?.record(activity) })
-            let inbound = ClipboardInboundOffers(
-                session: session, reporter: self.reporter, staging: self.staging,
-                peerName: Self.pasteSourceName,
-                maxPasteBytes: { [weak self] in
-                    self?.maxPasteBytes ?? ClipboardPasteLimit.defaultBytes
-                },
-                progressRevealDelay: self.progressRevealDelay,
-                progressIdleGap: self.progressIdleGap, clock: self.clock)
-            self.inbound = inbound
-            // Weak on both sides: the promise's data providers are what hold the
-            // inbound half alive past this connection, and a callback capturing
-            // it strongly would keep every connection's alive forever.
-            inbound.onOfferReceived = { [weak self, weak inbound] offer in
-                guard let self, let inbound else { return }
-                self.registerPromise(for: offer, on: inbound)
-            }
-            inbound.onOfferRetracted = { [weak self] _, reason in
-                guard reason == .released else { return }
-                self?.retractPromiseIfUnchanged()
-            }
-            inbound.onActivity = { [weak self] activity in self?.record(activity) }
+            self.endpoint = endpoint
+            endpoint.delegate = self
             self.lastPasteboardChangeCount = Self.unobservedChangeCount
-            session.start(
-                handleControlFrame: { [weak self] frame in self?.handleControlFrame(frame) },
-                // Wake any pull blocked on a now-dead transfer immediately,
-                // off-main — the teardown below runs on main, which a blocked
-                // provider holds.
-                onEnded: { [weak inbound] in inbound?.endSession() })
+            endpoint.start()
             Self.logger.notice(
-                "Vsock clipboard connected to host (conn=\(session.connectionTag, privacy: .public))"
+                "Vsock clipboard connected to host (conn=\(endpoint.connectionTag, privacy: .public))"
             )
-            return session
+            return endpoint
         }
 
-        await session.waitUntilEnded()
+        await endpoint.waitUntilEnded()
         await MainActor.run {
             self.teardownIfCurrent(channel)
         }
     }
 
-    /// Mirrors what the outbound half just did onto the menu-bar status line.
-    private func record(_ activity: ClipboardOutboundOffers.Activity) {
-        switch activity {
-        case .offerSent: clipboardActivityStorage = .offeredToHost
-        case .transferServed: clipboardActivityStorage = .sentToHost
-        }
-    }
-
-    /// Mirrors what an inbound paste just did onto the menu-bar status line.
+    /// Mirrors what the connection just did onto the menu-bar status line.
     ///
     /// The refusal line is written before the notice, so the dropdown the notice
     /// pops is rebuilt with the line already in it.
-    private func record(_ activity: ClipboardInboundOffers.Activity) {
+    private func record(_ activity: ClipboardEndpoint.Activity) {
         switch activity {
+        case .offerSent:
+            clipboardActivityStorage = .offeredToHost
+        case .transferServed:
+            clipboardActivityStorage = .sentToHost
         case .representationReceived:
             clipboardActivityStorage = .receivedFromHost
         case .pasteRefused(let code, let limitBytes):
@@ -569,7 +518,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     private func noteSnapshotOfferedNothing(pasteboardHeldSomething: Bool, changeCount: Int) {
         // The pasteboard still moved on, so the host's previous offer is retired
         // rather than left serving a copy the user has replaced.
-        let released = onMainActor { outbound?.release() ?? false }
+        let released = MainActorBridge.sync { endpoint?.release() ?? false }
         let watchedItArrive = lastPasteboardChangeCount != Self.unobservedChangeCount
         lastPasteboardChangeCount = changeCount
         guard pasteboardHeldSomething, watchedItArrive else {
@@ -591,22 +540,24 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// Announces `content` to the host when it's non-empty and not an echo of
     /// what we last wrote/sent, advancing the change-count bookkeeping.
     private func sendOfferIfNeeded(_ content: ClipboardContent, changeCount: Int) {
-        guard let outbound else { return }
+        guard let endpoint else { return }
         guard !content.isEmpty else {
             // A caller that can observe an empty snapshot classifies it itself;
             // one that hasn't can't claim a copy came up short.
             noteSnapshotOfferedNothing(pasteboardHeldSomething: false, changeCount: changeCount)
             return
         }
-        // Dedup on the buffer's own (uncapped) digest — the poll rebuilds the
-        // same content each tick, so an unchanged pasteboard hits this guard, and
-        // the change-count gate is what keeps it from re-reading.
-        guard content.digest != onMainActor({ outbound.lastOfferedDigest }) else {
+        switch MainActorBridge.sync({ endpoint.offer(content) }) {
+        case .sent, .duplicate:
+            // Content the host already holds is as good as sent: the poll rebuilds
+            // the same snapshot each tick, so the gate is what keeps it from
+            // re-reading an unchanged pasteboard.
             lastPasteboardChangeCount = changeCount
-            return
+        case .nothingToOffer, .sendFailed:
+            // The host is still owed this snapshot; leave the gate for the next
+            // poll to re-read.
+            break
         }
-        guard onMainActor({ outbound.offer(content) }) != nil else { return }
-        lastPasteboardChangeCount = changeCount
     }
 
     /// One on-disk pasteboard file or folder gathered for an outbound offer.
@@ -714,31 +665,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
     }
 
-    // MARK: - Frame handlers (main queue)
-
-    /// Handles the control frames the consume loop hops to the main queue for
-    /// (stream frames are routed off-main directly to the engine).
-    private func handleControlFrame(_ frame: Frame) {
-        switch frame.payload {
-        case .clipboardOffer(let offer):
-            onMainActor { inbound?.handleOffer(offer) }
-        case .clipboardRequest(let request):
-            onMainActor { outbound?.handleRequest(request) }
-        case .clipboardRelease(let release):
-            onMainActor { inbound?.handleRelease(release) }
-        case .error(let error):
-            onMainActor { inbound?.handlePeerError(error) }
-        case .clipboardStreamAbort(let abort):
-            // Only a sender-bound abort reaches here; see `ClipboardStreamRouting`.
-            onMainActor { session?.sender?.handleAbort(transferID: abort.transferID) }
-        case .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck:
-            // Routed off-main by the consume loop; never reaches here.
-            break
-        case .hello, .heartbeat, .policyUpdate, .logRecord, .dropOffer, .dropComplete,
-            .dropRelease, .none:
-            Self.logger.warning("Unexpected payload on clipboard channel — wrong port")
-        }
-    }
     // MARK: - Inbound (we are the receiver)
 
     /// Registers a host offer as lazy promises on the guest pasteboard, pulling
@@ -748,23 +674,23 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// does not read — and thereby self-trigger — our own promise.
     @MainActor
     private func registerPromise(
-        for offer: ClipboardInboundOffers.InboundOffer, on inbound: ClipboardInboundOffers
+        for offer: ClipboardEndpoint.InboundOffer, on endpoint: ClipboardEndpoint
     ) {
-        let items = inbound.promisePlan(generation: offer.generation).map(Self.promisedItems(for:))
+        let items = endpoint.promisePlan(generation: offer.generation).map(Self.promisedItems(for:))
         guard let items, !items.isEmpty else {
             Self.logger.warning(
                 "Dropped the host clipboard offer (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)): none of its \(offer.reps.count, privacy: .public) representation(s) can be promised — nothing written"
             )
-            inbound.discardInboundOffer()
+            endpoint.discardInboundOffer()
             return
         }
-        guard writePasteboardPromise(items, generation: offer.generation, serving: inbound) else {
+        guard writePasteboardPromise(items, generation: offer.generation, serving: endpoint) else {
             Self.logger.warning(
                 "Failed to register host clipboard promise (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
             )
             // The write failed, so the providers were never retained — there is
             // nothing to retract.
-            inbound.discardInboundOffer()
+            endpoint.discardInboundOffer()
             return
         }
         Self.logger.notice(
@@ -793,7 +719,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// representation already pulled is still pastable then.
     @discardableResult
     private func writePasteboardPromise(
-        _ items: [PromisedItem], generation: UInt64, serving: ClipboardInboundOffers
+        _ items: [PromisedItem], generation: UInt64, serving: ClipboardEndpoint
     ) -> Bool {
         var newProviders: [LazyClipboardDataProvider] = []
         let writes = items.map {
@@ -830,7 +756,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// first file rep across the offer.
     private static func provideData(
         _ type: NSPasteboard.PasteboardType, itemTypes: PromisedItem, generation: UInt64,
-        serving: ClipboardInboundOffers
+        serving: ClipboardEndpoint
     ) -> Data? {
         guard let repIndex = itemTypes.first(where: { $0.type == type })?.repIndex else {
             Self.logger.warning(
@@ -848,7 +774,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     #if DEBUG
     /// Test seam for the refusal hop's staleness check.
     func recordPasteFailureForTesting(code: ClipboardErrorCode, generation: UInt64) {
-        onMainActor { inbound?.recordRefusalForTesting(code, generation: generation) }
+        MainActorBridge.sync { endpoint?.recordRefusalForTesting(code, generation: generation) }
     }
     #endif
 
@@ -873,5 +799,29 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 )
             }
         }
+    }
+}
+
+// MARK: - Endpoint delegate
+
+extension VsockGuestClipboardAgent: ClipboardEndpointDelegate {
+    func endpoint(
+        _ endpoint: ClipboardEndpoint, didReceiveOffer offer: ClipboardEndpoint.InboundOffer
+    ) {
+        registerPromise(for: offer, on: endpoint)
+    }
+
+    func endpoint(
+        _ endpoint: ClipboardEndpoint, didRetractOffer generation: UInt64?,
+        reason: ClipboardEndpoint.RetractReason
+    ) {
+        guard reason == .released else { return }
+        retractPromiseIfUnchanged()
+    }
+
+    func endpoint(
+        _ endpoint: ClipboardEndpoint, didRecord activity: ClipboardEndpoint.Activity
+    ) {
+        record(activity)
     }
 }

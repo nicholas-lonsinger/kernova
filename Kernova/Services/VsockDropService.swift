@@ -27,15 +27,13 @@ final class VsockDropService {
 
     private let label: String
 
-    /// This connection's engine, frame routing and control-frame delivery.
-    nonisolated private let session: ClipboardStreamSession
-
-    /// The drops offered to the guest, and the transfers answering its pulls.
-    private let outbound: ClipboardOutboundOffers
+    /// This connection: the drops offered to the guest, and the transfers
+    /// answering its pulls.
+    private let endpoint: ClipboardEndpoint
 
     /// Log coordinate for this connection: generations and transfer ids restart
     /// with every accepted channel, and one instance serves exactly one.
-    nonisolated private var connectionTag: ClipboardConnectionTag { session.connectionTag }
+    nonisolated private var connectionTag: ClipboardConnectionTag { endpoint.connectionTag }
 
     /// This VM's transfer report, which every surface renders. Shared with the
     /// VM's clipboard service, so one readout covers both.
@@ -86,12 +84,13 @@ final class VsockDropService {
         self.reporter = reporter
         self.directoryByteCount = directoryByteCount
         self.runOffMainActor = runOffMainActor
-        let session = ClipboardStreamSession(
-            channel: channel, role: .host, kind: .drop, label: label)
-        self.session = session
-        self.outbound = ClipboardOutboundOffers(
-            session: session, reporter: reporter, peerName: label,
-            progressRevealDelay: progressRevealDelay, progressIdleGap: progressIdleGap)
+        self.endpoint = ClipboardEndpoint(
+            channel: channel,
+            configuration: ClipboardEndpoint.Configuration(
+                role: .host, kind: .drop, label: label, peerName: label,
+                progressRevealDelay: progressRevealDelay, progressIdleGap: progressIdleGap),
+            reporter: reporter)
+        endpoint.delegate = self
     }
 
     // MARK: - Lifecycle
@@ -99,17 +98,7 @@ final class VsockDropService {
     func start() {
         guard !isConnected else { return }
         isConnected = true
-        session.start(
-            handleControlFrame: { [weak self] frame in self?.handleControlFrame(frame) },
-            onEnded: { [weak self] in
-                // The channel is gone — settle here rather than waiting for
-                // whatever replaces this service. `isConnected` is what the
-                // display reads to decide whether it may take a drop, and the
-                // guest closes this channel on every control reconnect (its
-                // client pauses until the next `Hello`), so a service left
-                // standing would keep advertising a drop it can no longer send.
-                DispatchQueue.main.async { MainActor.assumeIsolated { self?.settle() } }
-            })
+        endpoint.start()
         Self.logger.notice(
             "Vsock drop service started for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )
@@ -125,10 +114,9 @@ final class VsockDropService {
     /// Idempotent: the consume loop's own settle and an owner's `stop()` race by
     /// construction, and the first one through does the work.
     private func settle() {
-        session.stop()
+        endpoint.stop()
         guard isConnected else { return }
         isConnected = false
-        outbound.endSession()
         Self.logger.notice(
             "Vsock drop service stopped for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )
@@ -155,7 +143,7 @@ final class VsockDropService {
     /// none of the items could be read.
     @discardableResult
     func startDrop(urls: [URL]) -> Bool {
-        guard isConnected, session.sender != nil else { return false }
+        guard isConnected else { return false }
         var candidates: [DropCandidate] = []
         var unreadable = 0
         for url in urls {
@@ -243,7 +231,7 @@ final class VsockDropService {
 
     /// Announces the drop, opening the readout that spans every file in it.
     private func offer(_ reps: [ClipboardContent.Representation]) {
-        outbound.offer(ClipboardContent(representations: reps))
+        endpoint.offer(ClipboardContent(representations: reps))
     }
 
     // MARK: - Cancelling
@@ -251,38 +239,20 @@ final class VsockDropService {
     /// Calls off the drop for `generation`: the guest keeps whatever already
     /// landed in Downloads and drops the rest.
     func cancelDrop(generation: UInt64) {
-        outbound.cancel(generation: generation)
+        endpoint.cancelOutbound(generation: generation)
     }
+}
 
-    // MARK: - Frame consumer
+// MARK: - Endpoint delegate
 
-    /// Handles the control frames the consume loop dispatches to the main actor.
-    private func handleControlFrame(_ frame: Frame) {
-        switch frame.payload {
-        case .clipboardRequest(let request):
-            outbound.handleRequest(request)
-        case .dropComplete(let complete):
-            outbound.handleDropComplete(complete)
-        case .clipboardStreamAbort(let abort):
-            // Only a sender-bound abort reaches here; see `ClipboardStreamRouting`.
-            session.sender?.handleAbort(transferID: abort.transferID)
-        case .error(let error):
-            Self.logger.warning(
-                "Guest drop error for '\(self.label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
-            )
-        case .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck:
-            // Routed off-main by the consume loop; never reaches here.
-            break
-        case .hello, .heartbeat, .policyUpdate, .logRecord, .clipboardOffer, .clipboardRelease,
-            .dropOffer, .dropRelease:
-            // Control-plane, clipboard and host→guest drop payloads belong
-            // elsewhere; a peer sending them here crossed wires.
-            Self.logger.warning(
-                "Unexpected payload on the drop channel for '\(self.label, privacy: .public)' — wrong port; closing the channel"
-            )
-            session.channel.close()
-        case .none:
-            Self.logger.debug("Frame with no payload for '\(self.label, privacy: .public)'")
-        }
+extension VsockDropService: ClipboardEndpointDelegate {
+    /// Settles here rather than waiting for whatever replaces this service.
+    ///
+    /// `isConnected` is what the display reads to decide whether it may take a
+    /// drop, and the guest closes this channel on every control reconnect (its
+    /// client pauses until the next `Hello`), so a service left standing would
+    /// keep advertising a drop it can no longer send.
+    func endpointDidEnd(_ endpoint: ClipboardEndpoint) {
+        settle()
     }
 }

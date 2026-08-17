@@ -11,14 +11,6 @@ import Foundation
 /// user asked for separately.
 @MainActor
 public final class ClipboardOutboundOffers {
-    /// Something this side just did that a surface may want to render.
-    public enum Activity: Sendable {
-        /// An offer went out to the peer.
-        case offerSent
-        /// A transfer began streaming in answer to the peer's request.
-        case transferServed
-    }
-
     /// One offer this side has made and can still serve.
     private final class Entry {
         let generation: UInt64
@@ -45,7 +37,12 @@ public final class ClipboardOutboundOffers {
     private let peerName: String
     private let progressRevealDelay: TimeInterval
     private let progressIdleGap: TimeInterval
-    private let onActivity: @MainActor (Activity) -> Void
+
+    /// Called with what this side just did, for a surface to render.
+    ///
+    /// Set after construction rather than taken at init: an owner that holds this
+    /// as a stored property has no `self` to hand over while building it.
+    public var onActivity: @MainActor (ClipboardEndpoint.Activity) -> Void = { _ in }
 
     private var entries: [UInt64: Entry] = [:]
 
@@ -78,8 +75,7 @@ public final class ClipboardOutboundOffers {
         peerName: String,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
-        firstGeneration: UInt64 = 1,
-        onActivity: @escaping @MainActor (Activity) -> Void = { _ in }
+        firstGeneration: UInt64 = 1
     ) {
         self.session = session
         self.reporter = reporter
@@ -87,7 +83,6 @@ public final class ClipboardOutboundOffers {
         self.progressRevealDelay = progressRevealDelay
         self.progressIdleGap = progressIdleGap
         self.nextGenerationStorage = max(1, firstGeneration)
-        self.onActivity = onActivity
     }
 
     // MARK: - Reading what is offered
@@ -104,23 +99,18 @@ public final class ClipboardOutboundOffers {
         entries[generation]?.content
     }
 
-    /// Digest of the content this side last announced, which the next offer is
-    /// deduped against.
-    public var lastOfferedDigest: Data? { lastOfferedDigestStorage }
-
     // MARK: - Offering
 
-    /// Announces `content` to the peer, returning the generation it went out
-    /// under — or `nil` when nothing was sent.
+    /// Announces `content` to the peer, reporting what became of it.
     ///
     /// The generation is committed only once the frame is away, so a failed send
     /// leaves nothing registered for the peer to request. A clipboard offer
-    /// dedups against `lastOfferedDigest` and retires the one before it; a drop
-    /// is registered alongside whatever is already streaming, and opens its
-    /// readout before the send so a failure has something to report on.
+    /// dedups against the digest it last announced and retires the one before it;
+    /// a drop is registered alongside whatever is already streaming, and opens
+    /// its readout before the send so a failure has something to report on.
     @discardableResult
-    public func offer(_ content: ClipboardContent) -> UInt64? {
-        if kind == .clipboard, content.digest == lastOfferedDigestStorage { return nil }
+    public func offer(_ content: ClipboardContent) -> ClipboardEndpoint.OfferOutcome {
+        if kind == .clipboard, content.digest == lastOfferedDigestStorage { return .duplicate }
         // Cap to the 16-bit rep-index limit a transfer id can address; the
         // uncapped digest stays the dedup key, so unchanged content isn't
         // re-offered.
@@ -131,7 +121,7 @@ public final class ClipboardOutboundOffers {
             )
         }
         let offered = capped.content
-        guard !offered.representations.isEmpty else { return nil }
+        guard !offered.representations.isEmpty else { return .nothingToOffer }
 
         let generation = nextGenerationStorage
         let operation: ClipboardTransferOperation? =
@@ -146,7 +136,7 @@ public final class ClipboardOutboundOffers {
                 "Failed to send the outbound offer to '\(self.peerName, privacy: .public)' (conn=\(self.session.connectionTag, privacy: .public)): \(error.localizedDescription, privacy: .public)"
             )
             operation?.finish(.failed(.sendFailed))
-            return nil
+            return .sendFailed
         }
 
         nextGenerationStorage += 1
@@ -160,12 +150,15 @@ public final class ClipboardOutboundOffers {
         if kind == .clipboard {
             currentGeneration = generation
             lastOfferedDigestStorage = content.digest
+            // What the peer has just been handed is the news; the report the
+            // previous gesture left standing described an offer this replaces.
+            reporter.clearFinished()
         }
         onActivity(.offerSent)
         Self.logger.notice(
             "Sent an offer to '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public), \(offered.representations.count, privacy: .public) reps, \(offered.totalByteCount, privacy: .public) bytes)"
         )
-        return generation
+        return .sent(generation: generation)
     }
 
     /// Forgets what was last offered, so re-announcing the same content counts as

@@ -15,3 +15,19 @@ public func performOnMainRunLoop(_ body: @escaping @MainActor () -> Void) {
         MainActor.assumeIsolated { body() }
     }
 }
+
+/// The one blocking bridge onto the main actor.
+public enum MainActorBridge {
+    /// Runs `body` on the main actor and returns its result, from either the
+    /// main thread or off it.
+    ///
+    /// The off-main branch blocks the caller, so this belongs on a path that
+    /// already holds a thread — a pasteboard provider fire, a drop worker — and
+    /// never on one the main actor may be waiting for.
+    @discardableResult
+    public static func sync<T: Sendable>(_ body: @MainActor () -> T) -> T {
+        Thread.isMainThread
+            ? MainActor.assumeIsolated { body() }
+            : DispatchQueue.main.sync { MainActor.assumeIsolated { body() } }
+    }
+}

@@ -39,7 +39,11 @@ public final class ClipboardStreamSession {
     nonisolated public let connectionTag: ClipboardConnectionTag
 
     /// The channel this session drains and writes to.
-    nonisolated public let channel: VsockChannel
+    ///
+    /// Not public: what crosses the wire goes through this type's own frame
+    /// senders, and only ``stop()`` closes it, so an owner cannot end the
+    /// connection behind the bookkeeping that describes it.
+    nonisolated let channel: VsockChannel
 
     /// What the log lines call the peer — the VM name on the host, the channel
     /// name in the guest.
@@ -95,19 +99,19 @@ public final class ClipboardStreamSession {
 
     /// The engine streaming what this side offers, or `nil` before `start()` and
     /// after `stop()`.
-    public var sender: ClipboardStreamSender? { senderStorage }
+    var sender: ClipboardStreamSender? { senderStorage }
 
     /// The engine receiving what the peer streams, or `nil` before `start()`,
     /// after `stop()`, and for a send-only session.
-    public var receiver: ClipboardStreamReceiver? { receiverStorage }
+    var receiver: ClipboardStreamReceiver? { receiverStorage }
 
     /// Whether this side ever streams payload bytes on this channel.
-    private static func sends(role: Role, kind: Kind) -> Bool {
+    static func sends(role: Role, kind: Kind) -> Bool {
         !(role == .guest && kind == .drop)
     }
 
     /// Whether this side ever receives payload bytes on this channel.
-    private static func receives(role: Role, kind: Kind) -> Bool {
+    static func receives(role: Role, kind: Kind) -> Bool {
         !(role == .host && kind == .drop)
     }
 
