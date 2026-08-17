@@ -369,6 +369,21 @@ struct VsockControlServiceTests {
         let watchdog = MainWatchdogDiag()
         watchdog.start()
         defer { watchdog.stop() }
+        let poolWatch = Task.detached {
+            var reported = 0
+            while !Task.isCancelled {
+                let t0 = ContinuousClock.now
+                try? await Task.sleep(for: .milliseconds(200))
+                let late = ContinuousClock.now - t0 - .milliseconds(200)
+                if late > .seconds(1), reported < 2 {
+                    reported += 1
+                    let text = MainWatchdogDiag.sampleProcess()
+                    LazyPullDiagTimeline.record(
+                        "POOL-LATE sleep overran by \(late); SAMPLE:\n" + String(text.prefix(12_000)))
+                }
+            }
+        }
+        defer { poolWatch.cancel() }
         var stamps: [ContinuousClock.Instant] = []
         var lastStamp: ContinuousClock.Instant? = nil
         while stamps.count < 3 {
@@ -382,7 +397,7 @@ struct VsockControlServiceTests {
                 if let last = lastStamp, now - last > .seconds(1) {
                     let text = MainWatchdogDiag.sampleProcess()
                     Issue.record(
-                        "DIAG late heartbeat gap \(now - last) at \(Date()); watchdog: \(watchdog.report())\nMAIN-PULL TIMELINE:\n\(LazyPullDiagTimeline.dump())\n\(text.prefix(2000))"
+                        "DIAG late heartbeat gap \(now - last) at \(Date()); watchdog: \(watchdog.report())\nTIMELINE:\n\(LazyPullDiagTimeline.dump())\nSAMPLE-NOW:\n\(text.prefix(12_000))"
                     )
                 }
                 lastStamp = now
@@ -1436,8 +1451,10 @@ final class MainWatchdogDiag: @unchecked Sendable {
 
     static func sampleProcess() -> String {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/sample")
-        process.arguments = [String(ProcessInfo.processInfo.processIdentifier), "1", "-mayDie"]
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+        process.arguments = [
+            "-n", "/usr/bin/sample", String(ProcessInfo.processInfo.processIdentifier), "1", "-mayDie",
+        ]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe

@@ -178,7 +178,7 @@ public final class LazyPullCoordinator: @unchecked Sendable {
             onProgress: onProgress)
         // DIAGNOSTIC (scratch): time every main-thread pull and record its caller.
         let diagStart = Date()
-        let diagStack = eventLoop != nil ? Thread.callStackSymbols.prefix(14).joined(separator: " | ") : ""
+        let diagStack = eventLoop != nil ? (Thread.callStackSymbols.dropFirst(1).first ?? "") : ""
         defer {
             if eventLoop != nil {
                 LazyPullDiagTimeline.record(
@@ -459,5 +459,5 @@ public enum LazyPullDiagTimeline {
     nonisolated(unsafe) private static var entries: [String] = []
     private static let lock = NSLock()
     public static func record(_ line: String) { lock.withLock { entries.append("[\(Date())] " + line) } }
-    public static func dump() -> String { lock.withLock { entries.suffix(40).joined(separator: "\n") } }
+    public static func dump() -> String { lock.withLock { entries.suffix(12).joined(separator: "\n") } }
 }
