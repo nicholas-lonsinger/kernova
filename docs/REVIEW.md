@@ -7,13 +7,17 @@ Read before filing a review-debt issue or writing an annotation. The four triage
 Escalating one of these to **Annotate** takes a pattern *actually* re-flagged across reviews, and an annotation clearing all four conditions in [Intentional pattern annotations](#intentional-pattern-annotations).
 
 - **Hypothetical future code** — "a future caller or method could bypass X." Unwritten code can't be defended against with access control; document the invariant where it lives instead.
-- **Adversarial scheduling** — a race needing timing no real user or system flow produces, with a bounded, benign outcome (one spurious retry). If you are unsure the flow can produce it, that investigation *is* the triage: do it before filing, not after.
+- **Adversarial scheduling** — a race needing timing no real user or system flow produces, with a bounded, benign outcome (one spurious retry).
 - **Degenerate inputs** — inputs no real workflow produces (same-name-differing-only-by-case bundles dropped together), failing recoverably.
 - **Pre-existing behavior surfaced by an unrelated diff** — verify against the merge base before attributing. It is a finding against *this* change only if the change introduced or worsened it; otherwise it is at most a new issue on its own merits, judged by the same bar.
 
 ## Review debt tracking
 
 Valid findings **out of scope** for the current task are captured as GitHub issues, never silently dropped: bugs, correctness and logic errors, security concerns, performance issues, meaningful refactors and non-trivial code smells, and missing coverage on critical paths — each still clearing the severity bar.
+
+**`## Reached by` is where the bar fires.** A mechanism traced through the code proves the finding is real, which is half the bar; naming the flow proves it is reachable, the half that decides whether it is worth tracking. Written while the code is in front of you it costs a line, and the same investigation otherwise runs at pickup, one planning cycle later.
+
+A finding you cannot put a flow behind is a **Dismiss** — record it in the PR's `## Review` notes, beside the diff that raised it, where it stays readable without becoming queued work.
 
 **File immediately**, as part of the review flow and before summarizing results — do not list a qualifying finding as "skipped" and wait to be asked. Check for an existing issue first, group findings sharing a root cause into one, and name what you filed in the task summary. Titles are actionable and specific ("Add error handling for disk-full scenario in BundleManager", not "Improve error handling").
 
@@ -28,6 +32,9 @@ gh issue create \
 
 ## Description
 <What the issue is and why it matters>
+
+## Reached by
+<The user gesture or supported automated flow that produces this, traced — never "a caller could". For a refactor or coverage finding, what leaving it costs instead. No line to write here means the finding fails the severity bar.>
 
 ## Location
 <Symbol/function name(s) and file path(s) — prefer names over line numbers, which drift>
