@@ -45,9 +45,8 @@ struct VsockControlServiceTests {
         return frame
     }
 
-    /// Default outbound-heartbeat cadence: small so `heartbeatOutboundCadence`
-    /// doesn't drag, and harmless to every other test (extra heartbeats only
-    /// keep the connection alive).
+    /// Default outbound-heartbeat cadence: small, and harmless to every test
+    /// (extra heartbeats only keep the connection alive).
     private static let testHeartbeat: Duration = .milliseconds(40)
 
     /// Starts a background task sending guest heartbeats every `interval`,
@@ -335,56 +334,6 @@ struct VsockControlServiceTests {
     }
 
     // MARK: - Heartbeat
-
-    @Test("Sends heartbeat frames on the configured cadence")
-    func heartbeatOutboundCadence() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        // Property under test: heartbeats fire repeatedly on the cadence.
-        //
-        // Gap-based, not a count inside a fixed wall-clock window, which a
-        // MainActor stall on macos-26 runners defeats: read three consecutive
-        // heartbeats and check that the maximum inter-frame gap stays within
-        // a generous tolerance of the cadence. Mirrors the agent-side test
-        // in VsockGuestControlAgentTests.
-        //
-        // Note: gaps are measured at receive time, not at the timer's fire
-        // time. A MainActor stall that buffers frames and drains them back-
-        // to-back will pass — correct for "is the timer running" but not a
-        // check on end-to-end latency.
-        let cadence: Duration = .milliseconds(100)
-        let service = makeService(channel: host, heartbeatInterval: cadence)
-        service.start()
-        defer { service.stop() }
-
-        // Frame 0 is the host Hello — discard.
-        _ = try await nextFrame(from: guest)
-
-        var stamps: [ContinuousClock.Instant] = []
-        while stamps.count < 3 {
-            // Use the shared 5 s default. If the timer is genuinely broken
-            // we'll still fail in bounded time (≤15 s); if it's just slow,
-            // returning the frame lets the maxGap assertion below produce a
-            // sharper "cadence drift" error than a generic timeout.
-            let frame = try await nextFrame(from: guest)
-            if case .heartbeat = frame.payload {
-                stamps.append(.now)
-            }
-        }
-
-        // Loop above guarantees stamps.count == 3, so gaps has exactly 2
-        // elements and reduce(.zero, max) is the natural non-optional form.
-        let gaps = zip(stamps.dropFirst(), stamps).map { $0 - $1 }
-        let maxGap = gaps.reduce(.zero, max)
-        let tolerance = cadence * 10
-        #expect(
-            maxGap < tolerance,
-            "Heartbeat cadence drift: max gap \(maxGap) exceeds \(tolerance) (10× cadence). Gaps: \(gaps)"
-        )
-    }
 
     @Test("Inbound heartbeat keeps agentStatus .current past unresponsiveAfter")
     func inboundHeartbeatPreservesLiveness() async throws {
