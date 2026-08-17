@@ -168,6 +168,13 @@ struct ClipboardEndpointDropTests {
                 return false
             }
         }
+        // The item already streaming is called off too, not left to run out the
+        // credit it is parked on.
+        try await harness.recorder.waitForFrames {
+            harness.recorder.aborts.contains {
+                $0.code == ClipboardStreamAbortCode.superseded.rawValue
+            }
+        }
         try await harness.side.reports.wait {
             dropFinishes(harness.side.reports).contains { isCancelledFinish($0) }
         }

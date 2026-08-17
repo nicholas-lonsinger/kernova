@@ -58,81 +58,6 @@ struct VsockDropServiceTests {
         }
     }
 
-    /// Collects frames arriving on the guest end, with a gate to await them.
-    @MainActor
-    private final class FrameRecorder {
-        var frames: [Frame] = []
-        let recorded = AsyncGate()
-        private var consumeTask: Task<Void, Never>?
-
-        init(channel: VsockChannel) {
-            consumeTask = Task { @MainActor [weak self] in
-                do {
-                    for try await frame in channel.incoming {
-                        self?.frames.append(frame)
-                        self?.recorded.notify()
-                    }
-                } catch {
-                    // Stream ended; tests assert on what was recorded.
-                }
-            }
-        }
-
-        func cancel() { consumeTask?.cancel() }
-        deinit { consumeTask?.cancel() }
-
-        var offers: [Kernova_V1_DropOffer] {
-            frames.compactMap {
-                if case .dropOffer(let offer) = $0.payload { return offer }
-                return nil
-            }
-        }
-
-        var releases: [Kernova_V1_DropRelease] {
-            frames.compactMap {
-                if case .dropRelease(let release) = $0.payload { return release }
-                return nil
-            }
-        }
-
-        var begins: [Kernova_V1_ClipboardStreamBegin] {
-            frames.compactMap {
-                if case .clipboardStreamBegin(let begin) = $0.payload { return begin }
-                return nil
-            }
-        }
-
-        var aborts: [Kernova_V1_ClipboardStreamAbort] {
-            frames.compactMap {
-                if case .clipboardStreamAbort(let abort) = $0.payload { return abort }
-                return nil
-            }
-        }
-
-        func chunkBytes(for transferID: UInt64) -> Data {
-            var data = Data()
-            for frame in frames {
-                if case .clipboardChunk(let chunk) = frame.payload, chunk.transferID == transferID {
-                    data.append(chunk.data)
-                }
-            }
-            return data
-        }
-
-        func end(for transferID: UInt64) -> Kernova_V1_ClipboardStreamEnd? {
-            for frame in frames {
-                if case .clipboardStreamEnd(let end) = frame.payload, end.transferID == transferID {
-                    return end
-                }
-            }
-            return nil
-        }
-
-        func wait(until predicate: @escaping () -> Bool) async throws {
-            try await recorded.wait(until: predicate)
-        }
-    }
-
     // MARK: - Fixtures
 
     /// A fresh directory under the temp root, removed by the caller.
@@ -156,46 +81,9 @@ struct VsockDropServiceTests {
             generation: generation, repIndex: repIndex, hostMinted: false)
     }
 
-    private func makeRequest(generation: UInt64, transferID: UInt64, uti: String) -> Frame {
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.clipboardRequest = Kernova_V1_ClipboardRequest.with {
-            $0.generation = generation
-            $0.transferID = transferID
-            $0.uti = uti
-            $0.maxAcceptByteCount = ClipboardStreamTuning.unlimitedAcceptByteCount
-        }
-        return frame
-    }
-
-    /// The receiver's go-signal plus credit for the whole payload.
-    private func makeAck(transferID: UInt64, consumed: UInt64 = 0) -> Frame {
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.clipboardStreamAck = Kernova_V1_ClipboardStreamAck.with {
-            $0.transferID = transferID
-            $0.bytesConsumed = consumed
-            $0.windowBytes = UInt64(ClipboardStreamTuning.defaultWindowBytes)
-        }
-        return frame
-    }
-
-    private func makeComplete(
-        generation: UInt64, outcome: Kernova_V1_DropComplete.Outcome,
-        code: ClipboardErrorCode? = nil
-    ) -> Frame {
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.dropComplete = Kernova_V1_DropComplete.with {
-            $0.generation = generation
-            $0.outcome = outcome
-            if let code {
-                $0.code = code.rawValue
-                $0.message = "detail the host must not render"
-            }
-        }
-        return frame
-    }
+    /// The guest's own sentence, which the host composes over rather than
+    /// renders.
+    private let hiddenGuestMessage = "detail the host must not render"
 
     // MARK: - Offering
 
@@ -209,9 +97,9 @@ struct VsockDropServiceTests {
         let second = try makeFile(in: scratch, named: "data.bin", bytes: Data(repeating: 0x42, count: 34))
 
         #expect(harness.service.startDrop(urls: [first, second]))
-        try await harness.recorder.wait { !harness.recorder.offers.isEmpty }
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
 
-        let offer = try #require(harness.recorder.offers.first)
+        let offer = try #require(harness.recorder.dropOffers.first)
         #expect(offer.generation == 1)
         #expect(offer.repInfo.map(\.filename) == ["notes.txt", "data.bin"])
         #expect(offer.repInfo.map(\.byteCount) == [12, 34])
@@ -230,29 +118,12 @@ struct VsockDropServiceTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
 
         #expect(harness.service.startDrop(urls: [folder]))
-        try await harness.recorder.wait { !harness.recorder.offers.isEmpty }
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
 
-        let rep = try #require(harness.recorder.offers.first?.repInfo.first)
+        let rep = try #require(harness.recorder.dropOffers.first?.repInfo.first)
         #expect(rep.filename == "Photos")
         #expect(rep.isDirectory)
         #expect(rep.byteCount == 4_096)
-    }
-
-    @Test("two drops are independent jobs under their own generations")
-    func secondDropDoesNotSupersedeTheFirst() async throws {
-        let harness = try Harness()
-        defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
-
-        #expect(harness.service.startDrop(urls: [file]))
-        #expect(harness.service.startDrop(urls: [file]))
-        try await harness.recorder.wait { harness.recorder.offers.count == 2 }
-
-        #expect(harness.recorder.offers.map(\.generation) == [1, 2])
-        // Nothing retires the first drop: the user asked for both sets of files.
-        #expect(harness.recorder.releases.isEmpty)
     }
 
     @Test("a drop of items that cannot be read is refused, and says so")
@@ -263,7 +134,7 @@ struct VsockDropServiceTests {
             .appendingPathComponent("does-not-exist-\(UUID().uuidString)")
 
         #expect(!harness.service.startDrop(urls: [missing]))
-        #expect(harness.recorder.offers.isEmpty)
+        #expect(harness.recorder.dropOffers.isEmpty)
         // The gesture happened on this Mac and produced nothing, so the silence
         // is explained here.
         #expect(harness.failure != nil)
@@ -281,12 +152,12 @@ struct VsockDropServiceTests {
         let file = try makeFile(in: scratch, named: "blob.bin", bytes: payload)
 
         #expect(harness.service.startDrop(urls: [file]))
-        try await harness.recorder.wait { !harness.recorder.offers.isEmpty }
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
 
         let xid = transferID(generation: 1, repIndex: 0)
-        let uti = try #require(harness.recorder.offers.first?.repInfo.first?.uti)
-        try harness.guest.send(makeRequest(generation: 1, transferID: xid, uti: uti))
-        try await harness.recorder.wait { !harness.recorder.begins.isEmpty }
+        let uti = try #require(harness.recorder.dropOffers.first?.repInfo.first?.uti)
+        try harness.guest.send(makeRequestFrame(generation: 1, transferID: xid, uti: uti))
+        try await harness.recorder.waitForFrames { !harness.recorder.begins.isEmpty }
 
         let begin = try #require(harness.recorder.begins.first)
         #expect(begin.transferID == xid)
@@ -297,8 +168,8 @@ struct VsockDropServiceTests {
         #expect(!begin.isInline)
 
         // The first ack is the sender's go-signal.
-        try harness.guest.send(makeAck(transferID: xid))
-        try await harness.recorder.wait { harness.recorder.end(for: xid) != nil }
+        try harness.guest.send(makeAckFrame(transferID: xid))
+        try await harness.recorder.waitForFrames { harness.recorder.end(for: xid) != nil }
 
         let wire = harness.recorder.chunkBytes(for: xid)
         let unpacked = try extractedClipboardArchive(wire)
@@ -323,20 +194,20 @@ struct VsockDropServiceTests {
         _ = try makeFile(in: folder, named: "one.txt", bytes: Data("hello".utf8))
 
         #expect(harness.service.startDrop(urls: [folder]))
-        try await harness.recorder.wait { !harness.recorder.offers.isEmpty }
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
 
         let xid = transferID(generation: 1, repIndex: 0)
-        let rep = try #require(harness.recorder.offers.first?.repInfo.first)
+        let rep = try #require(harness.recorder.dropOffers.first?.repInfo.first)
         #expect(rep.isDirectory)
-        try harness.guest.send(makeRequest(generation: 1, transferID: xid, uti: rep.uti))
-        try await harness.recorder.wait { !harness.recorder.begins.isEmpty }
+        try harness.guest.send(makeRequestFrame(generation: 1, transferID: xid, uti: rep.uti))
+        try await harness.recorder.waitForFrames { !harness.recorder.begins.isEmpty }
 
         let begin = try #require(harness.recorder.begins.first)
         #expect(begin.isArchive)
         #expect(begin.totalBytes == 0)
 
-        try harness.guest.send(makeAck(transferID: xid))
-        try await harness.recorder.wait { harness.recorder.end(for: xid) != nil }
+        try harness.guest.send(makeAckFrame(transferID: xid))
+        try await harness.recorder.waitForFrames { harness.recorder.end(for: xid) != nil }
 
         let wire = harness.recorder.chunkBytes(for: xid)
         // The tree's entries are relative to the folder, so its own name is not
@@ -353,73 +224,7 @@ struct VsockDropServiceTests {
         #expect(end.sha256 == Data(SHA256.hash(data: wire)))
     }
 
-    @Test("a request naming an unknown drop, index, or type is rejected rather than served")
-    func rejectsMalformedRequests() async throws {
-        let harness = try Harness()
-        defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
-
-        #expect(harness.service.startDrop(urls: [file]))
-        try await harness.recorder.wait { !harness.recorder.offers.isEmpty }
-        let uti = try #require(harness.recorder.offers.first?.repInfo.first?.uti)
-
-        // A generation no drop was ever offered under.
-        try harness.guest.send(
-            makeRequest(
-                generation: 99, transferID: transferID(generation: 99, repIndex: 0), uti: uti))
-        try await harness.recorder.wait { !harness.recorder.aborts.isEmpty }
-        #expect(harness.recorder.aborts.first?.code == ClipboardStreamAbortCode.requestStale.rawValue)
-
-        // An index past the offer's items.
-        try harness.guest.send(
-            makeRequest(
-                generation: 1, transferID: transferID(generation: 1, repIndex: 5), uti: uti))
-        try await harness.recorder.wait { harness.recorder.aborts.count >= 2 }
-        #expect(harness.recorder.aborts[1].code == ClipboardStreamAbortCode.requestRange.rawValue)
-
-        // The right item, the wrong type.
-        try harness.guest.send(
-            makeRequest(
-                generation: 1, transferID: transferID(generation: 1, repIndex: 0),
-                uti: "public.mpeg-4"))
-        try await harness.recorder.wait { harness.recorder.aborts.count >= 3 }
-        #expect(harness.recorder.aborts[2].code == ClipboardStreamAbortCode.requestUTI.rawValue)
-        // Nothing was streamed for any of them.
-        #expect(harness.recorder.begins.isEmpty)
-    }
-
     // MARK: - Cancelling
-
-    @Test("cancelling releases the drop and stops the transfer in flight")
-    func cancelReleasesAndAborts() async throws {
-        let harness = try Harness()
-        defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let file = try makeFile(
-            in: scratch, named: "big.bin", bytes: Data(repeating: 0x5A, count: 512 * 1_024))
-
-        #expect(harness.service.startDrop(urls: [file]))
-        try await harness.recorder.wait { !harness.recorder.offers.isEmpty }
-        let xid = transferID(generation: 1, repIndex: 0)
-        let uti = try #require(harness.recorder.offers.first?.repInfo.first?.uti)
-        try harness.guest.send(makeRequest(generation: 1, transferID: xid, uti: uti))
-        try await harness.recorder.wait { !harness.recorder.begins.isEmpty }
-        // Deliberately never acked: the transfer parks on credit, which is where
-        // a cancel has to reach it.
-
-        harness.service.cancelDrop(generation: 1)
-
-        try await harness.recorder.wait { !harness.recorder.releases.isEmpty }
-        #expect(harness.recorder.releases.first?.generation == 1)
-        try await harness.recorder.wait {
-            harness.recorder.aborts.contains { $0.code == ClipboardStreamAbortCode.superseded.rawValue }
-        }
-        // A cancel is not a failure: nothing is raised on either surface.
-        #expect(harness.failure == nil)
-    }
 
     @Test("cancelling a drop that is already over does nothing")
     func cancelAfterCompletionIsANoOp() async throws {
@@ -430,14 +235,14 @@ struct VsockDropServiceTests {
         let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
 
         #expect(harness.service.startDrop(urls: [file]))
-        try await harness.recorder.wait { !harness.recorder.offers.isEmpty }
-        try harness.guest.send(makeComplete(generation: 1, outcome: .completed))
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
+        try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
         try await Task.sleep(for: .milliseconds(50))
 
         harness.service.cancelDrop(generation: 1)
         harness.service.cancelDrop(generation: 1)
 
-        #expect(harness.recorder.releases.isEmpty)
+        #expect(harness.recorder.dropReleases.isEmpty)
         #expect(harness.failure == nil)
     }
 
@@ -452,8 +257,8 @@ struct VsockDropServiceTests {
         let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
 
         #expect(harness.service.startDrop(urls: [file]))
-        try await harness.recorder.wait { !harness.recorder.offers.isEmpty }
-        try harness.guest.send(makeComplete(generation: 1, outcome: .completed))
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
+        try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
         try await Task.sleep(for: .milliseconds(50))
 
         #expect(harness.failure == nil)
@@ -468,15 +273,17 @@ struct VsockDropServiceTests {
         let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
 
         #expect(harness.service.startDrop(urls: [file]))
-        try await harness.recorder.wait { !harness.recorder.offers.isEmpty }
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
         try harness.guest.send(
-            makeComplete(generation: 1, outcome: .failed, code: .dropDownloadsDenied))
+            makeDropCompleteFrame(
+                generation: 1, outcome: .failed, code: .dropDownloadsDenied,
+                message: hiddenGuestMessage))
         try await harness.reports.waitForFailure()
 
         let wording = try #require(harness.wording)
         #expect(wording.message.contains("Downloads"))
         // The guest's own message text never reaches a surface.
-        #expect(!wording.message.contains("detail the host must not render"))
+        #expect(!wording.message.contains(hiddenGuestMessage))
         // The specific code reaches every surface, so the dropdown line names
         // the same outcome the notice body does rather than the generic one.
         #expect(wording.menuLine == "Drop: the VM's Downloads folder is off limits")
@@ -491,8 +298,10 @@ struct VsockDropServiceTests {
         let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
 
         #expect(harness.service.startDrop(urls: [file]))
-        try await harness.recorder.wait { !harness.recorder.offers.isEmpty }
-        try harness.guest.send(makeComplete(generation: 1, outcome: .failed, code: .dropDiskFull))
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
+        try harness.guest.send(
+            makeDropCompleteFrame(
+                generation: 1, outcome: .failed, code: .dropDiskFull, message: hiddenGuestMessage))
         try await harness.reports.waitForFailure()
 
         // The guest moves each file as it lands, so a batch that fails on file 3
@@ -513,7 +322,7 @@ struct VsockDropServiceTests {
         let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
 
         #expect(harness.service.startDrop(urls: [file]))
-        try await harness.recorder.wait { !harness.recorder.offers.isEmpty }
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
 
         harness.recorder.cancel()
         harness.service.stop()
@@ -534,7 +343,7 @@ struct VsockDropServiceTests {
         let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
 
         #expect(harness.service.startDrop(urls: [file]))
-        try await harness.recorder.wait { !harness.recorder.offers.isEmpty }
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
         harness.service.cancelDrop(generation: 1)
 
         harness.recorder.cancel()
@@ -552,7 +361,7 @@ struct VsockDropServiceTests {
         let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
 
         #expect(harness.service.startDrop(urls: [file]))
-        try await harness.recorder.wait { !harness.recorder.offers.isEmpty }
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
 
         // The guest's drop client closes this channel on every control
         // reconnect. Nothing calls `stop()` for that, so the service has to
@@ -586,7 +395,7 @@ struct VsockDropServiceTests {
         // No job was ever registered, so `settle()` had nothing to report: only
         // the discarded walk can account for the drop the user made.
         try await harness.reports.waitForFailure()
-        #expect(harness.recorder.offers.isEmpty)
+        #expect(harness.recorder.dropOffers.isEmpty)
     }
 
     @Test("a drop is refused once the service has stopped")
@@ -601,5 +410,39 @@ struct VsockDropServiceTests {
         harness.guest.close()
 
         #expect(!harness.service.startDrop(urls: [file]))
+    }
+}
+
+/// Drop-side readers over the shared ``FrameRecorder``.
+extension FrameRecorder {
+    /// Every recorded `DropOffer`, in arrival order.
+    fileprivate var dropOffers: [Kernova_V1_DropOffer] {
+        frames.compactMap {
+            if case .dropOffer(let offer) = $0.payload { return offer }
+            return nil
+        }
+    }
+
+    /// Every recorded `DropRelease`, in arrival order.
+    fileprivate var dropReleases: [Kernova_V1_DropRelease] {
+        frames.compactMap {
+            if case .dropRelease(let release) = $0.payload { return release }
+            return nil
+        }
+    }
+
+    /// The chunks recorded for `transferID`, concatenated in arrival order.
+    fileprivate func chunkBytes(for transferID: UInt64) -> Data {
+        chunks(for: transferID).reduce(into: Data()) { $0.append($1.data) }
+    }
+
+    /// The `ClipboardStreamEnd` recorded for `transferID`, if any.
+    fileprivate func end(for transferID: UInt64) -> Kernova_V1_ClipboardStreamEnd? {
+        for frame in frames {
+            if case .clipboardStreamEnd(let end) = frame.payload, end.transferID == transferID {
+                return end
+            }
+        }
+        return nil
     }
 }
