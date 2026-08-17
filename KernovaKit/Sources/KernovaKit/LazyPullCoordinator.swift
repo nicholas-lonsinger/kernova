@@ -176,6 +176,16 @@ public final class LazyPullCoordinator: @unchecked Sendable {
         let waiter = Waiter(
             transferID: transferID, wakeup: .synchronous(semaphore, eventLoop),
             onProgress: onProgress)
+        // DIAGNOSTIC (scratch): time every main-thread pull and record its caller.
+        let diagStart = Date()
+        let diagStack = eventLoop != nil ? Thread.callStackSymbols.prefix(14).joined(separator: " | ") : ""
+        defer {
+            if eventLoop != nil {
+                LazyPullDiagTimeline.record(
+                    "MAIN-PULL id=\(transferID) took \(String(format: "%.2f", Date().timeIntervalSince(diagStart)))s from \(diagStart) stack: \(diagStack)"
+                )
+            }
+        }
         let slot = enter(waiter, timeout: timeout, retire: retire, start: start)
         while true {
             // Each wait holds one slice and re-checks: the waiter's own outcome,
@@ -442,4 +452,12 @@ public final class LazyPullCoordinator: @unchecked Sendable {
         backstopFired(slot)
     }
     #endif
+}
+
+// DIAGNOSTIC (scratch branch only).
+public enum LazyPullDiagTimeline {
+    nonisolated(unsafe) private static var entries: [String] = []
+    private static let lock = NSLock()
+    public static func record(_ line: String) { lock.withLock { entries.append("[\(Date())] " + line) } }
+    public static func dump() -> String { lock.withLock { entries.suffix(40).joined(separator: "\n") } }
 }
