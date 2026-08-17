@@ -103,7 +103,7 @@ struct ClipboardContentViewControllerRetentionTests {
         // Exactly one inline item → one retained provider once the write lands.
         try await retained.wait { registry.countForTesting == 1 }
 
-        // `retain()` runs immediately after a successful `writeObjects` in the same
+        // `retain()` runs immediately after a successful write in the same
         // synchronous step, so once the gate fires the promise is already on the
         // pasteboard and a destination read is served synchronously by the retained
         // provider — the provider path is in use (an eager `setData` write would
@@ -168,11 +168,11 @@ struct ClipboardContentViewControllerRetentionTests {
             writePasteboard: pasteboard, providerRegistry: registry)
 
         #expect(registry.countForTesting == 0)
-        // → copyToMac → finishCopyToMac → prepareForNewContents(with:) then writeObjects(→ false).
+        // → copyToMac → finishCopyToMac → prepareForNewContents(with:) then writeItems(→ false).
         vc.copy(nil)
         try await wrote.wait { pasteboard.writeAttempts == 1 }
 
-        // retain() runs only after a successful writeObjects, so the failed write
+        // retain() runs only after a successful write, so the failed write
         // leaves the registry empty — the providers deallocate with the copy Task's
         // local array, never getting a finish callback (so no rollback is needed).
         #expect(registry.countForTesting == 0)
@@ -181,7 +181,7 @@ struct ClipboardContentViewControllerRetentionTests {
         // observable via this seam.
         #expect(pasteboard.prepareCount == 1)
         // Marked host-only even though the write went on to fail — the option is
-        // applied unconditionally up front, before writeObjects is attempted, so
+        // applied unconditionally up front, before the write is attempted, so
         // this failure-path write already proves every write is marked (#560).
         #expect(pasteboard.lastPrepareOptions == .currentHostOnly)
     }
@@ -807,14 +807,14 @@ private final class FakeClipboardService: ClipboardServicing {
     }
 }
 
-/// A `HostWritePasteboard` whose `writeObjects` can be forced to fail, so the
-/// host "Copy to Mac" write-failure path is exercisable — the concrete
-/// `NSPasteboard` is a class cluster that can't be made to fail.
+/// A `ClipboardWritePasteboard` whose write can be forced to fail, so the host
+/// "Copy to Mac" write-failure path is exercisable — the concrete `NSPasteboard`
+/// is a class cluster that can't be made to fail.
 ///
 /// Not `Sendable`: single-threaded test use driven on the main actor. `onWrite`
-/// fires inside `writeObjects` so a test can await the write attempt event-driven
+/// fires inside `writeItems` so a test can await the write attempt event-driven
 /// rather than polling.
-private final class FakeWritePasteboard: HostWritePasteboard {
+private final class FakeWritePasteboard: ClipboardWritePasteboard {
     private(set) var prepareCount = 0
     private(set) var lastPrepareOptions: NSPasteboard.ContentsOptions?
     private(set) var writeAttempts = 0
@@ -830,7 +830,9 @@ private final class FakeWritePasteboard: HostWritePasteboard {
         return prepareCount
     }
 
-    func writeObjects(_ objects: [any NSPasteboardWriting]) -> Bool {
+    func writeItems(
+        _ items: [(types: [NSPasteboard.PasteboardType], provider: NSPasteboardItemDataProvider)]
+    ) -> Bool {
         writeAttempts += 1
         let shouldFail = failNextWrite
         failNextWrite = false

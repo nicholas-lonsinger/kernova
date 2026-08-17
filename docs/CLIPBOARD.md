@@ -302,6 +302,10 @@ When speed, RAM, disk, I/O, and CPU pull against each other, decide in this orde
 
 Non-negotiable mechanics for how clipboard changes ship:
 
+- **Owner logic exists once.** Offer, request, pull, gate, refusal and abort behavior for both
+  roles and both channels lives in KernovaKit's `ClipboardEndpoint`; a rule needed on one side is
+  added there and applies to both. Host and guest code are adapters: what to snapshot, when to
+  publish, and where to render.
 - **Verify at the seam.** Protocol and stream changes get deterministic, transport-level tests
   (socketpair round-trips through the real sender and receiver) covering inline and file paths,
   backpressure, abort, and digest/size mismatch. Use event-driven waits, never sleeps.

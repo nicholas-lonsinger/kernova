@@ -502,6 +502,12 @@ public final class ClipboardEndpoint {
     #endif
 }
 
+// MARK: - Promise serving
+
+/// The endpoint is what a pasteboard promise this side published is served
+/// from, whichever thread the OS fires the promise on.
+extension ClipboardEndpoint: ClipboardPromiseServing {}
+
 // MARK: - Delegate
 
 /// What one ``ClipboardEndpoint`` reports to its owner.

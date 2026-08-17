@@ -214,7 +214,9 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
   status activity, the channel's end. All four owners drive one: the two host services above and
   the guest agent's `VsockGuestClipboardAgent`/`VsockGuestDropAgent`.
 - `HostClipboardPublisher`, `ClipboardPassthroughCoordinator` — host-side publication of inbound
-  guest content, and the auto-publish path.
+  guest content, and the auto-publish path. Both reach the pasteboard through KernovaKit's
+  `ClipboardPasteboardPublisher` — the one promised write on either side of the wire, driven by the
+  guest agent too.
 - `ClipboardTransferReporter` — one per `VMInstance`, fed by `VsockClipboardService`,
   `VsockDropService` and `ClipboardPassthroughCoordinator`. `VMInstance.clipboardTransferReport`
   mirrors it as the observable value every surface renders — the clipboard window's bar and
@@ -361,8 +363,7 @@ vsock wire protocol, the clipboard domain model and file staging/archive, and cr
 helpers. **New host/guest-identical code belongs here**, not copied into both targets.
 
 The package also vends `KernovaTestSupport`, the single shared copy of the test wait primitives every
-test target imports. It must keep **no dependency on `KernovaKit`** and is **never linked
-into a shipping target** — nothing enforces either.
+test target imports. It is **never linked into a shipping target** — nothing enforces that.
 
 ## Key Design Decisions
 

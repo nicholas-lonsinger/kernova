@@ -117,7 +117,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     init(
         instance: VMInstance, viewModel: VMLibraryViewModel,
-        writePasteboard: any HostWritePasteboard = NSPasteboard.general,
+        writePasteboard: any ClipboardWritePasteboard = NSPasteboard.general,
         readPasteboard: NSPasteboard = .general,
         providerRegistry: LazyClipboardProviderRegistry = .shared,
         publisher: HostClipboardPublisher? = nil,
@@ -943,21 +943,3 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         return stack
     }
 }
-
-/// The narrow slice of `NSPasteboard` the host write-back path needs, so a
-/// test can substitute a fake that forces `writeObjects` to fail.
-///
-/// `NSPasteboard` is a class cluster with no public initializer and can't be
-/// subclassed, so its write can't be made to fail from a test.
-protocol HostWritePasteboard: AnyObject {
-    /// Monotonically increasing count of pasteboard changes — the value right
-    /// after a write identifies that write to a coordinator polling the same
-    /// pasteboard.
-    var changeCount: Int { get }
-    @discardableResult func prepareForNewContents(with options: NSPasteboard.ContentsOptions) -> Int
-    func writeObjects(_ objects: [any NSPasteboardWriting]) -> Bool
-    /// Empties the pasteboard — the publisher's stale-promise retraction.
-    @discardableResult func clearContents() -> Int
-}
-
-extension NSPasteboard: HostWritePasteboard {}

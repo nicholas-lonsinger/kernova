@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 
 /// Exercises `HostClipboardPublisher.hostPasteboardItems` — the pure
 /// "Copy to Mac" grouping/staging step that turns the buffer into one
-/// `PasteboardItemSpec` per inline-content block plus one per file payload.
+/// `ItemSpec` per inline-content block plus one per file payload.
 ///
 /// Each spec promises a set of types and serves their bytes lazily through
 /// `provide`; the tests drive that closure directly, so they cover both the
@@ -23,7 +23,7 @@ struct ClipboardHostPasteboardItemsTests {
     }
 
     /// The file URL a spec serves for `.fileURL`, or `nil` when it promises none.
-    private func fileURL(in spec: HostClipboardPublisher.PasteboardItemSpec) -> URL? {
+    private func fileURL(in spec: ClipboardPasteboardPublisher.ItemSpec) -> URL? {
         spec.provide(.fileURL)
             .flatMap { String(data: $0, encoding: .utf8) }
             .flatMap(URL.init(string:))
@@ -195,7 +195,7 @@ struct ClipboardHostPasteboardItemsTests {
 
     /// Records the paste-time fires `promisedItemSpecs` routes to a clipboard
     /// service, returning canned values — no service, no wire.
-    private final class RecordingRepProvider: ClipboardPasteboardRepProviding, @unchecked Sendable {
+    private final class RecordingRepProvider: ClipboardPromiseServing, @unchecked Sendable {
         private let lock = NSLock()
         private var fileURLCallsStorage: [(generation: UInt64, repIndex: Int)] = []
         private var dataCallsStorage: [(generation: UInt64, repIndex: Int, uti: String)] = []
@@ -212,12 +212,12 @@ struct ClipboardHostPasteboardItemsTests {
             lock.withLock { fileURLCallsStorage.count + dataCallsStorage.count }
         }
 
-        func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? {
+        func serveFileURL(generation: UInt64, repIndex: Int) -> URL? {
             lock.withLock { fileURLCallsStorage.append((generation, repIndex)) }
             return urlToReturn
         }
 
-        func copyToMacData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
+        func serveData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
             lock.withLock { dataCallsStorage.append((generation, repIndex, uti)) }
             return dataToReturn
         }
@@ -237,7 +237,7 @@ struct ClipboardHostPasteboardItemsTests {
                 generation: 3, repIndex: 2, uti: "public.data", filename: "blob.bin",
                 isInline: false),
         ]
-        let specs = HostClipboardPublisher.promisedItemSpecs(for: promises, provider: provider)
+        let specs = HostClipboardPublisher.promisedItemSpecs(for: promises, serve: provider)
 
         #expect(specs.count == 3)
         let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
@@ -259,7 +259,7 @@ struct ClipboardHostPasteboardItemsTests {
                 generation: 7, repIndex: 0, uti: UTType.png.identifier, filename: "photo.png",
                 isInline: true)
         ]
-        let specs = HostClipboardPublisher.promisedItemSpecs(for: promises, provider: provider)
+        let specs = HostClipboardPublisher.promisedItemSpecs(for: promises, serve: provider)
         let spec = try #require(specs.first)
 
         let pngType = NSPasteboard.PasteboardType(UTType.png.identifier)

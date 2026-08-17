@@ -1643,15 +1643,15 @@ struct VsockClipboardServiceTests {
         #expect(responder.requests.isEmpty)
 
         // Each flavor pulls its bytes on demand at paste time: the inline flavor
-        // through `copyToMacData`, the file's `.fileURL` through
-        // `copyToMacFileURL` — both off the main thread here.
+        // through `serveData`, the file's `.fileURL` through
+        // `serveFileURL` — both off the main thread here.
         let inlineData = await offCooperativePool {
-            service.copyToMacData(
+            service.serveData(
                 generation: 9, repIndex: 0, uti: ClipboardContent.utf8TextUTI)
         }
         #expect(inlineData == inlineBytes)
         let fileURL = await offCooperativePool {
-            service.copyToMacFileURL(generation: 9, repIndex: 1)
+            service.serveFileURL(generation: 9, repIndex: 1)
         }
         #expect(try Data(contentsOf: #require(fileURL)) == fileBytes)
         #expect(responder.requests.count == 2)
@@ -1714,7 +1714,7 @@ struct VsockClipboardServiceTests {
         // The paste-time `.fileURL` fire pulls the archive, which the transfer
         // extracted as it arrived, so a Finder paste recreates the tree.
         let url = try #require(
-            await offCooperativePool { service.copyToMacFileURL(generation: 11, repIndex: 0) })
+            await offCooperativePool { service.serveFileURL(generation: 11, repIndex: 0) })
         var isDir: ObjCBool = false
         #expect(FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir))
         #expect(isDir.boolValue)
@@ -1725,7 +1725,7 @@ struct VsockClipboardServiceTests {
         #expect(materializedFiles(under: stagingRoot).allSatisfy { $0.pathExtension != "aar" })
         // A second paste re-serves the same tree rather than unpacking again.
         let again = try #require(
-            await offCooperativePool { service.copyToMacFileURL(generation: 11, repIndex: 0) })
+            await offCooperativePool { service.serveFileURL(generation: 11, repIndex: 0) })
         #expect(again == url)
         #expect(responder.requests.count == 1)
     }
@@ -1786,7 +1786,7 @@ struct VsockClipboardServiceTests {
         #expect(responder.requests.isEmpty)
 
         let emptyURL = try #require(
-            await offCooperativePool { service.copyToMacFileURL(generation: 12, repIndex: 0) })
+            await offCooperativePool { service.serveFileURL(generation: 12, repIndex: 0) })
         var isDir: ObjCBool = false
         #expect(
             FileManager.default.fileExists(atPath: emptyURL.path, isDirectory: &isDir)
@@ -1795,7 +1795,7 @@ struct VsockClipboardServiceTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: emptyURL.path).isEmpty)
 
         let scaffoldURL = try #require(
-            await offCooperativePool { service.copyToMacFileURL(generation: 12, repIndex: 1) })
+            await offCooperativePool { service.serveFileURL(generation: 12, repIndex: 1) })
         #expect(scaffoldURL.lastPathComponent == "Scaffold")
         #expect(
             FileManager.default.fileExists(
@@ -1850,7 +1850,7 @@ struct VsockClipboardServiceTests {
         // A paste-time fire for the preview-pulled rep serves the cache — no
         // second request for it, ever.
         let cachedData = await offCooperativePool {
-            service.copyToMacData(
+            service.serveData(
                 generation: 6, repIndex: 0, uti: ClipboardContent.utf8TextUTI)
         }
         #expect(cachedData == inlineBytes)
@@ -1859,7 +1859,7 @@ struct VsockClipboardServiceTests {
         // The file rep misses the cache and takes the blocking-pull path — now the
         // second request goes out; nothing was ever double-requested.
         let fileURL = await offCooperativePool {
-            service.copyToMacFileURL(generation: 6, repIndex: 1)
+            service.serveFileURL(generation: 6, repIndex: 1)
         }
         #expect(try Data(contentsOf: #require(fileURL)) == fileBytes)
         #expect(responder.requests.count == 2)
@@ -1868,7 +1868,7 @@ struct VsockClipboardServiceTests {
         // The blocking pull cached its rep too: a repeat fire re-serves the staged
         // file without a third request.
         let repeatURL = await offCooperativePool {
-            service.copyToMacFileURL(generation: 6, repIndex: 1)
+            service.serveFileURL(generation: 6, repIndex: 1)
         }
         #expect(repeatURL == fileURL)
         #expect(responder.requests.count == 2)
@@ -1915,19 +1915,19 @@ struct VsockClipboardServiceTests {
         // pull — the whole file set is materialized before the stop.
         await service.materializeForPreview()
         let pulledURL = try #require(
-            await offCooperativePool { service.copyToMacFileURL(generation: 9, repIndex: 1) })
+            await offCooperativePool { service.serveFileURL(generation: 9, repIndex: 1) })
         #expect(try Data(contentsOf: pulledURL) == fileBytes)
 
         service.stop()
 
         // The inline cache still serves its bytes...
         let cachedData = await offCooperativePool {
-            service.copyToMacData(generation: 9, repIndex: 0, uti: ClipboardContent.utf8TextUTI)
+            service.serveData(generation: 9, repIndex: 0, uti: ClipboardContent.utf8TextUTI)
         }
         #expect(cachedData == inlineBytes)
         // ...and the staged file behind the vended URL is still on disk.
         let repeatURL = try #require(
-            await offCooperativePool { service.copyToMacFileURL(generation: 9, repIndex: 1) })
+            await offCooperativePool { service.serveFileURL(generation: 9, repIndex: 1) })
         #expect(repeatURL == pulledURL)
         #expect(try Data(contentsOf: repeatURL) == fileBytes)
         #expect(reports.failure == nil)
@@ -1973,18 +1973,18 @@ struct VsockClipboardServiceTests {
         // {kept.bin, never.bin} is only partially materialized at the stop.
         await service.materializeForPreview()
         _ = try #require(
-            await offCooperativePool { service.copyToMacFileURL(generation: 9, repIndex: 1) })
+            await offCooperativePool { service.serveFileURL(generation: 9, repIndex: 1) })
 
         service.stop()
 
         // All-or-nothing: with never.bin unreachable, the materialized sibling
         // is refused too — a Finder paste lands no silent partial file set.
         let keptURL = await offCooperativePool {
-            service.copyToMacFileURL(generation: 9, repIndex: 1)
+            service.serveFileURL(generation: 9, repIndex: 1)
         }
         #expect(keptURL == nil)
         let neverURL = await offCooperativePool {
-            service.copyToMacFileURL(generation: 9, repIndex: 2)
+            service.serveFileURL(generation: 9, repIndex: 2)
         }
         #expect(neverURL == nil)
 
@@ -1992,13 +1992,13 @@ struct VsockClipboardServiceTests {
         let refusal = try #require(reports.finish)
         #expect(refusal.failure == .incompleteFileSet)
         let announcements = reports.reports.count
-        _ = await offCooperativePool { service.copyToMacFileURL(generation: 9, repIndex: 1) }
+        _ = await offCooperativePool { service.serveFileURL(generation: 9, repIndex: 1) }
         #expect(reports.finish == refusal)
         #expect(reports.reports.count == announcements)
 
         // Inline flavors keep serving regardless.
         let cachedData = await offCooperativePool {
-            service.copyToMacData(generation: 9, repIndex: 0, uti: ClipboardContent.utf8TextUTI)
+            service.serveData(generation: 9, repIndex: 0, uti: ClipboardContent.utf8TextUTI)
         }
         #expect(cachedData == inlineBytes)
     }
@@ -2030,7 +2030,7 @@ struct VsockClipboardServiceTests {
         try await waitForChange { service.clipboardContent.representations.count == 1 }
 
         let stagedURL = try #require(
-            await offCooperativePool { service.copyToMacFileURL(generation: 1, repIndex: 0) })
+            await offCooperativePool { service.serveFileURL(generation: 1, repIndex: 0) })
         #expect(FileManager.default.fileExists(atPath: stagedURL.path))
 
         // A newer offer supersedes gen=1: its coordinates stop serving, but its
@@ -2046,11 +2046,11 @@ struct VsockClipboardServiceTests {
 
         // The old coordinates serve nothing — from the cache or the wire...
         let staleURL = await offCooperativePool {
-            service.copyToMacFileURL(generation: 1, repIndex: 0)
+            service.serveFileURL(generation: 1, repIndex: 0)
         }
         #expect(staleURL == nil)
         let staleData = await offCooperativePool {
-            service.copyToMacData(generation: 1, repIndex: 0, uti: "public.data")
+            service.serveData(generation: 1, repIndex: 0, uti: "public.data")
         }
         #expect(staleData == nil)
         #expect(responder.requests.count == 1, "A stale fire must not mint a new request")
@@ -2088,7 +2088,7 @@ struct VsockClipboardServiceTests {
         try await waitForChange { service.clipboardContent.representations.count == 1 }
 
         let stagedURL = try #require(
-            await offCooperativePool { service.copyToMacFileURL(generation: 15, repIndex: 0) })
+            await offCooperativePool { service.serveFileURL(generation: 15, repIndex: 0) })
         #expect(FileManager.default.fileExists(atPath: stagedURL.path))
 
         // The guest releases the offer — a supersession: the promise drops, but
@@ -2106,7 +2106,7 @@ struct VsockClipboardServiceTests {
         try await reports.waitForFailure()
 
         let staleURL = await offCooperativePool {
-            service.copyToMacFileURL(generation: 15, repIndex: 0)
+            service.serveFileURL(generation: 15, repIndex: 0)
         }
         #expect(staleURL == nil)
         #expect(FileManager.default.fileExists(atPath: stagedURL.path))
@@ -2342,7 +2342,7 @@ struct VsockClipboardServiceTests {
                 reps: [(uti: "public.data", byteCount: fileBytes.count, filename: "session1.bin", isInline: false)]))
         try await waitForChange { service1.clipboardContent.representations.count == 1 }
         let stagedURL = try #require(
-            await offCooperativePool { service1.copyToMacFileURL(generation: 1, repIndex: 0) })
+            await offCooperativePool { service1.serveFileURL(generation: 1, repIndex: 0) })
         service1.stop()
         #expect(FileManager.default.fileExists(atPath: stagedURL.path))
 
@@ -2672,9 +2672,9 @@ struct VsockClipboardServiceTests {
 
         // Each `.fileURL` fire pulls + stages its own rep on demand, off the main
         // thread here (a paste can also fire it on main).
-        let firstURL = await offCooperativePool { service.copyToMacFileURL(generation: 41, repIndex: 0) }
+        let firstURL = await offCooperativePool { service.serveFileURL(generation: 41, repIndex: 0) }
         #expect(try Data(contentsOf: #require(firstURL)) == aBytes)
-        let secondURL = await offCooperativePool { service.copyToMacFileURL(generation: 41, repIndex: 1) }
+        let secondURL = await offCooperativePool { service.serveFileURL(generation: 41, repIndex: 1) }
         #expect(try Data(contentsOf: #require(secondURL)) == bBytes)
     }
 
@@ -2707,7 +2707,7 @@ struct VsockClipboardServiceTests {
         #expect(service.materializeForCopy().promised.map(\.repIndex) == [0])
 
         let url = try #require(
-            await offCooperativePool { service.copyToMacFileURL(generation: 47, repIndex: 0) })
+            await offCooperativePool { service.serveFileURL(generation: 47, repIndex: 0) })
         #expect(url.lastPathComponent == "empty.bin")
         #expect(try Data(contentsOf: url).isEmpty)
     }
@@ -2741,8 +2741,8 @@ struct VsockClipboardServiceTests {
         let responder = FakeGuestResponder(guest: guest)
         defer { responder.cancel() }
         responder.start()
-        #expect(service.copyToMacFileURL(generation: 43, repIndex: 0) == nil)
-        #expect(service.copyToMacFileURL(generation: 43, repIndex: 1) == nil)
+        #expect(service.serveFileURL(generation: 43, repIndex: 0) == nil)
+        #expect(service.serveFileURL(generation: 43, repIndex: 1) == nil)
         #expect(responder.requests.isEmpty)
         // A provider fire has no return path to the gesture, so the refusal is
         // reported through the issue the clipboard window renders.
@@ -2785,7 +2785,7 @@ struct VsockClipboardServiceTests {
         // still promises, with `.fileURL` withheld from the item it plans.
         #expect(items.promised.map(\.repIndex) == [0, 1])
         #expect(items.promised.map(\.withholdsFileURL) == [true, true])
-        let specs = HostClipboardPublisher.promisedItemSpecs(for: items.promised, provider: service)
+        let specs = HostClipboardPublisher.promisedItemSpecs(for: items.promised, serve: service)
         let pngType = NSPasteboard.PasteboardType(png)
         #expect(specs.map(\.types) == [[pngType], [pngType]])
 
@@ -2799,12 +2799,12 @@ struct VsockClipboardServiceTests {
         // The paste-time gate refuses a `.fileURL` fire on its own, without a
         // request; the same rep's inline flavor still serves its bytes.
         let refused = await offCooperativePool {
-            service.copyToMacFileURL(generation: 71, repIndex: 0)
+            service.serveFileURL(generation: 71, repIndex: 0)
         }
         #expect(refused == nil)
         #expect(responder.requests.isEmpty)
         let inline = await offCooperativePool {
-            service.copyToMacData(generation: 71, repIndex: 0, uti: png)
+            service.serveData(generation: 71, repIndex: 0, uti: png)
         }
         #expect(inline == bytes)
     }
@@ -2839,7 +2839,7 @@ struct VsockClipboardServiceTests {
         let items = service.materializeForCopy()
         #expect(items.droppedReasons.isEmpty)
         #expect(items.promised.map(\.withholdsFileURL) == [false])
-        let url = await offCooperativePool { service.copyToMacFileURL(generation: 72, repIndex: 0) }
+        let url = await offCooperativePool { service.serveFileURL(generation: 72, repIndex: 0) }
         #expect(try Data(contentsOf: #require(url)) == bytes)
     }
 
@@ -2878,7 +2878,7 @@ struct VsockClipboardServiceTests {
         #expect(items.promised.isEmpty)
         #expect(items.droppedReasons == [.overPasteBudget])
         #expect(reports.failure == .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes))
-        #expect(service.copyToMacFileURL(generation: 73, repIndex: 0) == nil)
+        #expect(service.serveFileURL(generation: 73, repIndex: 0) == nil)
         #expect(responder.requests.isEmpty)
     }
 
@@ -2907,7 +2907,7 @@ struct VsockClipboardServiceTests {
         let items = service.materializeForCopy()
         #expect(items.promised.isEmpty)
         #expect(items.droppedReasons == [.overPasteBudget, .overPasteBudget])
-        #expect(service.copyToMacFileURL(generation: 74, repIndex: 0) == nil)
+        #expect(service.serveFileURL(generation: 74, repIndex: 0) == nil)
     }
 
     @Test("an offer declaring more reps than the transfer-id limit is truncated at intake")
@@ -2971,7 +2971,7 @@ struct VsockClipboardServiceTests {
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         let pull = Task {
-            await offCooperativePool { service.copyToMacFileURL(generation: 41, repIndex: 0) }
+            await offCooperativePool { service.serveFileURL(generation: 41, repIndex: 0) }
         }
 
         // The readout reveals mid-flight: inbound, denominated by the rep's total,
@@ -3031,7 +3031,7 @@ struct VsockClipboardServiceTests {
 
         let pull = Task {
             await offCooperativePool {
-                service.copyToMacData(generation: 44, repIndex: 0, uti: ClipboardContent.utf8TextUTI)
+                service.serveData(generation: 44, repIndex: 0, uti: ClipboardContent.utf8TextUTI)
             }
         }
         // Wait until the paste's transfer is live (its progress revealed), then
@@ -3090,13 +3090,13 @@ struct VsockClipboardServiceTests {
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         let firstFire = Task {
-            await offCooperativePool { service.copyToMacFileURL(generation: 45, repIndex: 0) }
+            await offCooperativePool { service.serveFileURL(generation: 45, repIndex: 0) }
         }
         try await responder.requested.wait { responder.requests.count == 1 }
 
         freeSpace.value = 1024 * 1024
         let secondFire = await offCooperativePool {
-            service.copyToMacFileURL(generation: 45, repIndex: 0)
+            service.serveFileURL(generation: 45, repIndex: 0)
         }
         // Refused at its own pre-flight, having touched neither the pull nor the
         // wire.
@@ -3149,7 +3149,7 @@ struct VsockClipboardServiceTests {
         let preview = Task { await service.materializeForPreview() }
         try await responder.requested.wait { responder.requests.count == 1 }
         let paste = Task {
-            await offCooperativePool { service.copyToMacFileURL(generation: 46, repIndex: 0) }
+            await offCooperativePool { service.serveFileURL(generation: 46, repIndex: 0) }
         }
         // RATIONALE: sanctioned no-signal poll (docs/TESTING.md "Async waits in
         // tests") — the waiter count is NSLock-guarded SUT state, not
@@ -3222,7 +3222,7 @@ struct VsockClipboardServiceTests {
         let preview = Task { await service.materializeForPreview() }
         try await responder.answered.wait { responder.requests.count == 1 }
         let paste = Task {
-            await offCooperativePool { service.copyToMacFileURL(generation: 54, repIndex: 0) }
+            await offCooperativePool { service.serveFileURL(generation: 54, repIndex: 0) }
         }
         try await responder.requested.wait { responder.requests.count == 2 }
         // The paste fire carries no Cancel, which is what routes `cancelRunning`
@@ -3272,7 +3272,7 @@ struct VsockClipboardServiceTests {
         try await waitForChange { service.clipboardContent.representations.count == 1 }
 
         let paste = Task {
-            await offCooperativePool { service.copyToMacFileURL(generation: 47, repIndex: 0) }
+            await offCooperativePool { service.serveFileURL(generation: 47, repIndex: 0) }
         }
         try await responder.answered.wait { responder.requests.count == 1 }
 
@@ -3334,7 +3334,7 @@ struct VsockClipboardServiceTests {
         try await waitForChange { service.clipboardContent.representations.count == 1 }
 
         let paste = Task {
-            await offCooperativePool { service.copyToMacFileURL(generation: 50, repIndex: 0) }
+            await offCooperativePool { service.serveFileURL(generation: 50, repIndex: 0) }
         }
         try await responder.answered.wait { responder.requests.count == 1 }
 
@@ -3382,7 +3382,7 @@ struct VsockClipboardServiceTests {
         }
 
         let paste = Task {
-            await offCooperativePool { service.copyToMacFileURL(generation: 49, repIndex: 0) }
+            await offCooperativePool { service.serveFileURL(generation: 49, repIndex: 0) }
         }
         try await responder.answered.wait { responder.requests.count == 1 }
 
@@ -3410,7 +3410,7 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         // RATIONALE: 5 s — a hostage-window bound (docs/TESTING.md), not the
-        // ≥60 s default: `copyToMacFileURL` runs on the real main thread from
+        // ≥60 s default: `serveFileURL` runs on the real main thread from
         // this main-queue job, so this timeout caps how long the bundle's
         // MainActor freezes if the fast path loses; a #458 regression resolves to
         // nothing whichever way it lands, so the value never masks one.
@@ -3441,7 +3441,7 @@ struct VsockClipboardServiceTests {
         // stream frames that resolve the pull. `.detached` (not plain `Task {}`,
         // which would inherit this MainActor test struct's isolation) so this
         // truly never touches the host's main actor and isn't blocked by the
-        // copyToMacFileURL call below; it is the guest-side analog of the "peer
+        // serveFileURL call below; it is the guest-side analog of the "peer
         // keeps talking while we're mid-transfer" scenario.
         let responderTask = Task.detached {
             for try await frame in guest.incoming {
@@ -3497,8 +3497,8 @@ struct VsockClipboardServiceTests {
         // control frame fire-and-forget and keeps draining — Begin/Chunk/End
         // route immediately regardless of main's availability — so this resolves
         // promptly.
-        guard let url = service.copyToMacFileURL(generation: 30, repIndex: 0) else {
-            Issue.record("Expected copyToMacFileURL to serve the rep")
+        guard let url = service.serveFileURL(generation: 30, repIndex: 0) else {
+            Issue.record("Expected serveFileURL to serve the rep")
             return
         }
         #expect(try Data(contentsOf: url) == payload)
@@ -3702,7 +3702,7 @@ struct VsockClipboardServiceTests {
 
         // The cached rep serves a paste-time fire after the stop.
         let served = await offCooperativePool {
-            service.copyToMacData(
+            service.serveData(
                 generation: 1, repIndex: 0, uti: ClipboardContent.utf8TextUTI)
         }
         #expect(served == Data("stale".utf8))
@@ -3892,7 +3892,7 @@ struct VsockClipboardServiceTests {
         // With the cache settled, a paste-time fire serves it without another
         // request.
         let pasted = await offCooperativePool {
-            service.copyToMacData(generation: generation, repIndex: 0, uti: textUTI)
+            service.serveData(generation: generation, repIndex: 0, uti: textUTI)
         }
         #expect(pasted == payload)
         #expect(responder.requests.filter { $0.transferID == rep0XID }.count == 1)
@@ -4224,7 +4224,7 @@ struct VsockClipboardServiceTests {
         try await waitForChange { service.clipboardContent.representations.count == 1 }
 
         let fire = Task {
-            await offCooperativePool { service.copyToMacFileURL(generation: 21, repIndex: 0) }
+            await offCooperativePool { service.serveFileURL(generation: 21, repIndex: 0) }
         }
         let xid = inboundTransferID(generation: 21, repIndex: 0)
         try await responder.answered.wait {
@@ -4274,7 +4274,7 @@ struct VsockClipboardServiceTests {
                 reps: [(uti: "public.data", byteCount: 4096, filename: "doc.bin", isInline: false)]))
         try await waitForChange { service.clipboardContent.representations.count == 1 }
 
-        let url = await offCooperativePool { service.copyToMacFileURL(generation: 17, repIndex: 0) }
+        let url = await offCooperativePool { service.serveFileURL(generation: 17, repIndex: 0) }
         #expect(url == nil)
         try await reports.waitForFailure()
         #expect(reports.failure == .timedOut)
@@ -4341,7 +4341,7 @@ struct VsockClipboardServiceTests {
                 reps: [(uti: "public.data", byteCount: 4096, filename: "doc.bin", isInline: false)]))
         try await waitForChange { service.clipboardContent.representations.count == 1 }
 
-        let url = await offCooperativePool { service.copyToMacFileURL(generation: 19, repIndex: 0) }
+        let url = await offCooperativePool { service.serveFileURL(generation: 19, repIndex: 0) }
         #expect(url == nil)
         // The pre-flight runs before the request, so nothing was asked for.
         #expect(responder.requests.isEmpty)
@@ -4394,7 +4394,7 @@ struct VsockClipboardServiceTests {
                 ]))
         try await waitForChange { service.clipboardContent.representations.count == 1 }
 
-        let url = await offCooperativePool { service.copyToMacFileURL(generation: 23, repIndex: 0) }
+        let url = await offCooperativePool { service.serveFileURL(generation: 23, repIndex: 0) }
         #expect(url == nil)
         try await reports.waitForFailure()
         #expect(reports.failure == .unpackFailed)
@@ -4809,7 +4809,7 @@ struct VsockClipboardServiceTests {
         // With it parked, a paste-time fire pulls rep 1 to completion under its
         // own operation — the rep the preview would otherwise have reached.
         let pasted = await offCooperativePool {
-            service.copyToMacData(generation: 7, repIndex: 1, uti: "public.rtf")
+            service.serveData(generation: 7, repIndex: 1, uti: "public.rtf")
         }
         #expect(pasted == rtf)
 

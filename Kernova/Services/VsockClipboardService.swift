@@ -465,7 +465,7 @@ final class VsockClipboardService: ClipboardServicing {
     ///
     /// Every usable rep of the live offer becomes a `.promised` item addressed by
     /// its offer coordinates; its bytes are pulled when a paste consumes them
-    /// (`copyToMacFileURL` / `copyToMacData`). When the offer's paste-bound total
+    /// (`serveFileURL` / `serveData`). When the offer's paste-bound total
     /// exceeds the deadline-safe cap the refusal is per *flavor*: every
     /// `.fileURL`-serving rep reports a `.droppedFile(.overPasteBudget)` — no
     /// paste could ever serve it — while an image file's inline flavor, which the
@@ -619,15 +619,12 @@ extension VsockClipboardService: ClipboardEndpointDelegate {
 
 // MARK: - Paste-time representation serving
 
-extension VsockClipboardService: ClipboardPasteboardRepProviding {
-    /// Serves the pasteboard `.fileURL` for a promised rep at paste time.
-    nonisolated func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? {
+extension VsockClipboardService: ClipboardPromiseServing {
+    nonisolated func serveFileURL(generation: UInt64, repIndex: Int) -> URL? {
         endpoint.serveFileURL(generation: generation, repIndex: repIndex)
     }
 
-    /// Serves an inline pasteboard flavor's bytes for a promised rep at paste
-    /// time.
-    nonisolated func copyToMacData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
+    nonisolated func serveData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
         endpoint.serveData(generation: generation, repIndex: repIndex, uti: uti)
     }
 }

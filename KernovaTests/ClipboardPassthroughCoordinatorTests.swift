@@ -505,7 +505,7 @@ struct ClipboardPassthroughCoordinatorTests {
     /// can prove the publish itself moved no bytes.
     @MainActor
     @Observable
-    final class PromisedPassthroughService: ClipboardServicing, ClipboardPasteboardRepProviding {
+    final class PromisedPassthroughService: ClipboardServicing, ClipboardPromiseServing {
         var clipboardContent: ClipboardContent = .empty
         var isConnected = true
         var supportsBinaryRepresentations = true
@@ -529,11 +529,11 @@ struct ClipboardPassthroughCoordinatorTests {
         nonisolated var pasteFireCount: Int { fireLock.withLock { fireCountStorage } }
         nonisolated private func recordFire() { fireLock.withLock { fireCountStorage += 1 } }
 
-        nonisolated func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? {
+        nonisolated func serveFileURL(generation: UInt64, repIndex: Int) -> URL? {
             recordFire()
             return nil
         }
-        nonisolated func copyToMacData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
+        nonisolated func serveData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
             recordFire()
             return Data("promised bytes".utf8)
         }

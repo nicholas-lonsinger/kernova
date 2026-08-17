@@ -5,10 +5,9 @@ import UniformTypeIdentifiers
 
 // MARK: - Pasteboard protocol
 
-/// Subset of `NSPasteboard` actually used by `VsockGuestClipboardAgent`.
-protocol Pasteboard: AnyObject {
-    var changeCount: Int { get }
-
+/// The reads `VsockGuestClipboardAgent` makes of `NSPasteboard`, on top of the
+/// write half every clipboard publication goes through.
+protocol Pasteboard: ClipboardWritePasteboard {
     /// Types of the **first** pasteboard item, in fidelity order; empty when
     /// the pasteboard holds nothing.
     var firstItemTypes: [NSPasteboard.PasteboardType] { get }
@@ -18,19 +17,6 @@ protocol Pasteboard: AnyObject {
     var itemFileURLs: [URL] { get }
 
     func data(forType type: NSPasteboard.PasteboardType) -> Data?
-
-    @discardableResult func clearContents() -> Int
-
-    /// Clears the pasteboard and applies `options` to the contents about to be
-    /// written.
-    @discardableResult func prepareForNewContents(with options: NSPasteboard.ContentsOptions) -> Int
-
-    /// Writes one pasteboard item per entry, each **promising** its types lazily
-    /// served by its own `provider` when the OS asks for one.
-    @discardableResult
-    func writeItems(
-        _ items: [(types: [NSPasteboard.PasteboardType], provider: NSPasteboardItemDataProvider)]
-    ) -> Bool
 }
 
 extension NSPasteboard: Pasteboard {
@@ -50,17 +36,6 @@ extension NSPasteboard: Pasteboard {
     // `NSPasteboard.data(forType:)` reads from "the first pasteboard item that
     // contains the type", which is the item-0 semantics this protocol wants, so
     // no explicit implementation is needed here.
-
-    func writeItems(
-        _ items: [(types: [NSPasteboard.PasteboardType], provider: NSPasteboardItemDataProvider)]
-    ) -> Bool {
-        let pasteboardItems = items.map { entry -> NSPasteboardItem in
-            let item = NSPasteboardItem()
-            item.setDataProvider(entry.provider, forTypes: entry.types)
-            return item
-        }
-        return writeObjects(pasteboardItems)
-    }
 }
 
 // MARK: - VsockGuestClipboardAgent
@@ -80,6 +55,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     private let client: VsockGuestClient
     private let pasteboard: Pasteboard
+
+    /// The one write choke point a host offer's promise reaches the guest
+    /// pasteboard through, and the retraction that withdraws it.
+    ///
+    /// Its provider registry is this agent's own, not the process-shared one:
+    /// the providers it holds are the guest pasteboard's alone.
+    private let publisher: ClipboardPasteboardPublisher
 
     /// Time source for the refusal-burst window; a manually advanced clock in
     /// tests, the platform clock in production.
@@ -128,10 +110,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// never be handed a generation this agent already used.
     private var nextLocalGeneration: UInt64 = 1
 
-    /// Owner of the data providers still promised on the pasteboard, keeping each
-    /// alive until `pasteboardFinishedWithDataProvider` fires (Apple requires it).
-    private let retainer = LazyClipboardProviderRegistry()
-
     /// Last `NSPasteboard.changeCount` we observed; set after every poll and
     /// every host write so we don't echo our own content.
     ///
@@ -177,8 +155,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// `PolicyUpdate` — which is also what turns sharing on, so no paste is ever
     /// gated on the placeholder.
     ///
-    /// Main-queue confined, like `enabled`: `provideData` — and the
-    /// `allowsFileURLPull` gate inside it — runs on the agent's main thread.
+    /// Main-queue confined, like `enabled`: the endpoint reads it at each gate
+    /// check, on the agent's main thread.
     private var maxPasteBytes: Int = ClipboardPasteLimit.defaultBytes
 
     #if DEBUG
@@ -253,6 +231,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         onClipboardNotice: @escaping @Sendable () -> Void = {}
     ) {
         self.pasteboard = pasteboard
+        self.publisher = ClipboardPasteboardPublisher(
+            pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
         self.client = client
         self.clock = clock
         self.onClipboardNotice = onClipboardNotice
@@ -342,9 +322,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // A stale in-flight estimate walk's completion checks `liveChannel` and
         // drops itself; clear the flag now so the next connection can walk again.
         estimateInFlight = false
-        // The retainer's providers are NOT dropped here: Apple requires a data
-        // provider stay alive while its item is still on the pasteboard. They're
-        // released when pasteboardFinishedWithDataProvider fires.
+        // The publisher's promise is left standing: Apple requires a data
+        // provider stay alive while its item is still on the pasteboard, and the
+        // offer behind it stays servable from its cache.
     }
 
     /// Tears the connection down only if `channel` is still the live one.
@@ -676,15 +656,25 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     private func registerPromise(
         for offer: ClipboardEndpoint.InboundOffer, on endpoint: ClipboardEndpoint
     ) {
-        let items = endpoint.promisePlan(generation: offer.generation).map(Self.promisedItems(for:))
-        guard let items, !items.isEmpty else {
+        let specs = endpoint.promisePlan(generation: offer.generation).map {
+            ClipboardPasteboardPublisher.specs(
+                for: $0, generation: offer.generation, serve: endpoint)
+        }
+        guard let specs, !specs.isEmpty else {
             Self.logger.warning(
                 "Dropped the host clipboard offer (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)): none of its \(offer.reps.count, privacy: .public) representation(s) can be promised — nothing written"
             )
             endpoint.discardInboundOffer()
             return
         }
-        guard writePasteboardPromise(items, generation: offer.generation, serving: endpoint) else {
+        let written = publisher.write(specs, promised: true)
+        // Echo suppression, from the write's own change count rather than a fresh
+        // read: the 0.5 s poll must not read this agent's promise as a copy, and
+        // a write that failed still moved the pasteboard on.
+        if let changeCount = publisher.lastWriteChangeCount {
+            lastPasteboardChangeCount = changeCount
+        }
+        guard written else {
             Self.logger.warning(
                 "Failed to register host clipboard promise (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
             )
@@ -694,81 +684,20 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return
         }
         Self.logger.notice(
-            "Registered host clipboard promise (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(items.count, privacy: .public) item(s))"
+            "Registered host clipboard promise (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public), \(specs.count, privacy: .public) item(s))"
         )
         clipboardActivityStorage = .offeredFromHost
     }
 
-    /// Clears the promise the host has withdrawn, unless the user has replaced it
-    /// since we wrote it — then whatever they copied stays.
-    private func retractPromiseIfUnchanged() {
-        guard pasteboard.changeCount == lastPasteboardChangeCount else { return }
-        pasteboard.clearContents()
+    /// Clears the promise the host has withdrawn, unless the user has copied
+    /// over it since — then whatever they copied stays.
+    @MainActor
+    private func retractPromise() {
+        guard publisher.retractPromisedWrite() else { return }
+        // The clear moved the pasteboard on; leaving the gate behind would have
+        // the next poll read the emptied pasteboard as a copy that carried
+        // nothing.
         lastPasteboardChangeCount = pasteboard.changeCount
-    }
-
-    /// Writes `items` to the pasteboard as lazy providers, every promised type
-    /// served by `serving` when the OS asks for it.
-    ///
-    /// Captures `lastPasteboardChangeCount` after the write regardless of
-    /// outcome (echo suppression — a partial write can't leave the poll
-    /// re-offering), and retains the providers only on success.
-    ///
-    /// Each provider holds `serving` strongly: the pasteboard can ask for a
-    /// promised flavor long after the connection that offered it is gone, and a
-    /// representation already pulled is still pastable then.
-    @discardableResult
-    private func writePasteboardPromise(
-        _ items: [PromisedItem], generation: UInt64, serving: ClipboardEndpoint
-    ) -> Bool {
-        var newProviders: [LazyClipboardDataProvider] = []
-        let writes = items.map {
-            item -> (types: [NSPasteboard.PasteboardType], provider: NSPasteboardItemDataProvider) in
-            let provider = LazyClipboardDataProvider(
-                provide: { type in
-                    Self.provideData(
-                        type, itemTypes: item, generation: generation, serving: serving)
-                },
-                onFinished: { [weak self] provider in self?.retainer.release(provider) })
-            newProviders.append(provider)
-            return (types: item.map { $0.type }, provider: provider)
-        }
-
-        // `.currentHostOnly` (docs/CLIPBOARD.md §3) is per-write state, reset by
-        // every prepare/clear, so it is applied at this single publication choke
-        // point.
-        pasteboard.prepareForNewContents(with: .currentHostOnly)
-        let written = pasteboard.writeItems(writes)
-        lastPasteboardChangeCount = pasteboard.changeCount
-        guard written else { return false }
-        // Hand the providers to the agent-lifetime registry so each survives
-        // until the pasteboard finishes with it.
-        retainer.retain(newProviders)
-        return true
-    }
-
-    /// Serves the bytes for a promised pasteboard type on demand.
-    ///
-    /// Runs synchronously on the agent's main thread (the pasteboard server's
-    /// `provideDataForType` callback), whose event loop keeps running while the
-    /// pull waits. `itemTypes` is the promising item's own type → rep-index map,
-    /// so a `.fileURL` pull resolves to *this* item's file rep rather than the
-    /// first file rep across the offer.
-    private static func provideData(
-        _ type: NSPasteboard.PasteboardType, itemTypes: PromisedItem, generation: UInt64,
-        serving: ClipboardEndpoint
-    ) -> Data? {
-        guard let repIndex = itemTypes.first(where: { $0.type == type })?.repIndex else {
-            Self.logger.warning(
-                "provideData for unpromised type '\(type.rawValue, privacy: .public)'")
-            return nil
-        }
-        guard type == .fileURL else {
-            return serving.serveData(
-                generation: generation, repIndex: repIndex, uti: type.rawValue)
-        }
-        return serving.serveFileURL(generation: generation, repIndex: repIndex)
-            .map { Data($0.absoluteString.utf8) }
     }
 
     #if DEBUG
@@ -777,29 +706,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         MainActorBridge.sync { endpoint?.recordRefusalForTesting(code, generation: generation) }
     }
     #endif
-
-    /// One promised pasteboard item: each pasteboard type it offers paired with
-    /// the offer-rep index that backs it.
-    private typealias PromisedItem = [(type: NSPasteboard.PasteboardType, repIndex: Int)]
-
-    /// The promised pasteboard items for one offer's plan.
-    ///
-    /// Inline-only reps (no filename) share one item promising each rep's content
-    /// UTI; each file rep gets its own item promising `public.file-url` (and its
-    /// image UTI when it's an image file). Each promised type carries the
-    /// offer-rep index that backs it.
-    private static func promisedItems(for plan: ClipboardPasteboardItemPlan) -> [PromisedItem] {
-        plan.items.map { item in
-            item.types.map { promised in
-                (
-                    type: promised.isFileURL
-                        ? NSPasteboard.PasteboardType.fileURL
-                        : NSPasteboard.PasteboardType(promised.uti),
-                    repIndex: promised.representationIndex
-                )
-            }
-        }
-    }
 }
 
 // MARK: - Endpoint delegate
@@ -815,8 +721,16 @@ extension VsockGuestClipboardAgent: ClipboardEndpointDelegate {
         _ endpoint: ClipboardEndpoint, didRetractOffer generation: UInt64?,
         reason: ClipboardEndpoint.RetractReason
     ) {
-        guard reason == .released else { return }
-        retractPromiseIfUnchanged()
+        switch reason {
+        case .released, .superseded(hasSuccessor: false):
+            // Nothing is coming to replace what the pasteboard advertises, so the
+            // promise standing there can no longer be served.
+            retractPromise()
+        case .superseded(hasSuccessor: true):
+            // The successor's own write replaces it; clearing first would put an
+            // empty pasteboard up in between.
+            break
+        }
     }
 
     func endpoint(
