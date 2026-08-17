@@ -55,7 +55,16 @@ public final class ClipboardStreamSession {
     /// Latched before the pulls a teardown cancels are woken, so a paste fire
     /// that wakes cancelled can tell the end of its session from a supersession
     /// or a release, which raise their own explainer.
-    private let endedFlag = EndedFlag()
+    private let endedFlag = Latch()
+
+    /// Latched by `stop()` alone, so the control-frame hop drops what was queued
+    /// to main before the teardown.
+    ///
+    /// Distinct from `endedFlag`, which the channel closing also sets: a peer
+    /// that sent a frame and then closed — a `DropComplete`, a
+    /// `ClipboardRelease` — is still owed its delivery, while a local `stop()`
+    /// is this side deciding it is done listening.
+    private let stoppedFlag = Latch()
 
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardStreamSession")
@@ -167,10 +176,11 @@ public final class ClipboardStreamSession {
         let sender = senderStorage
         let receiver = receiverStorage
         let endedFlag = self.endedFlag
-        consumeTask = Task {
+        let stoppedFlag = self.stoppedFlag
+        consumeTask = Task.detached {
             await Self.consume(
                 channel: channel, label: label, connectionTag: tag, subject: subject, role: role,
-                sender: sender, receiver: receiver,
+                sender: sender, receiver: receiver, endedFlag: endedFlag, onEnded: onEnded,
                 onControlFrame: { frame in
                     // Fire-and-forget: the consume loop must never wait on the
                     // main actor — a paste's promise callback occupies it, and
@@ -178,15 +188,10 @@ public final class ClipboardStreamSession {
                     // callback. Serial `DispatchQueue.main` preserves
                     // control-frame FIFO order; a per-frame Task would not.
                     DispatchQueue.main.async {
+                        guard !stoppedFlag.isSet else { return }
                         MainActor.assumeIsolated { handleControlFrame(frame) }
                     }
                 })
-            // Channel closed — wake any parked pull so a materialize doesn't hang
-            // forever. Marked ended first, so a paste fire that wakes here can
-            // tell this teardown from a supersession and explain itself.
-            endedFlag.set()
-            receiver?.cancelAll()
-            onEnded()
         }
     }
 
@@ -203,6 +208,7 @@ public final class ClipboardStreamSession {
         consumeTask = nil
         // Marked before any wake, so a paste fire this cancels explains itself.
         endedFlag.set()
+        stoppedFlag.set()
         senderStorage?.cancelAll()
         receiverStorage?.cancelAll()
         senderStorage = nil
@@ -218,12 +224,15 @@ public final class ClipboardStreamSession {
     }
 
     /// Drains the channel, routing high-frequency stream frames off the main
-    /// actor.
+    /// actor, and settles the session once the channel is done.
     ///
     /// `nonisolated` so the loop runs on a cooperative thread: stream frames go
     /// straight to the thread-safe engine and only the low-frequency control
     /// frames hop to main, keeping a multi-GB transfer's chunk/ack frames off the
-    /// main actor entirely. [M1]
+    /// main actor entirely. [M1] The settling tail lives here for the same
+    /// reason: a pull parked on the main thread — inside a tracking or modal loop
+    /// it parks rather than running the event loop — is woken by it, so it must
+    /// not itself be a main-queue job that pull is blocking.
     nonisolated private static func consume(
         channel: VsockChannel,
         label: String,
@@ -232,6 +241,8 @@ public final class ClipboardStreamSession {
         role: Role,
         sender: ClipboardStreamSender?,
         receiver: ClipboardStreamReceiver?,
+        endedFlag: Latch,
+        onEnded: @Sendable () -> Void,
         onControlFrame: @Sendable @escaping (Frame) -> Void
     ) async {
         let routingRole: ClipboardStreamRouting.Role = role == .host ? .host : .guest
@@ -241,7 +252,9 @@ public final class ClipboardStreamSession {
                     frame, role: routingRole, sender: sender, receiver: receiver,
                     onControlFrame: onControlFrame)
             }
-            logger.info(
+            // A guest disconnect has to survive in the log after the fact, so this
+            // persists rather than logging at `.debug`/`.info`.
+            logger.notice(
                 "Vsock \(subject, privacy: .public) channel closed for '\(label, privacy: .public)' (conn=\(connectionTag, privacy: .public))"
             )
         } catch {
@@ -249,6 +262,12 @@ public final class ClipboardStreamSession {
                 "Vsock \(subject, privacy: .public) channel ended with error for '\(label, privacy: .public)' (conn=\(connectionTag, privacy: .public)): \(error.localizedDescription, privacy: .public)"
             )
         }
+        // Channel closed — wake any parked pull so a materialize doesn't hang
+        // forever. Marked ended first, so a paste fire that wakes here can tell
+        // this teardown from a supersession and explain itself.
+        endedFlag.set()
+        receiver?.cancelAll()
+        onEnded()
     }
 
     // MARK: - Sending control frames
@@ -314,8 +333,8 @@ public final class ClipboardStreamSession {
     }
 }
 
-/// Thread-safe latch for "this session is over".
-private final class EndedFlag: @unchecked Sendable {
+/// Thread-safe one-way flag.
+private final class Latch: @unchecked Sendable {
     private let lock = NSLock()
     private var value = false
 
