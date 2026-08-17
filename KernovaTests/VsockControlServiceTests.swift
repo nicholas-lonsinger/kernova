@@ -366,6 +366,7 @@ struct VsockControlServiceTests {
 
         // DIAGNOSTIC (scratch): watch main + record where the process sits when
         // a heartbeat lands late.
+        _ = ThreadCPUDiag.mainThreadID  // resolved on main, so the watchdog never syncs to a blocked main
         let watchdog = MainWatchdogDiag()
         watchdog.start()
         defer { watchdog.stop() }
@@ -1449,7 +1450,9 @@ final class MainWatchdogDiag: @unchecked Sendable {
         lock.withLock { events.isEmpty ? "main responsive throughout" : events.joined(separator: "\n") }
     }
 
-    static func sampleProcess() -> String {
+    static func sampleProcess() -> String { ThreadCPUDiag.snapshot() }
+
+    static func sampleProcessViaTool() -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
         process.arguments = [
@@ -1467,4 +1470,87 @@ final class MainWatchdogDiag: @unchecked Sendable {
             return "SAMPLE FAILED: \(error)"
         }
     }
+}
+
+// DIAGNOSTIC (scratch): per-thread CPU/state/queue snapshot via Mach, no permissions needed.
+import Darwin
+enum ThreadCPUDiag {
+    static func snapshot() -> String {
+        var threads: thread_act_array_t?
+        var count: mach_msg_type_number_t = 0
+        guard task_threads(mach_task_self_, &threads, &count) == KERN_SUCCESS, let threads else {
+            return "task_threads failed"
+        }
+        defer {
+            vm_deallocate(
+                mach_task_self_, vm_address_t(bitPattern: threads),
+                vm_size_t(count) * vm_size_t(MemoryLayout<thread_act_t>.stride))
+        }
+        var rows: [(Double, String)] = []
+        var runningTotal = 0.0
+        for i in 0..<Int(count) {
+            let t = threads[i]
+            var basic = thread_basic_info()
+            var bcount = mach_msg_type_number_t(MemoryLayout<thread_basic_info>.size / MemoryLayout<integer_t>.size)
+            let kr = withUnsafeMutablePointer(to: &basic) {
+                $0.withMemoryRebound(to: integer_t.self, capacity: Int(bcount)) {
+                    thread_info(t, thread_flavor_t(THREAD_BASIC_INFO), $0, &bcount)
+                }
+            }
+            guard kr == KERN_SUCCESS else { continue }
+            var ident = thread_identifier_info()
+            var icount = mach_msg_type_number_t(
+                MemoryLayout<thread_identifier_info>.size / MemoryLayout<integer_t>.size)
+            _ = withUnsafeMutablePointer(to: &ident) {
+                $0.withMemoryRebound(to: integer_t.self, capacity: Int(icount)) {
+                    thread_info(t, thread_flavor_t(THREAD_IDENTIFIER_INFO), $0, &icount)
+                }
+            }
+            var label = ""
+            if ident.dispatch_qaddr != 0,
+                let qptr = UnsafeRawPointer(bitPattern: UInt(ident.dispatch_qaddr))?.load(as: UnsafeRawPointer?.self),
+                let q = Optional(qptr)
+            {
+                let cstr = dispatch_queue_get_label(unsafeBitCast(q, to: DispatchQueue.self))
+                label = String(cString: cstr)
+            }
+            var name = [CChar](repeating: 0, count: 64)
+            if let pt = pthread_from_mach_thread_np(t) { pthread_getname_np(pt, &name, 64) }
+            let nameStr = String(cString: name)
+            let cpu = Double(basic.cpu_usage) / Double(TH_USAGE_SCALE) * 100
+            let state: String
+            switch basic.run_state {
+            case TH_STATE_RUNNING: state = "RUN";
+            case TH_STATE_WAITING: state = "wait";
+            case TH_STATE_UNINTERRUPTIBLE: state = "UNINT";
+            case TH_STATE_STOPPED: state = "stop";
+            case TH_STATE_HALTED: state = "halt";
+            default: state = "?"
+            }
+            let user = Double(basic.user_time.seconds) + Double(basic.user_time.microseconds) / 1e6
+            let sys = Double(basic.system_time.seconds) + Double(basic.system_time.microseconds) / 1e6
+            runningTotal += cpu
+            let isMain = ident.thread_id == mainThreadID
+            rows.append(
+                (
+                    cpu,
+                    String(
+                        format: "%5.1f%% %-5@ u=%6.2fs s=%6.2fs %@ %@ %@", cpu, state as NSString, user, sys,
+                        (isMain ? "MAIN" : "") as NSString, nameStr as NSString, label as NSString)
+                ))
+        }
+        rows.sort { $0.0 > $1.0 }
+        let header =
+            "threads=\(count) totalCPU=\(String(format: "%.0f", runningTotal))% ncpu=\(ProcessInfo.processInfo.activeProcessorCount)\n"
+        return header + rows.prefix(25).map(\.1).joined(separator: "\n")
+    }
+    static let mainThreadID: UInt64 = {
+        var tid: UInt64 = 0
+        if Thread.isMainThread {
+            pthread_threadid_np(nil, &tid)
+        } else {
+            DispatchQueue.main.sync { pthread_threadid_np(nil, &tid) }
+        }
+        return tid
+    }()
 }
