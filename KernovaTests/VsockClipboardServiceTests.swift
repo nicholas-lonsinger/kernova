@@ -14,6 +14,7 @@ struct VsockClipboardServiceTests {
     // MARK: - Helpers
 
     private func makePair() throws -> (sender: VsockChannel, receiver: VsockChannel) {
+        GlobalMainWatchdogDiag.startOnce()
         let (a, b) = try makeRawSocketPair()
         return (VsockChannel(fileDescriptor: a), VsockChannel(fileDescriptor: b))
     }

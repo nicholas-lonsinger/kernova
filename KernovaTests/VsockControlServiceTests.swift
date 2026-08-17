@@ -338,6 +338,7 @@ struct VsockControlServiceTests {
 
     @Test("Sends heartbeat frames on the configured cadence")
     func heartbeatOutboundCadence() async throws {
+        GlobalMainWatchdogDiag.startOnce()
         let (guest, host) = try makePair()
         guest.start()
         host.start()

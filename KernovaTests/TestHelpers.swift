@@ -345,3 +345,61 @@ func showInTestWindow(_ view: NSView, size: NSSize? = nil) -> NSWindow {
     window.orderFront(nil)
     return window
 }
+
+// DIAGNOSTIC (scratch branch only): process-wide main-thread watchdog. When the
+// main queue or main run loop stops answering for >1.5 s, sample the process
+// and write the sample next to a marker so a local run can be read afterwards.
+enum GlobalMainWatchdogDiag {
+    nonisolated(unsafe) static var started = false
+    static let lock = NSLock()
+    static func startOnce() {
+        let go = lock.withLock { () -> Bool in
+            if started { return false }
+            started = true
+            return true
+        }
+        guard go else { return }
+        let dir = ProcessInfo.processInfo.environment["KERNOVA_DIAG_DIR"] ?? NSTemporaryDirectory()
+        let queuePong = LockedDate()
+        let runLoopPong = LockedDate()
+        let thread = Thread {
+            var n = 0
+            while true {
+                let sent = Date()
+                DispatchQueue.main.async { queuePong.set(Date()) }
+                CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
+                    runLoopPong.set(Date())
+                }
+                CFRunLoopWakeUp(CFRunLoopGetMain())
+                Thread.sleep(forTimeInterval: 0.5)
+                let qLate = sent.timeIntervalSince(queuePong.get()), rLate = sent.timeIntervalSince(runLoopPong.get())
+                if (qLate > 1.5 || rLate > 1.5) && n < 6 {
+                    n += 1
+                    let process = Process()
+                    process.executableURL = URL(fileURLWithPath: "/usr/bin/sample")
+                    process.arguments = [String(ProcessInfo.processInfo.processIdentifier), "1", "-mayDie"]
+                    let pipe = Pipe(); process.standardOutput = pipe; process.standardError = pipe
+                    var text = "SAMPLE FAILED"
+                    if (try? process.run()) != nil {
+                        let data = pipe.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+                        text = String(decoding: data, as: UTF8.self)
+                    }
+                    let header = String(
+                        format: "main-queue silent %.1fs, run-loop silent %.1fs at %@\n", qLate, rLate, "\(Date())")
+                    let url = URL(fileURLWithPath: dir).appendingPathComponent(
+                        "kernova-diag-stall-\(ProcessInfo.processInfo.processIdentifier)-\(n).txt")
+                    try? (header + text).write(to: url, atomically: true, encoding: .utf8)
+                    FileHandle.standardError.write(
+                        Data(("\n===== DIAG STALL " + header + "===== written to \(url.path)\n").utf8))
+                    Thread.sleep(forTimeInterval: 2)
+                }
+            }
+        }
+        thread.start()
+    }
+    final class LockedDate: @unchecked Sendable {
+        private let l = NSLock(); private var d = Date()
+        func set(_ v: Date) { l.withLock { d = v } }
+        func get() -> Date { l.withLock { d } }
+    }
+}
