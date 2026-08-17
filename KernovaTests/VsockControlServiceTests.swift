@@ -1472,7 +1472,7 @@ final class MainWatchdogDiag: @unchecked Sendable {
     }
 }
 
-// DIAGNOSTIC (scratch): per-thread CPU/state/queue snapshot via Mach, no permissions needed.
+// DIAGNOSTIC (scratch): per-thread CPU/state snapshot plus frame-pointer stacks via Mach.
 import Darwin
 enum ThreadCPUDiag {
     static func snapshot() -> String {
@@ -1486,8 +1486,10 @@ enum ThreadCPUDiag {
                 mach_task_self_, vm_address_t(bitPattern: threads),
                 vm_size_t(count) * vm_size_t(MemoryLayout<thread_act_t>.stride))
         }
-        var rows: [(Double, String)] = []
-        var runningTotal = 0.0
+        let selfThread = mach_thread_self()
+        defer { mach_port_deallocate(mach_task_self_, selfThread) }
+        var rows: [(Double, Bool, String, thread_act_t, Bool)] = []
+        var total = 0.0
         for i in 0..<Int(count) {
             let t = threads[i]
             var basic = thread_basic_info()
@@ -1506,44 +1508,83 @@ enum ThreadCPUDiag {
                     thread_info(t, thread_flavor_t(THREAD_IDENTIFIER_INFO), $0, &icount)
                 }
             }
-            var label = ""
-            if ident.dispatch_qaddr != 0,
-                let slot = UnsafeRawPointer(bitPattern: UInt(ident.dispatch_qaddr)),
-                let qptr = slot.load(as: UnsafeRawPointer?.self)
-            {
-                let queue = Unmanaged<DispatchQueue>.fromOpaque(qptr).takeUnretainedValue()
-                label = queue.label
-            }
             var name = [CChar](repeating: 0, count: 64)
             if let pt = pthread_from_mach_thread_np(t) { pthread_getname_np(pt, &name, 64) }
-            let nameStr = String(cString: name)
             let cpu = Double(basic.cpu_usage) / Double(TH_USAGE_SCALE) * 100
             let state: String
             switch basic.run_state {
             case TH_STATE_RUNNING: state = "RUN";
             case TH_STATE_WAITING: state = "wait";
             case TH_STATE_UNINTERRUPTIBLE: state = "UNINT";
-            case TH_STATE_STOPPED: state = "stop";
-            case TH_STATE_HALTED: state = "halt";
             default: state = "?"
             }
             let user = Double(basic.user_time.seconds) + Double(basic.user_time.microseconds) / 1e6
             let sys = Double(basic.system_time.seconds) + Double(basic.system_time.microseconds) / 1e6
-            runningTotal += cpu
+            total += cpu
             let isMain = ident.thread_id == mainThreadID
-            rows.append(
-                (
-                    cpu,
-                    String(
-                        format: "%5.1f%% %-5@ u=%6.2fs s=%6.2fs %@ %@ %@", cpu, state as NSString, user, sys,
-                        (isMain ? "MAIN" : "") as NSString, nameStr as NSString, label as NSString)
-                ))
+            let line = String(
+                format: "%5.1f%% %-5@ u=%6.2fs s=%6.2fs %@ %@", cpu, state as NSString, user, sys,
+                (isMain ? "MAIN" : "tid=\(ident.thread_id)") as NSString, String(cString: name) as NSString)
+            rows.append((cpu, basic.run_state == TH_STATE_RUNNING, line, t, isMain))
         }
         rows.sort { $0.0 > $1.0 }
-        let header =
-            "threads=\(count) totalCPU=\(String(format: "%.0f", runningTotal))% ncpu=\(ProcessInfo.processInfo.activeProcessorCount)\n"
-        return header + rows.prefix(25).map(\.1).joined(separator: "\n")
+        var out =
+            "threads=\(count) totalCPU=\(String(format: "%.0f", total))% ncpu=\(ProcessInfo.processInfo.activeProcessorCount)\n"
+        out += rows.prefix(30).map(\.2).joined(separator: "\n")
+        // Stacks: main, every RUN thread, and the top-CPU waiting threads.
+        var stacked = 0
+        for r in rows where (r.4 || r.1 || stacked < 10) && stacked < 18 {
+            guard r.3 != selfThread else { continue }
+            stacked += 1
+            out += "\n--- \(r.2)\n" + stack(of: r.3)
+        }
+        return out
     }
+
+    static func stack(of thread: thread_act_t) -> String {
+        guard thread_suspend(thread) == KERN_SUCCESS else { return "  (suspend failed)" }
+        defer { thread_resume(thread) }
+        var state = arm_thread_state64_t()
+        var cnt = mach_msg_type_number_t(MemoryLayout<arm_thread_state64_t>.size / MemoryLayout<UInt32>.size)
+        let kr = withUnsafeMutablePointer(to: &state) {
+            $0.withMemoryRebound(to: natural_t.self, capacity: Int(cnt)) {
+                thread_get_state(thread, ARM_THREAD_STATE64, $0, &cnt)
+            }
+        }
+        guard kr == KERN_SUCCESS else { return "  (get_state failed \(kr))" }
+        var frames: [UInt64] = [state.__pc, state.__lr]
+        var fp = state.__fp
+        var depth = 0
+        while fp != 0, depth < 40 {
+            var pair: (UInt64, UInt64) = (0, 0)
+            var outSize: vm_size_t = 0
+            let rk = withUnsafeMutablePointer(to: &pair) {
+                vm_read_overwrite(
+                    mach_task_self_, vm_address_t(fp), 16, vm_address_t(bitPattern: UnsafeMutableRawPointer($0)),
+                    &outSize)
+            }
+            guard rk == KERN_SUCCESS, outSize == 16 else { break }
+            let (next, ret) = pair
+            if ret == 0 { break }
+            frames.append(ret)
+            guard next > fp else { break }
+            fp = next
+            depth += 1
+        }
+        return frames.map { symbolize($0) }.joined(separator: "\n")
+    }
+
+    static func symbolize(_ addr: UInt64) -> String {
+        var info = Dl_info()
+        guard dladdr(UnsafeRawPointer(bitPattern: UInt(addr)), &info) != 0 else {
+            return String(format: "  0x%llx", addr)
+        }
+        let sym = info.dli_sname.map { String(cString: $0) } ?? "?"
+        let img = info.dli_fname.map { (String(cString: $0) as NSString).lastPathComponent } ?? "?"
+        let off = addr - UInt64(UInt(bitPattern: info.dli_saddr))
+        return "  \(img) \(sym) + \(off)"
+    }
+
     static let mainThreadID: UInt64 = {
         var tid: UInt64 = 0
         if Thread.isMainThread {
