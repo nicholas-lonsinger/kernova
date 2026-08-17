@@ -356,12 +356,18 @@ struct VsockControlServiceTests {
         // to-back will pass — correct for "is the timer running" but not a
         // check on end-to-end latency.
         let cadence: Duration = .milliseconds(100)
+        // DIAGNOSTIC (scratch branch only)
+        let sampler = DiagStallSampler()
+        sampler.start()
+        defer { sampler.stop() }
+        sampler.mark("setup")
         let service = makeService(channel: host, heartbeatInterval: cadence)
         service.start()
         defer { service.stop() }
 
         // Frame 0 is the host Hello — discard.
         _ = try await nextFrame(from: guest)
+        sampler.mark("hello")
 
         var stamps: [ContinuousClock.Instant] = []
         while stamps.count < 3 {
@@ -372,6 +378,7 @@ struct VsockControlServiceTests {
             let frame = try await nextFrame(from: guest)
             if case .heartbeat = frame.payload {
                 stamps.append(.now)
+                sampler.mark("hb\(stamps.count)")
             }
         }
 
@@ -384,6 +391,11 @@ struct VsockControlServiceTests {
             maxGap < tolerance,
             "Heartbeat cadence drift: max gap \(maxGap) exceeds \(tolerance) (10× cadence). Gaps: \(gaps)"
         )
+        // DIAGNOSTIC (scratch branch only): always record, so a passing run
+        // yields the same measurements as a failing one.
+        sampler.stop()
+        Issue.record(
+            Comment(rawValue: sampler.report(title: "heartbeat gaps=\(gaps) max=\(maxGap)")))
     }
 
     @Test("Inbound heartbeat keeps agentStatus .current past unresponsiveAfter")
