@@ -384,6 +384,9 @@ struct VsockControlServiceTests {
                     Issue.record(
                         "DIAG late heartbeat gap \(now - last) at \(Date()); watchdog: \(watchdog.report())\nMAIN-PULL TIMELINE:\n\(LazyPullDiagTimeline.dump())\n\(text.prefix(2000))"
                     )
+                }
+                lastStamp = now
+                stamps.append(now)
             }
         }
 
