@@ -3,8 +3,7 @@ import Testing
 @testable import KernovaKit
 
 /// Unit tests for the one routing rule every chunk-streamed channel shares —
-/// which engine owns an abort, and whether a sender-bound one may be delivered
-/// off the owner's actor.
+/// which engine owns an abort, and which frames reach the owner's actor.
 @Suite("ClipboardStreamRouting")
 struct ClipboardStreamRoutingTests {
     /// A transfer id the host receives (direction bit set) — one the guest is
@@ -41,16 +40,31 @@ struct ClipboardStreamRoutingTests {
 
     // MARK: - Delivery
 
-    @Test("a sender-bound abort rides the control hop when the owner asks it to")
-    func routesSenderAbortsAsControlFrames() {
+    @Test("a sender-bound abort rides the control hop on the host")
+    func routesHostSenderAbortsAsControlFrames() {
         var control: [Frame] = []
         ClipboardStreamRouting.route(
             abortFrame(guestReceivedID), role: .host, sender: nil, receiver: nil,
-            senderAbortDelivery: .viaControlFrame, onControlFrame: { control.append($0) })
+            onControlFrame: { control.append($0) })
 
         #expect(control.count == 1)
         if case .clipboardStreamAbort(let abort) = control.first?.payload {
             #expect(abort.transferID == guestReceivedID)
+        } else {
+            Issue.record("Expected the abort to reach the control-frame handler")
+        }
+    }
+
+    @Test("a sender-bound abort rides the control hop on the guest too")
+    func routesGuestSenderAbortsAsControlFrames() {
+        var control: [Frame] = []
+        ClipboardStreamRouting.route(
+            abortFrame(hostReceivedID), role: .guest, sender: nil, receiver: nil,
+            onControlFrame: { control.append($0) })
+
+        #expect(control.count == 1)
+        if case .clipboardStreamAbort(let abort) = control.first?.payload {
+            #expect(abort.transferID == hostReceivedID)
         } else {
             Issue.record("Expected the abort to reach the control-frame handler")
         }
@@ -61,17 +75,13 @@ struct ClipboardStreamRoutingTests {
         var control: [Frame] = []
         ClipboardStreamRouting.route(
             abortFrame(hostReceivedID), role: .host, sender: nil, receiver: nil,
-            senderAbortDelivery: .viaControlFrame, onControlFrame: { control.append($0) })
+            onControlFrame: { control.append($0) })
 
         #expect(control.isEmpty)
-    }
 
-    @Test("a sender-bound abort is delivered directly when the owner allows it")
-    func routesSenderAbortsDirectly() {
-        var control: [Frame] = []
         ClipboardStreamRouting.route(
-            abortFrame(hostReceivedID), role: .guest, sender: nil, receiver: nil,
-            senderAbortDelivery: .direct, onControlFrame: { control.append($0) })
+            abortFrame(guestReceivedID), role: .guest, sender: nil, receiver: nil,
+            onControlFrame: { control.append($0) })
 
         #expect(control.isEmpty)
     }
@@ -92,7 +102,7 @@ struct ClipboardStreamRoutingTests {
             frame.payload = payload
             ClipboardStreamRouting.route(
                 frame, role: .host, sender: nil, receiver: nil,
-                senderAbortDelivery: .viaControlFrame, onControlFrame: record)
+                onControlFrame: record)
         }
         #expect(control.isEmpty)
 
@@ -101,7 +111,7 @@ struct ClipboardStreamRoutingTests {
         offer.dropOffer = Kernova_V1_DropOffer()
         ClipboardStreamRouting.route(
             offer, role: .host, sender: nil, receiver: nil,
-            senderAbortDelivery: .viaControlFrame, onControlFrame: record)
+            onControlFrame: record)
         #expect(control.count == 1)
     }
 }

@@ -17,8 +17,10 @@ struct ClipboardTransferIDTests {
                 #expect(ClipboardTransferID.hostReceives(hostID))
                 #expect(ClipboardTransferID.generation(of: guestID) == generation)
                 #expect(ClipboardTransferID.generation(of: hostID) == generation)
-                // The layout — rep index in the low 16 bits.
-                #expect(Int(guestID & 0xFFFF) == repIndex)
+                // The layout — rep index in the low 16 bits, direction bit
+                // ignored.
+                #expect(ClipboardTransferID.repIndex(of: guestID) == repIndex)
+                #expect(ClipboardTransferID.repIndex(of: hostID) == repIndex)
             }
         }
     }
