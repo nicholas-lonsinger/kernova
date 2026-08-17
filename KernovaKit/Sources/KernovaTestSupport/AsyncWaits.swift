@@ -93,7 +93,8 @@ extension TestFailure {
     public static func backstop(
         _ message: String, stopwatch: BackstopStopwatch, timeout: TimeInterval
     ) -> TestFailure {
-        TestFailure(message + stopwatch.diagnosis(timeout: timeout))
+        sampleProcessOnceForDiagnosis()
+        return TestFailure(message + stopwatch.diagnosis(timeout: timeout))
     }
 
     /// `backstop(_:stopwatch:timeout:)` for the `Duration`-based wait helpers.
@@ -287,5 +288,36 @@ public func offCooperativePool<T: Sendable>(
 ) async -> T {
     await withCheckedContinuation { cont in
         DispatchQueue.global(qos: .userInitiated).async { cont.resume(returning: body()) }
+    }
+}
+
+// DIAGNOSTIC (scratch branch only): sample this process's threads the first
+// time any backstop fires, so a CI-only stall shows where every thread sits.
+nonisolated(unsafe) private var didSampleForDiagnosis = false
+private let sampleLock = NSLock()
+private func sampleProcessOnceForDiagnosis() {
+    let first = sampleLock.withLock { () -> Bool in
+        if didSampleForDiagnosis { return false }
+        didSampleForDiagnosis = true
+        return true
+    }
+    guard first else { return }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/sample")
+    process.arguments = [String(ProcessInfo.processInfo.processIdentifier), "1", "-mayDie"]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    do {
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let text = String(decoding: data.prefix(400_000), as: UTF8.self)
+        FileHandle.standardError.write(
+            Data("\n===== DIAG SAMPLE BEGIN pid=\(ProcessInfo.processInfo.processIdentifier) =====\n".utf8))
+        FileHandle.standardError.write(Data(text.utf8))
+        FileHandle.standardError.write(Data("\n===== DIAG SAMPLE END =====\n".utf8))
+    } catch {
+        FileHandle.standardError.write(Data("DIAG SAMPLE FAILED: \(error)\n".utf8))
     }
 }
