@@ -43,7 +43,6 @@ struct NetworkAttachmentCoordinatorTests {
     private final class PendingRecorder {
         private(set) var values: [Bool] = []
         func record(_ value: Bool) { values.append(value) }
-        var latest: Bool { values.last ?? false }
     }
 
     private func makeHarness(

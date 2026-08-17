@@ -166,13 +166,6 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         if liveChannel === channel { teardownConnectionState() }
     }
 
-    #if DEBUG
-    /// Test seam for `teardownIfCurrent`.
-    func teardownIfCurrentForTesting(_ channel: VsockChannel) {
-        teardownIfCurrent(channel)
-    }
-    #endif
-
     // MARK: - Per-connection serve
 
     private func serve(channel: VsockChannel) async {

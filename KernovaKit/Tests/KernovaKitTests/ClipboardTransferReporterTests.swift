@@ -11,7 +11,7 @@ private final class DwellScheduler: @unchecked Sendable {
 
     var isArmed: Bool { lock.withLock { !pending.isEmpty } }
 
-    func schedule(after: TimeInterval, _ work: @escaping @MainActor @Sendable () -> Void) {
+    func schedule(after _: TimeInterval, _ work: @escaping @MainActor @Sendable () -> Void) {
         lock.withLock { pending.append(work) }
     }
 
