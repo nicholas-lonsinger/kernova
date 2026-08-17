@@ -679,15 +679,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
 
     /// Writes a `ClipboardStreamAbort` for `transferID`.
     private func sendAbort(transferID: UInt64, code: ClipboardStreamAbortCode, message: String) {
-        _ = send(
-            .with {
-                $0.protocolVersion = 1
-                $0.clipboardStreamAbort = .with {
-                    $0.transferID = transferID
-                    $0.code = code.rawValue
-                    $0.message = message
-                }
-            })
+        _ = send(.clipboardStreamAbort(transferID: transferID, code: code, message: message))
     }
 }
 

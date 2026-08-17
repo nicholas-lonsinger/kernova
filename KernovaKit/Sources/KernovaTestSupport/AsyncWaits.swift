@@ -269,6 +269,20 @@ public func waitUntil(
     }
 }
 
+// MARK: - Main-queue ordering
+
+/// Suspends until every block already queued on the main queue has run.
+///
+/// The main queue is serial, so a block enqueued now runs last: this is an
+/// ordering barrier, not a wait — nothing is polled and no deadline decides it.
+/// Use it to assert on what a burst of `DispatchQueue.main.async` work left
+/// behind, from a `@MainActor` test body that queued the burst itself.
+public func drainMainQueue() async {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.main.async { continuation.resume() }
+    }
+}
+
 // MARK: - offCooperativePool
 
 /// Runs a **synchronous, blocking** bridge call on a GCD global-queue thread,

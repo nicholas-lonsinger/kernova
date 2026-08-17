@@ -38,4 +38,10 @@ public enum ClipboardTransferID {
     public static func generation(of transferID: UInt64) -> UInt64 {
         (transferID & ~hostReceivesBit) >> 16
     }
+
+    /// The representation index encoded in `transferID`, which a peer's request
+    /// carries and the offer holder resolves against its own representation list.
+    public static func repIndex(of transferID: UInt64) -> Int {
+        Int(transferID & 0xFFFF)
+    }
 }

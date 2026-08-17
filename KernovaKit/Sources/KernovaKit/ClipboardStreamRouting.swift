@@ -5,10 +5,9 @@ import Foundation
 ///
 /// Every channel carrying `ClipboardStreamBegin`/`Chunk`/`End`/`Ack`/`Abort` —
 /// the clipboard channel on both sides, the drop channel on both sides — has the
-/// same routing rule, and it is a rule with two subtleties that must not be
-/// restated per channel: which engine owns an abort (decided by the transfer
-/// id's direction bit, read from the routing side's point of view), and whether
-/// a sender-bound abort may be delivered off the owner's actor at all.
+/// same routing rule, and it is a rule with one subtlety that must not be
+/// restated per channel: which engine owns an abort, decided by the transfer
+/// id's direction bit read from the routing side's point of view.
 ///
 /// The high-frequency payloads go straight to the thread-safe engine so a
 /// multi-GB transfer's chunk and ack traffic never reaches the owner's actor.
@@ -17,33 +16,27 @@ public enum ClipboardStreamRouting {
     /// transfer id's direction bit readable: the host receives on ids that carry
     /// it and sends on ids that do not, and the guest is the mirror.
     public enum Role: Sendable {
+        /// The Mac running Kernova.
         case host
+        /// The agent inside the VM.
         case guest
-    }
-
-    /// How an abort naming a transfer this side is *sending* is delivered.
-    ///
-    /// `.viaControlFrame` when the owner registers outbound transfers on its own
-    /// actor: an abort handled synchronously here can otherwise overtake that
-    /// registration and no-op on an id the engine does not know yet, leaving a
-    /// cancelled transfer streaming. Routing it through the same hop the
-    /// registering frame takes preserves their order.
-    public enum SenderAbortDelivery: Sendable {
-        case direct
-        case viaControlFrame
     }
 
     /// Hands `frame` to `sender`/`receiver` when it is a stream payload, and to
     /// `onControlFrame` otherwise.
     ///
     /// `onControlFrame` is called on the routing thread; an owner confined to an
-    /// actor hops inside it.
+    /// actor hops inside it. An abort naming a transfer this side is *sending*
+    /// goes through it too, rather than to the sender here: every owner registers
+    /// its outbound transfers on its own actor, and an abort handled
+    /// synchronously on the routing thread can overtake that registration and
+    /// no-op on an id the engine does not know yet, leaving a cancelled transfer
+    /// streaming. [H3]
     public static func route(
         _ frame: Frame,
         role: Role,
         sender: ClipboardStreamSender?,
         receiver: ClipboardStreamReceiver?,
-        senderAbortDelivery: SenderAbortDelivery,
         onControlFrame: (Frame) -> Void
     ) {
         switch frame.payload {
@@ -61,10 +54,7 @@ public enum ClipboardStreamRouting {
             if receiverOwns(abort.transferID, role: role) {
                 receiver?.handleAbort(abort)
             } else {
-                switch senderAbortDelivery {
-                case .direct: sender?.handleAbort(transferID: abort.transferID)
-                case .viaControlFrame: onControlFrame(frame)
-                }
+                onControlFrame(frame)
             }
         default:
             onControlFrame(frame)

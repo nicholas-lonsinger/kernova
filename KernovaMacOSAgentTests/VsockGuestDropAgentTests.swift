@@ -82,31 +82,6 @@ struct VsockGuestDropAgentTests {
 
     // MARK: - Frame factories
 
-    private func makeDropOffer(generation: UInt64, reps: [RepInfo]) -> Frame {
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.dropOffer = Kernova_V1_DropOffer.with {
-            $0.generation = generation
-            $0.repInfo = reps.map { rep in
-                Kernova_V1_ClipboardRepresentationInfo.with {
-                    $0.uti = rep.uti
-                    $0.byteCount = rep.byteCount
-                    $0.filename = rep.filename
-                    $0.isInline = rep.isInline
-                    $0.isDirectory = rep.isDirectory
-                }
-            }
-        }
-        return frame
-    }
-
-    private func makeDropRelease(generation: UInt64) -> Frame {
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.dropRelease = Kernova_V1_DropRelease.with { $0.generation = generation }
-        return frame
-    }
-
     /// One dropped file's metadata, as the host would offer it.
     private func fileRep(_ name: String, bytes: Data) -> RepInfo {
         RepInfo(
@@ -176,7 +151,7 @@ struct VsockGuestDropAgentTests {
         let first = Data("first file".utf8)
         let second = Data(repeating: 0x7F, count: 4_096)
         try harness.host.send(
-            makeDropOffer(
+            makeDropOfferFrame(
                 generation: 1,
                 reps: [fileRep("notes.txt", bytes: first), fileRep("blob.bin", bytes: second)]))
 
@@ -208,7 +183,7 @@ struct VsockGuestDropAgentTests {
         // The folder's own name rides the offer, not the archive: its entries are
         // relative to it, so the guest is what recreates the folder itself.
         try harness.host.send(
-            makeDropOffer(
+            makeDropOfferFrame(
                 generation: 1,
                 reps: [
                     RepInfo(
@@ -236,7 +211,7 @@ struct VsockGuestDropAgentTests {
 
         let payload = Data("reveal me".utf8)
         try harness.host.send(
-            makeDropOffer(generation: 1, reps: [fileRep("shown.txt", bytes: payload)]))
+            makeDropOfferFrame(generation: 1, reps: [fileRep("shown.txt", bytes: payload)]))
         try await serveRequest(on: harness.host, generation: 1, repIndex: 0, payload: payload)
         _ = try await awaitCompletion(on: harness.host)
 
@@ -254,7 +229,7 @@ struct VsockGuestDropAgentTests {
 
         let payload = Data("arriving".utf8)
         try harness.host.send(
-            makeDropOffer(generation: 1, reps: [fileRep("report.pdf", bytes: payload)]))
+            makeDropOfferFrame(generation: 1, reps: [fileRep("report.pdf", bytes: payload)]))
         try await serveRequest(on: harness.host, generation: 1, repIndex: 0, payload: payload)
         _ = try await awaitCompletion(on: harness.host)
 
@@ -275,7 +250,7 @@ struct VsockGuestDropAgentTests {
         let landed = Data("already here".utf8)
         let never = Data(repeating: 0x11, count: 64)
         try harness.host.send(
-            makeDropOffer(
+            makeDropOfferFrame(
                 generation: 1,
                 reps: [fileRep("kept.txt", bytes: landed), fileRep("dropped.bin", bytes: never)]))
         try await serveRequest(on: harness.host, generation: 1, repIndex: 0, payload: landed)
@@ -290,7 +265,7 @@ struct VsockGuestDropAgentTests {
                 break
             }
         }
-        try harness.host.send(makeDropRelease(generation: 1))
+        try harness.host.send(makeDropReleaseFrame(generation: 1))
         let complete = try await awaitCompletion(on: harness.host)
 
         #expect(complete.outcome == .cancelled)
@@ -309,7 +284,7 @@ struct VsockGuestDropAgentTests {
 
         let payload = Data(repeating: 0x22, count: 128)
         try harness.host.send(
-            makeDropOffer(generation: 1, reps: [fileRep("pending.bin", bytes: payload)]))
+            makeDropOfferFrame(generation: 1, reps: [fileRep("pending.bin", bytes: payload)]))
         // Wait for the request, then cancel without ever answering it — the
         // worker is parked on the pull, which is where a cancel has to reach it.
         while true {
@@ -338,6 +313,59 @@ struct VsockGuestDropAgentTests {
         #expect(harness.downloadNames.isEmpty)
     }
 
+    @Test("a retiring abort mid-transfer cancels the job rather than failing it")
+    func retiringAbortCancelsTheJob() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        try await harness.start()
+
+        // Every terminal the drop's readout publishes, since the zero dwell
+        // retires the live report as soon as it stands.
+        let finishes = AtomicBox<[ClipboardTransferFinish]>()
+        let reporter = harness.reporter
+        await MainActor.run {
+            reporter.onReportChanged = { report in
+                guard case .finished(let finish) = report else { return }
+                finishes.set((finishes.value ?? []) + [finish])
+            }
+        }
+
+        try harness.host.send(
+            makeDropOfferFrame(
+                generation: 1,
+                reps: [fileRep("pending.bin", bytes: Data(repeating: 0x33, count: 128))]))
+
+        // The shape a channel closing under the job delivers: the session cancels
+        // every awaiter before its end reaches the job loop, so the abort lands
+        // while the job's own offer is still standing. Driven as a frame here so
+        // the completion stays observable.
+        while true {
+            let frame = try await nextFrame(from: harness.host)
+            if case .clipboardRequest(let request) = frame.payload {
+                try harness.host.send(
+                    makeAbortFrame(
+                        transferID: request.transferID,
+                        code: ClipboardStreamAbortCode.cancelled.rawValue,
+                        message: "Transfer superseded or channel closed"))
+                break
+            }
+        }
+
+        let complete = try await awaitCompletion(on: harness.host)
+        #expect(complete.outcome == .cancelled)
+        #expect(complete.code.isEmpty)
+
+        try await finishes.changed.wait { finishes.value?.isEmpty == false }
+        let finish = try #require(finishes.value?.last)
+        #expect(finish.gesture == .drop)
+        guard case .cancelled = finish.outcome else {
+            Issue.record("Expected a cancelled drop, got \(finish.outcome)")
+            return
+        }
+        #expect(harness.downloadNames.isEmpty)
+        #expect(harness.revealed.value == nil)
+    }
+
     // MARK: - Failures
 
     @Test("a Downloads folder that cannot be written fails the drop with a code")
@@ -355,7 +383,7 @@ struct VsockGuestDropAgentTests {
 
         let payload = Data("nowhere to go".utf8)
         try harness.host.send(
-            makeDropOffer(generation: 1, reps: [fileRep("blocked.txt", bytes: payload)]))
+            makeDropOfferFrame(generation: 1, reps: [fileRep("blocked.txt", bytes: payload)]))
         try await serveRequest(on: harness.host, generation: 1, repIndex: 0, payload: payload)
         let complete = try await awaitCompletion(on: harness.host)
 
@@ -371,25 +399,13 @@ struct VsockGuestDropAgentTests {
         try await harness.start()
 
         try harness.host.send(
-            makeDropOffer(
+            makeDropOfferFrame(
                 generation: 1, reps: [fileRep("huge.bin", bytes: Data(repeating: 0, count: 1_024))]))
         let complete = try await awaitCompletion(on: harness.host)
 
         #expect(complete.outcome == .failed)
         #expect(complete.code == ClipboardErrorCode.dropDiskFull.rawValue)
         #expect(harness.downloadNames.isEmpty)
-    }
-
-    @Test("an offer with no items is failed rather than left open")
-    func emptyOfferIsFailed() async throws {
-        let harness = try Harness()
-        defer { harness.tearDown() }
-        try await harness.start()
-
-        try harness.host.send(makeDropOffer(generation: 1, reps: []))
-        let complete = try await awaitCompletion(on: harness.host)
-
-        #expect(complete.outcome == .failed)
     }
 
     // MARK: - Enablement

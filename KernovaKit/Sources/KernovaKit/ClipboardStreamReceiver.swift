@@ -1054,15 +1054,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     }
 
     private func sendAbortFrame(_ transferID: UInt64, code: ClipboardStreamAbortCode, message: String) {
-        send(
-            .with {
-                $0.protocolVersion = 1
-                $0.clipboardStreamAbort = .with {
-                    $0.transferID = transferID
-                    $0.code = code.rawValue
-                    $0.message = message
-                }
-            })
+        send(.clipboardStreamAbort(transferID: transferID, code: code, message: message))
     }
 
     private func send(_ frame: Frame) {

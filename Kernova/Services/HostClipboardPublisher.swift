@@ -20,10 +20,8 @@ final class HostClipboardPublisher {
     /// launch instead.
     static let stagingLabel = "host"
 
-    private let writePasteboard: any HostWritePasteboard
-
-    /// Process-lifetime owner of the lazy data providers a write promises.
-    private let providerRegistry: LazyClipboardProviderRegistry
+    /// The shared write choke point every publication goes through.
+    private let publisher: ClipboardPasteboardPublisher
 
     /// Materializes inline/directory payloads to local temp files so a Finder
     /// paste creates real files.
@@ -36,29 +34,19 @@ final class HostClipboardPublisher {
     /// so each supersedes older staged artifacts within the recency window.
     private var stagingGeneration: UInt64 = 1
 
-    /// The write pasteboard's `changeCount` immediately after the most recent
-    /// successful write, or `nil` before any write (and after a retraction).
-    ///
-    /// A passthrough coordinator polling the same pasteboard skips this exact
-    /// change, so guest content is never re-forwarded back to the guest.
-    private(set) var lastWriteChangeCount: Int?
-
-    /// Whether the most recent write carried promised (offer-addressed) items.
-    ///
-    /// Those are the only kind a supersession can strand, and so the only kind
-    /// `retractPromisedWrite` retracts — a fully resolved write serves from
-    /// local staging and survives the guest clipboard moving on.
-    private var lastWriteWasPromised = false
+    /// The change a passthrough coordinator polling the same pasteboard skips,
+    /// so guest content is never re-forwarded back to the guest.
+    var lastWriteChangeCount: Int? { publisher.lastWriteChangeCount }
 
     nonisolated private static let logger = Logger(
         subsystem: "app.kernova", category: "HostClipboardPublisher")
 
     init(
-        writePasteboard: any HostWritePasteboard = NSPasteboard.general,
+        writePasteboard: any ClipboardWritePasteboard = NSPasteboard.general,
         providerRegistry: LazyClipboardProviderRegistry = .shared
     ) {
-        self.writePasteboard = writePasteboard
-        self.providerRegistry = providerRegistry
+        self.publisher = ClipboardPasteboardPublisher(
+            pasteboard: writePasteboard, providerRegistry: providerRegistry)
     }
 
     /// Builds the service's "Copy to Mac" items and writes them to the host
@@ -91,8 +79,8 @@ final class HostClipboardPublisher {
         var specs = await Self.hostPasteboardItems(
             for: ClipboardContent(representations: resolvedReps), generation: generation,
             staging: staging)
-        if let repProvider = service as? any ClipboardPasteboardRepProviding {
-            specs += Self.promisedItemSpecs(for: promises, provider: repProvider)
+        if let serving = service as? any ClipboardPromiseServing {
+            specs += Self.promisedItemSpecs(for: promises, serve: serving)
         }
 
         // An empty `specs` means every resolved payload was dropped (e.g. a lone
@@ -103,37 +91,15 @@ final class HostClipboardPublisher {
             return .stagingFailed
         }
 
-        // Captures the registry, not `self`, so a provider's lifetime is
-        // decoupled from this object.
-        let registry = self.providerRegistry
-        var providers: [LazyClipboardDataProvider] = []
-        let items = specs.map { spec -> NSPasteboardItem in
-            let item = NSPasteboardItem()
-            let provider = LazyClipboardDataProvider(
-                provide: spec.provide,
-                onFinished: { provider in registry.release(provider) })
-            item.setDataProvider(provider, forTypes: spec.types)
-            providers.append(provider)
-            return item
-        }
-
-        let pasteboard = writePasteboard
-        // `.currentHostOnly` (docs/CLIPBOARD.md §10) is per-write state, reset by
-        // every `prepareForNewContents`/`clearContents`, so it is applied at this
-        // single publication choke point rather than once at init.
-        pasteboard.prepareForNewContents(with: .currentHostOnly)
-        guard pasteboard.writeObjects(items) else {
-            // The write failed, so the providers were never retained.
-            Self.logger.error("NSPasteboard.writeObjects failed for host clipboard publish")
+        guard publisher.write(specs, promised: !promises.isEmpty),
+            let changeCount = publisher.lastWriteChangeCount
+        else {
+            Self.logger.error("The pasteboard write failed for a host clipboard publish")
             return .writeFailed
         }
-        providerRegistry.retain(providers)
-        let changeCount = pasteboard.changeCount
-        lastWriteChangeCount = changeCount
-        lastWriteWasPromised = !promises.isEmpty
         let representationCount = resolvedReps.count + promises.count
         Self.logger.info(
-            "Published clipboard buffer to host pasteboard (\(representationCount, privacy: .public) reps, \(items.count, privacy: .public) items, \(droppedReasons.count, privacy: .public) dropped)"
+            "Published clipboard buffer to host pasteboard (\(representationCount, privacy: .public) reps, \(specs.count, privacy: .public) items, \(droppedReasons.count, privacy: .public) dropped)"
         )
         return .written(
             representationCount: representationCount, droppedReasons: droppedReasons,
@@ -142,85 +108,43 @@ final class HostClipboardPublisher {
 
     /// `true` while the host pasteboard still holds this publisher's most recent
     /// write — nothing (the user included) has replaced it since.
-    var pasteboardHoldsLastWrite: Bool {
-        lastWriteChangeCount != nil && lastWriteChangeCount == writePasteboard.changeCount
-    }
+    var pasteboardHoldsLastWrite: Bool { publisher.holdsLastWrite }
 
     /// Clears the host pasteboard when it still holds this publisher's most
     /// recent *promised* write, returning whether it did — the stale-promise
     /// retraction the clipboard service triggers when the guest's clipboard
     /// supersedes an offer whose promises can no longer be served.
-    ///
-    /// A pasteboard the user has since written over is theirs and is left
-    /// untouched, as is a fully resolved write (it keeps serving from local
-    /// staging).
     func retractPromisedWrite() -> Bool {
-        guard lastWriteWasPromised, let lastWrite = lastWriteChangeCount,
-            writePasteboard.changeCount == lastWrite
-        else { return false }
-        writePasteboard.clearContents()
-        lastWriteChangeCount = nil
-        lastWriteWasPromised = false
+        guard publisher.retractPromisedWrite() else { return false }
         Self.logger.notice("Retracted stale promised clipboard write from the host pasteboard")
         return true
-    }
-
-    /// One pasteboard item to write: the types it promises and a closure that
-    /// lazily serves the bytes for each requested type.
-    struct PasteboardItemSpec: Sendable {
-        let types: [NSPasteboard.PasteboardType]
-        let provide: @Sendable (NSPasteboard.PasteboardType) -> Data?
     }
 
     /// Builds the per-item provider specs for reps promised by offer coordinates —
     /// the same grouping the resolved path plans, driven by offer metadata alone.
     ///
-    /// Each flavor's bytes are served at paste time: `.fileURL` through
-    /// `copyToMacFileURL`, inline flavors through `copyToMacData`. The pull runs
-    /// synchronously on the thread of the pasteboard server's `provideData`
-    /// callback (usually main, which keeps running its event loop meanwhile)
-    /// while the stream receiver delivers off-main; the offer's paste-bound total
-    /// is size-capped so the pull and stage complete within the OS paste
-    /// deadline. A promise that withholds
-    /// `.fileURL` (the over-cap refusal) never registers that type, so the paste
-    /// finds no file flavor to fire rather than firing one that serves nothing.
+    /// The pull each flavor's closure runs happens on the thread of the
+    /// pasteboard server's `provideData` callback (usually main, which keeps
+    /// running its event loop meanwhile) while the stream receiver delivers
+    /// off-main; the offer's paste-bound total is size-capped so the pull and
+    /// stage complete within the OS paste deadline. A promise that withholds
+    /// `.fileURL` (the over-cap refusal) never registers that type.
     nonisolated static func promisedItemSpecs(
-        for promises: [CopyToMacPromise], provider: any ClipboardPasteboardRepProviding
-    ) -> [PasteboardItemSpec] {
+        for promises: [CopyToMacPromise], serve: any ClipboardPromiseServing
+    ) -> [ClipboardPasteboardPublisher.ItemSpec] {
         let descriptors = promises.map {
             ClipboardRepresentationDescriptor(
                 uti: $0.uti, filename: $0.filename, isInline: $0.isInline, isPromisable: true)
         }
-        let plan = ClipboardPasteboardItemPlan.plan(for: descriptors)
-        return plan.items.compactMap { item -> PasteboardItemSpec? in
-            var types: [NSPasteboard.PasteboardType] = []
-            var routes: [NSPasteboard.PasteboardType: (promise: CopyToMacPromise, isFileURL: Bool)] =
-                [:]
-            for promisedType in item.types {
-                let promise = promises[promisedType.representationIndex]
-                if promisedType.isFileURL && promise.withholdsFileURL { continue }
-                let type: NSPasteboard.PasteboardType =
-                    promisedType.isFileURL ? .fileURL : .init(promisedType.uti)
-                types.append(type)
-                routes[type] = (promise, promisedType.isFileURL)
-            }
-            guard !types.isEmpty else { return nil }
-            // Snapshot to a `let` so the @Sendable closure captures an immutable
-            // map.
-            let itemRoutes = routes
-            return PasteboardItemSpec(types: types) { type in
-                guard let route = itemRoutes[type] else { return nil }
-                if route.isFileURL {
-                    guard
-                        let url = provider.copyToMacFileURL(
-                            generation: route.promise.generation, repIndex: route.promise.repIndex)
-                    else { return nil }
-                    return Data(url.absoluteString.utf8)
-                }
-                return provider.copyToMacData(
-                    generation: route.promise.generation, repIndex: route.promise.repIndex,
-                    uti: route.promise.uti)
-            }
+        // A "Copy to Mac" plans over the promises it kept, not the offer's own
+        // representations, so a promised type's index is into `promises` and the
+        // coordinates it serves from come from there.
+        return ClipboardPasteboardPublisher.specs(
+            for: ClipboardPasteboardItemPlan.plan(for: descriptors), serve: serve
+        ) { promisedType in
+            let promise = promises[promisedType.representationIndex]
+            guard !(promisedType.isFileURL && promise.withholdsFileURL) else { return nil }
+            return (generation: promise.generation, repIndex: promise.repIndex)
         }
     }
 
@@ -234,7 +158,7 @@ final class HostClipboardPublisher {
     /// one value per type, so several file URLs in one item would collide.
     nonisolated static func hostPasteboardItems(
         for content: ClipboardContent, generation: UInt64, staging: ClipboardFileStaging
-    ) async -> [PasteboardItemSpec] {
+    ) async -> [ClipboardPasteboardPublisher.ItemSpec] {
         let descriptors = content.representations.map {
             ClipboardRepresentationDescriptor(
                 uti: $0.uti, filename: $0.filename,
@@ -242,7 +166,7 @@ final class HostClipboardPublisher {
         }
         let plan = ClipboardPasteboardItemPlan.plan(for: descriptors)
 
-        var specs: [PasteboardItemSpec] = []
+        var specs: [ClipboardPasteboardPublisher.ItemSpec] = []
         for item in plan.items {
             if item.types.contains(where: \.isFileURL) {
                 // All of an item's types share one backing rep.
@@ -264,7 +188,7 @@ final class HostClipboardPublisher {
 
                 guard !types.isEmpty else { continue }
                 specs.append(
-                    PasteboardItemSpec(types: types) { type in
+                    ClipboardPasteboardPublisher.ItemSpec(types: types) { type in
                         if type == .fileURL { return fileURLData }
                         if type == imageType {
                             if let stagedURL,
@@ -289,7 +213,7 @@ final class HostClipboardPublisher {
                 // immutable map.
                 let inlineReps = inlineByType
                 specs.append(
-                    PasteboardItemSpec(types: inlineTypes) { type in
+                    ClipboardPasteboardPublisher.ItemSpec(types: inlineTypes) { type in
                         inlineReps[type].flatMap(inlineData(for:))
                     })
             }

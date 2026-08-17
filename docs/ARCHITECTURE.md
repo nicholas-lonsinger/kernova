@@ -179,12 +179,13 @@ The vsock stack (macOS guests only):
   notification that re-arms `VMInstance`'s agent-arrival watchdog. Installed for every macOS guest
   with a socket device, independent of clipboard sharing.
 - `VsockGuestLogService` — forwards guest `LogRecord` frames into the `app.kernova.guest` subsystem.
-- `VsockDropService` — `@MainActor` `@Observable` owner of the drop channel, send-only. Files
-  dragged onto `VMDisplayBackingView` become a `DropOffer` the guest pulls representation by
-  representation over the same streaming engine the clipboard uses; the guest writes them into its
-  Downloads folder and replies `DropComplete`. Installed for every guest with a socket device,
-  gated only on the guest's `drop.files.v2`. `VMInstance.displayDropAvailability` is the single
-  read site deciding whether the display registers as a drag destination at all.
+- `VsockDropService` — `@MainActor` `@Observable` owner of the drop channel, send-only, driving
+  `KernovaKit`'s `ClipboardEndpoint`. Files dragged onto `VMDisplayBackingView` become a
+  `DropOffer` the guest pulls representation by representation over the same streaming engine the
+  clipboard uses; the guest writes them into its Downloads folder and replies `DropComplete`.
+  Installed for every guest with a socket device, gated only on the guest's `drop.files.v2`.
+  `VMInstance.displayDropAvailability` is the single read site deciding whether the display
+  registers as a drag destination at all.
 
 The log and clipboard listeners are gated on their configuration toggles and re-evaluated at
 runtime through `VMInstance.applyLivePolicy(oldConfig:newConfig:)`; the control and drop listeners
@@ -202,12 +203,20 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
   `VZSpiceAgentPortAttachment` so clipboard data flows through the gated UI instead of the host
   `NSPasteboard`.
 - `VsockClipboardService` — the macOS transport, over `VsockChannel`, driving `KernovaKit`'s
-  `ClipboardStreamSender`/`ClipboardStreamReceiver`. Offers are metadata-only; bytes stream on
+  `ClipboardEndpoint`. Offers are metadata-only; bytes stream on
   request. Both stream engines and the agent's watchdog types store `any EngineClock` — one `EngineInstant`
   timeline for every conformance, so the macOS 13+ and macOS 12 clocks (and a manually advanced
   test clock) are interchangeable at construction.
+- `ClipboardEndpoint` — `KernovaKit`'s `@MainActor` owner of one clipboard-protocol connection,
+  parameterized by role (`.host`/`.guest`) and kind (`.clipboard`/`.drop`): the streaming engine
+  and its frame routing, what each side has offered, and every transfer between them. Its
+  `ClipboardEndpointDelegate` is the seam an owner sees — offer arrival and retraction, refusals,
+  status activity, the channel's end. All four owners drive one: the two host services above and
+  the guest agent's `VsockGuestClipboardAgent`/`VsockGuestDropAgent`.
 - `HostClipboardPublisher`, `ClipboardPassthroughCoordinator` — host-side publication of inbound
-  guest content, and the auto-publish path.
+  guest content, and the auto-publish path. Both reach the pasteboard through KernovaKit's
+  `ClipboardPasteboardPublisher` — the one promised write on either side of the wire, driven by the
+  guest agent too.
 - `ClipboardTransferReporter` — one per `VMInstance`, fed by `VsockClipboardService`,
   `VsockDropService` and `ClipboardPassthroughCoordinator`. `VMInstance.clipboardTransferReport`
   mirrors it as the observable value every surface renders — the clipboard window's bar and
@@ -353,9 +362,9 @@ AppKit views ──observe──→ VMLibraryViewModel ──delegates──→ 
 vsock wire protocol, the clipboard domain model and file staging/archive, and cross-cutting
 helpers. **New host/guest-identical code belongs here**, not copied into both targets.
 
-The package also vends `KernovaTestSupport`, the single shared copy of the test wait primitives every
-test target imports. It must keep **no dependency on `KernovaKit`** and is **never linked
-into a shipping target** — nothing enforces either.
+The package also vends `KernovaTestSupport`, the single shared copy of the wait primitives, channel
+and frame fixtures, and production-seam doubles every test target imports. It is **never linked into
+a shipping target** — nothing enforces that.
 
 ## Key Design Decisions
 
@@ -405,7 +414,8 @@ kernel resources until relaunch — hence one owner (`RuntimeFileAccess`) and on
 
 - **KernovaMacOSAgent** — `Kernova Guest Agent.app`, the `.accessory` menu-bar app that runs inside
   macOS guests, holding four independent vsock connections to the host (control, log forwarding,
-  clipboard, drop). It is not embedded as a bundle: the `Package Guest Agent DMG` build phase produces
+  clipboard, drop). Its clipboard and drop agents each drive a `ClipboardEndpoint`, the same
+  KernovaKit type the host services do. It is not embedded as a bundle: the `Package Guest Agent DMG` build phase produces
   `Contents/Resources/KernovaMacOSAgent.dmg`, so it must already carry its final Developer ID
   signature when the DMG is baked — export-time re-signing cannot reach inside a DMG resource
   ([RELEASING.md](RELEASING.md)); version bumps are in [BUILD.md](BUILD.md).

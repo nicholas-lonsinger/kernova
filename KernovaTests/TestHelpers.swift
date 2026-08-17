@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import Darwin
 import Observation
 import KernovaKit
 import KernovaTestSupport
@@ -57,70 +56,6 @@ func makeVZErrorChain(depth: Int, around error: NSError) -> NSError {
             userInfo: [NSUnderlyingErrorKey: wrapped])
     }
     return wrapped
-}
-
-// MARK: - Socket / channel factories
-
-/// Returns a connected AF_UNIX socketpair as two raw file descriptors.
-func makeRawSocketPair() throws -> (Int32, Int32) {
-    var fds: [Int32] = [-1, -1]
-    let rc = fds.withUnsafeMutableBufferPointer { buf in
-        socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
-    }
-    guard rc == 0 else {
-        throw POSIXError(.init(rawValue: errno) ?? .EIO)
-    }
-    return (fds[0], fds[1])
-}
-
-// MARK: - nextFrame
-
-/// Reads the next frame from `channel`, distinguishing timeout from EOF.
-///
-/// - Throws: `TestFailure("Timed out…")` when no frame arrives within the
-///   `testWaitBackstop` deadline.
-/// - Throws: `TestFailure("Channel finished…")` when the channel closes without
-///   producing a frame (EOF), so the two failure shapes are identifiable in
-///   post-mortem logs. Conflating them once masked a CI flake as a
-///   peer-disconnect bug.
-@MainActor
-func nextFrame(from channel: VsockChannel) async throws -> Frame {
-    let timeout: Duration = .seconds(testWaitBackstop)
-    let stopwatch = BackstopStopwatch()
-    let receiver = Task<Frame?, Error> {
-        var iterator = channel.incoming.makeAsyncIterator()
-        return try await iterator.next()
-    }
-    // `receiver` is not cancelled in `defer` because every exit path already
-    // awaits `receiver.value` — success, EOF, or the timeout task's cancel,
-    // which surfaces as a nil from `next()`. By the time the function returns,
-    // the receiver task has completed; a redundant cancel would be a no-op and
-    // obscures intent. Cancelling the timeoutTask is necessary on the success
-    // path.
-    let timeoutTask = Task<Void, Never> {
-        try? await Task.sleep(for: timeout)
-        receiver.cancel()
-    }
-    defer { timeoutTask.cancel() }
-
-    do {
-        guard let frame = try await receiver.value else {
-            // Cancelling the task suspended in `AsyncThrowingStream.next()`
-            // makes it return nil rather than throw, so the timeout lands here
-            // too, distinguishable from a genuine EOF only by the clock.
-            if stopwatch.elapsed >= testWaitBackstop {
-                throw TestFailure.backstop(
-                    "Timed out waiting for a frame after \(timeout)",
-                    stopwatch: stopwatch, timeout: timeout)
-            }
-            throw TestFailure("Channel finished without producing a frame (EOF)")
-        }
-        return frame
-    } catch is CancellationError {
-        throw TestFailure.backstop(
-            "Timed out waiting for a frame after \(timeout)",
-            stopwatch: stopwatch, timeout: timeout)
-    }
 }
 
 // MARK: - expectEOF

@@ -90,7 +90,7 @@ struct VsockHostConnectionTests {
             conn.bufferFrameUnlessDisabled(makeLogFrame(message: "flush\(i)"))
         }
 
-        let (sender, receiver) = try makeChannelPair()
+        let (sender, receiver) = try makeStartedChannelPair()
         defer { sender.close(); receiver.close() }
 
         conn.flushPendingLogs(on: sender)
@@ -116,7 +116,7 @@ struct VsockHostConnectionTests {
             conn.bufferFrameUnlessDisabled(makeLogFrame(message: "m\(i)"))
         }
 
-        let (sender, receiver) = try makeChannelPair()
+        let (sender, receiver) = try makeStartedChannelPair()
         defer { sender.close(); receiver.close() }
 
         conn.flushPendingLogs(on: sender)
@@ -193,7 +193,7 @@ struct VsockHostConnectionTests {
 
         // Close both ends before flush so every send throws .closed —
         // all 256 frames re-enqueue at the front of the buffer.
-        let (sender, receiver) = try makeChannelPair()
+        let (sender, receiver) = try makeStartedChannelPair()
         sender.close()
         receiver.close()
         conn.flushPendingLogs(on: sender)
@@ -224,7 +224,7 @@ struct VsockHostConnectionTests {
         conn.start()
         defer { conn.stop() }
 
-        let (sender, receiver) = try makeChannelPair()
+        let (sender, receiver) = try makeStartedChannelPair()
         defer { receiver.close() }
 
         // Manually wire a live channel by flushing zero frames — the channel
@@ -256,7 +256,7 @@ struct VsockHostConnectionTests {
         // The send fails and the frame is re-enqueued.
         conn.bufferFrameUnlessDisabled(makeLogFrame(message: "initial"))
 
-        let (sender, receiver) = try makeChannelPair()
+        let (sender, receiver) = try makeStartedChannelPair()
         sender.close()
         receiver.close()
 
@@ -328,7 +328,7 @@ struct VsockHostConnectionTests {
         // the records buffered during the undecided window (enabling doesn't clear
         // the buffer).
         conn.setEnabled(true)
-        let (sender, receiver) = try makeChannelPair()
+        let (sender, receiver) = try makeStartedChannelPair()
         defer { sender.close(); receiver.close() }
         conn.flushPendingLogs(on: sender)
 
