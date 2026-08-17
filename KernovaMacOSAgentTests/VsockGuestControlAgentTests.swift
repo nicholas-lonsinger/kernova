@@ -115,7 +115,7 @@ struct VsockGuestControlAgentTests {
         #expect(hello.capabilities.contains("control.heartbeat.v1"))
         // The guest advertises streaming-clipboard support so the host can gate
         // clipboard on it.
-        #expect(hello.capabilities.contains(KernovaCapability.clipboardStreamV2))
+        #expect(hello.capabilities.contains(KernovaCapability.clipboardTransferV3))
     }
 
     @Test("Guest Hello reports agent_info with a numeric os_version")

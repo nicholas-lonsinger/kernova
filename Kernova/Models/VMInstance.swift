@@ -819,9 +819,9 @@ final class VMInstance {
     enum FeatureChannelRequirement {
         /// Log forwarding — the handshake alone.
         case none
-        /// The clipboard channel: `clipboard.stream.v2`.
+        /// The clipboard channel: `clipboard.transfer.v3`.
         case clipboardStreaming
-        /// The drop channel: `drop.files.v2`.
+        /// The drop channel: `drop.files.v3`.
         case dropFiles
 
         /// The capability tag a guest must advertise, or `nil` when none is
@@ -829,8 +829,8 @@ final class VMInstance {
         var capability: String? {
             switch self {
             case .none: return nil
-            case .clipboardStreaming: return KernovaCapability.clipboardStreamV2
-            case .dropFiles: return KernovaCapability.dropFilesV2
+            case .clipboardStreaming: return KernovaCapability.clipboardTransferV3
+            case .dropFiles: return KernovaCapability.dropFilesV3
             }
         }
     }

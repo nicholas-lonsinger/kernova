@@ -40,6 +40,7 @@ message Frame {
     //   20..29 reserved for clipboard
     //   30..39 reserved for logging
     //   40..49 reserved for drag/drop
+    //   50..59 reserved for the clipboard data connection
     PolicyUpdate policy_update = 13;
 
     ClipboardOffer clipboard_offer = 20;
@@ -66,6 +67,12 @@ message Frame {
     DropOffer drop_offer = 40;
     DropComplete drop_complete = 41;
     DropRelease drop_release = 42;
+
+    // 50..59: the clipboard data connection. One guest-initiated vsock
+    // connection per transfer carries these two frames as its header, then the
+    // payload bytes, then a fixed 33-byte trailer, then EOF.
+    ClipboardTransferRequest clipboard_transfer_request = 50;
+    ClipboardTransferReply clipboard_transfer_reply = 51;
   }
 }
 
@@ -350,6 +357,67 @@ message ClipboardStreamAbort {
 
   // Human-readable detail for logs / user-facing messages.
   string message = 3;
+}
+
+// The first frame on a data connection when the side that dialled is the one
+// RECEIVING the payload (a guest paste, a drop into the guest): the connection
+// itself is the request, so no `ClipboardRequest` crosses the control channel
+// in that direction. Same fields as `ClipboardRequest`.
+message ClipboardTransferRequest {
+  // Echoes the offer's generation so a request racing a newer offer is dropped.
+  uint64 generation = 1;
+
+  // Names the transfer, derived exactly as `ClipboardRequest.transfer_id` is.
+  uint64 transfer_id = 2;
+
+  // The single representation being consumed (one of the offer's `rep_info`
+  // UTIs).
+  string uti = 3;
+
+  // The requester's free-space ceiling for this transfer: the sender refuses
+  // (`disk.full`) rather than start a transfer the requester cannot stage.
+  uint64 max_accept_byte_count = 4;
+}
+
+// Written on a data connection by whichever side SENDS the payload, before its
+// first payload byte: by the answering side after it reads a
+// `ClipboardTransferRequest`, or as the connection's first frame when the
+// dialling side is answering a `ClipboardRequest` it received on the control
+// channel.
+message ClipboardTransferReply {
+  // The transfer being answered — the request's `transfer_id`, which is how
+  // the receiving side matches the connection to the pull awaiting it.
+  uint64 transfer_id = 1;
+
+  // Non-empty when the transfer will not happen: no payload bytes and no
+  // trailer follow, and the connection closes. The vocabulary is
+  // `ClipboardStreamAbortCode` (`request.stale`, `request.range`,
+  // `request.uti`, `request.cancelled`, `superseded`, `disk.full`).
+  string refusal_code = 2;
+
+  // Human-readable detail for logs / user-facing messages; empty when
+  // `refusal_code` is.
+  string refusal_message = 3;
+
+  // Whether the payload is an AppleArchive (LZ4) the receiver extracts, rather
+  // than the representation's own bytes. Every representation that lands on
+  // the receiver's disk crosses as an archive — a file as a one-entry archive,
+  // a folder as an archive of its tree, and an inline representation larger
+  // than `ClipboardStreamTuning.maxResidentInlineBytes`, which the receiver
+  // extracts and maps back into memory. Only an inline representation at or
+  // below that size crosses raw, reassembled in RAM.
+  bool is_archive = 4;
+
+  // Whether the receiver delivers the payload as pasteboard bytes (inline) or
+  // as a file. Mirrors `ClipboardRepresentationInfo.is_inline`.
+  bool is_inline = 5;
+
+  // Payload size in bytes for a raw payload, which the receiver bounds the
+  // arriving bytes by. 0 for an archive (`is_archive`), whose compressed size
+  // is only known once it has been produced: the offer's `byte_count`, which
+  // the requester already read, stands in for the receiver's pre-flight and
+  // extract ceiling.
+  uint64 total_bytes = 6;
 }
 
 // Liveness ping exchanged on the control channel. Each side sends one on a

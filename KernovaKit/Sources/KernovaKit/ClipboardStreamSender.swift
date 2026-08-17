@@ -377,12 +377,12 @@ public final class ClipboardStreamSender: @unchecked Sendable {
                     detail: .outbound(
                         .init(
                             isArchived: declaredByteCount == nil,
-                            chunkCount: timings.chunkCount,
-                            timeToFirstChunk: timings.firstChunkAt.map {
+                            timeToFirstByte: timings.firstChunkAt.map {
                                 transfer.beganAt.seconds(to: $0)
                             },
-                            creditStall: timings.creditStall,
-                            sourceWait: timings.sourceWait))))
+                            sourceWait: timings.sourceWait,
+                            chunkCount: timings.chunkCount,
+                            creditStall: timings.creditStall))))
         }
     }
 

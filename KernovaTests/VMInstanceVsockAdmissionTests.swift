@@ -8,7 +8,7 @@ import Testing
 /// The #145 feature-channel admission predicate: log/clipboard vsock listeners
 /// only admit connections while a control channel with a completed `Hello`
 /// handshake exists — clipboard additionally requires the negotiated
-/// `clipboard.stream.v2` capability.
+/// `clipboard.transfer.v3` capability.
 @Suite("VMInstance vsock feature-channel admission")
 @MainActor
 struct VMInstanceVsockAdmissionTests {
@@ -176,7 +176,7 @@ struct VMInstanceVsockAdmissionTests {
 
     // MARK: - Drop channel
 
-    @Test("The drop channel is refused before the handshake, and without drop.files.v2")
+    @Test("The drop channel is refused before the handshake, and without drop.files.v3")
     func dropAdmissionFollowsItsOwnCapability() async throws {
         let instance = makeInstance()
         let (guestFd, hostFd) = try makeRawSocketPair()
@@ -198,7 +198,7 @@ struct VMInstanceVsockAdmissionTests {
         try guest.send(
             makeGuestHello(capabilities: [
                 KernovaCapability.controlV1, KernovaCapability.controlHeartbeatV1,
-                KernovaCapability.clipboardStreamV2,
+                KernovaCapability.clipboardTransferV3,
             ]))
         try await waitForChange { admits(instance, clipboard: true) }
         #expect(isDenied(instance.featureChannelAdmission(.dropFiles)))

@@ -223,8 +223,8 @@ final class VsockGuestControlAgent: @unchecked Sendable {
 
         switch frame.payload {
         case .hello(let hello):
-            let hostStreams = hello.capabilities.contains(KernovaCapability.clipboardStreamV2)
-            let hostTakesDrops = hello.capabilities.contains(KernovaCapability.dropFilesV2)
+            let hostStreams = hello.capabilities.contains(KernovaCapability.clipboardTransferV3)
+            let hostTakesDrops = hello.capabilities.contains(KernovaCapability.dropFilesV3)
             lock.withLock {
                 hostSupportsClipboardStreaming = hostStreams
                 hostSupportsDropFilesStorage = hostTakesDrops
@@ -251,7 +251,7 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             effective.clipboardSharingEnabled = policy.clipboardSharingEnabled && hostStreams
             if policy.clipboardSharingEnabled && !hostStreams {
                 Self.logger.notice(
-                    "Host enabled clipboard but didn't advertise \(KernovaCapability.clipboardStreamV2, privacy: .public) — keeping clipboard disabled"
+                    "Host enabled clipboard but didn't advertise \(KernovaCapability.clipboardTransferV3, privacy: .public) — keeping clipboard disabled"
                 )
             }
             Self.logger.notice(
@@ -260,7 +260,8 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             onPolicy?(effective)
         case .clipboardOffer, .clipboardRequest, .clipboardRelease,
             .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck,
-            .clipboardStreamAbort, .logRecord, .dropOffer, .dropComplete, .dropRelease, .none:
+            .clipboardStreamAbort, .clipboardTransferRequest, .clipboardTransferReply, .logRecord,
+            .dropOffer, .dropComplete, .dropRelease, .none:
             Self.logger.warning("Unexpected payload on control channel — wrong port")
         }
     }

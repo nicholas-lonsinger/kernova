@@ -121,7 +121,7 @@ struct ClipboardOutboundMetricsTests {
         #expect(metrics.logSummary.contains("raw"))
         #expect(sent.chunkCount == 3)
         #expect(metrics.duration > .zero)
-        let ramp = try #require(sent.timeToFirstChunk)
+        let ramp = try #require(sent.timeToFirstByte)
         #expect(ramp <= metrics.duration)
         #expect(metrics.inbound == nil)
 
@@ -165,7 +165,7 @@ struct ClipboardOutboundMetricsTests {
         #expect(received.wireByteCount == metrics.wireByteCount)
         #expect(metrics.logSummary.contains("archive"))
         #expect(metrics.logSummary.contains("\(metrics.wireByteCount) wire bytes"))
-        #expect(sent.chunkCount > 0)
+        #expect((sent.chunkCount ?? 0) > 0)
         #expect(harness.collector.abortCount == 0)
     }
 
@@ -204,7 +204,7 @@ struct ClipboardOutboundMetricsTests {
         #expect(sent.isArchived)
         #expect(metrics.wireByteCount == Int(end.totalBytes))
         #expect(metrics.byteCount > 0)
-        #expect(sent.chunkCount > 0)
+        #expect((sent.chunkCount ?? 0) > 0)
         #expect(harness.collector.abortCount == 0)
     }
 
@@ -224,7 +224,7 @@ struct ClipboardOutboundMetricsTests {
         let sent = try #require(metrics.outbound)
 
         #expect(sent.chunkCount == 0)
-        #expect(sent.timeToFirstChunk == nil)
+        #expect(sent.timeToFirstByte == nil)
         #expect(metrics.byteCount == 0)
         #expect(metrics.wireByteCount == 0)
         #expect(!metrics.logSummary.contains("ramp"))
@@ -339,7 +339,7 @@ struct ClipboardOutboundMetricsTests {
         #expect(stub.readCount > 1)
         #expect(sent.sourceWait == Double(stub.readCount) * 0.25)
         // The first read fills the first chunk whole, so the ramp is one read.
-        #expect(sent.timeToFirstChunk == 0.25)
+        #expect(sent.timeToFirstByte == 0.25)
         // A frozen clock only moves inside a read, and no read runs while the
         // sender is waiting on credit.
         #expect(sent.creditStall == 0)
@@ -374,7 +374,7 @@ struct ClipboardOutboundMetricsTests {
         let sent = try #require(metrics.outbound)
 
         #expect(sent.creditStall == 0.5)
-        #expect(sent.timeToFirstChunk == 0.5)
+        #expect(sent.timeToFirstByte == 0.5)
         #expect(metrics.duration == 0.5)
         #expect(sent.sourceWait == 0)
         #expect(metrics.logSummary.contains("credit 0.500 s"))

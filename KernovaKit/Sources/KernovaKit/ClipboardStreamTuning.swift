@@ -149,6 +149,39 @@ public enum ClipboardStreamTuning {
     /// still-progressing transfers that need more than one window to stream.
     public static let lazyPullTimeout: TimeInterval = 120
 
+    /// `SO_RCVTIMEO`/`SO_SNDTIMEO` on a transfer's data connection: 30 s.
+    ///
+    /// A `read(2)` or `write(2)` that reaches it is the stall — the peer has
+    /// gone quiet or stopped draining — reported as `stall.timeout`. It is the
+    /// transport's own liveness bound, inside the `lazyPullTimeout` backstop a
+    /// parked pull keeps.
+    public static let dataSocketTimeout: TimeInterval = 30
+
+    /// `SO_SNDBUF` on the host's end of a data connection: 1 MiB.
+    ///
+    /// The throughput lever, not a buffer budget: a freshly accepted vsock fd
+    /// is born at 8 KiB, which caps host→guest at ~715 MiB/s; at 256 KiB and
+    /// above the same stream reaches ~6.4 GiB/s
+    /// (docs/research/2026-07-13-vsock-transport-throughput.md).
+    public static let dataSendBufferBytes = 1024 * 1024
+
+    /// How much a data connection reads from its socket at a time: 64 KiB.
+    ///
+    /// 64 KiB is the vsock max packet size on both ends — Linux
+    /// `VIRTIO_VSOCK_MAX_PKT_BUF_SIZE` and macOS/XNU `VSOCK_MAX_PACKET_SIZE`
+    /// are both 65536 — so a larger read only spans more packets. It is also
+    /// the progress cadence: a receiver reports once per read.
+    public static let dataReadBufferBytes = 64 * 1024
+
+    /// How far past a completed archive a peer may keep streaming before the
+    /// receiver refuses the surplus: one read buffer.
+    ///
+    /// A decoder that has unpacked the whole archive stops pulling, which can
+    /// legitimately leave the codec's own trailing bytes unread; anything
+    /// beyond that is a peer holding a finished transfer open, and is reported
+    /// as `size.overrun`.
+    public static let archiveTailAllowance = dataReadBufferBytes
+
     /// Sentinel `maxAcceptByteCount` meaning "no explicit ceiling" — the
     /// requester could not measure its free space.
     ///

@@ -77,6 +77,7 @@ public nonisolated struct Kernova_V1_Frame: Sendable {
   ///   20..29 reserved for clipboard
   ///   30..39 reserved for logging
   ///   40..49 reserved for drag/drop
+  ///   50..59 reserved for the clipboard data connection
   public var policyUpdate: Kernova_V1_PolicyUpdate {
     get {
       if case .policyUpdate(let v)? = payload {return v}
@@ -185,6 +186,25 @@ public nonisolated struct Kernova_V1_Frame: Sendable {
     set {payload = .dropRelease(newValue)}
   }
 
+  /// 50..59: the clipboard data connection. One guest-initiated vsock
+  /// connection per transfer carries these two frames as its header, then the
+  /// payload bytes, then a fixed 33-byte trailer, then EOF.
+  public var clipboardTransferRequest: Kernova_V1_ClipboardTransferRequest {
+    get {
+      if case .clipboardTransferRequest(let v)? = payload {return v}
+      return Kernova_V1_ClipboardTransferRequest()
+    }
+    set {payload = .clipboardTransferRequest(newValue)}
+  }
+
+  public var clipboardTransferReply: Kernova_V1_ClipboardTransferReply {
+    get {
+      if case .clipboardTransferReply(let v)? = payload {return v}
+      return Kernova_V1_ClipboardTransferReply()
+    }
+    set {payload = .clipboardTransferReply(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Payload: Equatable, Sendable {
@@ -197,6 +217,7 @@ public nonisolated struct Kernova_V1_Frame: Sendable {
     ///   20..29 reserved for clipboard
     ///   30..39 reserved for logging
     ///   40..49 reserved for drag/drop
+    ///   50..59 reserved for the clipboard data connection
     case policyUpdate(Kernova_V1_PolicyUpdate)
     case clipboardOffer(Kernova_V1_ClipboardOffer)
     case clipboardRequest(Kernova_V1_ClipboardRequest)
@@ -214,6 +235,11 @@ public nonisolated struct Kernova_V1_Frame: Sendable {
     case dropOffer(Kernova_V1_DropOffer)
     case dropComplete(Kernova_V1_DropComplete)
     case dropRelease(Kernova_V1_DropRelease)
+    /// 50..59: the clipboard data connection. One guest-initiated vsock
+    /// connection per transfer carries these two frames as its header, then the
+    /// payload bytes, then a fixed 33-byte trailer, then EOF.
+    case clipboardTransferRequest(Kernova_V1_ClipboardTransferRequest)
+    case clipboardTransferReply(Kernova_V1_ClipboardTransferReply)
 
   }
 
@@ -647,6 +673,83 @@ public nonisolated struct Kernova_V1_ClipboardStreamAbort: Sendable {
   public init() {}
 }
 
+/// The first frame on a data connection when the side that dialled is the one
+/// RECEIVING the payload (a guest paste, a drop into the guest): the connection
+/// itself is the request, so no `ClipboardRequest` crosses the control channel
+/// in that direction. Same fields as `ClipboardRequest`.
+public nonisolated struct Kernova_V1_ClipboardTransferRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Echoes the offer's generation so a request racing a newer offer is dropped.
+  public var generation: UInt64 = 0
+
+  /// Names the transfer, derived exactly as `ClipboardRequest.transfer_id` is.
+  public var transferID: UInt64 = 0
+
+  /// The single representation being consumed (one of the offer's `rep_info`
+  /// UTIs).
+  public var uti: String = String()
+
+  /// The requester's free-space ceiling for this transfer: the sender refuses
+  /// (`disk.full`) rather than start a transfer the requester cannot stage.
+  public var maxAcceptByteCount: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Written on a data connection by whichever side SENDS the payload, before its
+/// first payload byte: by the answering side after it reads a
+/// `ClipboardTransferRequest`, or as the connection's first frame when the
+/// dialling side is answering a `ClipboardRequest` it received on the control
+/// channel.
+public nonisolated struct Kernova_V1_ClipboardTransferReply: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The transfer being answered — the request's `transfer_id`, which is how
+  /// the receiving side matches the connection to the pull awaiting it.
+  public var transferID: UInt64 = 0
+
+  /// Non-empty when the transfer will not happen: no payload bytes and no
+  /// trailer follow, and the connection closes. The vocabulary is
+  /// `ClipboardStreamAbortCode` (`request.stale`, `request.range`,
+  /// `request.uti`, `request.cancelled`, `superseded`, `disk.full`).
+  public var refusalCode: String = String()
+
+  /// Human-readable detail for logs / user-facing messages; empty when
+  /// `refusal_code` is.
+  public var refusalMessage: String = String()
+
+  /// Whether the payload is an AppleArchive (LZ4) the receiver extracts, rather
+  /// than the representation's own bytes. Every representation that lands on
+  /// the receiver's disk crosses as an archive — a file as a one-entry archive,
+  /// a folder as an archive of its tree, and an inline representation larger
+  /// than `ClipboardStreamTuning.maxResidentInlineBytes`, which the receiver
+  /// extracts and maps back into memory. Only an inline representation at or
+  /// below that size crosses raw, reassembled in RAM.
+  public var isArchive: Bool = false
+
+  /// Whether the receiver delivers the payload as pasteboard bytes (inline) or
+  /// as a file. Mirrors `ClipboardRepresentationInfo.is_inline`.
+  public var isInline: Bool = false
+
+  /// Payload size in bytes for a raw payload, which the receiver bounds the
+  /// arriving bytes by. 0 for an archive (`is_archive`), whose compressed size
+  /// is only known once it has been produced: the offer's `byte_count`, which
+  /// the requester already read, stands in for the receiver's pre-flight and
+  /// extract ceiling.
+  public var totalBytes: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// Liveness ping exchanged on the control channel. Each side sends one on a
 /// recurring timer (default ~5 seconds). Receivers refresh their "last seen"
 /// clock for the peer and treat extended silence as the peer being hung —
@@ -857,7 +960,7 @@ fileprivate nonisolated let _protobuf_package = "kernova.v1"
 
 nonisolated extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Frame"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{2}\u{9}hello\0\u{1}error\0\u{1}heartbeat\0\u{3}policy_update\0\u{4}\u{7}clipboard_offer\0\u{3}clipboard_request\0\u{4}\u{2}clipboard_release\0\u{3}clipboard_stream_begin\0\u{3}clipboard_chunk\0\u{3}clipboard_stream_end\0\u{3}clipboard_stream_ack\0\u{3}clipboard_stream_abort\0\u{4}\u{2}log_record\0\u{4}\u{a}drop_offer\0\u{3}drop_complete\0\u{3}drop_release\0\u{c}\u{16}\u{1}\u{c}\u{1d}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{2}\u{9}hello\0\u{1}error\0\u{1}heartbeat\0\u{3}policy_update\0\u{4}\u{7}clipboard_offer\0\u{3}clipboard_request\0\u{4}\u{2}clipboard_release\0\u{3}clipboard_stream_begin\0\u{3}clipboard_chunk\0\u{3}clipboard_stream_end\0\u{3}clipboard_stream_ack\0\u{3}clipboard_stream_abort\0\u{4}\u{2}log_record\0\u{4}\u{a}drop_offer\0\u{3}drop_complete\0\u{3}drop_release\0\u{4}\u{8}clipboard_transfer_request\0\u{3}clipboard_transfer_reply\0\u{c}\u{16}\u{1}\u{c}\u{1d}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1074,6 +1177,32 @@ nonisolated extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._Me
           self.payload = .dropRelease(v)
         }
       }()
+      case 50: try {
+        var v: Kernova_V1_ClipboardTransferRequest?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .clipboardTransferRequest(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .clipboardTransferRequest(v)
+        }
+      }()
+      case 51: try {
+        var v: Kernova_V1_ClipboardTransferReply?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .clipboardTransferReply(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .clipboardTransferReply(v)
+        }
+      }()
       default: break
       }
     }
@@ -1151,6 +1280,14 @@ nonisolated extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._Me
     case .dropRelease?: try {
       guard case .dropRelease(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 42)
+    }()
+    case .clipboardTransferRequest?: try {
+      guard case .clipboardTransferRequest(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 50)
+    }()
+    case .clipboardTransferReply?: try {
+      guard case .clipboardTransferReply(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 51)
     }()
     case nil: break
     }
@@ -1688,6 +1825,106 @@ nonisolated extension Kernova_V1_ClipboardStreamAbort: SwiftProtobuf.Message, Sw
     if lhs.transferID != rhs.transferID {return false}
     if lhs.code != rhs.code {return false}
     if lhs.message != rhs.message {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V1_ClipboardTransferRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ClipboardTransferRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{3}transfer_id\0\u{1}uti\0\u{3}max_accept_byte_count\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
+      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.transferID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.uti) }()
+      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.maxAcceptByteCount) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.generation != 0 {
+      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 1)
+    }
+    if self.transferID != 0 {
+      try visitor.visitSingularUInt64Field(value: self.transferID, fieldNumber: 2)
+    }
+    if !self.uti.isEmpty {
+      try visitor.visitSingularStringField(value: self.uti, fieldNumber: 3)
+    }
+    if self.maxAcceptByteCount != 0 {
+      try visitor.visitSingularUInt64Field(value: self.maxAcceptByteCount, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V1_ClipboardTransferRequest, rhs: Kernova_V1_ClipboardTransferRequest) -> Bool {
+    if lhs.generation != rhs.generation {return false}
+    if lhs.transferID != rhs.transferID {return false}
+    if lhs.uti != rhs.uti {return false}
+    if lhs.maxAcceptByteCount != rhs.maxAcceptByteCount {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V1_ClipboardTransferReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ClipboardTransferReply"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}transfer_id\0\u{3}refusal_code\0\u{3}refusal_message\0\u{3}is_archive\0\u{3}is_inline\0\u{3}total_bytes\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.transferID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.refusalCode) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.refusalMessage) }()
+      case 4: try { try decoder.decodeSingularBoolField(value: &self.isArchive) }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.isInline) }()
+      case 6: try { try decoder.decodeSingularUInt64Field(value: &self.totalBytes) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.transferID != 0 {
+      try visitor.visitSingularUInt64Field(value: self.transferID, fieldNumber: 1)
+    }
+    if !self.refusalCode.isEmpty {
+      try visitor.visitSingularStringField(value: self.refusalCode, fieldNumber: 2)
+    }
+    if !self.refusalMessage.isEmpty {
+      try visitor.visitSingularStringField(value: self.refusalMessage, fieldNumber: 3)
+    }
+    if self.isArchive != false {
+      try visitor.visitSingularBoolField(value: self.isArchive, fieldNumber: 4)
+    }
+    if self.isInline != false {
+      try visitor.visitSingularBoolField(value: self.isInline, fieldNumber: 5)
+    }
+    if self.totalBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.totalBytes, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V1_ClipboardTransferReply, rhs: Kernova_V1_ClipboardTransferReply) -> Bool {
+    if lhs.transferID != rhs.transferID {return false}
+    if lhs.refusalCode != rhs.refusalCode {return false}
+    if lhs.refusalMessage != rhs.refusalMessage {return false}
+    if lhs.isArchive != rhs.isArchive {return false}
+    if lhs.isInline != rhs.isInline {return false}
+    if lhs.totalBytes != rhs.totalBytes {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

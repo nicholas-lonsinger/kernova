@@ -175,11 +175,11 @@ final class VsockControlService {
     /// sharing turned on.
     private var guestSupportsClipboardStreamingStorage = false
 
-    /// Whether the guest advertised `clipboard.stream.v2` — the capability the
+    /// Whether the guest advertised `clipboard.transfer.v3` — the capability the
     /// clipboard-channel admission check requires.
     var guestSupportsClipboardStreaming: Bool { guestSupportsClipboardStreamingStorage }
 
-    /// Whether the connected guest agent advertised `drop.files.v2` in its
+    /// Whether the connected guest agent advertised `drop.files.v3` in its
     /// `Hello`.
     ///
     /// Set on Hello, reset on stop. An agent without it runs no drop client, so
@@ -352,7 +352,7 @@ final class VsockControlService {
         let clipboardEnabled = policy.clipboardSharingEnabled && guestSupportsClipboardStreaming
         if policy.clipboardSharingEnabled && !guestSupportsClipboardStreaming {
             Self.logger.notice(
-                "Clipboard sharing requested but guest agent for '\(self.label, privacy: .public)' lacks the \(KernovaCapability.clipboardStreamV2, privacy: .public) capability — keeping clipboard disabled (agent needs updating)"
+                "Clipboard sharing requested but guest agent for '\(self.label, privacy: .public)' lacks the \(KernovaCapability.clipboardTransferV3, privacy: .public) capability — keeping clipboard disabled (agent needs updating)"
             )
         }
         var frame = Frame()
@@ -490,9 +490,9 @@ final class VsockControlService {
             agentVersion = reportedVersion
             let reportedOSVersion = ObservedAgentInfo.boundedField(hello.agentInfo.osVersion)
             guestSupportsClipboardStreamingStorage = hello.capabilities.contains(
-                KernovaCapability.clipboardStreamV2)
+                KernovaCapability.clipboardTransferV3)
             guestSupportsDropFilesStorage = hello.capabilities.contains(
-                KernovaCapability.dropFilesV2)
+                KernovaCapability.dropFilesV3)
             // Every peer-supplied piece of this line is filtered first — the
             // version by `boundedField`, the capability tags by
             // `logDescription` — so none of them can write arbitrary content
@@ -524,7 +524,8 @@ final class VsockControlService {
             )
         case .policyUpdate, .clipboardOffer, .clipboardRequest,
             .clipboardRelease, .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd,
-            .clipboardStreamAck, .clipboardStreamAbort, .logRecord, .dropOffer, .dropComplete,
+            .clipboardStreamAck, .clipboardStreamAbort, .clipboardTransferRequest,
+            .clipboardTransferReply, .logRecord, .dropOffer, .dropComplete,
             .dropRelease, .none:
             // PolicyUpdate is host→guest and never arrives here; other payloads
             // belong on other channels. RATIONALE: the clipboard and log

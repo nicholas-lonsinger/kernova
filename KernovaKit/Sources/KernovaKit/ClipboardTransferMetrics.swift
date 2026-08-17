@@ -59,32 +59,34 @@ public struct ClipboardTransferMetrics: Sendable, Equatable {
     /// units the whole-transfer figures above are stated in.
     public struct Outbound: Sendable, Equatable {
         /// Whether the payload was encoded onto the wire as an archive — what
-        /// `ClipboardStreamBegin.is_archive` declared. Stated rather than
-        /// inferred from `wireByteCount != byteCount`, which an incompressible
-        /// archive coincides on.
+        /// the transfer's descriptor declared. Stated rather than inferred from
+        /// `wireByteCount != byteCount`, which an incompressible archive
+        /// coincides on.
         public let isArchived: Bool
-        /// Chunk frames handed to the socket.
-        public let chunkCount: Int
-        /// Registration → first chunk frame written, in seconds, covering the
-        /// payload classification and an archive's first-byte latency. `nil`
-        /// when no chunk was sent.
-        public let timeToFirstChunk: TimeInterval?
-        /// Seconds summed over every wait for the peer's go-signal and credit.
-        public let creditStall: TimeInterval
-        /// Seconds summed over every read from the source — the encode pipe for
-        /// an archived payload, so it is the time the encoder ran behind the
-        /// transport.
+        /// Registration → first payload byte handed to the socket, in seconds,
+        /// covering the payload classification and an archive's first-byte
+        /// latency. `nil` when no byte was sent.
+        public let timeToFirstByte: TimeInterval?
+        /// Seconds spent producing bytes rather than handing them to the
+        /// socket — reading and compressing the source, so it is what a slow
+        /// source rather than a slow peer costs.
         public let sourceWait: TimeInterval
+        /// Chunk frames handed to the socket, or `nil` for a transport that
+        /// does not chunk.
+        public let chunkCount: Int?
+        /// Seconds summed over every wait for the peer's go-signal and credit,
+        /// or `nil` for a transport with no application-level credit.
+        public let creditStall: TimeInterval?
 
         init(
-            isArchived: Bool, chunkCount: Int, timeToFirstChunk: TimeInterval?,
-            creditStall: TimeInterval, sourceWait: TimeInterval
+            isArchived: Bool, timeToFirstByte: TimeInterval?, sourceWait: TimeInterval,
+            chunkCount: Int? = nil, creditStall: TimeInterval? = nil
         ) {
             self.isArchived = isArchived
-            self.chunkCount = chunkCount
-            self.timeToFirstChunk = timeToFirstChunk
-            self.creditStall = creditStall
+            self.timeToFirstByte = timeToFirstByte
             self.sourceWait = sourceWait
+            self.chunkCount = chunkCount
+            self.creditStall = creditStall
         }
     }
 
@@ -131,11 +133,15 @@ public struct ClipboardTransferMetrics: Sendable, Equatable {
             }
         case .outbound(let outbound):
             kind = outbound.isArchived ? "archive" : "raw"
-            stages.append("\(outbound.chunkCount) chunks")
-            if let timeToFirstChunk = outbound.timeToFirstChunk {
-                stages.append(String(format: "ramp %.3f s", timeToFirstChunk))
+            if let chunkCount = outbound.chunkCount {
+                stages.append("\(chunkCount) chunks")
             }
-            stages.append(String(format: "credit %.3f s", outbound.creditStall))
+            if let timeToFirstByte = outbound.timeToFirstByte {
+                stages.append(String(format: "ramp %.3f s", timeToFirstByte))
+            }
+            if let creditStall = outbound.creditStall {
+                stages.append(String(format: "credit %.3f s", creditStall))
+            }
             stages.append(String(format: "source %.3f s", outbound.sourceWait))
         }
         var parts = [kind]

@@ -14,17 +14,16 @@ struct KernovaCapabilityTests {
                 == KernovaCapability.controlChannelDefaults.joined(separator: ","))
     }
 
-    @Test("The advertised defaults are the v2 clipboard and drop tags")
+    @Test("The advertised defaults are the v3 clipboard and drop tags")
     func defaultsAdvertiseTheCurrentProtocols() {
-        // A peer speaking either v1 would write an archive out as the file it
-        // was handed, so the tags are replaced rather than added to.
+        // An earlier tag's peer has no data port to dial, so the tags are
+        // replaced rather than added to.
         #expect(
             KernovaCapability.controlChannelDefaults == [
-                "control.v1", "control.heartbeat.v1", "clipboard.stream.v2", "drop.files.v2",
+                "control.v1", "control.heartbeat.v1", "clipboard.transfer.v3", "drop.files.v3",
             ])
-        #expect(!KernovaCapability.recognized.contains("clipboard.stream.v1"))
-        #expect(!KernovaCapability.recognized.contains("clipboard.stream.directory.v1"))
-        #expect(!KernovaCapability.recognized.contains("drop.files.v1"))
+        #expect(!KernovaCapability.recognized.contains("clipboard.stream.v2"))
+        #expect(!KernovaCapability.recognized.contains("drop.files.v2"))
     }
 
     @Test("Unrecognized tags are reduced to a count")
@@ -32,12 +31,12 @@ struct KernovaCapabilityTests {
         let capabilities = [
             KernovaCapability.controlV1,
             "evil\ninjected line",
-            KernovaCapability.clipboardStreamV2,
+            KernovaCapability.clipboardTransferV3,
             "another-unknown",
         ]
         #expect(
             KernovaCapability.logDescription(of: capabilities)
-                == "control.v1,clipboard.stream.v2 +2 unrecognized")
+                == "control.v1,clipboard.transfer.v3 +2 unrecognized")
     }
 
     @Test("An all-unrecognized list renders only the count")

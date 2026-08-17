@@ -1,0 +1,323 @@
+import CryptoKit
+import Darwin
+import Foundation
+import KernovaTestSupport
+
+@testable import KernovaKit
+
+// MARK: - Peer wiring
+
+/// Makes a socketpair, hands the far end to `peer` on a thread of its own, and
+/// returns this side's descriptor to whoever dialled.
+///
+/// Stands in for a vsock dial: the caller gets a connected descriptor, and
+/// whatever plays the peer — the real outbox, the real inbox, or a hand-driven
+/// stand-in — takes the other end off the caller's thread, exactly as an accept
+/// on a listener would.
+///
+/// A peer stand-in parks in a blocking read for as long as its case needs, so
+/// it gets a thread of its own rather than one of GCD's global queue's, which
+/// a parallel bundle is already drawing on.
+func dialToPeer(_ peer: @escaping @Sendable (Int32) -> Void) throws -> Int32 {
+    let (near, far) = try makeRawSocketPair()
+    Thread.detachNewThread { peer(far) }
+    return near
+}
+
+/// The `ClipboardTransferRequest` a dialling receiver opens with, or `nil` when
+/// the connection carried something else.
+func readTransferRequest(fd: Int32) -> Kernova_V1_ClipboardTransferRequest? {
+    guard let frame = try? ClipboardDataConnection.readFrame(fd: fd),
+        case .clipboardTransferRequest(let request) = frame.payload
+    else { return nil }
+    return request
+}
+
+/// The `ClipboardTransferReply` a sending peer opens with, or `nil` when the
+/// connection carried something else.
+func readTransferReply(fd: Int32) -> Kernova_V1_ClipboardTransferReply? {
+    guard let frame = try? ClipboardDataConnection.readFrame(fd: fd),
+        case .clipboardTransferReply(let reply) = frame.payload
+    else { return nil }
+    return reply
+}
+
+/// Writes the descriptor a hand-driven sending peer's payload follows.
+func writeTransferReply(
+    fd: Int32, transferID: UInt64, isArchive: Bool, isInline: Bool, totalBytes: UInt64
+) throws {
+    var frame = Frame()
+    frame.protocolVersion = 1
+    frame.clipboardTransferReply = Kernova_V1_ClipboardTransferReply.with {
+        $0.transferID = transferID
+        $0.isArchive = isArchive
+        $0.isInline = isInline
+        $0.totalBytes = totalBytes
+    }
+    try ClipboardDataConnection.writeFrame(frame, fd: fd)
+}
+
+/// Copies everything from `source` to `destination`, changing one payload byte
+/// on the way.
+///
+/// The one corruption the transport itself cannot notice: framing, sizes and
+/// the trailer all still line up, so only the end-to-end SHA-256 catches it
+/// (docs/CLIPBOARD.md §7). Buffered whole rather than streamed, so neither end
+/// can park on the other.
+func relayFlippingOneByte(from source: Int32, to destination: Int32) {
+    defer {
+        ClipboardDataConnection.end(fd: source)
+        ClipboardDataConnection.end(fd: destination)
+    }
+    var buffered = Data()
+    var block = [UInt8](repeating: 0, count: 64 * 1024)
+    while true {
+        let got = block.withUnsafeMutableBytes { raw in
+            (try? ClipboardDataConnection.read(fd: source, into: raw)) ?? 0
+        }
+        guard got > 0 else { break }
+        buffered.append(contentsOf: block[..<got])
+    }
+    // The last byte before the trailer, so the flip always lands in the payload
+    // whatever the reply frame's length came out as.
+    let flipped = buffered.count - ClipboardTransferTrailer.byteCount - 1
+    guard flipped >= 0 else { return }
+    buffered[flipped] ^= 0xFF
+    try? ClipboardDataConnection.write(fd: destination, buffered)
+}
+
+/// `count` incompressible bytes, so a fixture's wire size tracks its payload.
+func randomBytes(count: Int) throws -> Data {
+    let urandom = try FileHandle(forReadingFrom: URL(fileURLWithPath: "/dev/urandom"))
+    defer { try? urandom.close() }
+    var bytes = Data()
+    while bytes.count < count {
+        guard let block = try urandom.read(upToCount: count - bytes.count), !block.isEmpty else {
+            break
+        }
+        bytes.append(block)
+    }
+    return bytes
+}
+
+/// The SHA-256 a hand-driven peer's completion trailer carries.
+func sha256(_ data: Data) -> Data {
+    Data(SHA256.hash(data: data))
+}
+
+// MARK: - Collector
+
+/// Gathers what both halves of a transfer report.
+final class TransferCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var completed: [UInt64: ClipboardContent.Representation] = [:]
+    private var aborts: [ClipboardStreamAbortInfo] = []
+    private var sendOutcomes: [UInt64: Bool] = [:]
+    private var inboundTimings: [ClipboardTransferMetrics] = []
+    private var outboundTimings: [ClipboardTransferMetrics] = []
+    private var received: [(bytes: Int, total: Int)] = []
+    private var sent: [(bytes: Int, total: Int)] = []
+
+    /// Fires on every recorded event; await it instead of polling.
+    let gate = AsyncGate()
+
+    func complete(_ id: UInt64, _ representation: ClipboardContent.Representation) {
+        lock.withLock { completed[id] = representation }
+        gate.notify()
+    }
+
+    func abort(_ info: ClipboardStreamAbortInfo) {
+        lock.withLock { aborts.append(info) }
+        gate.notify()
+    }
+
+    func sendFinished(_ id: UInt64, success: Bool) {
+        lock.withLock { sendOutcomes[id] = success }
+        gate.notify()
+    }
+
+    func timedInbound(_ metrics: ClipboardTransferMetrics) {
+        lock.withLock { inboundTimings.append(metrics) }
+        gate.notify()
+    }
+
+    func timedOutbound(_ metrics: ClipboardTransferMetrics) {
+        lock.withLock { outboundTimings.append(metrics) }
+        gate.notify()
+    }
+
+    func receiveProgress(_ bytes: Int, _ total: Int) {
+        lock.withLock { received.append((bytes, total)) }
+        gate.notify()
+    }
+
+    func sendProgress(_ bytes: Int, _ total: Int) {
+        lock.withLock { sent.append((bytes, total)) }
+        gate.notify()
+    }
+
+    /// The representation one transfer delivered, if it completed.
+    func representation(_ id: UInt64) -> ClipboardContent.Representation? {
+        lock.withLock { completed[id] }
+    }
+    /// Every abort delivered, in order.
+    var abortInfos: [ClipboardStreamAbortInfo] { lock.withLock { aborts } }
+    /// How many aborts were delivered.
+    var abortCount: Int { lock.withLock { aborts.count } }
+    /// Whether one transfer's send reported success, or `nil` if it has not
+    /// finished.
+    func sendOutcome(_ id: UInt64) -> Bool? { lock.withLock { sendOutcomes[id] } }
+    /// How many sends have finished.
+    var sendCount: Int { lock.withLock { sendOutcomes.count } }
+    /// Metrics the *receiver* reported, kept apart from the sender's so a test
+    /// asserting one direction reported nothing cannot be satisfied by the
+    /// other.
+    var inboundMetrics: [ClipboardTransferMetrics] { lock.withLock { inboundTimings } }
+    /// Metrics the *sender* reported.
+    var outboundMetrics: [ClipboardTransferMetrics] { lock.withLock { outboundTimings } }
+    /// Every `(bytesReceived, totalBytes)` the receiving side reported.
+    var receiveProgressReports: [(bytes: Int, total: Int)] { lock.withLock { received } }
+    /// Every `(bytesSent, totalBytes)` the sending side reported.
+    var sendProgressReports: [(bytes: Int, total: Int)] { lock.withLock { sent } }
+}
+
+// MARK: - Harness
+
+/// Wires a real ``ClipboardTransferInbox`` and ``ClipboardTransferOutbox`` over
+/// socketpairs, in whichever header order the direction implies.
+///
+/// ``pull(transferID:generation:plan:representation:...)`` is the guest-receives
+/// order — the receiver dials and writes the request, the sender answers on the
+/// accepted end. ``push(transferID:generation:plan:representation:...)`` is the
+/// host-receives order — the sender dials and writes the reply, the receiver
+/// adopts the accepted end. Both run the shipping code on both ends.
+final class TransferHarness: @unchecked Sendable {
+    private let staging: ClipboardFileStaging
+    private let stagingTempRoot: URL
+    let inbox: ClipboardTransferInbox
+    let outbox: ClipboardTransferOutbox
+    let collector = TransferCollector()
+
+    /// An extra hook on each receive-progress report.
+    ///
+    /// Fires on the receiving transfer's own queue, so a test that must act at
+    /// a point *inside* the stream — cancelling once bytes are moving — does it
+    /// there rather than from its own thread, where a loaded runner decides how
+    /// far the transfer got first.
+    let onReceiveProgress = Box<(@Sendable (Int, Int) -> Void)?>(nil)
+
+    init(
+        freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
+        socketTimeout: TimeInterval = ClipboardStreamTuning.dataSocketTimeout,
+        maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
+        minimumExtractAllowance: Int = ClipboardStreamTuning.minimumExtractAllowance,
+        extractPacingBytes: Int = ClipboardStreamTuning.extractPacingBytes
+    ) {
+        stagingTempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        staging = ClipboardFileStaging(
+            label: "transfer-\(UUID().uuidString)", tempRoot: stagingTempRoot,
+            freeSpaceProvider: freeSpaceProvider)
+        let collector = self.collector
+        inbox = ClipboardTransferInbox(
+            staging: staging, role: .host, socketTimeout: socketTimeout,
+            maxResidentInlineBytes: maxResidentInlineBytes,
+            minimumExtractAllowance: minimumExtractAllowance,
+            extractPacingBytes: extractPacingBytes,
+            onTransferTimed: { collector.timedInbound($0) })
+        outbox = ClipboardTransferOutbox(
+            role: .guest, socketTimeout: socketTimeout,
+            maxResidentInlineBytes: maxResidentInlineBytes,
+            onTransferTimed: { collector.timedOutbound($0) })
+    }
+
+    func tearDown() {
+        inbox.cancelAll()
+        outbox.cancelAll()
+        staging.sweep()
+        try? FileManager.default.removeItem(at: stagingTempRoot)
+    }
+
+    /// Registers the pull for `transferID` with the inbox.
+    func expect(transferID: UInt64, plan: ClipboardTransferReceiver.Plan) {
+        let collector = self.collector
+        inbox.awaitTransfer(
+            transferID, plan: plan,
+            onComplete: { collector.complete(transferID, $0) },
+            onAbort: { collector.abort($0) },
+            onProgress: { [onReceiveProgress] bytes, total in
+                collector.receiveProgress(bytes, total)
+                onReceiveProgress.value?(bytes, total)
+            })
+    }
+
+    /// Guest-receives order: the inbox dials and writes the request, and the
+    /// far end is handed to `serve`.
+    func openPull(
+        transferID: UInt64, generation: UInt64,
+        maxAcceptByteCount: UInt64 = ClipboardStreamTuning.unlimitedAcceptByteCount,
+        serve: @escaping @Sendable (Int32, Kernova_V1_ClipboardTransferRequest) -> Void
+    ) {
+        inbox.open(
+            transferID: transferID, generation: generation,
+            maxAcceptByteCount: maxAcceptByteCount
+        ) {
+            try dialToPeer { far in
+                guard let request = readTransferRequest(fd: far) else {
+                    ClipboardDataConnection.end(fd: far)
+                    return
+                }
+                serve(far, request)
+            }
+        }
+    }
+
+    /// A full guest-receives round trip: the inbox dials, the outbox answers.
+    func pull(
+        transferID: UInt64, generation: UInt64, plan: ClipboardTransferReceiver.Plan,
+        representation: ClipboardContent.Representation, isInline: Bool = false,
+        maxAcceptByteCount: UInt64 = ClipboardStreamTuning.unlimitedAcceptByteCount,
+        isCurrent: @escaping @Sendable (UInt64) -> Bool = { _ in true }
+    ) {
+        expect(transferID: transferID, plan: plan)
+        let outbox = self.outbox
+        let collector = self.collector
+        openPull(
+            transferID: transferID, generation: generation, maxAcceptByteCount: maxAcceptByteCount
+        ) { far, request in
+            outbox.serve(
+                transferID: request.transferID, generation: request.generation,
+                representation: representation, maxAcceptByteCount: request.maxAcceptByteCount,
+                isInline: isInline, isCurrent: isCurrent, link: .accepted(far),
+                onProgress: { collector.sendProgress($0, $1) },
+                onComplete: { collector.sendFinished(request.transferID, success: $0) })
+        }
+    }
+
+    /// A full host-receives round trip: the outbox dials and writes the reply,
+    /// the inbox adopts the accepted end.
+    func push(
+        transferID: UInt64, generation: UInt64, plan: ClipboardTransferReceiver.Plan,
+        representation: ClipboardContent.Representation, isInline: Bool = false,
+        maxAcceptByteCount: UInt64 = ClipboardStreamTuning.unlimitedAcceptByteCount,
+        isCurrent: @escaping @Sendable (UInt64) -> Bool = { _ in true }
+    ) {
+        expect(transferID: transferID, plan: plan)
+        let inbox = self.inbox
+        let collector = self.collector
+        outbox.serve(
+            transferID: transferID, generation: generation, representation: representation,
+            maxAcceptByteCount: maxAcceptByteCount, isInline: isInline, isCurrent: isCurrent,
+            link: .dial {
+                try dialToPeer { far in
+                    guard let reply = readTransferReply(fd: far) else {
+                        ClipboardDataConnection.end(fd: far)
+                        return
+                    }
+                    inbox.adopt(fd: far, reply: reply)
+                }
+            },
+            onProgress: { collector.sendProgress($0, $1) },
+            onComplete: { collector.sendFinished(transferID, success: $0) })
+    }
+}

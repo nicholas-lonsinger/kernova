@@ -15,4 +15,10 @@ enum KernovaVsockPort {
 
     /// Files dragged onto the VM display, streamed host→guest into Downloads.
     static let drop: UInt32 = 49155
+
+    /// One connection per clipboard transfer, carrying that transfer's bytes.
+    static let clipboardData: UInt32 = 49156
+
+    /// One connection per dropped item, carrying that item's bytes.
+    static let dropData: UInt32 = 49157
 }

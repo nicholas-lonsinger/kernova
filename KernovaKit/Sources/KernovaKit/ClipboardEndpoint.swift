@@ -454,6 +454,9 @@ public final class ClipboardEndpoint {
         case .hello, .heartbeat, .policyUpdate, .logRecord:
             // Control-plane and log payloads have their own channels.
             closeOnWrongPort()
+        case .clipboardTransferRequest, .clipboardTransferReply:
+            // A transfer's header frames belong to its own data connection.
+            closeOnWrongPort()
         case .none:
             Self.logger.debug(
                 "Frame with no payload for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
