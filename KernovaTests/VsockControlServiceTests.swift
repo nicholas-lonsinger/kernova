@@ -1508,11 +1508,11 @@ enum ThreadCPUDiag {
             }
             var label = ""
             if ident.dispatch_qaddr != 0,
-                let qptr = UnsafeRawPointer(bitPattern: UInt(ident.dispatch_qaddr))?.load(as: UnsafeRawPointer?.self),
-                let q = Optional(qptr)
+                let slot = UnsafeRawPointer(bitPattern: UInt(ident.dispatch_qaddr)),
+                let qptr = slot.load(as: UnsafeRawPointer?.self)
             {
-                let cstr = dispatch_queue_get_label(unsafeBitCast(q, to: DispatchQueue.self))
-                label = String(cString: cstr)
+                let queue = Unmanaged<DispatchQueue>.fromOpaque(qptr).takeUnretainedValue()
+                label = queue.label
             }
             var name = [CChar](repeating: 0, count: 64)
             if let pt = pthread_from_mach_thread_np(t) { pthread_getname_np(pt, &name, 64) }
