@@ -638,21 +638,23 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
 
     /// Aborts every in-flight transfer for a superseded generation, deleting
     /// partial temp files, and wakes any lazy pull awaiting that generation.
-    ///
-    /// `except` names transfer ids another waiter keeps alive and this cancel may
-    /// not tear down — a paste fire sharing the pull a Cancel on the preview
-    /// readout leaves.
-    public func cancel(generation: UInt64, except: Set<UInt64> = []) {
+    public func cancel(generation: UInt64) {
         let affected = lock.withLock {
-            transfers.values.filter {
-                $0.generation == generation && !except.contains($0.transferID)
-            }
+            transfers.values.filter { $0.generation == generation }
         }
         for transfer in affected { teardown(transfer) }
         // Also wake awaiters whose transfer never produced a Begin, so a pull
         // blocked on a superseded generation resolves instead of parking to its
         // timeout.
-        failAwaiters { Self.generation(ofTransferID: $0) == generation && !except.contains($0) }
+        failAwaiters { Self.generation(ofTransferID: $0) == generation }
+    }
+
+    /// Aborts one in-flight transfer, deleting its partial temp file, and wakes a
+    /// lazy pull awaiting it — the teardown for a single abandoned pull, leaving
+    /// every sibling of the same generation streaming.
+    public func cancel(transferID: UInt64) {
+        if let transfer = lock.withLock({ transfers[transferID] }) { teardown(transfer) }
+        failAwaiters { $0 == transferID }
     }
 
     /// Aborts every in-flight transfer (channel teardown / capability disable)

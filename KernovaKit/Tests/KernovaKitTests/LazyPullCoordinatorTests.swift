@@ -48,6 +48,15 @@ struct LazyPullCoordinatorTests {
         var value: Int { lock.withLock { count } }
     }
 
+    /// A `Sendable` log of labelled steps, for a test asserting the order two
+    /// closures ran in.
+    private final class OrderLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var steps: [String] = []
+        func record(_ step: String) { lock.withLock { steps.append(step) } }
+        var entries: [String] { lock.withLock { steps } }
+    }
+
     /// Runs the blocking `pull` on a dedicated thread so the test's
     /// cooperative thread stays free to deliver/abort/failAll and `await` the
     /// outcome.
@@ -478,7 +487,80 @@ struct LazyPullCoordinatorTests {
         #expect(starts.value == 2)
     }
 
+    @Test("a pull ended while start runs is retired only once start returns")
+    func retireOwedDuringStartRunsAfterIt() async throws {
+        let coordinator = LazyPullCoordinator()
+        let order = OrderLog()
+        let outcome = await runPull(
+            coordinator, transferID: 61,
+            retire: { order.record("retire") },
+            start: {
+                order.record("start began")
+                // A channel close landing here finds no awaiter to release: the
+                // one this pull owns is what `start` is on its way to register.
+                coordinator.failAll()
+                order.record("start ended")
+            })
+        guard case .cancelled = outcome else {
+            Issue.record("Expected .cancelled, got \(outcome)")
+            return
+        }
+        #expect(order.entries == ["start began", "start ended", "retire"])
+        #expect(coordinator.pendingSlotCountForTesting == 0)
+    }
+
     // MARK: - Receiver wiring
+
+    @Test("a pull abandoned while start runs still releases the awaiter start registered")
+    func retireOwedDuringStartReleasesTheAwaiter() async throws {
+        let harness = try StreamHarness(
+            chunkSize: 4096, windowBytes: 16384,
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { harness.tearDown() }
+
+        let coordinator = LazyPullCoordinator()
+        let transferID = ClipboardTransferID.make(generation: 13, repIndex: 0, hostMinted: true)
+        let receiver = harness.receiver
+        let outcome = await runPull(
+            coordinator, transferID: transferID,
+            retire: { receiver.cancelAwait(transferID) },
+            start: {
+                // The channel closes between the slot going up and the
+                // registration going in — the one window where the release is
+                // owed rather than run.
+                coordinator.failAll()
+                receiver.awaitTransfer(
+                    transferID,
+                    onComplete: { _ in Issue.record("the abandoned pull's awaiter must not fire") },
+                    onAbort: { _ in Issue.record("the abandoned pull's awaiter must not fire") })
+            })
+        guard case .cancelled = outcome else {
+            Issue.record("Expected .cancelled, got \(outcome)")
+            return
+        }
+
+        // Nothing is registered for the id now, so a fresh pull for it registers
+        // cleanly — a live awaiter left behind would trip `awaitTransfer`'s
+        // double-registration assertion — and takes the transfer.
+        let box = RepBox()
+        let gate = AsyncGate()
+        receiver.awaitTransfer(
+            transferID,
+            onComplete: {
+                box.setRep($0)
+                gate.notify()
+            },
+            onAbort: {
+                box.setAbort($0)
+                gate.notify()
+            })
+        harness.sender.startTransfer(
+            transferID: transferID, generation: 13, representation: inlineRep("after the abandon"),
+            maxAcceptByteCount: .max, isInline: true, isCurrent: { _ in true })
+
+        try await gate.wait { box.representation != nil }
+        #expect(box.representation?.inMemoryData == Data("after the abandon".utf8))
+    }
 
     @Test("a registered awaiter receives the transfer instead of the channel-wide onComplete")
     func awaitTransferBypassesChannelWide() async throws {

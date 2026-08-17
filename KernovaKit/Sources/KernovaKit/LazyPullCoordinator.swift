@@ -39,10 +39,14 @@ public enum LazyPullOutcome: Sendable {
 ///
 /// The starter owns the pull's lifecycle: its `timeout` governs the slot's
 /// inactivity backstop, and its `retire` releases the awaiter whenever the slot
-/// ends by a route other than that awaiter firing. **No waiter owns anything
-/// keyed by `transfer_id`** — not a joiner, and not any waiter once it has its
-/// outcome, since by then the slot has released the id and the next `pull` or
-/// `join` for it starts a fresh pull.
+/// ends by a route other than that awaiter firing — in the same critical section
+/// that frees the id, so the next pull to take that id never has its own awaiter
+/// released by this one. A slot that ends while `start` is still running leaves
+/// that debt to the starting thread, which pays it as soon as `start` returns
+/// and the awaiter exists. **No waiter owns anything keyed by `transfer_id`** —
+/// not a joiner, and not any waiter once it has its outcome, since by then the
+/// slot has released the id and the next `pull` or `join` for it starts a fresh
+/// pull.
 public final class LazyPullCoordinator: @unchecked Sendable {
     /// One caller waiting on a pull; ``leave(_:)`` takes the handle back.
     ///
@@ -97,7 +101,7 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     ///
     /// `@unchecked Sendable`: the mutable state is read and written under the
     /// slot's own `lock`, which is taken while the coordinator's `lock` is held
-    /// and never the reverse.
+    /// and never the reverse. `retire` runs under the coordinator's lock alone.
     private final class Slot: @unchecked Sendable {
         let transferID: UInt64
         /// The starter's inactivity window, governing every waiter on this pull.
@@ -108,6 +112,12 @@ public final class LazyPullCoordinator: @unchecked Sendable {
         let lock = NSLock()
         var waiters: [Waiter] = []
         var resolved = false
+        /// Whether `start` has returned, so there is a registration for `retire`
+        /// to release.
+        var started = false
+        /// Set when the slot ended while `start` was still running: the starting
+        /// thread owes the `retire` nothing could run yet.
+        var retireOwed = false
         /// Set by `progress`, consumed by each backstop tick: a window that saw a
         /// chunk re-arms instead of timing the pull out.
         var progressed = false
@@ -144,9 +154,11 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     ///     so a healthy transfer of any size never times out.
     ///   - onProgress: this waiter's byte-progress hook, fanned out from
     ///     `progress`.
-    ///   - retire: releases the receiver awaiter `start` registered; run once, on
-    ///     whichever thread ends the slot, for every route out but that awaiter's
-    ///     own delivery.
+    ///   - retire: releases the receiver awaiter `start` registered, for every
+    ///     route out but that awaiter's own delivery. Runs at most once, under
+    ///     the coordinator's lock — on whichever thread ends the slot, or on this
+    ///     thread right after `start` returns when the slot ended while it ran —
+    ///     so it must neither block nor call back into the coordinator.
     ///   - start: registers the awaiter and sends the request. Runs synchronously
     ///     on the calling thread, after the slot is registered, and only when this
     ///     call created it.
@@ -213,23 +225,23 @@ public final class LazyPullCoordinator: @unchecked Sendable {
         var abandoned: Slot?
         let survives: Bool = lock.withLock {
             guard let slot = slots[waiter.transferID] else { return true }
-            return slot.lock.withLock {
+            let stillWanted: Bool = slot.lock.withLock {
                 guard let index = slot.waiters.firstIndex(where: { $0 === waiter }) else {
                     return true
                 }
                 slot.waiters.remove(at: index)
                 guard slot.waiters.isEmpty else { return true }
                 slot.resolved = true
-                slots[slot.transferID] = nil
-                abandoned = slot
                 return false
             }
+            guard !stillWanted else { return true }
+            slots[slot.transferID] = nil
+            retireSlot(slot)
+            abandoned = slot
+            return false
         }
         waiter.resolve(.cancelled)
-        if let abandoned {
-            cancelBackstop(abandoned)
-            abandoned.retire()
-        }
+        if let abandoned { cancelBackstop(abandoned) }
         return survives
     }
 
@@ -298,7 +310,39 @@ public final class LazyPullCoordinator: @unchecked Sendable {
         // Outside the lock, and only for the call that created the slot: one
         // awaiter and one request per pull, however many waiters join it.
         start()
+        // The registration exists from here on, so anything that ended the slot
+        // while `start` ran — a channel close, a release, the backstop — left the
+        // release of that registration to this thread. Identity-checked like
+        // `resolveSlot`'s removal: a fresh pull that took the id meanwhile owns
+        // the registration under it now, and its own end releases it.
+        lock.withLock {
+            let owed = slot.lock.withLock { () -> Bool in
+                let owed = slot.retireOwed
+                slot.started = true
+                slot.retireOwed = false
+                return owed
+            }
+            if owed, slots[slot.transferID] == nil { slot.retire() }
+        }
         return slot
+    }
+
+    /// Releases what `start` registered for `slot`, or leaves the debt to the
+    /// thread still inside `start`.
+    ///
+    /// Caller holds the coordinator's `lock` and not `slot.lock`: freeing the id
+    /// and releasing the awaiter registered against it are one step, so a fresh
+    /// pull that takes the id next cannot have its own awaiter deregistered — or
+    /// its reply blacklisted — by the slot it replaced.
+    private func retireSlot(_ slot: Slot) {
+        let started = slot.lock.withLock { () -> Bool in
+            guard slot.started else {
+                slot.retireOwed = true
+                return false
+            }
+            return true
+        }
+        if started { slot.retire() }
     }
 
     /// Arms the slot's inactivity backstop: a window that sees no chunk resolves
@@ -365,11 +409,11 @@ public final class LazyPullCoordinator: @unchecked Sendable {
             // Identity-checked: a fresh pull for the same id may already own the
             // key, and removing unconditionally would evict its live slot.
             if slots[slot.transferID] === slot { slots[slot.transferID] = nil }
+            if retiring { retireSlot(slot) }
             return taken
         }
         guard let waiters else { return }
         cancelBackstop(slot)
-        if retiring { slot.retire() }
         for waiter in waiters { waiter.resolve(outcome) }
     }
 

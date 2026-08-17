@@ -3139,7 +3139,7 @@ struct VsockClipboardServiceTests {
         }
         // The paste fire carries no Cancel, which is what routes `cancelRunning`
         // to the preview underneath it.
-        #expect(reports.runningSnapshot?.isCancellable == false)
+        try await reports.wait { reports.runningSnapshot?.isCancellable == false }
 
         reports.reporter.cancelRunning()
         await preview.value
@@ -3156,6 +3156,74 @@ struct VsockClipboardServiceTests {
         // no transfer another waiter still held.
         #expect(responder.requests.count == 1)
         #expect(responder.aborts.isEmpty)
+    }
+
+    @Test("a preview Cancel leaves a paste fire pulling another rep alone")
+    func previewCancelSparesAPasteFireOnAnotherRep() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let reports = ClipboardTransferReports()
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter,
+            progressRevealDelay: 0, progressIdleGap: 0)
+        service.start()
+        defer { service.stop() }
+
+        // A rep each, sharing nothing: the paste pulls the file rep (named, so
+        // the preview loop never asks for it) while the preview pulls the text
+        // rep. The paste's transfer is the one this Cancel must not reach, and no
+        // waiter list mentions it.
+        let fileBytes = Data([0xCA, 0xFE, 0xBA, 0xBE])
+        let previewSize = 200_000
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.holdEnd = true
+        responder.register(
+            generation: 54, repIndex: 0, uti: "public.data", bytes: fileBytes, filename: "f.bin",
+            isInline: false)
+        responder.register(
+            generation: 54, repIndex: 1, uti: ClipboardContent.utf8TextUTI,
+            bytes: Data(count: previewSize), isInline: true, beginOnly: true)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 54,
+                reps: [
+                    (uti: "public.data", byteCount: fileBytes.count, filename: "f.bin", isInline: false),
+                    (uti: ClipboardContent.utf8TextUTI, byteCount: previewSize, filename: "", isInline: true),
+                ]))
+        try await waitForChange { service.clipboardContent.representations.count == 2 }
+
+        // Preview first: its Begin-only reply parks that pull, so the paste's is
+        // the second request on the wire.
+        let preview = Task { await service.materializeForPreview() }
+        try await responder.answered.wait { responder.requests.count == 1 }
+        let paste = Task {
+            await offCooperativePool { service.copyToMacFileURL(generation: 54, repIndex: 0) }
+        }
+        try await responder.requested.wait { responder.requests.count == 2 }
+        // The paste fire carries no Cancel, which is what routes `cancelRunning`
+        // to the preview underneath it.
+        try await reports.wait { reports.runningSnapshot?.isCancellable == false }
+
+        reports.reporter.cancelRunning()
+        await preview.value
+        #expect(service.clipboardContent.representations[1].isPendingRemote)
+
+        // The paste's transfer and awaiter were never touched: releasing End
+        // serves it.
+        responder.releaseEnd()
+        let url = try #require(await paste.value)
+        #expect(try Data(contentsOf: url) == fileBytes)
+
+        // On the wire, the preview's own pull was aborted and nothing else was.
+        try await responder.answered.wait { !responder.aborts.isEmpty }
+        #expect(
+            responder.aborts.map(\.transferID) == [inboundTransferID(generation: 54, repIndex: 1)])
     }
 
     @Test("stop() during a paste fire explains why the paste served nothing")

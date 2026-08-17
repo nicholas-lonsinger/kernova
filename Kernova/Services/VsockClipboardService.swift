@@ -458,27 +458,23 @@ final class VsockClipboardService: ClipboardServicing {
 
     /// Stops the pulls the materialization loop has in flight for `generation`.
     ///
-    /// Two halves, because the transfer spans both sides: an abort frame per
-    /// abandoned id tells the guest's sender to stop producing bytes, and the
-    /// local cancel deletes each partial temp file and wakes the parked pull with
+    /// The loop leaves its pulls rather than ending them, and only one it was the
+    /// last waiter on is torn down: a rep a paste fire is also waiting on keeps
+    /// streaming, since this Cancel is on the preview readout and the paste is a
+    /// gesture of its own. An abandoned pull is ended on both sides — an abort
+    /// frame tells the guest's sender to stop producing bytes, and the local
+    /// cancel deletes the partial temp file — while the waiter itself wakes with
     /// the benign `cancelled` code, so the loop ends without raising an issue.
-    ///
-    /// The loop leaves its pulls rather than ending them: a rep a paste fire is
-    /// also waiting on keeps streaming, since this Cancel is on the preview
-    /// readout and the paste is a gesture of its own.
     private func cancelInboundPulls(generation: UInt64) {
         guard let promise = livePromise(generation: generation) else { return }
         cancelledInboundGeneration = generation
-        var kept: Set<UInt64> = []
-        for (repIndex, waiter) in promise.previewWaiters {
+        // Leaving is the step; its answer is whether this side is done with the
+        // transfer, and only then is it torn down.
+        for (repIndex, waiter) in promise.previewWaiters where !lazyCoordinator.leave(waiter) {
             let transferID = Self.inboundTransferID(generation: generation, repIndex: repIndex)
-            if lazyCoordinator.leave(waiter) {
-                kept.insert(transferID)
-            } else {
-                sendStreamAbort(transferID: transferID, code: .userCancelled)
-            }
+            sendStreamAbort(transferID: transferID, code: .userCancelled)
+            receiver?.cancel(transferID: transferID)
         }
-        receiver?.cancel(generation: generation, except: kept)
         Self.logger.notice(
             "User cancelled the inbound clipboard transfer from '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
         )
