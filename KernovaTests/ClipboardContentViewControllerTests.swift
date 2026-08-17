@@ -156,9 +156,7 @@ struct ClipboardContentViewControllerRetentionTests {
         defer { registry.releaseAllForTesting() }
         // The concrete NSPasteboard can't be made to fail; the write-only seam can.
         let pasteboard = FakeWritePasteboard()
-        pasteboard.failNextWrite = true
-        let wrote = AsyncGate()
-        pasteboard.onWrite = { wrote.notify() }
+        pasteboard.failNextWrite()
 
         let service = FakeClipboardService(content: ClipboardContent(text: "doomed write"))
         let instance = makeClipboardInstance()
@@ -170,7 +168,7 @@ struct ClipboardContentViewControllerRetentionTests {
         #expect(registry.countForTesting == 0)
         // → copyToMac → finishCopyToMac → prepareForNewContents(with:) then writeItems(→ false).
         vc.copy(nil)
-        try await wrote.wait { pasteboard.writeAttempts == 1 }
+        try await pasteboard.changed.wait { pasteboard.writeAttempts == 1 }
 
         // retain() runs only after a successful write, so the failed write
         // leaves the registry empty — the providers deallocate with the copy Task's
@@ -566,7 +564,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         let registry = LazyClipboardProviderRegistry()
         defer { registry.releaseAllForTesting() }
         let pasteboard = FakeWritePasteboard()
-        pasteboard.failNextWrite = failWrite
+        if failWrite { pasteboard.failNextWrite() }
 
         let service = FakeClipboardService(content: ClipboardContent(text: "buffer bytes"))
         service.copyItems = copyItems
@@ -804,45 +802,5 @@ private final class FakeClipboardService: ClipboardServicing {
 
     func materializeForCopy() -> [CopyToMacItem] {
         copyItems ?? clipboardContent.representations.map { .resolved($0) }
-    }
-}
-
-/// A `ClipboardWritePasteboard` whose write can be forced to fail, so the host
-/// "Copy to Mac" write-failure path is exercisable — the concrete `NSPasteboard`
-/// is a class cluster that can't be made to fail.
-///
-/// Not `Sendable`: single-threaded test use driven on the main actor. `onWrite`
-/// fires inside `writeItems` so a test can await the write attempt event-driven
-/// rather than polling.
-private final class FakeWritePasteboard: ClipboardWritePasteboard {
-    private(set) var prepareCount = 0
-    private(set) var lastPrepareOptions: NSPasteboard.ContentsOptions?
-    private(set) var writeAttempts = 0
-    var failNextWrite = false
-    var onWrite: (() -> Void)?
-
-    /// Bumped on every successful write so it mirrors `NSPasteboard.changeCount`.
-    private(set) var changeCount = 0
-
-    @discardableResult func prepareForNewContents(with options: NSPasteboard.ContentsOptions) -> Int {
-        prepareCount += 1
-        lastPrepareOptions = options
-        return prepareCount
-    }
-
-    func writeItems(
-        _ items: [(types: [NSPasteboard.PasteboardType], provider: NSPasteboardItemDataProvider)]
-    ) -> Bool {
-        writeAttempts += 1
-        let shouldFail = failNextWrite
-        failNextWrite = false
-        if !shouldFail { changeCount += 1 }
-        onWrite?()
-        return !shouldFail
-    }
-
-    @discardableResult func clearContents() -> Int {
-        changeCount += 1
-        return changeCount
     }
 }

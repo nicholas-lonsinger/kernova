@@ -362,8 +362,9 @@ AppKit views ──observe──→ VMLibraryViewModel ──delegates──→ 
 vsock wire protocol, the clipboard domain model and file staging/archive, and cross-cutting
 helpers. **New host/guest-identical code belongs here**, not copied into both targets.
 
-The package also vends `KernovaTestSupport`, the single shared copy of the test wait primitives every
-test target imports. It is **never linked into a shipping target** — nothing enforces that.
+The package also vends `KernovaTestSupport`, the single shared copy of the wait primitives, channel
+and frame fixtures, and production-seam doubles every test target imports. It is **never linked into
+a shipping target** — nothing enforces that.
 
 ## Key Design Decisions
 

@@ -24,6 +24,10 @@ public final class ClipboardEndpoint {
     /// Why an offer this side was holding is no longer live.
     public typealias RetractReason = ClipboardInboundOffers.RetractReason
 
+    /// How long a reported paste refusal silences further refusals of the same
+    /// offer.
+    public static let refusalBurstWindow = ClipboardInboundOffers.refusalBurstWindow
+
     /// Something this connection just did that a surface may want to render.
     public enum Activity: Equatable, Sendable {
         /// An offer went out to the peer.

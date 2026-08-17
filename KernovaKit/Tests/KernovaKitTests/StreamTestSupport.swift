@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 import KernovaTestSupport
 
@@ -9,22 +8,6 @@ struct StreamTestFailure: Error, CustomStringConvertible {
     let message: String
     init(_ message: String) { self.message = message }
     var description: String { message }
-}
-
-// MARK: - Socket pair
-
-/// Two `VsockChannel`s connected by a started `socketpair(AF_UNIX, SOCK_STREAM)`.
-func makeStartedChannelPair() throws -> (a: VsockChannel, b: VsockChannel) {
-    var fds: [Int32] = [-1, -1]
-    let rc = fds.withUnsafeMutableBufferPointer { buf in
-        socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
-    }
-    guard rc == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
-    let a = VsockChannel(fileDescriptor: fds[0])
-    let b = VsockChannel(fileDescriptor: fds[1])
-    a.start()
-    b.start()
-    return (a, b)
 }
 
 // MARK: - Payloads
