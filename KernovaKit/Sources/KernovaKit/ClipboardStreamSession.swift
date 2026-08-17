@@ -61,8 +61,8 @@ public final class ClipboardStreamSession {
     /// or a release, which raise their own explainer.
     private let endedFlag = Latch()
 
-    /// Latched by `stop()` alone, so the control-frame hop drops what was queued
-    /// to main before the teardown.
+    /// Latched by `stop()` alone, so a control frame queued to main before the
+    /// teardown is dropped rather than delivered.
     ///
     /// Distinct from `endedFlag`, which the channel closing also sets: a peer
     /// that sent a frame and then closed — a `DropComplete`, a
@@ -124,12 +124,18 @@ public final class ClipboardStreamSession {
     /// pasteboard server fired on.
     nonisolated public var hasEnded: Bool { endedFlag.isSet }
 
+    /// Whether `stop()` has run — this side deciding it is done listening,
+    /// which is what a queued control frame is dropped for.
+    nonisolated public var hasStopped: Bool { stoppedFlag.isSet }
+
     /// Builds the engine and starts draining the channel; idempotent.
     ///
     /// `handleControlFrame` receives every frame that is not a stream payload, on
-    /// the main actor and in arrival order. `onEnded` runs off the main actor the
-    /// moment the channel is done, so a pull parked on the main thread is woken
-    /// without waiting for a main-queue hop it is itself blocking.
+    /// the main actor and in arrival order — including one this session has since
+    /// stopped for, which its owner decides about (``hasStopped``). `onEnded` runs
+    /// off the main actor the moment the channel is done, so a pull parked on the
+    /// main thread is woken without waiting for a main-queue hop it is itself
+    /// blocking.
     public func start(
         handleControlFrame: @escaping @MainActor (Frame) -> Void,
         onEnded: @escaping @Sendable () -> Void = {}
@@ -180,7 +186,6 @@ public final class ClipboardStreamSession {
         let sender = senderStorage
         let receiver = receiverStorage
         let endedFlag = self.endedFlag
-        let stoppedFlag = self.stoppedFlag
         consumeTask = Task.detached {
             await Self.consume(
                 channel: channel, label: label, connectionTag: tag, subject: subject, role: role,
@@ -189,10 +194,9 @@ public final class ClipboardStreamSession {
                     // Fire-and-forget: the consume loop must never wait on the
                     // main actor — a paste's promise callback occupies it, and
                     // the stream frames routed here are what resolve that
-                    // callback. Serial `DispatchQueue.main` preserves
-                    // control-frame FIFO order; a per-frame Task would not.
+                    // callback. The serial main queue preserves control-frame
+                    // FIFO order; a per-frame Task would not.
                     DispatchQueue.main.async {
-                        guard !stoppedFlag.isSet else { return }
                         MainActor.assumeIsolated { handleControlFrame(frame) }
                     }
                 })

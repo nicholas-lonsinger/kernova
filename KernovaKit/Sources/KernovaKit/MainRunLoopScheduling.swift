@@ -16,7 +16,7 @@ public func performOnMainRunLoop(_ body: @escaping @MainActor () -> Void) {
     }
 }
 
-/// The one blocking bridge onto the main actor.
+/// The one bridge onto the main actor from code that is not on it.
 public enum MainActorBridge {
     /// Runs `body` on the main actor and returns its result, from either the
     /// main thread or off it.
@@ -29,5 +29,16 @@ public enum MainActorBridge {
         Thread.isMainThread
             ? MainActor.assumeIsolated { body() }
             : DispatchQueue.main.sync { MainActor.assumeIsolated { body() } }
+    }
+
+    /// Queues `body` for the next turn of the main queue, from the main thread
+    /// or off it.
+    ///
+    /// Never inline, even when the caller is already on the main actor: the
+    /// serial main queue is what orders these against the reporter emissions
+    /// ``ClipboardTransferOperation`` queues the same way, and a caller that ran
+    /// inline would jump ahead of everything already waiting there.
+    public static func async(_ body: @escaping @MainActor () -> Void) {
+        DispatchQueue.main.async { MainActor.assumeIsolated { body() } }
     }
 }

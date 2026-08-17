@@ -29,6 +29,7 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, @unchecked Sen
     private var items: [PromisedItem] = []
     private var resolved: [(type: NSPasteboard.PasteboardType, data: Data)] = []
     private var writeFailuresRemaining = 0
+    private var storedProviderInvocations = 0
 
     /// Fires after every mutation — a prepare, a write (successful or not), and
     /// a clear — so a test awaits the change instead of polling.
@@ -54,6 +55,10 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, @unchecked Sen
 
     /// How many times `writeItems(_:)` has been attempted, failures included.
     public var writeAttempts: Int { lock.withLock { storedWriteAttempts } }
+
+    /// How many promised providers have been fired, for a test proving one was
+    /// *not*.
+    public var providerInvocations: Int { lock.withLock { storedProviderInvocations } }
 
     /// Every promised type across all items, concatenated in item order.
     public var promisedTypes: [NSPasteboard.PasteboardType] {
@@ -167,6 +172,7 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, @unchecked Sen
             return items.first { $0.types.contains(type) }?.provider
         }
         guard let provider else { return nil }
+        lock.withLock { storedProviderInvocations += 1 }
         let item = NSPasteboardItem()
         provider.pasteboard(nil, item: item, provideDataForType: type)
         guard let bytes = item.data(forType: type) else { return nil }

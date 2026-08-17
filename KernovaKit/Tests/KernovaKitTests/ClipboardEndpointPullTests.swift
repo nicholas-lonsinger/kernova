@@ -303,11 +303,36 @@ struct ClipboardEndpointPullTests {
         let harness = try RawPeerHarness()
         defer { harness.tearDown() }
 
-        try harness.send(makeTextOfferFrame(generation: 1, text: "too late"))
         harness.endpoint.stop()
+        // The hop the consume loop makes for a frame that was already on the
+        // wire, driven directly: whether the frame reached the loop before the
+        // stop is a race, and the answer must not depend on it.
+        harness.endpoint.handleControlFrameForTesting(
+            makeTextOfferFrame(generation: 1, text: "too late"))
 
-        try await MonotonicEngineClock().sleep(for: 0.15)
         #expect(harness.side.recorder.offers.isEmpty)
+    }
+
+    @Test("a frame the peer sent and then closed on still reaches the owner")
+    func framesBeforeThePeerClosesStillLand() async throws {
+        let harness = try RawPeerHarness()
+        defer { harness.tearDown() }
+        try harness.send(makeTextOfferFrame(generation: 1, text: "first"))
+        try await harness.side.recorder.waitForOffer()
+
+        // The peer withdraws its offer and hangs up in the same breath. Only a
+        // local `stop()` drops what is queued; the channel's own end does not,
+        // or a `ClipboardRelease` or `DropComplete` sent on the way out would be
+        // lost.
+        try harness.send(makeReleaseFrame(generation: 1))
+        harness.peer.close()
+
+        // The second retraction: taking on the offer raised the first, for
+        // whatever this side had published before it.
+        let retraction = try await harness.side.recorder.waitForRetraction(count: 2)
+        #expect(retraction.generation == 1)
+        #expect(retraction.reason == .released)
+        try await harness.side.recorder.waitForEnd()
     }
 
     @Test("a payload from the wrong port closes the channel, whichever end reads it")
@@ -323,6 +348,10 @@ struct ClipboardEndpointPullTests {
 
             try await harness.recorder.waitUntilFinished()
             #expect(harness.endpoint.hasEnded)
+            // The peer crossed the wires, so the owner is owed the settle a
+            // channel ending under it gets — once, not once per queued frame.
+            try await harness.side.recorder.waitForEnd()
+            #expect(harness.side.recorder.endedCount == 1)
         }
     }
 }

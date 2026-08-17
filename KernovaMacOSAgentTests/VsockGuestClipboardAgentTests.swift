@@ -64,6 +64,10 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
     /// until the agent's first promise write.
     var lastPrepareOptionsForTesting: NSPasteboard.ContentsOptions? { writer.lastPrepareOptions }
 
+    /// How many promised providers have been fired, for a test proving the
+    /// agent's own poll fired none.
+    var providerInvocationCountForTesting: Int { writer.providerInvocations }
+
     /// Makes the next `times` `writeItems(_:)` calls fail, modelling an
     /// OS-level pasteboard write failure.
     func failNextWrite(times: Int = 1) { writer.failNextWrite(times: times) }
@@ -1932,6 +1936,79 @@ struct VsockGuestClipboardAgentTests {
             throw TestFailure("Expected ClipboardOffer after reconnect")
         }
         #expect(offer2.generation > offer1.generation)
+    }
+
+    @Test("after a reconnect the first poll never reads the promise this agent left standing")
+    func reconnectDoesNotOfferBackTheStandingPromise() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd0, remoteFd0) = try makeRawSocketPair()
+        let (agentFd1, remoteFd1) = try makeRawSocketPair()
+        let host0 = VsockChannel(fileDescriptor: remoteFd0)
+        let host1 = VsockChannel(fileDescriptor: remoteFd1)
+        host0.start()
+        host1.start()
+        defer { host0.close(); host1.close() }
+
+        // One consumer for the second connection's wire, so the offers it
+        // carries are read in order rather than through a second iterator.
+        let host1Frames = FrameRecorder(channel: host1)
+        defer { host1Frames.cancel() }
+
+        let fdBox = FdBox(fds: [agentFd0, agentFd1])
+        let provideCount = AtomicInt()
+        let client = VsockGuestClient(
+            port: 49152, label: "clipboard-promise-reconnect-test",
+            clock: MonotonicEngineClock(), retryInterval: 0.05
+        ) { _, _ in
+            let n = provideCount.increment()
+            guard let fd = fdBox.fd(at: n - 1) else {
+                return .failure(.transient("test: no fd at index \(n - 1)"))
+            }
+            return .success(fd)
+        }
+        let agent = VsockGuestClipboardAgent(
+            pasteboard: pasteboard, client: client, reporter: ClipboardTransferReporter())
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // The Mac's copy becomes a promise on the guest pasteboard, and a paste
+        // inside the guest materializes it — so its bytes are resident, exactly
+        // what a poll that read the promise would find.
+        let mac = "copied on the Mac"
+        try host0.send(makeTextOfferFrame(generation: 1, text: mac))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.string) }
+        let paste = lazyPull(pasteboard, forType: .string)
+        try await driveInboundStream(
+            generation: 1, uti: ClipboardContent.utf8TextUTI, filename: "",
+            payload: Data(mac.utf8), isInline: true, on: host0)
+        #expect(await paste.value == Data(mac.utf8))
+        #expect(pasteboard.providerInvocationCountForTesting == 1)
+
+        // The channel goes and the agent redials. The promise stays standing —
+        // its providers hold the offer's cache alive — and the change-count gate
+        // is deliberately unset for the new host.
+        host0.close()
+        try await waitUntil { agent.liveChannelForTesting == nil }
+        try await waitUntil { agent.liveChannelForTesting != nil }
+
+        // The first poll of the new connection must leave the standing promise
+        // alone: reading it would fire its providers and offer the Mac's own
+        // content back as a guest copy.
+        await MainActor.run { agent.checkClipboardChange() }
+        #expect(pasteboard.providerInvocationCountForTesting == 1)
+
+        // A copy the user actually makes still crosses — and because the wire is
+        // ordered, an offer the poll above should never have made would arrive
+        // ahead of it.
+        let guestCopy = "copied in the guest"
+        pasteboard.setString(guestCopy, forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+        try await host1Frames.waitForFrames { !host1Frames.offers.isEmpty }
+
+        #expect(host1Frames.offers.count == 1)
+        let offered = try #require(host1Frames.offers.first)
+        #expect(offered.repInfo.map(\.byteCount) == [UInt64(Data(guestCopy.utf8).count)])
     }
 
     /// A no-change guard that swallows the restated enable costs a full retry

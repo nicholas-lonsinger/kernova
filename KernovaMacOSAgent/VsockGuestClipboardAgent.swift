@@ -412,6 +412,16 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         guard let channel = liveChannel else { return }
         let currentCount = pasteboard.changeCount
         guard currentCount != lastPasteboardChangeCount else { return }
+        // Ahead of every read: reading a promised flavor *fires* its provider,
+        // and this agent's own promise is still standing across a teardown and
+        // reconnect — where the change-count gate is deliberately unset, so this
+        // latch is what keeps the first poll of a connection from pulling the
+        // Mac's own content back and offering it as a guest copy. The publisher
+        // outlives the connections, so the latch does too.
+        guard currentCount != MainActorBridge.sync({ publisher.lastWriteChangeCount }) else {
+            lastPasteboardChangeCount = currentCount
+            return
+        }
 
         // Read once: the marker disposition, the flavors worth reading, and the
         // account an empty result owes the menu all have to describe the same
@@ -491,10 +501,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// `pasteboardHeldSomething` separates a copy whose every flavor was
     /// filtered out from a pasteboard emptied outright, which are not the same
     /// news. Only a snapshot a poll on this connection watched arrive is a copy
-    /// at all: the first poll re-evaluates whatever was already standing —
-    /// including a promise this agent wrote, whose providers stop serving the
-    /// moment the promise behind them is dropped — so it re-announces silently
-    /// rather than reporting a gesture nobody just made.
+    /// at all: the first poll re-evaluates whatever was already standing, so it
+    /// re-announces silently rather than reporting a gesture nobody just made.
     private func noteSnapshotOfferedNothing(pasteboardHeldSomething: Bool, changeCount: Int) {
         // The pasteboard still moved on, so the host's previous offer is retired
         // rather than left serving a copy the user has replaced.

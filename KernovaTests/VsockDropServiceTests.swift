@@ -398,6 +398,26 @@ struct VsockDropServiceTests {
         #expect(harness.recorder.dropOffers.isEmpty)
     }
 
+    @Test("a control-plane payload on the drop channel closes it and settles the service")
+    func wrongPortPayloadSettlesTheService() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.hello = Kernova_V1_Hello()
+        try harness.guest.send(frame)
+
+        // The endpoint closes the channel itself, so nothing else will tell the
+        // service — and a service left connected keeps offering the display a
+        // drop it cannot send.
+        try await waitForChange { !harness.service.isConnected }
+        let scratch = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
+        #expect(!harness.service.startDrop(urls: [file]))
+    }
+
     @Test("a drop is refused once the service has stopped")
     func refusesADropAfterStop() async throws {
         let harness = try Harness()

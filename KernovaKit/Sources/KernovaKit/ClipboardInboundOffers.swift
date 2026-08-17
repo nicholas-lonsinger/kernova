@@ -676,15 +676,7 @@ public final class ClipboardInboundOffers {
             return .refused(.cancelled)
         }
         guard let entry = entries[generation] else {
-            if currentGeneration == 0 {
-                Self.logger.warning(
-                    "Pull requested rep \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) from '\(self.peerName, privacy: .public)' (conn=\(self.tag, privacy: .public)) with no live offer — serving nothing"
-                )
-            } else {
-                Self.logger.debug(
-                    "Pull requested rep \(repIndex, privacy: .public) of superseded gen=\(generation, privacy: .public) from '\(self.peerName, privacy: .public)' (live gen=\(self.currentGeneration, privacy: .public), conn=\(self.tag, privacy: .public)) — serving nothing"
-                )
-            }
+            logMissingOffer(generation: generation, repIndex: repIndex)
             return .refused(.cancelled)
         }
         guard entry.reps.indices.contains(repIndex) else {
@@ -724,6 +716,25 @@ public final class ClipboardInboundOffers {
                 preflightByteCount: !info.isInline || servesFileURL
                     ? Int(clamping: info.byteCount) : nil,
                 receiver: receiver))
+    }
+
+    /// Records a pull for a generation this side no longer holds.
+    ///
+    /// Only a clipboard promise with nothing live behind it persists: a drop's
+    /// entry is retired the moment its job ends, so a pull for one that is gone
+    /// is the ordinary tail of a cancelled or completed job, and a superseded
+    /// clipboard generation is the benign supersession race — the newer offer's
+    /// own publication is what retires those promises.
+    private func logMissingOffer(generation: UInt64, repIndex: Int) {
+        guard session.kind == .clipboard, currentGeneration == 0 else {
+            Self.logger.debug(
+                "Pull requested rep \(repIndex, privacy: .public) of retired gen=\(generation, privacy: .public) from '\(self.peerName, privacy: .public)' (live gen=\(self.currentGeneration, privacy: .public), conn=\(self.tag, privacy: .public)) — serving nothing"
+            )
+            return
+        }
+        Self.logger.warning(
+            "Pull requested rep \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) from '\(self.peerName, privacy: .public)' (conn=\(self.tag, privacy: .public)) with no live offer — serving nothing"
+        )
     }
 
     /// Refuses the whole file set, on the surface each side owes it.
@@ -848,9 +859,17 @@ public final class ClipboardInboundOffers {
     ) -> ClipboardContent.Representation? {
         syncPulls.remove(plan.transferID)
         guard case .delivered(let representation) = outcome else {
-            // Ended before the refusal is raised, so the readout the unit's last
-            // emission leaves cannot displace what the refusal reports.
-            operation.unitEnded(id: UInt64(plan.repIndex), succeeded: false)
+            if caller == .paste {
+                // Retired rather than ended: a readout this object owns has
+                // nothing left to say about a fire that failed, and its
+                // retirement is queued ahead of the refusal on the one serial
+                // main queue both take — so what the refusal reports is what
+                // stands. An ended unit would emit a running readout instead,
+                // landing *after* the refusal and displacing it.
+                operation.abandon()
+            } else {
+                operation.unitEnded(id: UInt64(plan.repIndex), succeeded: false)
+            }
             report(outcome, plan: plan, operation: operation, caller: caller)
             return nil
         }
@@ -949,10 +968,15 @@ public final class ClipboardInboundOffers {
 
     /// Hands one refusal to the surface that owns it, from whichever thread
     /// raised it.
+    ///
+    /// Queued rather than run inline, even on the main thread: a readout
+    /// publishes through the serial main queue, so a refusal that ran inline
+    /// would be recorded ahead of emissions its own operation queued earlier
+    /// and be displaced by them.
     nonisolated private func raiseRefusal(
         _ gesture: ClipboardTransferGesture, _ failure: ClipboardTransferFailure
     ) {
-        MainActorBridge.sync { self.onRefusal(gesture, failure) }
+        MainActorBridge.async { self.onRefusal(gesture, failure) }
     }
 
     /// Maps a receiver or peer abort code to the user-facing paste code the peer

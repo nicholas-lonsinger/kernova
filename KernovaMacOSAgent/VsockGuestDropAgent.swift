@@ -245,16 +245,31 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         var outcome: JobOutcome = .completed
 
         for index in offer.reps.indices {
+            // Asked before every pull and again before the file it delivers is
+            // landed: a Cancel or a `DropRelease` retires the job's entry, and
+            // between the two checks lies a whole transfer the user has already
+            // called off — pulling into it would ask the host for bytes nothing
+            // wants, and landing one would put a file in Downloads after the
+            // cancel.
+            guard endpoint.hasLiveInboundOffer(generation: generation) else {
+                outcome = .cancelled
+                break
+            }
             switch endpoint.pull(generation: generation, repIndex: index, operation: operation) {
             case .delivered(let representation):
-                do {
-                    landed.append(try land(representation, named: offer.reps[index].filename))
-                } catch {
-                    let failure = Self.classify(error)
-                    Self.logger.error(
-                        "Failed to save a dropped file into Downloads: \(error.localizedDescription, privacy: .public)"
-                    )
-                    outcome = .failed(failure.0, failure.1)
+                if endpoint.hasLiveInboundOffer(generation: generation) {
+                    do {
+                        landed.append(try land(representation, named: offer.reps[index].filename))
+                    } catch {
+                        let failure = Self.classify(error)
+                        Self.logger.error(
+                            "Failed to save a dropped file into Downloads: \(error.localizedDescription, privacy: .public)"
+                        )
+                        outcome = .failed(failure.0, failure.1)
+                    }
+                } else {
+                    Self.discard(representation)
+                    outcome = .cancelled
                 }
             case .aborted(let abort):
                 // A retiring code is every route a drop is called off by — a
@@ -334,6 +349,14 @@ final class VsockGuestDropAgent: @unchecked Sendable {
             try? fileManager.removeItem(at: source)
         }
         return destination
+    }
+
+    /// Throws away a file that arrived for a job the user had already called
+    /// off, so the staging root does not hold it until the generation window
+    /// reclaims it.
+    private static func discard(_ representation: ClipboardContent.Representation) {
+        guard let url = representation.fileURL else { return }
+        try? FileManager.default.removeItem(at: url)
     }
 
     private static func isCrossDevice(_ error: NSError) -> Bool {

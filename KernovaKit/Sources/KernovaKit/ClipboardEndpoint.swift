@@ -410,7 +410,12 @@ public final class ClipboardEndpoint {
     /// crossed wires: the connection ends, and a conformant agent reconnects.
     /// Stream payloads never arrive here — the consume loop routes them straight
     /// to the engine off the main actor.
+    ///
+    /// A frame the peer sent and then closed on is still delivered; one queued
+    /// behind a local ``stop()`` is not, because that is this side deciding it
+    /// is done listening.
     private func handleControlFrame(_ frame: Frame) {
+        guard !session.hasStopped else { return }
         switch frame.payload {
         case .clipboardOffer(let offer):
             guard kind == .clipboard, let inbound else { return closeOnWrongPort() }
@@ -459,11 +464,19 @@ public final class ClipboardEndpoint {
     }
 
     /// Ends a connection the peer is speaking the wrong protocol on.
+    ///
+    /// The owner is told, unlike after its own ``stop()``: the peer crossed the
+    /// wires, so this is the connection ending under the owner rather than the
+    /// owner deciding, and the consume tail's own settle is already past the
+    /// point where it could say so.
     private func closeOnWrongPort() {
         Self.logger.warning(
             "Unexpected payload on the \(self.channelWord, privacy: .public) channel for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) — wrong port; closing the channel"
         )
+        let wasConnected = isConnected
         stop()
+        guard wasConnected else { return }
+        delegate?.endpointDidEnd(self)
     }
 
     nonisolated private var channelWord: String {

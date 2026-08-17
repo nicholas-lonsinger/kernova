@@ -70,6 +70,24 @@ struct ClipboardPasteboardPublisherTests {
         #expect(registry.countForTesting == 0)
     }
 
+    @Test("a failed write holds nothing, so there is nothing to take back")
+    func failedWriteIsNotHeld() {
+        let pasteboard = FakeWritePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let publisher = ClipboardPasteboardPublisher(
+            pasteboard: pasteboard, providerRegistry: registry)
+        pasteboard.failNextWrite()
+
+        #expect(!publisher.write([makeSpec(textUTI, bytes: Data("one".utf8))], promised: true))
+
+        // The prepare left an empty pasteboard, which is nobody's write…
+        #expect(!publisher.holdsLastWrite)
+        #expect(!publisher.retractPromisedWrite())
+        // …but the change it made still must not read as the user's own copy.
+        #expect(publisher.lastWriteChangeCount == pasteboard.changeCount)
+    }
+
     // MARK: - Holding the write
 
     @Test("the write is held only while nothing has replaced it")

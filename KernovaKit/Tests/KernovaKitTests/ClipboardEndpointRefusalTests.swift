@@ -308,9 +308,52 @@ struct ClipboardEndpointRefusalTests {
         harness.side.channel.close()
         try await harness.side.recorder.waitForEnd()
 
+        let stopwatch = BackstopStopwatch()
         #expect(await harness.side.serveDataOffMain(generation: 1, repIndex: 0, uti: textUTI) == nil)
+        // The deadline *is* the assertion: no reply is coming, so a fire that
+        // parks to `lazyPullTimeout` holds the pasteboard past its own budget.
+        #expect(stopwatch.elapsed < 5)
         let refusal = try await harness.side.recorder.waitForRefusal()
         #expect(refusal.gesture == .paste)
+    }
+
+    // MARK: - What a refusal leaves on the readout
+
+    @Test("a refused paste fire is not displaced by the readout of the fire that raised it")
+    func refusalOutlivesItsOwnReadout() async throws {
+        let harness = try RawPeerHarness(freeSpaceProvider: { _ in 0 })
+        defer { harness.tearDown() }
+        let reports = harness.side.reports
+        // Stands in for the host adapter, whose answer to a refusal is the VM's
+        // own transfer report.
+        let owner = RefusalReportingDelegate(
+            recorder: harness.side.recorder, reporter: reports.reporter)
+        harness.endpoint.delegate = owner
+        try harness.send(
+            makeOfferFrame(generation: 1, reps: [fileRep("a.bin", bytes: 4096)]))
+        try await harness.side.recorder.waitForOffer()
+
+        // The fire runs on the main thread, where the pasteboard fires a promise
+        // — the ordering the refusal has to survive.
+        #expect(harness.endpoint.serveFileURL(generation: 1, repIndex: 0) == nil)
+        await drainMainQueue()
+
+        #expect(owner.reportedRefusals == 1)
+        // What the surface is left showing is the refusal…
+        #expect(reports.failure != nil)
+        // …and nothing the refused fire's own readout published ever came after
+        // it: a bar flashing over the refusal is what clears the collapse of the
+        // sibling fires that follow.
+        let failed = reports.reports.firstIndex { report in
+            guard case .finished(let finish) = report else { return false }
+            return finish.failure != nil
+        }
+        let index = try #require(failed)
+        #expect(
+            !reports.reports[index...].contains { report in
+                if case .running = report { return true }
+                return false
+            })
     }
 
     // MARK: - Reporting a refusal to the peer
@@ -442,4 +485,54 @@ struct ClipboardEndpointRefusalTests {
 private func isDiskFull(_ failure: ClipboardTransferFailure) -> Bool {
     if case .diskFull = failure { return true }
     return false
+}
+
+/// Records what the endpoint reports and puts every refusal on the transfer
+/// report, as the host adapter does.
+@MainActor
+private final class RefusalReportingDelegate: ClipboardEndpointDelegate {
+    private let recorder: EndpointRecorder
+    private let reporter: ClipboardTransferReporter
+
+    /// How many refusals reached the report.
+    private(set) var reportedRefusals = 0
+
+    init(recorder: EndpointRecorder, reporter: ClipboardTransferReporter) {
+        self.recorder = recorder
+        self.reporter = reporter
+    }
+
+    func endpoint(
+        _ endpoint: ClipboardEndpoint, didReceiveOffer offer: ClipboardEndpoint.InboundOffer
+    ) {
+        recorder.endpoint(endpoint, didReceiveOffer: offer)
+    }
+
+    func endpoint(
+        _ endpoint: ClipboardEndpoint, didRetractOffer generation: UInt64?,
+        reason: ClipboardEndpoint.RetractReason
+    ) {
+        recorder.endpoint(endpoint, didRetractOffer: generation, reason: reason)
+    }
+
+    func endpoint(
+        _ endpoint: ClipboardEndpoint, didRefuse gesture: ClipboardTransferGesture,
+        failure: ClipboardTransferFailure
+    ) {
+        recorder.endpoint(endpoint, didRefuse: gesture, failure: failure)
+        reportedRefusals += 1
+        reporter.finish(
+            ClipboardTransferFinish(
+                gesture: gesture, outcome: .failed(failure), peerName: "Guest"))
+    }
+
+    func endpoint(
+        _ endpoint: ClipboardEndpoint, didRecord activity: ClipboardEndpoint.Activity
+    ) {
+        recorder.endpoint(endpoint, didRecord: activity)
+    }
+
+    func endpointDidEnd(_ endpoint: ClipboardEndpoint) {
+        recorder.endpointDidEnd(endpoint)
+    }
 }

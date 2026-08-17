@@ -108,12 +108,16 @@ public final class ClipboardPasteboardPublisher {
     /// the user's own copy to something polling the same pasteboard.
     public private(set) var lastWriteChangeCount: Int?
 
-    /// Whether the most recent write carried promised (offer-addressed) items.
+    /// The most recent write the pasteboard actually took.
     ///
-    /// Those are the only kind a supersession can strand, and so the only kind
-    /// ``retractPromisedWrite()`` retracts — a fully resolved write serves from
-    /// local staging and survives the offer behind it moving on.
-    private var lastWriteWasPromised = false
+    /// Recorded on success alone, because it is what is *standing* on the
+    /// pasteboard: a write that failed left the prepare's empty pasteboard
+    /// behind, which is nothing to hold and nothing to withdraw. `promised`
+    /// marks the offer-addressed kind, the only one a supersession can strand
+    /// and so the only one ``retractPromisedWrite()`` retracts — a fully
+    /// resolved write serves from local staging and survives the offer behind it
+    /// moving on.
+    private var heldWrite: (changeCount: Int, promised: Bool)?
 
     /// Creates a publisher over `pasteboard`.
     ///
@@ -153,18 +157,22 @@ public final class ClipboardPasteboardPublisher {
         pasteboard.prepareForNewContents(with: .currentHostOnly)
         let written = pasteboard.writeItems(items)
         lastWriteChangeCount = pasteboard.changeCount
-        lastWriteWasPromised = promised
         // A failed write put no item on the pasteboard, so its providers are
-        // never asked for anything and nothing has to hold them.
-        guard written else { return false }
+        // never asked for anything, nothing has to hold them, and the empty
+        // pasteboard it left is nobody's write.
+        guard written else {
+            heldWrite = nil
+            return false
+        }
+        heldWrite = (changeCount: pasteboard.changeCount, promised: promised)
         providerRegistry.retain(providers)
         return true
     }
 
-    /// `true` while the pasteboard still holds this publisher's most recent write
-    /// — nothing (the user included) has replaced it since.
+    /// `true` while the pasteboard still holds this publisher's most recent
+    /// successful write — nothing (the user included) has replaced it since.
     public var holdsLastWrite: Bool {
-        lastWriteChangeCount != nil && lastWriteChangeCount == pasteboard.changeCount
+        heldWrite?.changeCount == pasteboard.changeCount
     }
 
     /// Clears the pasteboard when it still holds this publisher's most recent
@@ -175,10 +183,11 @@ public final class ClipboardPasteboardPublisher {
     /// staging.
     @discardableResult
     public func retractPromisedWrite() -> Bool {
-        guard lastWriteWasPromised, holdsLastWrite else { return false }
+        guard let held = heldWrite, held.promised, held.changeCount == pasteboard.changeCount
+        else { return false }
         pasteboard.clearContents()
         lastWriteChangeCount = nil
-        lastWriteWasPromised = false
+        heldWrite = nil
         return true
     }
 
