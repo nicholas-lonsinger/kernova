@@ -363,7 +363,13 @@ struct VsockControlServiceTests {
         // Frame 0 is the host Hello — discard.
         _ = try await nextFrame(from: guest)
 
+        // DIAGNOSTIC (scratch): watch main + record where the process sits when
+        // a heartbeat lands late.
+        let watchdog = MainWatchdogDiag()
+        watchdog.start()
+        defer { watchdog.stop() }
         var stamps: [ContinuousClock.Instant] = []
+        var lastStamp: ContinuousClock.Instant? = nil
         while stamps.count < 3 {
             // Use the shared 5 s default. If the timer is genuinely broken
             // we'll still fail in bounded time (≤15 s); if it's just slow,
@@ -371,7 +377,14 @@ struct VsockControlServiceTests {
             // sharper "cadence drift" error than a generic timeout.
             let frame = try await nextFrame(from: guest)
             if case .heartbeat = frame.payload {
-                stamps.append(.now)
+                let now = ContinuousClock.Instant.now
+                if let last = lastStamp, now - last > .seconds(1) {
+                    let text = MainWatchdogDiag.sampleProcess()
+                    Issue.record(
+                        "DIAG late heartbeat gap \(now - last); watchdog: \(watchdog.report())\n\(text.prefix(30_000))")
+                }
+                lastStamp = now
+                stamps.append(now)
             }
         }
 
@@ -1368,4 +1381,71 @@ private final class FrameCollector {
 
     func cancel() { consumeTask?.cancel() }
     deinit { consumeTask?.cancel() }
+}
+
+// DIAGNOSTIC (scratch branch only).
+final class MainWatchdogDiag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var queuePong = Date()
+    private var runLoopPong = Date()
+    private var stopped = false
+    private var events: [String] = []
+    private var sampled = false
+    private var thread: Thread?
+
+    func start() {
+        let t = Thread { [self] in
+            while !self.lock.withLock({ self.stopped }) {
+                let sent = Date()
+                DispatchQueue.main.async { self.lock.withLock { self.queuePong = Date() } }
+                CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
+                    self.lock.withLock { self.runLoopPong = Date() }
+                }
+                CFRunLoopWakeUp(CFRunLoopGetMain())
+                Thread.sleep(forTimeInterval: 0.25)
+                let (q, r) = self.lock.withLock { (self.queuePong, self.runLoopPong) }
+                let qLate = sent.timeIntervalSince(q), rLate = sent.timeIntervalSince(r)
+                if qLate > 1.5 || rLate > 1.5 {
+                    let msg = String(format: "main-queue silent %.1fs, run-loop silent %.1fs", qLate, rLate)
+                    let shouldSample = self.lock.withLock { () -> Bool in
+                        self.events.append(msg)
+                        if self.sampled { return false }
+                        self.sampled = true
+                        return true
+                    }
+                    if shouldSample {
+                        let text = Self.sampleProcess()
+                        FileHandle.standardError.write(
+                            Data("\n===== DIAG WATCHDOG \(msg) =====\n\(text)\n===== END =====\n".utf8))
+                        self.lock.withLock { self.events.append("SAMPLE:\n" + String(text.prefix(30_000))) }
+                    }
+                }
+            }
+        }
+        thread = t
+        t.start()
+    }
+
+    func stop() { lock.withLock { stopped = true } }
+
+    func report() -> String {
+        lock.withLock { events.isEmpty ? "main responsive throughout" : events.joined(separator: "\n") }
+    }
+
+    static func sampleProcess() -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sample")
+        process.arguments = [String(ProcessInfo.processInfo.processIdentifier), "1", "-mayDie"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return String(decoding: data.prefix(400_000), as: UTF8.self)
+        } catch {
+            return "SAMPLE FAILED: \(error)"
+        }
+    }
 }
