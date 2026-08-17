@@ -14,8 +14,8 @@ enum VsockFrame {
     /// A peer that announces a larger frame is protocol-violating —
     /// `VsockFrameDecoder.nextFrame()` throws `VsockFrameError.frameTooLarge`
     /// rather than buffer unboundedly. A DoS backstop only: no real frame
-    /// approaches it, since a `ClipboardChunk` payload is at most the negotiated
-    /// chunk size (64 KiB by default).
+    /// approaches it, since a transfer's payload never crosses as a frame — it
+    /// is raw bytes on that transfer's own data connection.
     static let maxPayloadSize: Int = 128 * 1024 * 1024
 
     /// Number of bytes occupied by the length prefix.

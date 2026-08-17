@@ -3,10 +3,10 @@ import Foundation
 /// Smoothed throughput and time-remaining estimate for a monotonically growing
 /// byte count.
 ///
-/// A raw Δbytes/Δt reading swings wildly across a chunked vsock transfer (a
-/// credit stall reads as 0 B/s, the chunk after it as a burst), so this keeps an
-/// exponential moving average instead. The caller passes its own sample time;
-/// the estimator never reads the wall clock itself.
+/// A raw Δbytes/Δt reading swings wildly across a vsock transfer (a write parked
+/// on a full socket buffer reads as 0 B/s, the drain after it as a burst), so
+/// this keeps an exponential moving average instead. The caller passes its own
+/// sample time; the estimator never reads the wall clock itself.
 struct TransferRateEstimator: Equatable, Sendable {
     /// Weight of the newest instantaneous reading in the moving average.
     private static let smoothing = 0.25

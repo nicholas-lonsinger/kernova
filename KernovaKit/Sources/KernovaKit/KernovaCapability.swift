@@ -20,9 +20,8 @@ public enum KernovaCapability {
     /// inline payload crosses raw.
     ///
     /// Required on both sides for clipboard sharing to be enabled, and for the
-    /// clipboard data port to admit a connection. Earlier versions carried the
-    /// bytes as chunk frames on the control channel under an application-level
-    /// credit window; a peer speaking one has no data port to dial.
+    /// clipboard data port to admit a connection. A peer without it has no data
+    /// port to dial.
     public static let clipboardTransferV3 = "clipboard.transfer.v3"
 
     /// Files dragged onto the VM display, offered on their own vsock channel

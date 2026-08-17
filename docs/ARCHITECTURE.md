@@ -161,13 +161,17 @@ through `PathValidation` before every hand-off. This is not defensive: under the
 
 The vsock stack (macOS guests only):
 
-- `VsockPorts` — the port registry. Each service
-  gets its own listener instead of in-band multiplexing; `KernovaMacOSAgent/VsockPorts.swift`
-  mirrors the same assignments guest-side.
+- `VsockPorts` — the port registry. Each service gets its own listener instead of in-band
+  multiplexing, and the clipboard and drop kinds get a second port apiece, carrying one
+  guest-dialed connection per transfer in place of a long-lived channel;
+  `KernovaMacOSAgent/VsockPorts.swift` mirrors the same assignments guest-side. What a connection
+  costs, and why nothing above the kernel meters a
+  stream: [research/2026-08-17-vsock-stalled-receiver-and-accept-latency.md](research/2026-08-17-vsock-stalled-receiver-and-accept-latency.md).
 - `VsockListenerHost` — one `VZVirtioSocketListener` per port, bridging an accepted connection to a
-  `VsockChannel`. Its `shouldAdmit` predicate refuses a connection before any channel is built;
-  `VMInstance` wires the log, clipboard and drop listeners to `featureChannelAdmission`, so no
-  feature channel is accepted before the control handshake completes, and each names the guest
+  `VsockChannel` or, on a data port, handing the raw descriptor to an `onAcceptFd` closure instead.
+  Its `shouldAdmit` predicate refuses a connection before any channel is built; `VMInstance` wires
+  the log, clipboard, drop and both data listeners to `featureChannelAdmission`, so no feature
+  channel is accepted before the control handshake completes, and each names the guest
   capability it additionally requires. Socket-buffer sizing and its
   measurements: [research/2026-07-13-vsock-transport-throughput.md](research/2026-07-13-vsock-transport-throughput.md).
 - `VsockControlService` — `@MainActor` `@Observable` owner of the always-on control channel:
@@ -181,16 +185,16 @@ The vsock stack (macOS guests only):
 - `VsockGuestLogService` — forwards guest `LogRecord` frames into the `app.kernova.guest` subsystem.
 - `VsockDropService` — `@MainActor` `@Observable` owner of the drop channel, send-only, driving
   `KernovaKit`'s `ClipboardEndpoint`. Files dragged onto `VMDisplayBackingView` become a
-  `DropOffer` the guest pulls representation by representation over the same streaming engine the
+  `DropOffer` the guest pulls representation by representation over the same transfer machinery the
   clipboard uses; the guest writes them into its Downloads folder and replies `DropComplete`.
-  Installed for every guest with a socket device, gated only on the guest's `drop.files.v2`.
+  Installed for every guest with a socket device, gated only on the guest's `drop.files.v3`.
   `VMInstance.displayDropAvailability` is the single read site deciding whether the display
   registers as a drag destination at all.
 
 The log and clipboard listeners are gated on their configuration toggles and re-evaluated at
-runtime through `VMInstance.applyLivePolicy(oldConfig:newConfig:)`; the control and drop listeners
-have no toggle to track. Linux clipboard sharing is restart-only — its SPICE port must be declared
-at config-build time.
+runtime through `VMInstance.applyLivePolicy(oldConfig:newConfig:)`, the clipboard's data listener
+rising and falling with it; the control, drop and drop-data listeners have no toggle to track.
+Linux clipboard sharing is restart-only — its SPICE port must be declared at config-build time.
 
 Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
 
@@ -203,16 +207,27 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
   `VZSpiceAgentPortAttachment` so clipboard data flows through the gated UI instead of the host
   `NSPasteboard`.
 - `VsockClipboardService` — the macOS transport, over `VsockChannel`, driving `KernovaKit`'s
-  `ClipboardEndpoint`. Offers are metadata-only; bytes stream on
-  request. Both stream engines and the agent's watchdog types store `any EngineClock` — one `EngineInstant`
-  timeline for every conformance, so the macOS 13+ and macOS 12 clocks (and a manually advanced
-  test clock) are interchangeable at construction.
-- `ClipboardEndpoint` — `KernovaKit`'s `@MainActor` owner of one clipboard-protocol connection,
-  parameterized by role (`.host`/`.guest`) and kind (`.clipboard`/`.drop`): the streaming engine
-  and its frame routing, what each side has offered, and every transfer between them. Its
-  `ClipboardEndpointDelegate` is the seam an owner sees — offer arrival and retraction, refusals,
-  status activity, the channel's end. All four owners drive one: the two host services above and
-  the guest agent's `VsockGuestClipboardAgent`/`VsockGuestDropAgent`.
+  `ClipboardEndpoint`. Offers are metadata-only; a transfer's bytes ride the data connection opened
+  for it. `EngineClock` is the one time seam KernovaKit and the agent share — a single
+  `EngineInstant` timeline for every conformance, so the macOS 13+ and macOS 12 clocks and a
+  manually advanced test clock are interchangeable at construction.
+- `ClipboardEndpoint` — `KernovaKit`'s `@MainActor` owner of one clipboard-protocol control
+  channel, parameterized by role (`.host`/`.guest`) and kind (`.clipboard`/`.drop`): what each side
+  has offered and every transfer between them. `Configuration.dataLink` is how it reaches the
+  kind's data port — `.accepts` on the host, where `acceptDataConnection(fd:)` takes the listener's
+  descriptor and moves it off the main queue, and `.dials` on the guest, which opens each
+  connection itself. Its `ClipboardEndpointDelegate` is the seam an owner sees — offer arrival and
+  retraction, refusals, status activity, the channel's end. All four owners drive one: the two host
+  services above and the guest agent's `VsockGuestClipboardAgent`/`VsockGuestDropAgent`.
+- `ClipboardControlSession`, `ClipboardTransferInbox`, `ClipboardTransferOutbox`,
+  `ClipboardTransferSender`, `ClipboardTransferReceiver` — the layers beneath that endpoint. The
+  session owns the control channel and the two transfer tables; the inbox holds what this side is
+  pulling and the outbox what it is serving, both lock-guarded rather than actor-isolated so a
+  transfer's own thread can reach them. Each live transfer gets a sender or a receiver on its own
+  serial queue, owning that connection's descriptor through the payload and the trailer that ends
+  it. `ClipboardDataConnection` (descriptor mechanics and the trailer) and
+  `ClipboardArchiveCodec` (AppleArchive encode/extract straight onto the socket) are the stateless
+  namespaces those queues call into.
 - `HostClipboardPublisher`, `ClipboardPassthroughCoordinator` — host-side publication of inbound
   guest content, and the auto-publish path. Both reach the pasteboard through KernovaKit's
   `ClipboardPasteboardPublisher` — the one promised write on either side of the wire, driven by the
@@ -225,7 +240,7 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
   `VMLibraryViewModel.instances` rather than holding a registry of its own.
 - `ClipboardTransferOperation` — KernovaKit's lock-based per-operation accumulator, opened by
   both host services and by the guest agent's clipboard and drop agents, which drive it from
-  non-`@MainActor` callbacks and stream lanes.
+  non-`@MainActor` callbacks and per-transfer queues.
 - `AgentStatus` — the enum driving install/update/reinstall affordances, sourced from
   `VsockControlService` (macOS) or `SpiceClipboardService` (Linux) and read through
   `VMInstance.agentStatus`.
@@ -413,9 +428,10 @@ kernel resources until relaunch — hence one owner (`RuntimeFileAccess`) and on
   `NSWorkspace`. Sandboxed with `app-sandbox` + `inherit`.
 
 - **KernovaMacOSAgent** — `Kernova Guest Agent.app`, the `.accessory` menu-bar app that runs inside
-  macOS guests, holding four independent vsock connections to the host (control, log forwarding,
-  clipboard, drop). Its clipboard and drop agents each drive a `ClipboardEndpoint`, the same
-  KernovaKit type the host services do. It is not embedded as a bundle: the `Package Guest Agent DMG` build phase produces
+  macOS guests, holding four long-lived vsock connections to the host (control, log forwarding,
+  clipboard, drop) and dialing one more per transfer through `VsockGuestDataDialer`, which reuses
+  `VsockGuestClient`'s per-OS connect paths. Its clipboard and drop agents each drive a
+  `ClipboardEndpoint`, the same KernovaKit type the host services do. It is not embedded as a bundle: the `Package Guest Agent DMG` build phase produces
   `Contents/Resources/KernovaMacOSAgent.dmg`, so it must already carry its final Developer ID
   signature when the DMG is baked — export-time re-signing cannot reach inside a DMG resource
   ([RELEASING.md](RELEASING.md)); version bumps are in [BUILD.md](BUILD.md).
