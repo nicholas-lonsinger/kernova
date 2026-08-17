@@ -51,6 +51,11 @@ public struct RepInfo: Sendable {
 }
 
 /// A frame with the protocol version every consumer requires.
+///
+/// For the payloads the streaming engine builds inside itself, which have no
+/// `Frame` factory to call; every control frame below goes through the
+/// production builder instead, so a fixture can never describe a frame the
+/// shipping one would not.
 private func versionedFrame() -> Frame {
     var frame = Frame()
     frame.protocolVersion = 1
@@ -62,13 +67,7 @@ private func versionedFrame() -> Frame {
 public func makeOfferFrame(
     generation: UInt64, reps: [RepInfo], isConcealed: Bool = false
 ) -> Frame {
-    var offer = Kernova_V1_ClipboardOffer()
-    offer.generation = generation
-    offer.repInfo = reps.map(\.wire)
-    offer.isConcealed = isConcealed
-    var frame = versionedFrame()
-    frame.clipboardOffer = offer
-    return frame
+    .clipboardOffer(generation: generation, reps: reps.map(\.wire), isConcealed: isConcealed)
 }
 
 /// An offer for a single inline text representation.
@@ -78,35 +77,26 @@ public func makeTextOfferFrame(generation: UInt64, text: String) -> Frame {
 
 /// A `ClipboardRelease` withdrawing an offer.
 public func makeReleaseFrame(generation: UInt64) -> Frame {
-    var release = Kernova_V1_ClipboardRelease()
-    release.generation = generation
-    var frame = versionedFrame()
-    frame.clipboardRelease = release
-    return frame
+    .clipboardRelease(generation: generation)
 }
 
 /// A `DropOffer` announcing one drop's items.
 public func makeDropOfferFrame(generation: UInt64, reps: [RepInfo]) -> Frame {
-    var offer = Kernova_V1_DropOffer()
-    offer.generation = generation
-    offer.repInfo = reps.map(\.wire)
-    var frame = versionedFrame()
-    frame.dropOffer = offer
-    return frame
+    .dropOffer(generation: generation, reps: reps.map(\.wire))
+}
+
+/// A `DropRelease` calling off one drop.
+public func makeDropReleaseFrame(generation: UInt64) -> Frame {
+    .dropRelease(generation: generation)
 }
 
 /// A `ClipboardRequest` pulling one representation of a generation.
 public func makeRequestFrame(
     generation: UInt64, transferID: UInt64, uti: String, maxAcceptByteCount: UInt64 = .max
 ) -> Frame {
-    var request = Kernova_V1_ClipboardRequest()
-    request.generation = generation
-    request.transferID = transferID
-    request.uti = uti
-    request.maxAcceptByteCount = maxAcceptByteCount
-    var frame = versionedFrame()
-    frame.clipboardRequest = request
-    return frame
+    .clipboardRequest(
+        generation: generation, transferID: transferID, uti: uti,
+        maxAcceptByteCount: maxAcceptByteCount)
 }
 
 /// A `ClipboardStreamBegin` opening an inbound transfer.
@@ -201,12 +191,5 @@ public func makeDropCompleteFrame(
     generation: UInt64, outcome: Kernova_V1_DropComplete.Outcome,
     code: ClipboardErrorCode? = nil, message: String = ""
 ) -> Frame {
-    var complete = Kernova_V1_DropComplete()
-    complete.generation = generation
-    complete.outcome = outcome
-    complete.code = code?.rawValue ?? ""
-    complete.message = message
-    var frame = versionedFrame()
-    frame.dropComplete = complete
-    return frame
+    .dropComplete(generation: generation, outcome: outcome, code: code, message: message)
 }

@@ -196,12 +196,7 @@ struct ClipboardEndpointDropTests {
         let pull = harness.side.startPull(generation: 1, repIndex: 0, operation: operation)
         try await harness.waitForRequest(generation: 1, repIndex: 0)
 
-        var release = Frame()
-        release.protocolVersion = 1
-        var dropRelease = Kernova_V1_DropRelease()
-        dropRelease.generation = 1
-        release.dropRelease = dropRelease
-        try harness.send(release)
+        try harness.send(makeDropReleaseFrame(generation: 1))
 
         // The wake carries a retiring abort code rather than a bare
         // cancellation, so the caller can tell it from a transfer that failed.

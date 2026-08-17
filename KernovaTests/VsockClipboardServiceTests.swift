@@ -58,45 +58,24 @@ struct VsockClipboardServiceTests {
         var offset = 0
         while offset < bytes.count {
             let end = min(offset + chunkSize, bytes.count)
-            var chunkFrame = Frame()
-            chunkFrame.protocolVersion = 1
-            chunkFrame.clipboardChunk = Kernova_V1_ClipboardChunk.with {
-                $0.transferID = transferID
-                $0.offset = UInt64(offset)
-                $0.data = bytes.subdata(in: offset..<end)
-            }
-            try guest.send(chunkFrame)
+            try guest.send(
+                makeChunkFrame(
+                    transferID: transferID, offset: offset,
+                    data: bytes.subdata(in: offset..<end)))
             offset = end
         }
-        var endFrame = Frame()
-        endFrame.protocolVersion = 1
-        endFrame.clipboardStreamEnd = Kernova_V1_ClipboardStreamEnd.with {
-            $0.transferID = transferID
-            $0.totalBytes = UInt64(bytes.count)
-            $0.sha256 = Data(SHA256.hash(data: bytes))
-        }
-        try guest.send(endFrame)
+        try guest.send(makeEndFrame(transferID: transferID, payload: bytes))
     }
 
     /// Acknowledges the service's outbound transfer so its sender (which waits
     /// for the first ack before chunking) makes progress.
     ///
-    /// A single ack
-    /// advertising a window large enough for the whole payload drains it.
+    /// A single ack advertising a window large enough for the whole payload
+    /// drains it.
     private func sendAck(
-        from guest: VsockChannel,
-        transferID: UInt64,
-        bytesConsumed: UInt64,
-        windowBytes: UInt64
+        from guest: VsockChannel, transferID: UInt64, windowBytes: Int = 512 * 1024
     ) throws {
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.clipboardStreamAck = Kernova_V1_ClipboardStreamAck.with {
-            $0.transferID = transferID
-            $0.bytesConsumed = bytesConsumed
-            $0.windowBytes = windowBytes
-        }
-        try guest.send(frame)
+        try guest.send(makeAckFrame(transferID: transferID, windowBytes: windowBytes))
     }
 
     /// Reassembles the chunks of one outbound transfer into a single buffer,
@@ -281,7 +260,7 @@ struct VsockClipboardServiceTests {
         #expect(!begin.isInline)
         #expect(begin.filename == "Project")
 
-        try sendAck(from: guest, transferID: xid, bytesConsumed: 0, windowBytes: 512 * 1024)
+        try sendAck(from: guest, transferID: xid)
         try await recorder.waitForFrames {
             recorder.first {
                 if case .clipboardStreamEnd = $0.payload { return true }; return false
@@ -402,7 +381,7 @@ struct VsockClipboardServiceTests {
                 return false
             } != nil
         }
-        try sendAck(from: guest, transferID: xid, bytesConsumed: 0, windowBytes: 512 * 1024)
+        try sendAck(from: guest, transferID: xid)
         try await recorder.waitForFrames {
             recorder.first {
                 if case .clipboardStreamEnd(let end) = $0.payload { return end.transferID == xid }
@@ -452,7 +431,7 @@ struct VsockClipboardServiceTests {
             } != nil
         }
         // A window covering the whole payload lets every chunk flow after one ack.
-        try sendAck(from: guest, transferID: xid, bytesConsumed: 0, windowBytes: UInt64(bytes.count))
+        try sendAck(from: guest, transferID: xid, windowBytes: bytes.count)
 
         try await recorder.waitForFrames {
             recorder.first {
@@ -724,19 +703,12 @@ struct VsockClipboardServiceTests {
             case .archived(let bytes, let name):
                 wire = try clipboardArchiveBytes(of: .blob(bytes, name: name))
             }
-            var begin = Frame()
-            begin.protocolVersion = 1
-            begin.clipboardStreamBegin = Kernova_V1_ClipboardStreamBegin.with {
-                $0.generation = req.generation
-                $0.transferID = req.transferID
-                $0.uti = reply.uti
-                // An archive's wire size isn't known until its last byte.
-                $0.totalBytes = reply.isArchive ? 0 : UInt64(wire.count)
-                $0.filename = reply.filename
-                $0.isInline = reply.isInline
-                $0.isArchive = reply.isArchive
-            }
-            try guest.send(begin)
+            try guest.send(
+                makeBeginFrame(
+                    generation: req.generation, transferID: req.transferID, uti: reply.uti,
+                    // An archive's wire size isn't known until its last byte.
+                    totalBytes: reply.isArchive ? 0 : wire.count, filename: reply.filename,
+                    isInline: reply.isInline, isArchive: reply.isArchive))
             // Begin-only: leave the transfer live so a supersede/release can
             // cancel it; never send chunks or End.
             if reply.beginOnly { return }
@@ -745,28 +717,17 @@ struct VsockClipboardServiceTests {
             let chunkSize = 64 * 1024
             while offset < wire.count {
                 let end = min(offset + chunkSize, wire.count)
-                var chunkFrame = Frame()
-                chunkFrame.protocolVersion = 1
-                chunkFrame.clipboardChunk = Kernova_V1_ClipboardChunk.with {
-                    $0.transferID = req.transferID
-                    $0.offset = UInt64(offset)
-                    $0.data = wire.subdata(in: offset..<end)
-                }
-                try guest.send(chunkFrame)
+                try guest.send(
+                    makeChunkFrame(
+                        transferID: req.transferID, offset: offset,
+                        data: wire.subdata(in: offset..<end)))
                 offset = end
             }
 
             // Park before End so a test can observe the live, mid-flight transfer.
             if holdEnd { try await endGate.wait { self.endReleased } }
 
-            var endFrame = Frame()
-            endFrame.protocolVersion = 1
-            endFrame.clipboardStreamEnd = Kernova_V1_ClipboardStreamEnd.with {
-                $0.transferID = req.transferID
-                $0.totalBytes = UInt64(wire.count)
-                $0.sha256 = Data(SHA256.hash(data: wire))
-            }
-            try guest.send(endFrame)
+            try guest.send(makeEndFrame(transferID: req.transferID, payload: wire))
         }
     }
 
@@ -1533,10 +1494,7 @@ struct VsockClipboardServiceTests {
 
         // The guest releases the offer — a supersession: the promise drops, but
         // the staged file rides the grace window.
-        var release = Frame()
-        release.protocolVersion = 1
-        release.clipboardRelease = Kernova_V1_ClipboardRelease.with { $0.generation = 15 }
-        try guest.send(release)
+        try guest.send(makeReleaseFrame(generation: 15))
 
         // Barrier: a control frame sent after the release, processed in order on
         // the single channel — once it surfaces, handleRelease has run.
@@ -1625,10 +1583,7 @@ struct VsockClipboardServiceTests {
         #expect(retractionCalls == 1)
         #expect(reports.failure == nil)
 
-        var release = Frame()
-        release.protocolVersion = 1
-        release.clipboardRelease = Kernova_V1_ClipboardRelease.with { $0.generation = 4 }
-        try guest.send(release)
+        try guest.send(makeReleaseFrame(generation: 4))
         try await reports.wait {
             reports.failure == .supersededCopyRetracted(hasSuccessor: false)
         }
@@ -2630,10 +2585,7 @@ struct VsockClipboardServiceTests {
         }
         try await responder.answered.wait { responder.requests.count == 1 }
 
-        var release = Frame()
-        release.protocolVersion = 1
-        release.clipboardRelease = Kernova_V1_ClipboardRelease.with { $0.generation = 49 }
-        try guest.send(release)
+        try guest.send(makeReleaseFrame(generation: 49))
 
         // The fire returns empty rather than parking to its backstop, and the
         // release's own explainer is what stands.
@@ -2694,37 +2646,15 @@ struct VsockClipboardServiceTests {
                 try guest.sendErrorFrame(
                     code: "clipboard.interleaved", message: "control frame mid-pull",
                     inReplyTo: "clipboard.request")
-                var begin = Frame()
-                begin.protocolVersion = 1
-                begin.clipboardStreamBegin = Kernova_V1_ClipboardStreamBegin.with {
-                    $0.generation = req.generation
-                    $0.transferID = req.transferID
-                    $0.uti = req.uti
-                    $0.totalBytes = 0
-                    $0.filename = "f.bin"
-                    $0.isInline = false
-                    $0.isArchive = true
-                }
-                try guest.send(begin)
-                // Inlined rather than calling the suite's `sendChunkAndEnd` helper:
-                // that helper is `@MainActor`-isolated (an instance method on this
-                // struct), and this closure must stay genuinely off-actor.
-                var chunkFrame = Frame()
-                chunkFrame.protocolVersion = 1
-                chunkFrame.clipboardChunk = Kernova_V1_ClipboardChunk.with {
-                    $0.transferID = req.transferID
-                    $0.offset = 0
-                    $0.data = wire
-                }
-                try guest.send(chunkFrame)
-                var endFrame = Frame()
-                endFrame.protocolVersion = 1
-                endFrame.clipboardStreamEnd = Kernova_V1_ClipboardStreamEnd.with {
-                    $0.transferID = req.transferID
-                    $0.totalBytes = UInt64(wire.count)
-                    $0.sha256 = Data(SHA256.hash(data: wire))
-                }
-                try guest.send(endFrame)
+                try guest.send(
+                    makeBeginFrame(
+                        generation: req.generation, transferID: req.transferID, uti: req.uti,
+                        totalBytes: 0, filename: "f.bin", isInline: false, isArchive: true))
+                // Written out rather than calling the suite's `sendChunkAndEnd`
+                // helper: that helper is `@MainActor`-isolated (an instance method
+                // on this struct), and this closure must stay genuinely off-actor.
+                try guest.send(makeChunkFrame(transferID: req.transferID, offset: 0, data: wire))
+                try guest.send(makeEndFrame(transferID: req.transferID, payload: wire))
                 return
             }
         }
@@ -2976,10 +2906,7 @@ struct VsockClipboardServiceTests {
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         // The guest releases the offer before the host pulls anything.
-        var release = Frame()
-        release.protocolVersion = 1
-        release.clipboardRelease = Kernova_V1_ClipboardRelease.with { $0.generation = 8 }
-        try guest.send(release)
+        try guest.send(makeReleaseFrame(generation: 8))
 
         // Barrier: send a clipboard error frame *after* the release. Both are
         // control frames on the single channel, processed in order, so once the
@@ -3208,14 +3135,10 @@ struct VsockClipboardServiceTests {
         try await responder.answered.wait {
             responder.requests.contains { $0.transferID == xid }
         }
-        var abort = Frame()
-        abort.protocolVersion = 1
-        abort.clipboardStreamAbort = Kernova_V1_ClipboardStreamAbort.with {
-            $0.transferID = xid
-            $0.code = ClipboardStreamAbortCode.cancelled.rawValue
-            $0.message = "test: pull aborted"
-        }
-        try guest.send(abort)
+        try guest.send(
+            makeAbortFrame(
+                transferID: xid, code: ClipboardStreamAbortCode.cancelled.rawValue,
+                message: "test: pull aborted"))
         await firstPreview.value
         #expect(service.clipboardContent.representations.first?.isPendingRemote == true)
 
@@ -3314,14 +3237,7 @@ struct VsockClipboardServiceTests {
             responder.requests.contains { $0.transferID == xid }
         }
 
-        var abort = Frame()
-        abort.protocolVersion = 1
-        abort.clipboardStreamAbort = Kernova_V1_ClipboardStreamAbort.with {
-            $0.transferID = xid
-            $0.code = rawCode
-            $0.message = "aborted"
-        }
-        try guest.send(abort)
+        try guest.send(makeAbortFrame(transferID: xid, code: rawCode, message: "aborted"))
 
         await previewTask.value
         // The refusal crosses the operation's serial main hop, enqueued before

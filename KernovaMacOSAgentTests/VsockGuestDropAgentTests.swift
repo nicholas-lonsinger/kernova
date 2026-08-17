@@ -82,13 +82,6 @@ struct VsockGuestDropAgentTests {
 
     // MARK: - Frame factories
 
-    private func makeDropRelease(generation: UInt64) -> Frame {
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.dropRelease = Kernova_V1_DropRelease.with { $0.generation = generation }
-        return frame
-    }
-
     /// One dropped file's metadata, as the host would offer it.
     private func fileRep(_ name: String, bytes: Data) -> RepInfo {
         RepInfo(
@@ -272,7 +265,7 @@ struct VsockGuestDropAgentTests {
                 break
             }
         }
-        try harness.host.send(makeDropRelease(generation: 1))
+        try harness.host.send(makeDropReleaseFrame(generation: 1))
         let complete = try await awaitCompletion(on: harness.host)
 
         #expect(complete.outcome == .cancelled)

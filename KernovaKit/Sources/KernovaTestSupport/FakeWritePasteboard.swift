@@ -40,8 +40,9 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, @unchecked Sen
 
     // MARK: - Recorded state
 
-    /// Monotonic change count, bumped by every prepare, write and clear exactly
-    /// as `NSPasteboard`'s is.
+    /// Monotonic change count, bumped by every prepare and every clear exactly
+    /// as `NSPasteboard`'s is — and by no write, since `writeObjects` moves it
+    /// no further than the `prepareForNewContents` before it already did.
     public var changeCount: Int { lock.withLock { storedChangeCount } }
 
     /// How many times `prepareForNewContents(with:)` has run.
@@ -96,14 +97,14 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, @unchecked Sen
     /// Clears the recorded state, noting the options this write was marked with.
     @discardableResult
     public func prepareForNewContents(with options: NSPasteboard.ContentsOptions) -> Int {
-        let count = lock.withLock { () -> Int in
-            items.removeAll()
-            resolved.removeAll()
+        let (count, displaced) = lock.withLock { () -> (Int, [NSPasteboardItemDataProvider]) in
+            let displaced = takeItemsLocked()
             storedPrepareCount += 1
             storedLastPrepareOptions = options
             storedChangeCount += 1
-            return storedChangeCount
+            return (storedChangeCount, displaced)
         }
+        finish(displaced)
         changed.notify()
         return count
     }
@@ -113,17 +114,17 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, @unchecked Sen
     public func writeItems(
         _ entries: [(types: [NSPasteboard.PasteboardType], provider: NSPasteboardItemDataProvider)]
     ) -> Bool {
-        let written = lock.withLock { () -> Bool in
+        let (written, displaced) = lock.withLock { () -> (Bool, [NSPasteboardItemDataProvider]) in
             storedWriteAttempts += 1
             guard writeFailuresRemaining == 0 else {
                 writeFailuresRemaining -= 1
-                return false
+                return (false, [])
             }
+            let displaced = takeItemsLocked()
             items = entries.map { PromisedItem(types: $0.types, provider: $0.provider) }
-            resolved.removeAll()
-            storedChangeCount += 1
-            return true
+            return (true, displaced)
         }
+        finish(displaced)
         changed.notify()
         return written
     }
@@ -131,15 +132,41 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, @unchecked Sen
     /// Empties the pasteboard, bumping the change count as a real one does.
     @discardableResult
     public func clearContents() -> Int {
-        let count = lock.withLock { () -> Int in
-            items.removeAll()
-            resolved.removeAll()
+        let (count, displaced) = lock.withLock { () -> (Int, [NSPasteboardItemDataProvider]) in
+            let displaced = takeItemsLocked()
             storedChangeCount += 1
-            return storedChangeCount
+            return (storedChangeCount, displaced)
         }
+        finish(displaced)
         changed.notify()
         return count
     }
+
+    /// Drops what is on the pasteboard, handing back the providers that were
+    /// serving it. Caller holds `lock`.
+    private func takeItemsLocked() -> [NSPasteboardItemDataProvider] {
+        let displaced = items.map(\.provider)
+        items.removeAll()
+        resolved.removeAll()
+        return displaced
+    }
+
+    /// Tells each displaced provider the pasteboard is done with it, as a real
+    /// one does — the call that lets an owner release it.
+    ///
+    /// Outside `lock`: a provider's owner takes its own lock to release it.
+    private func finish(_ providers: [NSPasteboardItemDataProvider]) {
+        for provider in providers {
+            provider.pasteboardFinishedWithDataProvider?(Self.finishArgument)
+        }
+    }
+
+    /// The pasteboard `pasteboardFinishedWithDataProvider(_:)` is handed, which
+    /// its callers ignore. A private named board, so nothing here can reach the
+    /// machine's own clipboard; never read and never written, so passing it
+    /// between threads carries no state.
+    nonisolated(unsafe) private static let finishArgument = NSPasteboard(
+        name: .init("app.kernova.fake-write"))
 
     // MARK: - Firing a promise
 

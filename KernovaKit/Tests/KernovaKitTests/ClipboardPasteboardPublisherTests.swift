@@ -88,6 +88,31 @@ struct ClipboardPasteboardPublisherTests {
         #expect(publisher.lastWriteChangeCount == pasteboard.changeCount)
     }
 
+    @Test("a write displaces the promise before it, and the registry lets those providers go")
+    func supersedingWriteReleasesTheDisplacedProviders() {
+        let pasteboard = FakeWritePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let publisher = ClipboardPasteboardPublisher(
+            pasteboard: pasteboard, providerRegistry: registry)
+
+        publisher.write(
+            [
+                makeSpec(textUTI, bytes: Data("one".utf8)),
+                makeSpec("public.rtf", bytes: Data("two".utf8)),
+            ], promised: true)
+        #expect(registry.countForTesting == 2)
+
+        // The pasteboard finishes with the displaced providers, which is what
+        // lets the registry drop them — otherwise every publication of a
+        // session's life is retained for the process's.
+        publisher.write([makeSpec(textUTI, bytes: Data("three".utf8))], promised: true)
+        #expect(registry.countForTesting == 1)
+
+        #expect(publisher.retractPromisedWrite())
+        #expect(registry.countForTesting == 0)
+    }
+
     // MARK: - Holding the write
 
     @Test("the write is held only while nothing has replaced it")

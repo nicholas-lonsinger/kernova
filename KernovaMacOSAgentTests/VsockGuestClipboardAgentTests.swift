@@ -1262,8 +1262,10 @@ struct VsockGuestClipboardAgentTests {
         // The host goes away. The promise stays on the pasteboard, held alive by
         // its own data providers.
         agent.applyPolicy(enabled: false, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
-        // RATIONALE: sanctioned no-signal poll (docs/TESTING.md) — the lifecycle
-        // read is SUT-internal state with nothing to await on.
+        // RATIONALE: sanctioned no-signal poll of the filesystem-appearance kind
+        // (docs/TESTING.md "Async waits in tests") — `liveChannelForTesting` is
+        // SUT-internal state the teardown simply stops publishing, with no
+        // @Observable getter and no test double to notify.
         try await waitUntil { agent.liveChannelForTesting == nil }
 
         // A materialized rep still pastes from the cache...
@@ -1365,10 +1367,7 @@ struct VsockGuestClipboardAgentTests {
             makeBeginFrame(
                 generation: 16, transferID: req.transferID, uti: ClipboardContent.utf8TextUTI,
                 totalBytes: 8, filename: "", isInline: true))
-        var release = Frame()
-        release.protocolVersion = 1
-        release.clipboardRelease = Kernova_V1_ClipboardRelease.with { $0.generation = 16 }
-        try hostChannel.send(release)
+        try hostChannel.send(makeReleaseFrame(generation: 16))
 
         let provided = await pull.value
         #expect(provided == nil)
