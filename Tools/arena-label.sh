@@ -13,15 +13,19 @@
 #   checkout directory itself.
 #
 # Prints exactly one of these and exits 0:
-#   worktree: <name>              a live .claude/worktrees/<name> worktree
-#   worktree: <name>, removed     an arena that outlived its worktree
-#   main checkout                 the primary checkout
-#   other checkout: <dir>         a different clone or project entirely
+#   worktree: <name>                a live .claude/worktrees/<name> worktree
+#   worktree: <name>, removed       an arena that outlived its worktree
+#   main checkout                   the primary checkout
+#   other checkout: <dir>           a different clone or project entirely
+#   other checkout: <dir>, removed  …one that is no longer on disk
+#
+# Both `, removed` forms say the same thing: the arena outlived the checkout it
+# was built from.
 #
 # With --status, prints the machine-readable kind instead — one of
-# `worktree-live`, `worktree-removed`, `main`, `other`. Callers branch on this rather than
-# on the human label: matching the label is a format dependency, and the
-# `, removed` suffix is presentation.
+# `worktree-live`, `worktree-removed`, `main`, `other`, `other-removed`. Callers
+# branch on this rather than on the human label: matching the label is a format
+# dependency, and the `, removed` suffix is presentation.
 #
 # Exits 1 printing nothing when the path can't be attributed (no info.plist to
 # read, a path outside every known checkout, not a git repo). Callers append the
@@ -111,12 +115,21 @@ while [ -n "$dir" ] && [ "$dir" != "/" ]; do
         ws=$(plutil -extract WorkspacePath raw "$dir/info.plist" -o - 2>/dev/null) || ws=''
         if [ -n "$ws" ]; then
             label_for_checkout "$ws" && exit 0
-            # A different project's arena: name its directory rather than
+            # A checkout outside this repo's layout — another clone, or a copy
+            # staged somewhere temporary: name its directory rather than
             # guessing at a friendlier label.
+            #
+            # Removed-ness is tested on the recorded .xcodeproj rather than its
+            # directory, because that path is what the arena's identity hashes
+            # from: once it is gone nothing can ever build into this arena
+            # again, whether the whole checkout went with it or only the
+            # project file.
+            removed=''
+            [ -e "$ws" ] || removed=1
             if [ "$STATUS_ONLY" = 1 ]; then
-                printf 'other'
+                printf 'other%s' "${removed:+-removed}"
             else
-                printf 'other checkout: %s' "$(pretty "${ws%/*}")"
+                printf 'other checkout: %s%s' "$(pretty "${ws%/*}")" "${removed:+, removed}"
             fi
             exit 0
         fi

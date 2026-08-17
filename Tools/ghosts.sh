@@ -15,10 +15,10 @@
 #     under the current app.kernova.* identifiers and the legacy
 #     pre-#471-rename `com.kernova.app` one alike
 #   - Xcode DerivedData build arenas in the global per-path-hashed
-#     ~/Library location whose recorded source worktree no longer exists —
-#     on default-location machines every worktree the GUI opens leaves a
+#     ~/Library location whose recorded source checkout no longer exists —
+#     on default-location machines every checkout the GUI opens leaves a
 #     permanent, LS-registered app copy there that keeps competing in the
-#     version election after the worktree is torn down (docs/BUILD.md
+#     version election after the checkout is torn down (docs/BUILD.md
 #     "Derived data and build arenas")
 #   - Running processes executing from a Kernova path that no longer exists
 #     on disk (the file was deleted out from under a still-running process)
@@ -124,21 +124,29 @@ kernova_registered_paths() {
 # genuinely nothing to scan.
 XCODE_DD_ROOT=$("$REPO_ROOT/Tools/derived-data-path.sh" --root 2>/dev/null) || XCODE_DD_ROOT=''
 
-# Print one arena directory per line whose recorded source worktree is gone.
+# Print one arena directory per line whose recorded source checkout is gone.
 # The classification is Tools/arena-label.sh's — this used to re-read each
 # info.plist and re-derive the .claude/worktrees layout itself, which was the
 # same mapping implemented twice. --status is asked for rather than the human
-# label so nothing here depends on that label's wording. Scoped to this repo's
-# worktrees by that same classification: a deleted checkout of some other
-# project reports `other` and is not this script's call to clean up.
+# label so nothing here depends on that label's wording.
+#
+# A torn-down worktree is the common case but not the only one: a checkout
+# staged anywhere else — a copy under a temp dir, a clone since deleted —
+# leaves an arena just as unreachable, and reports `other-removed`.
+#
+# The glob is what keeps that second status from reaching other projects'
+# arenas, which it also covers. Xcode names an arena `<project>-<hash>`, the
+# same name Tools/derived-data-path.sh builds forwards, so the prefix selects
+# this project's arenas and nobody else's.
 orphaned_dd_arenas() {
     [ -n "$XCODE_DD_ROOT" ] || return 0
     local info dir
-    for info in "$XCODE_DD_ROOT"/*/info.plist; do
+    for info in "$XCODE_DD_ROOT"/Kernova-*/info.plist; do
         [ -f "$info" ] || continue
         dir=${info%/info.plist}
-        [ "$("$REPO_ROOT/Tools/arena-label.sh" --status "$dir" 2>/dev/null)" = 'worktree-removed' ] || continue
-        printf '%s\n' "$dir"
+        case "$("$REPO_ROOT/Tools/arena-label.sh" --status "$dir" 2>/dev/null)" in
+            worktree-removed | other-removed) printf '%s\n' "$dir" ;;
+        esac
     done
 }
 
@@ -222,7 +230,7 @@ arena_blocked_lines() {
 # rule): a bundle sitting in the Trash is still a valid on-disk copy that
 # Launch Services can rediscover and re-elect until the Trash is emptied,
 # so trashing just relocates the ghost — and an orphaned arena is
-# purely regenerable build products of a worktree that no longer exists,
+# purely regenerable build products of a checkout that no longer exists,
 # with nothing user-authored to recover.
 evict_dd_arena() {
     local dir=$1 app
@@ -234,12 +242,12 @@ evict_dd_arena() {
 
 # --sweep: the quiet, non-interactive subset for hooks — unregister dead
 # app.kernova.* Launch Services registrations, evict DerivedData arenas
-# orphaned by torn-down worktrees, and exit. The post-checkout git hook runs
-# it on every new worktree, so debris left by torn-down worktrees self-heals
-# at the next worktree creation. Best-effort by design: always exits 0 so a
-# failed sweep can never fail the checkout that triggered it, skips anything
-# a process is still running from, and skips the fix path's re-dump
-# verification — `make ghosts` still reports anything left behind. Unlike
+# orphaned by removed checkouts, and exit. The post-checkout git hook runs it
+# on every new worktree, so that debris self-heals at the next worktree
+# creation. Best-effort by design: always exits 0 so a failed sweep can never
+# fail the checkout that triggered it, skips anything a process is still
+# running from, and skips the fix path's re-dump verification — `make ghosts`
+# still reports anything left behind. Unlike
 # --fix it terminates nothing: --fix kills processes whose own binary is
 # already deleted, while an arena's live blocker is the user's to quit under
 # either flag. The sweep runs unattended from a git hook, and the next
@@ -410,7 +418,7 @@ fi
 section 'DerivedData build arenas'
 
 # Unlike the live-copy election check below (which prompts, because a live
-# copy might be wanted), an orphaned arena's source worktree is gone — its
+# copy might be wanted), an orphaned arena's source checkout is gone — its
 # build products are unreachable garbage, so --fix evicts without asking.
 # An arena a process is still running from is skipped with a pointer instead,
 # since quitting a possibly-in-use app is not this script's call.
@@ -421,7 +429,7 @@ while IFS= read -r dir; do
 done < <(orphaned_dd_arenas)
 
 if [ "${#dd_orphans[@]}" -eq 0 ]; then
-    pass 'No DerivedData arenas left by torn-down worktrees'
+    pass 'No DerivedData arenas left by removed checkouts'
 else
     for dir in "${dd_orphans[@]}"; do
         # Resolved once, up front, because the label is read out of the arena's
