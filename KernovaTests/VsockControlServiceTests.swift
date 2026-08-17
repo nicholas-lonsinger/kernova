@@ -382,10 +382,8 @@ struct VsockControlServiceTests {
                 if let last = lastStamp, now - last > .seconds(1) {
                     let text = MainWatchdogDiag.sampleProcess()
                     Issue.record(
-                        "DIAG late heartbeat gap \(now - last); watchdog: \(watchdog.report())\n\(text.prefix(30_000))")
-                }
-                lastStamp = now
-                stamps.append(now)
+                        "DIAG late heartbeat gap \(now - last) at \(Date()); watchdog: \(watchdog.report())\nMAIN-PULL TIMELINE:\n\(LazyPullDiagTimeline.dump())\n\(text.prefix(2000))"
+                    )
             }
         }
 
