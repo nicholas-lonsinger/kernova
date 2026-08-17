@@ -34,15 +34,11 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     /// dials a host that has a drop listener.
     var hostSupportsDrop: @Sendable () -> Bool = { false }
 
-    /// Bridges each blocking pull on the worker queue to the off-main stream
-    /// receive.
-    private let coordinator = LazyPullCoordinator()
-
     /// Runs one drop job at a time, in offer order.
     ///
-    /// Serial and separate from main: `LazyPullCoordinator.pull` blocks its
-    /// caller, and a drop has no pasteboard deadline to race, so one file streams
-    /// at a time on a thread nothing else needs.
+    /// Serial and separate from main: an inbound pull blocks its caller, and a
+    /// drop has no pasteboard deadline to race, so one file streams at a time on
+    /// a thread nothing else needs.
     private let jobQueue = DispatchQueue(
         label: "app.kernova.macosagent.drop-jobs", qos: .userInitiated)
 
@@ -54,67 +50,17 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     /// connection.
     private var session: ClipboardStreamSession?
 
-    private var connectionTag = ClipboardConnectionTag.guestUnconnected
+    /// What the host has offered, and every pull that lands it.
+    private var inbound: ClipboardInboundOffers?
 
-    /// Every job the host has offered and this side has not finished, by
-    /// generation.
-    private var jobs: [UInt64: DropJob] = [:]
+    /// The readout of every drop the host has offered and this side has not
+    /// finished, by generation.
+    private var jobs: [UInt64: ClipboardTransferOperation] = [:]
 
     #if DEBUG
     /// Test seam.
     var liveChannelForTesting: VsockChannel? { liveChannel }
     #endif
-
-    /// One drop gesture's files, and the transfer of it that is in flight.
-    ///
-    /// `@unchecked Sendable`: `lock` guards everything the worker queue and the
-    /// main queue both touch.
-    private final class DropJob: @unchecked Sendable {
-        let generation: UInt64
-        let reps: [Kernova_V1_ClipboardRepresentationInfo]
-        let operation: ClipboardTransferOperation
-
-        private let lock = NSLock()
-        private var cancelledStorage = false
-        private var inFlightTransferID: UInt64?
-
-        init(
-            generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo],
-            operation: ClipboardTransferOperation
-        ) {
-            self.generation = generation
-            self.reps = reps
-            self.operation = operation
-        }
-
-        var isCancelled: Bool { lock.withLock { cancelledStorage } }
-
-        /// Marks the job cancelled, returning the transfer to abort if one is in
-        /// flight.
-        ///
-        /// Idempotent: a second cancel finds nothing in flight and returns `nil`.
-        func cancel() -> UInt64? {
-            lock.withLock {
-                cancelledStorage = true
-                defer { inFlightTransferID = nil }
-                return inFlightTransferID
-            }
-        }
-
-        /// Claims the job for one transfer, reporting `false` when a cancel has
-        /// already landed and the transfer must not start.
-        func beginTransfer(_ transferID: UInt64) -> Bool {
-            lock.withLock {
-                guard !cancelledStorage else { return false }
-                inFlightTransferID = transferID
-                return true
-            }
-        }
-
-        func endTransfer() {
-            lock.withLock { inFlightTransferID = nil }
-        }
-    }
 
     /// How one job ended.
     private enum JobOutcome {
@@ -204,17 +150,20 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     /// Clears per-connection state on the main queue.
     private func teardownConnectionState() {
         dispatchPrecondition(condition: .onQueue(.main))
-        MainActor.assumeIsolated { session?.stop() }
-        // Unblock any worker parked on a pull (it returns cancelled).
-        coordinator.failAll()
+        MainActor.assumeIsolated {
+            session?.stop()
+            // Unblock any worker parked on a pull; it reads the dead session as a
+            // cancellation and ends its job.
+            inbound?.endSession()
+            for operation in jobs.values {
+                // Retired, not finished: the transport measuring these is gone, so
+                // there is nothing left to show finishing.
+                operation.abandon()
+            }
+        }
+        inbound = nil
         session = nil
         liveChannel = nil
-        for job in jobs.values {
-            _ = job.cancel()
-            // Retired, not finished: the transport measuring these is gone, so
-            // there is nothing left to show finishing.
-            job.operation.abandon()
-        }
         jobs.removeAll()
     }
 
@@ -235,16 +184,29 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         let session = await MainActor.run { () -> ClipboardStreamSession in
             let session = ClipboardStreamSession(
                 channel: channel, role: .guest, kind: .drop, label: "drop", staging: self.staging)
-            self.connectionTag = session.connectionTag
             self.liveChannel = channel
             self.session = session
+            let inbound = ClipboardInboundOffers(
+                session: session, reporter: self.reporter, staging: self.staging,
+                peerName: Self.dropSourceName,
+                // A drop lands in Downloads, never on a pasteboard, so no OS paste
+                // deadline bounds it and nothing is capped.
+                maxPasteBytes: { .max },
+                lazyPullTimeout: self.pullTimeout,
+                progressRevealDelay: self.progressRevealDelay,
+                progressIdleGap: self.progressIdleGap)
+            self.inbound = inbound
+            inbound.onOfferReceived = { [weak self, weak inbound] offer in
+                guard let self, let inbound else { return }
+                self.takeOn(offer, on: inbound, session: session)
+            }
             session.start(
                 handleControlFrame: { [weak self] frame in
                     self?.handleControlFrame(frame, from: channel)
                 },
                 // Wake any worker blocked on a now-dead transfer immediately,
                 // off-main — the teardown below runs on main.
-                onEnded: { [coordinator = self.coordinator] in coordinator.failAll() })
+                onEnded: { [weak inbound] in inbound?.endSession() })
             Self.logger.notice(
                 "Vsock drop connected to host (conn=\(session.connectionTag, privacy: .public))")
             return session
@@ -260,124 +222,101 @@ final class VsockGuestDropAgent: @unchecked Sendable {
 
     private func handleControlFrame(_ frame: Frame, from channel: VsockChannel) {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard liveChannel === channel, let session else { return }
-        switch frame.payload {
-        case .dropOffer(let offer):
-            handleDropOffer(offer, on: session)
-        case .dropRelease(let release):
-            cancelJob(generation: release.generation)
-        case .error(let error):
-            Self.logger.warning(
-                "Host drop error: \(error.code, privacy: .public) — \(error.message, privacy: .public)"
-            )
-        case .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck:
-            // Routed off-main by the serve loop; never reaches here.
-            break
-        case .clipboardStreamAbort:
-            // Only a sender-bound abort reaches here, and this side never sends
-            // on the drop channel — there is nothing to call off.
-            break
-        case .hello, .heartbeat, .policyUpdate, .logRecord, .clipboardOffer, .clipboardRequest,
-            .clipboardRelease, .dropComplete, .none:
-            Self.logger.warning("Unexpected payload on the drop channel — wrong port")
+        guard liveChannel === channel, let inbound else { return }
+        MainActor.assumeIsolated {
+            switch frame.payload {
+            case .dropOffer(let offer):
+                inbound.handleDropOffer(offer)
+            case .dropRelease(let release):
+                inbound.handleDropRelease(release)
+            case .error(let error):
+                Self.logger.warning(
+                    "Host drop error: \(error.code, privacy: .public) — \(error.message, privacy: .public)"
+                )
+            case .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck:
+                // Routed off-main by the serve loop; never reaches here.
+                break
+            case .clipboardStreamAbort:
+                // Only a sender-bound abort reaches here, and this side never sends
+                // on the drop channel — there is nothing to call off.
+                break
+            case .hello, .heartbeat, .policyUpdate, .logRecord, .clipboardOffer,
+                .clipboardRequest, .clipboardRelease, .dropComplete, .none:
+                Self.logger.warning("Unexpected payload on the drop channel — wrong port")
+            }
         }
     }
 
     /// Takes on one drop gesture: opens its readout and queues its files behind
     /// whatever is already running.
-    private func handleDropOffer(
-        _ offer: Kernova_V1_DropOffer, on session: ClipboardStreamSession
+    private func takeOn(
+        _ offer: ClipboardInboundOffers.InboundOffer, on inbound: ClipboardInboundOffers,
+        session: ClipboardStreamSession
     ) {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard jobs[offer.generation] == nil else {
-            Self.logger.warning(
-                "Duplicate drop offer for gen=\(offer.generation, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) — ignored"
-            )
-            return
-        }
-        // Every field of the offer is host-supplied. Bound the count and each
-        // declared size once, here at intake, so no capacity or progress
-        // arithmetic downstream reasons about a value that can't be real.
-        let bounded = ClipboardOfferBounds.bounded(offer.repInfo)
-        if let truncatedFrom = bounded.truncatedFrom {
-            Self.logger.warning(
-                "Drop offer (gen=\(offer.generation, privacy: .public), conn=\(self.connectionTag, privacy: .public)) declared \(truncatedFrom, privacy: .public) items — truncated to \(bounded.reps.count, privacy: .public)"
-            )
-        }
-        guard !bounded.reps.isEmpty else {
-            send(
-                completion: .failed(.dropFailed, "The drop carried no files"),
-                generation: offer.generation, on: session)
-            return
-        }
-
         let generation = offer.generation
         // The whole drop's totals are the floor, so the bar's denominator is
         // every dropped file rather than each in turn (§13).
         let operation = ClipboardTransferOperation(
             gesture: .drop, direction: .inbound, peerName: Self.dropSourceName,
-            expectedBytes: bounded.reps.reduce(UInt64(0)) { $0 &+ $1.byteCount },
-            expectedItems: bounded.reps.count,
+            expectedBytes: offer.reps.reduce(UInt64(0)) { $0 &+ $1.byteCount },
+            expectedItems: offer.reps.count,
             revealDelay: progressRevealDelay, idleGap: progressIdleGap,
-            onCancelRequested: { [weak self] in
-                DispatchQueue.main.async { self?.cancelJob(generation: generation) }
+            onCancelRequested: { [weak inbound] in
+                // The tracker calls this outside its own lock, on whichever
+                // thread noticed the click, so it hops before touching anything.
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { inbound?.cancelInbound(generation: generation) }
+                }
             },
             reporter: reporter)
-        let job = DropJob(generation: generation, reps: bounded.reps, operation: operation)
-        jobs[generation] = job
-        Self.logger.notice(
-            "Accepted a drop of \(bounded.reps.count, privacy: .public) item(s) (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
-        )
+        jobs[generation] = operation
         jobQueue.async { [weak self] in
-            self?.run(job: job, on: session)
+            self?.run(offer, operation: operation, on: inbound, session: session)
         }
-    }
-
-    /// Calls off the drop for `generation`, keeping what already landed.
-    ///
-    /// The same body serves a host `DropRelease` and a Cancel on this guest's own
-    /// readout: both mean the user stopped it, and the files already written to
-    /// Downloads are complete and stay — Finder's own cancel keeps them too.
-    private func cancelJob(generation: UInt64) {
-        dispatchPrecondition(condition: .onQueue(.main))
-        guard let job = jobs[generation] else { return }
-        guard let transferID = job.cancel() else { return }
-        // Order matters: deregister the awaiter, stop the host producing bytes,
-        // then wake the parked worker. Waking it first would let it start the
-        // next file before the cancel is visible.
-        MainActor.assumeIsolated { session?.receiver?.cancelAwait(transferID) }
-        session?.sendStreamAbort(
-            transferID: transferID, code: .userCancelled, message: "Cancelled by the user")
-        coordinator.abort(
-            transferID,
-            ClipboardStreamAbortInfo(
-                transferID: transferID, code: .cancelled, message: "Cancelled by the user",
-                neededBytes: nil, availableBytes: nil))
-        Self.logger.notice(
-            "Drop cancelled (gen=\(generation, privacy: .public), conn=\(self.connectionTag, privacy: .public))"
-        )
     }
 
     // MARK: - Job execution (worker queue)
 
-    /// Pulls each of the job's files in order and lands it in Downloads.
-    private func run(job: DropJob, on session: ClipboardStreamSession) {
+    /// Pulls each of the drop's files in order and lands it in Downloads.
+    private func run(
+        _ offer: ClipboardInboundOffers.InboundOffer, operation: ClipboardTransferOperation,
+        on inbound: ClipboardInboundOffers, session: ClipboardStreamSession
+    ) {
         dispatchPrecondition(condition: .notOnQueue(.main))
+        let generation = offer.generation
         var landed: [URL] = []
         var outcome: JobOutcome = .completed
 
-        for (index, info) in job.reps.enumerated() {
-            if job.isCancelled {
-                outcome = .cancelled
-                break
-            }
-            switch pull(index: index, info: info, job: job, on: session) {
-            case .success(let url):
-                landed.append(url)
+        for index in offer.reps.indices {
+            switch inbound.pull(generation: generation, repIndex: index, operation: operation) {
+            case .delivered(let representation):
+                do {
+                    landed.append(try land(representation, named: offer.reps[index].filename))
+                } catch {
+                    let failure = Self.classify(error)
+                    Self.logger.error(
+                        "Failed to save a dropped file into Downloads: \(error.localizedDescription, privacy: .public)"
+                    )
+                    outcome = .failed(failure.0, failure.1)
+                }
+            case .aborted(let abort):
+                // The job's own entry going is how a cancel reaches this loop: a
+                // release or a Cancel on the readout retires it before waking the
+                // pull it aborted.
+                if !inbound.hasLiveOffer(generation: generation) {
+                    outcome = .cancelled
+                } else {
+                    Self.logger.warning(
+                        "Dropped file \(index, privacy: .public) of gen=\(generation, privacy: .public) aborted (\(abort.rawCode, privacy: .public))"
+                    )
+                    outcome = .failed(
+                        abort.code == .diskFull ? .dropDiskFull : .dropFailed, abort.message)
+                }
+            case .timedOut:
+                outcome = .failed(.dropFailed, "The transfer stopped making progress")
             case .cancelled:
                 outcome = .cancelled
-            case .failure(let code, let message):
-                outcome = .failed(code, message)
             }
             if case .completed = outcome { continue }
             break
@@ -386,143 +325,25 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         // The readout ends where it stopped: a cancelled or failed drop finishes
         // below 100 %, which is the whole of how those two read on screen.
         switch outcome {
-        case .completed: job.operation.finish(.completed)
-        case .cancelled: job.operation.finish(.cancelled)
-        case .failed(let code, _): job.operation.finish(.failed(.peerReported(code)))
+        case .completed: operation.finish(.completed)
+        case .cancelled: operation.finish(.cancelled)
+        case .failed(let code, _): operation.finish(.failed(.peerReported(code)))
         }
         if case .completed = outcome, !landed.isEmpty {
             revealInFinder(landed)
         }
-        let generation = job.generation
         send(completion: outcome, generation: generation, on: session)
         DispatchQueue.main.async { [weak self] in
             // Identity-checked, not just keyed: generations restart at 1 with
             // every accepted channel, so a worker that outlived a teardown would
             // otherwise clear the *next* connection's job of the same number —
             // leaving it unreachable by a release or a Cancel.
-            guard self?.jobs[generation] === job else { return }
+            guard self?.jobs[generation] === operation else { return }
             self?.jobs[generation] = nil
         }
         Self.logger.notice(
             "Drop job finished (gen=\(generation, privacy: .public), \(landed.count, privacy: .public) file(s) in Downloads)"
         )
-    }
-
-    /// One representation's outcome.
-    private enum PullOutcome {
-        case success(URL)
-        case cancelled
-        case failure(ClipboardErrorCode, String)
-    }
-
-    /// Requests one representation, blocks until it lands, and moves it into
-    /// Downloads.
-    private func pull(
-        index: Int, info: Kernova_V1_ClipboardRepresentationInfo, job: DropJob,
-        on session: ClipboardStreamSession
-    ) -> PullOutcome {
-        let byteCount = Int(clamping: info.byteCount)
-        guard staging.hasCapacity(forByteCount: byteCount) else {
-            Self.logger.warning(
-                "Not enough disk space to receive dropped file '\(info.filename, privacy: .public)' (\(info.byteCount, privacy: .public) bytes)"
-            )
-            return .failure(
-                .dropDiskFull, "Not enough disk space in the guest for \(info.byteCount) bytes")
-        }
-        // The guest is the receiver here, so it does not set the direction bit.
-        let transferID = ClipboardTransferID.make(
-            generation: job.generation, repIndex: index, hostMinted: false)
-        guard job.beginTransfer(transferID) else { return .cancelled }
-        defer { job.endTransfer() }
-
-        let maxAccept =
-            staging.availableCapacity().map { UInt64(clamping: $0) }
-            ?? ClipboardStreamTuning.unlimitedAcceptByteCount
-        let coordinator = self.coordinator
-        let operation = job.operation
-        guard let receiver = mainQueue({ self.session?.receiver }) else { return .cancelled }
-        operation.unitBegan(
-            id: transferID, expectedBytes: info.byteCount,
-            name: info.filename.isEmpty ? nil : info.filename)
-
-        let uti = info.uti
-        let generation = job.generation
-        let isDirectory = info.isDirectory
-        let filename = info.filename
-        let outcome = coordinator.pull(
-            transferID: transferID, timeout: pullTimeout,
-            onProgress: { bytes, total in
-                operation.unitProgressed(
-                    id: transferID, bytesTransferred: UInt64(max(0, bytes)),
-                    totalBytes: UInt64(max(0, total)))
-            },
-            retire: { receiver.cancelAwait(transferID) },
-            start: {
-                receiver.awaitTransfer(
-                    transferID,
-                    // A folder's bytes are an archive of its tree, extracted as
-                    // they arrive. Directory-ness rides the offer this side
-                    // already read, so nothing on the wire has to repeat it.
-                    extractsDirectoryNamed: isDirectory ? filename : nil,
-                    advertisedByteCount: byteCount,
-                    onComplete: { rep in coordinator.deliver(transferID, rep) },
-                    onAbort: { abort in coordinator.abort(transferID, abort) },
-                    // Re-arms the inactivity backstop, and feeds the readout, so a
-                    // large still-streaming file is never cut off mid-transfer.
-                    onProgress: { bytes, total in
-                        coordinator.progress(
-                            transferID, bytesReceived: bytes, totalBytes: total)
-                    })
-                do {
-                    try session.sendRequest(
-                        generation: generation, transferID: transferID, uti: uti,
-                        maxAcceptByteCount: maxAccept)
-                } catch {
-                    // No request went out, so no reply will arrive — resolve the
-                    // pull now instead of blocking to the backstop timeout.
-                    receiver.cancelAwait(transferID)
-                    coordinator.abort(
-                        transferID,
-                        ClipboardStreamAbortInfo(
-                            transferID: transferID, code: .sendFailed,
-                            message: "Failed to request the dropped file", neededBytes: nil,
-                            availableBytes: nil))
-                }
-            })
-
-        switch outcome {
-        case .delivered(let representation):
-            do {
-                let url = try land(representation, named: info.filename)
-                operation.unitEnded(id: transferID, succeeded: true)
-                return .success(url)
-            } catch {
-                operation.unitEnded(id: transferID, succeeded: false)
-                let failure = Self.classify(error)
-                Self.logger.error(
-                    "Failed to save a dropped file into Downloads: \(error.localizedDescription, privacy: .public)"
-                )
-                return .failure(failure.0, failure.1)
-            }
-        case .aborted(let abort):
-            operation.unitEnded(id: transferID, succeeded: false)
-            if job.isCancelled { return .cancelled }
-            Self.logger.warning(
-                "Dropped file \(transferID, privacy: .public) aborted (\(abort.rawCode, privacy: .public))"
-            )
-            return .failure(
-                abort.code == .diskFull ? .dropDiskFull : .dropFailed, abort.message)
-        case .timedOut:
-            operation.unitEnded(id: transferID, succeeded: false)
-            session.sendStreamAbort(
-                transferID: transferID, code: .stallTimeout,
-                message: "Receiver gave up waiting for the dropped file")
-            Self.logger.warning("Dropped file \(transferID, privacy: .public) timed out")
-            return .failure(.dropFailed, "The transfer stopped making progress")
-        case .cancelled:
-            operation.unitEnded(id: transferID, succeeded: false)
-            return .cancelled
-        }
     }
 
     // MARK: - Landing files in Downloads
@@ -588,16 +409,5 @@ final class VsockGuestDropAgent: @unchecked Sendable {
             session.sendDropComplete(
                 generation: generation, outcome: .failed, code: code, message: message)
         }
-    }
-
-    /// Reads main-queue-confined state from the worker queue.
-    ///
-    /// The agent's state is confined to the main dispatch queue, and the
-    /// `@MainActor` KernovaKit types it drives run on that same thread — this is
-    /// what tells the compiler so.
-    private func mainQueue<T: Sendable>(_ body: @MainActor () -> T) -> T {
-        Thread.isMainThread
-            ? MainActor.assumeIsolated(body)
-            : DispatchQueue.main.sync { MainActor.assumeIsolated(body) }
     }
 }

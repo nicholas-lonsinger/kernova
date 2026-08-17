@@ -1648,6 +1648,108 @@ struct VsockGuestClipboardAgentTests {
         #expect(try Data(contentsOf: staged) == png)
     }
 
+    @Test("an inline flavor of a rep that landed on disk is served by mapping the staged file")
+    func inboundInlineFlavorOfAStagedRepIsMapped() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // An image file promises its image UTI as well as `.fileURL`, so an
+        // inline flavor of a rep whose bytes land on disk is a shape a paste can
+        // ask for: the receiver hands back a staged file whenever the stream
+        // says the payload is not resident, and the promised inline flavor is
+        // then served by mapping it rather than by nothing at all.
+        let png = try makeTestPNG()
+        let pngType = NSPasteboard.PasteboardType(UTType.png.identifier)
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 41,
+                reps: [
+                    RepInfo(
+                        uti: UTType.png.identifier, byteCount: UInt64(png.count),
+                        filename: "spilled.png", isInline: true)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.count == 2 }
+
+        let pull = lazyPull(pasteboard, forType: pngType)
+        let request = try await awaitRequest(on: hostChannel)
+        let wire = try clipboardArchiveBytes(of: .blob(png, name: "spilled.png"))
+        try hostChannel.send(
+            makeBeginFrame(
+                generation: 41, transferID: request.transferID, uti: UTType.png.identifier,
+                totalBytes: 0, filename: "spilled.png", isInline: false, isArchive: true))
+        try hostChannel.send(
+            makeChunkFrame(transferID: request.transferID, offset: 0, data: wire))
+        try hostChannel.send(makeEndFrame(transferID: request.transferID, payload: wire))
+
+        #expect(await pull.value == png)
+    }
+
+    @Test("after the connection ends a cached rep still pastes and an unstaged file set is refused")
+    func pasteAfterDisconnectServesTheCacheAndRefusesThePartialFileSet() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // One inline rep and two files: the inline one and the first file are
+        // pasted while the host is there, the second file never is.
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        let text = Data("still here".utf8)
+        let fileBytes = Data(repeating: 0x5A, count: 4_096)
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 44,
+                reps: [
+                    RepInfo(
+                        uti: ClipboardContent.utf8TextUTI, byteCount: UInt64(text.count),
+                        isInline: true),
+                    RepInfo(
+                        uti: txtUTI, byteCount: UInt64(fileBytes.count), filename: "kept.txt",
+                        isInline: false),
+                    RepInfo(uti: txtUTI, byteCount: 512, filename: "never.txt", isInline: false),
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedItemCountForTesting == 3 }
+
+        let textPull = lazyPull(pasteboard, forType: .string)
+        try await driveInboundStream(
+            generation: 44, uti: ClipboardContent.utf8TextUTI, filename: "", payload: text,
+            isInline: true, on: hostChannel)
+        #expect(await textPull.value == text)
+
+        let filePull = lazyPull(pasteboard, forType: .fileURL, itemIndex: 1)
+        try await driveInboundStream(
+            generation: 44, uti: txtUTI, filename: "kept.txt", payload: fileBytes,
+            isInline: false, on: hostChannel)
+        #expect(await filePull.value != nil)
+
+        // The host goes away. The promise stays on the pasteboard, held alive by
+        // its own data providers.
+        agent.applyPolicy(enabled: false, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
+        // RATIONALE: sanctioned no-signal poll (docs/TESTING.md) — the lifecycle
+        // read is SUT-internal state with nothing to await on.
+        try await waitUntil { agent.liveChannelForTesting == nil }
+
+        // A materialized rep still pastes from the cache...
+        #expect(await lazyPull(pasteboard, forType: .string).value == text)
+        // ...while the file set is refused whole: `never.txt` can never arrive
+        // now, so serving `kept.txt` would land a silent subset of what was
+        // copied.
+        #expect(await lazyPull(pasteboard, forType: .fileURL, itemIndex: 1).value == nil)
+        #expect(await lazyPull(pasteboard, forType: .fileURL, itemIndex: 2).value == nil)
+    }
+
     @Test("a repeated .fileURL pull of an inline image file reuses the staged file (no duplicate)")
     func inboundImageFileRepeatedFileURLPullReusesStagedFile() async throws {
         let pasteboard = FakePasteboard()
@@ -2438,7 +2540,7 @@ struct VsockGuestClipboardAgentTests {
 
         // The offer is still live and the user pastes again — a new gesture, owed
         // its own answer on both surfaces rather than a silent no-op.
-        clock.advance(seconds: VsockGuestClipboardAgent.refusalBurstWindow)
+        clock.advance(seconds: await MainActor.run { ClipboardInboundOffers.refusalBurstWindow })
         #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
         try await notices.changed.wait { notices.value == 2 }
         let second = try await maybeNextFrame(from: hostChannel)
