@@ -301,10 +301,12 @@ final class VsockGuestDropAgent: @unchecked Sendable {
                     outcome = .failed(failure.0, failure.1)
                 }
             case .aborted(let abort):
-                // The job's own entry going is how a cancel reaches this loop: a
-                // release or a Cancel on the readout retires it before waking the
-                // pull it aborted.
-                if !inbound.hasLiveOffer(generation: generation) {
+                // A retiring code is every route a drop is called off by — a
+                // release, a Cancel on the readout, the channel going. The
+                // channel's own end is why liveness cannot stand in for it: the
+                // session cancels every awaiter before its end reaches this loop,
+                // so the job's entry is still standing when the abort lands.
+                if abort.isRetiring || !inbound.hasLiveOffer(generation: generation) {
                     outcome = .cancelled
                 } else {
                     Self.logger.warning(
@@ -334,6 +336,9 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         }
         send(completion: outcome, generation: generation, on: session)
         DispatchQueue.main.async { [weak self] in
+            // The offer goes with the job: a drop is landed in Downloads by this
+            // loop and never served again, so nothing is left to pull from it.
+            MainActor.assumeIsolated { inbound.retire(generation: generation) }
             // Identity-checked, not just keyed: generations restart at 1 with
             // every accepted channel, so a worker that outlived a teardown would
             // otherwise clear the *next* connection's job of the same number —

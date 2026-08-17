@@ -2287,6 +2287,53 @@ struct VsockGuestClipboardAgentTests {
         #expect(await MainActor.run { agent.clipboardActivity } == .pasteRefused(.pasteDiskFull, pasteLimitBytes: nil))
     }
 
+    @Test("disk full: the `.fileURL` flavor of an inline image file is refused before a request")
+    func diskFullRefusesTheFileFlavorOfAnInlineRep() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        // Only 1 KiB free, so the 50 MiB this file flavor stages does not fit.
+        let notices = AtomicInt()
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, freeSpaceProvider: { _ in 1024 },
+            onClipboardNotice: { notices.increment() })
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // An image file is `is_inline` — its bytes reassemble in memory — and it
+        // promises `.fileURL` as well, the flavor that writes them to disk. The
+        // pre-flight follows where the pull lands, not the rep's inline-ness.
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 14,
+                reps: [
+                    RepInfo(
+                        uti: UTType.png.identifier, byteCount: 50 * 1024 * 1024,
+                        filename: "huge.png", isInline: true)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.count == 2 }
+
+        #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
+
+        // The refusal is the first frame back, so no request preceded it.
+        let frame = try await maybeNextFrame(from: hostChannel)
+        guard case .error(let error)? = frame?.payload else {
+            Issue.record("Expected an Error frame, got \(String(describing: frame?.payload))")
+            return
+        }
+        #expect(error.code == "clipboard.paste.disk.full")
+        try await expectNoRequest(from: hostChannel)
+
+        try await notices.changed.wait { notices.value == 1 }
+        #expect(
+            await MainActor.run { agent.clipboardActivity }
+                == .pasteRefused(.pasteDiskFull, pasteLimitBytes: nil))
+    }
+
     @Test(
         "a mid-transfer abort reports its mapped failure on the guest's own menu, not only to the host",
         arguments: [

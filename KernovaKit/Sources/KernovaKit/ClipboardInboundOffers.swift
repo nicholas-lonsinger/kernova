@@ -44,17 +44,6 @@ public final class ClipboardInboundOffers {
         case pasteRefused(ClipboardErrorCode, limitBytes: Int?)
     }
 
-    /// An offer's paste-bound total against the ceiling in force.
-    public struct PasteBudget: Equatable, Sendable {
-        /// Total declared bytes of every representation served as
-        /// `public.file-url`.
-        public let total: UInt64
-        /// The ceiling read when this was computed.
-        public let limit: Int
-        /// Whether the set is over the ceiling, and so refused whole.
-        public var exceeds: Bool { total > UInt64(limit) }
-    }
-
     /// How long a reported paste refusal silences further refusals of the same
     /// offer.
     ///
@@ -84,9 +73,6 @@ public final class ClipboardInboundOffers {
         /// that started them can leave those pulls — and only those — rather than
         /// tearing down a transfer a paste fire is also waiting on.
         var joinedWaiters: [Int: LazyPullCoordinator.Waiter] = [:]
-        /// Transfer ids of the synchronous pulls parked on this offer, so a
-        /// cancel can stop the peer producing bytes for them.
-        var inFlightSyncPulls: Set<UInt64> = []
         /// When this offer's last refusal was reported, opening the burst window
         /// that keeps the rest of one paste's provider fires quiet.
         var lastRefusalReportedAt: EngineInstant?
@@ -113,6 +99,14 @@ public final class ClipboardInboundOffers {
     /// fire for one representation share a single request.
     nonisolated private let coordinator = LazyPullCoordinator()
 
+    /// Transfer ids of the synchronous pulls parked on this connection, so a
+    /// cancel can stop the peer producing bytes for them.
+    ///
+    /// Held off the main actor deliberately: a blocking fire clears its id from
+    /// whichever thread it holds, and the main hop that would cost is the one a
+    /// paste must not pay (docs/CLIPBOARD.md §8).
+    nonisolated private let syncPulls = InFlightSyncPulls()
+
     private let clock: any EngineClock
     private let maxPasteBytes: @MainActor () -> Int
 
@@ -129,6 +123,17 @@ public final class ClipboardInboundOffers {
 
     /// Called with what an inbound gesture just did, for a surface to render.
     public var onActivity: @MainActor (Activity) -> Void = { _ in }
+
+    /// Called with every refusal this side raises for the peer's offer — a
+    /// pre-flight check, a gate, or a transfer that failed under an operation
+    /// this object owns.
+    ///
+    /// The owner decides where a refusal belongs: the host renders it on the VM's
+    /// transfer report, while the guest's own menu line (``onActivity``) is the
+    /// account it owes, and a failed report there would displace another agent's
+    /// running transfer.
+    public var onRefusal: @MainActor (ClipboardTransferGesture, ClipboardTransferFailure) -> Void =
+        { _, _ in }
 
     private var entries: [UInt64: Entry] = [:]
 
@@ -194,6 +199,10 @@ public final class ClipboardInboundOffers {
     /// itself and has nothing to send back.
     nonisolated private var sendsPasteRefusalsToPeer: Bool { session.role == .guest }
 
+    /// Whether the peer's `Error` frame becomes a refusal on this side's surface
+    /// — the other half of ``sendsPasteRefusalsToPeer``.
+    private var rendersPeerRefusals: Bool { session.role == .host }
+
     /// Whether a new offer retires the last finished report.
     ///
     /// The host's reporter covers exactly this VM, so the offer the peer just
@@ -231,10 +240,9 @@ public final class ClipboardInboundOffers {
 
     /// The offer's paste-bound total against the ceiling in force, or `nil` when
     /// `generation` names no live offer.
-    public func pasteBudget(generation: UInt64) -> PasteBudget? {
+    public func pasteBudget(generation: UInt64) -> ClipboardPromisePolicy.PasteBudget? {
         guard let entry = entries[generation] else { return nil }
-        return PasteBudget(
-            total: ClipboardPromisePolicy.pasteBoundTotal(entry.reps), limit: maxPasteBytes())
+        return ClipboardPromisePolicy.pasteBudget(entry.reps, limit: maxPasteBytes())
     }
 
     /// The pasteboard items to promise for `generation`, or `nil` when it names
@@ -330,6 +338,34 @@ public final class ClipboardInboundOffers {
         cancelInbound(generation: release.generation)
     }
 
+    /// Takes on what the peer reported about a gesture made on its side.
+    ///
+    /// A `clipboard.*` code is the peer's paste refusing, which only the host
+    /// renders: the guest raised its own refusal on its own menu already, and the
+    /// frame it sent is what this turns back into a report.
+    public func handlePeerError(_ error: Kernova_V1_Error) {
+        Self.logger.warning(
+            "Clipboard error from '\(self.peerName, privacy: .public)' (conn=\(self.tag, privacy: .public)): \(error.code, privacy: .public) — \(error.message, privacy: .public)"
+        )
+        guard rendersPeerRefusals, error.code.hasPrefix("clipboard.") else { return }
+        let code = ClipboardErrorCode(rawValue: error.code)
+        onRefusal(
+            .peerPaste,
+            code == .pasteTooLarge ? .tooLarge(limitBytes: maxPasteBytes()) : .peerReported(code))
+    }
+
+    /// Forgets one offer and everything it holds, telling the peer nothing — the
+    /// gesture it belonged to is over.
+    ///
+    /// A drop's entry is a finished job rather than a promise something still
+    /// advertises, so nothing is left to serve from it.
+    public func retire(generation: UInt64) {
+        guard let entry = entries.removeValue(forKey: generation) else { return }
+        if currentGeneration == generation { currentGeneration = 0 }
+        for waiter in entry.joinedWaiters.values { _ = coordinator.leave(waiter) }
+        _ = syncPulls.take(generation: generation)
+    }
+
     /// Forgets the live offer without telling the peer — the buffer it was
     /// published into holds something else now.
     public func discardInboundOffer() {
@@ -378,15 +414,23 @@ public final class ClipboardInboundOffers {
 
     /// Wakes every parked pull because the connection is over.
     ///
-    /// The offers and their materialization caches deliberately stay: a
+    /// A clipboard offer and its materialization cache deliberately stay: a
     /// pasteboard write this side published outlives the session behind it, and
     /// every representation already pulled stays servable from the cache and the
-    /// staged files (docs/CLIPBOARD.md §3).
+    /// staged files (docs/CLIPBOARD.md §3). A drop's entries go — nothing on this
+    /// side advertises them, and the jobs they belonged to end with the channel.
     ///
     /// `nonisolated` so the channel's own end can run it before anything hops to
-    /// main — a pull parked on the main thread is what would block that hop.
+    /// main — a pull parked on the main thread is what would block that hop. The
+    /// retirement is left to a later main turn for the same reason.
     nonisolated public func endSession() {
         coordinator.failAll()
+        guard session.kind == .drop else { return }
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                for generation in Array(self.entries.keys) { self.retire(generation: generation) }
+            }
+        }
     }
 
     /// Stops the pulls an owner's readout started for `generation`, leaving one
@@ -417,7 +461,7 @@ public final class ClipboardInboundOffers {
         guard let entry = entries.removeValue(forKey: generation) else { return }
         if currentGeneration == generation { currentGeneration = 0 }
         for waiter in entry.joinedWaiters.values { _ = coordinator.leave(waiter) }
-        for id in entry.inFlightSyncPulls {
+        for id in syncPulls.take(generation: generation) {
             session.receiver?.cancelAwait(id)
             session.sendStreamAbort(
                 transferID: id, code: .userCancelled, message: "Cancelled by the user")
@@ -444,7 +488,7 @@ public final class ClipboardInboundOffers {
     ) async -> ClipboardContent.Representation? {
         let plan: PullPlan
         switch resolve(generation: generation, repIndex: repIndex, servesFileURL: false) {
-        case .cached(let representation): return representation
+        case .cached(let representation, _): return representation
         case .refused: return nil
         case .ready(let ready): plan = ready
         }
@@ -488,7 +532,7 @@ public final class ClipboardInboundOffers {
         switch onMain({
             self.resolve(generation: generation, repIndex: repIndex, servesFileURL: false)
         }) {
-        case .cached(let representation): return .delivered(representation)
+        case .cached(let representation, _): return .delivered(representation)
         case .refused(let outcome): return outcome
         case .ready(let ready): plan = ready
         }
@@ -502,24 +546,19 @@ public final class ClipboardInboundOffers {
     ///
     /// Safe to call on the main thread even though it blocks.
     nonisolated public func serveFileURL(generation: UInt64, repIndex: Int) -> URL? {
-        // Post-stop all-or-nothing: a partially materialized file set serves no
-        // file at all rather than a silent subset.
-        if onMain({ self.refusesPasteBoundFire(generation: generation) }) { return nil }
-        if let cached = onMain({ self.materialized(generation: generation, repIndex: repIndex) }) {
-            logCacheHit(cached, generation: generation, repIndex: repIndex)
-            return fileURL(for: cached, generation: generation, repIndex: repIndex)
-        }
         let plan: PullPlan
         switch onMain({
             self.resolve(generation: generation, repIndex: repIndex, servesFileURL: true)
         }) {
-        case .cached(let representation):
-            return fileURL(for: representation, generation: generation, repIndex: repIndex)
+        case .cached(let representation, let staged):
+            return fileURL(
+                for: representation, generation: generation, repIndex: repIndex, staged: staged)
         case .refused: return nil
         case .ready(let ready): plan = ready
         }
         guard let representation = pullUnderOwnOperation(plan) else { return nil }
-        return fileURL(for: representation, generation: generation, repIndex: repIndex)
+        return fileURL(
+            for: representation, generation: generation, repIndex: repIndex, staged: nil)
     }
 
     /// Serves an inline pasteboard flavor's bytes for a promised representation
@@ -530,16 +569,12 @@ public final class ClipboardInboundOffers {
     ///
     /// Safe to call on the main thread even though it blocks.
     nonisolated public func serveData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
-        if let cached = onMain({ self.materialized(generation: generation, repIndex: repIndex) }) {
-            logCacheHit(cached, generation: generation, repIndex: repIndex)
-            return Self.residentBytes(of: cached)
-        }
         let plan: PullPlan
         switch onMain({
             self.resolve(
                 generation: generation, repIndex: repIndex, servesFileURL: false, expectedUTI: uti)
         }) {
-        case .cached(let representation): return Self.residentBytes(of: representation)
+        case .cached(let representation, _): return Self.residentBytes(of: representation)
         case .refused: return nil
         case .ready(let ready): plan = ready
         }
@@ -562,9 +597,9 @@ public final class ClipboardInboundOffers {
             case .delivered(let representation) = runSyncPull(
                 plan, operation: operation, caller: .paste)
         else {
-            // Every path that owes the user a reason has already finished this
-            // operation with it; what is left is a supersession or a benign
-            // retiring abort, which explain themselves elsewhere.
+            // Retired rather than finished: what a failed fire owes the user has
+            // gone to the surface that owns refusals, and the readout has nothing
+            // left to say about a transfer that ended.
             operation.abandon()
             return nil
         }
@@ -592,27 +627,28 @@ public final class ClipboardInboundOffers {
             "Paste fired for gen=\(generation, privacy: .public) of '\(self.peerName, privacy: .public)' (conn=\(self.tag, privacy: .public)) after the session ended with the file set partly materialized — \(ClipboardErrorCode.pasteIncompleteSet.rawValue, privacy: .public); serving nothing"
         )
         // The N fires of one multi-file paste each report the same refusal; the
-        // reporter absorbs the repeats into one message.
-        reportRefusal(gesture: .paste, .incompleteFileSet)
+        // surface it lands on absorbs the repeats into one message.
+        onRefusal(.paste, .incompleteFileSet)
         return true
     }
 
     // MARK: - The pull core
 
-    /// Everything one pull needs, snapshotted on the main actor before it holds
-    /// a thread.
+    /// Everything one pull needs, snapshotted in the single main-actor hop a
+    /// blocking caller makes before it holds a thread.
     private struct PullPlan: Sendable {
         let generation: UInt64
         let repIndex: Int
         let transferID: UInt64
         let uti: String
         let byteCount: UInt64
-        let isInline: Bool
         /// Non-`nil` for a folder: the archive is its tree, extracted into a
         /// folder of that name as it streams.
         let extractsDirectoryNamed: String?
         let filename: String
-        let maxAcceptByteCount: UInt64
+        /// What the receive volume must have room for before a byte is
+        /// requested, or `nil` when nothing about this pull lands on disk.
+        let preflightByteCount: Int?
         let receiver: ClipboardStreamReceiver
 
         var unitName: String? { filename.isEmpty ? nil : filename }
@@ -620,7 +656,9 @@ public final class ClipboardInboundOffers {
 
     /// What a resolved pull request turned out to be.
     private enum Resolution: Sendable {
-        case cached(ClipboardContent.Representation)
+        /// Already materialized; `stagedURL` is the temp file an inline payload
+        /// was staged into for an earlier `.fileURL` fire, if any.
+        case cached(ClipboardContent.Representation, stagedURL: URL?)
         /// Nothing will be pulled; the reason has already been logged and, where
         /// one is owed, reported.
         case refused(LazyPullOutcome)
@@ -640,14 +678,24 @@ public final class ClipboardInboundOffers {
     /// Validates that `(generation, repIndex)` still addresses a live offer and
     /// snapshots what pulling it needs.
     ///
-    /// The single site every uncached fire passes through, so each refusal logs
-    /// why it serves nothing — a provider fire has no other surface. A stale
-    /// generation logs `.debug` (the benign supersession race: the newer offer's
-    /// own publication is what retires these promises); the other misses persist
-    /// as `.warning`.
+    /// The single site every fire passes through — and the only main-actor hop a
+    /// blocking one makes before its wait — so each refusal logs why it serves
+    /// nothing, since a provider fire has no other surface. A stale generation
+    /// logs `.debug` (the benign supersession race: the newer offer's own
+    /// publication is what retires these promises); the other misses persist as
+    /// `.warning`.
+    ///
+    /// `servesFileURL` says the caller is a `.fileURL` fire: the flavor the
+    /// paste-bound rules govern, and the one that lands on disk whether or not
+    /// the representation is inline.
     private func resolve(
         generation: UInt64, repIndex: Int, servesFileURL: Bool, expectedUTI: String? = nil
     ) -> Resolution {
+        // Post-stop all-or-nothing: a partially materialized file set serves no
+        // file at all rather than a silent subset, cached siblings included.
+        if servesFileURL, refusesPasteBoundFire(generation: generation) {
+            return .refused(.cancelled)
+        }
         guard let entry = entries[generation] else {
             if currentGeneration == 0 {
                 Self.logger.warning(
@@ -666,7 +714,10 @@ public final class ClipboardInboundOffers {
             )
             return .refused(.cancelled)
         }
-        if let cached = entry.materialized[repIndex] { return .cached(cached) }
+        if let cached = entry.materialized[repIndex] {
+            logCacheHit(cached, generation: generation, repIndex: repIndex)
+            return .cached(cached, stagedURL: entry.stagedInlineURLs[repIndex])
+        }
         guard let receiver = session.receiver else {
             Self.logger.warning(
                 "Pull requested un-materialized rep \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) from '\(self.peerName, privacy: .public)' (conn=\(self.tag, privacy: .public)) after the session ended — serving nothing"
@@ -680,15 +731,19 @@ public final class ClipboardInboundOffers {
             return .refused(.cancelled)
         }
         let transferID = self.transferID(generation: generation, repIndex: repIndex)
-        entry.inFlightSyncPulls.insert(transferID)
+        syncPulls.insert(transferID)
         return .ready(
             PullPlan(
                 generation: generation, repIndex: repIndex, transferID: transferID, uti: info.uti,
-                byteCount: info.byteCount, isInline: info.isInline,
+                byteCount: info.byteCount,
                 extractsDirectoryNamed: info.isDirectory ? info.filename : nil,
                 filename: info.filename,
-                maxAcceptByteCount: staging.availableCapacity().map { UInt64(clamping: $0) }
-                    ?? ClipboardStreamTuning.unlimitedAcceptByteCount,
+                // Every representation that stages to disk is checked, plus the
+                // `.fileURL` flavor of an inline one — its bytes reassemble in
+                // memory and are then staged for the URL a paste creates the file
+                // from.
+                preflightByteCount: !info.isInline || servesFileURL
+                    ? Int(clamping: info.byteCount) : nil,
                 receiver: receiver))
     }
 
@@ -697,11 +752,11 @@ public final class ClipboardInboundOffers {
     /// One paste is one deadline-bound operation, so the OS clock sees the sum
     /// rather than each file: a set over the cap is refused whole rather than
     /// landing 2 of 3 files.
-    private func refusePasteBudget(_ budget: PasteBudget, entry: Entry) {
+    private func refusePasteBudget(_ budget: ClipboardPromisePolicy.PasteBudget, entry: Entry) {
         Self.logger.warning(
             "Paste refused: \(ClipboardErrorCode.copyTooLarge.rawValue, privacy: .public) — paste-bound reps total \(budget.total, privacy: .public) bytes, over the \(budget.limit, privacy: .public)-byte cap; refusing the whole file set"
         )
-        reportRefusal(gesture: .copy, .tooLarge(limitBytes: budget.limit))
+        onRefusal(.copy, .tooLarge(limitBytes: budget.limit))
         announceRefusal(
             .pasteTooLarge, "Too large to paste (\(budget.total) bytes total)", entry: entry)
     }
@@ -712,7 +767,7 @@ public final class ClipboardInboundOffers {
     ) -> LazyPullOutcome {
         operation.unitBegan(
             id: UInt64(plan.repIndex), expectedBytes: plan.byteCount, name: plan.unitName)
-        if let refusal = onMain({ self.preflight(plan) }) {
+        if let refusal = preflight(plan) {
             settle(refusal, plan: plan, operation: operation, caller: caller)
             return refusal
         }
@@ -727,13 +782,17 @@ public final class ClipboardInboundOffers {
 
     /// The free-space pre-flight, as the abort a failure reads as.
     ///
-    /// Only a representation that stages to disk is checked: an inline payload
-    /// reassembles in memory, and Kernova caps neither (docs/CLIPBOARD.md §1).
-    /// Raised as an abort so one outcome mapping covers a volume this side found
-    /// full and one the peer did.
-    private func preflight(_ plan: PullPlan) -> LazyPullOutcome? {
-        guard !plan.isInline,
-            !staging.hasCapacity(forByteCount: Int(clamping: plan.byteCount))
+    /// Runs wherever the pull will land on disk (``PullPlan/preflightByteCount``)
+    /// and nowhere else: an inline payload a caller only reads reassembles in
+    /// memory, and Kernova caps neither (docs/CLIPBOARD.md §1). Raised as an
+    /// abort so one outcome mapping covers a volume this side found full and one
+    /// the peer did.
+    ///
+    /// `nonisolated`: it reads the thread-safe staging alone, and the statfs
+    /// behind that has no business on the main thread (docs/CLIPBOARD.md §8).
+    nonisolated private func preflight(_ plan: PullPlan) -> LazyPullOutcome? {
+        guard let needed = plan.preflightByteCount,
+            !staging.hasCapacity(forByteCount: needed)
         else { return nil }
         Self.logger.warning(
             "Not enough disk space to receive rep '\(plan.uti, privacy: .public)' (\(plan.byteCount, privacy: .public) bytes)"
@@ -742,7 +801,7 @@ public final class ClipboardInboundOffers {
             ClipboardStreamAbortInfo(
                 transferID: plan.transferID, code: .diskFull,
                 message: "Not enough disk space to receive \(plan.byteCount) bytes",
-                neededBytes: Int(clamping: plan.byteCount),
+                neededBytes: needed,
                 availableBytes: staging.availableCapacity().map { Int(clamping: $0) }))
     }
 
@@ -771,7 +830,10 @@ public final class ClipboardInboundOffers {
         do {
             try session.sendRequest(
                 generation: plan.generation, transferID: plan.transferID, uti: plan.uti,
-                maxAcceptByteCount: plan.maxAcceptByteCount)
+                // Read here rather than snapshotted with the plan: the statfs
+                // behind it belongs off the main thread (docs/CLIPBOARD.md §8).
+                maxAcceptByteCount: staging.availableCapacity().map { UInt64(clamping: $0) }
+                    ?? ClipboardStreamTuning.unlimitedAcceptByteCount)
         } catch {
             // No request went out, so no reply will arrive — resolve the pull now
             // instead of blocking to the backstop timeout.
@@ -805,27 +867,30 @@ public final class ClipboardInboundOffers {
         _ outcome: LazyPullOutcome, plan: PullPlan, operation: ClipboardTransferOperation,
         caller: PullCaller
     ) -> ClipboardContent.Representation? {
+        syncPulls.remove(plan.transferID)
         guard case .delivered(let representation) = outcome else {
-            onMain { self.entries[plan.generation]?.inFlightSyncPulls.remove(plan.transferID) }
-            report(outcome, plan: plan, operation: operation, caller: caller)
+            // Ended before the refusal is raised, so the readout the unit's last
+            // emission leaves cannot displace what the refusal reports.
             operation.unitEnded(id: UInt64(plan.repIndex), succeeded: false)
+            report(outcome, plan: plan, operation: operation, caller: caller)
             return nil
         }
-        onMain {
-            guard let entry = self.entries[plan.generation] else { return }
-            entry.inFlightSyncPulls.remove(plan.transferID)
-            // A dropped file is landed by its caller, never served again, so
-            // caching it would only pin the staged copy it is about to move.
-            guard self.session.kind == .clipboard else { return }
-            // The entry is re-read after the wait rather than captured before it:
-            // a supersession can land inside the nested event loop a main-thread
-            // fire runs, and caching into an offer nothing shows any more would
-            // resurrect it.
-            if entry.materialized[plan.repIndex] == nil {
-                entry.materialized[plan.repIndex] = representation
-                entry.epoch += 1
+        // A dropped file is landed by its caller, never served again, so caching
+        // it would only pin the staged copy it is about to move — and the hop
+        // that cache costs is one a drop's pull then never pays.
+        if session.kind == .clipboard {
+            onMain {
+                // The entry is re-read after the wait rather than captured before
+                // it: a supersession can land inside the nested event loop a
+                // main-thread fire runs, and caching into an offer nothing shows
+                // any more would resurrect it.
+                guard let entry = self.entries[plan.generation] else { return }
+                if entry.materialized[plan.repIndex] == nil {
+                    entry.materialized[plan.repIndex] = representation
+                    entry.epoch += 1
+                }
+                self.onActivity(.representationReceived)
             }
-            self.onActivity(.representationReceived)
         }
         operation.unitEnded(id: UInt64(plan.repIndex), succeeded: true)
         return representation
@@ -833,6 +898,14 @@ public final class ClipboardInboundOffers {
 
     /// Reports what one pull's outcome owes, to the surfaces that side owes it
     /// on.
+    ///
+    /// Only a paste fire's own operation, which this object opened, reports a
+    /// failure: an operation the caller owns spans more than this pull — the
+    /// host's preview loop shares one across every representation it fetches —
+    /// so ending it on one stalled representation would leave the rest streaming
+    /// into a dead readout. The exception is an abort a joined pull maps to a
+    /// failure, which is the whole account that loop gets of a chip that never
+    /// filled in.
     nonisolated private func report(
         _ outcome: LazyPullOutcome, plan: PullPlan, operation: ClipboardTransferOperation,
         caller: PullCaller
@@ -850,10 +923,14 @@ public final class ClipboardInboundOffers {
             guard let failure = ClipboardTransferFailure.inboundPullAborted(info) else {
                 // A retiring abort names no failure of its own; only the end of
                 // this connection has nothing else to explain it.
-                recordInterruption(operation, caller: caller)
+                recordInterruption(caller: caller)
                 return
             }
-            operation.finish(.failed(failure))
+            switch caller {
+            case .join: operation.finish(.failed(failure))
+            case .paste: raiseRefusal(.paste, failure)
+            case .caller: break
+            }
             announceRefusal(
                 Self.pasteErrorCode(forAbortCode: info.code), info.message, generation: plan.generation,
                 caller: caller)
@@ -865,8 +942,8 @@ public final class ClipboardInboundOffers {
             session.sendStreamAbort(
                 transferID: plan.transferID, code: .pasteTimeout,
                 message: "Receiver gave up waiting for the transfer")
-            guard caller != .caller else { return }
-            operation.finish(.failed(.timedOut))
+            guard caller == .paste else { return }
+            raiseRefusal(.paste, .timedOut)
             announceRefusal(
                 .pasteTimeout, "The clipboard transfer timed out", generation: plan.generation, caller: caller)
         case .cancelled:
@@ -875,7 +952,7 @@ public final class ClipboardInboundOffers {
             Self.logger.debug(
                 "Inbound pull \(plan.transferID, privacy: .public) (conn=\(self.tag, privacy: .public)) cancelled"
             )
-            recordInterruption(operation, caller: caller)
+            recordInterruption(caller: caller)
         }
     }
 
@@ -883,24 +960,20 @@ public final class ClipboardInboundOffers {
     /// nothing, and unlike a supersession nothing else says why.
     ///
     /// The N fires of one multi-file paste each report the same refusal; the
-    /// reporter absorbs the repeats into one message.
-    nonisolated private func recordInterruption(
-        _ operation: ClipboardTransferOperation, caller: PullCaller
-    ) {
+    /// surface it lands on absorbs the repeats into one message.
+    nonisolated private func recordInterruption(caller: PullCaller) {
         guard caller == .paste, session.hasEnded else { return }
-        operation.finish(.failed(.interrupted(fileCount: nil)))
+        raiseRefusal(.paste, .interrupted(fileCount: nil))
     }
 
     // MARK: - Refusals
 
-    /// Reports a refusal no operation is measuring — a pre-flight check, a
-    /// gesture that never opened a stream.
-    private func reportRefusal(
-        gesture: ClipboardTransferGesture, _ failure: ClipboardTransferFailure
+    /// Hands one refusal to the surface that owns it, from whichever thread
+    /// raised it.
+    nonisolated private func raiseRefusal(
+        _ gesture: ClipboardTransferGesture, _ failure: ClipboardTransferFailure
     ) {
-        reporter.finish(
-            ClipboardTransferFinish(
-                gesture: gesture, outcome: .failed(failure), peerName: peerName))
+        onMain { self.onRefusal(gesture, failure) }
     }
 
     /// Maps a receiver or peer abort code to the user-facing paste code the peer
@@ -986,17 +1059,15 @@ public final class ClipboardInboundOffers {
     /// A folder arrives already unpacked — its transfer extracted the tree as the
     /// archive streamed — so serving it costs nothing inside the paste deadline,
     /// and a repeated paste re-serves the same tree.
+    ///
+    /// `staged` is what an earlier fire of this representation staged, read in the
+    /// resolving hop; a fire that just pulled the bytes has none.
     nonisolated private func fileURL(
-        for representation: ClipboardContent.Representation, generation: UInt64, repIndex: Int
+        for representation: ClipboardContent.Representation, generation: UInt64, repIndex: Int,
+        staged: URL?
     ) -> URL? {
         if let url = representation.fileURL { return url }
-        // Cached per representation so a repeated fire returns the same file
-        // instead of minting `name (2).ext`.
-        if let cached = onMain({ self.entries[generation]?.stagedInlineURLs[repIndex] }),
-            FileManager.default.fileExists(atPath: cached.path)
-        {
-            return cached
-        }
+        if let staged, FileManager.default.fileExists(atPath: staged.path) { return staged }
         guard let data = representation.inMemoryData,
             let sink = try? staging.makeSink(
                 generation: generation, filename: representation.filename)
@@ -1004,7 +1075,7 @@ public final class ClipboardInboundOffers {
             Self.logger.error(
                 "Failed to stage '\(representation.filename, privacy: .public)' from '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.tag, privacy: .public)) — serving nothing"
             )
-            onMain { self.reportRefusal(gesture: .paste, .stagingFailed) }
+            raiseRefusal(.paste, .stagingFailed)
             return nil
         }
         do {
@@ -1018,7 +1089,7 @@ public final class ClipboardInboundOffers {
             Self.logger.error(
                 "Failed to write staged file '\(representation.filename, privacy: .public)' from '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.tag, privacy: .public)): \(error.localizedDescription, privacy: .public)"
             )
-            onMain { self.reportRefusal(gesture: .paste, .stagingFailed) }
+            raiseRefusal(.paste, .stagingFailed)
             return nil
         }
     }
@@ -1067,5 +1138,30 @@ extension LazyPullOutcome {
     fileprivate var isTimedOut: Bool {
         if case .timedOut = self { return true }
         return false
+    }
+}
+
+/// The transfer ids of the pulls holding a thread right now, readable and
+/// writable from any of them.
+private final class InFlightSyncPulls: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ids: Set<UInt64> = []
+
+    func insert(_ id: UInt64) {
+        lock.withLock { _ = ids.insert(id) }
+    }
+
+    func remove(_ id: UInt64) {
+        lock.withLock { _ = ids.remove(id) }
+    }
+
+    /// Takes every id belonging to `generation` out, returning them for the
+    /// caller to tear down.
+    func take(generation: UInt64) -> [UInt64] {
+        lock.withLock {
+            let matched = ids.filter { ClipboardTransferID.generation(of: $0) == generation }
+            ids.subtract(matched)
+            return Array(matched)
+        }
     }
 }

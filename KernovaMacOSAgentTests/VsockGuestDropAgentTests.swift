@@ -338,6 +338,59 @@ struct VsockGuestDropAgentTests {
         #expect(harness.downloadNames.isEmpty)
     }
 
+    @Test("a retiring abort mid-transfer cancels the job rather than failing it")
+    func retiringAbortCancelsTheJob() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        try await harness.start()
+
+        // Every terminal the drop's readout publishes, since the zero dwell
+        // retires the live report as soon as it stands.
+        let finishes = AtomicBox<[ClipboardTransferFinish]>()
+        let reporter = harness.reporter
+        await MainActor.run {
+            reporter.onReportChanged = { report in
+                guard case .finished(let finish) = report else { return }
+                finishes.set((finishes.value ?? []) + [finish])
+            }
+        }
+
+        try harness.host.send(
+            makeDropOffer(
+                generation: 1,
+                reps: [fileRep("pending.bin", bytes: Data(repeating: 0x33, count: 128))]))
+
+        // The shape a channel closing under the job delivers: the session cancels
+        // every awaiter before its end reaches the job loop, so the abort lands
+        // while the job's own offer is still standing. Driven as a frame here so
+        // the completion stays observable.
+        while true {
+            let frame = try await nextFrame(from: harness.host)
+            if case .clipboardRequest(let request) = frame.payload {
+                try harness.host.send(
+                    makeAbortFrame(
+                        transferID: request.transferID,
+                        code: ClipboardStreamAbortCode.cancelled.rawValue,
+                        message: "Transfer superseded or channel closed"))
+                break
+            }
+        }
+
+        let complete = try await awaitCompletion(on: harness.host)
+        #expect(complete.outcome == .cancelled)
+        #expect(complete.code.isEmpty)
+
+        try await finishes.changed.wait { finishes.value?.isEmpty == false }
+        let finish = try #require(finishes.value?.last)
+        #expect(finish.gesture == .drop)
+        guard case .cancelled = finish.outcome else {
+            Issue.record("Expected a cancelled drop, got \(finish.outcome)")
+            return
+        }
+        #expect(harness.downloadNames.isEmpty)
+        #expect(harness.revealed.value == nil)
+    }
+
     // MARK: - Failures
 
     @Test("a Downloads folder that cannot be written fails the drop with a code")

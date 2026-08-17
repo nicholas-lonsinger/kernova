@@ -58,7 +58,7 @@ struct ClipboardPromisePolicyTests {
             info(byteCount: 200),
             info(byteCount: 300, filename: "b.bin"),
         ]
-        #expect(ClipboardPromisePolicy.pasteBoundTotal(reps) == 400)
+        #expect(ClipboardPromisePolicy.pasteBudget(reps, limit: .max).total == 400)
     }
 
     @Test("the paste-bound total saturates rather than wrapping")
@@ -67,14 +67,15 @@ struct ClipboardPromisePolicyTests {
             info(byteCount: .max, filename: "a.bin"),
             info(byteCount: 1, filename: "b.bin"),
         ]
-        #expect(ClipboardPromisePolicy.pasteBoundTotal(reps) == .max)
+        #expect(ClipboardPromisePolicy.pasteBudget(reps, limit: .max).total == .max)
     }
 
     @Test("a set exactly at the cap is within budget, one byte over is not")
     func atCapIsWithinBudget() {
         let reps = [info(byteCount: 100, filename: "a.bin")]
-        #expect(!ClipboardPromisePolicy.exceedsPasteBudget(reps, limit: 100))
-        #expect(ClipboardPromisePolicy.exceedsPasteBudget(reps, limit: 99))
+        #expect(!ClipboardPromisePolicy.pasteBudget(reps, limit: 100).exceeds)
+        #expect(ClipboardPromisePolicy.pasteBudget(reps, limit: 99).exceeds)
+        #expect(ClipboardPromisePolicy.pasteBudget(reps, limit: 99).limit == 99)
     }
 
     // MARK: - descriptors

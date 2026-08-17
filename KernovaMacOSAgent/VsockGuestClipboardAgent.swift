@@ -727,9 +727,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         case .clipboardRelease(let release):
             onMainActor { inbound?.handleRelease(release) }
         case .error(let error):
-            Self.logger.warning(
-                "Host clipboard error: \(error.code, privacy: .public) — \(error.message, privacy: .public)"
-            )
+            onMainActor { inbound?.handlePeerError(error) }
         case .clipboardStreamAbort(let abort):
             // Only a sender-bound abort reaches here; see `ClipboardStreamRouting`.
             onMainActor { session?.sender?.handleAbort(transferID: abort.transferID) }

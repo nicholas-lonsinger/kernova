@@ -84,10 +84,6 @@ final class VsockClipboardService: ClipboardServicing {
     private let progressRevealDelay: TimeInterval
     private let progressIdleGap: TimeInterval
 
-    /// The ceiling on a paste's file-representation total, read at each budget
-    /// check rather than captured, so a Settings change reaches a live session.
-    private let maxPasteBytes: @MainActor () -> Int
-
     /// The operation covering the current preview materialization loop, held so a
     /// teardown can retire it.
     @ObservationIgnored
@@ -186,7 +182,6 @@ final class VsockClipboardService: ClipboardServicing {
         stagingTempRoot: URL = FileManager.default.temporaryDirectory
     ) {
         self.label = label
-        self.maxPasteBytes = maxPasteBytes
         self.reporter = reporter
         self.progressRevealDelay = progressRevealDelay
         self.progressIdleGap = progressIdleGap
@@ -210,6 +205,9 @@ final class VsockClipboardService: ClipboardServicing {
         self.inbound = inbound
         inbound.onOfferReceived = { [weak self] offer in self?.publishOffer(offer) }
         inbound.onOfferRetracted = { [weak self] _, reason in self?.retractOffer(reason: reason) }
+        inbound.onRefusal = { [weak self] gesture, failure in
+            self?.reportRefusal(gesture: gesture, failure)
+        }
     }
 
     // MARK: - Lifecycle
@@ -400,16 +398,7 @@ final class VsockClipboardService: ClipboardServicing {
         case .clipboardRelease(let release):
             inbound.handleRelease(release)
         case .error(let error):
-            Self.logger.warning(
-                "Guest clipboard error for '\(self.label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
-            )
-            if error.code.hasPrefix("clipboard.") {
-                let code = ClipboardErrorCode(rawValue: error.code)
-                reportRefusal(
-                    gesture: .peerPaste,
-                    code == .pasteTooLarge
-                        ? .tooLarge(limitBytes: maxPasteBytes()) : .peerReported(code))
-            }
+            inbound.handlePeerError(error)
         case .clipboardStreamAbort(let abort):
             // Only a sender-bound abort reaches here; see `ClipboardStreamRouting`.
             session.sender?.handleAbort(transferID: abort.transferID)

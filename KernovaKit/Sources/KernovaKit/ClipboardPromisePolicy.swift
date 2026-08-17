@@ -36,32 +36,36 @@ public enum ClipboardPromisePolicy {
         keeps(info) && !info.filename.isEmpty
     }
 
-    /// The offer's paste-bound total: the byte count of every representation
-    /// served as `public.file-url`, which is the payload one paste has to land
-    /// against the OS deadline.
+    /// An offer's paste-bound total against the ceiling in force.
+    public struct PasteBudget: Equatable, Sendable {
+        /// Total declared bytes of every representation served as
+        /// `public.file-url`.
+        public let total: UInt64
+        /// The ceiling this total was measured against.
+        public let limit: Int
+        /// Whether the set is over the ceiling, and so refused whole. A total
+        /// exactly at the cap is within it.
+        public var exceeds: Bool { total > UInt64(limit) }
+    }
+
+    /// The paste-bound total of `reps` against `limit`: the byte count of every
+    /// representation served as `public.file-url`, which is the payload one
+    /// paste has to land against the OS deadline.
     ///
-    /// A directory rep contributes the producer's stat-walk estimate, the same
-    /// figure the wire carries as its `byte_count`. The sum saturates, so an
-    /// absurd declared total fails the cap rather than wrapping under it.
-    public static func pasteBoundTotal(
-        _ reps: [Kernova_V1_ClipboardRepresentationInfo]
-    ) -> UInt64 {
+    /// One paste is one deadline-bound operation, so the OS clock sees the sum
+    /// rather than each file: a set over the cap is refused whole rather than
+    /// landing 2 of 3 files. A directory rep contributes the producer's
+    /// stat-walk estimate, the same figure the wire carries as its `byte_count`.
+    /// The sum saturates, so an absurd declared total fails the cap rather than
+    /// wrapping under it.
+    public static func pasteBudget(
+        _ reps: [Kernova_V1_ClipboardRepresentationInfo], limit: Int
+    ) -> PasteBudget {
         var total: UInt64 = 0
         for info in reps where servesFileURL(info) {
             total = total.saturatingAdding(info.byteCount)
         }
-        return total
-    }
-
-    /// Whether the paste-bound total of `reps` is over `limit`.
-    ///
-    /// One paste is one deadline-bound operation, so the OS clock sees the sum
-    /// rather than each file: a set over the cap is refused whole rather than
-    /// landing 2 of 3 files. A total exactly at the cap is within it.
-    public static func exceedsPasteBudget(
-        _ reps: [Kernova_V1_ClipboardRepresentationInfo], limit: Int
-    ) -> Bool {
-        pasteBoundTotal(reps) > UInt64(limit)
+        return PasteBudget(total: total, limit: limit)
     }
 
     /// The pasteboard-item grouping inputs for `reps`, each tagged with whether
