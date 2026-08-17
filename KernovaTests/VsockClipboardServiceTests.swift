@@ -1104,6 +1104,13 @@ struct VsockClipboardServiceTests {
             /// Used to create a live receiver-side transfer that a later
             /// supersession/release can cancel while the host's pull is parked.
             let beginOnly: Bool
+            /// When `true`, the reply parks *before* `Begin` until
+            /// `releaseReplies()` — the host's pull is in flight (slot registered,
+            /// awaiter waiting) with no transfer, and so no sink, open for it.
+            /// Prefer this over `holdEnd` for a non-inline rep: a stalled archive
+            /// extract keeps AppleArchive's worker threads polling for the length
+            /// of the hold, which on a small CI runner starves the whole process.
+            let holdReply: Bool
         }
 
         private let guest: VsockChannel
@@ -1134,6 +1141,15 @@ struct VsockClipboardServiceTests {
             endGate.notify()
         }
 
+        private let replyGate = AsyncGate()
+        private var replyReleased = false
+
+        /// Releases every reply registered with `holdReply` so it streams.
+        func releaseReplies() {
+            replyReleased = true
+            replyGate.notify()
+        }
+
         init(guest: VsockChannel) {
             self.guest = guest
         }
@@ -1146,7 +1162,7 @@ struct VsockClipboardServiceTests {
         /// would encode.
         func register(
             generation: UInt64, repIndex: UInt64, uti: String, bytes: Data,
-            filename: String = "", isInline: Bool, beginOnly: Bool = false
+            filename: String = "", isInline: Bool, beginOnly: Bool = false, holdReply: Bool = false
         ) {
             store(
                 generation: generation, repIndex: repIndex, uti: uti,
@@ -1154,7 +1170,7 @@ struct VsockClipboardServiceTests {
                     ? .verbatim(bytes)
                     : .archived(bytes, name: filename.isEmpty ? "data" : filename),
                 filename: filename, isInline: isInline, isArchive: !isInline,
-                beginOnly: beginOnly)
+                beginOnly: beginOnly, holdReply: holdReply)
         }
 
         /// Registers archive bytes to stream verbatim — a folder's tree, or a
@@ -1166,18 +1182,18 @@ struct VsockClipboardServiceTests {
             store(
                 generation: generation, repIndex: repIndex, uti: uti,
                 payload: .verbatim(archiveBytes), filename: filename, isInline: false,
-                isArchive: true, beginOnly: false)
+                isArchive: true, beginOnly: false, holdReply: false)
         }
 
         private func store(
             generation: UInt64, repIndex: UInt64, uti: String, payload: Payload,
-            filename: String, isInline: Bool, isArchive: Bool, beginOnly: Bool
+            filename: String, isInline: Bool, isArchive: Bool, beginOnly: Bool, holdReply: Bool
         ) {
             let xid = ClipboardTransferID.make(
                 generation: generation, repIndex: Int(repIndex), hostMinted: true)
             replies[xid] = Reply(
                 uti: uti, payload: payload, filename: filename, isInline: isInline,
-                isArchive: isArchive, beginOnly: beginOnly)
+                isArchive: isArchive, beginOnly: beginOnly, holdReply: holdReply)
         }
 
         /// Starts draining the channel and answering requests.
@@ -1214,6 +1230,7 @@ struct VsockClipboardServiceTests {
 
         /// Streams Begin → Chunk(s) → End for one request's registered reply.
         private func stream(req: Kernova_V1_ClipboardRequest, reply: Reply) async throws {
+            if reply.holdReply { try await replyGate.wait { self.replyReleased } }
             let wire: Data
             switch reply.payload {
             case .verbatim(let bytes):
@@ -3059,10 +3076,9 @@ struct VsockClipboardServiceTests {
         let fileBytes = Data(count: 4096)
         let responder = FakeGuestResponder(guest: guest)
         defer { responder.cancel() }
-        responder.holdEnd = true
         responder.register(
             generation: 45, repIndex: 0, uti: "public.png", bytes: fileBytes, filename: "shot.png",
-            isInline: false)
+            isInline: false, holdReply: true)
         responder.start()
 
         // A paste-bound image file: named, and pre-flighted because it is not
@@ -3087,7 +3103,11 @@ struct VsockClipboardServiceTests {
         #expect(secondFire == nil)
         #expect(responder.requests.count == 1)
 
-        responder.releaseEnd()
+        // Capacity back before the first fire's transfer opens: its `Begin` runs
+        // the receiver's own capacity check, and only the second fire's
+        // pre-flight was meant to see the squeeze.
+        freeSpace.value = 1 << 40
+        responder.releaseReplies()
         #expect(await firstFire.value != nil)
         #expect(responder.requests.count == 1)
     }
@@ -3180,10 +3200,9 @@ struct VsockClipboardServiceTests {
         let previewSize = 200_000
         let responder = FakeGuestResponder(guest: guest)
         defer { responder.cancel() }
-        responder.holdEnd = true
         responder.register(
             generation: 54, repIndex: 0, uti: "public.data", bytes: fileBytes, filename: "f.bin",
-            isInline: false)
+            isInline: false, holdReply: true)
         responder.register(
             generation: 54, repIndex: 1, uti: ClipboardContent.utf8TextUTI,
             bytes: Data(count: previewSize), isInline: true, beginOnly: true)
@@ -3214,9 +3233,9 @@ struct VsockClipboardServiceTests {
         await preview.value
         #expect(service.clipboardContent.representations[1].isPendingRemote)
 
-        // The paste's transfer and awaiter were never touched: releasing End
-        // serves it.
-        responder.releaseEnd()
+        // The paste's awaiter was never touched: answering its request serves
+        // it.
+        responder.releaseReplies()
         let url = try #require(await paste.value)
         #expect(try Data(contentsOf: url) == fileBytes)
 
