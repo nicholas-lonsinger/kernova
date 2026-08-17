@@ -108,61 +108,29 @@ final class AtomicBox<Value: Sendable>: @unchecked Sendable {
     }
 }
 
-// MARK: - Host-side stream driver
+// MARK: - Host-side transfer driver
 
-/// Collects the `Begin`/`Chunk`(s)/`End` of one outbound transfer the agent
-/// sends in reply to a `ClipboardRequest`, returning the reassembled bytes and
-/// the transfer's metadata.
+/// Reads one whole outbound transfer off the data connection the agent dialled
+/// to answer a host `ClipboardRequest`: the reply describing the payload, the
+/// payload bytes, and the trailer that ended them.
 ///
-/// The agent's `ClipboardStreamSender` waits for a first ack (the go-signal)
-/// before chunking, so the caller must send `makeAckFrame(...)` *after* the
-/// `ClipboardRequest` to release it. This driver reads frames until `End`,
-/// re-acking each chunk so a small test window can't stall the transfer.
-struct CollectedTransfer {
-    var begin: Kernova_V1_ClipboardStreamBegin
-    var bytes: Data
-    var end: Kernova_V1_ClipboardStreamEnd
-}
-
-/// Reads `Begin`→`Chunk`(s)→`End` for `transferID` off `channel`, acking as it
-/// goes.
-///
-/// Sends the go-signal ack itself, on receipt of `Begin` — mirroring the real
-/// receiver, which acks in response to `Begin`. (The caller must not pre-send an
-/// ack: the agent's consume loop processes stream frames off-main, so an ack
-/// sent before the `ClipboardRequest` is handled could overtake it and be
-/// dropped before the transfer is registered.)
+/// A macOS guest only ever initiates connections, so the transfer arrives on one
+/// the agent opened rather than as frames on the control channel — the test
+/// takes it from `connections`, the collector standing in for the host's data
+/// listener. The reads block, so they run off the caller's actor.
 func collectOutboundTransfer(
-    transferID: UInt64, from channel: VsockChannel
-) async throws -> CollectedTransfer {
-    var begin: Kernova_V1_ClipboardStreamBegin?
-    var assembled = Data()
-
-    while true {
-        let frame = try await nextFrame(from: channel)
-        switch frame.payload {
-        case .clipboardStreamBegin(let b) where b.transferID == transferID:
-            begin = b
-            // Go-signal: release the sender now that Begin has arrived.
-            try channel.send(makeAckFrame(transferID: transferID, bytesConsumed: 0))
-        case .clipboardChunk(let c) where c.transferID == transferID:
-            assembled.append(c.data)
-            // Re-ack cumulative progress so a small window keeps advancing.
-            try channel.send(
-                makeAckFrame(transferID: transferID, bytesConsumed: assembled.count))
-        case .clipboardStreamEnd(let e) where e.transferID == transferID:
-            guard let begin else {
-                throw TestFailure("Got End for transfer \(transferID) before Begin")
-            }
-            return CollectedTransfer(begin: begin, bytes: assembled, end: e)
-        case .clipboardStreamAbort(let a) where a.transferID == transferID:
-            throw TestFailure(
-                "Outbound transfer \(transferID) aborted: \(a.code) — \(a.message)")
-        default:
-            // A frame for another transfer/payload — keep reading.
-            continue
-        }
+    transferID: UInt64, from connections: DialledDataConnections
+) async throws -> ReceivedTransfer {
+    let fd = try await connections.next()
+    guard let received = await offCooperativePool({ try? receiveTransfer(fd: fd) }) else {
+        throw TestFailure(
+            "The agent's data connection for transfer \(transferID) carried nothing readable")
     }
+    guard received.reply.transferID == transferID else {
+        throw TestFailure(
+            "The agent streamed transfer \(received.reply.transferID), not \(transferID)")
+    }
+    return received
 }
 
 func makeLogFrame(message: String) -> Frame {

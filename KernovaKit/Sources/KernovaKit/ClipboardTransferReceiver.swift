@@ -618,6 +618,14 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
                 return ReceiveStop(code: .sizeMismatch, message: "The connection ended early")
             }
         }
+        // A volume that filled between the output guard's last check and the
+        // extract's own write surfaces from AppleArchive as an archive failure.
+        // Naming that a corrupt payload sends the user off to retry the copy
+        // instead of to free space, so the volume is asked before the codec is
+        // believed.
+        guard staging.hasCapacity(forByteCount: 0) else {
+            return diskFull(needed: plan.advertisedByteCount)
+        }
         return ReceiveStop(
             code: .extractError,
             message: "Unpacking the payload failed: \(error.localizedDescription)")

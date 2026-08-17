@@ -25,7 +25,7 @@ struct VsockListenerHostTests {
             close(b)
         }
 
-        let host = VsockListenerHost(port: 49_152) { _ in }
+        let host = VsockListenerHost(port: 49_152, onConnect: { _ in })
 
         host.configureAcceptedSocket(a)
 
@@ -48,9 +48,8 @@ struct VsockListenerHostTests {
         defer { close(b) }  // `a` is owned — and must be closed — by the listener.
 
         var connected = false
-        let host = VsockListenerHost(port: 49_153, shouldAdmit: { verdict }) { _ in
-            connected = true
-        }
+        let host = VsockListenerHost(
+            port: 49_153, shouldAdmit: { verdict }, onConnect: { _ in connected = true })
 
         #expect(host.acceptDuplicatedFd(a, dupErrno: 0) == false)
         #expect(connected == false)
@@ -93,5 +92,55 @@ struct VsockListenerHostTests {
         #expect(host.acceptDuplicatedFd(a, dupErrno: 0) == true)
         let channel = try #require(received)
         channel.close()
+    }
+
+    // MARK: - Data ports
+
+    /// A data port hands the descriptor over as it is, with no channel built on
+    /// it: one transfer's connection carries its own header, payload and
+    /// trailer rather than a stream of frames.
+    @Test("A data listener hands over the raw descriptor rather than a channel")
+    func dataListenerHandsOverTheDescriptor() throws {
+        let (a, b) = try makeRawSocketPair()
+        defer {
+            close(a)
+            close(b)
+        }
+
+        var handedOver: Int32?
+        let host = VsockListenerHost(
+            port: KernovaVsockPort.clipboardData, shouldAdmit: { .admit },
+            onAcceptFd: { fd in handedOver = fd })
+
+        #expect(host.acceptDuplicatedFd(a, dupErrno: 0) == true)
+        #expect(handedOver == a)
+        // Nothing was written to the descriptor: a channel would have started
+        // its own read loop and the endpoint's first header read would race it.
+        #expect(fcntl(b, F_SETFL, O_NONBLOCK) >= 0)
+        var byte: UInt8 = 0
+        #expect(recv(b, &byte, 1, 0) == -1)
+        #expect(errno == EAGAIN || errno == EWOULDBLOCK)
+    }
+
+    @Test(
+        "A data listener's refusal closes the descriptor and hands over nothing",
+        arguments: [
+            VsockAdmission.notReady(reason: "test: handshake pending"),
+            .denied(reason: "test: peer not entitled"),
+        ])
+    func dataListenerRefusalClosesFd(verdict: VsockAdmission) throws {
+        let (a, b) = try makeRawSocketPair()
+        defer { close(b) }  // `a` is owned — and must be closed — by the listener.
+
+        var handedOver: Int32?
+        let host = VsockListenerHost(
+            port: KernovaVsockPort.dropData, shouldAdmit: { verdict },
+            onAcceptFd: { fd in handedOver = fd })
+
+        #expect(host.acceptDuplicatedFd(a, dupErrno: 0) == false)
+        #expect(handedOver == nil)
+        #expect(fcntl(b, F_SETFL, O_NONBLOCK) >= 0)
+        var byte: UInt8 = 0
+        #expect(recv(b, &byte, 1, 0) == 0)
     }
 }

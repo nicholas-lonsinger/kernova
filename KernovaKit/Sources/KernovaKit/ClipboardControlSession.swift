@@ -1,17 +1,24 @@
 import Foundation
 
-/// One connection's streaming engine, frame routing and control-frame delivery,
-/// for either end of either chunk-streamed channel.
+/// One connection's control channel and the two transfer tables riding beside
+/// it, for either end of either clipboard channel.
 ///
 /// The owner supplies the channel and says which end of which channel it is;
-/// everything below the control frames — building the sender and receiver,
-/// draining the channel off the owner's actor, routing stream payloads straight
-/// to the engine, and the frames the control side writes back — is here.
+/// everything below the control frames — draining the channel off the owner's
+/// actor, the inbox of transfers this side is pulling, the outbox of transfers
+/// it is serving, and the frames the control side writes back — is here. No
+/// payload byte crosses this channel: each transfer carries its own on a data
+/// connection of its own.
 @MainActor
-public final class ClipboardStreamSession {
-    /// Which end of the wire this session is — the same value the frame router
-    /// reads the transfer id's direction bit against, so there is one of it.
-    public typealias Role = ClipboardStreamRouting.Role
+public final class ClipboardControlSession {
+    /// Which end of the wire this session is — the same value the transfer id's
+    /// direction bit is read against, so there is one of it.
+    public enum Role: Sendable {
+        /// The Mac running Kernova.
+        case host
+        /// The agent inside the VM.
+        case guest
+    }
 
     /// Which channel this session serves.
     public enum Kind: Sendable {
@@ -19,6 +26,19 @@ public final class ClipboardStreamSession {
         case clipboard
         /// Files dropped on the VM display, host→guest only.
         case drop
+    }
+
+    /// How this side obtains a transfer's data connection.
+    ///
+    /// macOS guests only ever *initiate* vsock connections, so this is the one
+    /// axis the two roles differ on: the guest dials the kind's data port and
+    /// the host takes what its listener accepted.
+    public enum DataLink: Sendable {
+        /// Dial `port` for each transfer, through `connect`.
+        case dials(port: UInt32, connect: @Sendable (UInt32) throws -> Int32)
+        /// Take each connection from a listener, through
+        /// ``ClipboardEndpoint/acceptDataConnection(fd:)``.
+        case accepts
     }
 
     /// The end of the wire this session is.
@@ -48,8 +68,17 @@ public final class ClipboardStreamSession {
     /// Where an inbound payload lands; `nil` for a send-only session.
     private let staging: ClipboardFileStaging?
 
-    private var senderStorage: ClipboardStreamSender?
-    private var receiverStorage: ClipboardStreamReceiver?
+    nonisolated private let dataLink: DataLink
+
+    /// The inbox, held where a thread that is not the main one can reach it.
+    ///
+    /// A data connection answering a pull this side opened must be adopted
+    /// without a hop to the main actor: the paste fire that opened that pull can
+    /// be holding the main thread inside a tracking or modal loop, which runs
+    /// nothing queued to main until it returns — and what would resolve it is
+    /// that connection. [M1]
+    private let inboxHolder = InboxHolder()
+    private var outboxStorage: ClipboardTransferOutbox?
     private var consumeTask: Task<Void, Never>?
 
     /// Latched before the pulls a teardown cancels are woken, so a paste fire
@@ -67,7 +96,7 @@ public final class ClipboardStreamSession {
     private let stoppedFlag = Latch()
 
     nonisolated private static let logger = KernovaLogger(
-        subsystem: "app.kernova", category: "ClipboardStreamSession")
+        subsystem: "app.kernova", category: "ClipboardControlSession")
 
     /// Creates a session for one accepted channel.
     ///
@@ -75,31 +104,54 @@ public final class ClipboardStreamSession {
     /// send-only and passes none.
     public init(
         channel: VsockChannel, role: Role, kind: Kind, label: String,
-        staging: ClipboardFileStaging? = nil
+        staging: ClipboardFileStaging? = nil, dataLink: DataLink = .accepts
     ) {
         self.channel = channel
         self.role = role
         self.kind = kind
         self.label = label
         self.staging = staging
+        self.dataLink = dataLink
         self.connectionTag = role == .host ? .nextHost() : .nextGuest()
         if Self.receives(role: role, kind: kind), staging == nil {
             Self.logger.fault(
-                "Clipboard stream session for '\(label, privacy: .public)' receives but was given no staging"
+                "Clipboard control session for '\(label, privacy: .public)' receives but was given no staging"
             )
             assertionFailure("Receiving session for '\(label)' was given no staging")
         }
+        // A guest cannot be connected to: a session that expects to accept data
+        // connections in that role would leave every transfer waiting for one
+        // that can never arrive.
+        if role == .guest, case .accepts = dataLink {
+            Self.logger.fault(
+                "Guest clipboard control session for '\(label, privacy: .public)' was given no data dialler"
+            )
+            assertionFailure("Guest session for '\(label)' was given no data dialler")
+        }
     }
 
-    // MARK: - Engines
+    // MARK: - Transfers
 
-    /// The engine streaming what this side offers, or `nil` before `start()` and
-    /// after `stop()`.
-    var sender: ClipboardStreamSender? { senderStorage }
+    /// The transfers this side is pulling, or `nil` before `start()`, after
+    /// `stop()`, and for a send-only session.
+    ///
+    /// `nonisolated` so an arriving data connection can be adopted from the
+    /// thread that read its header — see `inboxHolder`.
+    nonisolated var inbox: ClipboardTransferInbox? { inboxHolder.value }
 
-    /// The engine receiving what the peer streams, or `nil` before `start()`,
-    /// after `stop()`, and for a send-only session.
-    var receiver: ClipboardStreamReceiver? { receiverStorage }
+    /// The transfers this side is serving, or `nil` before `start()` and after
+    /// `stop()`.
+    var outbox: ClipboardTransferOutbox? { outboxStorage }
+
+    /// Opens one transfer's data connection, or `nil` when this side accepts
+    /// them instead.
+    ///
+    /// `nonisolated` because it is handed to a transfer that dials on its own
+    /// queue, never on the owner's actor.
+    nonisolated var dataDialer: (@Sendable () throws -> Int32)? {
+        guard case .dials(let port, let connect) = dataLink else { return nil }
+        return { try connect(port) }
+    }
 
     /// Whether this side ever streams payload bytes on this channel.
     static func sends(role: Role, kind: Kind) -> Bool {
@@ -124,13 +176,13 @@ public final class ClipboardStreamSession {
     /// which is what a queued control frame is dropped for.
     nonisolated public var hasStopped: Bool { stoppedFlag.isSet }
 
-    /// Builds the engine and starts draining the channel; idempotent.
+    /// Opens the transfer tables and starts draining the channel; idempotent.
     ///
-    /// `handleControlFrame` receives every frame that is not a stream payload, on
-    /// the main actor and in arrival order — including one this session has since
-    /// stopped for, which its owner decides about (``hasStopped``). `onEnded` runs
-    /// off the main actor the moment the channel is done, so a pull parked on the
-    /// main thread is woken without waiting for a main-queue hop it is itself
+    /// `handleControlFrame` receives every frame, on the main actor and in
+    /// arrival order — including one this session has since stopped for, which
+    /// its owner decides about (``hasStopped``). `onEnded` runs off the main
+    /// actor the moment the channel is done, so a pull parked on the main
+    /// thread is woken without waiting for a main-queue hop it is itself
     /// blocking.
     public func start(
         handleControlFrame: @escaping @MainActor (Frame) -> Void,
@@ -142,10 +194,11 @@ public final class ClipboardStreamSession {
         let sent = Self.sentDirectionWord(role: role)
         let received = Self.sentDirectionWord(role: role == .host ? .guest : .host)
         let subject = kind == .clipboard ? "clipboard transfer" : "drop"
+        let connectionRole: ClipboardDataConnection.Role = role == .host ? .host : .guest
 
         if Self.sends(role: role, kind: kind) {
-            senderStorage = ClipboardStreamSender(
-                channel: channel,
+            outboxStorage = ClipboardTransferOutbox(
+                role: connectionRole,
                 // The only measured throughput number for what this side sends,
                 // so it logs at `.notice` (persisted) rather than `.debug`.
                 onTransferTimed: { metrics in
@@ -155,41 +208,26 @@ public final class ClipboardStreamSession {
                 })
         }
         if let staging, Self.receives(role: role, kind: kind) {
-            receiverStorage = ClipboardStreamReceiver(
-                channel: channel, staging: staging,
+            inboxHolder.value = ClipboardTransferInbox(
+                staging: staging, role: connectionRole,
                 onTransferTimed: { metrics in
                     Self.logger.notice(
                         "\(received, privacy: .public) \(subject, privacy: .public) \(metrics.transferID, privacy: .public) ('\(label, privacy: .public)', conn=\(tag, privacy: .public)) completed: \(metrics.logSummary, privacy: .public)"
-                    )
-                },
-                // A lazy pull's per-transfer awaiter takes precedence over these
-                // channel-wide closures, so they fire only for an unawaited
-                // transfer.
-                onComplete: { transferID, _ in
-                    Self.logger.warning(
-                        "Unawaited inbound \(subject, privacy: .public) \(transferID, privacy: .public) (conn=\(tag, privacy: .public)) completed — dropped"
-                    )
-                },
-                onAbort: { info in
-                    Self.logger.debug(
-                        "Unawaited inbound \(subject, privacy: .public) \(info.transferID, privacy: .public) (conn=\(tag, privacy: .public)) aborted (\(info.rawCode, privacy: .public))"
                     )
                 })
         }
 
         let channel = self.channel
-        let role = self.role
-        let sender = senderStorage
-        let receiver = receiverStorage
         let endedFlag = self.endedFlag
+        let inbox = inboxHolder.value
         consumeTask = Task.detached {
             await Self.consume(
-                channel: channel, label: label, connectionTag: tag, subject: subject, role: role,
-                sender: sender, receiver: receiver, endedFlag: endedFlag, onEnded: onEnded,
+                channel: channel, label: label, connectionTag: tag, subject: subject,
+                inbox: inbox, endedFlag: endedFlag, onEnded: onEnded,
                 onControlFrame: { frame in
                     // Fire-and-forget: the consume loop must never wait on the
                     // main actor — a paste's promise callback occupies it, and
-                    // the stream frames routed here are what resolve that
+                    // a transfer this loop's frames open is what resolves that
                     // callback. The serial main queue preserves control-frame
                     // FIFO order; a per-frame Task would not.
                     MainActorBridge.async { handleControlFrame(frame) }
@@ -211,10 +249,10 @@ public final class ClipboardStreamSession {
         // Marked before any wake, so a paste fire this cancels explains itself.
         endedFlag.set()
         stoppedFlag.set()
-        senderStorage?.cancelAll()
-        receiverStorage?.cancelAll()
-        senderStorage = nil
-        receiverStorage = nil
+        outboxStorage?.cancelAll()
+        inboxHolder.value?.cancelAll()
+        outboxStorage = nil
+        inboxHolder.value = nil
         channel.close()
     }
 
@@ -225,33 +263,26 @@ public final class ClipboardStreamSession {
         role == .host ? "Host→guest" : "Guest→host"
     }
 
-    /// Drains the channel, routing high-frequency stream frames off the main
-    /// actor, and settles the session once the channel is done.
+    /// Drains the channel and settles the session once it is done.
     ///
-    /// `nonisolated` so the loop runs on a cooperative thread: stream frames go
-    /// straight to the thread-safe engine and only the low-frequency control
-    /// frames hop to main, keeping a multi-GB transfer's chunk/ack frames off the
-    /// main actor entirely. [M1] The settling tail lives here for the same
-    /// reason: a pull parked on the main thread — inside a tracking or modal loop
-    /// it parks rather than running the event loop — is woken by it, so it must
-    /// not itself be a main-queue job that pull is blocking.
+    /// `nonisolated` so the loop runs on a cooperative thread. [M1] The settling
+    /// tail lives here for the same reason: a pull parked on the main thread —
+    /// inside a tracking or modal loop it parks rather than running the event
+    /// loop — is woken by it, so it must not itself be a main-queue job that
+    /// pull is blocking.
     nonisolated private static func consume(
         channel: VsockChannel,
         label: String,
         connectionTag: ClipboardConnectionTag,
         subject: String,
-        role: Role,
-        sender: ClipboardStreamSender?,
-        receiver: ClipboardStreamReceiver?,
+        inbox: ClipboardTransferInbox?,
         endedFlag: Latch,
         onEnded: @Sendable () -> Void,
         onControlFrame: @Sendable @escaping (Frame) -> Void
     ) async {
         do {
             for try await frame in channel.incoming where frame.protocolVersion == 1 {
-                ClipboardStreamRouting.route(
-                    frame, role: role, sender: sender, receiver: receiver,
-                    onControlFrame: onControlFrame)
+                onControlFrame(frame)
             }
             // A guest disconnect has to survive in the log after the fact, so this
             // persists rather than logging at `.debug`/`.info`.
@@ -267,7 +298,7 @@ public final class ClipboardStreamSession {
         // forever. Marked ended first, so a paste fire that wakes here can tell
         // this teardown from a supersession and explain itself.
         endedFlag.set()
-        receiver?.cancelAll()
+        inbox?.cancelAll()
         onEnded()
     }
 
@@ -294,7 +325,10 @@ public final class ClipboardStreamSession {
         }
     }
 
-    /// Asks the peer to stream one representation of its offer.
+    /// Asks the peer to dial one representation's data connection.
+    ///
+    /// Only the side that cannot dial ever sends this: the peer answers by
+    /// opening the transfer's connection and writing the reply that names it.
     nonisolated public func sendRequest(
         generation: UInt64, transferID: UInt64, uti: String, maxAcceptByteCount: UInt64
     ) throws {
@@ -302,15 +336,6 @@ public final class ClipboardStreamSession {
             .clipboardRequest(
                 generation: generation, transferID: transferID, uti: uti,
                 maxAcceptByteCount: maxAcceptByteCount))
-    }
-
-    /// Tells the peer's sender to stop streaming a transfer this side is
-    /// abandoning. Best-effort: a dead channel needs no abort.
-    nonisolated public func sendStreamAbort(
-        transferID: UInt64, code: ClipboardStreamAbortCode, message: String
-    ) {
-        try? channel.send(
-            .clipboardStreamAbort(transferID: transferID, code: code, message: message))
     }
 
     /// Reports a refusal to the peer. Best-effort, as the refusal has already
@@ -331,6 +356,17 @@ public final class ClipboardStreamSession {
         try? channel.send(
             .dropComplete(
                 generation: generation, outcome: outcome, code: code, message: message))
+    }
+}
+
+/// Holds one session's inbox where any thread can read it.
+private final class InboxHolder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: ClipboardTransferInbox?
+
+    var value: ClipboardTransferInbox? {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
     }
 }
 

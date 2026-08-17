@@ -42,10 +42,9 @@ struct ClipboardTransferFailureTests {
             }
         case .extractError:
             #expect(failure == .unpackFailed)
-        case .requestRange, .requestUTI, .requestCancelled, .readError, .sendFailed, .ackTimeout,
-            .offsetGap, .chunkEmpty, .chunkTooLarge, .sizeOverrun, .flowOverrun, .sizeMismatch,
-            .digestMismatch, .payloadUnsupported, .payloadUnexpected, .payloadInvalid, .writeError,
-            .stageError, .mapError, .stallTimeout, .pasteTimeout:
+        case .requestRange, .requestUTI, .requestCancelled, .readError, .sendFailed,
+            .sizeOverrun, .sizeMismatch, .digestMismatch, .payloadUnsupported, .payloadInvalid,
+            .writeError, .stageError, .mapError, .stallTimeout, .pasteTimeout:
             #expect(failure == .transferFailed)
         case .cancelled, .superseded, .requestStale, .userCancelled:
             Issue.record("\(code.rawValue) retires the transfer and is covered by the case above")

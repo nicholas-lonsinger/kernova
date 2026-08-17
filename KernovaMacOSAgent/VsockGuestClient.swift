@@ -149,7 +149,10 @@ final class VsockGuestClient: @unchecked Sendable {
         subsystem: "app.kernova.macosagent", category: "VsockGuestClient")
 
     /// Ceiling on how long a `recv`/`send` on a connected channel may block.
-    private static let socketTimeoutSeconds: Int = 30
+    ///
+    /// The same bound a transfer's data connection uses, so one stall window
+    /// governs every vsock socket the guest holds.
+    private static let socketTimeoutSeconds = Int(ClipboardStreamTuning.dataSocketTimeout)
 
     /// Ceiling on one connect attempt.
     ///
@@ -411,7 +414,7 @@ final class VsockGuestClient: @unchecked Sendable {
     /// (docs/research/2026-08-06-macos13-vsock-nonblocking-state-blind.md,
     /// docs/research/2026-08-06-macos14-vsock-state-blind.md) — so the split
     /// sits at the oldest OS the non-blocking idiom is proven on.
-    private static func openVsockToHost(
+    static func openVsockToHost(
         port: UInt32, label: String, clock: any EngineClock
     ) -> Result<Int32, VsockProviderError> {
         let fd = socket(AF_VSOCK, SOCK_STREAM, 0)

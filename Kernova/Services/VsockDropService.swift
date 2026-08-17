@@ -104,6 +104,13 @@ final class VsockDropService {
         )
     }
 
+    /// Takes over one item's data connection, accepted on the drop data port.
+    ///
+    /// Takes ownership of `fd` on every path.
+    func acceptDataConnection(fd: Int32) {
+        endpoint.acceptDataConnection(fd: fd)
+    }
+
     func stop() {
         settle()
     }

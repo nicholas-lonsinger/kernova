@@ -523,8 +523,7 @@ final class VsockControlService {
                 "Guest control error for '\(self.label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
         case .policyUpdate, .clipboardOffer, .clipboardRequest,
-            .clipboardRelease, .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd,
-            .clipboardStreamAck, .clipboardStreamAbort, .clipboardTransferRequest,
+            .clipboardRelease, .clipboardTransferRequest,
             .clipboardTransferReply, .logRecord, .dropOffer, .dropComplete,
             .dropRelease, .none:
             // PolicyUpdate is host→guest and never arrives here; other payloads

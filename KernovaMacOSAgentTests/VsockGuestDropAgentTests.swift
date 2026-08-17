@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import KernovaKit
 import KernovaTestSupport
@@ -19,6 +18,9 @@ struct VsockGuestDropAgentTests {
         let host: VsockChannel
         let downloads: URL
         let root: URL
+        /// The peer ends of every data connection the agent has dialled: a drop
+        /// is pulled file by file, and each pull *is* the connection it opens.
+        let dialled = DialledDataConnections()
         /// Every set of URLs handed to the Finder reveal, in order.
         let revealed = AtomicBox<[URL]>()
         let reporter: ClipboardTransferReporter
@@ -50,6 +52,7 @@ struct VsockGuestDropAgentTests {
                 progressRevealDelay: 0, progressIdleGap: 0, downloadsDirectory: downloads,
                 stagingTempRoot: root.appendingPathComponent("staging", isDirectory: true),
                 freeSpaceProvider: freeSpaceProvider,
+                dataDialer: dialled.dialer,
                 revealInFinder: { urls in revealed.set(urls) })
             agent.hostSupportsDrop = { true }
         }
@@ -67,6 +70,7 @@ struct VsockGuestDropAgentTests {
         func tearDown() {
             agent.stop()
             host.close()
+            dialled.closeAll()
             try? FileManager.default.removeItem(at: root)
         }
 
@@ -95,39 +99,59 @@ struct VsockGuestDropAgentTests {
         ClipboardTransferID.make(generation: generation, repIndex: repIndex, hostMinted: false)
     }
 
-    /// Reads frames until the agent's request for `transferID` arrives, then
-    /// streams `payload` back to it as the archive a drop crosses as.
+    /// Takes the data connection the agent dialled to pull
+    /// `(generation, repIndex)`, with the `ClipboardTransferRequest` that opened
+    /// it, and leaves it unanswered.
+    ///
+    /// The caller owns the descriptor. A drop's pull is the connection itself —
+    /// nothing about it crosses the control channel.
+    private func acceptPull(
+        on connections: DialledDataConnections, generation: UInt64, repIndex: Int
+    ) async throws -> (fd: Int32, request: Kernova_V1_ClipboardTransferRequest) {
+        let fd = try await connections.next()
+        let expected = transferID(generation: generation, repIndex: repIndex)
+        let request = await offCooperativePool { readTransferRequest(fd: fd) }
+        guard let request else {
+            ClipboardDataConnection.end(fd: fd)
+            throw TestFailure("A dialled data connection carried no transfer request")
+        }
+        guard request.transferID == expected else {
+            ClipboardDataConnection.end(fd: fd)
+            throw TestFailure(
+                "A dialled data connection pulled transfer \(request.transferID), not \(expected)")
+        }
+        return (fd, request)
+    }
+
+    /// Answers the agent's pull for `(generation, repIndex)` with `payload`, as
+    /// the archive a drop crosses as: the reply, the bytes, a completion
+    /// trailer, then EOF.
     ///
     /// `payload` is the dropped file's own bytes, wrapped here in the one-entry
     /// archive the host's sender would encode; pass `payloadIsArchived` when it
     /// is already the archive — a folder's tree.
     ///
-    /// Returns the request it answered, so a caller can assert on request
-    /// ordering.
+    /// Returns the request it answered, so a caller can assert on pull ordering.
     @discardableResult
     private func serveRequest(
-        on channel: VsockChannel, generation: UInt64, repIndex: Int, payload: Data,
+        on connections: DialledDataConnections, generation: UInt64, repIndex: Int, payload: Data,
         payloadIsArchived: Bool = false
-    ) async throws -> Kernova_V1_ClipboardRequest {
-        let expected = transferID(generation: generation, repIndex: repIndex)
+    ) async throws -> Kernova_V1_ClipboardTransferRequest {
         let wire =
             payloadIsArchived
             ? payload
             : try clipboardArchiveBytes(of: .blob(payload, name: "data"))
-        while true {
-            let frame = try await nextFrame(from: channel)
-            guard case .clipboardRequest(let request) = frame.payload,
-                request.transferID == expected
-            else { continue }
-            try channel.send(
-                makeBeginFrame(
-                    generation: generation, transferID: expected, uti: request.uti,
-                    // An archive's wire size isn't known until its last byte.
-                    totalBytes: 0, filename: "", isInline: false, isArchive: true))
-            try channel.send(makeChunkFrame(transferID: expected, offset: 0, data: wire))
-            try channel.send(makeEndFrame(transferID: expected, payload: wire))
-            return request
+        let pull = try await acceptPull(
+            on: connections, generation: generation, repIndex: repIndex)
+        let served = await offCooperativePool {
+            (try? serveTransfer(
+                fd: pull.fd, transferID: pull.request.transferID, payload: wire, isArchive: true,
+                isInline: false)) != nil
         }
+        guard served else {
+            throw TestFailure("Serving transfer \(pull.request.transferID) failed")
+        }
+        return pull.request
     }
 
     /// Reads frames until a `DropComplete` arrives.
@@ -155,8 +179,8 @@ struct VsockGuestDropAgentTests {
                 generation: 1,
                 reps: [fileRep("notes.txt", bytes: first), fileRep("blob.bin", bytes: second)]))
 
-        try await serveRequest(on: harness.host, generation: 1, repIndex: 0, payload: first)
-        try await serveRequest(on: harness.host, generation: 1, repIndex: 1, payload: second)
+        try await serveRequest(on: harness.dialled, generation: 1, repIndex: 0, payload: first)
+        try await serveRequest(on: harness.dialled, generation: 1, repIndex: 1, payload: second)
         let complete = try await awaitCompletion(on: harness.host)
 
         #expect(complete.generation == 1)
@@ -191,7 +215,7 @@ struct VsockGuestDropAgentTests {
                         isInline: false, isDirectory: true)
                 ]))
         try await serveRequest(
-            on: harness.host, generation: 1, repIndex: 0, payload: tree, payloadIsArchived: true)
+            on: harness.dialled, generation: 1, repIndex: 0, payload: tree, payloadIsArchived: true)
         let complete = try await awaitCompletion(on: harness.host)
 
         #expect(complete.outcome == .completed)
@@ -212,7 +236,7 @@ struct VsockGuestDropAgentTests {
         let payload = Data("reveal me".utf8)
         try harness.host.send(
             makeDropOfferFrame(generation: 1, reps: [fileRep("shown.txt", bytes: payload)]))
-        try await serveRequest(on: harness.host, generation: 1, repIndex: 0, payload: payload)
+        try await serveRequest(on: harness.dialled, generation: 1, repIndex: 0, payload: payload)
         _ = try await awaitCompletion(on: harness.host)
 
         try await harness.revealed.changed.wait { harness.revealed.value != nil }
@@ -230,7 +254,7 @@ struct VsockGuestDropAgentTests {
         let payload = Data("arriving".utf8)
         try harness.host.send(
             makeDropOfferFrame(generation: 1, reps: [fileRep("report.pdf", bytes: payload)]))
-        try await serveRequest(on: harness.host, generation: 1, repIndex: 0, payload: payload)
+        try await serveRequest(on: harness.dialled, generation: 1, repIndex: 0, payload: payload)
         _ = try await awaitCompletion(on: harness.host)
 
         #expect(harness.downloadNames == ["report 2.pdf", "report.pdf"])
@@ -253,18 +277,12 @@ struct VsockGuestDropAgentTests {
             makeDropOfferFrame(
                 generation: 1,
                 reps: [fileRep("kept.txt", bytes: landed), fileRep("dropped.bin", bytes: never)]))
-        try await serveRequest(on: harness.host, generation: 1, repIndex: 0, payload: landed)
+        try await serveRequest(on: harness.dialled, generation: 1, repIndex: 0, payload: landed)
 
-        // The second file's request arrives, and is answered with a release
-        // instead of bytes.
-        while true {
-            let frame = try await nextFrame(from: harness.host)
-            if case .clipboardRequest(let request) = frame.payload,
-                request.transferID == transferID(generation: 1, repIndex: 1)
-            {
-                break
-            }
-        }
+        // The second file's pull opens its connection, and is answered with a
+        // release instead of bytes.
+        let pending = try await acceptPull(on: harness.dialled, generation: 1, repIndex: 1)
+        defer { ClipboardDataConnection.end(fd: pending.fd) }
         try harness.host.send(makeDropReleaseFrame(generation: 1))
         let complete = try await awaitCompletion(on: harness.host)
 
@@ -282,34 +300,38 @@ struct VsockGuestDropAgentTests {
         defer { harness.tearDown() }
         try await harness.start()
 
+        // A Cancel is a click on a standing readout, so watch for the running
+        // report the pull publishes before firing one.
+        let running = AtomicBox<Bool>()
+        let reporter = harness.reporter
+        await MainActor.run {
+            reporter.onReportChanged = { report in
+                guard case .running = report else { return }
+                running.set(true)
+            }
+        }
+
         let payload = Data(repeating: 0x22, count: 128)
         try harness.host.send(
             makeDropOfferFrame(generation: 1, reps: [fileRep("pending.bin", bytes: payload)]))
-        // Wait for the request, then cancel without ever answering it — the
-        // worker is parked on the pull, which is where a cancel has to reach it.
-        while true {
-            let frame = try await nextFrame(from: harness.host)
-            if case .clipboardRequest = frame.payload { break }
-        }
-        let reporter = harness.reporter
+        // Wait for the pull's connection, then cancel without ever answering it
+        // — the worker is parked on the pull, which is where a cancel has to
+        // reach it.
+        let pending = try await acceptPull(on: harness.dialled, generation: 1, repIndex: 0)
+        defer { ClipboardDataConnection.end(fd: pending.fd) }
+        try await running.changed.wait { running.value == true }
         await MainActor.run { reporter.cancelRunning() }
 
-        var sawAbort = false
-        var complete: Kernova_V1_DropComplete?
-        while complete == nil {
-            let frame = try await nextFrame(from: harness.host)
-            switch frame.payload {
-            case .clipboardStreamAbort(let abort):
-                #expect(abort.code == ClipboardStreamAbortCode.userCancelled.rawValue)
-                sawAbort = true
-            case .dropComplete(let value):
-                complete = value
-            default:
-                continue
-            }
+        // The agent closing its end of the transfer's connection is how the host
+        // is told to stop: a receiver that gives up names no code, it stops
+        // reading, so the stream ends where the cancel found it.
+        let ended = await offCooperativePool {
+            (try? readToEnd(fd: pending.fd))?.isEmpty ?? false
         }
-        #expect(sawAbort)
-        #expect(complete?.outcome == .cancelled)
+        #expect(ended)
+        let complete = try await awaitCompletion(on: harness.host)
+        #expect(complete.outcome == .cancelled)
+        #expect(complete.code.isEmpty)
         #expect(harness.downloadNames.isEmpty)
     }
 
@@ -337,19 +359,12 @@ struct VsockGuestDropAgentTests {
 
         // The shape a channel closing under the job delivers: the session cancels
         // every awaiter before its end reaches the job loop, so the abort lands
-        // while the job's own offer is still standing. Driven as a frame here so
-        // the completion stays observable.
-        while true {
-            let frame = try await nextFrame(from: harness.host)
-            if case .clipboardRequest(let request) = frame.payload {
-                try harness.host.send(
-                    makeAbortFrame(
-                        transferID: request.transferID,
-                        code: ClipboardStreamAbortCode.cancelled.rawValue,
-                        message: "Transfer superseded or channel closed"))
-                break
-            }
-        }
+        // while the job's own offer is still standing. Driven as one transfer's
+        // abort trailer here so the completion stays observable.
+        let pending = try await acceptPull(on: harness.dialled, generation: 1, repIndex: 0)
+        try abortTransfer(
+            fd: pending.fd, transferID: pending.request.transferID,
+            code: ClipboardStreamAbortCode.cancelled.rawValue, declaredBytes: 128)
 
         let complete = try await awaitCompletion(on: harness.host)
         #expect(complete.outcome == .cancelled)
@@ -384,7 +399,7 @@ struct VsockGuestDropAgentTests {
         let payload = Data("nowhere to go".utf8)
         try harness.host.send(
             makeDropOfferFrame(generation: 1, reps: [fileRep("blocked.txt", bytes: payload)]))
-        try await serveRequest(on: harness.host, generation: 1, repIndex: 0, payload: payload)
+        try await serveRequest(on: harness.dialled, generation: 1, repIndex: 0, payload: payload)
         let complete = try await awaitCompletion(on: harness.host)
 
         #expect(complete.outcome == .failed)
@@ -406,6 +421,9 @@ struct VsockGuestDropAgentTests {
         #expect(complete.outcome == .failed)
         #expect(complete.code == ClipboardErrorCode.dropDiskFull.rawValue)
         #expect(harness.downloadNames.isEmpty)
+        // The pre-flight refuses ahead of the pull, and a pull *is* a connection,
+        // so the host is never dialled at all.
+        #expect(harness.dialled.count == 0)
     }
 
     // MARK: - Enablement

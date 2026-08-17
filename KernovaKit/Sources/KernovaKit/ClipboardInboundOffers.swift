@@ -77,7 +77,7 @@ public final class ClipboardInboundOffers {
         }
     }
 
-    nonisolated private let session: ClipboardStreamSession
+    nonisolated private let session: ClipboardControlSession
     nonisolated private let reporter: ClipboardTransferReporter
     nonisolated private let staging: ClipboardFileStaging
     nonisolated private let peerName: String
@@ -85,9 +85,9 @@ public final class ClipboardInboundOffers {
     nonisolated private let progressRevealDelay: TimeInterval
     nonisolated private let progressIdleGap: TimeInterval
 
-    /// Bridges every pull to the off-actor stream receive: the first caller for a
-    /// transfer id starts it and the rest join, so a preview fetch and a paste
-    /// fire for one representation share a single request.
+    /// Bridges every pull to the off-actor receive: the first caller for a
+    /// transfer id opens it and the rest join, so a preview fetch and a paste
+    /// fire for one representation share a single transfer.
     nonisolated private let coordinator = LazyPullCoordinator()
 
     /// Transfer ids of the synchronous pulls parked on this connection, so a
@@ -157,7 +157,7 @@ public final class ClipboardInboundOffers {
     /// `maxPasteBytes` is read at each gate check rather than captured, so a
     /// ceiling the user or the host changes reaches a live session.
     public init(
-        session: ClipboardStreamSession,
+        session: ClipboardControlSession,
         reporter: ClipboardTransferReporter,
         staging: ClipboardFileStaging,
         peerName: String,
@@ -345,6 +345,25 @@ public final class ClipboardInboundOffers {
         _ = syncPulls.take(generation: generation)
     }
 
+    /// Takes over a data connection this side's listener accepted, matching it
+    /// to the pull awaiting the transfer its reply names.
+    ///
+    /// Takes ownership of `fd`: a reply naming a transfer nothing is awaiting
+    /// closes it, which is the refusal the peer sees.
+    ///
+    /// `nonisolated` deliberately: this runs on the thread that read the reply,
+    /// because a paste fire parked on the pull it answers can be holding the
+    /// main thread (docs/CLIPBOARD.md §8).
+    nonisolated public func adoptDataConnection(
+        fd: Int32, reply: Kernova_V1_ClipboardTransferReply
+    ) {
+        guard let inbox = session.inbox else {
+            ClipboardDataConnection.end(fd: fd)
+            return
+        }
+        inbox.adopt(fd: fd, reply: reply)
+    }
+
     /// Forgets the live offer without telling the peer — the buffer it was
     /// published into holds something else now.
     public func discardInboundOffer() {
@@ -382,7 +401,7 @@ public final class ClipboardInboundOffers {
         if let previous {
             // Wakes every pull of the retired generation, whether or not its
             // transfer ever opened, so nothing parks to its backstop.
-            session.receiver?.cancel(generation: previous.generation)
+            session.inbox?.cancel(generation: previous.generation)
             entries[previous.generation] = nil
         }
         currentGeneration = 0
@@ -419,10 +438,10 @@ public final class ClipboardInboundOffers {
     public func cancelJoinedPulls(generation: UInt64) {
         guard let entry = entries[generation] else { return }
         for (repIndex, waiter) in entry.joinedWaiters where !coordinator.leave(waiter) {
-            let id = transferID(generation: generation, repIndex: repIndex)
-            session.sendStreamAbort(
-                transferID: id, code: .userCancelled, message: "Cancelled by the user")
-            session.receiver?.cancel(transferID: id)
+            // Closing this side's end of the transfer's connection is the whole
+            // cancellation: the peer's next write fails and it stops producing
+            // bytes for a pull nothing is waiting on.
+            session.inbox?.cancel(transferID: transferID(generation: generation, repIndex: repIndex))
         }
         Self.logger.notice(
             "User cancelled the inbound transfer from '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.tag, privacy: .public))"
@@ -439,9 +458,7 @@ public final class ClipboardInboundOffers {
         if currentGeneration == generation { currentGeneration = 0 }
         for waiter in entry.joinedWaiters.values { _ = coordinator.leave(waiter) }
         for id in syncPulls.take(generation: generation) {
-            session.receiver?.cancelAwait(id)
-            session.sendStreamAbort(
-                transferID: id, code: .userCancelled, message: "Cancelled by the user")
+            session.inbox?.cancelAwait(id)
             coordinator.abort(
                 id,
                 ClipboardStreamAbortInfo(
@@ -478,7 +495,7 @@ public final class ClipboardInboundOffers {
             let waiter = coordinator.join(
                 transferID: plan.transferID, timeout: lazyPullTimeout,
                 onProgress: progressHandler(plan, operation: operation),
-                retire: { plan.receiver.cancelAwait(plan.transferID) },
+                retire: { plan.inbox.cancelAwait(plan.transferID) },
                 start: { self.begin(plan) },
                 // Resumed from whichever thread resolved the pull — never routed
                 // through main, which a paste fire may be holding (§8).
@@ -593,11 +610,11 @@ public final class ClipboardInboundOffers {
     /// from; a fully materialized set keeps serving from the cache and the staged
     /// files, and inline flavors keep serving regardless.
     private func refusesPasteBoundFire(generation: UInt64) -> Bool {
-        // Keyed on the receiver being gone rather than on the session having
+        // Keyed on the inbox being gone rather than on the session having
         // ended: a channel that closed under a live session can still serve
-        // everything it holds, while a stopped one has no engine left to reach
-        // the unmaterialized siblings with.
-        guard session.receiver == nil, let entry = entries[generation] else { return false }
+        // everything it holds, while a stopped one has no way left to reach the
+        // unmaterialized siblings.
+        guard session.inbox == nil, let entry = entries[generation] else { return false }
         let fileSet = entry.reps.indices.filter { ClipboardPromisePolicy.servesFileURL(entry.reps[$0]) }
         guard fileSet.contains(where: { entry.materialized[$0] == nil }) else { return false }
         Self.logger.warning(
@@ -626,9 +643,20 @@ public final class ClipboardInboundOffers {
         /// What the receive volume must have room for before a byte is
         /// requested, or `nil` when nothing about this pull lands on disk.
         let preflightByteCount: Int?
-        let receiver: ClipboardStreamReceiver
+        let inbox: ClipboardTransferInbox
+        /// Opens this transfer's data connection when this side is the one that
+        /// dials; `nil` when it accepts instead and asks over the control
+        /// channel.
+        let dial: (@Sendable () throws -> Int32)?
 
         var unitName: String? { filename.isEmpty ? nil : filename }
+
+        /// What the receiving side expects of the transfer.
+        var receivePlan: ClipboardTransferReceiver.Plan {
+            ClipboardTransferReceiver.Plan(
+                uti: uti, filename: filename, extractsDirectoryNamed: extractsDirectoryNamed,
+                advertisedByteCount: Int(clamping: byteCount))
+        }
     }
 
     /// What a resolved pull request turned out to be.
@@ -687,7 +715,7 @@ public final class ClipboardInboundOffers {
             logCacheHit(cached, generation: generation, repIndex: repIndex)
             return .cached(cached, stagedURL: entry.stagedInlineURLs[repIndex])
         }
-        guard let receiver = session.receiver else {
+        guard let inbox = session.inbox else {
             Self.logger.warning(
                 "Pull requested un-materialized rep \(repIndex, privacy: .public) of gen=\(generation, privacy: .public) from '\(self.peerName, privacy: .public)' (conn=\(self.tag, privacy: .public)) after the session ended — serving nothing"
             )
@@ -713,7 +741,7 @@ public final class ClipboardInboundOffers {
                 // from.
                 preflightByteCount: !info.isInline || servesFileURL
                     ? Int(clamping: info.byteCount) : nil,
-                receiver: receiver))
+                inbox: inbox, dial: session.dataDialer))
     }
 
     /// Records a pull for a generation this side no longer holds.
@@ -762,7 +790,7 @@ public final class ClipboardInboundOffers {
         let outcome = coordinator.pull(
             transferID: plan.transferID, timeout: lazyPullTimeout,
             onProgress: progressHandler(plan, operation: operation),
-            retire: { plan.receiver.cancelAwait(plan.transferID) },
+            retire: { plan.inbox.cancelAwait(plan.transferID) },
             start: { self.begin(plan) })
         settle(outcome, plan: plan, operation: operation, caller: caller)
         return outcome
@@ -793,21 +821,23 @@ public final class ClipboardInboundOffers {
                 availableBytes: staging.availableCapacity().map { Int(clamping: $0) }))
     }
 
-    /// Opens one pull: registers the transfer's awaiter, then sends the request.
+    /// Opens one pull: registers the transfer's awaiter, then asks for its bytes
+    /// the way this side's role allows.
     ///
     /// The single place a pull begins, whichever gesture arrived first — so one
-    /// awaiter and one request cover every caller that joins it. A send that
-    /// fails resolves the pull immediately rather than leaving it to the
-    /// backstop.
+    /// awaiter and one ask cover every caller that joins it. On the dialling
+    /// side the connection *is* the ask; on the accepting side a
+    /// `ClipboardRequest` crosses the control channel and the peer dials back. A
+    /// request that never leaves resolves the pull immediately rather than
+    /// leaving it to the backstop.
     nonisolated private func begin(_ plan: PullPlan) {
-        plan.receiver.awaitTransfer(
+        plan.inbox.awaitTransfer(
             plan.transferID,
             // A folder's bytes are an archive of its tree, extracted as they
-            // arrive: the stream layer learns that here, from the offer this side
+            // arrive: the transfer learns that here, from the offer this side
             // already read, rather than from the wire — including the size the
             // extract is held to.
-            extractsDirectoryNamed: plan.extractsDirectoryNamed,
-            advertisedByteCount: Int(clamping: plan.byteCount),
+            plan: plan.receivePlan,
             onComplete: { [coordinator] in coordinator.deliver(plan.transferID, $0) },
             onAbort: { [coordinator] in coordinator.abort(plan.transferID, $0) },
             // Re-arms the inactivity backstop and feeds every waiter's readout, so
@@ -815,17 +845,27 @@ public final class ClipboardInboundOffers {
             onProgress: { [coordinator] bytes, total in
                 coordinator.progress(plan.transferID, bytesReceived: bytes, totalBytes: total)
             })
+        // Read here rather than snapshotted with the plan: the statfs behind it
+        // belongs off the main thread (docs/CLIPBOARD.md §8).
+        let ceiling =
+            staging.availableCapacity().map { UInt64(clamping: $0) }
+            ?? ClipboardStreamTuning.unlimitedAcceptByteCount
+        if let dial = plan.dial {
+            // A dial that fails resolves the transfer's own abort, so there is
+            // nothing to catch here.
+            plan.inbox.open(
+                transferID: plan.transferID, generation: plan.generation,
+                maxAcceptByteCount: ceiling, dial: dial)
+            return
+        }
         do {
             try session.sendRequest(
                 generation: plan.generation, transferID: plan.transferID, uti: plan.uti,
-                // Read here rather than snapshotted with the plan: the statfs
-                // behind it belongs off the main thread (docs/CLIPBOARD.md §8).
-                maxAcceptByteCount: staging.availableCapacity().map { UInt64(clamping: $0) }
-                    ?? ClipboardStreamTuning.unlimitedAcceptByteCount)
+                maxAcceptByteCount: ceiling)
         } catch {
-            // No request went out, so no reply will arrive — resolve the pull now
-            // instead of blocking to the backstop timeout.
-            plan.receiver.cancelAwait(plan.transferID)
+            // No request went out, so no connection will arrive — resolve the
+            // pull now instead of blocking to the backstop timeout.
+            plan.inbox.cancelAwait(plan.transferID)
             Self.logger.warning(
                 "Failed to send the clipboard request: \(error.localizedDescription, privacy: .public)"
             )
@@ -934,10 +974,9 @@ public final class ClipboardInboundOffers {
             Self.logger.warning(
                 "Inbound pull \(plan.transferID, privacy: .public) (conn=\(self.tag, privacy: .public)) timed out"
             )
-            // Stop the peer streaming for a pull nothing is waiting on any more.
-            session.sendStreamAbort(
-                transferID: plan.transferID, code: .pasteTimeout,
-                message: "Receiver gave up waiting for the transfer")
+            // Nothing is sent to stop the peer: the coordinator's own retirement
+            // released the awaiter and closed the transfer's connection, which
+            // is what stops it producing bytes.
             guard caller == .paste else { return }
             raiseRefusal(.paste, .timedOut)
             announceRefusal(

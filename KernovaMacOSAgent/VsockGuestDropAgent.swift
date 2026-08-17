@@ -30,6 +30,10 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     private let pullTimeout: TimeInterval
     private let revealInFinder: @Sendable ([URL]) -> Void
 
+    /// Opens one item's data connection to the host; tests hand over a
+    /// socketpair in place of a real dial.
+    private let dataDialer: @Sendable (UInt32) throws -> Int32
+
     /// Whether the host advertised `drop.files.v3`, so the reconnect loop only
     /// dials a host that has a drop listener.
     var hostSupportsDrop: @Sendable () -> Bool = { false }
@@ -96,11 +100,15 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         stagingTempRoot: URL = FileManager.default.temporaryDirectory,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         pullTimeout: TimeInterval = ClipboardStreamTuning.lazyPullTimeout,
+        dataDialer: @escaping @Sendable (UInt32) throws -> Int32 = {
+            try VsockGuestDataDialer.connect(port: $0)
+        },
         revealInFinder: @escaping @Sendable ([URL]) -> Void = { urls in
             DispatchQueue.main.async { NSWorkspace.shared.activateFileViewerSelecting(urls) }
         }
     ) {
         self.client = client
+        self.dataDialer = dataDialer
         self.reporter = reporter
         self.progressRevealDelay = progressRevealDelay
         self.progressIdleGap = progressIdleGap
@@ -187,7 +195,9 @@ final class VsockGuestDropAgent: @unchecked Sendable {
                     staging: self.staging,
                     lazyPullTimeout: self.pullTimeout,
                     progressRevealDelay: self.progressRevealDelay,
-                    progressIdleGap: self.progressIdleGap),
+                    progressIdleGap: self.progressIdleGap,
+                    dataLink: .dials(
+                        port: KernovaVsockPort.dropData, connect: self.dataDialer)),
                 reporter: self.reporter)
             self.liveChannel = channel
             self.endpoint = endpoint

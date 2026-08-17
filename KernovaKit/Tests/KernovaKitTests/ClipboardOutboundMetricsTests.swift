@@ -4,25 +4,18 @@ import Testing
 
 @testable import KernovaKit
 
-/// The sender's own stage timings, over the real sender and receiver on a
-/// socketpair.
+/// The sender's own stage timings, over a real data connection.
 @Suite("ClipboardOutboundMetrics")
 struct ClipboardOutboundMetricsTests {
-    private static let chunk = 4096
-    private static let window = 16384  // 4 chunks
+    /// How far a check on the sender's own thread moves the test clock, in the
+    /// case that measures where a transfer's seconds are charged.
+    private static let perCheckSeconds: TimeInterval = 0.25
 
-    private func harness(
-        senderClock: (any EngineClock)? = nil,
-        noAckTimeout: TimeInterval = 10,
-        suppressAcks: Bool = false,
-        archiveSource: ClipboardArchiveSourceFactory? = nil
-    ) throws -> StreamHarness {
-        try StreamHarness(
-            senderClock: senderClock,
-            chunkSize: Self.chunk, windowBytes: Self.window, noAckTimeout: noAckTimeout,
-            suppressAcks: suppressAcks,
-            freeSpaceProvider: { _ in 100 << 30 },
-            archiveSource: archiveSource)
+    private func makeScratch() throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "outbound-metrics-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
     }
 
     private func tempFile(bytes: Data) throws -> URL {
@@ -46,71 +39,34 @@ struct ClipboardOutboundMetricsTests {
         return bytes
     }
 
-    /// The priming a requester performs before its `ClipboardRequest` goes out:
-    /// an archived transfer is refused at Begin unless a pull awaits it.
-    private func prime(
-        _ harness: StreamHarness, id: UInt64, advertised: Int,
-        extractsDirectoryNamed: String? = nil
-    ) {
-        let collector = harness.collector
-        harness.receiver.awaitTransfer(
-            id, extractsDirectoryNamed: extractsDirectoryNamed, advertisedByteCount: advertised,
-            onComplete: { collector.complete(id, $0) },
-            onAbort: { collector.abort($0) })
-    }
-
-    /// The sender's own verdict for one transfer.
-    ///
-    /// It is the terminal signal a metrics test wants: `onComplete` fires from a
-    /// `defer`, so by the time it lands the decision to report — or not to — has
-    /// already been made, and an "it reported nothing" assertion cannot run early.
-    private final class SendOutcome: @unchecked Sendable {
-        private let lock = NSLock()
-        private var stored: Bool?
-        let gate = AsyncGate()
-
-        func record(_ success: Bool) {
-            lock.withLock { stored = success }
-            gate.notify()
-        }
-
-        var succeeded: Bool? { lock.withLock { stored } }
-    }
-
-    /// Lets a per-chunk hook act exactly once.
-    private final class OnceFlag: @unchecked Sendable {
-        private let lock = NSLock()
-        private var claimed = false
-
-        /// `true` to the first caller only.
-        func claim() -> Bool {
-            lock.withLock {
-                guard !claimed else { return false }
-                claimed = true
-                return true
-            }
-        }
-    }
-
     @Test("a raw inline send reports its own metrics, with the wire count left unstated")
     func rawInlineSendReportsMetrics() async throws {
-        let harness = try harness()
+        let harness = TransferHarness()
         defer { harness.tearDown() }
+        let collector = harness.collector
 
-        let payload = Data(repeating: 0x42, count: Self.chunk * 2 + 17)
-        let outcome = SendOutcome()
-        harness.sender.startTransfer(
-            transferID: 1, generation: 1,
-            representation: ClipboardContent.Representation(
-                uti: "public.utf8-plain-text", data: payload),
-            maxAcceptByteCount: .max, isInline: true, isCurrent: { _ in true },
-            onComplete: { outcome.record($0) })
+        let payload = Data(repeating: 0x42, count: 2 * ClipboardStreamTuning.dataReadBufferBytes + 17)
+        let transferID: UInt64 = 1
+        let received = Box<ReceivedTransfer?>(nil)
+        let served = AsyncGate()
+        harness.outbox.serve(
+            transferID: transferID, generation: 1,
+            representation: .init(uti: "public.utf8-plain-text", data: payload),
+            maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount, isInline: true,
+            isCurrent: { _ in true },
+            link: .dial {
+                try dialToPeer { far in
+                    received.value = try? receiveTransfer(fd: far)
+                    served.notify()
+                }
+            },
+            onComplete: { collector.sendFinished(transferID, success: $0) })
 
-        try await harness.collector.gate.wait { harness.collector.outboundMetrics.count == 1 }
-        let metrics = try #require(harness.collector.outboundMetrics.first)
+        try await collector.gate.wait { collector.outboundMetrics.count == 1 }
+        let metrics = try #require(collector.outboundMetrics.first)
         let sent = try #require(metrics.outbound)
 
-        #expect(metrics.transferID == 1)
+        #expect(metrics.transferID == transferID)
         #expect(metrics.uti == "public.utf8-plain-text")
         #expect(sent.isArchived == false)
         // Raw: the wire bytes *are* the payload, so the summary stays silent
@@ -119,44 +75,51 @@ struct ClipboardOutboundMetricsTests {
         #expect(metrics.wireByteCount == payload.count)
         #expect(!metrics.logSummary.contains("wire bytes"))
         #expect(metrics.logSummary.contains("raw"))
-        #expect(sent.chunkCount == 3)
         #expect(metrics.duration > .zero)
         let ramp = try #require(sent.timeToFirstByte)
         #expect(ramp <= metrics.duration)
         #expect(metrics.inbound == nil)
 
         // The wire count the peer was told matches what the sender counted.
-        try await harness.collector.gate.wait { harness.collector.end(1) != nil }
-        let end = try #require(harness.collector.end(1))
-        #expect(Int(end.totalBytes) == metrics.wireByteCount)
-        #expect(outcome.succeeded == true)
+        try await served.wait { received.value != nil }
+        let transfer = try #require(received.value)
+        #expect(Int(transfer.reply.totalBytes) == metrics.wireByteCount)
+        #expect(transfer.payload == payload)
+        #expect(transfer.isComplete)
+        // The metrics are reported before the transfer's own terminal, so the
+        // verdict is awaited rather than read off the wait above.
+        try await collector.gate.wait { collector.sendCount == 1 }
+        #expect(collector.sendOutcome(transferID) == true)
     }
 
     @Test("an archived file send counts the archive on the wire and the payload it expands to")
     func archivedFileSendReportsMetrics() async throws {
-        let harness = try harness()
+        let fm = FileManager.default
+        let harness = TransferHarness()
         defer { harness.tearDown() }
+        let collector = harness.collector
 
-        let bytes = incompressibleBytes(count: Self.chunk * 5 + 99)
+        let bytes = incompressibleBytes(count: 5 * ClipboardStreamTuning.dataReadBufferBytes + 99)
         let source = try tempFile(bytes: bytes)
-        defer { try? FileManager.default.removeItem(at: source) }
-        prime(harness, id: 1, advertised: bytes.count)
-        harness.sender.startTransfer(
-            transferID: 1, generation: 1,
-            representation: ClipboardContent.Representation(
-                uti: "public.data", fileURL: source, byteCount: bytes.count, filename: "big.bin"),
-            maxAcceptByteCount: .max, isInline: false, isCurrent: { _ in true })
+        defer { try? fm.removeItem(at: source) }
 
-        try await harness.collector.gate.wait { harness.collector.outboundMetrics.count == 1 }
-        try await harness.collector.gate.wait { harness.collector.inboundMetrics.count == 1 }
-        try await harness.collector.gate.wait { harness.collector.end(1) != nil }
-        let metrics = try #require(harness.collector.outboundMetrics.first)
+        let transferID: UInt64 = 1
+        harness.pull(
+            transferID: transferID, generation: 1,
+            plan: .init(uti: "public.data", filename: "big.bin", advertisedByteCount: bytes.count),
+            representation: .init(
+                uti: "public.data", fileURL: source, byteCount: bytes.count, filename: "big.bin"))
+
+        try await collector.gate.wait {
+            collector.outboundMetrics.count == 1 && collector.inboundMetrics.count == 1
+        }
+        let metrics = try #require(collector.outboundMetrics.first)
         let sent = try #require(metrics.outbound)
-        let end = try #require(harness.collector.end(1))
-        let received = try #require(harness.collector.inboundMetrics.first)
+        let received = try #require(collector.inboundMetrics.first)
 
         #expect(sent.isArchived)
-        #expect(metrics.wireByteCount == Int(end.totalBytes))
+        // Incompressible, so what separates the two counts is the container the
+        // payload crossed in rather than anything the compressor did.
         #expect(metrics.wireByteCount != metrics.byteCount)
         // Both lines describe the same transfer, so both state the payload the
         // file expands to — not the archive stream that carried it.
@@ -165,65 +128,68 @@ struct ClipboardOutboundMetricsTests {
         #expect(received.wireByteCount == metrics.wireByteCount)
         #expect(metrics.logSummary.contains("archive"))
         #expect(metrics.logSummary.contains("\(metrics.wireByteCount) wire bytes"))
-        #expect((sent.chunkCount ?? 0) > 0)
-        #expect(harness.collector.abortCount == 0)
+        #expect(collector.abortCount == 0)
     }
 
     @Test("a folder send reports metrics in the tree's unit")
     func folderSendReportsMetrics() async throws {
-        let harness = try harness()
+        let fm = FileManager.default
+        let harness = TransferHarness()
         defer { harness.tearDown() }
+        let collector = harness.collector
 
-        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "outbound-metrics-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
         let source = scratch.appendingPathComponent("Project", isDirectory: true)
-        try FileManager.default.createDirectory(
+        try fm.createDirectory(
             at: source.appendingPathComponent("sub", isDirectory: true),
             withIntermediateDirectories: true)
-        try "readme".write(
-            to: source.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
-        try "nested".write(
-            to: source.appendingPathComponent("sub/n.txt"), atomically: true, encoding: .utf8)
+        try Data(repeating: 0x20, count: 256 * 1024)
+            .write(to: source.appendingPathComponent("sub/big.log"))
 
-        prime(harness, id: 1, advertised: 0, extractsDirectoryNamed: "Project")
-        harness.sender.startTransfer(
-            transferID: 1, generation: 1,
-            representation: ClipboardContent.Representation(
-                directorySourceURL: source,
-                estimatedByteCount: ClipboardArchive.estimatedByteCount(at: source),
-                filename: "Project"),
-            maxAcceptByteCount: .max, isInline: false, isCurrent: { _ in true })
+        let transferID: UInt64 = 1
+        let estimate = ClipboardArchive.estimatedByteCount(at: source)
+        harness.pull(
+            transferID: transferID, generation: 1,
+            plan: .init(
+                uti: ClipboardArchive.directoryUTI, filename: "Project",
+                extractsDirectoryNamed: "Project", advertisedByteCount: estimate),
+            representation: .init(
+                directorySourceURL: source, estimatedByteCount: estimate, filename: "Project"))
 
-        try await harness.collector.gate.wait { harness.collector.outboundMetrics.count == 1 }
-        try await harness.collector.gate.wait { harness.collector.end(1) != nil }
-        let metrics = try #require(harness.collector.outboundMetrics.first)
+        try await collector.gate.wait {
+            collector.outboundMetrics.count == 1 && collector.inboundMetrics.count == 1
+        }
+        let metrics = try #require(collector.outboundMetrics.first)
         let sent = try #require(metrics.outbound)
-        let end = try #require(harness.collector.end(1))
+        let received = try #require(collector.inboundMetrics.first)
 
         #expect(sent.isArchived)
-        #expect(metrics.wireByteCount == Int(end.totalBytes))
-        #expect(metrics.byteCount > 0)
-        #expect((sent.chunkCount ?? 0) > 0)
-        #expect(harness.collector.abortCount == 0)
+        #expect(metrics.wireByteCount < metrics.byteCount)
+        #expect(received.wireByteCount == metrics.wireByteCount)
+        // A folder is the one payload whose exact size is unknown while it
+        // streams, so the sender states its uncompressed archive stream — the
+        // tree plus its per-entry headers, at or above what the receiver counts.
+        #expect(metrics.byteCount >= received.byteCount)
+        #expect(collector.abortCount == 0)
     }
 
-    @Test("a zero-byte send reports no chunks and no ramp")
-    func zeroByteSendReportsNoChunks() async throws {
-        let harness = try harness()
+    @Test("a zero-byte send reports no ramp")
+    func zeroByteSendReportsNoRamp() async throws {
+        let harness = TransferHarness()
         defer { harness.tearDown() }
+        let collector = harness.collector
 
-        harness.sender.startTransfer(
-            transferID: 1, generation: 1,
-            representation: ClipboardContent.Representation(
-                uti: "public.utf8-plain-text", data: Data()),
-            maxAcceptByteCount: .max, isInline: true, isCurrent: { _ in true })
+        harness.push(
+            transferID: 1, generation: 1, plan: .init(uti: "public.utf8-plain-text"),
+            representation: .init(uti: "public.utf8-plain-text", data: Data()), isInline: true)
 
-        try await harness.collector.gate.wait { harness.collector.outboundMetrics.count == 1 }
-        let metrics = try #require(harness.collector.outboundMetrics.first)
+        try await collector.gate.wait { collector.outboundMetrics.count == 1 }
+        let metrics = try #require(collector.outboundMetrics.first)
         let sent = try #require(metrics.outbound)
 
-        #expect(sent.chunkCount == 0)
+        // No byte was ever handed to the socket, so there is no first one to
+        // date the ramp from.
         #expect(sent.timeToFirstByte == nil)
         #expect(metrics.byteCount == 0)
         #expect(metrics.wireByteCount == 0)
@@ -232,152 +198,117 @@ struct ClipboardOutboundMetricsTests {
 
     @Test("a payload the requester refuses up front reports no metrics")
     func refusedSendReportsNoMetrics() async throws {
-        let harness = try harness()
+        let harness = TransferHarness()
         defer { harness.tearDown() }
+        let collector = harness.collector
 
-        let outcome = SendOutcome()
-        harness.sender.startTransfer(
-            transferID: 1, generation: 1,
-            representation: ClipboardContent.Representation(
+        let transferID: UInt64 = 1
+        harness.push(
+            transferID: transferID, generation: 1,
+            plan: .init(uti: "public.utf8-plain-text", advertisedByteCount: 4096),
+            representation: .init(
                 uti: "public.utf8-plain-text", data: Data(repeating: 0x7, count: 4096)),
-            maxAcceptByteCount: 16, isInline: true, isCurrent: { _ in true },
-            onComplete: { outcome.record($0) })
+            isInline: true, maxAcceptByteCount: 16)
 
-        try await outcome.gate.wait { outcome.succeeded != nil }
-        #expect(outcome.succeeded == false)
-        #expect(harness.collector.outboundMetrics.isEmpty)
+        try await collector.gate.wait { collector.sendCount == 1 && collector.abortCount == 1 }
+        #expect(collector.sendOutcome(transferID) == false)
+        #expect(try #require(collector.abortInfos.first).code == .diskFull)
+        #expect(collector.outboundMetrics.isEmpty)
     }
 
-    @Test("a superseded send reports no metrics")
+    @Test("a send superseded before its first byte reports no metrics")
     func supersededSendReportsNoMetrics() async throws {
-        let harness = try harness()
+        let harness = TransferHarness()
         defer { harness.tearDown() }
+        let collector = harness.collector
 
-        let outcome = SendOutcome()
-        harness.sender.startTransfer(
-            transferID: 1, generation: 1,
-            representation: ClipboardContent.Representation(
+        let transferID: UInt64 = 1
+        harness.push(
+            transferID: transferID, generation: 1,
+            plan: .init(uti: "public.utf8-plain-text", advertisedByteCount: 4096),
+            representation: .init(
                 uti: "public.utf8-plain-text", data: Data(repeating: 0x7, count: 4096)),
-            maxAcceptByteCount: .max, isInline: true, isCurrent: { _ in false },
-            onComplete: { outcome.record($0) })
+            isInline: true, isCurrent: { _ in false })
 
-        try await outcome.gate.wait { outcome.succeeded != nil }
-        #expect(outcome.succeeded == false)
-        #expect(harness.collector.outboundMetrics.isEmpty)
+        try await collector.gate.wait { collector.sendCount == 1 && collector.abortCount == 1 }
+        #expect(collector.sendOutcome(transferID) == false)
+        #expect(try #require(collector.abortInfos.first).code == .superseded)
+        #expect(collector.outboundMetrics.isEmpty)
     }
 
-    @Test("a send the peer aborts mid-stream reports no metrics")
+    @Test("a send the peer abandons mid-payload reports no metrics")
     func peerAbortedSendReportsNoMetrics() async throws {
-        // Acks are held back so the sender parks on credit, which is where the
-        // peer's abort lands.
-        let harness = try harness(suppressAcks: true)
+        let harness = TransferHarness()
         defer { harness.tearDown() }
-        let once = OnceFlag()
-        harness.onCreditWait = { [weak harness] transferID in
-            guard once.claim() else { return }
-            harness?.sender.handleAbort(transferID: transferID)
-        }
+        let collector = harness.collector
 
-        let outcome = SendOutcome()
-        harness.sender.startTransfer(
-            transferID: 1, generation: 1,
-            representation: ClipboardContent.Representation(
-                uti: "public.utf8-plain-text", data: Data(repeating: 0x7, count: Self.chunk * 2)),
-            maxAcceptByteCount: .max, isInline: true, isCurrent: { _ in true },
-            onComplete: { outcome.record($0) })
+        // Past every buffer in the pipeline, so the connection goes away with
+        // most of the payload still to write.
+        let payload = Data(repeating: 0x7, count: 8 * 1024 * 1024)
+        let transferID: UInt64 = 1
+        harness.outbox.serve(
+            transferID: transferID, generation: 1,
+            representation: .init(uti: "public.utf8-plain-text", data: payload),
+            maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount, isInline: true,
+            isCurrent: { _ in true },
+            link: .dial {
+                try dialToPeer { far in
+                    // A peer's abort on a data connection is the connection
+                    // going away under the payload.
+                    _ = readTransferReply(fd: far)
+                    ClipboardDataConnection.end(fd: far)
+                }
+            },
+            onComplete: { collector.sendFinished(transferID, success: $0) })
 
-        try await outcome.gate.wait { outcome.succeeded != nil }
-        #expect(outcome.succeeded == false)
-        #expect(harness.collector.outboundMetrics.isEmpty)
+        try await collector.gate.wait { collector.sendCount == 1 }
+        #expect(collector.sendOutcome(transferID) == false)
+        #expect(collector.outboundMetrics.isEmpty)
     }
 
-    @Test("a send that times out waiting for acks reports no metrics")
-    func ackTimeoutSendReportsNoMetrics() async throws {
-        // The timeout is the behavior under test, so a short one is correct.
-        let harness = try harness(noAckTimeout: 0.2, suppressAcks: true)
-        defer { harness.tearDown() }
-
-        let outcome = SendOutcome()
-        harness.sender.startTransfer(
-            transferID: 1, generation: 1,
-            representation: ClipboardContent.Representation(
-                uti: "public.utf8-plain-text", data: Data(repeating: 0x7, count: Self.chunk * 2)),
-            maxAcceptByteCount: .max, isInline: true, isCurrent: { _ in true },
-            onComplete: { outcome.record($0) })
-
-        try await outcome.gate.wait { outcome.succeeded != nil }
-        #expect(outcome.succeeded == false)
-        #expect(harness.collector.outboundMetrics.isEmpty)
-    }
-
-    @Test("every read from a source that runs behind is charged to the source wait")
-    func sourceWaitAccumulatesOverReads() async throws {
+    @Test("seconds spent producing bytes rather than handing them to the socket are the source's")
+    func sourceWaitAccumulatesOverWrites() async throws {
         let clock = TestEngineClock()
-        let bytes = incompressibleBytes(count: Self.chunk * 4)
-        let source = try tempFile(bytes: bytes)
-        defer { try? FileManager.default.removeItem(at: source) }
-        // Real archive bytes, so the receiver's extract succeeds and the
-        // transfer reaches its End rather than aborting.
-        let archived = try clipboardArchiveBytes(ofFileAt: source, named: "big.bin")
-        let stub = ClockAdvancingChunkReader(bytes: archived, clock: clock, secondsPerRead: 0.25)
+        let timed = Box<[ClipboardTransferMetrics]>([])
+        let reported = AsyncGate()
+        let outbox = ClipboardTransferOutbox(
+            role: .guest, clock: clock,
+            onTransferTimed: { metrics in
+                timed.value.append(metrics)
+                reported.notify()
+            })
+        defer { outbox.cancelAll() }
 
-        let harness = try harness(
-            senderClock: clock, archiveSource: { _, _, _ in stub })
-        defer { harness.tearDown() }
+        // The supersession check is the hook that runs on the sending thread
+        // between a buffer being produced and the socket taking it, so the
+        // seconds it burns are charged exactly where a slow source's are. It
+        // runs once before the stream opens and once before every socket write.
+        let checks = Box(0)
+        let payload = Data(repeating: 0x42, count: 4 * ClipboardStreamTuning.dataReadBufferBytes)
+        let transferID: UInt64 = 1
+        outbox.serve(
+            transferID: transferID, generation: 1,
+            representation: .init(uti: "public.utf8-plain-text", data: payload),
+            maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount, isInline: true,
+            isCurrent: { _ in
+                checks.value += 1
+                clock.advance(seconds: Self.perCheckSeconds)
+                return true
+            },
+            link: .dial { try dialToPeer { far in _ = try? receiveTransfer(fd: far) } })
 
-        prime(harness, id: 1, advertised: bytes.count)
-        harness.sender.startTransfer(
-            transferID: 1, generation: 1,
-            representation: ClipboardContent.Representation(
-                uti: "public.data", fileURL: source, byteCount: bytes.count, filename: "big.bin"),
-            maxAcceptByteCount: .max, isInline: false, isCurrent: { _ in true })
-
-        try await harness.collector.gate.wait { harness.collector.outboundMetrics.count == 1 }
-        let metrics = try #require(harness.collector.outboundMetrics.first)
+        try await reported.wait { !timed.value.isEmpty }
+        let metrics = try #require(timed.value.first)
         let sent = try #require(metrics.outbound)
 
-        #expect(stub.readCount > 1)
-        #expect(sent.sourceWait == Double(stub.readCount) * 0.25)
-        // The first read fills the first chunk whole, so the ramp is one read.
-        #expect(sent.timeToFirstByte == 0.25)
-        // A frozen clock only moves inside a read, and no read runs while the
-        // sender is waiting on credit.
-        #expect(sent.creditStall == 0)
-    }
-
-    @Test("time parked waiting for credit is charged to the credit stall")
-    func creditStallAccumulatesWhileParked() async throws {
-        let clock = TestEngineClock()
-        let harness = try harness(senderClock: clock, suppressAcks: true)
-        defer { harness.tearDown() }
-
-        // Fires on the transfer's queue with the stall reading already taken, so
-        // the advance below is bracketed by the measurement rather than racing
-        // the park. Only the first wait pays; every later one adds nothing,
-        // which is what makes the total exact.
-        let once = OnceFlag()
-        harness.onCreditWait = { [weak harness] _ in
-            guard once.claim() else { return }
-            clock.advance(seconds: 0.5)
-            harness?.releaseAcks()
-        }
-
-        let payload = Data(repeating: 0x3, count: Self.chunk * 3)
-        harness.sender.startTransfer(
-            transferID: 1, generation: 1,
-            representation: ClipboardContent.Representation(
-                uti: "public.utf8-plain-text", data: payload),
-            maxAcceptByteCount: .max, isInline: true, isCurrent: { _ in true })
-
-        try await harness.collector.gate.wait { harness.collector.outboundMetrics.count == 1 }
-        let metrics = try #require(harness.collector.outboundMetrics.first)
-        let sent = try #require(metrics.outbound)
-
-        #expect(sent.creditStall == 0.5)
-        #expect(sent.timeToFirstByte == 0.5)
-        #expect(metrics.duration == 0.5)
-        #expect(sent.sourceWait == 0)
-        #expect(metrics.logSummary.contains("credit 0.500 s"))
-        #expect(metrics.logSummary.contains("3 chunks"))
+        // More than one write, so the figure accumulated over the stream rather
+        // than being taken once.
+        #expect(checks.value > 2)
+        #expect(sent.sourceWait >= 2 * Self.perCheckSeconds)
+        // A clock that moves nowhere else charges every second of the stream to
+        // one stage or the other, and none of them was the socket's: what is left
+        // over is the check before the stream opened.
+        #expect(sent.sourceWait == metrics.duration - Self.perCheckSeconds)
+        #expect(sent.timeToFirstByte == 2 * Self.perCheckSeconds)
     }
 }

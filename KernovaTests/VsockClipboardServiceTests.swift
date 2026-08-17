@@ -2,7 +2,6 @@ import AppKit
 import Testing
 import Foundation
 import Darwin
-import CryptoKit
 import KernovaKit
 import KernovaTestSupport
 import UniformTypeIdentifiers
@@ -35,57 +34,41 @@ struct VsockClipboardServiceTests {
     /// The id the **service** mints for an inbound transfer it requests.
     ///
     /// This is the outbound id plus the host direction bit [H3]; inbound tests
-    /// use it so a driven `Begin` matches the service's pending set and
+    /// use it so a driven reply matches the service's pending set and
     /// `req.transferID`.
     private func inboundTransferID(generation: UInt64, repIndex: UInt64) -> UInt64 {
         ClipboardTransferID.make(
             generation: generation, repIndex: Int(repIndex), hostMinted: true)
     }
 
-    // MARK: - Streaming a reply to the service (we are the sender)
+    // MARK: - Driving one transfer's data connection
 
-    /// Streams `ClipboardChunk`(s) → `ClipboardStreamEnd` for `transferID` from
-    /// the guest end, **without** a preceding `Begin`.
+    /// Opens one transfer's data connection into `service`, as a guest's dial
+    /// does, and returns the peer's end for the test to drive.
     ///
-    /// Used to complete a transfer whose `Begin` the responder already sent
-    /// (`beginOnly`), so a host pull parked on it resolves with the bytes.
-    private func sendChunkAndEnd(
-        from guest: VsockChannel,
-        transferID: UInt64,
-        bytes: Data,
-        chunkSize: Int = 64 * 1024
-    ) throws {
-        var offset = 0
-        while offset < bytes.count {
-            let end = min(offset + chunkSize, bytes.count)
-            try guest.send(
-                makeChunkFrame(
-                    transferID: transferID, offset: offset,
-                    data: bytes.subdata(in: offset..<end)))
-            offset = end
-        }
-        try guest.send(makeEndFrame(transferID: transferID, payload: bytes))
+    /// The service owns its end on every path; whatever writes on the returned
+    /// descriptor closes it.
+    private func openDataConnection(to service: VsockClipboardService) throws -> Int32 {
+        let (peerEnd, hostEnd) = try makeRawSocketPair()
+        service.acceptDataConnection(fd: hostEnd)
+        return peerEnd
     }
 
-    /// Acknowledges the service's outbound transfer so its sender (which waits
-    /// for the first ack before chunking) makes progress.
+    /// Pulls one representation from the service the way a guest does: a data
+    /// connection of its own opening with the request, then the reply, the
+    /// payload and the trailer that answer it.
     ///
-    /// A single ack advertising a window large enough for the whole payload
-    /// drains it.
-    private func sendAck(
-        from guest: VsockChannel, transferID: UInt64, windowBytes: Int = 512 * 1024
-    ) throws {
-        try guest.send(makeAckFrame(transferID: transferID, windowBytes: windowBytes))
-    }
-
-    /// Reassembles the chunks of one outbound transfer into a single buffer,
-    /// validating contiguity along the way.
-    private func reassemble(_ chunks: [Kernova_V1_ClipboardChunk]) -> Data {
-        var result = Data()
-        for chunk in chunks.sorted(by: { $0.offset < $1.offset }) {
-            result.append(chunk.data)
+    /// The pull blocks until the transfer ends, so it runs off this suite's main
+    /// actor — the service streams onto the connection from there.
+    private func pullFromService(
+        _ service: VsockClipboardService, generation: UInt64, repIndex: UInt64, uti: String
+    ) async throws -> ReceivedTransfer {
+        let fd = try openDataConnection(to: service)
+        let xid = transferID(generation: generation, repIndex: repIndex)
+        let received = await offCooperativePool {
+            try? pullTransfer(fd: fd, generation: generation, transferID: xid, uti: uti)
         }
-        return result
+        return try #require(received, "The service answered transfer \(xid) with nothing readable")
     }
 
     // MARK: - Lifecycle / connectivity
@@ -234,57 +217,25 @@ struct VsockClipboardServiceTests {
         #expect(info.filename == "Project")
         let xid = transferID(generation: offer.generation, repIndex: 0)
 
-        let recorder = FrameRecorder(channel: guest)
-        defer { recorder.cancel() }
-
-        // The request starts the walk-and-compress, whose bytes go straight to
-        // the wire — no archive is ever staged.
-        try guest.send(
-            makeRequestFrame(
-                generation: offer.generation,
-                transferID: transferID(generation: offer.generation, repIndex: 0), uti: info.uti))
-        try await recorder.waitForFrames {
-            recorder.first {
-                if case .clipboardStreamBegin = $0.payload { return true }; return false
-            } != nil
-        }
-        let beginFrame = try #require(
-            recorder.first {
-                if case .clipboardStreamBegin = $0.payload { return true }; return false
-            })
-        guard case .clipboardStreamBegin(let begin) = beginFrame.payload else {
-            Issue.record("Expected clipboardStreamBegin")
-            return
-        }
-        #expect(begin.transferID == xid)
-        #expect(!begin.isInline)
-        #expect(begin.filename == "Project")
-
-        try sendAck(from: guest, transferID: xid)
-        try await recorder.waitForFrames {
-            recorder.first {
-                if case .clipboardStreamEnd = $0.payload { return true }; return false
-            } != nil
-        }
-        let reassembled = reassemble(recorder.chunks(for: xid))
+        // The request starts the walk-and-compress, whose bytes go straight onto
+        // the connection — no archive is ever staged.
+        let received = try await pullFromService(
+            service, generation: offer.generation, repIndex: 0, uti: info.uti)
+        #expect(received.reply.transferID == xid)
+        #expect(!received.reply.isInline)
+        #expect(received.reply.isArchive)
         // The tree is compressed straight onto the wire, so its size is unknown
-        // at Begin; the End frame carries the authoritative count.
-        #expect(begin.totalBytes == 0)
-        let endFrame = try #require(
-            recorder.first {
-                if case .clipboardStreamEnd = $0.payload { return true }
-                return false
-            })
-        guard case .clipboardStreamEnd(let end) = endFrame.payload else {
-            Issue.record("Expected clipboardStreamEnd")
-            return
-        }
-        #expect(end.totalBytes == UInt64(reassembled.count))
+        // when the reply goes out; the trailer's digest is what proves every
+        // byte of it arrived.
+        #expect(received.reply.totalBytes == 0)
+        #expect(
+            received.trailer
+                == ClipboardTransferTrailer(ending: .complete(digest: sha256(received.payload))))
         // Nothing was staged to send it.
         #expect(materializedFiles(under: stagingRoot).isEmpty)
 
         // The streamed bytes are the archive, and they extract back to the tree.
-        let dest = try extractedClipboardArchive(reassembled)
+        let dest = try extractedClipboardArchive(received.payload)
         defer { try? FileManager.default.removeItem(at: dest.deletingLastPathComponent()) }
         #expect(
             try String(contentsOf: dest.appendingPathComponent("README.md"), encoding: .utf8)
@@ -340,20 +291,15 @@ struct VsockClipboardServiceTests {
         #expect(offer.repInfo.map(\.byteCount) == [0, 0])
         #expect(offer.repInfo.map(\.filename) == ["Empty", "Scaffold"])
 
-        let recorder = FrameRecorder(channel: guest)
-        defer { recorder.cancel() }
-
         // The zero estimate gates nothing: each rep archives at request time and
         // the streamed `.aar` rebuilds its tree.
         let emptyOut = try await pullAndExtractArchive(
-            generation: offer.generation, repIndex: 0, uti: offer.repInfo[0].uti, from: guest,
-            recorder: recorder)
+            from: service, generation: offer.generation, repIndex: 0, uti: offer.repInfo[0].uti)
         defer { try? FileManager.default.removeItem(at: emptyOut.deletingLastPathComponent()) }
         #expect(try FileManager.default.contentsOfDirectory(atPath: emptyOut.path).isEmpty)
 
         let scaffoldOut = try await pullAndExtractArchive(
-            generation: offer.generation, repIndex: 1, uti: offer.repInfo[1].uti, from: guest,
-            recorder: recorder)
+            from: service, generation: offer.generation, repIndex: 1, uti: offer.repInfo[1].uti)
         defer { try? FileManager.default.removeItem(at: scaffoldOut.deletingLastPathComponent()) }
         var isDir: ObjCBool = false
         #expect(
@@ -365,34 +311,21 @@ struct VsockClipboardServiceTests {
                 atPath: scaffoldOut.appendingPathComponent("sub/.keep").path))
     }
 
-    /// Requests representation `repIndex` of `generation`, waits out its stream,
-    /// and extracts the reassembled `.aar` into a fresh directory it returns.
+    /// Pulls representation `repIndex` of `generation` off its own data
+    /// connection and extracts the `.aar` it carried into a fresh directory it
+    /// returns.
     private func pullAndExtractArchive(
-        generation: UInt64, repIndex: UInt64, uti: String, from guest: VsockChannel,
-        recorder: FrameRecorder
+        from service: VsockClipboardService, generation: UInt64, repIndex: UInt64, uti: String
     ) async throws -> URL {
-        let xid = transferID(generation: generation, repIndex: repIndex)
-        try guest.send(makeRequestFrame(generation: generation, transferID: xid, uti: uti))
-        try await recorder.waitForFrames {
-            recorder.first {
-                if case .clipboardStreamBegin(let begin) = $0.payload {
-                    return begin.transferID == xid
-                }
-                return false
-            } != nil
-        }
-        try sendAck(from: guest, transferID: xid)
-        try await recorder.waitForFrames {
-            recorder.first {
-                if case .clipboardStreamEnd(let end) = $0.payload { return end.transferID == xid }
-                return false
-            } != nil
-        }
-        return try extractedClipboardArchive(reassemble(recorder.chunks(for: xid)))
+        let received = try await pullFromService(
+            service, generation: generation, repIndex: repIndex, uti: uti)
+        #expect(received.reply.isArchive)
+        #expect(received.isComplete)
+        return try extractedClipboardArchive(received.payload)
     }
 
-    @Test("A large outbound payload streams as multiple chunks that reassemble exactly")
-    func largeOutboundStreamsMultipleChunks() async throws {
+    @Test("A large outbound payload crosses its data connection whole and byte-exact")
+    func largeOutboundStreamsOnItsOwnConnection() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -403,7 +336,8 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        // > 64 KiB default chunk so the sender emits several chunks.
+        // Past the socket buffer and the sender's own read buffer several times
+        // over, so the payload cannot cross in one write.
         let bytes = Data((0..<(200 * 1024)).map { UInt8(truncatingIfNeeded: $0 &* 37 &+ 11) })
         service.clipboardContent = ClipboardContent(representations: [
             .init(uti: "public.data", data: bytes)
@@ -418,29 +352,18 @@ struct VsockClipboardServiceTests {
         let info = try #require(offer.repInfo.first)
         let xid = transferID(generation: offer.generation, repIndex: 0)
 
-        let recorder = FrameRecorder(channel: guest)
-        defer { recorder.cancel() }
-
-        try guest.send(
-            makeRequestFrame(
-                generation: offer.generation,
-                transferID: transferID(generation: offer.generation, repIndex: 0), uti: info.uti))
-        try await recorder.waitForFrames {
-            recorder.first {
-                if case .clipboardStreamBegin = $0.payload { return true }; return false
-            } != nil
-        }
-        // A window covering the whole payload lets every chunk flow after one ack.
-        try sendAck(from: guest, transferID: xid, windowBytes: bytes.count)
-
-        try await recorder.waitForFrames {
-            recorder.first {
-                if case .clipboardStreamEnd = $0.payload { return true }; return false
-            } != nil
-        }
-        let chunks = recorder.chunks(for: xid)
-        #expect(chunks.count > 1, "Expected a multi-chunk transfer for a 200 KiB payload")
-        #expect(reassemble(chunks) == bytes)
+        let received = try await pullFromService(
+            service, generation: offer.generation, repIndex: 0, uti: info.uti)
+        #expect(received.reply.transferID == xid)
+        // An inline payload this side of the resident threshold crosses raw, so
+        // its size is known when the reply goes out.
+        #expect(received.reply.isInline)
+        #expect(!received.reply.isArchive)
+        #expect(received.reply.totalBytes == UInt64(bytes.count))
+        #expect(received.payload == bytes)
+        #expect(
+            received.trailer
+                == ClipboardTransferTrailer(ending: .complete(digest: sha256(bytes))))
     }
 
     @Test("grabIfChanged is suppressed when content is unchanged or empty")
@@ -516,12 +439,18 @@ struct VsockClipboardServiceTests {
         }
         let info = try #require(offer.repInfo.first)
 
-        // Queue the request, then close the guest end so the service's stream
-        // frames arrive at a dead peer.
-        try guest.send(
-            makeRequestFrame(
-                generation: offer.generation,
-                transferID: transferID(generation: offer.generation, repIndex: 0), uti: info.uti))
+        // Open the pull's data connection, write the request onto it, then close
+        // it — so the reply and the payload the service writes back arrive at a
+        // dead peer. The control channel goes too, as an agent crash takes both.
+        let dataFd = try openDataConnection(to: service)
+        let generation = offer.generation
+        let xid = transferID(generation: generation, repIndex: 0)
+        await offCooperativePool {
+            defer { ClipboardDataConnection.end(fd: dataFd) }
+            try? ClipboardDataConnection.writeFrame(
+                makeTransferRequestFrame(generation: generation, transferID: xid, uti: info.uti),
+                fd: dataFd)
+        }
         guest.close()
 
         // The service reads the request and tries to stream; the writes fail
@@ -536,18 +465,23 @@ struct VsockClipboardServiceTests {
 
     /// Background task that plays the guest end of the channel.
     ///
-    /// For every `ClipboardRequest` the host sends, it streams back the bytes
-    /// registered for that `(generation, repIndex)`. Lets a test drive
+    /// For every `ClipboardRequest` the host sends, it dials a data connection
+    /// into the service — as a macOS guest, which only ever initiates, does —
+    /// and serves the bytes registered for that `(generation, repIndex)` on it:
+    /// the reply, the payload, the 33-byte trailer, then EOF. Lets a test drive
     /// `materializeForPreview()` / `materializeForCopy()` — which block on the
-    /// host's pull continuations — without hand-sequencing each request.
+    /// host's pull continuations — without hand-sequencing each transfer.
     ///
     /// Reps are keyed by `(generation, repIndex)`; the responder mints the host
     /// transfer id [H3] itself so the test only supplies the payload. Requests
     /// for an unregistered rep are ignored (the host's continuation stays parked
     /// until the test tears down or supersedes).
+    ///
+    /// Every read and write on a data connection runs off this suite's actor:
+    /// the socket parks, and the service streams from the main actor.
     @MainActor
     private final class FakeGuestResponder {
-        /// What the reply puts on the wire.
+        /// What the connection carries.
         enum Payload {
             /// Streamed verbatim: an inline rep's raw bytes, or an archive a
             /// test built itself.
@@ -555,67 +489,93 @@ struct VsockClipboardServiceTests {
             /// Wrapped in a one-entry archive at stream time, the way the
             /// sender encodes a file or an oversize inline payload.
             case archived(Data, name: String)
+            /// Nothing but a reply and an abort trailer naming this code — the
+            /// guest giving up on a transfer it opened.
+            case aborting(rawCode: String)
+        }
+
+        /// How far into the transfer the guest gets before it stops.
+        enum Hold {
+            /// Serves the transfer whole.
+            case whole
+            /// Parks *before* the connection is opened, until
+            /// `releaseReplies()` — the host's pull is in flight (slot
+            /// registered, awaiter waiting) with no transfer, and so no sink,
+            /// open for it. Prefer this over ``beforeTrailer`` for a non-inline
+            /// rep: a stalled archive extract keeps AppleArchive's worker
+            /// threads polling for the length of the hold, which on a small CI
+            /// runner starves the whole process.
+            case beforeReply
+            /// Opens the connection and writes the reply, then stops: the
+            /// receiver-side transfer is live and its payload never arrives, so
+            /// a later supersession, release or cancel has something to tear
+            /// down while the host's pull is parked. `finishTransfer(_:)`
+            /// resolves it instead.
+            case beforePayload
+            /// Writes the reply and every payload byte, then parks before the
+            /// trailer until `releaseTrailer()` — so a test can observe a live,
+            /// mid-flight transfer (the host has taken bytes but the pull hasn't
+            /// resolved).
+            case beforeTrailer
         }
 
         struct Reply {
+            /// The UTI the offer described, which the host's request must name.
             let uti: String
             let payload: Payload
-            let filename: String
             let isInline: Bool
-            /// Mirrored into `ClipboardStreamBegin.is_archive`.
+            /// Mirrored into the reply's `is_archive`.
             let isArchive: Bool
-            /// When `true`, only `Begin` is streamed — no chunks, no `End`.
-            ///
-            /// Used to create a live receiver-side transfer that a later
-            /// supersession/release can cancel while the host's pull is parked.
-            let beginOnly: Bool
-            /// When `true`, the reply parks *before* `Begin` until
-            /// `releaseReplies()` — the host's pull is in flight (slot registered,
-            /// awaiter waiting) with no transfer, and so no sink, open for it.
-            /// Prefer this over `holdEnd` for a non-inline rep: a stalled archive
-            /// extract keeps AppleArchive's worker threads polling for the length
-            /// of the hold, which on a small CI runner starves the whole process.
-            let holdReply: Bool
+            let hold: Hold
         }
 
+        private let service: VsockClipboardService
         private let guest: VsockChannel
         private var replies: [UInt64: Reply] = [:]
         private var consumeTask: Task<Void, Never>?
+        /// Connections whose stream stopped at its hold, by transfer id.
+        private var parked: [UInt64: (connection: ParkedDataConnection, hold: Hold)] = [:]
 
-        /// Fires after each request is answered and each abort is recorded; await
-        /// it to observe progress.
+        /// Fires after each request is answered; await it to observe progress.
         let answered = AsyncGate()
-        /// Fires as each request arrives, before its reply streams — for a request
-        /// whose reply then parks on `holdEnd`.
+        /// Fires as each request arrives, before its transfer opens — for a
+        /// request whose reply then parks.
         let requested = AsyncGate()
         /// Every `ClipboardRequest` the host sent, in arrival order.
         private(set) var requests: [Kernova_V1_ClipboardRequest] = []
-        /// Every `ClipboardStreamAbort` the host sent, in arrival order.
-        private(set) var aborts: [Kernova_V1_ClipboardStreamAbort] = []
+        /// The transfers whose data connection the host closed under a parked
+        /// reply — how a receiver's cancellation reads from the guest, with
+        /// nothing crossing the control channel.
+        fileprivate let hostClosed = HostClosedTransfers()
 
-        /// When `true`, the stream sends Begin + all chunks but parks before `End`
-        /// until `releaseEnd()` — so a test can observe a live, mid-flight transfer
-        /// (the host has received bytes but the pull hasn't resolved).
-        var holdEnd = false
-        private let endGate = AsyncGate()
-        private var endReleased = false
+        /// When `true`, every reply registered without a hold of its own parks
+        /// before its trailer.
+        var holdTrailer = false
 
-        /// Releases a stream parked by `holdEnd` so it sends its `End`.
-        func releaseEnd() {
-            endReleased = true
-            endGate.notify()
+        /// Releases every transfer parked before its trailer, so it ends.
+        func releaseTrailer() {
+            let held = parked.filter { $0.value.hold == .beforeTrailer }.map(\.key)
+            for id in held { finishTransfer(id) }
+        }
+
+        /// Finishes one transfer parked before its payload or its trailer,
+        /// writing what is left of the stream.
+        func finishTransfer(_ transferID: UInt64) {
+            guard let entry = parked.removeValue(forKey: transferID) else { return }
+            entry.connection.resume()
         }
 
         private let replyGate = AsyncGate()
         private var replyReleased = false
 
-        /// Releases every reply registered with `holdReply` so it streams.
+        /// Releases every reply registered with `.beforeReply` so it streams.
         func releaseReplies() {
             replyReleased = true
             replyGate.notify()
         }
 
-        init(guest: VsockChannel) {
+        init(service: VsockClipboardService, guest: VsockChannel) {
+            self.service = service
             self.guest = guest
         }
 
@@ -627,38 +587,48 @@ struct VsockClipboardServiceTests {
         /// would encode.
         func register(
             generation: UInt64, repIndex: UInt64, uti: String, bytes: Data,
-            filename: String = "", isInline: Bool, beginOnly: Bool = false, holdReply: Bool = false
+            filename: String = "", isInline: Bool, hold: Hold = .whole
         ) {
             store(
                 generation: generation, repIndex: repIndex, uti: uti,
                 payload: isInline
                     ? .verbatim(bytes)
                     : .archived(bytes, name: filename.isEmpty ? "data" : filename),
-                filename: filename, isInline: isInline, isArchive: !isInline,
-                beginOnly: beginOnly, holdReply: holdReply)
+                isInline: isInline, isArchive: !isInline, hold: hold)
         }
 
         /// Registers archive bytes to stream verbatim — a folder's tree, or a
         /// payload a test wants the extract itself to reject.
+        ///
+        /// The name the payload lands under comes from the offer, never the
+        /// connection, so there is nothing to name here.
         func registerArchive(
-            generation: UInt64, repIndex: UInt64, uti: String, archiveBytes: Data,
-            filename: String = ""
+            generation: UInt64, repIndex: UInt64, uti: String, archiveBytes: Data
         ) {
             store(
                 generation: generation, repIndex: repIndex, uti: uti,
-                payload: .verbatim(archiveBytes), filename: filename, isInline: false,
-                isArchive: true, beginOnly: false, holdReply: false)
+                payload: .verbatim(archiveBytes), isInline: false, isArchive: true, hold: .whole)
+        }
+
+        /// Registers a transfer the guest gives up on part-way: the reply, then
+        /// an abort trailer naming `code` with the payload it promised unwritten.
+        ///
+        /// `code` is the bare wire string rather than a `ClipboardStreamAbortCode`
+        /// so a test can inject one this build does not define.
+        func registerAbort(generation: UInt64, repIndex: UInt64, uti: String, code: String) {
+            store(
+                generation: generation, repIndex: repIndex, uti: uti,
+                payload: .aborting(rawCode: code), isInline: true, isArchive: false, hold: .whole)
         }
 
         private func store(
             generation: UInt64, repIndex: UInt64, uti: String, payload: Payload,
-            filename: String, isInline: Bool, isArchive: Bool, beginOnly: Bool, holdReply: Bool
+            isInline: Bool, isArchive: Bool, hold: Hold
         ) {
             let xid = ClipboardTransferID.make(
                 generation: generation, repIndex: Int(repIndex), hostMinted: true)
             replies[xid] = Reply(
-                uti: uti, payload: payload, filename: filename, isInline: isInline,
-                isArchive: isArchive, beginOnly: beginOnly, holdReply: holdReply)
+                uti: uti, payload: payload, isInline: isInline, isArchive: isArchive, hold: hold)
         }
 
         /// Starts draining the channel and answering requests.
@@ -671,16 +641,11 @@ struct VsockClipboardServiceTests {
                 guard let self else { return }
                 do {
                     for try await frame in self.guest.incoming {
-                        if case .clipboardStreamAbort(let abort) = frame.payload {
-                            self.aborts.append(abort)
-                            self.answered.notify()
-                            continue
-                        }
                         guard case .clipboardRequest(let req) = frame.payload else { continue }
                         self.requests.append(req)
                         self.requested.notify()
                         if let reply = self.replies[req.transferID] {
-                            try await self.stream(req: req, reply: reply)
+                            try await self.serve(req: req, reply: reply)
                         }
                         self.answered.notify()
                     }
@@ -690,44 +655,78 @@ struct VsockClipboardServiceTests {
             }
         }
 
-        func cancel() { consumeTask?.cancel() }
+        func cancel() {
+            consumeTask?.cancel()
+            for entry in parked.values { entry.connection.abandon() }
+            parked.removeAll()
+        }
         deinit { consumeTask?.cancel() }
 
-        /// Streams Begin → Chunk(s) → End for one request's registered reply.
-        private func stream(req: Kernova_V1_ClipboardRequest, reply: Reply) async throws {
-            if reply.holdReply { try await replyGate.wait { self.replyReleased } }
+        /// Answers one request on a data connection of its own, stopping where
+        /// the reply's hold says.
+        private func serve(req: Kernova_V1_ClipboardRequest, reply: Reply) async throws {
+            // The request names the rep the offer described; a payload answering
+            // some other UTI would make its shape a coincidence.
+            #expect(req.uti == reply.uti)
+            let hold: Hold = reply.hold == .whole && holdTrailer ? .beforeTrailer : reply.hold
+            if hold == .beforeReply { try await replyGate.wait { self.replyReleased } }
+            let xid = req.transferID
             let wire: Data
             switch reply.payload {
             case .verbatim(let bytes):
                 wire = bytes
             case .archived(let bytes, let name):
                 wire = try clipboardArchiveBytes(of: .blob(bytes, name: name))
-            }
-            try guest.send(
-                makeBeginFrame(
-                    generation: req.generation, transferID: req.transferID, uti: reply.uti,
-                    // An archive's wire size isn't known until its last byte.
-                    totalBytes: reply.isArchive ? 0 : wire.count, filename: reply.filename,
-                    isInline: reply.isInline, isArchive: reply.isArchive))
-            // Begin-only: leave the transfer live so a supersede/release can
-            // cancel it; never send chunks or End.
-            if reply.beginOnly { return }
-
-            var offset = 0
-            let chunkSize = 64 * 1024
-            while offset < wire.count {
-                let end = min(offset + chunkSize, wire.count)
-                try guest.send(
-                    makeChunkFrame(
-                        transferID: req.transferID, offset: offset,
-                        data: wire.subdata(in: offset..<end)))
-                offset = end
+            case .aborting(let rawCode):
+                let peerEnd = try openConnection()
+                // A blocking write gets a thread of its own rather than one of
+                // the cooperative pool's.
+                Thread.detachNewThread {
+                    try? abortTransfer(fd: peerEnd, transferID: xid, code: rawCode)
+                }
+                return
             }
 
-            // Park before End so a test can observe the live, mid-flight transfer.
-            if holdEnd { try await endGate.wait { self.endReleased } }
+            let isArchive = reply.isArchive
+            let isInline = reply.isInline
+            let peerEnd = try openConnection()
+            guard hold == .beforePayload || hold == .beforeTrailer else {
+                Thread.detachNewThread {
+                    try? serveTransfer(
+                        fd: peerEnd, transferID: xid, payload: wire, isArchive: isArchive,
+                        isInline: isInline)
+                }
+                return
+            }
+            // An archive's size isn't known until its last byte, so the reply
+            // declares 0 for one — exactly as the shipping sender does.
+            let replyFrame = makeTransferReplyFrame(
+                transferID: xid, isArchive: isArchive, isInline: isInline,
+                totalBytes: isArchive ? 0 : wire.count)
+            let trailer = ClipboardTransferTrailer(ending: .complete(digest: sha256(wire)))
+            let stopsBeforePayload = hold == .beforePayload
+            parked[xid] = (
+                connection: ParkedDataConnection(
+                    fd: peerEnd, transferID: xid, closed: hostClosed,
+                    prefix: { fd in
+                        try? ClipboardDataConnection.writeFrame(replyFrame, fd: fd)
+                        guard !stopsBeforePayload else { return }
+                        try? writeTransferBytes(fd: fd, wire)
+                    },
+                    remainder: { fd in
+                        if stopsBeforePayload { try? writeTransferBytes(fd: fd, wire) }
+                        try? ClipboardDataConnection.writeTrailer(trailer, fd: fd)
+                    }),
+                hold: hold
+            )
+        }
 
-            try guest.send(makeEndFrame(transferID: req.transferID, payload: wire))
+        /// Dials one transfer's data connection into the service — the guest's
+        /// half of every answer — and returns the guest's end of it.
+        private func openConnection() throws -> Int32 {
+            let (peerEnd, hostEnd) = try makeRawSocketPair()
+            service.acceptDataConnection(fd: hostEnd)
+            return peerEnd
         }
     }
 
@@ -818,7 +817,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         let text = "from guest"
         let bytes = Data(text.utf8)
@@ -859,7 +858,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         let bytes = Data("rtfd-with-inline-image".utf8)
         responder.register(
@@ -898,7 +897,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         // rep 0: a small inline text → eagerly previewable, will be pulled.
         let text = "caption"
@@ -952,7 +951,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 4, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: Data("x".utf8),
@@ -985,7 +984,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 7, repIndex: 0, uti: ClipboardContent.utf8TextUTI,
@@ -1013,7 +1012,7 @@ struct VsockClipboardServiceTests {
         #expect(service.clipboardContent.representations.first?.isPendingRemote == true)
     }
 
-    @Test("A large multi-chunk inline preview rep reassembles correctly")
+    @Test("A large inline preview rep arrives whole")
     func previewLargeInlineReassembles() async throws {
         let (guest, host) = try makePair()
         guest.start()
@@ -1025,12 +1024,12 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        // > 64 KiB inline text so the responder emits several chunks; still well
-        // under maxEditableTextBytes so preview pulls it.
+        // Past the socket buffer several times over, so the payload cannot cross
+        // in one write; still well under maxEditableTextBytes so preview pulls it.
         let bytes = Data((0..<(200 * 1024)).map { UInt8(truncatingIfNeeded: $0 &* 53 &+ 7) })
         let textUTI = ClipboardContent.utf8TextUTI
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(generation: 3, repIndex: 0, uti: textUTI, bytes: bytes, isInline: true)
         responder.start()
@@ -1060,7 +1059,7 @@ struct VsockClipboardServiceTests {
         let inlineBytes = Data("inline payload".utf8)
         let fileBytes = Data((0..<(150 * 1024)).map { UInt8(truncatingIfNeeded: $0 &* 11 &+ 3) })
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 9, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: inlineBytes,
@@ -1131,11 +1130,10 @@ struct VsockClipboardServiceTests {
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
         let aarBytes = try clipboardArchiveBytes(ofDirectoryAt: src)
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.registerArchive(
-            generation: 11, repIndex: 0, uti: UTType.folder.identifier, archiveBytes: aarBytes,
-            filename: "MyFolder")
+            generation: 11, repIndex: 0, uti: UTType.folder.identifier, archiveBytes: aarBytes)
         responder.start()
 
         // The offer carries the directory flag; the stream layer stays
@@ -1205,14 +1203,12 @@ struct VsockClipboardServiceTests {
         let emptyBytes = try clipboardArchiveBytes(ofDirectoryAt: empty)
         let scaffoldBytes = try clipboardArchiveBytes(ofDirectoryAt: scaffold)
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.registerArchive(
-            generation: 12, repIndex: 0, uti: UTType.folder.identifier, archiveBytes: emptyBytes,
-            filename: "Empty")
+            generation: 12, repIndex: 0, uti: UTType.folder.identifier, archiveBytes: emptyBytes)
         responder.registerArchive(
-            generation: 12, repIndex: 1, uti: UTType.folder.identifier,
-            archiveBytes: scaffoldBytes, filename: "Scaffold")
+            generation: 12, repIndex: 1, uti: UTType.folder.identifier, archiveBytes: scaffoldBytes)
         responder.start()
 
         // The estimate is 0 for both, which is what the wire carries — neither rep
@@ -1268,7 +1264,7 @@ struct VsockClipboardServiceTests {
         let inlineBytes = Data("preview me".utf8)
         let fileBytes = Data((0..<(80 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 6, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: inlineBytes,
@@ -1342,7 +1338,7 @@ struct VsockClipboardServiceTests {
         let inlineBytes = Data("still served".utf8)
         let fileBytes = Data((0..<(64 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 9, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: inlineBytes,
@@ -1410,7 +1406,7 @@ struct VsockClipboardServiceTests {
         defer { service.stop() }
 
         let fileBytes = Data((0..<(48 * 1024)).map { UInt8(truncatingIfNeeded: $0 &* 3) })
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 1, repIndex: 0, uti: "public.data", bytes: fileBytes,
@@ -1471,7 +1467,7 @@ struct VsockClipboardServiceTests {
         defer { service.stop() }
 
         let fileBytes = Data((0..<(32 * 1024)).map { UInt8(truncatingIfNeeded: $0 &+ 5) })
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 15, repIndex: 0, uti: "public.data", bytes: fileBytes,
@@ -1725,7 +1721,7 @@ struct VsockClipboardServiceTests {
             channel: host1, label: label, reporter: ClipboardTransferReporter(), stagingTempRoot: tempRoot)
         service1.start()
         let fileBytes = Data((0..<(16 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
-        let responder = FakeGuestResponder(guest: guest1)
+        let responder = FakeGuestResponder(service: service1, guest: guest1)
         defer { responder.cancel() }
         responder.register(
             generation: 1, repIndex: 0, uti: "public.data", bytes: fileBytes,
@@ -1792,7 +1788,7 @@ struct VsockClipboardServiceTests {
                 ]))
         try await waitForChange { service.clipboardContent.representations.count == 2 }
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.start()
 
@@ -1822,7 +1818,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.start()
 
@@ -1869,7 +1865,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.start()
 
@@ -1905,7 +1901,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.start()
 
@@ -1944,7 +1940,7 @@ struct VsockClipboardServiceTests {
         defer { service.stop() }
 
         let noteBytes = Data("note".utf8)
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 14, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: noteBytes,
@@ -1995,7 +1991,7 @@ struct VsockClipboardServiceTests {
         defer { service.stop() }
 
         let noteBytes = Data("note".utf8)
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 21, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: noteBytes,
@@ -2040,7 +2036,7 @@ struct VsockClipboardServiceTests {
         let aBytes = Data((0..<(40 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
         let bBytes = Data((0..<(30 * 1024)).map { UInt8(truncatingIfNeeded: $0 &* 7) })
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 41, repIndex: 0, uti: "public.data", bytes: aBytes, filename: "a.bin",
@@ -2111,7 +2107,7 @@ struct VsockClipboardServiceTests {
         let pngType = NSPasteboard.PasteboardType(png)
         #expect(specs.map(\.types) == [[pngType], [pngType]])
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         let bytes = Data(repeating: 0x89, count: 2048)
         responder.register(
@@ -2145,7 +2141,7 @@ struct VsockClipboardServiceTests {
 
         let png = UTType.png.identifier
         let bytes = Data((0..<4096).map { UInt8(truncatingIfNeeded: $0) })
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 72, repIndex: 0, uti: png, bytes: bytes, filename: "shot.png",
@@ -2192,7 +2188,7 @@ struct VsockClipboardServiceTests {
             service.clipboardContent.representations[0].byteCount
                 == Int(ClipboardOfferBounds.maxDeclaredByteCount))
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.start()
 
@@ -2276,11 +2272,11 @@ struct VsockClipboardServiceTests {
         defer { service.stop() }
 
         let fileBytes = Data((0..<(200 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
-        // Park before End so the transfer is live (bytes received, pull unresolved)
-        // while we observe the bar.
-        responder.holdEnd = true
+        // Park before the trailer so the transfer is live (bytes received, pull
+        // unresolved) while we observe the bar.
+        responder.holdTrailer = true
         responder.register(
             generation: 41, repIndex: 0, uti: "public.data", bytes: fileBytes,
             filename: "big.bin", isInline: false)
@@ -2310,9 +2306,9 @@ struct VsockClipboardServiceTests {
         #expect(reports.snapshot?.gesture == .paste)
         #expect(reports.snapshot?.isCancellable == false)
 
-        // Releasing End resolves the pull; the terminal clears the readout (§13:
+        // Releasing the trailer resolves the pull; the terminal clears the readout (§13:
         // never leave a stuck bar).
-        responder.releaseEnd()
+        responder.releaseTrailer()
         let url = await pull.value
         #expect(url != nil)
         try await reports.wait { reports.snapshot == nil }
@@ -2337,12 +2333,12 @@ struct VsockClipboardServiceTests {
         // A previewable rep: the one kind a preview trigger would pull itself.
         // The paste runs off-main (`offCooperativePool`, as every other
         // blocking-pull test does) so main stays free to fire the preview and
-        // then release End — no dependence on the nested loop's timing.
+        // then release the trailer — no dependence on the nested loop's timing.
         let text = "shared by paste and preview"
         let bytes = Data(text.utf8)
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
-        responder.holdEnd = true
+        responder.holdTrailer = true
         responder.register(
             generation: 44, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: bytes,
             isInline: true)
@@ -2369,7 +2365,7 @@ struct VsockClipboardServiceTests {
         try await waitUntil {
             service.inboundPullWaiterCountForTesting(generation: 44, repIndex: 0) == 2
         }
-        responder.releaseEnd()
+        responder.releaseTrailer()
         let data = await pull.value
         await preview.value
 
@@ -2399,11 +2395,11 @@ struct VsockClipboardServiceTests {
         defer { service.stop() }
 
         let fileBytes = Data(count: 4096)
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 45, repIndex: 0, uti: "public.png", bytes: fileBytes, filename: "shot.png",
-            isInline: false, holdReply: true)
+            isInline: false, hold: .beforeReply)
         responder.start()
 
         // A paste-bound image file: named, and pre-flighted because it is not
@@ -2431,7 +2427,7 @@ struct VsockClipboardServiceTests {
         #expect(secondFire == nil)
         #expect(responder.requests.count == 1)
 
-        // Capacity back before the first fire's transfer opens: its `Begin` runs
+        // Capacity back before the first fire's transfer opens: its reply runs
         // the receiver's own capacity check, and only the second fire's
         // pre-flight was meant to see the squeeze.
         freeSpace.value = 1 << 40
@@ -2460,14 +2456,14 @@ struct VsockClipboardServiceTests {
         // waiter list mentions it.
         let fileBytes = Data([0xCA, 0xFE, 0xBA, 0xBE])
         let previewSize = 200_000
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 54, repIndex: 0, uti: "public.data", bytes: fileBytes, filename: "f.bin",
-            isInline: false, holdReply: true)
+            isInline: false, hold: .beforeReply)
         responder.register(
             generation: 54, repIndex: 1, uti: ClipboardContent.utf8TextUTI,
-            bytes: Data(count: previewSize), isInline: true, beginOnly: true)
+            bytes: Data(count: previewSize), isInline: true, hold: .beforePayload)
         responder.start()
 
         try guest.send(
@@ -2479,8 +2475,8 @@ struct VsockClipboardServiceTests {
                 ]))
         try await waitForChange { service.clipboardContent.representations.count == 2 }
 
-        // Preview first: its Begin-only reply parks that pull, so the paste's is
-        // the second request on the wire.
+        // Preview first: its payload-less reply parks that pull, so the paste's
+        // is the second request on the wire.
         let preview = Task { await service.materializeForPreview() }
         try await responder.answered.wait { responder.requests.count == 1 }
         let paste = Task {
@@ -2501,10 +2497,11 @@ struct VsockClipboardServiceTests {
         let url = try #require(await paste.value)
         #expect(try Data(contentsOf: url) == fileBytes)
 
-        // On the wire, the preview's own pull was aborted and nothing else was.
-        try await responder.answered.wait { !responder.aborts.isEmpty }
-        #expect(
-            responder.aborts.map(\.transferID) == [inboundTransferID(generation: 54, repIndex: 1)])
+        // On the wire, the preview's own pull was cancelled and nothing else
+        // was: a receiver cancels by closing its end of the connection, and the
+        // paste's own connection carried its payload through to the file above.
+        try await responder.hostClosed.recorded.wait { !responder.hostClosed.all.isEmpty }
+        #expect(responder.hostClosed.all == [inboundTransferID(generation: 54, repIndex: 1)])
     }
 
     @Test("the channel closing under a paste fire explains it, as stop() does")
@@ -2519,11 +2516,11 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 50, repIndex: 0, uti: "public.data", bytes: Data(count: 64),
-            filename: "dropped.bin", isInline: false, beginOnly: true)
+            filename: "dropped.bin", isInline: false, hold: .beforePayload)
         responder.start()
 
         try guest.send(
@@ -2559,11 +2556,11 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 49, repIndex: 0, uti: "public.data", bytes: Data(count: 64),
-            filename: "gone.bin", isInline: false, beginOnly: true)
+            filename: "gone.bin", isInline: false, hold: .beforePayload)
         responder.start()
 
         try guest.send(
@@ -2597,7 +2594,7 @@ struct VsockClipboardServiceTests {
     }
 
     @Test(
-        "A control frame arriving while a paste pull holds main does not stall stream-frame routing (#458)"
+        "A control frame arriving while a paste pull holds main does not stall the transfer answering it (#458)"
     )
     func controlFrameDuringBlockingPullDoesNotStallRouting() async throws {
         let (guest, host) = try makePair()
@@ -2606,10 +2603,10 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         // RATIONALE: 5 s — a hostage-window bound (docs/TESTING.md), not the
-        // ≥60 s default: `serveFileURL` runs on the real main thread from
-        // this main-queue job, so this timeout caps how long the bundle's
-        // MainActor freezes if the fast path loses; a #458 regression resolves to
-        // nothing whichever way it lands, so the value never masks one.
+        // ≥60 s default: `serveFileURL` runs on the real main thread, so this
+        // timeout caps how long the bundle's main thread is held if the fast
+        // path loses; a #458 regression resolves to nothing whichever way it
+        // lands, so the value never masks one.
         let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter, lazyPullTimeout: 5)
@@ -2633,12 +2630,12 @@ struct VsockClipboardServiceTests {
 
         // Drains the guest side independently of the host's main thread: on seeing
         // the host's ClipboardRequest, sends an inert control frame FIRST — the
-        // interleaving #458 describes, a control frame landing mid-pull — THEN the
-        // stream frames that resolve the pull. `.detached` (not plain `Task {}`,
-        // which would inherit this MainActor test struct's isolation) so this
-        // truly never touches the host's main actor and isn't blocked by the
-        // serveFileURL call below; it is the guest-side analog of the "peer
-        // keeps talking while we're mid-transfer" scenario.
+        // interleaving #458 describes, a control frame landing mid-pull — THEN
+        // dials the transfer's data connection and serves it. `.detached` (not
+        // plain `Task {}`, which would inherit this MainActor test struct's
+        // isolation) so this truly never touches the host's main actor and isn't
+        // blocked by the serveFileURL call below; it is the guest-side analog of
+        // the "peer keeps talking while we're mid-transfer" scenario.
         let responderTask = Task.detached {
             for try await frame in guest.incoming {
                 guard case .clipboardRequest(let req) = frame.payload, req.transferID == xid
@@ -2646,36 +2643,36 @@ struct VsockClipboardServiceTests {
                 try guest.sendErrorFrame(
                     code: "clipboard.interleaved", message: "control frame mid-pull",
                     inReplyTo: "clipboard.request")
-                try guest.send(
-                    makeBeginFrame(
-                        generation: req.generation, transferID: req.transferID, uti: req.uti,
-                        totalBytes: 0, filename: "f.bin", isInline: false, isArchive: true))
-                // Written out rather than calling the suite's `sendChunkAndEnd`
-                // helper: that helper is `@MainActor`-isolated (an instance method
-                // on this struct), and this closure must stay genuinely off-actor.
-                try guest.send(makeChunkFrame(transferID: req.transferID, offset: 0, data: wire))
-                try guest.send(makeEndFrame(transferID: req.transferID, payload: wire))
+                let (peerEnd, hostEnd) = try makeRawSocketPair()
+                MainActorBridge.async { service.acceptDataConnection(fd: hostEnd) }
+                // A blocking write gets a thread of its own rather than one of
+                // the cooperative pool's.
+                Thread.detachNewThread {
+                    try? serveTransfer(
+                        fd: peerEnd, transferID: xid, payload: wire, isArchive: true,
+                        isInline: false)
+                }
                 return
             }
         }
         defer { responderTask.cancel() }
 
-        // Called directly on main from this main-queue job, so for main-queue
-        // work — the control frame's hop included — main is as unavailable as a
-        // parked thread until the pull returns. Under the old `await
-        // onControlFrame` code this would hang until the lazyPullTimeout backstop
-        // fired and resolved to `.pullFailed`: the interleaved control frame
-        // suspends the whole consume loop on the unavailable main actor, so the
-        // Begin/Chunk/End behind it in the channel never route and the pull's
-        // wait never resolves. Under the fix, the consume loop dispatches the
-        // control frame fire-and-forget and keeps draining — Begin/Chunk/End
-        // route immediately regardless of main's availability — so this resolves
+        // Fired from the main run loop's base, the way the pasteboard delivers a
+        // promise (`NestedEventLoopWait`) rather than from a main-queue job: the
+        // wait holds the real main thread for the length of the pull either way,
+        // and only from the base does it keep draining the main queue — which is
+        // how the VZ listener delivers the transfer's connection at all. Under
+        // the old `await onControlFrame` code the interleaved control frame
+        // suspended the whole consume loop, so nothing behind it in the channel
+        // routed and the pull ran to its backstop; under the fix the loop
+        // dispatches it fire-and-forget and keeps draining, so this resolves
         // promptly.
-        guard let url = service.serveFileURL(generation: 30, repIndex: 0) else {
-            Issue.record("Expected serveFileURL to serve the rep")
-            return
+        let url = await withCheckedContinuation { (served: CheckedContinuation<URL?, Never>) in
+            performOnMainRunLoop {
+                served.resume(returning: service.serveFileURL(generation: 30, repIndex: 0))
+            }
         }
-        #expect(try Data(contentsOf: url) == payload)
+        #expect(try Data(contentsOf: #require(url)) == payload)
 
         // The interleaved control frame wasn't dropped — it's processed
         // fire-and-forget, so it surfaces once main frees up.
@@ -2698,19 +2695,17 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        // The responder answers gen=1's request with a Begin **only** (no End):
-        // that registers a live transfer in the host's receiver table, so the
-        // gen=2 supersede's `cancel(generation: 1)` has something to tear down,
-        // which resolves the host's parked pull continuation to nil. The single
-        // channel preserves order — the Begin is processed by the receiver before
-        // the gen=2 offer reaches handleOffer.
-        let responder = FakeGuestResponder(guest: guest)
+        // The responder answers gen=1's request with a reply **only** (no
+        // payload): that registers a live transfer in the host's receiver table,
+        // so the gen=2 supersede's `cancel(generation: 1)` has something to tear
+        // down, which resolves the host's parked pull continuation to nil.
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
-        // An inline rep so the preview pulls it; beginOnly so the pull parks for
-        // the supersede to interrupt.
+        // An inline rep so the preview pulls it, and a payload that never
+        // arrives so the pull parks for the supersede to interrupt.
         responder.register(
             generation: 1, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: Data("stale".utf8),
-            isInline: true, beginOnly: true)
+            isInline: true, hold: .beforePayload)
         responder.start()
 
         // First offer (gen=1) — a single inline rep, a placeholder until pulled.
@@ -2720,7 +2715,7 @@ struct VsockClipboardServiceTests {
                 reps: [RepInfo(uti: ClipboardContent.utf8TextUTI, byteCount: 5, isInline: true)]))
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
-        // Start a preview that issues the gen=1 pull and parks (no End arrives).
+        // Start a preview that issues the gen=1 pull and parks (no payload arrives).
         let previewTask = Task { await service.materializeForPreview() }
         // Wait until the host has actually sent the pull request — that's the
         // in-flight window we want to interrupt.
@@ -2760,12 +2755,13 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        // Unlike `newerOfferSupersedesInFlightPull` (beginOnly → pull resolves to
-        // nil), gen=1 answers with a COMPLETE transfer, so the pull resolves with
-        // real bytes. That is the only path where the `inboundPromise === promise`
+        // Unlike `newerOfferSupersedesInFlightPull` (a payload that never
+        // arrives → pull resolves to nil), gen=1 answers with a COMPLETE
+        // transfer, so the pull resolves with real bytes. That is the only path
+        // where the `inboundPromise === promise`
         // re-check is load-bearing: a successful pull's bytes would clobber the
         // newer offer's placeholders if the guard didn't suppress the republish.
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         // An inline rep so the preview pulls it through the async `materialize`
         // path (which the test seam parks).
@@ -2832,7 +2828,7 @@ struct VsockClipboardServiceTests {
         // this defer is an idempotent safety net for the early-throw path.
         defer { service.stop() }
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         // An inline rep so the preview pulls it through the async `materialize`
         // path (which the test seam parks).
@@ -2895,7 +2891,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 8, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: Data("x".utf8),
@@ -3009,15 +3005,15 @@ struct VsockClipboardServiceTests {
         let textUTI = ClipboardContent.utf8TextUTI
         let generation: UInt64 = 17
 
-        // Register the rep as Begin-ONLY: the responder opens the receiver
-        // transfer (Begin) but never streams chunks/End, so the host's first
-        // pull parks. That parked window is exactly when a second display
-        // trigger must add nothing to the wire.
-        let responder = FakeGuestResponder(guest: guest)
+        // Register the rep as reply-ONLY: the responder opens the transfer's
+        // connection and describes the payload, but writes none of it, so the
+        // host's first pull parks. That parked window is exactly when a second
+        // display trigger must add nothing to the wire.
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: generation, repIndex: 0, uti: textUTI, bytes: payload,
-            isInline: true, beginOnly: true)
+            isInline: true, hold: .beforePayload)
         responder.start()
 
         try guest.send(
@@ -3027,7 +3023,7 @@ struct VsockClipboardServiceTests {
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         // First caller: preview pull for rep 0. It sends one request and parks
-        // (no End arrives). Run it detached so the test keeps driving.
+        // (no payload arrives). Run it detached so the test keeps driving.
         let firstPreview = Task { await service.materializeForPreview() }
 
         // Wait until EXACTLY one request for rep 0 has been recorded — the
@@ -3046,9 +3042,9 @@ struct VsockClipboardServiceTests {
             responder.requests.filter { $0.transferID == rep0XID }.count == 1,
             "A second preview trigger must add no request while the loop runs")
 
-        // Now complete the parked transfer: the Begin was already sent by the
-        // responder, so stream the chunks + End directly for that transfer id.
-        try sendChunkAndEnd(from: guest, transferID: rep0XID, bytes: payload)
+        // Now complete the parked transfer: its connection is already open and
+        // its reply written, so the payload and the trailer finish it.
+        responder.finishTransfer(rep0XID)
 
         await firstPreview.value
 
@@ -3081,7 +3077,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 3, repIndex: 0, uti: ClipboardContent.utf8TextUTI,
@@ -3111,7 +3107,7 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        // The pull is failed via an explicit abort (below), not the
+        // The pull is failed by the guest's own abort trailer, not the
         // lazyPullTimeout backstop, so no second clock races the test body
         // (docs/TESTING.md's injected-timeout rule).
         let service = VsockClipboardService(
@@ -3120,25 +3116,24 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
-        // No reply registered yet → the pull parks until aborted.
+        // The guest answers the pull by giving up on it: the transfer opens and
+        // its trailer names the abort.
+        let xid = inboundTransferID(generation: 2, repIndex: 0)
+        responder.registerAbort(
+            generation: 2, repIndex: 0, uti: ClipboardContent.utf8TextUTI,
+            code: ClipboardStreamAbortCode.cancelled.rawValue)
         responder.start()
 
         try guest.send(makeTextOfferFrame(generation: 2, text: "retry me"))
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
-        // Park the pull, then abort it from the guest side: it resolves nil and
-        // the rep stays a placeholder.
+        // The aborted pull resolves nil and the rep stays a placeholder.
         let firstPreview = Task { await service.materializeForPreview() }
-        let xid = inboundTransferID(generation: 2, repIndex: 0)
         try await responder.answered.wait {
             responder.requests.contains { $0.transferID == xid }
         }
-        try guest.send(
-            makeAbortFrame(
-                transferID: xid, code: ClipboardStreamAbortCode.cancelled.rawValue,
-                message: "test: pull aborted"))
         await firstPreview.value
         #expect(service.clipboardContent.representations.first?.isPendingRemote == true)
 
@@ -3166,7 +3161,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.start()
 
@@ -3214,15 +3209,14 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        // `beginOnly` opens a transfer the guest can then abort, exercising the
-        // awaiter's onAbort classification (the same handler the host's own
-        // mid-stream disk-full detection drives via deliverAbort). An image rep
-        // is used because the preview pulls it through the async `pull`.
-        let responder = FakeGuestResponder(guest: guest)
+        // The guest opens the transfer and gives up part-way, its trailer naming
+        // the reason — exercising the awaiter's onAbort classification (the same
+        // handler the host's own mid-stream disk-full detection drives via
+        // deliverAbort). An image rep is used because the preview pulls it
+        // through the async `pull`.
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
-        responder.register(
-            generation: 5, repIndex: 0, uti: "public.png", bytes: Data(count: 4096),
-            filename: "shot.png", isInline: true, beginOnly: true)
+        responder.registerAbort(generation: 5, repIndex: 0, uti: "public.png", code: rawCode)
         responder.start()
 
         try guest.send(
@@ -3236,8 +3230,6 @@ struct VsockClipboardServiceTests {
         try await responder.answered.wait {
             responder.requests.contains { $0.transferID == xid }
         }
-
-        try guest.send(makeAbortFrame(transferID: xid, code: rawCode, message: "aborted"))
 
         await previewTask.value
         // The refusal crosses the operation's serial main hop, enqueued before
@@ -3259,7 +3251,7 @@ struct VsockClipboardServiceTests {
         "a preview pull aborted mid-stream reports the failed transfer",
         arguments: [
             ClipboardStreamAbortCode.readError, .digestMismatch, .sizeMismatch, .stallTimeout,
-            .flowOverrun, .ackTimeout, .sendFailed,
+            .writeError, .payloadInvalid, .sendFailed,
         ])
     func previewPullAbortSurfacesIssue(code: ClipboardStreamAbortCode) async throws {
         let finish = try await previewPullAbortedByGuest(code: code)
@@ -3296,11 +3288,10 @@ struct VsockClipboardServiceTests {
         // Size and digest both agree with what arrived, so only the extract
         // itself can reject the payload.
         let notAnArchive = Data("not an archive".utf8)
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.registerArchive(
-            generation: 23, repIndex: 0, uti: UTType.folder.identifier, archiveBytes: notAnArchive,
-            filename: "MyFolder")
+            generation: 23, repIndex: 0, uti: UTType.folder.identifier, archiveBytes: notAnArchive)
         responder.start()
 
         try guest.send(
@@ -3551,7 +3542,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.start()
 
@@ -3611,7 +3602,7 @@ struct VsockClipboardServiceTests {
         // preview never begins a transfer for it.
         let text = String(repeating: "x", count: 200_000)
         let rtf = Data(repeating: 0x41, count: 8_192)
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
         responder.register(
             generation: 7, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: Data(text.utf8),
@@ -3688,7 +3679,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let responder = FakeGuestResponder(guest: guest)
+        let responder = FakeGuestResponder(service: service, guest: guest)
         let text = "small"
         responder.register(
             generation: 9, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: Data(text.utf8),
@@ -3719,12 +3710,12 @@ struct VsockClipboardServiceTests {
             progressIdleGap: 0)
         service.start()
 
-        let responder = FakeGuestResponder(guest: guest)
-        let text = String(repeating: "S", count: 120 * 1024)  // multi-chunk inline payload
+        let responder = FakeGuestResponder(service: service, guest: guest)
+        let text = String(repeating: "S", count: 120 * 1024)  // past one socket buffer
         responder.register(
             generation: 3, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: Data(text.utf8),
             isInline: true)
-        responder.holdEnd = true
+        responder.holdTrailer = true
         responder.start()
         defer { responder.cancel() }
 
@@ -3738,8 +3729,101 @@ struct VsockClipboardServiceTests {
         service.stop()
         try await reports.wait { reports.snapshot == nil }
 
-        responder.releaseEnd()
+        responder.releaseTrailer()
         await previewTask.value
+    }
+}
+
+// MARK: - The guest's end of a parked data connection
+
+/// The transfers whose data connection the receiver closed while the guest's
+/// reply was parked.
+///
+/// A receiver cancels by closing its end and says nothing on the control
+/// channel, so this is what a cancellation looks like from the other end: the
+/// stream ends where the payload should have been.
+private final class HostClosedTransfers: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ids: [UInt64] = []
+
+    /// Fires as each closed connection is recorded.
+    let recorded = AsyncGate()
+
+    /// The ids recorded so far, in the order their connections ended.
+    var all: [UInt64] { lock.withLock { ids } }
+
+    /// Records `transferID` and wakes whatever awaits ``recorded``.
+    func record(_ transferID: UInt64) {
+        lock.withLock { ids.append(transferID) }
+        recorded.notify()
+    }
+}
+
+/// One transfer's data connection, held open past the point its stream stopped
+/// short, so a test can finish it — or watch the receiver close it.
+///
+/// Every touch of the descriptor runs on one serial queue, so a resumed write
+/// can never overlap the close. The watcher thread only reads, which ends when
+/// the receiver closes its end, and a descriptor is closed exactly once.
+private final class ParkedDataConnection: @unchecked Sendable {
+    private let fd: Int32
+    private let transferID: UInt64
+    private let closed: HostClosedTransfers
+    private let remainder: @Sendable (Int32) -> Void
+    private let io: DispatchQueue
+    private let lock = NSLock()
+    private var isResumed = false
+    private var isAbandoned = false
+    private var isEnded = false
+
+    /// Opens the connection by writing `prefix`, and keeps `remainder` — the
+    /// rest of the stream — for ``resume()``.
+    fileprivate init(
+        fd: Int32, transferID: UInt64, closed: HostClosedTransfers,
+        prefix: @escaping @Sendable (Int32) -> Void,
+        remainder: @escaping @Sendable (Int32) -> Void
+    ) {
+        self.fd = fd
+        self.transferID = transferID
+        self.closed = closed
+        self.remainder = remainder
+        io = DispatchQueue(label: "test.clipboard.parked-transfer.\(transferID)")
+        io.async { prefix(fd) }
+        // A blocking read for as long as the case needs, so it gets a thread of
+        // its own rather than one of GCD's global queue's.
+        Thread.detachNewThread { [self] in
+            _ = try? readToEnd(fd: fd)
+            io.async { [self] in end() }
+        }
+    }
+
+    /// Writes what the hold left unwritten and half-closes, so the receiver
+    /// reads the end of the stream and the transfer resolves.
+    func resume() {
+        lock.withLock { isResumed = true }
+        io.async { [self] in
+            guard !lock.withLock({ isEnded }) else { return }
+            remainder(fd)
+            _ = shutdown(fd, SHUT_WR)
+        }
+    }
+
+    /// Wakes the watcher at teardown, so a connection nothing resolved is closed
+    /// rather than left parked — and is not read as a cancellation.
+    func abandon() {
+        lock.withLock { isAbandoned = true }
+        ClipboardDataConnection.interrupt(fd: fd)
+    }
+
+    /// Closes the descriptor once the receiver's end is gone, recording the
+    /// cancellation when nothing had resumed the stream.
+    private func end() {
+        let (resumed, abandoned) = lock.withLock { () -> (Bool, Bool) in
+            isEnded = true
+            return (isResumed, isAbandoned)
+        }
+        if !resumed, !abandoned { closed.record(transferID) }
+        ClipboardDataConnection.end(fd: fd)
     }
 }
 

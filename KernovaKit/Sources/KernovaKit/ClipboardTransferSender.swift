@@ -11,6 +11,17 @@ public enum ClipboardTransferLink: Sendable {
     /// A dialler that connects to the peer's data port and returns the
     /// descriptor.
     case dial(@Sendable () throws -> Int32)
+
+    /// Gives the link up without serving it: an accepted descriptor is closed,
+    /// a dialler is simply never called.
+    ///
+    /// The exit for an owner that cannot answer at all — no transfer table to
+    /// register with — where dropping the value would leak the descriptor its
+    /// listener already opened.
+    public func abandon() {
+        guard case .accepted(let fd) = self else { return }
+        ClipboardDataConnection.end(fd: fd)
+    }
 }
 
 /// Streams one clipboard representation onto its own vsock data connection:

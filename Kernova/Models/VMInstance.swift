@@ -166,6 +166,14 @@ final class VMInstance {
     /// agent's drop client connects.
     var vsockDropService: VsockDropService?
 
+    /// Listener for the per-transfer clipboard data connections; installed and
+    /// withdrawn with the clipboard listener it belongs to.
+    var vsockClipboardDataListenerHost: VsockListenerHost?
+
+    /// Listener for the per-item drop data connections; always on, like the
+    /// drop channel it belongs to.
+    var vsockDropDataListenerHost: VsockListenerHost?
+
     /// `true` when this VM has reached `.running`, the host previously saw a
     /// guest agent connect (`configuration.lastSeenAgentVersion != nil`), and a
     /// grace period has elapsed without a `Hello` arriving over the control
@@ -796,6 +804,10 @@ final class VMInstance {
         dropHost.attach(to: socketDevice)
         vsockDropListenerHost = dropHost
 
+        let dropDataHost = makeDropDataListenerHost()
+        dropDataHost.attach(to: socketDevice)
+        vsockDropDataListenerHost = dropDataHost
+
         if configuration.agentLogForwardingEnabled {
             let logHost = makeLogListenerHost()
             logHost.attach(to: socketDevice)
@@ -806,6 +818,10 @@ final class VMInstance {
             let clipHost = makeClipboardListenerHost()
             clipHost.attach(to: socketDevice)
             vsockClipboardListenerHost = clipHost
+
+            let clipDataHost = makeClipboardDataListenerHost()
+            clipDataHost.attach(to: socketDevice)
+            vsockClipboardDataListenerHost = clipDataHost
         }
 
         Self.logger.info("Vsock services started for '\(self.name, privacy: .public)'")
@@ -980,6 +996,44 @@ final class VMInstance {
         }
     }
 
+    /// Builds the drop data listener, which hands each accepted connection to
+    /// the live drop service as one item's transfer.
+    private func makeDropDataListenerHost() -> VsockListenerHost {
+        VsockListenerHost(
+            port: KernovaVsockPort.dropData,
+            shouldAdmit: { [weak self] in
+                self?.featureChannelAdmission(.dropFiles)
+                    ?? .notReady(reason: "the VM instance is gone")
+            },
+            onAcceptFd: { [weak self] fd in
+                // A connection that beats the drop channel's own accept has
+                // nothing to belong to; the guest redials with the next pull.
+                guard let service = self?.vsockDropService else {
+                    ClipboardDataConnection.end(fd: fd)
+                    return
+                }
+                service.acceptDataConnection(fd: fd)
+            })
+    }
+
+    /// Builds the clipboard data listener, which hands each accepted connection
+    /// to the live clipboard service as one transfer.
+    private func makeClipboardDataListenerHost() -> VsockListenerHost {
+        VsockListenerHost(
+            port: KernovaVsockPort.clipboardData,
+            shouldAdmit: { [weak self] in
+                self?.featureChannelAdmission(.clipboardStreaming)
+                    ?? .notReady(reason: "the VM instance is gone")
+            },
+            onAcceptFd: { [weak self] fd in
+                guard let service = self?.clipboardService as? VsockClipboardService else {
+                    ClipboardDataConnection.end(fd: fd)
+                    return
+                }
+                service.acceptDataConnection(fd: fd)
+            })
+    }
+
     /// Builds the clipboard-channel listener; each accepted channel replaces any
     /// prior clipboard service.
     private func makeClipboardListenerHost() -> VsockListenerHost {
@@ -1148,12 +1202,14 @@ final class VMInstance {
         vsockDropService?.stop()
         vsockDropService = nil
         vsockDropListenerHost = nil
+        vsockDropDataListenerHost = nil
 
         if clipboardService is VsockClipboardService {
             clipboardService?.stop()
             clipboardService = nil
         }
         vsockClipboardListenerHost = nil
+        vsockClipboardDataListenerHost = nil
     }
 
     /// Reacts to a configuration change while the VM is running by installing
@@ -1275,12 +1331,18 @@ final class VMInstance {
             let clipHost = makeClipboardListenerHost()
             clipHost.attach(to: socketDevice)
             vsockClipboardListenerHost = clipHost
+
+            vsockClipboardDataListenerHost = nil
+            let clipDataHost = makeClipboardDataListenerHost()
+            clipDataHost.attach(to: socketDevice)
+            vsockClipboardDataListenerHost = clipDataHost
         } else {
             // The caller gates this branch on macOS guests, so any
             // `clipboardService` here is a `VsockClipboardService`.
             clipboardService?.stop()
             clipboardService = nil
             vsockClipboardListenerHost = nil
+            vsockClipboardDataListenerHost = nil
         }
     }
 }

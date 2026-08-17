@@ -259,8 +259,7 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             )
             onPolicy?(effective)
         case .clipboardOffer, .clipboardRequest, .clipboardRelease,
-            .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck,
-            .clipboardStreamAbort, .clipboardTransferRequest, .clipboardTransferReply, .logRecord,
+            .clipboardTransferRequest, .clipboardTransferReply, .logRecord,
             .dropOffer, .dropComplete, .dropRelease, .none:
             Self.logger.warning("Unexpected payload on control channel — wrong port")
         }

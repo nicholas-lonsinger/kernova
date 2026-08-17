@@ -18,10 +18,18 @@ message Frame {
   uint32 protocol_version = 1;
 
   // 22 was `ClipboardData`, the legacy single-frame clipboard data path
-  // (whole payload in one frame). Retired in favour of the chunk-streamed
-  // protocol (`ClipboardStreamBegin`/`ClipboardChunk`/`ClipboardStreamEnd`).
+  // (whole payload in one frame). Retired in favour of streaming the payload.
   // Never reuse — reserved for wire history.
   reserved 22;
+
+  // 24..28 were `ClipboardStreamBegin`, `ClipboardChunk`, `ClipboardStreamEnd`,
+  // `ClipboardStreamAck` and `ClipboardStreamAbort`, the chunk-streamed
+  // clipboard payload protocol: the control channel carried the bytes as
+  // framed chunks under an application-level credit window. Retired with it —
+  // a payload now rides its own data connection (50..59), where the kernel's
+  // socket buffers are the flow control. Never reuse — reserved for wire
+  // history.
+  reserved 24, 25, 26, 27, 28;
 
   // 29 was `ClipboardTreeFetch`, which pulled a directory representation's
   // placeholder tree one node at a time (a listing, or one child file).
@@ -50,16 +58,7 @@ message Frame {
 
     ClipboardRelease clipboard_release = 23;
 
-    // Chunk-streamed clipboard data. One streamed representation per
-    // `transfer_id`: Begin announces it, a series of Chunks carries the bytes,
-    // End commits with a digest. Ack is the receiver's credit + go-signal,
-    // Abort is an in-band graceful failure (disk full, read error, supersede).
-    ClipboardStreamBegin clipboard_stream_begin = 24;
-    ClipboardChunk clipboard_chunk = 25;
-    ClipboardStreamEnd clipboard_stream_end = 26;
-    ClipboardStreamAck clipboard_stream_ack = 27;
-    ClipboardStreamAbort clipboard_stream_abort = 28;
-
+    // 24..28 retired (see `reserved` above).
     // 29 retired (see `reserved` above).
 
     LogRecord log_record = 30;
@@ -154,9 +153,9 @@ message ClipboardRepresentationInfo {
   // For a directory rep (`is_directory`) it is the producer's stat-walk size
   // ESTIMATE of the *uncompressed* source tree, which is what a streamed
   // extract writes. The receiver's paste cap, free-space pre-flight and
-  // extract ceiling all gate on it; the stream layer re-enforces reality with
+  // extract ceiling all gate on it; the transport re-enforces reality with
   // `max_accept_byte_count` on the request, the extract's own output guard,
-  // and the End frame's size + SHA-256 verification.
+  // and the trailer's SHA-256 over every payload byte.
   uint64 byte_count = 2;
 
   // Suggested filename when this representation is a file payload (e.g. a
@@ -181,7 +180,7 @@ message ClipboardRepresentationInfo {
   // name, without an archive suffix) and `is_inline = false`.
   //
   // A directory rep streams as an archive of its tree — the same
-  // `ClipboardStreamBegin.is_archive` encoding every file representation
+  // `ClipboardTransferReply.is_archive` encoding every file representation
   // uses — encoded straight onto the wire when the representation is
   // *requested*, never at copy time and never through an archive file, and
   // extracted by the receiver straight into a real directory. What this flag
@@ -189,17 +188,17 @@ message ClipboardRepresentationInfo {
   // rather than delivering the archive's single file entry, and that
   // `byte_count` is an estimate.
   //
-  // The stream layer is offer-agnostic: the requester tells its own receiver
-  // that a transfer carries a directory when it sends the `ClipboardRequest`,
-  // so nothing on the wire repeats this flag. Excluded from the content digest
+  // The transport is offer-agnostic: the requester tells its own receiver that
+  // a transfer carries a directory when it registers the pull, so nothing on
+  // the wire repeats this flag. Excluded from the content digest
   // — the archive's SHA-256 and the folded filename already identify it.
   bool is_directory = 5;
 }
 
 // Sent by either side to advertise that fresh clipboard content is available.
 // Metadata only — never carries bytes. The receiver registers lazy promises
-// from `rep_info` and replies with a `ClipboardRequest` (one per representation
-// actually consumed) to pull the bytes via the chunk-streamed protocol.
+// from `rep_info` and pulls the bytes of each representation it actually
+// consumes over that transfer's own data connection.
 //
 // The `generation` field is a monotonically increasing counter scoped to the
 // sender. Each new offer bumps it; receivers use it to discard requests that
@@ -224,11 +223,14 @@ message ClipboardOffer {
   bool is_concealed = 5;
 }
 
-// Sent in response to a `ClipboardOffer` to pull one representation's bytes.
-// The OS asks the pasteboard per type, so a paste pulls only the representation
-// actually read; the requester sends one `ClipboardRequest` per representation
-// it consumes. The responder answers with a `ClipboardStreamBegin` →
-// `ClipboardChunk`* → `ClipboardStreamEnd` sequence keyed by `transfer_id`.
+// Sent in response to a `ClipboardOffer` to pull one representation's bytes,
+// by the side that cannot dial — the host, which only ever accepts vsock
+// connections. The OS asks the pasteboard per type, so a paste pulls only the
+// representation actually read; the requester sends one `ClipboardRequest` per
+// representation it consumes. The responder answers by dialling that
+// transfer's data connection and writing a `ClipboardTransferReply` naming
+// this `transfer_id`. A guest pulls with a `ClipboardTransferRequest` on the
+// connection instead, so this frame only ever travels host→guest.
 message ClipboardRequest {
   // Echoes the offer's generation so a request racing a newer offer is dropped.
   uint64 generation = 1;
@@ -239,9 +241,9 @@ message ClipboardRequest {
   reserved 2, 3;
   reserved "format", "utis";
 
-  // Correlates the streamed reply (Begin/Chunk/End/Ack/Abort) with this
-  // request. `transfer_id = (generation << 16) | repIndex`, scoped per
-  // connection.
+  // Names the transfer answering this request, which is how the data
+  // connection carrying it is matched to the pull awaiting it.
+  // `transfer_id = (generation << 16) | repIndex`, scoped per connection.
   uint64 transfer_id = 4;
 
   // The single representation being consumed (one of the offer's `rep_info`
@@ -259,104 +261,6 @@ message ClipboardRequest {
 // any pending state for the named generation.
 message ClipboardRelease {
   uint64 generation = 1;
-}
-
-// Announces one streamed representation in reply to a `ClipboardRequest`. The
-// bytes follow in a series of `ClipboardChunk` frames sharing `transfer_id`,
-// terminated by a `ClipboardStreamEnd`.
-message ClipboardStreamBegin {
-  // The offer generation this transfer belongs to (so a superseded offer's
-  // in-flight transfer can be recognised and dropped).
-  uint64 generation = 1;
-
-  // Correlates Begin/Chunk/End/Ack/Abort. Echoes the request's `transfer_id`.
-  uint64 transfer_id = 2;
-
-  // The representation's UTI.
-  string uti = 3;
-
-  // Total payload size in bytes for a raw payload, which the receiver bounds
-  // the arriving bytes by. 0 for an archive (`is_archive`), whose compressed
-  // size is only known once it has been produced: the offer's `byte_count`,
-  // which the requester already read, stands in for the receiver's pre-flight
-  // and extract ceiling, and `ClipboardStreamEnd` carries the authoritative
-  // wire count.
-  uint64 total_bytes = 4;
-
-  // Suggested filename for a file rep (see `ClipboardRepresentationInfo`);
-  // empty for an inline rep.
-  string filename = 5;
-
-  // Whether the receiver delivers the payload as pasteboard bytes (inline) or
-  // as a file. Mirrors `ClipboardRepresentationInfo.is_inline`.
-  bool is_inline = 6;
-
-  // Whether the payload is an AppleArchive (LZ4) the receiver extracts, rather
-  // than the representation's own bytes. Every representation that lands on
-  // the receiver's disk crosses as an archive — a file as a one-entry archive,
-  // a folder as an archive of its tree, and an inline representation larger
-  // than `ClipboardStreamTuning.maxResidentInlineBytes`, which the receiver
-  // extracts and maps back into memory. Only an inline representation at or
-  // below that size crosses raw, reassembled in RAM.
-  bool is_archive = 7;
-}
-
-// One chunk of a streamed representation. Each is a normal length-prefixed
-// frame the existing decoder reassembles; the payload is at most the negotiated
-// chunk size (64 KiB by default).
-message ClipboardChunk {
-  uint64 transfer_id = 1;
-
-  // Byte offset of `data` within the representation. Lets the receiver detect
-  // gaps/duplicates/reordering and write at the correct position.
-  uint64 offset = 2;
-
-  // The chunk bytes (<= the negotiated chunk size).
-  bytes data = 3;
-}
-
-// Terminates a streamed representation. The receiver commits only after the
-// reassembled byte count equals `total_bytes` and the digest matches `sha256`.
-message ClipboardStreamEnd {
-  uint64 transfer_id = 1;
-
-  // Total bytes the sender streamed — the authoritative count, and the Begin's
-  // `total_bytes` whenever that declared one.
-  uint64 total_bytes = 2;
-
-  // SHA-256 over the streamed bytes, computed incrementally as the sender read
-  // the source. The receiver verifies and reuses it as the representation's
-  // content digest (so a multi-GB file is never re-hashed).
-  bytes sha256 = 3;
-}
-
-// The receiver's credit + go-signal for a transfer. The sender holds at most
-// `window_bytes` of un-acked data in flight; the receiver sends an Ack only
-// after bytes are durably written, so credit tracks the slowest stage.
-message ClipboardStreamAck {
-  uint64 transfer_id = 1;
-
-  // CUMULATIVE count of bytes written and verified so far (not incremental),
-  // so the protocol self-heals against a lost or reordered Ack frame.
-  uint64 bytes_consumed = 2;
-
-  // The receiver's current in-flight window in bytes. The sender may have up
-  // to `bytes_consumed + window_bytes` bytes sent at any time.
-  uint64 window_bytes = 3;
-}
-
-// In-band graceful failure of a transfer (disk full, source read error, offer
-// superseded, connection teardown imminent). The channel stays up — an abort
-// is a message, not a disconnect. The peer stops, cleans up its partial state
-// (deletes any partial temp file), and is ready for the next transfer.
-message ClipboardStreamAbort {
-  uint64 transfer_id = 1;
-
-  // Stable machine-readable code; the vocabulary is ClipboardStreamAbortCode.
-  string code = 2;
-
-  // Human-readable detail for logs / user-facing messages.
-  string message = 3;
 }
 
 // The first frame on a data connection when the side that dialled is the one
@@ -447,9 +351,9 @@ message PolicyUpdate {
   // and stream `LogRecord` frames to the host.
   bool log_forwarding_enabled = 1;
 
-  // Whether the guest's clipboard agent should poll `NSPasteboard.general`
-  // and exchange `ClipboardOffer`/`ClipboardRequest` and the chunk-streamed
-  // data frames with the host on the clipboard port.
+  // Whether the guest's clipboard agent should poll `NSPasteboard.general`,
+  // exchange `ClipboardOffer`/`ClipboardRequest` with the host on the
+  // clipboard port, and dial the clipboard data port per transfer.
   bool clipboard_sharing_enabled = 2;
 
   // Ceiling on the total of one paste's file representations, in bytes. Both
@@ -481,8 +385,8 @@ message Error {
 // Host->guest: the files of one drag-and-drop gesture onto the VM display.
 //
 // Metadata only, exactly like `ClipboardOffer`: the guest pulls each
-// representation with a `ClipboardRequest` on the drop channel and receives it
-// through the same `ClipboardStreamBegin`/`Chunk`/`End` path a paste uses. Every
+// representation over its own data connection on the drop data port, through
+// the same `ClipboardTransferRequest`/`Reply` path a paste uses. Every
 // representation carries a non-empty `filename`, and the guest writes each into
 // its Downloads folder as a file — `is_inline` is meaningless here and is
 // ignored, since a drop never reaches a pasteboard.

@@ -128,6 +128,9 @@ public final class ClipboardTransferInbox: @unchecked Sendable {
     /// sees for both.
     public func adopt(fd: Int32, reply: Kernova_V1_ClipboardTransferReply) {
         guard let awaiter = lock.withLock({ awaiters[reply.transferID] }) else {
+            Self.logger.debug(
+                "Closing a data connection for clipboard transfer \(reply.transferID, privacy: .public) — nothing is awaiting it"
+            )
             ClipboardDataConnection.end(fd: fd)
             return
         }

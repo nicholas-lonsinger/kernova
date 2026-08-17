@@ -1,60 +1,19 @@
-import CryptoKit
 import Darwin
 import Foundation
 import KernovaTestSupport
+import Testing
 
 @testable import KernovaKit
-
-// MARK: - Peer wiring
-
-/// Makes a socketpair, hands the far end to `peer` on a thread of its own, and
-/// returns this side's descriptor to whoever dialled.
-///
-/// Stands in for a vsock dial: the caller gets a connected descriptor, and
-/// whatever plays the peer — the real outbox, the real inbox, or a hand-driven
-/// stand-in — takes the other end off the caller's thread, exactly as an accept
-/// on a listener would.
-///
-/// A peer stand-in parks in a blocking read for as long as its case needs, so
-/// it gets a thread of its own rather than one of GCD's global queue's, which
-/// a parallel bundle is already drawing on.
-func dialToPeer(_ peer: @escaping @Sendable (Int32) -> Void) throws -> Int32 {
-    let (near, far) = try makeRawSocketPair()
-    Thread.detachNewThread { peer(far) }
-    return near
-}
-
-/// The `ClipboardTransferRequest` a dialling receiver opens with, or `nil` when
-/// the connection carried something else.
-func readTransferRequest(fd: Int32) -> Kernova_V1_ClipboardTransferRequest? {
-    guard let frame = try? ClipboardDataConnection.readFrame(fd: fd),
-        case .clipboardTransferRequest(let request) = frame.payload
-    else { return nil }
-    return request
-}
-
-/// The `ClipboardTransferReply` a sending peer opens with, or `nil` when the
-/// connection carried something else.
-func readTransferReply(fd: Int32) -> Kernova_V1_ClipboardTransferReply? {
-    guard let frame = try? ClipboardDataConnection.readFrame(fd: fd),
-        case .clipboardTransferReply(let reply) = frame.payload
-    else { return nil }
-    return reply
-}
 
 /// Writes the descriptor a hand-driven sending peer's payload follows.
 func writeTransferReply(
     fd: Int32, transferID: UInt64, isArchive: Bool, isInline: Bool, totalBytes: UInt64
 ) throws {
-    var frame = Frame()
-    frame.protocolVersion = 1
-    frame.clipboardTransferReply = Kernova_V1_ClipboardTransferReply.with {
-        $0.transferID = transferID
-        $0.isArchive = isArchive
-        $0.isInline = isInline
-        $0.totalBytes = totalBytes
-    }
-    try ClipboardDataConnection.writeFrame(frame, fd: fd)
+    try ClipboardDataConnection.writeFrame(
+        makeTransferReplyFrame(
+            transferID: transferID, isArchive: isArchive, isInline: isInline,
+            totalBytes: Int(clamping: totalBytes)),
+        fd: fd)
 }
 
 /// Copies everything from `source` to `destination`, changing one payload byte
@@ -98,11 +57,6 @@ func randomBytes(count: Int) throws -> Data {
         bytes.append(block)
     }
     return bytes
-}
-
-/// The SHA-256 a hand-driven peer's completion trailer carries.
-func sha256(_ data: Data) -> Data {
-    Data(SHA256.hash(data: data))
 }
 
 // MARK: - Collector
@@ -179,6 +133,42 @@ final class TransferCollector: @unchecked Sendable {
     var receiveProgressReports: [(bytes: Int, total: Int)] { lock.withLock { received } }
     /// Every `(bytesSent, totalBytes)` the sending side reported.
     var sendProgressReports: [(bytes: Int, total: Int)] { lock.withLock { sent } }
+}
+
+// MARK: - Staging
+
+/// Answers a receiver's free-space query and remembers the staging root it was
+/// asked about.
+///
+/// A receiver reserves its own extract destination, so the root its free-space
+/// guard is queried against is the only handle a test has on what a transfer put
+/// on disk — and every archived transfer queries it before it reserves anything.
+final class StagingProbe: @unchecked Sendable {
+    private let answer: @Sendable (Int) -> Int64
+    private let state = Box<(queries: Int, root: URL?)>((0, nil))
+
+    /// - Parameter freeSpace: answers the *n*th query, counted from zero, so a
+    ///   test can be roomy at the pre-flight and full from the next check on.
+    init(freeSpace: @escaping @Sendable (Int) -> Int64 = { _ in 100 << 30 }) {
+        answer = freeSpace
+    }
+
+    /// The provider to hand a ``TransferHarness``.
+    var provider: ClipboardFileStaging.FreeSpaceProvider {
+        { [self] url in
+            let seen = state.value.queries
+            state.value = (seen + 1, url)
+            return answer(seen)
+        }
+    }
+
+    /// How many times a transfer asked whether it had room.
+    var queryCount: Int { state.value.queries }
+
+    /// Every file staged under the root a transfer asked about.
+    func stagedFiles() throws -> [URL] {
+        materializedFiles(under: try #require(state.value.root))
+    }
 }
 
 // MARK: - Harness

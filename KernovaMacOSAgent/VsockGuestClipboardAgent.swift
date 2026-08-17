@@ -56,6 +56,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     private let client: VsockGuestClient
     private let pasteboard: Pasteboard
 
+    /// Opens one transfer's data connection to the host; tests hand over a
+    /// socketpair in place of a real dial.
+    private let dataDialer: @Sendable (UInt32) throws -> Int32
+
     /// The one write choke point a host offer's promise reaches the guest
     /// pasteboard through, and the retraction that withdraws it.
     ///
@@ -228,9 +232,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         reporter: ClipboardTransferReporter,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
+        dataDialer: @escaping @Sendable (UInt32) throws -> Int32 = {
+            try VsockGuestDataDialer.connect(port: $0)
+        },
         onClipboardNotice: @escaping @Sendable () -> Void = {}
     ) {
         self.pasteboard = pasteboard
+        self.dataDialer = dataDialer
         self.publisher = ClipboardPasteboardPublisher(
             pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
         self.client = client
@@ -355,6 +363,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                     progressRevealDelay: self.progressRevealDelay,
                     progressIdleGap: self.progressIdleGap,
                     clock: self.clock,
+                    dataLink: .dials(
+                        port: KernovaVsockPort.clipboardData, connect: self.dataDialer),
                     // A brand-new host has no record of prior offers; the fresh
                     // dedup latch is what re-announces the standing snapshot.
                     firstGeneration: self.nextLocalGeneration),

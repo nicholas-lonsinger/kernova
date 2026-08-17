@@ -212,6 +212,14 @@ final class VsockClipboardService: ClipboardServicing {
         )
     }
 
+    /// Takes over one transfer's data connection, accepted on the clipboard
+    /// data port.
+    ///
+    /// Takes ownership of `fd` on every path.
+    func acceptDataConnection(fd: Int32) {
+        endpoint.acceptDataConnection(fd: fd)
+    }
+
     func stop() {
         endpoint.stop()
         isConnected = false

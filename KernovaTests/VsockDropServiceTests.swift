@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import KernovaKit
 import KernovaTestSupport
@@ -47,6 +46,25 @@ struct VsockDropServiceTests {
             recorder.cancel()
             service.stop()
             guest.close()
+        }
+
+        /// Pulls one offered item the way the guest agent does: a data connection
+        /// of its own opening with the request — a macOS guest only ever dials —
+        /// then the reply, the payload and the trailer that answer it.
+        ///
+        /// The pull blocks until the transfer ends, so it runs off the suite's
+        /// main actor; the service streams onto the connection from there.
+        func pull(generation: UInt64, transferID: UInt64, uti: String) async throws
+            -> ReceivedTransfer
+        {
+            let (peerEnd, hostEnd) = try makeRawSocketPair()
+            service.acceptDataConnection(fd: hostEnd)
+            let received = await offCooperativePool {
+                try? pullTransfer(
+                    fd: peerEnd, generation: generation, transferID: transferID, uti: uti)
+            }
+            return try #require(
+                received, "The drop answered transfer \(transferID) with nothing readable")
         }
 
         /// The refusal standing on this VM's report, or `nil` when none is.
@@ -156,31 +174,26 @@ struct VsockDropServiceTests {
 
         let xid = transferID(generation: 1, repIndex: 0)
         let uti = try #require(harness.recorder.dropOffers.first?.repInfo.first?.uti)
-        try harness.guest.send(makeRequestFrame(generation: 1, transferID: xid, uti: uti))
-        try await harness.recorder.waitForFrames { !harness.recorder.begins.isEmpty }
+        let received = try await harness.pull(generation: 1, transferID: xid, uti: uti)
 
-        let begin = try #require(harness.recorder.begins.first)
-        #expect(begin.transferID == xid)
-        #expect(begin.filename == "blob.bin")
-        #expect(begin.isArchive)
+        #expect(received.reply.transferID == xid)
+        #expect(received.reply.isArchive)
         // An archive's compressed size isn't known until its last byte.
-        #expect(begin.totalBytes == 0)
-        #expect(!begin.isInline)
+        #expect(received.reply.totalBytes == 0)
+        #expect(!received.reply.isInline)
 
-        // The first ack is the sender's go-signal.
-        try harness.guest.send(makeAckFrame(transferID: xid))
-        try await harness.recorder.waitForFrames { harness.recorder.end(for: xid) != nil }
-
-        let wire = harness.recorder.chunkBytes(for: xid)
+        let wire = received.payload
         let unpacked = try extractedClipboardArchive(wire)
         defer { try? FileManager.default.removeItem(at: unpacked) }
+        // Nothing on the connection repeats the offer's name: the archive's one
+        // entry is what lands the file under it.
         #expect(
             try FileManager.default.contentsOfDirectory(atPath: unpacked.path) == ["blob.bin"])
         #expect(try Data(contentsOf: unpacked.appendingPathComponent("blob.bin")) == payload)
 
-        let end = try #require(harness.recorder.end(for: xid))
-        #expect(end.totalBytes == UInt64(wire.count))
-        #expect(end.sha256 == Data(SHA256.hash(data: wire)))
+        // The trailer's digest is taken over exactly the bytes that crossed.
+        #expect(
+            received.trailer == ClipboardTransferTrailer(ending: .complete(digest: sha256(wire))))
     }
 
     @Test("the guest's request streams a dropped folder as its tree archive")
@@ -199,17 +212,13 @@ struct VsockDropServiceTests {
         let xid = transferID(generation: 1, repIndex: 0)
         let rep = try #require(harness.recorder.dropOffers.first?.repInfo.first)
         #expect(rep.isDirectory)
-        try harness.guest.send(makeRequestFrame(generation: 1, transferID: xid, uti: rep.uti))
-        try await harness.recorder.waitForFrames { !harness.recorder.begins.isEmpty }
+        let received = try await harness.pull(generation: 1, transferID: xid, uti: rep.uti)
 
-        let begin = try #require(harness.recorder.begins.first)
-        #expect(begin.isArchive)
-        #expect(begin.totalBytes == 0)
+        #expect(received.reply.transferID == xid)
+        #expect(received.reply.isArchive)
+        #expect(received.reply.totalBytes == 0)
 
-        try harness.guest.send(makeAckFrame(transferID: xid))
-        try await harness.recorder.waitForFrames { harness.recorder.end(for: xid) != nil }
-
-        let wire = harness.recorder.chunkBytes(for: xid)
+        let wire = received.payload
         // The tree's entries are relative to the folder, so its own name is not
         // in the archive — the receiver supplies it.
         let unpacked = try extractedClipboardArchive(wire, named: "Photos")
@@ -219,9 +228,8 @@ struct VsockDropServiceTests {
             try Data(contentsOf: unpacked.appendingPathComponent("one.txt"))
                 == Data("hello".utf8))
 
-        let end = try #require(harness.recorder.end(for: xid))
-        #expect(end.totalBytes == UInt64(wire.count))
-        #expect(end.sha256 == Data(SHA256.hash(data: wire)))
+        #expect(
+            received.trailer == ClipboardTransferTrailer(ending: .complete(digest: sha256(wire))))
     }
 
     // MARK: - Cancelling
@@ -237,10 +245,11 @@ struct VsockDropServiceTests {
         #expect(harness.service.startDrop(urls: [file]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
         // The readout is the only handle a Cancel has, and only a running one
-        // carries it — so the guest's request is what puts one on screen.
+        // carries it — so the guest's pull is what puts one on screen.
         let xid = transferID(generation: 1, repIndex: 0)
         let uti = try #require(harness.recorder.dropOffers.first?.repInfo.first?.uti)
-        try harness.guest.send(makeRequestFrame(generation: 1, transferID: xid, uti: uti))
+        let served = try await harness.pull(generation: 1, transferID: xid, uti: uti)
+        #expect(served.isComplete)
         try await harness.reports.wait { harness.reports.runningSnapshot != nil }
 
         try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
@@ -352,10 +361,11 @@ struct VsockDropServiceTests {
         #expect(harness.service.startDrop(urls: [file]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
         // The user's Cancel comes off the running readout, which the guest's
-        // first request is what raises.
+        // first pull is what raises.
         let xid = transferID(generation: 1, repIndex: 0)
         let uti = try #require(harness.recorder.dropOffers.first?.repInfo.first?.uti)
-        try harness.guest.send(makeRequestFrame(generation: 1, transferID: xid, uti: uti))
+        let served = try await harness.pull(generation: 1, transferID: xid, uti: uti)
+        #expect(served.isComplete)
         try await harness.reports.wait { harness.reports.runningSnapshot != nil }
         harness.reports.reporter.cancelRunning()
         try await harness.recorder.waitForFrames { !harness.recorder.dropReleases.isEmpty }
@@ -463,20 +473,5 @@ extension FrameRecorder {
             if case .dropRelease(let release) = $0.payload { return release }
             return nil
         }
-    }
-
-    /// The chunks recorded for `transferID`, concatenated in arrival order.
-    fileprivate func chunkBytes(for transferID: UInt64) -> Data {
-        chunks(for: transferID).reduce(into: Data()) { $0.append($1.data) }
-    }
-
-    /// The `ClipboardStreamEnd` recorded for `transferID`, if any.
-    fileprivate func end(for transferID: UInt64) -> Kernova_V1_ClipboardStreamEnd? {
-        for frame in frames {
-            if case .clipboardStreamEnd(let end) = frame.payload, end.transferID == transferID {
-                return end
-            }
-        }
-        return nil
     }
 }

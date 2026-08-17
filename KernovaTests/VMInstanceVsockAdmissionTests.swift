@@ -207,6 +207,35 @@ struct VMInstanceVsockAdmissionTests {
         try await waitForChange { instance.featureChannelAdmission(.dropFiles) == .admit }
     }
 
+    // MARK: - Data ports
+
+    /// Each transfer dials a port of its own, so a collision would silently hand
+    /// one service's connections to another's listener.
+    @Test("Every vsock port is distinct")
+    func portsAreDistinct() {
+        let ports = [
+            KernovaVsockPort.control, KernovaVsockPort.clipboard, KernovaVsockPort.log,
+            KernovaVsockPort.drop, KernovaVsockPort.clipboardData, KernovaVsockPort.dropData,
+        ]
+        #expect(Set(ports).count == ports.count)
+    }
+
+    /// A data listener outliving its session would keep admitting transfers into
+    /// a service that is gone.
+    @Test("Tearing the vsock services down withdraws the data listeners too")
+    func stopWithdrawsDataListeners() {
+        let instance = makeInstance()
+        instance.vsockClipboardDataListenerHost = VsockListenerHost(
+            port: KernovaVsockPort.clipboardData, onAcceptFd: { _ in })
+        instance.vsockDropDataListenerHost = VsockListenerHost(
+            port: KernovaVsockPort.dropData, onAcceptFd: { _ in })
+
+        instance.stopVsockServices()
+
+        #expect(instance.vsockClipboardDataListenerHost == nil)
+        #expect(instance.vsockDropDataListenerHost == nil)
+    }
+
     @Test("Stopping the control service withdraws drop admission too")
     func stopWithdrawsDropAdmission() async throws {
         let instance = makeInstance()

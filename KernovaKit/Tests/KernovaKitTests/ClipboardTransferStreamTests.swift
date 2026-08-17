@@ -757,8 +757,6 @@ struct ClipboardTransferStreamTests {
         #expect(detail.timeToFirstByte != nil)
         #expect(detail.sourceWait >= 0)
         // The chunk-and-credit stages belong to a transport this one replaced.
-        #expect(detail.chunkCount == nil)
-        #expect(detail.creditStall == nil)
         #expect(!outbound.logSummary.contains("chunks"))
         #expect(!outbound.logSummary.contains("credit"))
         // Both sides state the payload in the same unit, so the two lines
