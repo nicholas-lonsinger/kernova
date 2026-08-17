@@ -131,7 +131,9 @@ identical with or without gating.
 
 A preview must be derivable **cheaply**: header-only metadata, a size-capped thumbnail decode, or
 a placeholder for anything too large to render cheaply. A bounded preview-pull is allowed; it must
-never escalate into a full materialization.
+never escalate into a full materialization. **A preview and a paste for the same representation
+share one pull** — neither displaces the other, the second joins the first — so the preview's own
+bound is also what keeps a joined paste's wait short against the deadline (§2).
 
 ### 6. Fidelity: preserve every representation, resolve at paste time
 

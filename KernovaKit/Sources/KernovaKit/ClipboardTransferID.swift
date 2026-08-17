@@ -10,11 +10,11 @@ import Foundation
 /// key across a peer's sender *and* receiver tables where a single
 /// `ClipboardStreamAbort` would tear down both.
 ///
-/// `RATIONALE (2026-08-04):` the id is **intentionally** reproducible from
-/// `(generation, repIndex, direction)` alone — a paste's re-fire of the same rep
-/// must land on the same id so the `LazyPullCoordinator`'s newest-awaiter-wins
-/// supersession applies. A reused id's worst case is one spurious re-abort,
-/// never corruption — pinned by
+/// `RATIONALE (2026-08-16):` the id is **intentionally** reproducible from
+/// `(generation, repIndex, direction)` alone — a re-fire for the same rep, or the
+/// window's preview fetch of it, must land on the same id so it *joins* the
+/// `LazyPullCoordinator`'s in-flight pull rather than opening a second one. A
+/// reused id's worst case is one spurious re-abort, never corruption — pinned by
 /// `LazyPullCoordinatorTests.staleAbortCollidesWithReusedAwaiterButTableStaysConsistent`.
 public enum ClipboardTransferID {
     /// High bit marking a transfer the **host** receives (guest→host direction).

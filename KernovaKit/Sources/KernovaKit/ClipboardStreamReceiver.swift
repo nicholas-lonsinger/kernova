@@ -44,6 +44,9 @@ public typealias ClipboardSinkFactory =
 public final class ClipboardStreamReceiver: @unchecked Sendable {
     private typealias Transfer = InboundTransfer
 
+    private static let logger = KernovaLogger(
+        subsystem: "app.kernova", category: "ClipboardStreamReceiver")
+
     private let clock: any EngineClock
     private let channel: VsockChannel
     private let staging: ClipboardFileStaging
@@ -635,21 +638,23 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
 
     /// Aborts every in-flight transfer for a superseded generation, deleting
     /// partial temp files, and wakes any lazy pull awaiting that generation.
-    ///
-    /// `except` names transfer ids another caller owns and this cancel may not
-    /// tear down — a paste fire's pull running alongside the preview pulls a
-    /// Cancel on the readout stops.
-    public func cancel(generation: UInt64, except: Set<UInt64> = []) {
+    public func cancel(generation: UInt64) {
         let affected = lock.withLock {
-            transfers.values.filter {
-                $0.generation == generation && !except.contains($0.transferID)
-            }
+            transfers.values.filter { $0.generation == generation }
         }
         for transfer in affected { teardown(transfer) }
         // Also wake awaiters whose transfer never produced a Begin, so a pull
         // blocked on a superseded generation resolves instead of parking to its
         // timeout.
-        failAwaiters { Self.generation(ofTransferID: $0) == generation && !except.contains($0) }
+        failAwaiters { Self.generation(ofTransferID: $0) == generation }
+    }
+
+    /// Aborts one in-flight transfer, deleting its partial temp file, and wakes a
+    /// lazy pull awaiting it — the teardown for a single abandoned pull, leaving
+    /// every sibling of the same generation streaming.
+    public func cancel(transferID: UInt64) {
+        if let transfer = lock.withLock({ transfers[transferID] }) { teardown(transfer) }
+        failAwaiters { $0 == transferID }
     }
 
     /// Aborts every in-flight transfer (channel teardown / capability disable)
@@ -674,6 +679,10 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     /// request, so the stream layer never needs it on the wire.
     /// `advertisedByteCount` is that offer's `byte_count`, which the extract is
     /// then held to — nothing on the wire states an archive's unpacked size.
+    ///
+    /// One live registration per id: callers sharing a `transfer_id` share the
+    /// pull that owns it (`LazyPullCoordinator`), so an overwrite here would be a
+    /// second pull nobody asked for.
     public func awaitTransfer(
         _ transferID: UInt64,
         extractsDirectoryNamed: String? = nil,
@@ -682,18 +691,26 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         onAbort: @escaping @Sendable (ClipboardStreamAbortInfo) -> Void,
         onProgress: (@Sendable (_ bytesReceived: Int, _ totalBytes: Int) -> Void)? = nil
     ) {
-        lock.withLock {
+        let displaced: Bool = lock.withLock {
             // A transfer id is derivable from `(generation, repIndex, direction)`,
             // so a fresh pull reuses the id of one this side gave up on. Clearing
             // the cancellation record here is what keeps the retry from being
             // refused as that abandoned pull's late reply.
             cancelledTransfers.remove(transferID)
             cancelledOrder.removeAll { $0 == transferID }
-            awaiters[transferID] = Awaiter(
-                extractsDirectoryNamed: extractsDirectoryNamed,
-                advertisedByteCount: max(0, advertisedByteCount),
-                onComplete: onComplete, onAbort: onAbort, onProgress: onProgress)
+            let prior = awaiters.updateValue(
+                Awaiter(
+                    extractsDirectoryNamed: extractsDirectoryNamed,
+                    advertisedByteCount: max(0, advertisedByteCount),
+                    onComplete: onComplete, onAbort: onAbort, onProgress: onProgress),
+                forKey: transferID)
+            return prior != nil
         }
+        guard displaced else { return }
+        Self.logger.fault(
+            "Clipboard transfer \(transferID, privacy: .public) was awaited twice — the earlier awaiter is dropped"
+        )
+        assertionFailure("Clipboard transfer \(transferID) was awaited twice")
     }
 
     /// Deregisters a per-transfer delivery handler without firing it.

@@ -477,52 +477,60 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         let coordinator = self.coordinator
         let operation = job.operation
         guard let receiver = mainQueue({ self.receiver }) else { return .cancelled }
-        receiver.awaitTransfer(
-            transferID,
-            // A folder's bytes are an archive of its tree, extracted as they
-            // arrive. Directory-ness rides the offer this side already read, so
-            // nothing on the wire has to repeat it.
-            extractsDirectoryNamed: info.isDirectory ? info.filename : nil,
-            advertisedByteCount: byteCount,
-            onComplete: { rep in coordinator.deliver(transferID, rep) },
-            onAbort: { abort in coordinator.abort(transferID, abort) },
-            onProgress: { bytes, total in
-                // Re-arms the inactivity backstop so a large still-streaming file
-                // is never cut off mid-transfer.
-                coordinator.heartbeat(transferID)
-                operation.unitProgressed(
-                    id: transferID, bytesTransferred: UInt64(max(0, bytes)),
-                    totalBytes: UInt64(max(0, total)))
-            })
         operation.unitBegan(
             id: transferID, expectedBytes: info.byteCount,
             name: info.filename.isEmpty ? nil : info.filename)
 
         let uti = info.uti
         let generation = job.generation
-        let outcome = coordinator.pull(transferID: transferID, timeout: pullTimeout) {
-            var request = Frame()
-            request.protocolVersion = 1
-            request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
-                $0.generation = generation
-                $0.transferID = transferID
-                $0.uti = uti
-                $0.maxAcceptByteCount = maxAccept
-            }
-            do {
-                try channel.send(request)
-            } catch {
-                // No request went out, so no reply will arrive — resolve the pull
-                // now instead of blocking to the backstop timeout.
-                receiver.cancelAwait(transferID)
-                coordinator.abort(
+        let isDirectory = info.isDirectory
+        let filename = info.filename
+        let outcome = coordinator.pull(
+            transferID: transferID, timeout: pullTimeout,
+            onProgress: { bytes, total in
+                operation.unitProgressed(
+                    id: transferID, bytesTransferred: UInt64(max(0, bytes)),
+                    totalBytes: UInt64(max(0, total)))
+            },
+            retire: { receiver.cancelAwait(transferID) },
+            start: {
+                receiver.awaitTransfer(
                     transferID,
-                    ClipboardStreamAbortInfo(
-                        transferID: transferID, code: .sendFailed,
-                        message: "Failed to request the dropped file", neededBytes: nil,
-                        availableBytes: nil))
-            }
-        }
+                    // A folder's bytes are an archive of its tree, extracted as
+                    // they arrive. Directory-ness rides the offer this side
+                    // already read, so nothing on the wire has to repeat it.
+                    extractsDirectoryNamed: isDirectory ? filename : nil,
+                    advertisedByteCount: byteCount,
+                    onComplete: { rep in coordinator.deliver(transferID, rep) },
+                    onAbort: { abort in coordinator.abort(transferID, abort) },
+                    // Re-arms the inactivity backstop, and feeds the readout, so a
+                    // large still-streaming file is never cut off mid-transfer.
+                    onProgress: { bytes, total in
+                        coordinator.progress(
+                            transferID, bytesReceived: bytes, totalBytes: total)
+                    })
+                var request = Frame()
+                request.protocolVersion = 1
+                request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
+                    $0.generation = generation
+                    $0.transferID = transferID
+                    $0.uti = uti
+                    $0.maxAcceptByteCount = maxAccept
+                }
+                do {
+                    try channel.send(request)
+                } catch {
+                    // No request went out, so no reply will arrive — resolve the
+                    // pull now instead of blocking to the backstop timeout.
+                    receiver.cancelAwait(transferID)
+                    coordinator.abort(
+                        transferID,
+                        ClipboardStreamAbortInfo(
+                            transferID: transferID, code: .sendFailed,
+                            message: "Failed to request the dropped file", neededBytes: nil,
+                            availableBytes: nil))
+                }
+            })
 
         switch outcome {
         case .delivered(let representation):
@@ -547,17 +555,11 @@ final class VsockGuestDropAgent: @unchecked Sendable {
             return .failure(
                 abort.code == .diskFull ? .dropDiskFull : .dropFailed, abort.message)
         case .timedOut:
-            receiver.cancelAwait(transferID)
             operation.unitEnded(id: transferID, succeeded: false)
             sendStreamAbortFromWorker(transferID: transferID, on: channel)
             Self.logger.warning("Dropped file \(transferID, privacy: .public) timed out")
             return .failure(.dropFailed, "The transfer stopped making progress")
         case .cancelled:
-            receiver.cancelAwait(transferID)
-            operation.unitEnded(id: transferID, succeeded: false)
-            return .cancelled
-        case .superseded:
-            // A newer pull owns this id now; touch nothing keyed by it.
             operation.unitEnded(id: transferID, succeeded: false)
             return .cancelled
         }

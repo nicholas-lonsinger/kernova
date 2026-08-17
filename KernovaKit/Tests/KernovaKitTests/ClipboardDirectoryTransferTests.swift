@@ -414,7 +414,10 @@ struct ClipboardDirectoryTransferTests {
         try await done.wait { outcome.value != nil }
 
         // Same sender, same id: the table entry has to be gone, or this call is
-        // silently dropped and the peer waits for a Begin that never comes.
+        // silently dropped and the peer waits for a Begin that never comes. The
+        // receive side retires the abandoned pull's awaiter first, as the pull
+        // that gave up on this id does.
+        rig.receiver.cancelAwait(id)
         prime(rig, id: id, named: "Project")
         rig.sender.startTransfer(
             transferID: id, generation: 1,

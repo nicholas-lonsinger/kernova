@@ -29,7 +29,7 @@ struct LazyPullCoordinatorMainThreadTests {
         // returning — timed out — so `.delivered` proves the loop turned.
         RunLoop.main.perform { coordinator.deliver(7, rep) }
 
-        let outcome = coordinator.pull(transferID: 7, timeout: Self.window) {}
+        let outcome = coordinator.pull(transferID: 7, timeout: Self.window, retire: {}, start: {})
 
         guard case .delivered(let delivered) = outcome else {
             Issue.record("Expected .delivered from the performed block, got \(outcome)")
@@ -43,7 +43,7 @@ struct LazyPullCoordinatorMainThreadTests {
         let coordinator = LazyPullCoordinator()
         RunLoop.main.perform { coordinator.failAll() }
 
-        let outcome = coordinator.pull(transferID: 8, timeout: Self.window) {}
+        let outcome = coordinator.pull(transferID: 8, timeout: Self.window, retire: {}, start: {})
 
         guard case .cancelled = outcome else {
             Issue.record("Expected .cancelled from the performed failAll, got \(outcome)")
@@ -64,9 +64,9 @@ struct LazyPullCoordinatorMainThreadTests {
         // can consume the outer's; the outer must still return promptly rather
         // than stranding to its window — the per-slice re-check is what guarantees
         // that under any interleaving.
-        let outcome = coordinator.pull(transferID: 1, timeout: 5) {
+        let outcome = coordinator.pull(transferID: 1, timeout: 5, retire: {}) {
             RunLoop.main.perform {
-                let inner = coordinator.pull(transferID: 2, timeout: 5) {
+                let inner = coordinator.pull(transferID: 2, timeout: 5, retire: {}) {
                     coordinator.deliver(1, self.inlineRep("outer"))
                     RunLoop.main.perform { coordinator.deliver(2, self.inlineRep("inner")) }
                 }
@@ -99,7 +99,7 @@ struct LazyPullCoordinatorMainThreadTests {
         defer { NestedEventLoopWait.sliceSecondsForTesting = nil }
         let started = clock.now
 
-        let outcome = coordinator.pull(transferID: 9, timeout: Self.window) {
+        let outcome = coordinator.pull(transferID: 9, timeout: Self.window, retire: {}) {
             // Runs on this thread once the slot is registered, so the deliver
             // below cannot be missed.
             Thread { coordinator.deliver(9, rep) }.start()

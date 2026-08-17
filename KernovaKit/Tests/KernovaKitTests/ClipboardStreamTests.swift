@@ -1799,8 +1799,8 @@ struct ClipboardStreamTests {
         #expect(harness.collector.completedCount == 0)
     }
 
-    @Test("cancelling a generation spares the awaiters and transfers it is told to except")
-    func cancelGenerationSparesExceptedTransfers() async throws {
+    @Test("cancelling one transfer leaves its generation's other transfers streaming")
+    func cancelTransferIDSparesItsSiblings() async throws {
         let harness = try roomyHarness()
         defer { harness.tearDown() }
         let collector = harness.collector
@@ -1815,25 +1815,27 @@ struct ClipboardStreamTests {
                 onComplete: { collector.complete(id, $0) },
                 onAbort: { collector.abort($0) })
         }
-        // The paste's transfer is live on the wire, the state a generation-wide
-        // teardown would otherwise sweep up.
+        // Both transfers are live on the wire, the state a generation-wide
+        // teardown would sweep up together.
         let payload = Data("kept".utf8)
-        harness.receiver.handleBegin(
-            .with {
-                $0.generation = 6
-                $0.transferID = pasteID
-                $0.uti = ClipboardContent.utf8TextUTI
-                $0.totalBytes = UInt64(payload.count)
-                $0.isInline = true
-            })
+        for id in [previewID, pasteID] {
+            harness.receiver.handleBegin(
+                .with {
+                    $0.generation = 6
+                    $0.transferID = id
+                    $0.uti = ClipboardContent.utf8TextUTI
+                    $0.totalBytes = UInt64(payload.count)
+                    $0.isInline = true
+                })
+        }
 
-        harness.receiver.cancel(generation: 6, except: [pasteID])
+        harness.receiver.cancel(transferID: previewID)
 
         try await collector.gate.wait { collector.abortCount == 1 }
         #expect(collector.abortInfos.first?.transferID == previewID)
         #expect(collector.abortInfos.first?.code == .cancelled)
 
-        // The excepted transfer still delivers.
+        // The sibling still delivers.
         harness.receiver.handleChunk(
             .with {
                 $0.transferID = pasteID

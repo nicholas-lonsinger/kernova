@@ -1102,21 +1102,16 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             // image file promises both — carries no size bound (§1).
             guard type != .fileURL || allowsFileURLPull(repIndex, promise: promise, channel: channel)
             else { return nil }
-            if let pulled = pullRepresentation(
-                repIndex, promise: promise, channel: channel, receiver: receiver)
-            {
-                promise.materialized[repIndex] = pulled
-                representation = pulled
-            } else if let cached = liveMaterialized(repIndex: repIndex, generation: generation) {
-                // The wait ran the run loop, so a sibling flavor of this same rep
-                // — an image file promises both at one repIndex — could have fired
-                // nested, superseded this pull's transfer id and cached the rep on
-                // its way out. Serve from that cache rather than leaving this
-                // flavor empty.
-                representation = cached
-            } else {
-                return nil
-            }
+            // The wait runs the run loop, so a sibling flavor of this same rep —
+            // an image file promises both at one repIndex — can fire nested. It
+            // joins this pull rather than displacing it, and both flavors are
+            // served from the one transfer.
+            guard
+                let pulled = pullRepresentation(
+                    repIndex, promise: promise, channel: channel, receiver: receiver)
+            else { return nil }
+            promise.materialized[repIndex] = pulled
+            representation = pulled
         }
 
         if type == .fileURL {
@@ -1126,18 +1121,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         return representation.inMemoryData
     }
 
-    /// The materialized rep for `repIndex`, but only while `generation` still
-    /// addresses the live offer — the cache a nested sibling-flavor fire fills.
-    private func liveMaterialized(repIndex: Int, generation: UInt64)
-        -> ClipboardContent.Representation?
-    {
-        guard let promise = inboundPromise, promise.generation == generation else { return nil }
-        return promise.materialized[repIndex]
-    }
-
-    /// Registers a per-transfer awaiter, sends the request via `sendRequest`, and
-    /// holds the calling thread until the transfer resolves — the shared
-    /// transport core of every inbound pull.
+    /// Starts or joins the pull for `transferID` and holds the calling thread
+    /// until it resolves — the shared transport core of every inbound pull.
+    ///
+    /// The awaiter registration and the request ride the coordinator's `start`,
+    /// so a nested fire for the same rep — a sibling flavor asked for while this
+    /// wait runs the run loop — joins this transfer instead of opening a second
+    /// one, and both fires take its bytes.
     ///
     /// The deadlock-safe wakeup: the receiver's `awaitTransfer` handler fires
     /// off-main into the coordinator, never hopping to the thread this call
@@ -1148,33 +1138,40 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         sendRequest: @escaping () throws -> Void
     ) -> LazyPullOutcome {
         let coordinator = lazyCoordinator
-        receiver.awaitTransfer(
-            transferID,
-            extractsDirectoryNamed: extractsDirectoryNamed,
-            advertisedByteCount: advertisedByteCount,
-            onComplete: { rep in coordinator.deliver(transferID, rep) },
-            onAbort: { abort in coordinator.abort(transferID, abort) },
-            // Re-arm the pull's inactivity backstop on every chunk so a large
-            // still-streaming transfer is never timed out mid-flight.
-            onProgress: { _, _ in coordinator.heartbeat(transferID) })
-        return coordinator.pull(transferID: transferID) {
-            do {
-                try sendRequest()
-            } catch {
-                Self.logger.warning(
-                    "Failed to send clipboard request: \(error.localizedDescription, privacy: .public)"
-                )
-                // No request went out, so no reply will arrive — resolve the pull
-                // now instead of blocking the calling thread to the backstop timeout.
-                receiver.cancelAwait(transferID)
-                coordinator.abort(
+        return coordinator.pull(
+            transferID: transferID,
+            retire: { receiver.cancelAwait(transferID) },
+            start: {
+                receiver.awaitTransfer(
                     transferID,
-                    ClipboardStreamAbortInfo(
-                        transferID: transferID, code: .sendFailed,
-                        message: "Failed to send clipboard request", neededBytes: nil,
-                        availableBytes: nil))
-            }
-        }
+                    extractsDirectoryNamed: extractsDirectoryNamed,
+                    advertisedByteCount: advertisedByteCount,
+                    onComplete: { rep in coordinator.deliver(transferID, rep) },
+                    onAbort: { abort in coordinator.abort(transferID, abort) },
+                    // Re-arms the pull's inactivity backstop on every chunk so a
+                    // large still-streaming transfer is never timed out mid-flight.
+                    onProgress: { bytes, total in
+                        coordinator.progress(
+                            transferID, bytesReceived: bytes, totalBytes: total)
+                    })
+                do {
+                    try sendRequest()
+                } catch {
+                    Self.logger.warning(
+                        "Failed to send clipboard request: \(error.localizedDescription, privacy: .public)"
+                    )
+                    // No request went out, so no reply will arrive — resolve the
+                    // pull now instead of blocking the calling thread to the
+                    // backstop timeout.
+                    receiver.cancelAwait(transferID)
+                    coordinator.abort(
+                        transferID,
+                        ClipboardStreamAbortInfo(
+                            transferID: transferID, code: .sendFailed,
+                            message: "Failed to send clipboard request", neededBytes: nil,
+                            availableBytes: nil))
+                }
+            })
     }
 
     /// Whether a `.fileURL` fire may start its pull: the offer's deadline-bound
@@ -1269,7 +1266,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                     message: abort.message, promise: promise, on: channel)
             }
         case .timedOut:
-            receiver.cancelAwait(transferID)
             Self.logger.warning(
                 "Inbound clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) timed out"
             )
@@ -1287,15 +1283,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             // teardown/supersession, which is deliberately silent elsewhere.
             Self.logger.debug(
                 "Inbound clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) cancelled"
-            )
-            receiver.cancelAwait(transferID)
-        case .superseded:
-            // A newer pull for this id has already taken over the awaiter/slot
-            // registration — touch nothing keyed by `transferID` (no
-            // `cancelAwait`, no abort frame, no paste error): the retry owns it
-            // now and must resolve on its own.
-            Self.logger.debug(
-                "Inbound clipboard pull \(transferID, privacy: .public) (conn=\(self.connectionTag, privacy: .public)) superseded by a newer fetch"
             )
         }
         return nil
