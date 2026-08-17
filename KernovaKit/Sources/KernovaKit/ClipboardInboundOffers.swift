@@ -405,10 +405,8 @@ public final class ClipboardInboundOffers {
     nonisolated public func endSession() {
         coordinator.failAll()
         guard session.kind == .drop else { return }
-        DispatchQueue.main.async {
-            MainActor.assumeIsolated {
-                for generation in Array(self.entries.keys) { self.retire(generation: generation) }
-            }
+        MainActorBridge.async {
+            for generation in Array(self.entries.keys) { self.retire(generation: generation) }
         }
     }
 
@@ -1021,15 +1019,13 @@ public final class ClipboardInboundOffers {
     /// event loop, so an offer that landed inside it is live and pastable and
     /// must not be relabelled with the previous offer's failure.
     private func recordRefusal(_ code: ClipboardErrorCode, generation: UInt64) {
-        DispatchQueue.main.async {
-            MainActor.assumeIsolated {
-                guard self.currentGeneration == generation else { return }
-                // The ceiling is read now: a peer that raises it after this
-                // refusal must not rewrite the figure the refusal named.
-                self.onActivity(
-                    .pasteRefused(
-                        code, limitBytes: code == .pasteTooLarge ? self.maxPasteBytes() : nil))
-            }
+        MainActorBridge.async {
+            guard self.currentGeneration == generation else { return }
+            // The ceiling is read now: a peer that raises it after this refusal
+            // must not rewrite the figure the refusal named.
+            self.onActivity(
+                .pasteRefused(
+                    code, limitBytes: code == .pasteTooLarge ? self.maxPasteBytes() : nil))
         }
     }
 

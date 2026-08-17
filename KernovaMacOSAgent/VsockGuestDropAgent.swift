@@ -219,9 +219,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
             onCancelRequested: { [weak endpoint] in
                 // The tracker calls this outside its own lock, on whichever
                 // thread noticed the click, so it hops before touching anything.
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated { endpoint?.cancelInbound(generation: generation) }
-                }
+                MainActorBridge.async { endpoint?.cancelInbound(generation: generation) }
             },
             reporter: reporter)
         jobs[generation] = operation
@@ -306,10 +304,10 @@ final class VsockGuestDropAgent: @unchecked Sendable {
             revealInFinder(landed)
         }
         send(completion: outcome, generation: generation, on: endpoint)
-        DispatchQueue.main.async { [weak self] in
+        MainActorBridge.async { [weak self] in
             // The offer goes with the job: a drop is landed in Downloads by this
             // loop and never served again, so nothing is left to pull from it.
-            MainActor.assumeIsolated { endpoint.retireInbound(generation: generation) }
+            endpoint.retireInbound(generation: generation)
             // Identity-checked, not just keyed: generations restart at 1 with
             // every accepted channel, so a worker that outlived a teardown would
             // otherwise clear the *next* connection's job of the same number —

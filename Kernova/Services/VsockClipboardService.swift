@@ -253,15 +253,6 @@ final class VsockClipboardService: ClipboardServicing {
         endpoint.cancelJoinedPulls(generation: generation)
     }
 
-    /// Runs `body` on the main actor on the next turn of the main queue.
-    ///
-    /// The hop is what makes a cancel closure safe to invoke from anywhere: the
-    /// tracker calls it outside its own lock, but on whichever thread noticed the
-    /// click.
-    nonisolated private static func onMainQueue(_ body: @escaping @MainActor () -> Void) {
-        DispatchQueue.main.async { MainActor.assumeIsolated { body() } }
-    }
-
     // MARK: - Transfer refusals
 
     /// Reports a refusal no operation is measuring — a pre-flight check, a peer
@@ -441,7 +432,9 @@ final class VsockClipboardService: ClipboardServicing {
         let operation = makeOperation(
             gesture: .preview, direction: .inbound, peerName: label,
             onCancelRequested: { [weak self] in
-                Self.onMainQueue { self?.cancelInboundPulls(generation: generation) }
+                // The tracker calls this outside its own lock, on whichever
+                // thread noticed the click, so it hops before touching anything.
+                MainActorBridge.async { self?.cancelInboundPulls(generation: generation) }
             })
         previewOperation = operation
         // A pull that failed has already finished the operation with its own

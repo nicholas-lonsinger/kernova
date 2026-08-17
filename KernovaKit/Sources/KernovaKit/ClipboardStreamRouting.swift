@@ -16,7 +16,9 @@ public enum ClipboardStreamRouting {
     /// transfer id's direction bit readable: the host receives on ids that carry
     /// it and sends on ids that do not, and the guest is the mirror.
     public enum Role: Sendable {
+        /// The Mac running Kernova.
         case host
+        /// The agent inside the VM.
         case guest
     }
 

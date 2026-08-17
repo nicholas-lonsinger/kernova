@@ -236,11 +236,18 @@ struct VsockDropServiceTests {
 
         #expect(harness.service.startDrop(urls: [file]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
-        try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
-        try await Task.sleep(for: .milliseconds(50))
+        // The readout is the only handle a Cancel has, and only a running one
+        // carries it — so the guest's request is what puts one on screen.
+        let xid = transferID(generation: 1, repIndex: 0)
+        let uti = try #require(harness.recorder.dropOffers.first?.repInfo.first?.uti)
+        try harness.guest.send(makeRequestFrame(generation: 1, transferID: xid, uti: uti))
+        try await harness.reports.wait { harness.reports.runningSnapshot != nil }
 
-        harness.service.cancelDrop(generation: 1)
-        harness.service.cancelDrop(generation: 1)
+        try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
+        try await harness.reports.wait { harness.reports.runningSnapshot == nil }
+
+        harness.reports.reporter.cancelRunning()
+        harness.reports.reporter.cancelRunning()
 
         #expect(harness.recorder.dropReleases.isEmpty)
         #expect(harness.failure == nil)
@@ -344,7 +351,14 @@ struct VsockDropServiceTests {
 
         #expect(harness.service.startDrop(urls: [file]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
-        harness.service.cancelDrop(generation: 1)
+        // The user's Cancel comes off the running readout, which the guest's
+        // first request is what raises.
+        let xid = transferID(generation: 1, repIndex: 0)
+        let uti = try #require(harness.recorder.dropOffers.first?.repInfo.first?.uti)
+        try harness.guest.send(makeRequestFrame(generation: 1, transferID: xid, uti: uti))
+        try await harness.reports.wait { harness.reports.runningSnapshot != nil }
+        harness.reports.reporter.cancelRunning()
+        try await harness.recorder.waitForFrames { !harness.recorder.dropReleases.isEmpty }
 
         harness.recorder.cancel()
         harness.service.stop()

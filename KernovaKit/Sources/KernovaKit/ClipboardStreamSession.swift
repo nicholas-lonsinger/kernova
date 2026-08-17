@@ -9,13 +9,9 @@ import Foundation
 /// to the engine, and the frames the control side writes back — is here.
 @MainActor
 public final class ClipboardStreamSession {
-    /// Which end of the wire this session is.
-    public enum Role: Sendable {
-        /// The Mac running Kernova.
-        case host
-        /// The agent inside the VM.
-        case guest
-    }
+    /// Which end of the wire this session is — the same value the frame router
+    /// reads the transfer id's direction bit against, so there is one of it.
+    public typealias Role = ClipboardStreamRouting.Role
 
     /// Which channel this session serves.
     public enum Kind: Sendable {
@@ -196,9 +192,7 @@ public final class ClipboardStreamSession {
                     // the stream frames routed here are what resolve that
                     // callback. The serial main queue preserves control-frame
                     // FIFO order; a per-frame Task would not.
-                    DispatchQueue.main.async {
-                        MainActor.assumeIsolated { handleControlFrame(frame) }
-                    }
+                    MainActorBridge.async { handleControlFrame(frame) }
                 })
         }
     }
@@ -253,11 +247,10 @@ public final class ClipboardStreamSession {
         onEnded: @Sendable () -> Void,
         onControlFrame: @Sendable @escaping (Frame) -> Void
     ) async {
-        let routingRole: ClipboardStreamRouting.Role = role == .host ? .host : .guest
         do {
             for try await frame in channel.incoming where frame.protocolVersion == 1 {
                 ClipboardStreamRouting.route(
-                    frame, role: routingRole, sender: sender, receiver: receiver,
+                    frame, role: role, sender: sender, receiver: receiver,
                     onControlFrame: onControlFrame)
             }
             // A guest disconnect has to survive in the log after the fact, so this

@@ -220,9 +220,7 @@ public final class ClipboardEndpoint {
                 // Off the main actor and before anything hops to it: a pull
                 // parked on the main thread is what would block that hop.
                 self?.inbound?.endSession()
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated { self?.channelDidEnd() }
-                }
+                MainActorBridge.async { self?.channelDidEnd() }
             })
     }
 

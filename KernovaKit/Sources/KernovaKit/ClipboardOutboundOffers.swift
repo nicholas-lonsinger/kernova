@@ -399,16 +399,20 @@ public final class ClipboardOutboundOffers {
         let operation = ClipboardTransferOperation(
             gesture: .peerPaste, direction: .outbound, peerName: peerName,
             revealDelay: progressRevealDelay, idleGap: progressIdleGap,
-            onCancelRequested: { [weak self] in
-                // The tracker calls this outside its own lock, on whichever
-                // thread noticed the click, so it hops before touching anything.
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated { self?.cancel(generation: generation) }
-                }
-            },
+            onCancelRequested: cancelHandler(generation: generation),
             reporter: reporter)
         pasteOperation = (generation: generation, operation: operation)
         return operation
+    }
+
+    /// What a Cancel on `generation`'s readout runs.
+    ///
+    /// The tracker calls it outside its own lock, on whichever thread noticed
+    /// the click, so it hops before touching anything.
+    private func cancelHandler(generation: UInt64) -> @Sendable () -> Void {
+        { [weak self] in
+            MainActorBridge.async { self?.cancel(generation: generation) }
+        }
     }
 
     /// Opens the readout spanning one drop, with the set's totals as the floor so
@@ -423,11 +427,7 @@ public final class ClipboardOutboundOffers {
             },
             expectedItems: content.representations.count,
             revealDelay: progressRevealDelay, idleGap: progressIdleGap,
-            onCancelRequested: { [weak self] in
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated { self?.cancel(generation: generation) }
-                }
-            },
+            onCancelRequested: cancelHandler(generation: generation),
             reporter: reporter)
     }
 

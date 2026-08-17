@@ -194,19 +194,17 @@ final class VsockDropService {
             var sizes: [URL: Int] = [:]
             for folder in folders { sizes[folder] = sizeOf(folder) }
             let measured = sizes
-            DispatchQueue.main.async {
+            MainActorBridge.async {
                 guard let self else { return }
-                MainActor.assumeIsolated {
-                    guard self.isConnected else {
-                        // The channel went away while the folder was being
-                        // sized. The drop was accepted, so its disappearance is
-                        // owed the same answer an interrupted transfer gets —
-                        // there is no job yet for `settle()` to have reported.
-                        self.reportRefusal(.interrupted(fileCount: dropped.count))
-                        return
-                    }
-                    self.offer(Self.representations(for: dropped, sizes: measured))
+                guard self.isConnected else {
+                    // The channel went away while the folder was being sized.
+                    // The drop was accepted, so its disappearance is owed the
+                    // same answer an interrupted transfer gets — there is no job
+                    // yet for `settle()` to have reported.
+                    self.reportRefusal(.interrupted(fileCount: dropped.count))
+                    return
                 }
+                self.offer(Self.representations(for: dropped, sizes: measured))
             }
         }
         return true
@@ -230,16 +228,11 @@ final class VsockDropService {
     }
 
     /// Announces the drop, opening the readout that spans every file in it.
+    ///
+    /// The readout carries the Cancel the user reaches a drop through; it runs
+    /// on the endpoint, so nothing here handles one.
     private func offer(_ reps: [ClipboardContent.Representation]) {
         endpoint.offer(ClipboardContent(representations: reps))
-    }
-
-    // MARK: - Cancelling
-
-    /// Calls off the drop for `generation`: the guest keeps whatever already
-    /// landed in Downloads and drops the rest.
-    func cancelDrop(generation: UInt64) {
-        endpoint.cancelOutbound(generation: generation)
     }
 }
 
