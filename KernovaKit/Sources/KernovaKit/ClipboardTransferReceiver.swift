@@ -15,6 +15,9 @@ import Foundation
 /// never blocked, and the 33-byte trailer is verified — size and SHA-256 both —
 /// before anything is delivered (docs/CLIPBOARD.md §7).
 public final class ClipboardTransferReceiver: @unchecked Sendable {
+    private static let logger = KernovaLogger(
+        subsystem: "app.kernova", category: "ClipboardTransferReceiver")
+
     /// What the pull that opened this connection expects to receive.
     ///
     /// Set from the pull's own registration, never from the wire: the side that
@@ -202,8 +205,11 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
         defer { ClipboardSignposts.transfers.endInterval("Clipboard receive", signpost) }
 
         let beganAt = clock.now
-        guard let fd = openConnection() else {
-            onAbort(abortInfo(ReceiveStop(code: .cancelled, message: "The connection never opened")))
+        let fd: Int32
+        do {
+            fd = try openConnection()
+        } catch {
+            onAbort(abortInfo(stop(for: error)))
             return
         }
         defer { closeConnection(fd) }
@@ -218,15 +224,30 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
 
     /// Obtains the connection, writes the request when this side dials, and
     /// applies the socket options.
-    private func openConnection() -> Int32? {
-        guard !cancelled else { return nil }
+    ///
+    /// - Throws: the stop the transfer ends with when the connection cannot be
+    ///   opened — a cancellation that landed first, or the transport failure
+    ///   that kept it from opening. No descriptor outlives the throw: `run`
+    ///   installs its own close only for one this returns.
+    private func openConnection() throws -> Int32 {
         let fd: Int32
         switch source {
         case .accepted(let accepted, _):
+            // A cancellation this early has no descriptor registered to
+            // interrupt, so honor it here — and close the one the accept path
+            // opened, which nothing else owns yet.
+            guard !cancelled else {
+                ClipboardDataConnection.end(fd: accepted)
+                throw cancellationStop
+            }
             fd = accepted
         case .dial(let dial, _):
-            guard let dialled = try? dial() else { return nil }
-            fd = dialled
+            guard !cancelled else { throw cancellationStop }
+            do {
+                fd = try dial()
+            } catch {
+                throw openStop(error, "Dialling the transfer's data connection")
+            }
         }
         ClipboardDataConnection.applySocketOptions(fd: fd, role: role, timeout: socketTimeout)
         lock.withLock { descriptor = fd }
@@ -235,7 +256,7 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
         // nobody is waiting on.
         guard !cancelled else {
             closeConnection(fd)
-            return nil
+            throw cancellationStop
         }
         // The request is what opens a transfer this side dials for; the reply
         // is then the first thing back.
@@ -243,9 +264,11 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
             var frame = Frame()
             frame.protocolVersion = 1
             frame.clipboardTransferRequest = request
-            guard (try? ClipboardDataConnection.writeFrame(frame, fd: fd)) != nil else {
+            do {
+                try ClipboardDataConnection.writeFrame(frame, fd: fd)
+            } catch {
                 closeConnection(fd)
-                return nil
+                throw openStop(error, "Writing the transfer request")
             }
         }
         return fd
@@ -573,6 +596,31 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
             availableBytes: staging.availableCapacity().map { Int(clamping: $0) })
     }
 
+    /// The stop a locally abandoned transfer ends with, which retires it
+    /// quietly.
+    private var cancellationStop: ReceiveStop {
+        ReceiveStop(code: .cancelled, message: "The transfer was cancelled")
+    }
+
+    /// The stop a connection this side could not open ends the transfer with.
+    ///
+    /// Logged here because nothing downstream can: the pull it resolves reports
+    /// the failure but never sees the error, and a transfer that carried no
+    /// bytes leaves no other trace of why the paste came back empty. A
+    /// cancellation that provoked the failure outranks it, so a teardown still
+    /// retires quietly.
+    private func openStop(_ error: Error, _ attempt: String) -> ReceiveStop {
+        guard !cancelled else { return cancellationStop }
+        // `String(describing:)`: what reaches here is a plain Swift enum on
+        // both paths — the dialler's own error and `ClipboardDataConnectionError`
+        // — whose payload `localizedDescription` drops.
+        let reason = String(describing: error)
+        Self.logger.error(
+            "Clipboard transfer \(self.transferID, privacy: .public): \(attempt, privacy: .public) failed: \(reason, privacy: .public)"
+        )
+        return ReceiveStop(code: .sendFailed, message: "\(attempt) failed: \(reason)")
+    }
+
     /// The stop a peer's abort trailer names.
     private func stop(forAbortedTrailer rawCode: String) -> ReceiveStop {
         ReceiveStop(rawCode: rawCode, message: "The sender ended the transfer")
@@ -584,9 +632,7 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
         -> ReceiveStop
     {
         if let stop = error as? ReceiveStop { return stop }
-        if cancelled {
-            return ReceiveStop(code: .cancelled, message: "The transfer was cancelled")
-        }
+        if cancelled { return cancellationStop }
         if case ClipboardArchiveStreamError.outputRefused(let refusal) = error {
             switch refusal {
             case .diskFull:

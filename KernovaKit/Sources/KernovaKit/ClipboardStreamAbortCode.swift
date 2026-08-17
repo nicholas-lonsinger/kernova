@@ -40,7 +40,9 @@ public enum ClipboardStreamAbortCode: String, CaseIterable, Sendable {
     /// The sender could not read the source representation.
     case readError = "read.error"
 
-    /// The transfer's bytes could not be written to its connection.
+    /// The transfer's connection could not be opened, or could not carry what
+    /// this side wrote onto it — the request that opens a pull, or the payload
+    /// answering one.
     case sendFailed = "send.failed"
 
     // MARK: - Framing and integrity

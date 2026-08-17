@@ -45,8 +45,11 @@ public final class ClipboardTransferOutbox: @unchecked Sendable {
 
     /// Streams `representation` to the peer over `link`.
     ///
-    /// A duplicate `transferID` is ignored rather than allowed to displace an
-    /// in-flight transfer, which would orphan its open connection.
+    /// A duplicate `transferID` never displaces the transfer already streaming
+    /// under it: the second `link` is abandoned — its accepted descriptor
+    /// closed, its dialler never called — and `onComplete` does not fire for it,
+    /// since the id's own transfer is still running and owes its owner that one
+    /// terminal.
     ///
     /// - Parameters:
     ///   - transferID: identifies the transfer, and keys it for cancellation.
@@ -79,7 +82,10 @@ public final class ClipboardTransferOutbox: @unchecked Sendable {
             live[transferID] = sender
             return true
         }
-        guard inserted else { return }
+        guard inserted else {
+            link.abandon()
+            return
+        }
         sender.start(
             representation: representation, maxAcceptByteCount: maxAcceptByteCount,
             isInline: isInline, isCurrent: isCurrent, onProgress: onProgress

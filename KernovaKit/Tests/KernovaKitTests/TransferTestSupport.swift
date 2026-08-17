@@ -45,6 +45,16 @@ func relayFlippingOneByte(from source: Int32, to destination: Int32) {
     try? ClipboardDataConnection.write(fd: destination, buffered)
 }
 
+/// Everything left on `fd` up to end of stream, which is empty when the peer
+/// closed its end without writing.
+///
+/// The read is bounded by a socket timeout, so a descriptor a regression left
+/// open fails the test rather than parking it forever.
+func drainUntilPeerCloses(_ fd: Int32, timeout: TimeInterval = 5) throws -> Data {
+    ClipboardDataConnection.applySocketOptions(fd: fd, role: .guest, timeout: timeout)
+    return try readToEnd(fd: fd)
+}
+
 /// `count` incompressible bytes, so a fixture's wire size tracks its payload.
 func randomBytes(count: Int) throws -> Data {
     let urandom = try FileHandle(forReadingFrom: URL(fileURLWithPath: "/dev/urandom"))
@@ -226,6 +236,17 @@ final class TransferHarness: @unchecked Sendable {
         outbox.cancelAll()
         staging.sweep()
         try? FileManager.default.removeItem(at: stagingTempRoot)
+    }
+
+    /// A receiver on this harness's staging, for a test driving one transfer's
+    /// own lifecycle rather than a round trip through the inbox.
+    func makeReceiver(
+        transferID: UInt64, generation: UInt64, plan: ClipboardTransferReceiver.Plan,
+        source: ClipboardTransferReceiver.Source
+    ) -> ClipboardTransferReceiver {
+        ClipboardTransferReceiver(
+            transferID: transferID, generation: generation, source: source, role: .host,
+            plan: plan, staging: staging)
     }
 
     /// Registers the pull for `transferID` with the inbox.

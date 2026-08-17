@@ -10,6 +10,13 @@ import Testing
 /// socketpair with both ends running, in both header orders.
 @Suite("ClipboardTransferStream")
 struct ClipboardTransferStreamTests {
+    /// What a stubbed dial throws, shaped like the guest dialler's own error —
+    /// a plain enum carrying its reason — so a test can look for that reason in
+    /// what the failed transfer reports.
+    private enum DialFailure: Error {
+        case refused(String)
+    }
+
     /// A unique scratch directory removed when the test ends.
     private func makeScratch() throws -> URL {
         let url = FileManager.default.temporaryDirectory
@@ -455,6 +462,140 @@ struct ClipboardTransferStreamTests {
         try await collector.gate.wait { collector.sendCount == 1 }
         #expect(collector.sendOutcome(transferID) == false)
         #expect(collector.outboundMetrics.isEmpty)
+    }
+
+    // MARK: - Opening the connection
+
+    @Test("a second connection for a transfer already streaming is closed, not orphaned")
+    func duplicateTransferIDClosesItsConnection() async throws {
+        let harness = TransferHarness()
+        defer { harness.tearDown() }
+        let collector = harness.collector
+        let transferID: UInt64 = 0x181
+        // A key of its own for the duplicate's terminal, so an outcome recorded
+        // for it cannot be mistaken for the running transfer's.
+        let duplicateKey: UInt64 = 0x182
+
+        // Past everything the socket can buffer, with nothing reading the peer
+        // end yet: the first transfer is parked mid-payload, and registered —
+        // the outbox records it before its queue hop — when the duplicate
+        // arrives.
+        let payload = Data(repeating: 0x5A, count: 4 * 1024 * 1024)
+        let (first, firstPeer) = try makeRawSocketPair()
+        defer { ClipboardDataConnection.end(fd: firstPeer) }
+        harness.outbox.serve(
+            transferID: transferID, generation: 24,
+            representation: .init(uti: "public.data", data: payload),
+            maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount, isInline: true,
+            isCurrent: { _ in true }, link: .accepted(first),
+            onComplete: { collector.sendFinished(transferID, success: $0) })
+
+        let (second, secondPeer) = try makeRawSocketPair()
+        defer { ClipboardDataConnection.end(fd: secondPeer) }
+        harness.outbox.serve(
+            transferID: transferID, generation: 24,
+            representation: .init(uti: "public.data", data: Data("second".utf8)),
+            maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount, isInline: true,
+            isCurrent: { _ in true }, link: .accepted(second),
+            onComplete: { collector.sendFinished(duplicateKey, success: $0) })
+
+        // The refused link is given up as `serve` returns, so its peer reaches
+        // EOF instead of parking on a connection nothing owns.
+        #expect(try drainUntilPeerCloses(secondPeer).isEmpty)
+
+        // The transfer already under way kept its own connection: draining it
+        // releases the parked send, and every payload byte is there.
+        let delivered = await offCooperativePool { (try? readToEnd(fd: firstPeer)) ?? Data() }
+        #expect(delivered.count > payload.count)
+        try await collector.gate.wait { collector.sendCount == 1 }
+        #expect(collector.sendOutcome(transferID) == true)
+        // The duplicate reported nothing: the id's one terminal is the running
+        // transfer's to fire.
+        #expect(collector.sendOutcome(duplicateKey) == nil)
+    }
+
+    @Test("a cancel landing before the connection opens closes the descriptor it was handed")
+    func cancelBeforeOpenClosesTheAcceptedConnection() async throws {
+        let harness = TransferHarness()
+        defer { harness.tearDown() }
+        let collector = harness.collector
+        let transferID: UInt64 = 0x191
+        let (accepted, peer) = try makeRawSocketPair()
+        defer { ClipboardDataConnection.end(fd: peer) }
+
+        // The window `ClipboardTransferInbox.start` opens between registering
+        // the transfer and its queue hop: the cancel lands while the receiver
+        // holds no descriptor to interrupt, which is what a session teardown or
+        // a supersession during an accepted transfer produces.
+        let receiver = harness.makeReceiver(
+            transferID: transferID, generation: 25,
+            plan: .init(uti: "public.utf8-plain-text"),
+            source: .accepted(
+                fd: accepted,
+                reply: Kernova_V1_ClipboardTransferReply.with {
+                    $0.transferID = transferID
+                    $0.isInline = true
+                }))
+        receiver.cancel()
+        receiver.start(
+            onComplete: { collector.complete(transferID, $0) },
+            onAbort: { collector.abort($0) })
+        try await collector.gate.wait { collector.abortCount > 0 }
+
+        let info = try abort(harness)
+        #expect(info.code == .cancelled)
+        #expect(info.isRetiring)
+        #expect(collector.representation(transferID) == nil)
+        // The descriptor the accept handed over is closed on the way out, so the
+        // peer sees EOF rather than a connection nothing will ever read.
+        #expect(try drainUntilPeerCloses(peer).isEmpty)
+    }
+
+    @Test("a dial that fails reports the failure instead of retiring the pull quietly")
+    func failedDialReportsTheFailure() async throws {
+        let harness = TransferHarness()
+        defer { harness.tearDown() }
+        let transferID: UInt64 = 0x1A1
+        harness.expect(
+            transferID: transferID, plan: .init(uti: "public.data", advertisedByteCount: 16))
+        harness.inbox.open(
+            transferID: transferID, generation: 26,
+            maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount
+        ) {
+            throw DialFailure.refused("the data port refused admission")
+        }
+        try await settle(harness, transferID)
+
+        let info = try abort(harness)
+        #expect(info.code == .sendFailed)
+        // The pull that dialled is the only place this can be reported from, so
+        // a retiring code would take the failure with it.
+        #expect(!info.isRetiring)
+        #expect(ClipboardTransferFailure.inboundPullAborted(info) == .transferFailed)
+        #expect(info.message.contains("the data port refused admission"))
+        #expect(harness.collector.representation(transferID) == nil)
+    }
+
+    @Test("a request that cannot be written reports the failure the connection raised")
+    func failedRequestWriteReportsTheFailure() async throws {
+        let harness = TransferHarness()
+        defer { harness.tearDown() }
+        let transferID: UInt64 = 0x1B1
+        harness.expect(
+            transferID: transferID, plan: .init(uti: "public.data", advertisedByteCount: 16))
+        // A connected descriptor whose peer is already gone: the dial succeeds
+        // and the request has nowhere to land.
+        let (near, far) = try makeRawSocketPair()
+        ClipboardDataConnection.end(fd: far)
+        harness.inbox.open(
+            transferID: transferID, generation: 27,
+            maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount
+        ) { near }
+        try await settle(harness, transferID)
+
+        let info = try abort(harness)
+        #expect(info.code == .sendFailed)
+        #expect(!info.isRetiring)
     }
 
     // MARK: - Refusals
