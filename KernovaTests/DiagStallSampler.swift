@@ -99,6 +99,7 @@ final class DiagStallSampler: @unchecked Sendable {
         var mainQ: Double
         var runLoop: Double
         var pool: Double
+        var actor: Double
         var tick: Double
         var procCPU: Double
         var sysBusy: Double
@@ -115,6 +116,7 @@ final class DiagStallSampler: @unchecked Sendable {
     private var mainQArmed: Double?
     private var runLoopArmed: Double?
     private var poolArmed: Double?
+    private var actorArmed: Double?
 
     private let period = 0.1
 
@@ -159,12 +161,19 @@ final class DiagStallSampler: @unchecked Sendable {
             let poolAge = armAndAge(now: now, slot: \.poolArmed) { stamp in
                 Task.detached { self.clear(\.poolArmed, stamp) }
             }
+            // The lane the heartbeat timer actually uses: a MainActor job.
+            // The main-actor executor drains these back-to-back without
+            // yielding to the main queue, so this can be fast while `mainQ`
+            // is seconds behind — and vice versa.
+            let actorAge = armAndAge(now: now, slot: \.actorArmed) { stamp in
+                Task { @MainActor in self.clear(\.actorArmed, stamp) }
+            }
 
             let cpu = processCPUSeconds()
             let system = systemCPUTicks()
             let sample = Sample(
                 t: now - startTime, mainQ: mainQAge, runLoop: runLoopAge, pool: poolAge,
-                tick: overrun, procCPU: cpu - lastCPU,
+                actor: actorAge, tick: overrun, procCPU: cpu - lastCPU,
                 sysBusy: system.busy - lastSystem.busy, sysIdle: system.idle - lastSystem.idle,
                 threads: liveThreadCount())
             lastCPU = cpu
@@ -197,7 +206,7 @@ final class DiagStallSampler: @unchecked Sendable {
         let (rows, points) = lock.withLock { (samples, marks) }
         var text = "DIAG \(title) cores=\(ProcessInfo.processInfo.activeProcessorCount)\n"
         text += "marks: " + points.map { String(format: "%.3f=%@", $0.0, $0.1) }.joined(separator: " ") + "\n"
-        text += "t,mainQ,runLoop,pool,tick,procCPU,sysBusy,sysIdle,threads\n"
+        text += "t,mainQ,runLoop,pool,actor,tick,procCPU,sysBusy,sysIdle,threads\n"
         for row in rows {
             text += String(
                 format: "%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%.0f,%.0f,%d\n",
