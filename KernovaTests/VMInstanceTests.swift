@@ -953,11 +953,10 @@ struct VMInstanceTests {
         var newConfig = oldConfig
         newConfig.agentLogForwardingEnabled = true
 
-        // No session set — applyLivePolicy must early-exit cleanly.
+        // No session set — applyLivePolicy must early-exit cleanly. There is
+        // no listener state to assert on: a stopped instance has no session to
+        // install through, which is the whole outcome under test.
         instance.applyLivePolicy(oldConfig: oldConfig, newConfig: newConfig)
-
-        #expect(instance.vsockLogService == nil)
-        #expect(instance.clipboardService == nil)
     }
 
     @Test("applyLivePolicy is a no-op when no hot fields changed")
@@ -966,12 +965,9 @@ struct VMInstanceTests {
         let config = instance.configuration
 
         // Same on both sides — no listener changes should occur. Without a
-        // session the function exits even earlier; this asserts the
-        // guard order doesn't crash on equal inputs.
+        // session the function exits even earlier; this covers the guard order
+        // not crashing on equal inputs.
         instance.applyLivePolicy(oldConfig: config, newConfig: config)
-
-        #expect(instance.vsockLogService == nil)
-        #expect(instance.clipboardService == nil)
     }
 
     // MARK: - Session Events

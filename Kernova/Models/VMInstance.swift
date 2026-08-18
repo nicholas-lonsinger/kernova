@@ -837,8 +837,9 @@ final class VMInstance {
         let hosts = [controlHost, dropHost, dropDataHost, logHost, clipHost, clipDataHost]
             .compactMap { $0 }
         await session.attach(hosts)
-        // Torn down while installing: the listeners die with the session that
-        // retains them, so there is no start left to announce.
+        // Torn down while installing: these hosts live and die with the
+        // session that retains them, so nothing is left dangling on a device
+        // the teardown already walked — and there is no start to announce.
         guard self.session === session else { return }
 
         Self.logger.info("Vsock services started for '\(self.name, privacy: .public)'")
@@ -1156,16 +1157,18 @@ final class VMInstance {
         }
     }
 
-    /// Stops every vsock service and clears the state its listeners read.
+    /// Stops every vsock service and unbinds the listeners that fed them.
     ///
-    /// The listeners themselves stay bound and come down with the session that
-    /// retains them, which is what keeps this synchronous: every caller either
-    /// releases the session right after or runs against one already gone, so
-    /// no guest can dial the ports in between.
+    /// The unbind is ordered fire-and-forget on the session's queue, which is
+    /// what keeps this synchronous: the session retains each host until its
+    /// port is gone, so there is nothing to await to keep a bound port's
+    /// delegate alive.
     ///
     /// Only the vsock clipboard service is stopped here — the SPICE service is
     /// owned by `stopClipboardService()`.
     func stopVsockServices() {
+        session?.detachRemainingListeners()
+
         vsockControlService?.stop()
         vsockControlService = nil
         // The stopped service cleared the gate; this also covers a service torn
