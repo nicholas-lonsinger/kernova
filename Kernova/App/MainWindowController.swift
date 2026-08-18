@@ -146,7 +146,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 _ = self.viewModel.selectedInstance?.status
                 _ = self.viewModel.selectedInstance?.isPreparing
                 _ = self.viewModel.selectedInstance?.displayMode
-                _ = self.viewModel.selectedInstance?.virtualMachine
+                _ = self.viewModel.selectedInstance?.hasLiveVirtualMachine
                 _ = self.viewModel.selectedInstance?.configuration.clipboardSharingEnabled
                 _ = self.viewModel.selectedInstance?.detailPaneMode
             },

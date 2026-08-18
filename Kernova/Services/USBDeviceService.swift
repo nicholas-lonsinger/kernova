@@ -5,7 +5,8 @@ import os
 /// Manages runtime USB mass storage device attach/detach via XHCI controller.
 @MainActor
 final class USBDeviceService: USBDeviceProviding {
-    private static let logger = Logger(subsystem: "app.kernova", category: "USBDeviceService")
+    // `nonisolated`: the attach factory logs from the session's queue.
+    private nonisolated static let logger = Logger(subsystem: "app.kernova", category: "USBDeviceService")
 
     func attach(
         diskImagePath: String,
@@ -13,11 +14,11 @@ final class USBDeviceService: USBDeviceProviding {
         desiredUUID: UUID?,
         to instance: VMInstance
     ) async throws -> USBDeviceInfo {
-        guard let vm = instance.virtualMachine else {
+        guard let session = instance.session else {
             Self.logger.error("Cannot attach USB device: no virtual machine for '\(instance.name, privacy: .public)'")
             throw USBDeviceError.noVirtualMachine
         }
-        guard let controller = vm.usbControllers.first else {
+        guard session.hasUSBController else {
             Self.logger.error("Cannot attach USB device: no USB controller for '\(instance.name, privacy: .public)'")
             throw USBDeviceError.noUSBController
         }
@@ -45,37 +46,44 @@ final class USBDeviceService: USBDeviceProviding {
             }
         }
 
-        let attachment: VZDiskImageStorageDeviceAttachment
+        let url = resolved.url
+        let uuid: UUID
         do {
-            attachment = try VZDiskImageStorageDeviceAttachment(url: resolved.url, readOnly: readOnly)
+            uuid = try await session.attachUSBDevice {
+                let attachment: VZDiskImageStorageDeviceAttachment
+                do {
+                    attachment = try VZDiskImageStorageDeviceAttachment(url: url, readOnly: readOnly)
+                } catch {
+                    Self.logger.error(
+                        "Failed to create disk attachment for '\(url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                    )
+                    throw error
+                }
+                let usbConfig = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
+                if let desiredUUID {
+                    // Override the framework-generated UUID so the live device
+                    // matches the caller's persisted identity (e.g.
+                    // `RemovableMediaItem.id`) for save-state restore matching.
+                    usbConfig.uuid = desiredUUID
+                }
+                return VZUSBMassStorageDevice(configuration: usbConfig)
+            }
+        } catch let error as VMSessionError {
+            Self.logger.error(
+                "Cannot attach USB device '\(url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)': \(String(describing: error), privacy: .public)"
+            )
+            throw USBDeviceError.noUSBController
         } catch {
             Self.logger.error(
-                "Failed to create disk attachment for '\(resolved.url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                "Failed to attach USB device '\(url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw error
         }
-        let usbConfig = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
-        if let desiredUUID {
-            // Override the framework-generated UUID so the live device
-            // matches the caller's persisted identity (e.g.
-            // `RemovableMediaItem.id`) for save-state restore matching.
-            usbConfig.uuid = desiredUUID
-        }
-        let usbDevice = VZUSBMassStorageDevice(configuration: usbConfig)
 
-        do {
-            try await controller.attach(device: usbDevice)
-        } catch {
-            Self.logger.error(
-                "Failed to attach USB device '\(resolved.url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            throw error
-        }
-
-        let info = USBDeviceInfo(id: usbConfig.uuid, path: diskImagePath, readOnly: readOnly)
+        let info = USBDeviceInfo(id: uuid, path: diskImagePath, readOnly: readOnly)
 
         Self.logger.notice(
-            "Attached USB device '\(resolved.url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)' (readOnly: \(readOnly, privacy: .public))"
+            "Attached USB device '\(url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)' (readOnly: \(readOnly, privacy: .public))"
         )
         return info
     }
@@ -84,24 +92,24 @@ final class USBDeviceService: USBDeviceProviding {
         deviceInfo: USBDeviceInfo,
         from instance: VMInstance
     ) async throws {
-        guard let vm = instance.virtualMachine else {
+        guard let session = instance.session else {
             Self.logger.error("Cannot detach USB device: no virtual machine for '\(instance.name, privacy: .public)'")
             throw USBDeviceError.noVirtualMachine
         }
-        guard let controller = vm.usbControllers.first else {
+        guard session.hasUSBController else {
             Self.logger.error("Cannot detach USB device: no USB controller for '\(instance.name, privacy: .public)'")
             throw USBDeviceError.noUSBController
         }
 
-        guard let usbDevice = controller.usbDevices.first(where: { $0.uuid == deviceInfo.id }) else {
+        do {
+            try await session.detachUSBDevice(uuid: deviceInfo.id)
+        } catch VMSessionError.usbDeviceNotFound {
             Self.logger.error(
                 "USB device '\(deviceInfo.displayName, privacy: .public)' not found on controller for VM '\(instance.name, privacy: .public)'"
             )
             throw USBDeviceError.deviceNotFound
-        }
-
-        do {
-            try await controller.detach(device: usbDevice)
+        } catch VMSessionError.usbControllerUnavailable {
+            throw USBDeviceError.noUSBController
         } catch {
             Self.logger.error(
                 "Failed to detach USB device '\(deviceInfo.displayName, privacy: .public)' from VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"

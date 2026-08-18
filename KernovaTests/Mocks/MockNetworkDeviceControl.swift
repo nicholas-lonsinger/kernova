@@ -31,4 +31,10 @@ final class MockNetworkDeviceControl: NetworkDeviceControlling {
         detachCount += 1
         plan = nil
     }
+
+    func attachmentWasDisconnected() {
+        // Mirrors the real handle: the framework nils the attachment before
+        // its disconnect callback, so the mirror clears with it.
+        plan = nil
+    }
 }

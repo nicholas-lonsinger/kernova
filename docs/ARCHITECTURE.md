@@ -49,9 +49,14 @@ bar and Option-revealed in the sidebar, gated by `AppPreferences.alwaysShowAdvan
 - `VMConfiguration` — a VM's persisted identity: a `Codable` `Sendable` struct written as
   `config.json` inside the VM bundle.
 - `VMInstance` — a VM's runtime representation: an `@Observable` `@MainActor` class wrapping a
-  `VMConfiguration`, an optional `VZVirtualMachine`, and a `VMStatus`. It owns the per-VM vsock
+  `VMConfiguration`, an optional `VMSession`, and a `VMStatus`. It owns the per-VM vsock
   listeners, `clipboardService`, `SerialSocketRelay`, and `runtimeFileAccess`. View-layer helpers
   live in the `VMInstance+Display.swift` extension.
+- `VMSession` — one running VM's isolation domain: an actor whose executor is the private serial
+  queue its `VZVirtualMachine` was created with, and the only type holding that VM or any of its
+  device objects. VZ's delegate callbacks arrive on that queue and leave as `VMSessionEvent`s
+  stamped with the session's id, which `VMInstance` hops to main and drops once the id no longer
+  names the live session.
 - `VMBundleLayout` — a `Sendable` struct deriving every in-bundle path (disk image, aux storage,
   save file, serial log) from the bundle root; the one place path logic lives.
 - `VMStatus`, `VMBootMode`, `VMGuestOS` — enums.
@@ -74,8 +79,8 @@ synthesized main disk derives its own from the bundle path
 ### Services
 
 The services the view models inject conform to a protocol in `Services/Protocols/` so tests can
-substitute mocks. Services split by concurrency: those that touch
-`VZVirtualMachine` are `@MainActor`; stateless ones are `Sendable` structs.
+substitute mocks. Services split by concurrency: those that mutate `VMInstance` are `@MainActor`;
+stateless ones are `Sendable` structs.
 
 `@MainActor`:
 
@@ -167,12 +172,16 @@ The vsock stack (macOS guests only):
   `KernovaMacOSAgent/VsockPorts.swift` mirrors the same assignments guest-side. What a connection
   costs, and why nothing above the kernel meters a
   stream: [research/2026-08-17-vsock-stalled-receiver-and-accept-latency.md](research/2026-08-17-vsock-stalled-receiver-and-accept-latency.md).
-- `VsockListenerHost` — one `VZVirtioSocketListener` per port, bridging an accepted connection to a
-  `VsockChannel` or, on a data port, handing the raw descriptor to an `onAcceptFd` closure instead.
-  Its `shouldAdmit` predicate refuses a connection before any channel is built; `VMInstance` wires
-  the log, clipboard, drop and both data listeners to `featureChannelAdmission`, so no feature
-  channel is accepted before the control handshake completes, and each names the guest
-  capability it additionally requires. Socket-buffer sizing and its
+- `VsockListenerHost` — one `VZVirtioSocketListener` per port, nonisolated so the whole accept
+  path runs on whatever queue VZ delivers the callback on: a framed port builds and starts the
+  `VsockChannel` there and hops only the hand-off to the main actor, while a data port's
+  `onAcceptFd` takes the raw descriptor synchronously. Its `shouldAdmit` predicate refuses a
+  connection before any channel is built; `VMInstance` wires the log, clipboard, drop and both
+  data listeners to its `VsockAdmissionGate` — a lock-guarded snapshot the control service
+  publishes its completed handshake and advertised capabilities into — so no feature channel is
+  accepted before the handshake completes, and each names the guest capability it additionally
+  requires. The two data listeners forward through a `VsockDataConnectionSink` apiece, pointed at
+  the live service generation. Socket-buffer sizing and its
   measurements: [research/2026-07-13-vsock-transport-throughput.md](research/2026-07-13-vsock-transport-throughput.md).
 - `VsockControlService` — `@MainActor` `@Observable` owner of the always-on control channel:
   `Hello`/`Heartbeat` exchange, a liveness watchdog, the observed `agentVersion`, and `PolicyUpdate`
@@ -215,10 +224,11 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
   channel, parameterized by role (`.host`/`.guest`) and kind (`.clipboard`/`.drop`): what each side
   has offered and every transfer between them. `Configuration.dataLink` is how it reaches the
   kind's data port — `.accepts` on the host, where `acceptDataConnection(fd:)` takes the listener's
-  descriptor and moves it off the main queue, and `.dials` on the guest, which opens each
-  connection itself. Its `ClipboardEndpointDelegate` is the seam an owner sees — offer arrival and
-  retraction, refusals, status activity, the channel's end. All four owners drive one: the two host
-  services above and the guest agent's `VsockGuestClipboardAgent`/`VsockGuestDropAgent`.
+  descriptor on the VM's queue and reads it on the transfer's own worker, and `.dials` on the
+  guest, which opens each connection itself. Its `ClipboardEndpointDelegate` is the seam an owner
+  sees — offer arrival and retraction, refusals, status activity, the channel's end. All four
+  owners drive one: the two host services above and the guest agent's
+  `VsockGuestClipboardAgent`/`VsockGuestDropAgent`.
 - `ClipboardControlSession`, `ClipboardTransferInbox`, `ClipboardTransferOutbox`,
   `ClipboardTransferSender`, `ClipboardTransferReceiver` — the layers beneath that endpoint. The
   session owns the control channel and the two transfer tables; the inbox holds what this side is
@@ -305,6 +315,9 @@ Constraints the file layout does not show:
 - **Popover anchors target a wrapper `NSView`, never an inner control**, so
   `NSPopover.preferredEdge` is interpreted in an unflipped coordinate system.
 - **The clipboard window renders inline RTF only, never HTML.**
+- **`VZVirtualMachineView` is fed only through `VMDisplayHandle`** — the session's one `Sendable`
+  crossing, handed to `VMDisplayBackingView` by the controllers that render a live VM. Every other
+  view asks `VMInstance.hasLiveVirtualMachine` instead of reaching for the VM.
 
 `VMSettingsViewController` serves both attachment lists — storage disks and removable media — from
 one set of row/menu/popover builders parameterized by `AttachmentKind`, dispatching on an

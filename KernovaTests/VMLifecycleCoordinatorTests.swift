@@ -86,12 +86,12 @@ struct VMLifecycleCoordinatorTests {
     }
 
     @Test("stop forwards to virtualization service")
-    func stopForwards() throws {
+    func stopForwards() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = makeInstance()
         instance.status = .running
 
-        try coordinator.stop(instance)
+        try await coordinator.stop(instance)
 
         #expect(virtService.stopCallCount == 1)
     }
@@ -154,13 +154,13 @@ struct VMLifecycleCoordinatorTests {
     }
 
     @Test("stop propagates error from virtualization service")
-    func stopPropagatesError() {
+    func stopPropagatesError() async {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         virtService.stopError = VirtualizationError.noVirtualMachine
         let instance = makeInstance()
 
-        #expect(throws: VirtualizationError.self) {
-            try coordinator.stop(instance)
+        await #expect(throws: VirtualizationError.self) {
+            try await coordinator.stop(instance)
         }
     }
 
@@ -245,7 +245,7 @@ struct VMLifecycleCoordinatorTests {
         }
         await suspendingService.waitUntilSuspended()
 
-        try coordinator.stop(instance)
+        try await coordinator.stop(instance)
 
         #expect(!coordinator.hasActiveOperation(for: instance.id))
         #expect(coordinator.hasUnsettledOperation(for: instance.id))
@@ -345,7 +345,7 @@ struct VMLifecycleCoordinatorTests {
         #expect(coordinator.hasActiveOperation(for: instance.id))
 
         // Stop should succeed even though start is in flight
-        try coordinator.stop(instance)
+        try await coordinator.stop(instance)
 
         // Active operation flag should be cleared by stop
         #expect(!coordinator.hasActiveOperation(for: instance.id))
@@ -380,12 +380,12 @@ struct VMLifecycleCoordinatorTests {
     }
 
     @Test("stop does not affect active operation tracking")
-    func stopDoesNotAffectActiveOperationTracking() throws {
+    func stopDoesNotAffectActiveOperationTracking() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = makeInstance()
         instance.status = .running
 
-        try coordinator.stop(instance)
+        try await coordinator.stop(instance)
         #expect(!coordinator.hasActiveOperation(for: instance.id))
         #expect(virtService.stopCallCount == 1)
     }
@@ -396,8 +396,8 @@ struct VMLifecycleCoordinatorTests {
         virtService.stopError = VirtualizationError.noVirtualMachine
         let instance = makeInstance()
 
-        #expect(throws: VirtualizationError.self) {
-            try coordinator.stop(instance)
+        await #expect(throws: VirtualizationError.self) {
+            try await coordinator.stop(instance)
         }
 
         #expect(!coordinator.hasActiveOperation(for: instance.id))
@@ -421,7 +421,7 @@ struct VMLifecycleCoordinatorTests {
         #expect(coordinator.hasActiveOperation(for: instance.id))
 
         // Stop clears the active operation entry (invalidating token A)
-        try coordinator.stop(instance)
+        try await coordinator.stop(instance)
         #expect(!coordinator.hasActiveOperation(for: instance.id))
 
         // Resume the suspended start — its defer should NOT re-clear the entry

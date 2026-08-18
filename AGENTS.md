@@ -40,9 +40,9 @@ Any change requiring a guest-agent reinstall bumps its `MARKETING_VERSION` — e
 
 Kernova is a **pure-AppKit** app managing macOS and Linux guests via `Virtualization.framework`.
 
-**Concurrency model:** Swift 6 strict concurrency. VZ delivers every delegate callback on the queue its `VZVirtualMachine` was created with, and `VMInstance` creates them on the main queue — so everything touching `VZVirtualMachine`, including every service that talks to VZ, is `@MainActor`, and stateless services are `Sendable` structs. VZ delegate callbacks bridge back with `nonisolated(unsafe)` plus `MainActor.assumeIsolated`.
+**Concurrency model:** Swift 6 strict concurrency. VZ delivers every callback on the queue its `VZVirtualMachine` was created with, so each `VMInstance` runs its VM on a private serial queue behind a `VMSession` actor whose executor is that queue — the only type holding a `VZVirtualMachine` or any VZ device object.
 
-That arrangement makes the main thread both the UI thread and the hypervisor's I/O callback thread, so VZ-delivered work is starved for as long as AppKit owns main.
+Services stay `@MainActor` and reach VZ with `await session.…`; stateless services are `Sendable` structs. Crossings from VZ back to main hop asynchronously, and whatever VZ calls synchronously — the socket-listener accept — answers without main.
 
 **No third-party dependencies.** Apple-published Swift Packages (e.g. `apple/swift-protobuf`) are acceptable when they pull their weight; non-Apple packages require explicit sign-off.
 

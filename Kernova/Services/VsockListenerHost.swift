@@ -26,12 +26,19 @@ enum VsockAdmission: Equatable, Sendable {
 ///
 /// One instance handles one port; pair several with one `VZVirtioSocketDevice`
 /// to run multiple services side-by-side.
-@MainActor
-final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
+///
+/// The accept path runs entirely on whatever queue VZ delivers the delegate
+/// callback on: the admission check and a data port's hand-off are synchronous
+/// there, and only a framed port's `onConnect` hops to the main actor.
+///
+/// `@unchecked Sendable`: every stored property is `let`, and the non-Sendable
+/// `VZVirtioSocketListener` is touched only at `init` and `attach(to:)`.
+final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate, @unchecked Sendable {
     typealias OnConnect = @MainActor (VsockChannel) -> Void
 
-    /// Takes ownership of one accepted descriptor, unwrapped.
-    typealias OnAcceptFd = @MainActor (Int32) -> Void
+    /// Takes ownership of one accepted descriptor, unwrapped, synchronously on
+    /// the accepting thread.
+    typealias OnAcceptFd = @Sendable (Int32) -> Void
 
     /// What an accepted connection is handed over as.
     private enum Handoff {
@@ -39,11 +46,12 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
         case rawDescriptor(OnAcceptFd)
     }
 
-    /// Owner-supplied admission predicate, evaluated per accepted connection.
+    /// Owner-supplied admission predicate, evaluated per accepted connection on
+    /// the accepting thread.
     ///
     /// Anything but `.admit` refuses the connection at the VZ level — no channel
     /// is built and `onConnect` never fires. `nil` admits every connection.
-    typealias ShouldAdmit = @MainActor () -> VsockAdmission
+    typealias ShouldAdmit = @Sendable () -> VsockAdmission
 
     private static let logger = Logger(subsystem: "app.kernova", category: "VsockListenerHost")
 
@@ -86,27 +94,26 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
 
     // MARK: - VZVirtioSocketListenerDelegate
 
-    // VZ delegate callbacks for a VM created on the main queue are delivered on
-    // the main queue, so `assumeIsolated` bridges back. Resolve the fd (and
-    // capture errno) here, in the nonisolated method, so the non-Sendable
-    // `VZVirtioSocketConnection` never crosses the actor boundary.
-    nonisolated func listener(
+    // Resolve the fd (and capture errno) here, in the delegate method, so the
+    // non-Sendable `VZVirtioSocketConnection` never leaves it.
+    func listener(
         _ listener: VZVirtioSocketListener,
         shouldAcceptNewConnection connection: VZVirtioSocketConnection,
         from socketDevice: VZVirtioSocketDevice
     ) -> Bool {
         let dupedFd = dup(connection.fileDescriptor)
         let dupErrno: Int32 = dupedFd < 0 ? errno : 0
-        return MainActor.assumeIsolated {
-            self.acceptDuplicatedFd(dupedFd, dupErrno: dupErrno)
-        }
+        return acceptDuplicatedFd(dupedFd, dupErrno: dupErrno)
     }
 
-    /// Resolves one accepted connection: admission check, socket configuration,
-    /// channel construction, `onConnect`.
+    /// Resolves one accepted connection on the accepting thread: admission
+    /// check, socket configuration, channel construction or raw hand-off.
     ///
-    /// Takes ownership of `fd` on every path — the built channel closes it, or
-    /// a refusal closes it here.
+    /// Takes ownership of `fd` on every path — the built channel closes it, a
+    /// data port's `onAcceptFd` takes it over, or a refusal closes it here.
+    /// Nothing on this path reads main-actor state or waits on a main-queue
+    /// hop: a framed port's `onConnect` is queued and not awaited, and a data
+    /// port's `onAcceptFd` runs synchronously right here.
     func acceptDuplicatedFd(_ fd: Int32, dupErrno: Int32) -> Bool {
         // The dup() above is a fully independent fd on the same socket file
         // description: the framework can release its own copy without affecting
@@ -146,7 +153,10 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
             channel.start()
             Self.logger.notice(
                 "Accepted vsock connection on port \(self.port, privacy: .public)")
-            onConnect(channel)
+            // Only the hand-off hops: the channel is already draining, and the
+            // async bridge keeps FIFO order with the reporter emissions queued
+            // the same way.
+            MainActorBridge.async { onConnect(channel) }
         case .rawDescriptor(let onAcceptFd):
             // No `configureAcceptedSocket` here: a data connection's options are
             // the endpoint's, applied where the first read on the descriptor

@@ -12,12 +12,12 @@ struct VMDisplayBackingViewTests {
         #expect(backing.machineView.automaticallyReconfiguresDisplay == true)
 
         backing.update(
-            virtualMachine: nil, isPaused: false, transitionText: nil,
+            display: nil, isPaused: false, transitionText: nil,
             automaticallyReconfiguresDisplay: false)
         #expect(backing.machineView.automaticallyReconfiguresDisplay == false)
 
         backing.update(
-            virtualMachine: nil, isPaused: false, transitionText: nil,
+            display: nil, isPaused: false, transitionText: nil,
             automaticallyReconfiguresDisplay: true)
         #expect(backing.machineView.automaticallyReconfiguresDisplay == true)
     }

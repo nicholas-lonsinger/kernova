@@ -58,6 +58,16 @@ func makeVZErrorChain(depth: Int, around error: NSError) -> NSError {
     return wrapped
 }
 
+// MARK: - drainMainQueue
+
+/// Waits for everything already queued on the main queue — one FIFO turn of
+/// the `MainActorBridge.async` bridge a listener's accepted channel rides.
+func drainMainQueue() async {
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        MainActorBridge.async { continuation.resume() }
+    }
+}
+
 // MARK: - expectEOF
 
 /// Asserts `channel` reaches EOF — the peer closed its end — rather than

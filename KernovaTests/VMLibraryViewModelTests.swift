@@ -1213,13 +1213,13 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("stop delegates to lifecycle coordinator")
-    func stopDelegates() {
+    func stopDelegates() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = makeInstance()
         instance.status = .running
         viewModel.instances.append(instance)
 
-        viewModel.stop(instance)
+        await viewModel.stop(instance)
 
         #expect(virtService.stopCallCount == 1)
         #expect(instance.status == .stopped)
@@ -2296,13 +2296,13 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("stop presents error on service failure")
-    func stopPresentsError() {
+    func stopPresentsError() async {
         let virtService = MockVirtualizationService()
         virtService.stopError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = makeInstance()
 
-        viewModel.stop(instance)
+        await viewModel.stop(instance)
 
         #expect(presenter.showError == true)
         #expect(presenter.errorMessage != nil)
@@ -2365,13 +2365,13 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("stop on running VM still delegates directly without confirmation")
-    func stopRunningSkipsConfirmation() {
+    func stopRunningSkipsConfirmation() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = makeInstance()
         instance.status = .running
         viewModel.instances.append(instance)
 
-        viewModel.stop(instance)
+        await viewModel.stop(instance)
 
         #expect(virtService.stopCallCount == 1)
         #expect(presenter.showStopPausedConfirmation == false)

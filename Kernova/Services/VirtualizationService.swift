@@ -4,7 +4,9 @@ import os
 
 /// Manages VM lifecycle operations: start, stop, pause, resume, save, and restore.
 ///
-/// All operations run on the main actor since `VZVirtualMachine` must be used on the main thread.
+/// Stays on the main actor because it mutates `VMInstance`; every
+/// `VZVirtualMachine` touch goes through the instance's `VMSession`, the VM's
+/// own isolation domain on its private queue.
 @MainActor
 final class VirtualizationService {
     private static let logger = Logger(subsystem: "app.kernova", category: "VirtualizationService")
@@ -118,13 +120,13 @@ final class VirtualizationService {
         instance.clipboardInputPipe = result.clipboardInputPipe
         instance.clipboardOutputPipe = result.clipboardOutputPipe
         instance.liveRemovableMedia = result.coldRemovableMedia
-        let vm = instance.attachVirtualMachine(from: result.configuration)
+        let session = await instance.attachSession(from: result.configuration)
         instance.startSerialReading()
         instance.startClipboardService()
-        instance.startVsockServices()
+        await instance.startVsockServices()
         let startOptions = Self.recoveryStartOptions(
             bootIntoRecovery: bootIntoRecovery, guestOS: instance.configuration.guestOS)
-        try await startMachine(vm, options: startOptions)
+        try await session.start(options: startOptions)
     }
 
     /// Detects VZ's advisory file-lock contention on a VM's backing files.
@@ -164,8 +166,9 @@ final class VirtualizationService {
     /// Builds the one-shot start options for a recovery boot.
     ///
     /// Returns `nil` — a normal boot — unless a recovery boot is requested for a
-    /// macOS guest.
-    static func recoveryStartOptions(
+    /// macOS guest. `nonisolated` so the fresh options object stays in a
+    /// disconnected region the session's `sending` parameter can take.
+    nonisolated static func recoveryStartOptions(
         bootIntoRecovery: Bool, guestOS: VMGuestOS
     ) -> VZMacOSVirtualMachineStartOptions? {
         guard bootIntoRecovery, guestOS == .macOS else { return nil }
@@ -177,7 +180,7 @@ final class VirtualizationService {
     // MARK: - Stop
 
     /// Requests a graceful ACPI shutdown of the virtual machine.
-    func stop(_ instance: VMInstance) throws {
+    func stop(_ instance: VMInstance) async throws {
         Self.logger.debug(
             "stop: status=\(instance.status.displayName, privacy: .public), isColdPaused=\(instance.isColdPaused, privacy: .public)"
         )
@@ -189,11 +192,11 @@ final class VirtualizationService {
             return
         }
 
-        guard instance.status.canStop, let vm = instance.virtualMachine else {
+        guard instance.status.canStop, let session = instance.session else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "stop")
         }
 
-        try vm.requestStop()
+        try await session.requestStop()
         Self.logger.notice("Requested stop for VM '\(instance.name, privacy: .public)'")
     }
 
@@ -209,11 +212,11 @@ final class VirtualizationService {
             return
         }
 
-        guard let vm = instance.virtualMachine else {
+        guard let session = instance.session else {
             throw VirtualizationError.noVirtualMachine
         }
 
-        try await vm.stop()
+        try await session.stop()
         instance.resetToStopped()
         Self.logger.notice("Force-stopped VM '\(instance.name, privacy: .public)'")
     }
@@ -222,12 +225,12 @@ final class VirtualizationService {
 
     func pause(_ instance: VMInstance) async throws {
         Self.logger.debug("pause: status=\(instance.status.displayName, privacy: .public)")
-        guard instance.status.canPause, let vm = instance.virtualMachine else {
+        guard instance.status.canPause, let session = instance.session else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "pause")
         }
 
         do {
-            try await vm.pause()
+            try await session.pause()
             instance.status = .paused
             // The grace clock only means something while the guest is executing
             // — a frozen guest cannot say Hello, so letting it run would blame
@@ -250,15 +253,15 @@ final class VirtualizationService {
     /// restores from the save file.
     func resume(_ instance: VMInstance) async throws {
         Self.logger.debug(
-            "resume: status=\(instance.status.displayName, privacy: .public), hasVM=\(instance.virtualMachine != nil, privacy: .public), hasSaveFile=\(instance.hasSaveFile, privacy: .public)"
+            "resume: status=\(instance.status.displayName, privacy: .public), hasVM=\(instance.hasLiveVirtualMachine, privacy: .public), hasSaveFile=\(instance.hasSaveFile, privacy: .public)"
         )
         guard instance.status.canResume else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "resume")
         }
 
         do {
-            if let vm = instance.virtualMachine {
-                try await vm.resume()
+            if let session = instance.session {
+                try await session.resume()
                 instance.status = .running
                 // Idempotent re-activation reconciles an attachment the host
                 // link may have invalidated during the pause.
@@ -301,18 +304,15 @@ final class VirtualizationService {
     /// Saves the current VM state to disk (pause + snapshot).
     func save(_ instance: VMInstance) async throws {
         Self.logger.debug("save: status=\(instance.status.displayName, privacy: .public)")
-        guard instance.status.canSave, let vm = instance.virtualMachine else {
+        guard instance.status.canSave, let session = instance.session else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "save")
         }
 
         instance.status = .saving
 
         do {
-            if vm.state == .running {
-                try await vm.pause()
-            }
-
-            try await saveMachineState(vm, to: instance.saveFileURL)
+            try await session.pauseIfRunning()
+            try await session.saveMachineState(to: instance.saveFileURL)
             // No sidecar metadata is needed beside the save file: removable media
             // carry stable UUIDs and storage disks stable virtio block identifiers
             // in `config`, and VZ matches both on restore.
@@ -516,16 +516,16 @@ final class VirtualizationService {
         instance.clipboardInputPipe = result.clipboardInputPipe
         instance.clipboardOutputPipe = result.clipboardOutputPipe
         instance.liveRemovableMedia = result.coldRemovableMedia
-        let vm = instance.attachVirtualMachine(from: result.configuration)
+        let session = await instance.attachSession(from: result.configuration)
         instance.startSerialReading()
         instance.startClipboardService()
-        instance.startVsockServices()
+        await instance.startVsockServices()
 
         Self.logger.debug("restoreFromSaveFile: attempting restore from save file")
         do {
             instance.status = .restoring
-            try await restoreMachineState(vm, from: instance.saveFileURL)
-            try await vm.resume()
+            try await session.restoreMachineState(from: instance.saveFileURL)
+            try await session.resume()
             instance.removeSaveFile()
         } catch {
             let nsError = error as NSError
@@ -533,55 +533,6 @@ final class VirtualizationService {
                 "Restore failed for VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(Self.underlyingChainDescription(nsError), privacy: .public)]"
             )
             throw VirtualizationError.restoreFailed(underlying: error)
-        }
-    }
-
-    // MARK: - Private Async Wrappers
-
-    /// Starts `vm`, using the options-aware overload only when `options` are supplied.
-    ///
-    /// `VZVirtualMachine.start(options:completionHandler:)` has no `async` variant,
-    /// so it is bridged through a continuation.
-    private func startMachine(_ vm: VZVirtualMachine, options: VZVirtualMachineStartOptions?) async throws {
-        guard let options else {
-            try await vm.start()
-            return
-        }
-        nonisolated(unsafe) let vm = vm
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            vm.start(options: options) { error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume()
-                }
-            }
-        }
-    }
-
-    private func saveMachineState(_ vm: VZVirtualMachine, to url: URL) async throws {
-        nonisolated(unsafe) let vm = vm
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            vm.saveMachineStateTo(url: url) { error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume()
-                }
-            }
-        }
-    }
-
-    private func restoreMachineState(_ vm: VZVirtualMachine, from url: URL) async throws {
-        nonisolated(unsafe) let vm = vm
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            vm.restoreMachineStateFrom(url: url) { error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume()
-                }
-            }
         }
     }
 }

@@ -49,7 +49,7 @@ struct VMInstanceTests {
 
     // MARK: - tearDownSession
 
-    @Test("tearDownSession clears pipes and virtualMachine without changing status")
+    @Test("tearDownSession clears pipes and the session without changing status")
     func tearDownSessionPreservesStatus() {
         let instance = makeInstance(status: .running)
         instance.serialInputPipe = Pipe()
@@ -58,7 +58,7 @@ struct VMInstanceTests {
         instance.tearDownSession()
 
         #expect(instance.status == .running)
-        #expect(instance.virtualMachine == nil)
+        #expect(instance.session == nil)
         #expect(instance.serialInputPipe == nil)
         #expect(instance.serialOutputPipe == nil)
     }
@@ -80,14 +80,14 @@ struct VMInstanceTests {
         instance.tearDownSession()
 
         #expect(instance.status == .paused)
-        #expect(instance.virtualMachine == nil)
+        #expect(instance.session == nil)
         #expect(instance.serialInputPipe == nil)
         #expect(instance.serialOutputPipe == nil)
     }
 
     // MARK: - resetToStopped
 
-    @Test("resetToStopped sets status to stopped and clears virtualMachine")
+    @Test("resetToStopped sets status to stopped and clears the session")
     func resetToStopped() {
         let instance = makeInstance(status: .running)
         // Simulate having a VM reference (we can't create a real VZVirtualMachine)
@@ -96,7 +96,7 @@ struct VMInstanceTests {
         instance.resetToStopped()
 
         #expect(instance.status == .stopped)
-        #expect(instance.virtualMachine == nil)
+        #expect(instance.session == nil)
     }
 
     @Test("resetToStopped is idempotent when already stopped")
@@ -104,7 +104,7 @@ struct VMInstanceTests {
         let instance = makeInstance(status: .stopped)
         instance.resetToStopped()
         #expect(instance.status == .stopped)
-        #expect(instance.virtualMachine == nil)
+        #expect(instance.session == nil)
     }
 
     // MARK: - removeSaveFile
@@ -142,10 +142,10 @@ struct VMInstanceTests {
 
     // MARK: - isColdPaused
 
-    @Test("isColdPaused is true when paused with no virtualMachine")
+    @Test("isColdPaused is true when paused with no live session")
     func isColdPausedTrue() {
         let instance = makeInstance(status: .paused)
-        #expect(instance.virtualMachine == nil)
+        #expect(instance.session == nil)
         #expect(instance.isColdPaused == true)
     }
 
@@ -240,7 +240,7 @@ struct VMInstanceTests {
     @Test("isKeepingAppAlive is false when cold-paused")
     func isKeepingAppAliveColdPaused() {
         let instance = makeInstance(status: .paused)
-        #expect(instance.virtualMachine == nil)
+        #expect(instance.session == nil)
         #expect(instance.isKeepingAppAlive == false)
     }
 
@@ -569,6 +569,58 @@ struct VMInstanceTests {
         instance.applyLivePolicy(oldConfig: old, newConfig: instance.configuration)
 
         #expect(device.appliedPlans == [.nat])
+    }
+
+    // MARK: - mayHoldAttachment
+
+    /// The window between a session being created and its recovery coordinator
+    /// being built: the configuration build has already attached the VM to the
+    /// app-managed network, so answering from the absent coordinator would
+    /// invite `rebuildNetworkIfIdle` to recreate the network under it.
+    @Test("A live session holds its configured network before its coordinator exists")
+    func mayHoldAttachmentBeforeTheCoordinatorIsBuilt() {
+        let instance = makeInstance(status: .starting)
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = .shared
+        instance.hasLiveVirtualMachineOverrideForTesting = true
+        #expect(instance.networkAttachmentCoordinator == nil)
+
+        #expect(instance.mayHoldAttachment(on: .shared))
+        #expect(!instance.mayHoldAttachment(on: .hostOnly))
+    }
+
+    @Test("A live session with networking off holds nothing")
+    func mayHoldAttachmentWithNetworkingOff() {
+        let instance = makeInstance(status: .running)
+        instance.configuration.networkEnabled = false
+        instance.configuration.networkMode = .shared
+        instance.hasLiveVirtualMachineOverrideForTesting = true
+
+        #expect(!instance.mayHoldAttachment(on: .shared))
+        #expect(!instance.mayHoldAttachment(on: .hostOnly))
+    }
+
+    /// Once the coordinator exists its mirror of the installed attachment is
+    /// authoritative — a live mode switch leaves it disagreeing with the
+    /// configuration in both directions until the swap lands, and an
+    /// unentitled build realizes Shared as plain NAT, on no app-managed
+    /// network at all.
+    @Test(
+        "The coordinator's applied attachment answers once it exists",
+        arguments: [
+            (NetworkAttachmentPlan.sharedVmnet, true),
+            (NetworkAttachmentPlan.hostOnly, false),
+            (NetworkAttachmentPlan.nat, false),
+        ])
+    func mayHoldAttachmentReadsTheAppliedPlan(plan: NetworkAttachmentPlan, holdsShared: Bool) {
+        let instance = makeInstance(status: .running)
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = .shared
+        instance.hasLiveVirtualMachineOverrideForTesting = true
+        _ = attachNetworkCoordinator(to: instance, device: MockNetworkDeviceControl(plan: plan))
+
+        #expect(instance.mayHoldAttachment(on: .shared) == holdsShared)
+        #expect(instance.mayHoldAttachment(on: .hostOnly) == (plan == .hostOnly))
     }
 
     @Test("tearDownSession stops network recovery and clears the pending flag")
@@ -901,7 +953,7 @@ struct VMInstanceTests {
         var newConfig = oldConfig
         newConfig.agentLogForwardingEnabled = true
 
-        // No virtualMachine set — applyLivePolicy must early-exit cleanly.
+        // No session set — applyLivePolicy must early-exit cleanly.
         instance.applyLivePolicy(oldConfig: oldConfig, newConfig: newConfig)
 
         #expect(instance.vsockLogListenerHost == nil)
@@ -914,12 +966,70 @@ struct VMInstanceTests {
         let config = instance.configuration
 
         // Same on both sides — no listener changes should occur. Without a
-        // virtualMachine the function exits even earlier; this asserts the
+        // session the function exits even earlier; this asserts the
         // guard order doesn't crash on equal inputs.
         instance.applyLivePolicy(oldConfig: config, newConfig: config)
 
         #expect(instance.vsockLogListenerHost == nil)
         #expect(instance.vsockClipboardListenerHost == nil)
+    }
+
+    // MARK: - Session Events
+
+    @Test("a session event whose id matches no live session is dropped")
+    func staleSessionEventIsDropped() {
+        let instance = makeInstance(status: .running)
+        // No session attached: any delivered id is stale — the event a
+        // torn-down session's guest stop produces after a fresh start.
+        instance.deliverSessionEvent(.guestDidStop, from: UUID())
+        #expect(instance.status == .running)
+    }
+
+    @Test("guestDidStop resets the instance to stopped")
+    func guestDidStopEventResets() {
+        let instance = makeInstance(status: .running)
+        instance.serialInputPipe = Pipe()
+        instance.handleSessionEvent(.guestDidStop)
+        #expect(instance.status == .stopped)
+        #expect(instance.serialInputPipe == nil)
+    }
+
+    @Test("didStopWithError tears the session down and records the error")
+    func didStopWithErrorEventRecordsError() {
+        let instance = makeInstance(status: .running)
+        instance.serialInputPipe = Pipe()
+        let failure = NSError(
+            domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "boom"])
+        instance.handleSessionEvent(.didStopWithError(failure))
+        #expect(instance.status == .error)
+        #expect(instance.errorMessage == "boom")
+        #expect(instance.serialInputPipe == nil)
+    }
+
+    @Test("networkAttachmentDisconnected forwards to the recovery coordinator")
+    func networkDisconnectedEventForwardsToCoordinator() {
+        let instance = makeInstance(status: .running)
+        let device = MockNetworkDeviceControl(plan: .nat)
+        let coordinator = NetworkAttachmentCoordinator(
+            vmName: "Test VM",
+            device: device,
+            interfaces: MockBridgedInterfaceProvider(available: [], primary: nil),
+            linkObserver: MockNetworkLinkObserver(),
+            vmnetNetworks: MockVmnetNetworkProvider(),
+            isVMNetworkingEntitled: false,
+            retryDelays: [],
+            choice: { NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil) },
+            onPendingChange: { _ in })
+        instance.networkAttachmentCoordinator = coordinator
+        coordinator.activate()
+        #expect(device.appliedPlans.isEmpty)
+
+        instance.handleSessionEvent(
+            .networkAttachmentDisconnected(NSError(domain: "test", code: 2)))
+
+        // The framework-nil'd mirror is cleared and the chosen mode reattached.
+        #expect(device.appliedPlans == [.nat])
+        #expect(device.currentPlan == .nat)
     }
 
     // MARK: - Agent Post-Start Watchdog

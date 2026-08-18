@@ -1327,7 +1327,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if instance.isColdPaused {
             viewModel.confirmForceStop(instance)
         } else {
-            viewModel.stop(instance)
+            Task { await viewModel.stop(instance) }
         }
     }
 

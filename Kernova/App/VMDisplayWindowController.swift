@@ -1,6 +1,5 @@
 import Cocoa
 import os
-import Virtualization
 
 /// Manages a dedicated window displaying a single VM's screen, either as a
 /// resizable pop-out window or in native macOS fullscreen.
@@ -72,7 +71,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         }
         backing.applyDropRegistration()
         backing.update(
-            virtualMachine: instance.virtualMachine,
+            display: instance.session?.displayHandle,
             isPaused: instance.status == .paused,
             transitionText: instance.status.transitionLabel,
             automaticallyReconfiguresDisplay: instance.configuration.displayAutoResizes
@@ -193,7 +192,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
             track: { [weak self] in
                 guard let self else { return }
                 _ = self.instance.status
-                _ = self.instance.virtualMachine
+                _ = self.instance.hasLiveVirtualMachine
                 _ = self.instance.displayMode
                 _ = self.instance.configuration.clipboardSharingEnabled
                 _ = self.instance.configuration.displayAutoResizes
@@ -212,7 +211,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                     self.closeForAppDismissal()
                 } else {
                     self.backingView.update(
-                        virtualMachine: self.instance.virtualMachine,
+                        display: self.instance.session?.displayHandle,
                         isPaused: status == .paused,
                         transitionText: status.transitionLabel,
                         automaticallyReconfiguresDisplay: self.instance.configuration.displayAutoResizes

@@ -53,7 +53,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         instance.status = .running
     }
 
-    func stop(_ instance: VMInstance) throws {
+    func stop(_ instance: VMInstance) async throws {
         stopCallCount += 1
         if let error = stopError { throw error }
         instance.resetToStopped()

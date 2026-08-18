@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import KernovaKit
 import KernovaTestSupport
+import Synchronization
 import Testing
 import Virtualization
 
@@ -43,16 +44,19 @@ struct VsockListenerHostTests {
             VsockAdmission.notReady(reason: "test: handshake pending"),
             .denied(reason: "test: peer not entitled"),
         ])
-    func admissionRefusalClosesFd(verdict: VsockAdmission) throws {
+    func admissionRefusalClosesFd(verdict: VsockAdmission) async throws {
         let (a, b) = try makeRawSocketPair()
         defer { close(b) }  // `a` is owned — and must be closed — by the listener.
 
-        var connected = false
+        let connected = Mutex(false)
         let host = VsockListenerHost(
-            port: 49_153, shouldAdmit: { verdict }, onConnect: { _ in connected = true })
+            port: 49_153, shouldAdmit: { verdict },
+            onConnect: { _ in connected.withLock { $0 = true } })
 
         #expect(host.acceptDuplicatedFd(a, dupErrno: 0) == false)
-        #expect(connected == false)
+        // A refused connection queues no hand-off; one bridged turn proves it.
+        await drainMainQueue()
+        #expect(connected.withLock { $0 } == false)
         // The refused duplicate must not leak. Observe the closure from the
         // peer end: the refusal path close(2)s `a` synchronously before
         // returning, so a non-blocking read on `b` sees EOF (0) — a
@@ -64,33 +68,37 @@ struct VsockListenerHostTests {
         #expect(recv(b, &byte, 1, 0) == 0)
     }
 
-    @Test("A passing admission check accepts and hands over the channel")
-    func admissionPassAcceptsConnection() throws {
+    @Test("A passing admission check accepts and hands the channel to main")
+    func admissionPassAcceptsConnection() async throws {
         let (a, b) = try makeRawSocketPair()
         defer { close(b) }
 
-        var received: VsockChannel?
+        let received = Mutex<VsockChannel?>(nil)
         let host = VsockListenerHost(port: 49_153, shouldAdmit: { .admit }) { channel in
-            received = channel
+            #expect(Thread.isMainThread)
+            received.withLock { $0 = channel }
         }
 
         #expect(host.acceptDuplicatedFd(a, dupErrno: 0) == true)
-        let channel = try #require(received)
+        // The hand-off rides the FIFO main-queue bridge, so one turn delivers it.
+        await drainMainQueue()
+        let channel = try #require(received.withLock { $0 })
         channel.close()
     }
 
     @Test("No admission check admits every connection (control listener)")
-    func nilAdmissionAdmits() throws {
+    func nilAdmissionAdmits() async throws {
         let (a, b) = try makeRawSocketPair()
         defer { close(b) }
 
-        var received: VsockChannel?
+        let received = Mutex<VsockChannel?>(nil)
         let host = VsockListenerHost(port: 49_154) { channel in
-            received = channel
+            received.withLock { $0 = channel }
         }
 
         #expect(host.acceptDuplicatedFd(a, dupErrno: 0) == true)
-        let channel = try #require(received)
+        await drainMainQueue()
+        let channel = try #require(received.withLock { $0 })
         channel.close()
     }
 
@@ -107,19 +115,47 @@ struct VsockListenerHostTests {
             close(b)
         }
 
-        var handedOver: Int32?
+        let handedOver = Mutex<Int32?>(nil)
         let host = VsockListenerHost(
             port: KernovaVsockPort.clipboardData, shouldAdmit: { .admit },
-            onAcceptFd: { fd in handedOver = fd })
+            onAcceptFd: { fd in handedOver.withLock { $0 = fd } })
 
         #expect(host.acceptDuplicatedFd(a, dupErrno: 0) == true)
-        #expect(handedOver == a)
+        #expect(handedOver.withLock { $0 } == a)
         // Nothing was written to the descriptor: a channel would have started
         // its own read loop and the endpoint's first header read would race it.
         #expect(fcntl(b, F_SETFL, O_NONBLOCK) >= 0)
         var byte: UInt8 = 0
         #expect(recv(b, &byte, 1, 0) == -1)
         #expect(errno == EAGAIN || errno == EWOULDBLOCK)
+    }
+
+    /// The invariant the accept path exists to keep: a data connection is
+    /// handed over on the thread VZ accepted it on, before the delegate
+    /// callback returns, with no main-queue hop in between.
+    @Test("A data port's hand-off runs synchronously on the accepting thread")
+    func dataHandoffRunsSynchronouslyOffMain() async throws {
+        let (a, b) = try makeRawSocketPair()
+        defer {
+            close(a)
+            close(b)
+        }
+
+        let handedOver = Mutex<Int32?>(nil)
+        let host = VsockListenerHost(
+            port: KernovaVsockPort.clipboardData, shouldAdmit: { .admit },
+            onAcceptFd: { fd in
+                #expect(!Thread.isMainThread)
+                handedOver.withLock { $0 = fd }
+            })
+
+        // As VZ will deliver it once the VM leaves the main queue: accepted off
+        // main, and — by `&&`'s ordering — handed over before the delegate
+        // callback returned, on that same thread.
+        let handedOverBeforeReturn = await offCooperativePool {
+            host.acceptDuplicatedFd(a, dupErrno: 0) && handedOver.withLock { $0 } == a
+        }
+        #expect(handedOverBeforeReturn)
     }
 
     @Test(
@@ -132,13 +168,13 @@ struct VsockListenerHostTests {
         let (a, b) = try makeRawSocketPair()
         defer { close(b) }  // `a` is owned — and must be closed — by the listener.
 
-        var handedOver: Int32?
+        let handedOver = Mutex<Int32?>(nil)
         let host = VsockListenerHost(
             port: KernovaVsockPort.dropData, shouldAdmit: { verdict },
-            onAcceptFd: { fd in handedOver = fd })
+            onAcceptFd: { fd in handedOver.withLock { $0 = fd } })
 
         #expect(host.acceptDuplicatedFd(a, dupErrno: 0) == false)
-        #expect(handedOver == nil)
+        #expect(handedOver.withLock { $0 } == nil)
         #expect(fcntl(b, F_SETFL, O_NONBLOCK) >= 0)
         var byte: UInt8 = 0
         #expect(recv(b, &byte, 1, 0) == 0)
