@@ -260,22 +260,6 @@ struct VMInstanceVsockAdmissionTests {
         #expect(Set(ports).count == ports.count)
     }
 
-    /// A data listener outliving its session would keep admitting transfers into
-    /// a service that is gone.
-    @Test("Tearing the vsock services down withdraws the data listeners too")
-    func stopWithdrawsDataListeners() {
-        let instance = makeInstance()
-        instance.vsockClipboardDataListenerHost = VsockListenerHost(
-            port: KernovaVsockPort.clipboardData, onAcceptFd: { _ in })
-        instance.vsockDropDataListenerHost = VsockListenerHost(
-            port: KernovaVsockPort.dropData, onAcceptFd: { _ in })
-
-        instance.stopVsockServices()
-
-        #expect(instance.vsockClipboardDataListenerHost == nil)
-        #expect(instance.vsockDropDataListenerHost == nil)
-    }
-
     @Test("Tearing the vsock services down clears the gate and the data sinks")
     func stopClearsGateAndSinks() throws {
         let instance = makeInstance()

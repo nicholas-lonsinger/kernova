@@ -956,8 +956,8 @@ struct VMInstanceTests {
         // No session set — applyLivePolicy must early-exit cleanly.
         instance.applyLivePolicy(oldConfig: oldConfig, newConfig: newConfig)
 
-        #expect(instance.vsockLogListenerHost == nil)
-        #expect(instance.vsockClipboardListenerHost == nil)
+        #expect(instance.vsockLogService == nil)
+        #expect(instance.clipboardService == nil)
     }
 
     @Test("applyLivePolicy is a no-op when no hot fields changed")
@@ -970,8 +970,8 @@ struct VMInstanceTests {
         // guard order doesn't crash on equal inputs.
         instance.applyLivePolicy(oldConfig: config, newConfig: config)
 
-        #expect(instance.vsockLogListenerHost == nil)
-        #expect(instance.vsockClipboardListenerHost == nil)
+        #expect(instance.vsockLogService == nil)
+        #expect(instance.clipboardService == nil)
     }
 
     // MARK: - Session Events
