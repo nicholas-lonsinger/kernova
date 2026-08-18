@@ -268,7 +268,7 @@ private nonisolated func hostLinkObserverRelease(_ info: UnsafeRawPointer) {
 }
 
 private nonisolated func hostLinkObserverCallout(
-    _ store: SCDynamicStore, _ changedKeys: CFArray, _ info: UnsafeMutableRawPointer?
+    _: SCDynamicStore, _: CFArray, _ info: UnsafeMutableRawPointer?
 ) {
     guard let info else { return }
     let observer = Unmanaged<HostNetworkLinkObserver>.fromOpaque(info).takeUnretainedValue()
