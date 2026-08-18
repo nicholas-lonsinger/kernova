@@ -21,7 +21,7 @@ private final class TestScheduler: @unchecked Sendable {
     private let lock = NSLock()
     private var pending: [@Sendable () -> Void] = []
 
-    func schedule(after: TimeInterval, _ work: @escaping @Sendable () -> Void) {
+    func schedule(after _: TimeInterval, _ work: @escaping @Sendable () -> Void) {
         lock.withLock { pending.append(work) }
     }
 
