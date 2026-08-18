@@ -53,8 +53,8 @@ bar and Option-revealed in the sidebar, gated by `AppPreferences.alwaysShowAdvan
   listeners, `clipboardService`, `SerialSocketRelay`, and `runtimeFileAccess`. View-layer helpers
   live in the `VMInstance+Display.swift` extension.
 - `VMSession` — one running VM's isolation domain: an actor whose executor is the private serial
-  queue its `VZVirtualMachine` was created with, and the only type holding that VM or any of its
-  device objects. VZ's delegate callbacks arrive on that queue and leave as `VMSessionEvent`s
+  queue its `VZVirtualMachine` was created with, and the only type that calls into that VM or any
+  of its device objects. VZ's delegate callbacks arrive on that queue and leave as `VMSessionEvent`s
   stamped with the session's id, which `VMInstance` hops to main and drops once the id no longer
   names the live session.
 - `VMBundleLayout` — a `Sendable` struct deriving every in-bundle path (disk image, aux storage,
