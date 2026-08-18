@@ -571,6 +571,58 @@ struct VMInstanceTests {
         #expect(device.appliedPlans == [.nat])
     }
 
+    // MARK: - mayHoldAttachment
+
+    /// The window between a session being created and its recovery coordinator
+    /// being built: the configuration build has already attached the VM to the
+    /// app-managed network, so answering from the absent coordinator would
+    /// invite `rebuildNetworkIfIdle` to recreate the network under it.
+    @Test("A live session holds its configured network before its coordinator exists")
+    func mayHoldAttachmentBeforeTheCoordinatorIsBuilt() {
+        let instance = makeInstance(status: .starting)
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = .shared
+        instance.hasLiveVirtualMachineOverrideForTesting = true
+        #expect(instance.networkAttachmentCoordinator == nil)
+
+        #expect(instance.mayHoldAttachment(on: .shared))
+        #expect(!instance.mayHoldAttachment(on: .hostOnly))
+    }
+
+    @Test("A live session with networking off holds nothing")
+    func mayHoldAttachmentWithNetworkingOff() {
+        let instance = makeInstance(status: .running)
+        instance.configuration.networkEnabled = false
+        instance.configuration.networkMode = .shared
+        instance.hasLiveVirtualMachineOverrideForTesting = true
+
+        #expect(!instance.mayHoldAttachment(on: .shared))
+        #expect(!instance.mayHoldAttachment(on: .hostOnly))
+    }
+
+    /// Once the coordinator exists its mirror of the installed attachment is
+    /// authoritative — a live mode switch leaves it disagreeing with the
+    /// configuration in both directions until the swap lands, and an
+    /// unentitled build realizes Shared as plain NAT, on no app-managed
+    /// network at all.
+    @Test(
+        "The coordinator's applied attachment answers once it exists",
+        arguments: [
+            (NetworkAttachmentPlan.sharedVmnet, true),
+            (NetworkAttachmentPlan.hostOnly, false),
+            (NetworkAttachmentPlan.nat, false),
+        ])
+    func mayHoldAttachmentReadsTheAppliedPlan(plan: NetworkAttachmentPlan, holdsShared: Bool) {
+        let instance = makeInstance(status: .running)
+        instance.configuration.networkEnabled = true
+        instance.configuration.networkMode = .shared
+        instance.hasLiveVirtualMachineOverrideForTesting = true
+        _ = attachNetworkCoordinator(to: instance, device: MockNetworkDeviceControl(plan: plan))
+
+        #expect(instance.mayHoldAttachment(on: .shared) == holdsShared)
+        #expect(instance.mayHoldAttachment(on: .hostOnly) == (plan == .hostOnly))
+    }
+
     @Test("tearDownSession stops network recovery and clears the pending flag")
     func tearDownSessionStopsNetworkRecovery() {
         let instance = makeInstance(status: .running)

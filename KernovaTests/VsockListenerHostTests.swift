@@ -11,14 +11,6 @@ import Virtualization
 @MainActor
 @Suite("VsockListenerHost")
 struct VsockListenerHostTests {
-    /// Waits for everything already queued on the main queue — one FIFO turn of
-    /// the bridge the channel hand-off rides.
-    private func drainMainQueue() async {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            MainActorBridge.async { continuation.resume() }
-        }
-    }
-
     /// `configureAcceptedSocket` must raise `SO_SNDBUF` on the accepted fd.
     ///
     /// This is the host→guest throughput lever (#377). Assert the buffer lands at

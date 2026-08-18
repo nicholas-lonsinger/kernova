@@ -390,7 +390,21 @@ final class VMInstance {
     /// `VZVirtualMachine` requires the virtualization entitlement, which CI
     /// test hosts lack.
     var hasLiveVirtualMachineOverrideForTesting: Bool?
+
+    /// Test stand-in for the live session's identity, for the same reason.
+    var liveSessionIDOverrideForTesting: UUID?
     #endif
+
+    /// The live session's identity — the token every asynchronous hand-off and
+    /// delivered event carries, so one raised against a session this instance
+    /// has already released is dropped instead of landing on its successor or
+    /// on a stopped VM.
+    var liveSessionID: UUID? {
+        #if DEBUG
+        if let liveSessionIDOverrideForTesting { return liveSessionIDOverrideForTesting }
+        #endif
+        return session?.id
+    }
 
     /// Whether a `VZVirtualMachine` for this VM is live in memory — the single
     /// liveness read every predicate here shares.
@@ -398,7 +412,7 @@ final class VMInstance {
         #if DEBUG
         if let hasLiveVirtualMachineOverrideForTesting { return hasLiveVirtualMachineOverrideForTesting }
         #endif
-        return session != nil
+        return liveSessionID != nil
     }
 
     /// Whether a live `VZVirtualMachine` is attached and settled at a state VZ
@@ -428,17 +442,20 @@ final class VMInstance {
     /// the app-managed network of `kind`, so recreating that network would pull
     /// it out from under a session.
     ///
-    /// A live session answers from the attachment it is *on* — the recovery
-    /// coordinator's main-actor mirror of what was last installed on the
-    /// session's queue — not from the configuration: the two disagree from a
-    /// live mode switch until the swap lands, in both directions. With no live
-    /// session there is nothing to read, so the configuration decides — and
-    /// only while a session could be forming or settling, since off-main
-    /// configuration assembly can already hold a handle this VM has not been
-    /// given yet.
+    /// The recovery coordinator answers whenever it exists: its main-actor
+    /// mirror of what was last installed on the session's queue is the
+    /// attachment the VM is *on*, which the configuration disagrees with from a
+    /// live mode switch until the swap lands, in both directions.
+    ///
+    /// Without one — a VM with no session or no network device, and a session
+    /// between its creation and its coordinator being built — the configuration
+    /// decides, and only while a session could be forming or settling: the
+    /// configuration build attaches the VM to the network before this instance
+    /// holds anything that can be read back, and off-main configuration
+    /// assembly can already hold a handle this VM has not been given yet.
     func mayHoldAttachment(on kind: VmnetNetworkKind) -> Bool {
-        if session != nil {
-            return networkAttachmentCoordinator?.appliedVmnetKind == kind
+        if let networkAttachmentCoordinator {
+            return networkAttachmentCoordinator.appliedVmnetKind == kind
         }
         guard configuration.networkEnabled,
             VmnetNetworkKind(mode: configuration.networkMode) == kind
@@ -534,7 +551,7 @@ final class VMInstance {
     /// Applies `event` if `sessionID` still names the live session; drops it
     /// otherwise.
     func deliverSessionEvent(_ event: VMSessionEvent, from sessionID: UUID) {
-        guard session?.id == sessionID else { return }
+        guard liveSessionID == sessionID else { return }
         handleSessionEvent(event)
     }
 
@@ -828,31 +845,19 @@ final class VMInstance {
         stopVsockServices()
         guard let session, session.hasVirtioSocketDevice else { return }
 
-        let controlHost = VsockListenerHost(port: KernovaVsockPort.control) { [weak self] channel in
-            guard let self else {
-                channel.close()
-                return
-            }
-            // Replace any prior service from a previous reconnect.
-            self.vsockControlService?.stop()
-            let service = self.makeControlService(for: channel)
-            self.vsockControlService = service
-            service.start()
-            // Any accepted channel that never completes its Hello is on a
-            // clock. Replacing a live service settles the old one as
-            // owner-requested, so `onChannelLost` does not fire and nothing
-            // else would arm here — and an agent that connects but cannot
-            // handshake (a half-finished update) is exactly when the reinstall
-            // affordance is wanted. Idempotent; the Hello cancels it.
-            self.startAgentPostStartWatchdog()
-        }
+        let sessionID = session.id
+        let controlHost = makeControlListenerHost(sessionID: sessionID)
 
         // Drop is unconditional, like control: there is no drop setting — the
         // display simply refuses the gesture when the guest can't take it.
-        let dropHost = makeDropListenerHost()
+        let dropHost = makeDropListenerHost(sessionID: sessionID)
         let dropDataHost = makeDropDataListenerHost()
-        let logHost = configuration.agentLogForwardingEnabled ? makeLogListenerHost() : nil
-        let clipHost = configuration.clipboardSharingEnabled ? makeClipboardListenerHost() : nil
+        let logHost =
+            configuration.agentLogForwardingEnabled
+            ? makeLogListenerHost(sessionID: sessionID) : nil
+        let clipHost =
+            configuration.clipboardSharingEnabled
+            ? makeClipboardListenerHost(sessionID: sessionID) : nil
         let clipDataHost =
             configuration.clipboardSharingEnabled ? makeClipboardDataListenerHost() : nil
 
@@ -952,14 +957,37 @@ final class VMInstance {
         )
     }
 
-    /// Builds the log-channel listener; each accepted channel replaces any prior
-    /// log service.
-    private func makeLogListenerHost() -> VsockListenerHost {
+    /// Builds the control-channel listener for the session identified by
+    /// `sessionID`; each accepted channel replaces any prior control service.
+    func makeControlListenerHost(sessionID: UUID) -> VsockListenerHost {
+        VsockListenerHost(port: KernovaVsockPort.control) { [weak self] channel in
+            guard let self, self.liveSessionID == sessionID else {
+                channel.close()
+                return
+            }
+            // Replace any prior service from a previous reconnect.
+            self.vsockControlService?.stop()
+            let service = self.makeControlService(for: channel)
+            self.vsockControlService = service
+            service.start()
+            // Any accepted channel that never completes its Hello is on a
+            // clock. Replacing a live service settles the old one as
+            // owner-requested, so `onChannelLost` does not fire and nothing
+            // else would arm here — and an agent that connects but cannot
+            // handshake (a half-finished update) is exactly when the reinstall
+            // affordance is wanted. Idempotent; the Hello cancels it.
+            self.startAgentPostStartWatchdog()
+        }
+    }
+
+    /// Builds the log-channel listener for the session identified by
+    /// `sessionID`; each accepted channel replaces any prior log service.
+    func makeLogListenerHost(sessionID: UUID) -> VsockListenerHost {
         VsockListenerHost(
             port: KernovaVsockPort.log,
             shouldAdmit: { [gate = vsockAdmissionGate] in gate.admission(for: .none) }
         ) { [weak self] channel in
-            guard let self else {
+            guard let self, self.liveSessionID == sessionID else {
                 channel.close()
                 return
             }
@@ -970,14 +998,14 @@ final class VMInstance {
         }
     }
 
-    /// Builds the drop-channel listener; each accepted channel replaces any prior
-    /// drop service.
-    private func makeDropListenerHost() -> VsockListenerHost {
+    /// Builds the drop-channel listener for the session identified by
+    /// `sessionID`; each accepted channel replaces any prior drop service.
+    func makeDropListenerHost(sessionID: UUID) -> VsockListenerHost {
         VsockListenerHost(
             port: KernovaVsockPort.drop,
             shouldAdmit: { [gate = vsockAdmissionGate] in gate.admission(for: .dropFiles) }
         ) { [weak self] channel in
-            guard let self else {
+            guard let self, self.liveSessionID == sessionID else {
                 channel.close()
                 return
             }
@@ -1010,16 +1038,16 @@ final class VMInstance {
             onAcceptFd: { [sink = clipboardDataSink] fd in sink.accept(fd: fd) })
     }
 
-    /// Builds the clipboard-channel listener; each accepted channel replaces any
-    /// prior clipboard service.
-    private func makeClipboardListenerHost() -> VsockListenerHost {
+    /// Builds the clipboard-channel listener for the session identified by
+    /// `sessionID`; each accepted channel replaces any prior clipboard service.
+    func makeClipboardListenerHost(sessionID: UUID) -> VsockListenerHost {
         VsockListenerHost(
             port: KernovaVsockPort.clipboard,
             shouldAdmit: { [gate = vsockAdmissionGate] in
                 gate.admission(for: .clipboardStreaming)
             }
         ) { [weak self] channel in
-            guard let self else {
+            guard let self, self.liveSessionID == sessionID else {
                 channel.close()
                 return
             }
@@ -1305,7 +1333,7 @@ final class VMInstance {
             // Idempotent reinstall: tear down any prior listener so a stale
             // accept callback doesn't race a new one.
             vsockLogListenerHost = nil
-            let logHost = makeLogListenerHost()
+            let logHost = makeLogListenerHost(sessionID: session.id)
             await session.attach(logHost)
             guard self.session === session else { return }
             vsockLogListenerHost = logHost
@@ -1321,7 +1349,7 @@ final class VMInstance {
         if enabled {
             vsockClipboardListenerHost = nil
             vsockClipboardDataListenerHost = nil
-            let clipHost = makeClipboardListenerHost()
+            let clipHost = makeClipboardListenerHost(sessionID: session.id)
             let clipDataHost = makeClipboardDataListenerHost()
             await session.attach([clipHost, clipDataHost])
             guard self.session === session else { return }

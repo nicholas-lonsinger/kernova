@@ -301,6 +301,100 @@ struct VMInstanceVsockAdmissionTests {
         }
     }
 
+    // MARK: - Stale-session hand-offs
+
+    /// One of the four framed listeners a session installs: how it is built,
+    /// and what an accepted channel populates on the instance.
+    private struct FramedListener {
+        let port: String
+        let makeHost: @MainActor (VMInstance, UUID) -> VsockListenerHost
+        let isInstalled: @MainActor (VMInstance) -> Bool
+    }
+
+    private var framedListeners: [FramedListener] {
+        [
+            FramedListener(
+                port: "control",
+                makeHost: { $0.makeControlListenerHost(sessionID: $1) },
+                isInstalled: { $0.vsockControlService != nil }),
+            FramedListener(
+                port: "log",
+                makeHost: { $0.makeLogListenerHost(sessionID: $1) },
+                isInstalled: { $0.vsockLogService != nil }),
+            FramedListener(
+                port: "drop",
+                makeHost: { $0.makeDropListenerHost(sessionID: $1) },
+                isInstalled: { $0.vsockDropService != nil }),
+            FramedListener(
+                port: "clipboard",
+                makeHost: { $0.makeClipboardListenerHost(sessionID: $1) },
+                isInstalled: { $0.clipboardService != nil }),
+        ]
+    }
+
+    /// An instance standing in for one with a live session, its handshake
+    /// published so the feature ports admit a connection.
+    private func makeInstanceWithLiveSession() -> (instance: VMInstance, sessionID: UUID) {
+        let instance = makeInstance()
+        let sessionID = UUID()
+        instance.liveSessionIDOverrideForTesting = sessionID
+        instance.vsockAdmissionGate.publish(
+            VsockAdmissionGate.State(
+                handshakeComplete: true,
+                capabilities: Set(KernovaCapability.controlChannelDefaults)))
+        return (instance, sessionID)
+    }
+
+    @Test("Each framed listener installs its service for the session that built it")
+    func liveSessionHandOffInstallsTheService() async throws {
+        for listener in framedListeners {
+            let (instance, sessionID) = makeInstanceWithLiveSession()
+            let host = listener.makeHost(instance, sessionID)
+            let (acceptedFd, guestFd) = try makeRawSocketPair()
+            let guest = VsockChannel(fileDescriptor: guestFd)
+            guest.start()
+            defer { guest.close() }
+
+            #expect(host.acceptDuplicatedFd(acceptedFd, dupErrno: 0))
+            await drainMainQueue()
+
+            #expect(listener.isInstalled(instance), "\(listener.port): no service installed")
+            instance.tearDownSession()
+        }
+    }
+
+    /// The accept runs on the VM's queue and queues the hand-off; a stop
+    /// running on main in between clears every service, and the hand-off that
+    /// lands after it must not put them back — `VMInstance` outlives the
+    /// session, so nothing else would ever clear them.
+    @Test("A hand-off queued by a released session installs nothing and closes its channel")
+    func releasedSessionHandOffIsRefused() async throws {
+        for listener in framedListeners {
+            let (instance, sessionID) = makeInstanceWithLiveSession()
+            let host = listener.makeHost(instance, sessionID)
+            let (acceptedFd, guestFd) = try makeRawSocketPair()
+            let guest = VsockChannel(fileDescriptor: guestFd)
+            guest.start()
+            defer { guest.close() }
+
+            // Admitted while the session is live, so the refusal under test is
+            // the hand-off's own and not the admission gate's.
+            #expect(host.acceptDuplicatedFd(acceptedFd, dupErrno: 0))
+            // The user stops the VM before the queued hand-off gets its turn on
+            // main. Releasing the stand-in identity is what `tearDownSession`
+            // does to `session` itself.
+            instance.tearDownSession()
+            instance.liveSessionIDOverrideForTesting = nil
+
+            await drainMainQueue()
+
+            #expect(
+                !listener.isInstalled(instance),
+                "\(listener.port): a stopped instance was repopulated")
+            await expectEOF(on: guest)
+        }
+    }
+
     @Test("Tearing the session down clears the gate")
     func tearDownSessionClearsGate() {
         let instance = makeInstance()
