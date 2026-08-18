@@ -320,6 +320,11 @@ struct VMInstanceVsockAdmissionTests {
     /// published so the feature ports admit a connection.
     private func makeInstanceWithLiveSession() -> (instance: VMInstance, sessionID: UUID) {
         let instance = makeInstance()
+        // A feature listener exists only while its setting is on, and its
+        // hand-off re-reads that setting — so a fixture standing in for a bound
+        // feature port has to have them on.
+        instance.configuration.clipboardSharingEnabled = true
+        instance.configuration.agentLogForwardingEnabled = true
         let sessionID = UUID()
         instance.liveSessionIDOverrideForTesting = sessionID
         instance.vsockAdmissionGate.publish(

@@ -954,7 +954,14 @@ final class VMInstance {
             port: KernovaVsockPort.log,
             shouldAdmit: { [gate = vsockAdmissionGate] in gate.admission(for: .none) }
         ) { [weak self] channel in
-            guard let self, self.liveSessionID == sessionID else {
+            // The accept ran on the VM's queue and this hand-off is a
+            // main-actor hop behind it, so the setting is re-read rather than
+            // captured: a toggle-off landing in between has already stopped the
+            // service and unbound the port, and this connection must not put
+            // them back.
+            guard let self, self.liveSessionID == sessionID,
+                self.configuration.agentLogForwardingEnabled
+            else {
                 channel.close()
                 return
             }
@@ -1014,7 +1021,12 @@ final class VMInstance {
                 gate.admission(for: .clipboardStreaming)
             }
         ) { [weak self] channel in
-            guard let self, self.liveSessionID == sessionID else {
+            // Re-read on the hop, as the log listener does: a toggle-off
+            // between the accept and this hand-off must not reinstate the
+            // service and data sink it just cleared.
+            guard let self, self.liveSessionID == sessionID,
+                self.configuration.clipboardSharingEnabled
+            else {
                 channel.close()
                 return
             }
@@ -1256,6 +1268,11 @@ final class VMInstance {
             if logChanged && logEnabled {
                 await self.applyLiveLogPolicy(enabled: true, on: session, sessionID: sessionID)
             }
+            // Re-checked between the two installs: the hop above hands main
+            // back, so a teardown landing there has already queued its unbind,
+            // and a second install would bind ports behind it that nothing
+            // takes down.
+            guard self.session === session else { return }
             if clipboardApplies && clipboardEnabled {
                 await self.applyLiveClipboardPolicy(enabled: true, on: session, sessionID: sessionID)
             }

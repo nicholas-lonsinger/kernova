@@ -28,6 +28,11 @@ struct VMInstanceLiveVsockPolicyTests {
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
         let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+        // A feature listener exists only while its setting is on, and its
+        // hand-off re-reads that setting — so a fixture standing in for a bound
+        // feature port has to have them on.
+        instance.configuration.clipboardSharingEnabled = true
+        instance.configuration.agentLogForwardingEnabled = true
         let sessionID = UUID()
         instance.liveSessionIDOverrideForTesting = sessionID
         instance.vsockAdmissionGate.publish(
@@ -127,5 +132,56 @@ struct VMInstanceLiveVsockPolicyTests {
         #expect(installer.attached.isEmpty)
         #expect(instance.clipboardService == nil)
         try expectSinkCleared(instance.clipboardDataSink)
+    }
+
+    // MARK: - Hand-offs crossing a toggle-off
+
+    /// The accept runs on the VM's queue and only queues its hand-off, so a
+    /// toggle-off can land on main in between — unbinding the port and stopping
+    /// the service while this connection is still on its way to rebuild them.
+    /// The hand-off has to refuse, or the feature the user switched off keeps
+    /// running on the accepted channel for the rest of the session.
+    @Test("A log hand-off queued before the toggle-off installs nothing")
+    func logHandOffCrossingDisableIsRefused() async throws {
+        let (instance, sessionID) = makeInstanceWithLiveSession()
+        let host = instance.makeLogListenerHost(sessionID: sessionID)
+        let (acceptedFd, guestFd) = try makeRawSocketPair()
+        let guest = VsockChannel(fileDescriptor: guestFd)
+        guest.start()
+        defer { guest.close() }
+
+        // Admitted while forwarding is on, so the refusal under test is the
+        // hand-off's own and not the admission gate's.
+        #expect(host.acceptDuplicatedFd(acceptedFd, dupErrno: 0))
+        // The user toggles the setting off before the queued hand-off gets its
+        // turn on main.
+        instance.configuration.agentLogForwardingEnabled = false
+
+        await drainMainQueue()
+
+        #expect(instance.vsockLogService == nil)
+        await expectEOF(on: guest)
+    }
+
+    @Test("A clipboard hand-off queued before the toggle-off installs nothing")
+    func clipboardHandOffCrossingDisableIsRefused() async throws {
+        let (instance, sessionID) = makeInstanceWithLiveSession()
+        let host = instance.makeClipboardListenerHost(sessionID: sessionID)
+        let (acceptedFd, guestFd) = try makeRawSocketPair()
+        let guest = VsockChannel(fileDescriptor: guestFd)
+        guest.start()
+        defer { guest.close() }
+
+        #expect(host.acceptDuplicatedFd(acceptedFd, dupErrno: 0))
+        // Cleared the way the disable branch clears it, so a hand-off that
+        // repointed the sink at a rebuilt service would show up below.
+        instance.clipboardDataSink.set(nil)
+        instance.configuration.clipboardSharingEnabled = false
+
+        await drainMainQueue()
+
+        #expect(instance.clipboardService == nil)
+        try expectSinkCleared(instance.clipboardDataSink)
+        await expectEOF(on: guest)
     }
 }
