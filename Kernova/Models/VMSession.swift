@@ -62,9 +62,9 @@ enum VMSessionError: Error {
 
 // MARK: - VMSession
 
-/// One VM's isolation domain: the only type that holds a `VZVirtualMachine` or
-/// any of its device objects, executing on the serial queue the VM was created
-/// with.
+/// One VM's isolation domain: the only type that calls into a
+/// `VZVirtualMachine` or any of its device objects, executing on the serial
+/// queue the VM was created with.
 ///
 /// `VZVirtualMachine.queue`'s documentation states the rule this actor
 /// enforces: "Other properties or function calls on VZVirtualMachine must

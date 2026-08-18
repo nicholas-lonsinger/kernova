@@ -35,7 +35,7 @@ final class VMInstance {
     var configuration: VMConfiguration
     var status: VMStatus
 
-    /// The live VM's isolation domain — the only holder of the
+    /// The live VM's isolation domain — the only type that calls into the
     /// `VZVirtualMachine` and its device objects.
     private(set) var session: VMSession?
 
