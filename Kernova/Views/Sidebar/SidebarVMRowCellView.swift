@@ -189,7 +189,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
                 // it registers the lifecycle term only while the others are
                 // false, and the tooltip and icon color need `status` anyway.
                 _ = self.isBusy?()
-                _ = instance.virtualMachine
+                _ = instance.hasLiveVirtualMachine
                 _ = instance.statusToolTip
                 _ = instance.statusDisplayNSColor
                 _ = instance.agentStatus

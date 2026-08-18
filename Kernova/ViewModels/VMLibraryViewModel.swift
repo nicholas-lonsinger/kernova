@@ -461,7 +461,7 @@ final class VMLibraryViewModel {
             } catch is CancellationError {
                 // Tear down a VM the install attached before cancellation fired: a
                 // retry would otherwise build a fresh `VZMacAuxiliaryStorage` while
-                // the old one is still alive on `instance.virtualMachine`.
+                // the old one is still alive on `instance.session`.
                 instance.tearDownSession()
                 instance.setupState = nil
                 instance.errorMessage = nil
@@ -830,7 +830,7 @@ final class VMLibraryViewModel {
         await start(instance)
     }
 
-    func stop(_ instance: VMInstance) {
+    func stop(_ instance: VMInstance) async {
         // VZ rejects requestStop() on paused VMs ("Invalid virtual machine state").
         // Surface a confirmation sheet offering resume-and-shutdown or force-stop instead.
         if instance.isLivePaused {
@@ -838,7 +838,7 @@ final class VMLibraryViewModel {
             return
         }
         do {
-            try lifecycle.stop(instance)
+            try await lifecycle.stop(instance)
         } catch {
             Self.logger.error(
                 "Failed to stop '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
@@ -850,7 +850,7 @@ final class VMLibraryViewModel {
     func resumeAndStop(_ instance: VMInstance) async {
         do {
             try await lifecycle.resume(instance)
-            try lifecycle.stop(instance)
+            try await lifecycle.stop(instance)
         } catch {
             Self.logger.error(
                 "Failed to resume-and-stop '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -1731,7 +1731,7 @@ final class VMLibraryViewModel {
     private func rebuildNetworkIfIdle(_ kind: VmnetNetworkKind, ignoring tornDown: VMInstance?) {
         guard vmnetNetworks.networkConfigurationIsPending(for: kind) else { return }
         let attached = instances.contains {
-            $0 !== tornDown && $0.mayHoldAttachment(on: kind, networks: vmnetNetworks)
+            $0 !== tornDown && $0.mayHoldAttachment(on: kind)
         }
         guard !attached else { return }
         Self.logger.notice(

@@ -78,7 +78,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         instance.status = .running
     }
 
-    func stop(_ instance: VMInstance) throws {
+    func stop(_ instance: VMInstance) async throws {
         instance.resetToStopped()
     }
 

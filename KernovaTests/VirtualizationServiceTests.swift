@@ -51,20 +51,20 @@ struct VirtualizationServiceTests {
     // MARK: - Stop Guards
 
     @Test("stop throws when VM is stopped")
-    func stopThrowsWhenStopped() {
+    func stopThrowsWhenStopped() async {
         let instance = makeInstance(status: .stopped)
 
-        #expect(throws: VirtualizationError.self) {
-            try service.stop(instance)
+        await #expect(throws: VirtualizationError.self) {
+            try await service.stop(instance)
         }
     }
 
     @Test("stop throws when VM is starting")
-    func stopThrowsWhenStarting() {
+    func stopThrowsWhenStarting() async {
         let instance = makeInstance(status: .starting)
 
-        #expect(throws: VirtualizationError.self) {
-            try service.stop(instance)
+        await #expect(throws: VirtualizationError.self) {
+            try await service.stop(instance)
         }
     }
 

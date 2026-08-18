@@ -11,7 +11,7 @@ protocol VirtualizationProviding: Sendable {
     /// `bootIntoRecovery` cold-boots a macOS guest into Recovery for this launch
     /// only; it is ignored for Linux guests and for restore-from-save paths.
     func start(_ instance: VMInstance, bootIntoRecovery: Bool) async throws
-    func stop(_ instance: VMInstance) throws
+    func stop(_ instance: VMInstance) async throws
     func forceStop(_ instance: VMInstance) async throws
     func pause(_ instance: VMInstance) async throws
     func resume(_ instance: VMInstance) async throws

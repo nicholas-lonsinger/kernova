@@ -34,7 +34,11 @@ final class VMInstance {
     let instanceID: UUID
     var configuration: VMConfiguration
     var status: VMStatus
-    var virtualMachine: VZVirtualMachine?
+
+    /// The live VM's isolation domain — the only holder of the
+    /// `VZVirtualMachine` and its device objects.
+    private(set) var session: VMSession?
+
     let bundleURL: URL
 
     /// Security-scoped access grants held for the live session; populated by
@@ -299,10 +303,6 @@ final class VMInstance {
     nonisolated var id: UUID { instanceID }
     var name: String { configuration.name }
 
-    // MARK: - Delegate
-
-    private var delegateAdapter: VMDelegateAdapter?
-
     // MARK: - Network Attachment Recovery
 
     /// Keeps the live network attachment realizing the configured mode;
@@ -386,7 +386,7 @@ final class VMInstance {
     var liveRemovableMedia: [USBDeviceInfo] = []
 
     #if DEBUG
-    /// Test stand-in for `virtualMachine != nil`: constructing a real
+    /// Test stand-in for `session != nil`: constructing a real
     /// `VZVirtualMachine` requires the virtualization entitlement, which CI
     /// test hosts lack.
     var hasLiveVirtualMachineOverrideForTesting: Bool?
@@ -398,7 +398,7 @@ final class VMInstance {
         #if DEBUG
         if let hasLiveVirtualMachineOverrideForTesting { return hasLiveVirtualMachineOverrideForTesting }
         #endif
-        return virtualMachine != nil
+        return session != nil
     }
 
     /// Whether a live `VZVirtualMachine` is attached and settled at a state VZ
@@ -428,22 +428,17 @@ final class VMInstance {
     /// the app-managed network of `kind`, so recreating that network would pull
     /// it out from under a session.
     ///
-    /// A live session answers from the attachment it is *on*, not from the
-    /// configuration: the two disagree from a live mode switch until the swap
-    /// lands, in both directions. With no live `VZVirtualMachine` there is
-    /// nothing to read, so the configuration decides — and only while a session
-    /// could be forming or settling, since off-main configuration assembly can
-    /// already hold a handle this VM has not been given yet.
-    func mayHoldAttachment(
-        on kind: VmnetNetworkKind, networks: any VmnetNetworkProviding
-    ) -> Bool {
-        if let virtualMachine {
-            return virtualMachine.networkDevices.contains { device in
-                guard let vmnet = device.attachment as? VZVmnetNetworkDeviceAttachment else {
-                    return false
-                }
-                return networks.kind(ofNetwork: vmnet.network) == kind
-            }
+    /// A live session answers from the attachment it is *on* — the recovery
+    /// coordinator's main-actor mirror of what was last installed on the
+    /// session's queue — not from the configuration: the two disagree from a
+    /// live mode switch until the swap lands, in both directions. With no live
+    /// session there is nothing to read, so the configuration decides — and
+    /// only while a session could be forming or settling, since off-main
+    /// configuration assembly can already hold a handle this VM has not been
+    /// given yet.
+    func mayHoldAttachment(on kind: VmnetNetworkKind) -> Bool {
+        if session != nil {
+            return networkAttachmentCoordinator?.appliedVmnetKind == kind
         }
         guard configuration.networkEnabled,
             VmnetNetworkKind(mode: configuration.networkMode) == kind
@@ -506,7 +501,7 @@ final class VMInstance {
     }
 
     var canUseExternalDisplay: Bool {
-        (status == .running || status == .paused) && virtualMachine != nil
+        (status == .running || status == .paused) && hasLiveVirtualMachine
     }
 
     var isInFullscreen: Bool { displayMode == .fullscreen }
@@ -516,16 +511,48 @@ final class VMInstance {
     var isDisplayDetached: Bool { displayMode != .inline }
 
     var canShowClipboard: Bool {
-        configuration.clipboardSharingEnabled && (status == .running || status == .paused) && virtualMachine != nil
+        configuration.clipboardSharingEnabled && (status == .running || status == .paused)
+            && hasLiveVirtualMachine
     }
 
-    // MARK: - Delegate Setup
+    // MARK: - Session Events
 
-    func setupDelegate() {
-        guard let vm = virtualMachine else { return }
-        let adapter = VMDelegateAdapter(instance: self)
-        vm.delegate = adapter
-        self.delegateAdapter = adapter
+    /// Builds the event sink a new session delivers into.
+    ///
+    /// Events hop to the main actor and apply only while the delivering
+    /// session is still the one this instance holds: delivery is asynchronous,
+    /// so a stop event from a torn-down session can arrive after a fresh
+    /// session is attached and must not reset it.
+    func makeSessionEvents() -> VMSessionEvents {
+        VMSessionEvents { [weak self] sessionID, event in
+            Task { @MainActor in
+                self?.deliverSessionEvent(event, from: sessionID)
+            }
+        }
+    }
+
+    /// Applies `event` if `sessionID` still names the live session; drops it
+    /// otherwise.
+    func deliverSessionEvent(_ event: VMSessionEvent, from sessionID: UUID) {
+        guard session?.id == sessionID else { return }
+        handleSessionEvent(event)
+    }
+
+    func handleSessionEvent(_ event: VMSessionEvent) {
+        switch event {
+        case .guestDidStop:
+            resetToStopped()
+            Self.logger.notice("Guest stopped for VM '\(self.name, privacy: .public)'")
+        case .didStopWithError(let error):
+            tearDownSession()
+            status = .error
+            errorMessage = error.localizedDescription
+            Self.logger.error(
+                "VM '\(self.name, privacy: .public)' stopped with error: \(error.localizedDescription, privacy: .public)"
+            )
+        case .networkAttachmentDisconnected(let error):
+            networkAttachmentCoordinator?.attachmentWasDisconnected(error: error)
+        }
     }
 
     // MARK: - State Helpers
@@ -549,8 +576,10 @@ final class VMInstance {
         serialInputPipe = nil
         serialOutputPipe = nil
         liveRemovableMedia = []
-        virtualMachine = nil
-        delegateAdapter = nil
+        // Releasing the session releases the actor, its delegate adapter, and
+        // the `VZVirtualMachine`; the boot paths' file-lock retry covers the
+        // lagging deallocation of the VM's advisory locks.
+        session = nil
         runtimeFileAccess.releaseAll()
         // An open display window resets this itself when it auto-closes;
         // `.hidden` (headless) has no window to do so — reset here so it
@@ -567,25 +596,35 @@ final class VMInstance {
         detailPaneMode = .display
     }
 
+    /// Creates the VM on its own queue, stores the session, and builds the
+    /// network-attachment coordinator for network-enabled configurations.
     @discardableResult
-    func attachVirtualMachine(from vzConfig: VZVirtualMachineConfiguration) -> VZVirtualMachine {
-        let vm = VZVirtualMachine(configuration: vzConfig)
-        virtualMachine = vm
-        setupDelegate()
-        setupNetworkAttachmentCoordinator(for: vm)
-        return vm
+    func attachSession(from vzConfig: VZVirtualMachineConfiguration) async -> VMSession {
+        // The configuration was assembled off-main and is handed over whole:
+        // nothing touches it after the VM is created from it.
+        nonisolated(unsafe) let vzConfig = vzConfig
+        let session = await VMSession.make(configuration: vzConfig, events: makeSessionEvents())
+        self.session = session
+        await setupNetworkAttachmentCoordinator(for: session)
+        return session
     }
 
     /// Builds this session's attachment-recovery coordinator, replacing any
     /// prior one.
-    private func setupNetworkAttachmentCoordinator(for vm: VZVirtualMachine) {
+    private func setupNetworkAttachmentCoordinator(for session: VMSession) async {
         networkAttachmentCoordinator?.stop()
         networkAttachmentCoordinator = nil
         networkAttachmentPending = false
-        guard configuration.networkEnabled, let device = vm.networkDevices.first else { return }
+        guard configuration.networkEnabled, session.hasNetworkDevice else { return }
+        let networks = VmnetNetworkService.shared
+        let initialPlan = await session.inspectNetworkAttachment { attachment in
+            VZNetworkDeviceHandle.plan(of: attachment, in: networks)
+        }
+        guard self.session === session else { return }
         networkAttachmentCoordinator = NetworkAttachmentCoordinator(
             vmName: name,
-            device: VZNetworkDeviceHandle(device: device),
+            device: VZNetworkDeviceHandle(
+                session: session, initialPlan: initialPlan, vmnetNetworks: networks),
             interfaces: HostBridgedInterfaceProvider(),
             linkObserver: HostNetworkLinkObserver(),
             isEligible: { [weak self] in
@@ -706,7 +745,7 @@ final class VMInstance {
     func refreshClipboardPassthrough() {
         let shouldRun =
             configuration.clipboardSharingEnabled && configuration.clipboardPassthroughEnabled
-            && virtualMachine != nil
+            && hasLiveVirtualMachine
         if shouldRun {
             let coordinator =
                 clipboardPassthroughCoordinator
@@ -779,19 +818,15 @@ final class VMInstance {
 
     // MARK: - Vsock Service Lifecycle
 
-    /// Installs vsock listeners on the live VM's `VZVirtioSocketDevice`.
+    /// Installs vsock listeners on the live session's `VZVirtioSocketDevice`.
     ///
     /// A no-op when no socket device is present. Idempotent: any previously
     /// installed listeners are torn down first. The control listener is always
     /// installed; the log and clipboard listeners are gated on
     /// `agentLogForwardingEnabled` / `clipboardSharingEnabled`.
-    func startVsockServices() {
+    func startVsockServices() async {
         stopVsockServices()
-        guard let vm = virtualMachine else { return }
-        guard let socketDevice = vm.socketDevices.first(where: { $0 is VZVirtioSocketDevice }) as? VZVirtioSocketDevice
-        else {
-            return
-        }
+        guard let session, session.hasVirtioSocketDevice else { return }
 
         let controlHost = VsockListenerHost(port: KernovaVsockPort.control) { [weak self] channel in
             guard let self else {
@@ -811,34 +846,29 @@ final class VMInstance {
             // affordance is wanted. Idempotent; the Hello cancels it.
             self.startAgentPostStartWatchdog()
         }
-        controlHost.attach(to: socketDevice)
-        vsockControlListenerHost = controlHost
 
-        // Unconditional, like control: there is no drop setting — the display
-        // simply refuses the gesture when the guest can't take it.
+        // Drop is unconditional, like control: there is no drop setting — the
+        // display simply refuses the gesture when the guest can't take it.
         let dropHost = makeDropListenerHost()
-        dropHost.attach(to: socketDevice)
-        vsockDropListenerHost = dropHost
-
         let dropDataHost = makeDropDataListenerHost()
-        dropDataHost.attach(to: socketDevice)
+        let logHost = configuration.agentLogForwardingEnabled ? makeLogListenerHost() : nil
+        let clipHost = configuration.clipboardSharingEnabled ? makeClipboardListenerHost() : nil
+        let clipDataHost =
+            configuration.clipboardSharingEnabled ? makeClipboardDataListenerHost() : nil
+
+        let hosts = [controlHost, dropHost, dropDataHost, logHost, clipHost, clipDataHost]
+            .compactMap { $0 }
+        await session.attach(hosts)
+        // Torn down while installing: the listeners die with the released VM,
+        // and nothing must be re-populated on this instance.
+        guard self.session === session else { return }
+
+        vsockControlListenerHost = controlHost
+        vsockDropListenerHost = dropHost
         vsockDropDataListenerHost = dropDataHost
-
-        if configuration.agentLogForwardingEnabled {
-            let logHost = makeLogListenerHost()
-            logHost.attach(to: socketDevice)
-            vsockLogListenerHost = logHost
-        }
-
-        if configuration.clipboardSharingEnabled {
-            let clipHost = makeClipboardListenerHost()
-            clipHost.attach(to: socketDevice)
-            vsockClipboardListenerHost = clipHost
-
-            let clipDataHost = makeClipboardDataListenerHost()
-            clipDataHost.attach(to: socketDevice)
-            vsockClipboardDataListenerHost = clipDataHost
-        }
+        vsockLogListenerHost = logHost
+        vsockClipboardListenerHost = clipHost
+        vsockClipboardDataListenerHost = clipDataHost
 
         Self.logger.info("Vsock services started for '\(self.name, privacy: .public)'")
     }
@@ -1163,6 +1193,11 @@ final class VMInstance {
         clipboardDataSink.set(nil)
     }
 
+    /// The vsock live-policy application in flight, chained so a second toggle
+    /// arriving before the first finishes runs after it rather than
+    /// interleaving with it.
+    @ObservationIgnored private var livePolicyApplication: Task<Void, Never>?
+
     /// Reacts to a configuration change while the VM is running by installing
     /// or tearing down vsock listeners and pushing a fresh `PolicyUpdate` to
     /// the guest agent.
@@ -1183,7 +1218,7 @@ final class VMInstance {
             networkAttachmentCoordinator?.configurationChanged()
         }
 
-        guard let vm = virtualMachine else { return }
+        guard hasLiveVirtualMachine else { return }
 
         // Host-only (no vsock device), so handle it before the socket-device
         // guard returns early for guests without a `VZVirtioSocketDevice`.
@@ -1199,10 +1234,7 @@ final class VMInstance {
             refreshClipboardPassthrough()
         }
 
-        guard let socketDevice = vm.socketDevices.first(where: { $0 is VZVirtioSocketDevice }) as? VZVirtioSocketDevice
-        else {
-            return
-        }
+        guard let session, session.hasVirtioSocketDevice else { return }
 
         let logChanged =
             oldConfig.agentLogForwardingEnabled != newConfig.agentLogForwardingEnabled
@@ -1213,37 +1245,44 @@ final class VMInstance {
         let logEnabled = newConfig.agentLogForwardingEnabled
         let clipboardEnabled = newConfig.clipboardSharingEnabled
         let clipboardApplies = clipboardChanged && newConfig.guestOS == .macOS
+        let snapshot = agentPolicySnapshot(for: newConfig)
 
-        // A listener the guest is about to be told about goes up first: the
-        // policy frame wakes the guest's parked reconnect loop at once
-        // (`VsockGuestClient.resume()`), and a redial that beats the listener is
-        // refused and costs the guest a full retry interval.
-        if logChanged && logEnabled {
-            applyLiveLogPolicy(enabled: true, on: socketDevice)
-        }
-        if clipboardApplies && clipboardEnabled {
-            applyLiveClipboardPolicy(enabled: true, on: socketDevice)
-        }
+        livePolicyApplication = Task { [previous = livePolicyApplication] in
+            await previous?.value
+            guard self.session === session else { return }
 
-        // The control service is nil in the window between accepting a
-        // connection and the guest's Hello — the next Hello-driven send catches
-        // that up.
-        vsockControlService?.sendPolicyUpdate(agentPolicySnapshot(for: newConfig))
+            // A listener the guest is about to be told about goes up first: the
+            // policy frame wakes the guest's parked reconnect loop at once
+            // (`VsockGuestClient.resume()`), and a redial that beats the
+            // listener is refused and costs the guest a full retry interval.
+            if logChanged && logEnabled {
+                await self.applyLiveLogPolicy(enabled: true, on: session)
+            }
+            if clipboardApplies && clipboardEnabled {
+                await self.applyLiveClipboardPolicy(enabled: true, on: session)
+            }
 
-        // A listener being withdrawn comes down after, so the frame pauses the
-        // guest's loop first: tearing it down while the guest still thinks the
-        // feature is on makes the guest see EOF and pound the host with
-        // reconnects until the policy arrives.
-        if logChanged && !logEnabled {
-            applyLiveLogPolicy(enabled: false, on: socketDevice)
-        }
-        if clipboardApplies && !clipboardEnabled {
-            applyLiveClipboardPolicy(enabled: false, on: socketDevice)
-        }
+            guard self.session === session else { return }
+            // The control service is nil in the window between accepting a
+            // connection and the guest's Hello — the next Hello-driven send
+            // catches that up.
+            self.vsockControlService?.sendPolicyUpdate(snapshot)
 
-        Self.logger.notice(
-            "Applied live policy for '\(self.name, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public), clipboard=\(newConfig.clipboardSharingEnabled, privacy: .public))"
-        )
+            // A listener being withdrawn comes down after, so the frame pauses
+            // the guest's loop first: tearing it down while the guest still
+            // thinks the feature is on makes the guest see EOF and pound the
+            // host with reconnects until the policy arrives.
+            if logChanged && !logEnabled {
+                await self.applyLiveLogPolicy(enabled: false, on: session)
+            }
+            if clipboardApplies && !clipboardEnabled {
+                await self.applyLiveClipboardPolicy(enabled: false, on: session)
+            }
+
+            Self.logger.notice(
+                "Applied live policy for '\(self.name, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public), clipboard=\(newConfig.clipboardSharingEnabled, privacy: .public))"
+            )
+        }
     }
 
     /// Starts or stops the host-side serial relay live.
@@ -1261,31 +1300,32 @@ final class VMInstance {
         )
     }
 
-    private func applyLiveLogPolicy(enabled: Bool, on socketDevice: VZVirtioSocketDevice) {
+    private func applyLiveLogPolicy(enabled: Bool, on session: VMSession) async {
         if enabled {
             // Idempotent reinstall: tear down any prior listener so a stale
             // accept callback doesn't race a new one.
             vsockLogListenerHost = nil
             let logHost = makeLogListenerHost()
-            logHost.attach(to: socketDevice)
+            await session.attach(logHost)
+            guard self.session === session else { return }
             vsockLogListenerHost = logHost
         } else {
             vsockLogService?.stop()
             vsockLogService = nil
             vsockLogListenerHost = nil
+            await session.removeSocketListener(port: KernovaVsockPort.log)
         }
     }
 
-    private func applyLiveClipboardPolicy(enabled: Bool, on socketDevice: VZVirtioSocketDevice) {
+    private func applyLiveClipboardPolicy(enabled: Bool, on session: VMSession) async {
         if enabled {
             vsockClipboardListenerHost = nil
-            let clipHost = makeClipboardListenerHost()
-            clipHost.attach(to: socketDevice)
-            vsockClipboardListenerHost = clipHost
-
             vsockClipboardDataListenerHost = nil
+            let clipHost = makeClipboardListenerHost()
             let clipDataHost = makeClipboardDataListenerHost()
-            clipDataHost.attach(to: socketDevice)
+            await session.attach([clipHost, clipDataHost])
+            guard self.session === session else { return }
+            vsockClipboardListenerHost = clipHost
             vsockClipboardDataListenerHost = clipDataHost
         } else {
             // The caller gates this branch on macOS guests, so any
@@ -1295,60 +1335,9 @@ final class VMInstance {
             vsockClipboardListenerHost = nil
             vsockClipboardDataListenerHost = nil
             clipboardDataSink.set(nil)
-        }
-    }
-}
-
-// MARK: - VZVirtualMachineDelegate Adapter
-
-/// Bridges `VZVirtualMachineDelegate` callbacks to update the `VMInstance` status.
-@MainActor
-private final class VMDelegateAdapter: NSObject, VZVirtualMachineDelegate {
-    private static let logger = Logger(subsystem: "app.kernova", category: "VMDelegateAdapter")
-
-    weak var instance: VMInstance?
-
-    init(instance: VMInstance) {
-        self.instance = instance
-    }
-
-    nonisolated func guestDidStop(_ virtualMachine: VZVirtualMachine) {
-        MainActor.assumeIsolated {
-            guard let instance else {
-                Self.logger.warning("guestDidStop received but VMInstance has been deallocated")
-                return
-            }
-            instance.resetToStopped()
-            Self.logger.notice("Guest stopped for VM '\(instance.name, privacy: .public)'")
-        }
-    }
-
-    nonisolated func virtualMachine(
-        _ virtualMachine: VZVirtualMachine, networkDevice: VZNetworkDevice,
-        attachmentWasDisconnectedWithError error: any Error
-    ) {
-        MainActor.assumeIsolated {
-            guard let instance else {
-                Self.logger.warning(
-                    "attachmentWasDisconnected received but VMInstance has been deallocated")
-                return
-            }
-            instance.networkAttachmentCoordinator?.attachmentWasDisconnected(error: error)
-        }
-    }
-
-    nonisolated func virtualMachine(_ virtualMachine: VZVirtualMachine, didStopWithError error: any Error) {
-        MainActor.assumeIsolated {
-            guard let instance else {
-                Self.logger.warning("didStopWithError received but VMInstance has been deallocated")
-                return
-            }
-            instance.tearDownSession()
-            instance.status = .error
-            instance.errorMessage = error.localizedDescription
-            Self.logger.error(
-                "VM '\(instance.name, privacy: .public)' stopped with error: \(error.localizedDescription, privacy: .public)"
-            )
+            await session.removeSocketListener(port: KernovaVsockPort.clipboard)
+            guard self.session === session else { return }
+            await session.removeSocketListener(port: KernovaVsockPort.clipboardData)
         }
     }
 }

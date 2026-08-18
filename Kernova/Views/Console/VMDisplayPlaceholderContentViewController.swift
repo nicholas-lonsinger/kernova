@@ -83,7 +83,7 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
                 guard let self else { return }
                 _ = self.instance.displayMode
                 _ = self.instance.isColdPaused
-                _ = self.instance.virtualMachine
+                _ = self.instance.hasLiveVirtualMachine
             },
             apply: { [weak self] in
                 self?.apply()
@@ -109,7 +109,7 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
         case .hidden: return .displayClosed
         case .inline:
             if instance.isColdPaused { return .suspended }
-            if instance.virtualMachine != nil { return .live }
+            if instance.hasLiveVirtualMachine { return .live }
             return .noDisplay
         }
     }

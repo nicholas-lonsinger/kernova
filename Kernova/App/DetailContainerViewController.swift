@@ -216,7 +216,7 @@ final class DetailContainerViewController: NSViewController {
                 _ = self.viewModel.selectedInstance?.status
                 _ = self.viewModel.selectedInstance?.displayMode
                 _ = self.viewModel.selectedInstance?.detailPaneMode
-                _ = self.viewModel.selectedInstance?.virtualMachine
+                _ = self.viewModel.selectedInstance?.hasLiveVirtualMachine
                 _ = self.viewModel.selectedInstance?.configuration.displayAutoResizes
                 // Track instances with backing views so a stop or a move out of
                 // inline mode is detected, and the array itself for adds/removes.
@@ -224,7 +224,7 @@ final class DetailContainerViewController: NSViewController {
                 for id in self.backingViews.keys {
                     if let inst = self.viewModel.instances.first(where: { $0.id == id }) {
                         _ = inst.status
-                        _ = inst.virtualMachine
+                        _ = inst.hasLiveVirtualMachine
                         _ = inst.displayMode
                         _ = inst.configuration.displayAutoResizes
                         // Everything `displayDropAvailability` reads, so the
@@ -265,7 +265,7 @@ final class DetailContainerViewController: NSViewController {
         let activeInlineIDs = Set(
             viewModel.instances
                 .filter {
-                    $0.virtualMachine != nil && $0.displayMode == .inline
+                    $0.hasLiveVirtualMachine && $0.displayMode == .inline
                         && $0.status.hasActiveDisplay
                 }
                 .map(\.id)
@@ -277,7 +277,7 @@ final class DetailContainerViewController: NSViewController {
         }
 
         guard let instance = viewModel.selectedInstance,
-            let vm = instance.virtualMachine,
+            let display = instance.session?.displayHandle,
             instance.displayMode == .inline,
             instance.status.hasActiveDisplay,
             instance.detailPaneMode == .display
@@ -287,7 +287,7 @@ final class DetailContainerViewController: NSViewController {
             // passed, so expire the request instead of letting it fire on a
             // later pane switch.
             if let selected = viewModel.selectedInstance, armedGuestFocusID == selected.id,
-                selected.virtualMachine != nil, selected.status.hasActiveDisplay
+                selected.hasLiveVirtualMachine, selected.status.hasActiveDisplay
             {
                 armedGuestFocusID = nil
             }
@@ -313,7 +313,7 @@ final class DetailContainerViewController: NSViewController {
         activeBackingViewID = instance.id
 
         backing.update(
-            virtualMachine: vm,
+            display: display,
             isPaused: instance.status == .paused,
             transitionText: instance.status.transitionLabel,
             automaticallyReconfiguresDisplay: instance.configuration.displayAutoResizes

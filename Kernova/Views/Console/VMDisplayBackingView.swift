@@ -90,18 +90,18 @@ final class VMDisplayBackingView: NSView {
     /// Updates the displayed virtual machine and overlay visibility.
     ///
     /// - Parameters:
-    ///   - virtualMachine: The VM to display, or `nil` to clear.
+    ///   - display: The session's display handle, or `nil` to clear.
     ///   - isPaused: Whether the pause overlay should be visible.
     ///   - transitionText: If non-nil, shows the transition overlay with this label (e.g. "Suspending…").
     ///   - automaticallyReconfiguresDisplay: Whether the guest display follows the view as it resizes.
     func update(
-        virtualMachine: VZVirtualMachine?, isPaused: Bool, transitionText: String?,
+        display: VMDisplayHandle?, isPaused: Bool, transitionText: String?,
         automaticallyReconfiguresDisplay: Bool
     ) {
         // Before the attach: VZ reconfigures the guest display as the VM is
         // assigned, so a stale flag reconfigures a VM the user opted out of.
         apply(automaticallyReconfiguresDisplay: automaticallyReconfiguresDisplay)
-        show(virtualMachine: virtualMachine, isPaused: isPaused, transitionText: transitionText)
+        show(display: display, isPaused: isPaused, transitionText: transitionText)
     }
 
     /// Clears the displayed VM and its overlays on a view about to be discarded.
@@ -109,14 +109,16 @@ final class VMDisplayBackingView: NSView {
     /// Leaves `automaticallyReconfiguresDisplay` where it is: with no VM
     /// attached there is nothing left for it to reconfigure.
     func detach() {
-        show(virtualMachine: nil, isPaused: false, transitionText: nil)
+        show(display: nil, isPaused: false, transitionText: nil)
     }
 
     private func show(
-        virtualMachine: VZVirtualMachine?, isPaused: Bool, transitionText: String?
+        display: VMDisplayHandle?, isPaused: Bool, transitionText: String?
     ) {
-        if machineView.virtualMachine !== virtualMachine {
-            machineView.virtualMachine = virtualMachine
+        if let display {
+            display.attach(to: machineView)
+        } else if machineView.virtualMachine != nil {
+            VMDisplayHandle.detach(machineView)
         }
         setOverlay(pauseOverlay, visible: isPaused, flag: &pauseVisible)
         setOverlay(transitionOverlay, visible: transitionText != nil, flag: &transitionVisible)

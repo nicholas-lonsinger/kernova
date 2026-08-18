@@ -6,7 +6,7 @@ import os
 import vmnet
 
 /// A realizable network attachment for a live VM, decoupled from VZ for testability.
-enum NetworkAttachmentPlan: Equatable {
+enum NetworkAttachmentPlan: Equatable, Sendable {
     /// The system NAT attachment — Shared Network in an unentitled build.
     case nat
     case bridged(String)
@@ -65,34 +65,51 @@ protocol NetworkDeviceControlling: AnyObject {
     /// provide it right now — the bridge interface vanished since resolution.
     func apply(_ plan: NetworkAttachmentPlan) -> Bool
     func detach()
+    /// The framework nil'd the live attachment ahead of its disconnect
+    /// callback; reflect that.
+    func attachmentWasDisconnected()
 }
 
-/// Drives a `VZNetworkDevice`, re-fetching the concrete
+/// Drives a session's network device from the main actor: feasibility is
+/// answered here, synchronously, from host state and a mirror of the plan
+/// last applied, while the VZ writes are forwarded to the session's queue in
+/// program order and never awaited — a live attachment install reports
+/// failure only asynchronously, through a later disconnect callback, so there
+/// is nothing to wait for. The queue-side factories re-fetch the concrete
 /// `VZBridgedNetworkInterface` by identifier at each attach — a VZ interface
 /// object held across a link change is stale.
 @MainActor
 final class VZNetworkDeviceHandle: NetworkDeviceControlling {
-    private let device: VZNetworkDevice
+    private let session: VMSession
     private let vmnetNetworks: any VmnetNetworkProviding
 
+    /// The plan the device is on: what `apply`/`detach` last installed,
+    /// cleared when the framework reports the attachment disconnected.
+    private var appliedPlan: NetworkAttachmentPlan?
+
     init(
-        device: VZNetworkDevice,
+        session: VMSession,
+        initialPlan: NetworkAttachmentPlan?,
         vmnetNetworks: any VmnetNetworkProviding = VmnetNetworkService.shared
     ) {
-        self.device = device
+        self.session = session
+        self.appliedPlan = initialPlan
         self.vmnetNetworks = vmnetNetworks
     }
 
-    var currentPlan: NetworkAttachmentPlan? {
-        switch device.attachment {
+    /// Classifies a live attachment back to the plan it realizes — run on the
+    /// session's queue to seed `initialPlan` from the attachment the
+    /// configuration build installed. A network the service no longer holds
+    /// realizes nothing, so reconciliation replaces it.
+    nonisolated static func plan(
+        of attachment: VZNetworkDeviceAttachment, in vmnetNetworks: any VmnetNetworkProviding
+    ) -> NetworkAttachmentPlan? {
+        switch attachment {
         case is VZNATNetworkDeviceAttachment:
             .nat
         case let bridged as VZBridgedNetworkDeviceAttachment:
             .bridged(bridged.interface.identifier)
         case let vmnet as VZVmnetNetworkDeviceAttachment:
-            // Map the attachment back to the app-managed network it joined; a
-            // network the service no longer holds realizes nothing, so
-            // reconciliation replaces it.
             switch vmnetNetworks.kind(ofNetwork: vmnet.network) {
             case .hostOnly: .hostOnly
             case .shared: .sharedVmnet
@@ -103,33 +120,44 @@ final class VZNetworkDeviceHandle: NetworkDeviceControlling {
         }
     }
 
+    var currentPlan: NetworkAttachmentPlan? { appliedPlan }
+
     func apply(_ plan: NetworkAttachmentPlan) -> Bool {
         switch plan {
         case .nat:
-            device.attachment = VZNATNetworkDeviceAttachment()
-            return true
+            session.applyNetworkAttachment { VZNATNetworkDeviceAttachment() }
         case .bridged(let identifier):
-            guard
-                let interface = VZBridgedNetworkInterface.networkInterfaces.first(where: {
-                    $0.identifier == identifier
-                })
-            else { return false }
-            device.attachment = VZBridgedNetworkDeviceAttachment(interface: interface)
-            return true
+            guard Self.bridgedInterface(identifier) != nil else { return false }
+            session.applyNetworkAttachment {
+                Self.bridgedInterface(identifier)
+                    .map(VZBridgedNetworkDeviceAttachment.init(interface:))
+            }
         case .hostOnly, .sharedVmnet:
             // Non-blocking: an unmaterialized network refuses the apply, and
             // the coordinator materializes it off-main and reconciles when
             // it's ready.
             guard let kind = plan.vmnetKind,
-                let attachment = vmnetNetworks.attachmentIfMaterialized(for: kind)
+                vmnetNetworks.attachmentIfMaterialized(for: kind) != nil
             else { return false }
-            device.attachment = attachment
-            return true
+            session.applyNetworkAttachment { [vmnetNetworks] in
+                vmnetNetworks.attachmentIfMaterialized(for: kind)
+            }
         }
+        appliedPlan = plan
+        return true
+    }
+
+    private nonisolated static func bridgedInterface(_ identifier: String) -> VZBridgedNetworkInterface? {
+        VZBridgedNetworkInterface.networkInterfaces.first { $0.identifier == identifier }
     }
 
     func detach() {
-        device.attachment = nil
+        appliedPlan = nil
+        session.detachNetworkAttachment()
+    }
+
+    func attachmentWasDisconnected() {
+        appliedPlan = nil
     }
 }
 
@@ -276,6 +304,12 @@ final class NetworkAttachmentCoordinator {
     /// `true` while the device is detached — no attachment realizes the chosen
     /// mode and recovery is waiting to reattach.
     private(set) var isPending = false
+
+    /// The app-managed network the live device is attached to, `nil` for
+    /// non-vmnet attachments and a detached device — the main-actor read
+    /// `VMInstance.mayHoldAttachment(on:)` uses now that the device object
+    /// itself lives on the session's queue.
+    var appliedVmnetKind: VmnetNetworkKind? { device.currentPlan?.vmnetKind }
     private var isActive = false
     private var retryTask: Task<Void, Never>?
     private var nextRetryIndex = 0
@@ -350,6 +384,10 @@ final class NetworkAttachmentCoordinator {
         Self.logger.warning(
             "Network attachment for '\(self.vmName, privacy: .public)' disconnected: \(error.localizedDescription, privacy: .public)"
         )
+        // Ahead of the guards: the framework already nil'd the attachment, and
+        // the device's mirror must say so even when this session isn't
+        // eligible to reattach right now.
+        device.attachmentWasDisconnected()
         guard isActive, isEligible() else { return }
         let isFailedAttachReport =
             lastAttachAttemptAt.map { clock.seconds(since: $0) < disconnectBurstWindow } ?? false

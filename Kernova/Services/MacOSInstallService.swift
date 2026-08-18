@@ -10,7 +10,6 @@ final class MacOSInstallService {
 
     private let configBuilder = ConfigurationBuilder()
     private let storageService = VMStorageService()
-    private var progressObservation: NSKeyValueObservation?
 
     // MARK: - Installation
 
@@ -69,50 +68,33 @@ final class MacOSInstallService {
         instance.serialOutputPipe = result.serialOutputPipe
         instance.clipboardInputPipe = result.clipboardInputPipe
         instance.clipboardOutputPipe = result.clipboardOutputPipe
-        // RATIONALE: `attachVirtualMachine` runs *before* the cancellation check
-        // below on purpose. A cancel in this window unwinds with
-        // `instance.virtualMachine` set, which
+        // RATIONALE (2026-08-17): `attachSession` runs *before* the cancellation
+        // check below on purpose. A cancel in this window unwinds with
+        // `instance.session` set, which
         // `VMLibraryViewModel.runGuestSetup`'s `catch is CancellationError`
         // tears down. Checking first would leave the configured pipes dangling on
         // `instance` with no matching VM.
-        let vm = instance.attachVirtualMachine(from: result.configuration)
+        let session = await instance.attachSession(from: result.configuration)
         instance.startSerialReading()
         instance.startClipboardService()
 
         try Task.checkCancellation()
 
-        let installer = VZMacOSInstaller(virtualMachine: vm, restoringFromImageAt: imageURL)
-
-        progressObservation = installer.progress.observe(\.fractionCompleted, options: [.new]) { progress, _ in
-            let fraction = progress.fractionCompleted
+        Self.logger.info("Running macOS installer...")
+        try await session.installMacOS(from: imageURL) { fraction in
             Task { @MainActor in
                 progressHandler(fraction)
             }
-        }
-
-        defer {
-            progressObservation?.invalidate()
-            progressObservation = nil
-        }
-
-        // Capture progress for the @Sendable onCancel closure (VZMacOSInstaller is not Sendable)
-        let installerProgress = installer.progress
-
-        Self.logger.info("Running macOS installer...")
-        try await withTaskCancellationHandler {
-            try await installer.install()
-        } onCancel: {
-            installerProgress.cancel()
         }
 
         // `VZMacOSInstaller.install` resolves its completion handler before VZ has
         // finished propagating the post-install guest shutdown through `vm.state`.
         // Without this wait the caller's auto-boot races the auxiliary-storage file
         // lock ("Failed to lock auxiliary storage"), and `guestDidStop` hasn't yet
-        // cleared `instance.virtualMachine`.
-        await Self.waitForVMStopped(vm)
+        // cleared `instance.session`.
+        await session.waitUntilStopped(timeout: .seconds(30))
 
-        // `waitForVMStopped` observes cancellation but never throws, so the signal
+        // `waitUntilStopped` observes cancellation but never throws, so the signal
         // has to be re-raised here: otherwise a cancel landing during the wait lets
         // the install return success and `runGuestSetup` auto-boots it.
         try Task.checkCancellation()
@@ -120,7 +102,7 @@ final class MacOSInstallService {
         // If the delegate never fired (timed out, or deallocated before
         // `guestDidStop` ran), tear down explicitly so a later boot doesn't
         // observe a stale attached VM.
-        if instance.virtualMachine != nil {
+        if instance.hasLiveVirtualMachine {
             instance.resetToStopped()
         }
 
@@ -131,64 +113,6 @@ final class MacOSInstallService {
         return .macOSRestoreImage(
             version: KernovaOSVersion.displayString(restoreImage.operatingSystemVersion),
             build: restoreImage.buildVersion)
-    }
-
-    /// Waits for `vm.state` to reach `.stopped`, the timeout to elapse, or the
-    /// surrounding `Task` to be cancelled — whichever comes first.
-    ///
-    /// Never throws; outer cancellation only suppresses the timeout warning.
-    /// Bridges `vm.state`'s KVO through `NSObject.observe(_:options:)` rather than
-    /// Combine's `publisher(for:).values`, whose `AsyncPublisher` isn't `Sendable`
-    /// when its subject isn't — and the sequence has to cross into a task-group
-    /// child.
-    private static func waitForVMStopped(
-        _ vm: VZVirtualMachine,
-        timeout: Duration = .seconds(30)
-    ) async {
-        // Quick path for the common case where VZ propagated synchronously.
-        if vm.state == .stopped { return }
-
-        let (stream, continuation) = AsyncStream<Void>.makeStream()
-
-        // The `defer { invalidate() }` below keeps the observation alive for the
-        // lifetime of this function; losing the reference silently stops it.
-        let observation = vm.observe(\.state, options: [.new]) { observed, _ in
-            if observed.state == .stopped {
-                continuation.yield(())
-                continuation.finish()
-            }
-        }
-        defer { observation.invalidate() }
-
-        // Cover the race: state may have transitioned to `.stopped` between
-        // the initial guard and observer registration above.
-        if vm.state == .stopped {
-            continuation.finish()
-            return
-        }
-
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask {
-                // `for await` over `AsyncStream` returns when the consumer's task
-                // is cancelled, so `group.cancelAll()` below unblocks this child
-                // without further plumbing.
-                for await _ in stream { return }
-            }
-            group.addTask {
-                // `try?`: when the group cancels this child the sleep throws, and
-                // exiting silently is what lets the group complete.
-                try? await Task.sleep(for: timeout)
-            }
-            _ = await group.next()
-            group.cancelAll()
-        }
-
-        // A timeout is an anomaly; a user cancel is not. Log only the former.
-        if vm.state != .stopped && !Task.isCancelled {
-            logger.warning(
-                "VM did not reach .stopped within timeout (state: \(String(describing: vm.state), privacy: .public))"
-            )
-        }
     }
 
     // MARK: - Platform Setup

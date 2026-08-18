@@ -285,7 +285,8 @@ final class DetailAlertsPresenter: NSObject {
         if vm.canStop && vm.status != .paused {
             buttons.append(
                 AlertButton("Shut Down", role: .default) { [weak self] in
-                    self?.viewModel.stop(vm)
+                    guard let self else { return }
+                    Task { await self.viewModel.stop(vm) }
                 })
         }
         buttons.append(AlertButton("Cancel", role: .cancel))

@@ -158,9 +158,9 @@ final class VMLifecycleCoordinator {
     /// Bypasses serialization so users can always interrupt an in-progress
     /// operation, clearing the active-operation token *before* calling the
     /// service to invalidate any in-flight operation's defer guard.
-    func stop(_ instance: VMInstance) throws {
+    func stop(_ instance: VMInstance) async throws {
         activeOperations.removeValue(forKey: instance.id)
-        try virtualizationService.stop(instance)
+        try await virtualizationService.stop(instance)
     }
 
     /// Immediately terminates the VM.

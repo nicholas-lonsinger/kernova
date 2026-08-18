@@ -849,7 +849,7 @@ extension SidebarViewController {
 
     @objc private func menuStop(_ sender: NSMenuItem) {
         guard let instance = sender.representedObject as? VMInstance else { return }
-        viewModel.stop(instance)
+        Task { await viewModel.stop(instance) }
     }
 
     @objc private func menuForceStop(_ sender: NSMenuItem) {
