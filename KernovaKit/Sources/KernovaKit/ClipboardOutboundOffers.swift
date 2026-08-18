@@ -1,5 +1,44 @@
 import Foundation
 
+/// One peer's pull of a single representation, however it reached this side.
+///
+/// A guest's pull arrives as the first frame on the data connection it dialled;
+/// a host's arrives as a `ClipboardRequest` on the control channel, and the
+/// connection follows. The fields are the same either way, so the owner logic
+/// that answers one is written once.
+public struct ClipboardPullRequest: Sendable {
+    /// The offer generation being pulled from.
+    public let generation: UInt64
+    /// Names the transfer answering this pull.
+    public let transferID: UInt64
+    /// The single representation being consumed.
+    public let uti: String
+    /// The requester's payload ceiling, in the unit the offer advertised.
+    public let maxAcceptByteCount: UInt64
+
+    /// Describes one pull.
+    public init(generation: UInt64, transferID: UInt64, uti: String, maxAcceptByteCount: UInt64) {
+        self.generation = generation
+        self.transferID = transferID
+        self.uti = uti
+        self.maxAcceptByteCount = maxAcceptByteCount
+    }
+
+    /// The pull a control-channel `ClipboardRequest` names.
+    public init(_ request: Kernova_V1_ClipboardRequest) {
+        self.init(
+            generation: request.generation, transferID: request.transferID, uti: request.uti,
+            maxAcceptByteCount: request.maxAcceptByteCount)
+    }
+
+    /// The pull a data connection's opening frame names.
+    public init(_ request: Kernova_V1_ClipboardTransferRequest) {
+        self.init(
+            generation: request.generation, transferID: request.transferID, uti: request.uti,
+            maxAcceptByteCount: request.maxAcceptByteCount)
+    }
+}
+
 /// What this side has offered the peer, and the transfers it serves in answer.
 ///
 /// The peer decides what it pulls and when — a paste can take two waves minutes
@@ -15,7 +54,7 @@ public final class ClipboardOutboundOffers {
     private final class Entry {
         let generation: UInt64
         let content: ClipboardContent
-        /// Read from the sender's transfer queues to decide whether the offer is
+        /// Read from each transfer's own queue to decide whether the offer is
         /// still wanted; zeroed once it is not, which aborts its transfers.
         let live = AtomicGeneration()
         /// The readout measuring this offer, opened up front for a drop and on
@@ -32,7 +71,7 @@ public final class ClipboardOutboundOffers {
         }
     }
 
-    private let session: ClipboardStreamSession
+    private let session: ClipboardControlSession
     private let reporter: ClipboardTransferReporter
     private let peerName: String
     private let progressRevealDelay: TimeInterval
@@ -59,7 +98,7 @@ public final class ClipboardOutboundOffers {
 
     private var lastOfferedDigestStorage: Data?
 
-    private var kind: ClipboardStreamSession.Kind { session.kind }
+    private var kind: ClipboardControlSession.Kind { session.kind }
 
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardOutboundOffers")
@@ -70,7 +109,7 @@ public final class ClipboardOutboundOffers {
     /// outlives its channels, and a reconnected host must never be handed a
     /// generation the agent already used.
     public init(
-        session: ClipboardStreamSession,
+        session: ClipboardControlSession,
         reporter: ClipboardTransferReporter,
         peerName: String,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
@@ -142,7 +181,7 @@ public final class ClipboardOutboundOffers {
         nextGenerationStorage += 1
         if kind == .clipboard, let previous = entries[currentGeneration] {
             retire(previous)
-            session.sender?.cancel(generation: previous.generation)
+            session.outbox?.cancel(generation: previous.generation)
         }
         let entry = Entry(generation: generation, content: offered)
         entry.operation = operation
@@ -193,7 +232,7 @@ public final class ClipboardOutboundOffers {
             return false
         }
         retire(entry)
-        session.sender?.cancel(generation: entry.generation)
+        session.outbox?.cancel(generation: entry.generation)
         // The send-dedup latch means "the peer already has this", which the
         // release just made false — so re-copying the released content is a new
         // copy to a peer whose clipboard this emptied, not a redundant offer.
@@ -206,18 +245,29 @@ public final class ClipboardOutboundOffers {
 
     // MARK: - Serving the peer's pulls
 
-    /// Answers one `ClipboardRequest` by streaming the representation it names.
-    public func handleRequest(_ request: Kernova_V1_ClipboardRequest) {
+    /// Answers one pull by streaming the representation it names over `link`.
+    ///
+    /// `link` is the transfer's data connection — one this side's listener
+    /// accepted, or a dialler for the one it is about to open — and every exit
+    /// path here disposes of it, so a refused pull never leaves a descriptor
+    /// open or a peer parked.
+    public func handleRequest(_ request: ClipboardPullRequest, link: ClipboardTransferLink) {
+        // Ahead of every verdict: with no outbox nothing can answer, and the
+        // link is this side's to close.
+        guard let outbox = session.outbox else {
+            link.abandon()
+            return
+        }
         guard let entry = entries[request.generation], !entry.isCancelled else {
             Self.logger.debug(
                 "Refusing a stale request for gen=\(request.generation, privacy: .public) (conn=\(self.session.connectionTag, privacy: .public))"
             )
-            // Abort every dropped request so the peer's parked pull wakes
+            // Refuse every dropped request so the peer's parked pull wakes
             // immediately instead of stalling to its backstop timeout. Stale is
             // the code a peer retires quietly: its paste comes back empty and
             // neither side reports a failure.
-            session.sender?.rejectRequest(
-                transferID: request.transferID, code: .requestStale,
+            outbox.refuse(
+                link: link, transferID: request.transferID, code: .requestStale,
                 message: staleMessage(for: request.generation))
             return
         }
@@ -226,8 +276,8 @@ public final class ClipboardOutboundOffers {
             Self.logger.warning(
                 "Request transfer_id \(request.transferID, privacy: .public) out of range for gen=\(request.generation, privacy: .public) (conn=\(self.session.connectionTag, privacy: .public))"
             )
-            session.sender?.rejectRequest(
-                transferID: request.transferID, code: .requestRange,
+            outbox.refuse(
+                link: link, transferID: request.transferID, code: .requestRange,
                 message: rangeMessage(repIndex))
             return
         }
@@ -236,23 +286,30 @@ public final class ClipboardOutboundOffers {
             Self.logger.warning(
                 "Request uti '\(request.uti, privacy: .public)' doesn't match offered rep \(repIndex, privacy: .public) (conn=\(self.session.connectionTag, privacy: .public))"
             )
-            session.sender?.rejectRequest(
-                transferID: request.transferID, code: .requestUTI,
+            outbox.refuse(
+                link: link, transferID: request.transferID, code: .requestUTI,
                 message: utiMessage(request.uti))
             return
         }
-        // Ahead of the session bookkeeping: with no sender nothing streams, so a
-        // transfer announced here would never see a terminal and its readout
-        // would stick on screen.
-        guard let sender = session.sender, let operation = operation(for: entry) else { return }
+        // Ahead of the transfer: with no readout a transfer announced here
+        // would never see a terminal and its bar would stick on screen.
+        guard let operation = operation(for: entry) else {
+            outbox.refuse(
+                link: link, transferID: request.transferID, code: .cancelled,
+                message: "No readout is measuring generation \(request.generation)")
+            return
+        }
 
         let xid = request.transferID
         let live = entry.live
         let isClipboard = kind == .clipboard
-        operation.unitBegan(
-            id: xid, expectedBytes: UInt64(max(0, representation.byteCount)),
-            name: unitName(for: representation))
-        sender.startTransfer(
+        let expectedBytes = UInt64(max(0, representation.byteCount))
+        let unitName = unitName(for: representation)
+        // The readout hears about the transfer from inside `serve`, once it has
+        // taken the id: a request the outbox turns away as a duplicate of one
+        // already streaming must not re-announce that live unit, which would
+        // reset its byte count to zero and run its bar backwards.
+        let served = outbox.serve(
             transferID: xid,
             generation: request.generation,
             representation: representation,
@@ -261,6 +318,10 @@ public final class ClipboardOutboundOffers {
             // about it is pasteboard-inline.
             isInline: isClipboard && representation.shouldInlineOnPasteboard,
             isCurrent: { live.isCurrent($0) },
+            link: link,
+            onBegin: {
+                operation.unitBegan(id: xid, expectedBytes: expectedBytes, name: unitName)
+            },
             onProgress: { sent, total in
                 operation.unitProgressed(
                     id: xid, bytesTransferred: UInt64(max(0, sent)),
@@ -273,6 +334,12 @@ public final class ClipboardOutboundOffers {
                 // whole set and ends with the peer's `DropComplete`.
                 if isClipboard { operation.finishWhenIdle() }
             })
+        guard served else {
+            Self.logger.warning(
+                "Ignoring a second request for transfer \(xid, privacy: .public), which is already streaming to '\(self.peerName, privacy: .public)' (conn=\(self.session.connectionTag, privacy: .public))"
+            )
+            return
+        }
         onActivity(.transferServed)
         Self.logger.debug(
             "Streaming rep \(repIndex, privacy: .public) to '\(self.peerName, privacy: .public)' (gen=\(request.generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public), \(representation.byteCount, privacy: .public) bytes offered)"
@@ -293,16 +360,16 @@ public final class ClipboardOutboundOffers {
         guard let entry = entries[generation] else { return }
         switch kind {
         case .clipboard:
-            // With no sender there is nothing streaming to call off.
-            guard let sender = session.sender else { return }
+            // With no outbox there is nothing streaming to call off.
+            guard let outbox = session.outbox else { return }
             entry.isCancelled = true
-            sender.cancel(generation: generation)
+            outbox.cancel(generation: generation)
         case .drop:
             entry.isCancelled = true
-            // Zeroed first, so a transfer between chunks sees the job is gone and
-            // aborts itself rather than racing the explicit cancel below.
+            // Zeroed first, so a transfer between writes sees the job is gone
+            // and aborts itself rather than racing the explicit cancel below.
             entry.live.set(0)
-            session.sender?.cancel(generation: generation)
+            session.outbox?.cancel(generation: generation)
             try? session.sendRelease(generation: generation)
             // The readout dwells at the fraction it stopped on, so the cancel is
             // visibly what happened.

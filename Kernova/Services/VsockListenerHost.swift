@@ -17,14 +17,27 @@ enum VsockAdmission: Equatable, Sendable {
     case denied(reason: String)
 }
 
-/// Hosts a single `VZVirtioSocketListener` on a given vsock port and hands
-/// each accepted connection to a callback as a `VsockChannel`.
+/// Hosts a single `VZVirtioSocketListener` on a given vsock port and hands each
+/// accepted connection to a callback.
+///
+/// A control port's connections arrive as a framed `VsockChannel`; a data port's
+/// arrive as the raw descriptor, because one transfer's connection carries its
+/// own header, payload and trailer rather than a stream of frames.
 ///
 /// One instance handles one port; pair several with one `VZVirtioSocketDevice`
 /// to run multiple services side-by-side.
 @MainActor
 final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
     typealias OnConnect = @MainActor (VsockChannel) -> Void
+
+    /// Takes ownership of one accepted descriptor, unwrapped.
+    typealias OnAcceptFd = @MainActor (Int32) -> Void
+
+    /// What an accepted connection is handed over as.
+    private enum Handoff {
+        case channel(OnConnect)
+        case rawDescriptor(OnAcceptFd)
+    }
 
     /// Owner-supplied admission predicate, evaluated per accepted connection.
     ///
@@ -36,14 +49,30 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
 
     let port: UInt32
     private let shouldAdmit: ShouldAdmit?
-    private let onConnect: OnConnect
+    private let handoff: Handoff
 
     private let listener: VZVirtioSocketListener
 
+    /// Serves a port whose connections are framed channels.
     init(port: UInt32, shouldAdmit: ShouldAdmit? = nil, onConnect: @escaping OnConnect) {
         self.port = port
         self.shouldAdmit = shouldAdmit
-        self.onConnect = onConnect
+        self.handoff = .channel(onConnect)
+        self.listener = VZVirtioSocketListener()
+        super.init()
+        self.listener.delegate = self
+    }
+
+    /// Serves a data port, whose connections are handed over as raw
+    /// descriptors.
+    ///
+    /// `onAcceptFd` takes ownership of the descriptor: the endpoint applies the
+    /// data connection's own socket options and reads its header off the main
+    /// actor.
+    init(port: UInt32, shouldAdmit: ShouldAdmit? = nil, onAcceptFd: @escaping OnAcceptFd) {
+        self.port = port
+        self.shouldAdmit = shouldAdmit
+        self.handoff = .rawDescriptor(onAcceptFd)
         self.listener = VZVirtioSocketListener()
         super.init()
         self.listener.delegate = self
@@ -110,12 +139,22 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
             return false
         }
 
-        configureAcceptedSocket(fd)
-
-        let channel = VsockChannel(fileDescriptor: fd)
-        channel.start()
-        Self.logger.notice("Accepted vsock connection on port \(self.port, privacy: .public)")
-        onConnect(channel)
+        switch handoff {
+        case .channel(let onConnect):
+            configureAcceptedSocket(fd)
+            let channel = VsockChannel(fileDescriptor: fd)
+            channel.start()
+            Self.logger.notice(
+                "Accepted vsock connection on port \(self.port, privacy: .public)")
+            onConnect(channel)
+        case .rawDescriptor(let onAcceptFd):
+            // No `configureAcceptedSocket` here: a data connection's options are
+            // the endpoint's, applied where the first read on the descriptor
+            // happens rather than in two places that must stay in step.
+            Self.logger.debug(
+                "Accepted vsock data connection on port \(self.port, privacy: .public)")
+            onAcceptFd(fd)
+        }
         return true
     }
 
@@ -163,23 +202,23 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
     /// Apple does not document whether `SO_SNDTIMEO` is honoured on a vsock fd,
     /// so treat this as a backstop, not as the mechanism that unwedges a write
     /// to a stalled guest — that is `VsockChannel`'s split write/state lock,
-    /// which keeps acks flowing so the streaming deadlines can tear the channel
-    /// down and unblock the parked write.
+    /// which keeps the channel readable so a teardown can unblock the parked
+    /// write.
     private func applySendTimeout(_ fd: Int32) {
         var timeout = timeval(tv_sec: Self.sendTimeoutSeconds, tv_usec: 0)
         let rc = setsockopt(
             fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         if rc != 0 {
             Self.logger.warning(
-                "setsockopt(SO_SNDTIMEO) failed on vsock port \(self.port, privacy: .public): errno=\(errno, privacy: .public) — relying on the streaming credit window for write bounding"
+                "setsockopt(SO_SNDTIMEO) failed on vsock port \(self.port, privacy: .public): errno=\(errno, privacy: .public) — a write to a stalled guest is bounded only by the channel's own teardown"
             )
         }
     }
 
     /// Defensive host-side send timeout, matching the guest's socket timeout.
-    private static let sendTimeoutSeconds = 30
+    private static let sendTimeoutSeconds = Int(ClipboardStreamTuning.dataSocketTimeout)
 
     /// Host-side socket send-buffer size, well under `kern.ipc.maxsockbuf`
     /// (8 MiB) — see `applySendBuffer` for why it is raised at all.
-    private static let sendBufferBytes = 1 << 20
+    private static let sendBufferBytes = ClipboardStreamTuning.dataSendBufferBytes
 }

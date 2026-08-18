@@ -167,13 +167,13 @@ struct ClipboardEndpointTests {
         #expect(pair.guest.endpoint.materializationEpoch(generation: 1) == 1)
     }
 
-    @Test("a payload past one chunk reassembles")
-    func multiChunkPayloadReassembles() async throws {
+    @Test("a payload past one socket read reassembles")
+    func multiReadPayloadReassembles() async throws {
         let pair = try EndpointPair()
         defer { pair.tearDown() }
 
         let payload = patternedBytes(
-            count: 3 * ClipboardStreamTuning.defaultChunkPayloadSize + 17, multiplier: 7, offset: 3)
+            count: 3 * ClipboardStreamTuning.dataReadBufferBytes + 17, multiplier: 7, offset: 3)
         let representation = ClipboardContent.Representation(uti: "public.data", data: payload)
         pair.host.endpoint.offer(ClipboardContent(representations: [representation]))
         try await pair.guest.recorder.waitForOffer()
@@ -301,13 +301,7 @@ struct ClipboardEndpointTests {
         let serve = harness.side.startDataServe(generation: 1, repIndex: 0, uti: "public.png")
         try await harness.waitForRequest(generation: 1, repIndex: 0)
         // The peer answers a representation it advertised as inline with a file.
-        let id = harness.transferID(generation: 1, repIndex: 0)
-        try harness.send(
-            makeBeginFrame(
-                generation: 1, transferID: id, uti: "public.png", totalBytes: 0,
-                filename: "shot.png", isInline: false, isArchive: true))
-        try harness.send(makeChunkFrame(transferID: id, offset: 0, data: archive))
-        try harness.send(makeEndFrame(transferID: id, payload: archive))
+        try harness.streamArchive(generation: 1, repIndex: 0, archive: archive, isInline: false)
 
         #expect(await serve.value == bytes)
         let materialized = try #require(harness.endpoint.materialized(generation: 1, repIndex: 0))
@@ -350,14 +344,12 @@ struct ClipboardEndpointTests {
         defer { harness.tearDown() }
         harness.endpoint.offer(ClipboardContent(text: "live"))
 
-        try harness.send(
-            makeRequestFrame(
-                generation: 99, transferID: harness.peerTransferID(generation: 99, repIndex: 0),
-                uti: textUTI))
+        let refused = try await harness.pullFromEndpoint(
+            generation: 99, repIndex: 0, uti: textUTI)
 
-        try await harness.recorder.waitForFrames { !harness.recorder.aborts.isEmpty }
-        #expect(harness.recorder.aborts.map(\.code) == [ClipboardStreamAbortCode.requestStale.rawValue])
-        #expect(harness.recorder.begins.isEmpty)
+        #expect(refused.reply.refusalCode == ClipboardStreamAbortCode.requestStale.rawValue)
+        #expect(refused.payload.isEmpty)
+        #expect(refused.trailer == nil)
     }
 
     @Test("a request naming a representation outside the offer is refused out of range")
@@ -366,14 +358,10 @@ struct ClipboardEndpointTests {
         defer { harness.tearDown() }
         harness.endpoint.offer(ClipboardContent(text: "live"))
 
-        try harness.send(
-            makeRequestFrame(
-                generation: 1, transferID: harness.peerTransferID(generation: 1, repIndex: 5),
-                uti: textUTI))
+        let refused = try await harness.pullFromEndpoint(generation: 1, repIndex: 5, uti: textUTI)
 
-        try await harness.recorder.waitForFrames { !harness.recorder.aborts.isEmpty }
-        #expect(harness.recorder.aborts.map(\.code) == [ClipboardStreamAbortCode.requestRange.rawValue])
-        #expect(harness.recorder.begins.isEmpty)
+        #expect(refused.reply.refusalCode == ClipboardStreamAbortCode.requestRange.rawValue)
+        #expect(refused.payload.isEmpty)
     }
 
     @Test("a request whose UTI does not match the offered representation is refused")
@@ -382,14 +370,11 @@ struct ClipboardEndpointTests {
         defer { harness.tearDown() }
         harness.endpoint.offer(ClipboardContent(text: "live"))
 
-        try harness.send(
-            makeRequestFrame(
-                generation: 1, transferID: harness.peerTransferID(generation: 1, repIndex: 0),
-                uti: "public.png"))
+        let refused = try await harness.pullFromEndpoint(
+            generation: 1, repIndex: 0, uti: "public.png")
 
-        try await harness.recorder.waitForFrames { !harness.recorder.aborts.isEmpty }
-        #expect(harness.recorder.aborts.map(\.code) == [ClipboardStreamAbortCode.requestUTI.rawValue])
-        #expect(harness.recorder.begins.isEmpty)
+        #expect(refused.reply.refusalCode == ClipboardStreamAbortCode.requestUTI.rawValue)
+        #expect(refused.payload.isEmpty)
     }
 
     @Test("a request arriving after the user cancelled the offer's wave is refused stale")
@@ -399,40 +384,77 @@ struct ClipboardEndpointTests {
         harness.endpoint.offer(ClipboardContent(text: "live"))
         harness.endpoint.cancelOutbound(generation: 1)
 
-        try harness.send(
-            makeRequestFrame(
-                generation: 1, transferID: harness.peerTransferID(generation: 1, repIndex: 0),
-                uti: textUTI))
+        let refused = try await harness.pullFromEndpoint(generation: 1, repIndex: 0, uti: textUTI)
 
-        try await harness.recorder.waitForFrames { !harness.recorder.aborts.isEmpty }
-        #expect(harness.recorder.aborts.map(\.code) == [ClipboardStreamAbortCode.requestStale.rawValue])
-        #expect(harness.recorder.begins.isEmpty)
+        #expect(refused.reply.refusalCode == ClipboardStreamAbortCode.requestStale.rawValue)
+        #expect(refused.payload.isEmpty)
     }
 
     @Test("the readout's Cancel stops the wave, and later requests are refused stale")
     func readoutCancelRefusesLaterRequests() async throws {
         let harness = try RawPeerHarness()
         defer { harness.tearDown() }
-        harness.endpoint.offer(ClipboardContent(text: "live"))
+        // Larger than the connection's send buffer, so the transfer is still in
+        // flight while its readout is on screen: a peer that reads the reply and
+        // stops leaves the sender parked, which is the state the Cancel acts on.
+        let payload = patternedBytes(count: 4 << 20, multiplier: 23, offset: 5)
+        harness.endpoint.offer(
+            ClipboardContent(representations: [
+                ClipboardContent.Representation(uti: "public.data", data: payload)
+            ]))
 
         // The first request opens the `.peerPaste` readout the user can cancel.
-        try harness.send(
-            makeRequestFrame(
+        let parked = try harness.openDataConnection()
+        try ClipboardDataConnection.writeFrame(
+            makeTransferRequestFrame(
                 generation: 1, transferID: harness.peerTransferID(generation: 1, repIndex: 0),
-                uti: textUTI))
-        try await harness.recorder.waitForFrames { !harness.recorder.begins.isEmpty }
+                uti: "public.data"),
+            fd: parked)
         try await harness.side.reports.wait { harness.side.reports.runningSnapshot != nil }
 
         harness.side.reports.reporter.cancelRunning()
-        try harness.send(
-            makeRequestFrame(
-                generation: 1, transferID: harness.peerTransferID(generation: 1, repIndex: 0),
-                uti: textUTI))
+        // The tracker hops to main to call the cancel off, and the wave stops
+        // between socket writes — so the hop has to land before this side reads
+        // anything back, or the payload would simply finish.
+        await drainMainQueue()
 
-        try await harness.recorder.waitForFrames {
-            harness.recorder.aborts.contains {
-                $0.code == ClipboardStreamAbortCode.requestStale.rawValue
-            }
+        // The wave already streaming ends with the reason in its trailer rather
+        // than a completion, and the connection closes.
+        let stopped = await offCooperativePool { try? receiveTransfer(fd: parked) }
+        #expect(try #require(stopped).abortCode == ClipboardStreamAbortCode.superseded.rawValue)
+
+        let refused = try await harness.pullFromEndpoint(
+            generation: 1, repIndex: 0, uti: "public.data")
+        #expect(refused.reply.refusalCode == ClipboardStreamAbortCode.requestStale.rawValue)
+    }
+
+    // MARK: - Bounding accepted data connections
+
+    /// A wedged or compromised guest is in scope (docs/CLIPBOARD.md §10), and
+    /// each accepted connection's opening frame is read on a blocking worker —
+    /// so what a peer that connects and then says nothing costs the host is a
+    /// constant, not one worker per connection it opens.
+    @Test("a peer that dials and says nothing parks a bounded number of header reads")
+    func silentDialsAreBounded() async throws {
+        let harness = try RawPeerHarness()
+        defer { harness.tearDown() }
+        let endpoint = harness.endpoint
+        let width = ClipboardStreamTuning.maxConcurrentDataAccepts
+
+        var peers: [Int32] = []
+        for _ in 0...width { peers.append(try harness.openDataConnection()) }
+
+        #expect(endpoint.dataAcceptsForTesting.running == width)
+        #expect(endpoint.dataAcceptsForTesting.waiting == peers.count - width)
+
+        // Closing every peer end is the end of stream each parked read is
+        // waiting on, so the connection held back gets its slot as they clear.
+        for fd in peers { ClipboardDataConnection.end(fd: fd) }
+        // RATIONALE: no-signal predicate — nothing publishes a notification when
+        // a header read finishes and frees its slot (docs/TESTING.md).
+        try await waitUntil {
+            endpoint.dataAcceptsForTesting.running == 0
+                && endpoint.dataAcceptsForTesting.waiting == 0
         }
     }
 }

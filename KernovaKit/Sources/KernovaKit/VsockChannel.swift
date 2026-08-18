@@ -12,7 +12,8 @@ public typealias Frame = Kernova_V1_Frame
 /// cannot interleave on the wire. The channel owns the descriptor and closes it.
 /// Keep `writeLock` and `stateLock` separate: `writeFramed` parks in a blocking
 /// `write(2)` while the peer's receive buffer is full, and one shared lock would
-/// starve the inbound acks that advance the credit window and unblock that write.
+/// hold off both the inbound reads that keep the peer draining and the close
+/// that would otherwise end the park.
 public final class VsockChannel: @unchecked Sendable {
     /// Inbound frames.
     ///

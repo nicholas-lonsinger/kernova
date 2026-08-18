@@ -118,7 +118,7 @@ struct VMInstanceDisplayDropTests {
 
         try guest.send(
             makeHello(capabilities: [
-                KernovaCapability.controlV1, KernovaCapability.clipboardStreamV2,
+                KernovaCapability.controlV1, KernovaCapability.clipboardTransferV3,
             ]))
         try await waitForChange { harness.instance.vsockControlService?.isConnected == true }
 

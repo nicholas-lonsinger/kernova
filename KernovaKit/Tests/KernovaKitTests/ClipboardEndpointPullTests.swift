@@ -23,23 +23,28 @@ struct ClipboardEndpointPullTests {
 
         let fire = harness.side.startDataServe(generation: 1, repIndex: 0, uti: textUTI)
         try await harness.waitForRequest(generation: 1, repIndex: 0)
+        // Opened but unanswered: the transfer is live and nothing has resolved
+        // it, which is the window the join has to land in.
+        let connection = try harness.openDataConnection()
         let id = harness.transferID(generation: 1, repIndex: 0)
-        try harness.send(
-            makeBeginFrame(
-                generation: 1, transferID: id, uti: textUTI, totalBytes: payload.count,
-                isInline: true))
-        try harness.send(makeChunkFrame(transferID: id, offset: 0, data: payload))
+        try ClipboardDataConnection.writeFrame(
+            makeTransferReplyFrame(
+                transferID: id, isArchive: false, isInline: true, totalBytes: payload.count),
+            fd: connection)
 
         // Enqueued before the join, so it runs the moment the join has
         // registered its waiter and suspended — the one instant both are on the
         // transfer.
         let waiters = Box(0)
         let endpoint = harness.endpoint
-        let peer = harness.peer
         DispatchQueue.main.async {
             waiters.value = endpoint.inboundPullWaiterCountForTesting(
                 generation: 1, repIndex: 0)
-            try? peer.send(makeEndFrame(transferID: id, payload: payload))
+            try? writeTransferBytes(fd: connection, payload)
+            try? ClipboardDataConnection.writeTrailer(
+                ClipboardTransferTrailer(ending: .complete(digest: sha256(payload))),
+                fd: connection)
+            ClipboardDataConnection.end(fd: connection)
         }
         let operation = harness.side.makeOperation(gesture: .preview, direction: .inbound)
         let joined = await harness.endpoint.join(generation: 1, repIndex: 0, operation: operation)
@@ -60,25 +65,29 @@ struct ClipboardEndpointPullTests {
 
         let fire = harness.side.startDataServe(generation: 1, repIndex: 0, uti: textUTI)
         try await harness.waitForRequest(generation: 1, repIndex: 0)
+        let connection = try harness.openDataConnection()
         let id = harness.transferID(generation: 1, repIndex: 0)
-        try harness.send(
-            makeBeginFrame(
-                generation: 1, transferID: id, uti: textUTI, totalBytes: payload.count,
-                isInline: true))
-        try harness.send(makeChunkFrame(transferID: id, offset: 0, data: payload))
+        try ClipboardDataConnection.writeFrame(
+            makeTransferReplyFrame(
+                transferID: id, isArchive: false, isInline: true, totalBytes: payload.count),
+            fd: connection)
 
         let endpoint = harness.endpoint
-        let peer = harness.peer
         DispatchQueue.main.async {
             MainActor.assumeIsolated { endpoint.cancelJoinedPulls(generation: 1) }
-            try? peer.send(makeEndFrame(transferID: id, payload: payload))
+            try? writeTransferBytes(fd: connection, payload)
+            try? ClipboardDataConnection.writeTrailer(
+                ClipboardTransferTrailer(ending: .complete(digest: sha256(payload))),
+                fd: connection)
+            ClipboardDataConnection.end(fd: connection)
         }
         let operation = harness.side.makeOperation(gesture: .preview, direction: .inbound)
         let joined = await harness.endpoint.join(generation: 1, repIndex: 0, operation: operation)
 
         #expect(joined == nil)
+        // The transfer the paste fire is also waiting on ran to completion: the
+        // join left it rather than tearing it down.
         #expect(await fire.value == payload)
-        #expect(harness.recorder.aborts.isEmpty)
     }
 
     @Test("cancelling the last joined pull tears the transfer down on both sides")
@@ -96,11 +105,9 @@ struct ClipboardEndpointPullTests {
         let joined = await harness.endpoint.join(generation: 1, repIndex: 0, operation: operation)
 
         #expect(joined == nil)
-        try await harness.recorder.waitForFrames {
-            harness.recorder.aborts.contains {
-                $0.code == ClipboardStreamAbortCode.userCancelled.rawValue
-            }
-        }
+        // Torn down on this side too: a connection arriving for the abandoned
+        // transfer is closed rather than served, which is what stops the peer.
+        #expect(try await harness.refusesTransfer(generation: 1, repIndex: 0))
     }
 
     // MARK: - A gesture retiring under a parked fire

@@ -26,9 +26,10 @@ public struct ClipboardTransferMetrics: Sendable, Equatable {
     /// Bytes that crossed the wire: the archive for an archived payload,
     /// `byteCount` itself for a raw one.
     public let wireByteCount: Int
-    /// Whole-transfer wall time in seconds — `ClipboardStreamBegin` processed →
-    /// digest verified and committed inbound; registration → `ClipboardStreamEnd`
-    /// written outbound, so the sender's source-open ramp is inside it.
+    /// Whole-transfer wall time in seconds — the connection opening → the
+    /// trailer's digest verified and the payload committed inbound;
+    /// registration → the trailer written outbound, so the sender's source-open
+    /// ramp is inside it.
     public let duration: TimeInterval
     /// What only the measuring side can know.
     public let detail: Detail
@@ -44,9 +45,9 @@ public struct ClipboardTransferMetrics: Sendable, Equatable {
         /// Whether the payload streamed through the extract pipeline (vs.
         /// reassembling in RAM).
         public let streamedToDisk: Bool
-        /// First chunk arrival → digest verified and committed, in seconds,
-        /// excluding the go-signal round-trip and the sender's source-open ramp.
-        /// `nil` for a zero-byte transfer, which never carries a chunk.
+        /// The descriptor read → digest verified and committed, in seconds,
+        /// excluding the connection's own open and the sender's source-open
+        /// ramp.
         public let streamingDuration: TimeInterval?
 
         init(streamedToDisk: Bool, streamingDuration: TimeInterval?) {
@@ -59,31 +60,22 @@ public struct ClipboardTransferMetrics: Sendable, Equatable {
     /// units the whole-transfer figures above are stated in.
     public struct Outbound: Sendable, Equatable {
         /// Whether the payload was encoded onto the wire as an archive — what
-        /// `ClipboardStreamBegin.is_archive` declared. Stated rather than
-        /// inferred from `wireByteCount != byteCount`, which an incompressible
-        /// archive coincides on.
+        /// the transfer's descriptor declared. Stated rather than inferred from
+        /// `wireByteCount != byteCount`, which an incompressible archive
+        /// coincides on.
         public let isArchived: Bool
-        /// Chunk frames handed to the socket.
-        public let chunkCount: Int
-        /// Registration → first chunk frame written, in seconds, covering the
-        /// payload classification and an archive's first-byte latency. `nil`
-        /// when no chunk was sent.
-        public let timeToFirstChunk: TimeInterval?
-        /// Seconds summed over every wait for the peer's go-signal and credit.
-        public let creditStall: TimeInterval
-        /// Seconds summed over every read from the source — the encode pipe for
-        /// an archived payload, so it is the time the encoder ran behind the
-        /// transport.
+        /// Registration → first payload byte handed to the socket, in seconds,
+        /// covering the payload classification and an archive's first-byte
+        /// latency. `nil` when no byte was sent.
+        public let timeToFirstByte: TimeInterval?
+        /// Seconds spent producing bytes rather than handing them to the
+        /// socket — reading and compressing the source, so it is what a slow
+        /// source rather than a slow peer costs.
         public let sourceWait: TimeInterval
 
-        init(
-            isArchived: Bool, chunkCount: Int, timeToFirstChunk: TimeInterval?,
-            creditStall: TimeInterval, sourceWait: TimeInterval
-        ) {
+        init(isArchived: Bool, timeToFirstByte: TimeInterval?, sourceWait: TimeInterval) {
             self.isArchived = isArchived
-            self.chunkCount = chunkCount
-            self.timeToFirstChunk = timeToFirstChunk
-            self.creditStall = creditStall
+            self.timeToFirstByte = timeToFirstByte
             self.sourceWait = sourceWait
         }
     }
@@ -131,11 +123,9 @@ public struct ClipboardTransferMetrics: Sendable, Equatable {
             }
         case .outbound(let outbound):
             kind = outbound.isArchived ? "archive" : "raw"
-            stages.append("\(outbound.chunkCount) chunks")
-            if let timeToFirstChunk = outbound.timeToFirstChunk {
-                stages.append(String(format: "ramp %.3f s", timeToFirstChunk))
+            if let timeToFirstByte = outbound.timeToFirstByte {
+                stages.append(String(format: "ramp %.3f s", timeToFirstByte))
             }
-            stages.append(String(format: "credit %.3f s", outbound.creditStall))
             stages.append(String(format: "source %.3f s", outbound.sourceWait))
         }
         var parts = [kind]

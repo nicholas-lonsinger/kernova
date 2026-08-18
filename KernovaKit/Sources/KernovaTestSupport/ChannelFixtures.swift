@@ -145,36 +145,11 @@ public final class FrameRecorder: @unchecked Sendable {
         }
     }
 
-    /// Every recorded `ClipboardStreamAbort`, in arrival order.
-    public var aborts: [Kernova_V1_ClipboardStreamAbort] {
-        frames.compactMap {
-            guard case .clipboardStreamAbort(let abort) = $0.payload else { return nil }
-            return abort
-        }
-    }
-
     /// Every recorded `Error`, in arrival order.
     public var errors: [Kernova_V1_Error] {
         frames.compactMap {
             guard case .error(let error) = $0.payload else { return nil }
             return error
-        }
-    }
-
-    /// Every recorded `ClipboardStreamBegin`, in arrival order.
-    public var begins: [Kernova_V1_ClipboardStreamBegin] {
-        frames.compactMap {
-            guard case .clipboardStreamBegin(let begin) = $0.payload else { return nil }
-            return begin
-        }
-    }
-
-    /// Every recorded `ClipboardChunk` for `transferID`, in arrival order.
-    public func chunks(for transferID: UInt64) -> [Kernova_V1_ClipboardChunk] {
-        frames.compactMap {
-            guard case .clipboardChunk(let chunk) = $0.payload, chunk.transferID == transferID
-            else { return nil }
-            return chunk
         }
     }
 

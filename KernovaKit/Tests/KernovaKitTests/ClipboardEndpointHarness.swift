@@ -32,7 +32,8 @@ final class EndpointSide {
         pasteLimit: Int,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider?,
         lazyPullTimeout: TimeInterval,
-        firstGeneration: UInt64
+        firstGeneration: UInt64,
+        dataLink: ClipboardEndpoint.DataLink
     ) {
         self.channel = channel
         self.pasteLimit = Box(pasteLimit)
@@ -56,6 +57,7 @@ final class EndpointSide {
         configuration.progressRevealDelay = 0
         configuration.progressIdleGap = 0
         configuration.clock = clock
+        configuration.dataLink = dataLink
         configuration.firstGeneration = firstGeneration
         endpoint = ClipboardEndpoint(
             channel: channel, configuration: configuration, reporter: reports.reporter)
@@ -158,11 +160,20 @@ final class EndpointPair {
             channel: a, role: .host, kind: kind, label: "host", peerName: "Guest",
             receives: kind == .clipboard, pasteLimit: hostPasteLimit,
             freeSpaceProvider: hostFreeSpace, lazyPullTimeout: lazyPullTimeout,
-            firstGeneration: hostFirstGeneration)
+            firstGeneration: hostFirstGeneration, dataLink: .accepts)
+        // The guest's dial is a socketpair whose far end goes straight to the
+        // host endpoint's accept path — the in-process stand-in for the host's
+        // data listener, so both ends run the shipping code.
+        let hostEndpoint = host.endpoint
         guest = EndpointSide(
             channel: b, role: .guest, kind: kind, label: "guest", peerName: "Mac",
             receives: true, pasteLimit: guestPasteLimit, freeSpaceProvider: guestFreeSpace,
-            lazyPullTimeout: lazyPullTimeout, firstGeneration: guestFirstGeneration)
+            lazyPullTimeout: lazyPullTimeout, firstGeneration: guestFirstGeneration,
+            dataLink: .dials(port: 0) { _ in
+                let (near, far) = try makeRawSocketPair()
+                MainActorBridge.async { hostEndpoint.acceptDataConnection(fd: far) }
+                return near
+            })
         guard autoStart else { return }
         host.start()
         guest.start()
@@ -184,6 +195,9 @@ final class RawPeerHarness {
     /// The peer's end of the wire — a test writes frames onto it directly.
     let peer: VsockChannel
     let recorder: FrameRecorder
+    /// The peer ends of every data connection the endpoint has dialled, for a
+    /// guest-role harness.
+    let dialled = DialledDataConnections()
 
     init(
         role: ClipboardEndpoint.Role = .host,
@@ -200,12 +214,14 @@ final class RawPeerHarness {
         peer = VsockChannel(fileDescriptor: peerFd)
         local.start()
         peer.start()
+        let dialled = self.dialled
         side = EndpointSide(
             channel: local, role: role, kind: kind,
             label: role == .host ? "host" : "guest",
             peerName: role == .host ? "Guest" : "Mac", receives: receives,
             pasteLimit: pasteLimit, freeSpaceProvider: freeSpaceProvider,
-            lazyPullTimeout: lazyPullTimeout, firstGeneration: firstGeneration)
+            lazyPullTimeout: lazyPullTimeout, firstGeneration: firstGeneration,
+            dataLink: role == .host ? .accepts : .dials(port: 0, connect: dialled.dialer))
         recorder = FrameRecorder(channel: peer)
         if autoStart { side.start() }
     }
@@ -220,6 +236,128 @@ final class RawPeerHarness {
         recorder.cancel()
         side.tearDown()
         peer.close()
+        dialled.closeAll()
+    }
+
+    // MARK: - Data connections
+
+    /// Dials one transfer's data connection into the endpoint under test and
+    /// returns the peer's end.
+    ///
+    /// For a host-role harness, which accepts them; the fixtures that write on
+    /// the returned descriptor close it.
+    func openDataConnection() throws -> Int32 {
+        let (peerEnd, endpointEnd) = try makeRawSocketPair()
+        side.endpoint.acceptDataConnection(fd: endpointEnd)
+        return peerEnd
+    }
+
+    /// The peer's end of the next data connection the endpoint dials, for a
+    /// guest-role harness.
+    func nextDialledConnection() async throws -> Int32 {
+        try await dialled.next()
+    }
+
+    /// Takes the connection the endpoint dials to pull one representation, with
+    /// the request that opened it.
+    ///
+    /// The caller owns the descriptor. For a guest-role harness, where a pull is
+    /// the connection rather than a control frame.
+    func acceptPull(generation: UInt64, repIndex: Int) async throws
+        -> (fd: Int32, request: Kernova_V1_ClipboardTransferRequest)
+    {
+        let fd = try await nextDialledConnection()
+        let expected = transferID(generation: generation, repIndex: repIndex)
+        let request = await offCooperativePool { readTransferRequest(fd: fd) }
+        guard let request else {
+            ClipboardDataConnection.end(fd: fd)
+            throw TestFailure("A dialled data connection carried no transfer request")
+        }
+        guard request.transferID == expected else {
+            ClipboardDataConnection.end(fd: fd)
+            throw TestFailure(
+                "A dialled data connection pulled transfer \(request.transferID), not \(expected)")
+        }
+        return (fd, request)
+    }
+
+    /// Answers the endpoint's pull for `(generation, repIndex)` with a whole
+    /// inline payload, over a data connection of its own.
+    ///
+    /// The connection repeats no offer metadata — no UTI, no filename — so the
+    /// pull's own registration is what names what arrives.
+    func streamInline(generation: UInt64, repIndex: Int, payload: Data) throws {
+        try serveTransfer(
+            fd: try openDataConnection(),
+            transferID: transferID(generation: generation, repIndex: repIndex),
+            payload: payload, isArchive: false, isInline: true)
+    }
+
+    /// Answers the endpoint's pull with an archived payload the receiver
+    /// extracts as it arrives.
+    func streamArchive(
+        generation: UInt64, repIndex: Int, archive: Data, isInline: Bool = false
+    ) throws {
+        try serveTransfer(
+            fd: try openDataConnection(),
+            transferID: transferID(generation: generation, repIndex: repIndex),
+            payload: archive, isArchive: true, isInline: isInline)
+    }
+
+    /// Answers the endpoint's pull by giving up part-way, naming `code` in the
+    /// abort trailer.
+    func abortTransfer(
+        generation: UInt64, repIndex: Int, code: String, sent: Data = Data(),
+        declaredBytes: Int = 1
+    ) throws {
+        try KernovaTestSupport.abortTransfer(
+            fd: try openDataConnection(),
+            transferID: transferID(generation: generation, repIndex: repIndex),
+            code: code, sent: sent, declaredBytes: declaredBytes)
+    }
+
+    /// Answers the endpoint's pull with a refusal reply and no payload.
+    func refuseTransfer(generation: UInt64, repIndex: Int, code: String) throws {
+        try KernovaTestSupport.refuseTransfer(
+            fd: try openDataConnection(),
+            transferID: transferID(generation: generation, repIndex: repIndex), code: code)
+    }
+
+    /// Whether the endpoint closes a data connection answering
+    /// `(generation, repIndex)` instead of taking its bytes.
+    ///
+    /// How "the pull is gone" is observable from the peer: an unmatched reply
+    /// is closed on sight, so the sender's stream ends at once.
+    func refusesTransfer(generation: UInt64, repIndex: Int) async throws -> Bool {
+        let fd = try openDataConnection()
+        try ClipboardDataConnection.writeFrame(
+            makeTransferReplyFrame(
+                transferID: transferID(generation: generation, repIndex: repIndex),
+                isArchive: false, isInline: true, totalBytes: 4),
+            fd: fd)
+        return await offCooperativePool {
+            defer { ClipboardDataConnection.end(fd: fd) }
+            return (try? readToEnd(fd: fd))?.isEmpty ?? false
+        }
+    }
+
+    /// Pulls one representation from the endpoint under test, as a peer that
+    /// receives does: a data connection carrying the request, then whatever
+    /// answers it.
+    func pullFromEndpoint(
+        generation: UInt64, repIndex: Int, uti: String, maxAcceptByteCount: UInt64 = .max
+    ) async throws -> ReceivedTransfer {
+        let fd = try openDataConnection()
+        let id = peerTransferID(generation: generation, repIndex: repIndex)
+        let received = await offCooperativePool {
+            try? pullTransfer(
+                fd: fd, generation: generation, transferID: id, uti: uti,
+                maxAcceptByteCount: maxAcceptByteCount)
+        }
+        guard let received else {
+            throw TestFailure("The endpoint answered transfer \(id) with nothing readable")
+        }
+        return received
     }
 
     /// The transfer id the endpoint mints for `(generation, repIndex)` — what a
@@ -246,19 +384,6 @@ final class RawPeerHarness {
             throw TestFailure("Request for transfer \(id) vanished")
         }
         return request
-    }
-
-    /// Answers a pull with a whole inline payload.
-    func streamInline(
-        generation: UInt64, repIndex: Int, uti: String, payload: Data, filename: String = ""
-    ) throws {
-        let id = transferID(generation: generation, repIndex: repIndex)
-        try send(
-            makeBeginFrame(
-                generation: generation, transferID: id, uti: uti, totalBytes: payload.count,
-                filename: filename, isInline: true))
-        try send(makeChunkFrame(transferID: id, offset: 0, data: payload))
-        try send(makeEndFrame(transferID: id, payload: payload))
     }
 }
 

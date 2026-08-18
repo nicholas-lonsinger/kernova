@@ -1,11 +1,12 @@
 import Foundation
 
-/// Stable machine-readable reasons a `ClipboardStreamAbort` gives for ending a
-/// transfer, named `<stage>.<condition>`.
+/// Stable machine-readable reasons a transfer ended, named
+/// `<stage>.<condition>`.
 ///
-/// The raw value is what the frame carries and what the receiving side matches
-/// on to decide whether the failure reaches the user, so the side that aborts
-/// and the side that judges the abort share one spelling.
+/// The raw value is what a refusal reply or an abort trailer carries, and what
+/// the receiving side matches on to decide whether the failure reaches the
+/// user, so the side that aborts and the side that judges the abort share one
+/// spelling.
 public enum ClipboardStreamAbortCode: String, CaseIterable, Sendable {
     // MARK: - Request rejection
 
@@ -19,7 +20,7 @@ public enum ClipboardStreamAbortCode: String, CaseIterable, Sendable {
     /// The requested UTI does not match the representation offered at that index.
     case requestUTI = "request.uti"
 
-    /// Begin arrived for a transfer the receiver had already cancelled.
+    /// The connection named a transfer the receiver had already cancelled.
     case requestCancelled = "request.cancelled"
 
     // MARK: - Retirement and supersession
@@ -39,41 +40,26 @@ public enum ClipboardStreamAbortCode: String, CaseIterable, Sendable {
     /// The sender could not read the source representation.
     case readError = "read.error"
 
-    /// A frame carrying the transfer could not be written to the channel.
+    /// The transfer's connection could not be opened, or could not carry what
+    /// this side wrote onto it — the request that opens a pull, or the payload
+    /// answering one.
     case sendFailed = "send.failed"
 
-    /// The peer stopped acknowledging received bytes.
-    case ackTimeout = "ack.timeout"
-
     // MARK: - Framing and integrity
-
-    /// A chunk's offset does not continue from the bytes already received.
-    case offsetGap = "offset.gap"
-
-    /// A chunk carries no bytes.
-    case chunkEmpty = "chunk.empty"
-
-    /// A chunk exceeds the negotiated maximum chunk size.
-    case chunkTooLarge = "chunk.too.large"
 
     /// The payload runs past the size the offer advertised.
     case sizeOverrun = "size.overrun"
 
-    /// Undrained chunks backed up past the receiver's in-memory budget.
-    case flowOverrun = "flow.overrun"
-
-    /// The bytes received do not add up to the total End declares.
+    /// The stream ended before its trailer, so what arrived is a prefix of the
+    /// payload rather than the payload.
     case sizeMismatch = "size.mismatch"
 
-    /// The payload's SHA-256 does not match the digest End declares.
+    /// The payload's SHA-256 does not match the digest its trailer declares.
     case digestMismatch = "digest.mismatch"
 
     /// The payload's shape is one this receiver cannot take — an inline
     /// representation past the resident cap, for instance.
     case payloadUnsupported = "payload.unsupported"
-
-    /// A payload arrived for a transfer that expected none.
-    case payloadUnexpected = "payload.unexpected"
 
     /// The delivered payload is not what its declared shape promised.
     case payloadInvalid = "payload.invalid"
@@ -97,7 +83,8 @@ public enum ClipboardStreamAbortCode: String, CaseIterable, Sendable {
 
     // MARK: - Timeouts
 
-    /// No chunk arrived within the receiver's inactivity window.
+    /// A read or write on the data connection reached the socket's own
+    /// timeout with no bytes moving.
     case stallTimeout = "stall.timeout"
 
     /// The receiver's paste gesture gave up waiting for the transfer.
@@ -116,4 +103,60 @@ extension ClipboardStreamAbortCode {
     public static let retiring: Set<ClipboardStreamAbortCode> = [
         .cancelled, .superseded, .requestStale, .userCancelled,
     ]
+}
+
+/// Why an inbound transfer failed, surfaced to the owning service.
+public struct ClipboardStreamAbortInfo: Sendable, Equatable {
+    /// Identifies the transfer that aborted.
+    public let transferID: UInt64
+    /// The abort reason, or `nil` for a code this build does not define.
+    public let code: ClipboardStreamAbortCode?
+    /// Exactly what the aborting side spelled, so a log line names an
+    /// undefined code rather than losing it.
+    public let rawCode: String
+    /// Human-readable description of the failure.
+    public let message: String
+    /// Bytes the transfer needed, for a `disk.full` abort.
+    public let neededBytes: Int?
+    /// Bytes available on the staging volume, for a `disk.full` abort.
+    public let availableBytes: Int?
+
+    /// Whether the abort retires the transfer quietly instead of reporting a
+    /// failure.
+    ///
+    /// An undefined code is never retiring: an abort spelled in a way this
+    /// build cannot read is a failure to surface, not one to swallow.
+    public var isRetiring: Bool {
+        guard let code else { return false }
+        return ClipboardStreamAbortCode.retiring.contains(code)
+    }
+
+    /// Creates abort info for a failure this side raised, whose code is known
+    /// by construction.
+    public init(
+        transferID: UInt64, code: ClipboardStreamAbortCode, message: String, neededBytes: Int?,
+        availableBytes: Int?
+    ) {
+        self.transferID = transferID
+        self.code = code
+        self.rawCode = code.rawValue
+        self.message = message
+        self.neededBytes = neededBytes
+        self.availableBytes = availableBytes
+    }
+
+    /// Creates abort info from what a peer wrote — its refusal reply or its
+    /// abort trailer — the one construction that takes an arbitrary string,
+    /// since the peer's spelling is untrusted.
+    init(
+        transferID: UInt64, rawCode: String, message: String, neededBytes: Int?,
+        availableBytes: Int?
+    ) {
+        self.transferID = transferID
+        self.code = ClipboardStreamAbortCode(rawValue: rawCode)
+        self.rawCode = rawCode
+        self.message = message
+        self.neededBytes = neededBytes
+        self.availableBytes = availableBytes
+    }
 }

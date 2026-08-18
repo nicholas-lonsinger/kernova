@@ -192,16 +192,11 @@ resolves a parked wait may be routed through the parked thread — and whatever 
 a promised flavor of Kernova's own write does so from that base, as an event or a run-loop timer,
 never from a main-queue callout, whose drain the nested loop cannot re-enter.
 
-- Off-actor is the floor, not the ceiling: payload-proportional stages that gate the *protocol*
-  need separating from each other too. A staging write sitting between a chunk's arrival and the
-  ack that reopens the sender's credit window leaves the sender blocked on credit for most of a
-  large transfer.
-- Chunk size and the credit window are one tuning pair — never ship a chunk-size bump without
-  co-scaling the window.
 - **A flow-control size and a safety bound are never the same constant.** The quantum an extract
-  re-checks its free-space and payload ceilings on decides how far a transfer overruns them before
-  the next check; sized from the credit window or a pipe, tuning throughput silently coarsens a
-  guard.
+  re-checks its free-space and payload ceilings on (`extractPacingBytes`) decides how far a
+  transfer overruns them before the next check. Derive it from a throughput lever — the socket
+  buffers the kernel meters the stream with, or `dataSendBufferBytes` — and tuning throughput
+  silently coarsens a guard.
 
 ### 9. Abort and restart must be immediate, idempotent, and bidirectional
 
@@ -209,10 +204,14 @@ never from a main-queue callout, whose drain the nested loop cannot re-enter.
 it stalling until a backstop timeout, which is a last resort, not the cancellation path.
 
 - Aborts propagate both ways and resolve **idempotently**; a late duplicate abort is harmless.
+- **An abort rides the transfer's own connection, never a frame beside it.** A sender's reason is
+  the trailer that ends its payload stream; a receiver's is the close, which carries no reason and
+  needs none. In band is what keeps a reason from overtaking or trailing the bytes it explains,
+  leaving neither side a race to arbitrate.
 - **A transfer id stays derivable from `(generation, repIndex, direction)` alone.** Cancellation
   re-derives the id rather than remembering it, and the cancel race guard depends on that
   determinism — do not make the id format vary per attempt.
-- Restart after abort must be cheap: no orphaned state, no leaked staging, no half-open channel.
+- Restart after abort must be cheap: no orphaned state, no leaked staging, no connection left open.
 
 ### 10. Trust boundary and privacy
 
@@ -308,7 +307,7 @@ Non-negotiable mechanics for how clipboard changes ship:
   publish, and where to render.
 - **Verify at the seam.** Protocol and stream changes get deterministic, transport-level tests
   (socketpair round-trips through the real sender and receiver) covering inline and file paths,
-  backpressure, abort, and digest/size mismatch. Use event-driven waits, never sleeps.
+  a stalled peer, abort, and digest/size mismatch. Use event-driven waits, never sleeps.
 - **Gate protocol changes on capability, not on version.** Protocol changes are gated by the Hello
   exchange's `capabilities` list; frames carrying an unsupported `Frame.protocol_version` are
   dropped silently. That list says which features a peer speaks, never which agent build it is —

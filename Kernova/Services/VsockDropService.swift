@@ -6,11 +6,12 @@ import os
 /// Streams files dropped on the VM display to the guest agent, which writes them
 /// into the guest's Downloads folder.
 ///
-/// One instance serves one accepted channel on `KernovaVsockPort.drop`. It is
-/// send-only and rides the clipboard streaming engine unchanged: a drop is
-/// announced as a `DropOffer` carrying metadata, the guest pulls each
-/// representation with a `ClipboardRequest`, and the bytes cross on the same
-/// `Begin`/`Chunk`/`End` path a paste uses.
+/// One instance serves one accepted channel on `KernovaVsockPort.drop`, and the
+/// drop is send-only: that channel carries the `DropOffer` announcing the items
+/// and the guest's `DropComplete` closing the batch, never a payload byte. The
+/// guest pulls each item on a vsock data connection of its own, dialled to the
+/// drop data port and opened with a `ClipboardTransferRequest` — the transfer
+/// engine a paste runs on.
 ///
 /// Drops are **independent jobs**, not a supersession chain: dropping a second
 /// batch while the first is still streaming leaves both running under their own
@@ -102,6 +103,13 @@ final class VsockDropService {
         Self.logger.notice(
             "Vsock drop service started for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )
+    }
+
+    /// Takes over one item's data connection, accepted on the drop data port.
+    ///
+    /// Takes ownership of `fd` on every path.
+    func acceptDataConnection(fd: Int32) {
+        endpoint.acceptDataConnection(fd: fd)
     }
 
     func stop() {

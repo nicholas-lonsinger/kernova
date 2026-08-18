@@ -74,10 +74,8 @@ struct ClipboardEndpointRefusalTests {
         let serve = harness.side.startFileURLServe(generation: 1, repIndex: 0)
         try await harness.waitForRequest(generation: 1, repIndex: 0)
         // Nothing is going to stream; wake the fire rather than leave it parked.
-        try harness.send(
-            makeAbortFrame(
-                transferID: harness.transferID(generation: 1, repIndex: 0),
-                code: ClipboardStreamAbortCode.cancelled.rawValue, message: "done"))
+        try harness.refuseTransfer(
+            generation: 1, repIndex: 0, code: ClipboardStreamAbortCode.cancelled.rawValue)
         _ = await serve.value
         #expect(harness.side.recorder.refusals.isEmpty)
     }
@@ -123,8 +121,7 @@ struct ClipboardEndpointRefusalTests {
         let payload = Data("png bytes".utf8)
         let serve = harness.side.startDataServe(generation: 1, repIndex: 0, uti: imageUTI)
         try await harness.waitForRequest(generation: 1, repIndex: 0)
-        try harness.streamInline(
-            generation: 1, repIndex: 0, uti: imageUTI, payload: payload, filename: "big.png")
+        try harness.streamInline(generation: 1, repIndex: 0, payload: payload)
         #expect(await serve.value == payload)
     }
 
@@ -142,10 +139,8 @@ struct ClipboardEndpointRefusalTests {
         harness.side.pasteLimit.value = cap * 4
         let serve = harness.side.startFileURLServe(generation: 1, repIndex: 0)
         try await harness.waitForRequest(generation: 1, repIndex: 0)
-        try harness.send(
-            makeAbortFrame(
-                transferID: harness.transferID(generation: 1, repIndex: 0),
-                code: ClipboardStreamAbortCode.cancelled.rawValue, message: "done"))
+        try harness.refuseTransfer(
+            generation: 1, repIndex: 0, code: ClipboardStreamAbortCode.cancelled.rawValue)
         _ = await serve.value
     }
 
@@ -211,8 +206,7 @@ struct ClipboardEndpointRefusalTests {
 
         let serve = harness.side.startDataServe(generation: 1, repIndex: 0, uti: textUTI)
         try await harness.waitForRequest(generation: 1, repIndex: 0)
-        try harness.streamInline(
-            generation: 1, repIndex: 0, uti: textUTI, payload: Data("inline".utf8))
+        try harness.streamInline(generation: 1, repIndex: 0, payload: Data("inline".utf8))
         #expect(await serve.value == Data("inline".utf8))
         #expect(harness.side.recorder.refusals.isEmpty)
     }
@@ -228,10 +222,9 @@ struct ClipboardEndpointRefusalTests {
 
         let serve = harness.side.startDataServe(generation: 1, repIndex: 0, uti: textUTI)
         try await harness.waitForRequest(generation: 1, repIndex: 0)
-        try harness.send(
-            makeAbortFrame(
-                transferID: harness.transferID(generation: 1, repIndex: 0),
-                code: ClipboardStreamAbortCode.diskFull.rawValue, message: "no room"))
+        try harness.abortTransfer(
+            generation: 1, repIndex: 0, code: ClipboardStreamAbortCode.diskFull.rawValue,
+            sent: Data("par".utf8), declaredBytes: 32)
 
         #expect(await serve.value == nil)
         let refusal = try await harness.side.recorder.waitForRefusal()
@@ -248,10 +241,9 @@ struct ClipboardEndpointRefusalTests {
 
         let serve = harness.side.startDataServe(generation: 1, repIndex: 0, uti: textUTI)
         try await harness.waitForRequest(generation: 1, repIndex: 0)
-        try harness.send(
-            makeAbortFrame(
-                transferID: harness.transferID(generation: 1, repIndex: 0),
-                code: ClipboardStreamAbortCode.superseded.rawValue, message: "moved on"))
+        try harness.abortTransfer(
+            generation: 1, repIndex: 0, code: ClipboardStreamAbortCode.superseded.rawValue,
+            sent: Data("par".utf8), declaredBytes: 32)
 
         #expect(await serve.value == nil)
         try await harness.side.recorder.expectNoNewRefusals(sinceCount: 0)
@@ -266,10 +258,9 @@ struct ClipboardEndpointRefusalTests {
 
         let serve = harness.side.startDataServe(generation: 1, repIndex: 0, uti: textUTI)
         try await harness.waitForRequest(generation: 1, repIndex: 0)
-        try harness.send(
-            makeAbortFrame(
-                transferID: harness.transferID(generation: 1, repIndex: 0),
-                code: "some.future.code", message: "from a newer peer"))
+        try harness.abortTransfer(
+            generation: 1, repIndex: 0, code: "some.future.code", sent: Data("par".utf8),
+            declaredBytes: 32)
 
         #expect(await serve.value == nil)
         let refusal = try await harness.side.recorder.waitForRefusal()
@@ -290,12 +281,10 @@ struct ClipboardEndpointRefusalTests {
         let refusal = try await harness.side.recorder.waitForRefusal()
         #expect(refusal.gesture == .paste)
         #expect(refusal.failure == .timedOut)
-        // Both sides stop a pull nothing is waiting on any more.
-        try await harness.recorder.waitForFrames {
-            harness.recorder.aborts.contains {
-                $0.code == ClipboardStreamAbortCode.pasteTimeout.rawValue
-            }
-        }
+        // The pull is released rather than left registered, so a peer that
+        // answers late has its connection closed instead of streaming into a
+        // fire that has gone.
+        #expect(try await harness.refusesTransfer(generation: 1, repIndex: 0))
     }
 
     @Test("a request that never leaves resolves its pull at once")

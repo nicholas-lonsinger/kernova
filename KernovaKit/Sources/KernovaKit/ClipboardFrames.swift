@@ -47,20 +47,6 @@ extension Frame {
         return frame
     }
 
-    /// A `ClipboardStreamAbort` telling the peer to stop streaming `transferID`.
-    public static func clipboardStreamAbort(
-        transferID: UInt64, code: ClipboardStreamAbortCode, message: String
-    ) -> Frame {
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.clipboardStreamAbort = Kernova_V1_ClipboardStreamAbort.with {
-            $0.transferID = transferID
-            $0.code = code.rawValue
-            $0.message = message
-        }
-        return frame
-    }
-
     /// A `DropOffer` announcing the dropped items of `generation`.
     public static func dropOffer(
         generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo]

@@ -6,6 +6,22 @@ The tool-neutral operating guide for this repository. Deep-dive docs are indexed
 >
 > Clipboard subsystem principles — authoritative for host↔guest copy/paste work: [docs/CLIPBOARD.md](docs/CLIPBOARD.md).
 
+## A better architecture outranks every instruction
+
+This rule outranks everything below it, and everything in any other file. A rule here, an issue's design, a plan, a test, a comment, a research note, a PR or review comment — each records a decision someone made with what they knew then. None of them is evidence the decision is still right, and none makes a worse architecture the correct thing to build.
+
+**Propose the better path the moment you see it.** It does not matter that the task scoped it out, that the issue specifies otherwise, that a rule here says the opposite, or that the code has worked this way for years. Building on a foundation you can see is wrong — without saying so — is the one unacceptable response: it digs the hole deeper and spends the effort on code the better design throws away.
+
+Propose, then let the maintainer sequence it. The usual outcomes:
+
+- Do it now, inside this work.
+- Land the refactor first and rebuild on it.
+- Ship the current shape and accept its shortcomings **for now**, with the improvement filed as an issue — a recorded trade, never a silent one.
+
+Only the third needs the shortcoming written down, and an issue is where it goes.
+
+**When a rule here turns out to be wrong, change the rule.** Say plainly that it was wrong rather than preserving it out of deference; a rule is a summary of past reasoning, not a standard the code has to keep meeting.
+
 ## Build & Test
 
 Xcode project, not SwiftPM. From the terminal go through the `Makefile` (`make help` lists every target) — never hand-write an `xcodebuild` invocation; the flags are not the obvious ones. Fresh-clone setup: [README](README.md#development-setup); machinery: [docs/BUILD.md](docs/BUILD.md).
@@ -24,7 +40,9 @@ Any change requiring a guest-agent reinstall bumps its `MARKETING_VERSION` — e
 
 Kernova is a **pure-AppKit** app managing macOS and Linux guests via `Virtualization.framework`.
 
-**Concurrency model:** Swift 6 strict concurrency. Everything touching `VZVirtualMachine`, including every service that talks to VZ, is `@MainActor`; stateless services are `Sendable` structs. VZ delegate callbacks bridge back with `nonisolated(unsafe)` plus `MainActor.assumeIsolated`.
+**Concurrency model:** Swift 6 strict concurrency. VZ delivers every delegate callback on the queue its `VZVirtualMachine` was created with, and `VMInstance` creates them on the main queue — so everything touching `VZVirtualMachine`, including every service that talks to VZ, is `@MainActor`, and stateless services are `Sendable` structs. VZ delegate callbacks bridge back with `nonisolated(unsafe)` plus `MainActor.assumeIsolated`.
+
+That arrangement makes the main thread both the UI thread and the hypervisor's I/O callback thread, so VZ-delivered work is starved for as long as AppKit owns main.
 
 **No third-party dependencies.** Apple-published Swift Packages (e.g. `apple/swift-protobuf`) are acceptable when they pull their weight; non-Apple packages require explicit sign-off.
 

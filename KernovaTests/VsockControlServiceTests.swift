@@ -27,7 +27,7 @@ struct VsockControlServiceTests {
         frame.hello = Kernova_V1_Hello.with {
             $0.serviceVersion = 1
             var capabilities = [KernovaCapability.controlV1, KernovaCapability.controlHeartbeatV1]
-            if streamingCapable { capabilities.append(KernovaCapability.clipboardStreamV2) }
+            if streamingCapable { capabilities.append(KernovaCapability.clipboardTransferV3) }
             $0.capabilities = capabilities
             $0.agentInfo = Kernova_V1_AgentInfo.with {
                 $0.os = "macOS"
@@ -161,7 +161,7 @@ struct VsockControlServiceTests {
         #expect(hello.capabilities.contains("control.heartbeat.v1"))
         // The host advertises streaming-clipboard support so the guest can
         // symmetrically gate clipboard on it.
-        #expect(hello.capabilities.contains(KernovaCapability.clipboardStreamV2))
+        #expect(hello.capabilities.contains(KernovaCapability.clipboardTransferV3))
     }
 
     @Test("Host Hello reports agent_info with a numeric os_version")
@@ -1090,7 +1090,7 @@ struct VsockControlServiceTests {
         defer { service.stop() }
 
         _ = try await nextFrame(from: guest)  // host hello
-        // Guest that predates streaming: no clipboard.stream.v2.
+        // Guest that predates streaming: no clipboard.transfer.v3.
         try guest.send(makeGuestHello(agentVersion: "0.15.0", streamingCapable: false))
 
         service.sendPolicyUpdate(

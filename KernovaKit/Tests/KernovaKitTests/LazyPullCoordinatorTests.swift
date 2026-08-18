@@ -509,28 +509,56 @@ struct LazyPullCoordinatorTests {
         #expect(coordinator.pendingSlotCountForTesting == 0)
     }
 
-    // MARK: - Receiver wiring
+    // MARK: - Inbox wiring
+
+    /// The plan a text pull registers, which nothing on the wire repeats.
+    private func textPlan(advertising byteCount: Int = 0) -> ClipboardTransferReceiver.Plan {
+        ClipboardTransferReceiver.Plan(
+            uti: ClipboardContent.utf8TextUTI, advertisedByteCount: byteCount)
+    }
+
+    /// Serves `representation` for `transferID` the way the sending side does
+    /// when it is the one that dials: the reply, the payload, the trailer, then
+    /// the inbox adopting what arrived.
+    private func serve(
+        _ representation: ClipboardContent.Representation, transferID: UInt64, generation: UInt64,
+        isInline: Bool = true, on harness: TransferHarness
+    ) {
+        let inbox = harness.inbox
+        harness.outbox.serve(
+            transferID: transferID, generation: generation, representation: representation,
+            maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount,
+            isInline: isInline, isCurrent: { _ in true },
+            link: .dial {
+                try dialToPeer { far in
+                    guard let reply = readTransferReply(fd: far) else {
+                        ClipboardDataConnection.end(fd: far)
+                        return
+                    }
+                    inbox.adopt(fd: far, reply: reply)
+                }
+            })
+    }
 
     @Test("a pull abandoned while start runs still releases the awaiter start registered")
     func retireOwedDuringStartReleasesTheAwaiter() async throws {
-        let harness = try StreamHarness(
-            chunkSize: 4096, windowBytes: 16384,
-            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        let harness = TransferHarness()
         defer { harness.tearDown() }
 
         let coordinator = LazyPullCoordinator()
         let transferID = ClipboardTransferID.make(generation: 13, repIndex: 0, hostMinted: true)
-        let receiver = harness.receiver
+        let inbox = harness.inbox
+        let plan = textPlan()
         let outcome = await runPull(
             coordinator, transferID: transferID,
-            retire: { receiver.cancelAwait(transferID) },
+            retire: { inbox.cancelAwait(transferID) },
             start: {
-                // The channel closes between the slot going up and the
+                // The connection dies between the slot going up and the
                 // registration going in — the one window where the release is
                 // owed rather than run.
                 coordinator.failAll()
-                receiver.awaitTransfer(
-                    transferID,
+                inbox.awaitTransfer(
+                    transferID, plan: plan,
                     onComplete: { _ in Issue.record("the abandoned pull's awaiter must not fire") },
                     onAbort: { _ in Issue.record("the abandoned pull's awaiter must not fire") })
             })
@@ -544,8 +572,8 @@ struct LazyPullCoordinatorTests {
         // double-registration assertion — and takes the transfer.
         let box = RepBox()
         let gate = AsyncGate()
-        receiver.awaitTransfer(
-            transferID,
+        inbox.awaitTransfer(
+            transferID, plan: plan,
             onComplete: {
                 box.setRep($0)
                 gate.notify()
@@ -554,25 +582,21 @@ struct LazyPullCoordinatorTests {
                 box.setAbort($0)
                 gate.notify()
             })
-        harness.sender.startTransfer(
-            transferID: transferID, generation: 13, representation: inlineRep("after the abandon"),
-            maxAcceptByteCount: .max, isInline: true, isCurrent: { _ in true })
+        serve(inlineRep("after the abandon"), transferID: transferID, generation: 13, on: harness)
 
         try await gate.wait { box.representation != nil }
         #expect(box.representation?.inMemoryData == Data("after the abandon".utf8))
     }
 
-    @Test("a registered awaiter receives the transfer instead of the channel-wide onComplete")
-    func awaitTransferBypassesChannelWide() async throws {
-        let harness = try StreamHarness(
-            chunkSize: 4096, windowBytes: 16384,
-            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+    @Test("an awaiter registered before the transfer opens receives its representation")
+    func awaitTransferDeliversToItsAwaiter() async throws {
+        let harness = TransferHarness()
         defer { harness.tearDown() }
 
         let box = RepBox()
         let gate = AsyncGate()
-        harness.receiver.awaitTransfer(
-            1,
+        harness.inbox.awaitTransfer(
+            1, plan: textPlan(),
             onComplete: { rep in
                 box.setRep(rep)
                 gate.notify()
@@ -582,19 +606,12 @@ struct LazyPullCoordinatorTests {
                 gate.notify()
             })
 
-        var bytes = Data()
-        for i in 0..<(4096 * 3 + 11) { bytes.append(UInt8((i * 13 + 5) & 0xFF)) }
+        let bytes = patternedBytes(count: 4096 * 3 + 11, multiplier: 13, offset: 5)
         let rep = ClipboardContent.Representation(uti: ClipboardContent.utf8TextUTI, data: bytes)
-        harness.sender.startTransfer(
-            transferID: 1, generation: 1, representation: rep, maxAcceptByteCount: .max,
-            isInline: true, isCurrent: { _ in true })
+        serve(rep, transferID: 1, generation: 1, on: harness)
 
         try await gate.wait { box.representation != nil }
         #expect(box.representation?.inMemoryData == bytes)
-        // The channel-wide collector must NOT have been invoked for an awaited
-        // transfer.
-        #expect(harness.collector.representation(1) == nil)
-        #expect(harness.collector.completedCount == 0)
     }
 
     @Test(
@@ -603,24 +620,22 @@ struct LazyPullCoordinatorTests {
     func concurrentPullsForSameIDJoin() async throws {
         // Mirrors the real trigger: a second consumer asks for the same
         // representation — a sibling flavor, or the window's preview — while the
-        // first pull is still parked. Exercised through the real receiver and
-        // sender, not just the coordinator in isolation.
-        let harness = try StreamHarness(
-            chunkSize: 4096, windowBytes: 16384,
-            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        // first pull is still parked. Exercised through the real inbox and
+        // outbox, not just the coordinator in isolation.
+        let harness = TransferHarness()
         defer { harness.tearDown() }
 
         let coordinator = LazyPullCoordinator()
         let transferID = ClipboardTransferID.make(generation: 1, repIndex: 0, hostMinted: true)
         let starts = Tally()
         // The starter registers the awaiter inside `start`, exactly like
-        // `VsockGuestClipboardAgent.awaitPull` /
-        // `VsockClipboardService.beginInboundPull`.
-        let receiver = harness.receiver
+        // `ClipboardInboundOffers.begin`.
+        let inbox = harness.inbox
+        let plan = textPlan()
         let start: @Sendable () -> Void = {
             starts.bump()
-            receiver.awaitTransfer(
-                transferID,
+            inbox.awaitTransfer(
+                transferID, plan: plan,
                 onComplete: { rep in coordinator.deliver(transferID, rep) },
                 onAbort: { info in coordinator.abort(transferID, info) })
         }
@@ -632,12 +647,9 @@ struct LazyPullCoordinatorTests {
         async let secondAttempt = runPull(coordinator, transferID: transferID, start: start)
         try await waitUntil { coordinator.waiterCountForTesting(transferID) == 2 }
 
-        var bytes = Data()
-        for i in 0..<(4096 * 2 + 9) { bytes.append(UInt8((i * 29 + 3) & 0xFF)) }
+        let bytes = patternedBytes(count: 4096 * 2 + 9, multiplier: 29, offset: 3)
         let rep = ClipboardContent.Representation(uti: ClipboardContent.utf8TextUTI, data: bytes)
-        harness.sender.startTransfer(
-            transferID: transferID, generation: 1, representation: rep, maxAcceptByteCount: .max,
-            isInline: true, isCurrent: { _ in true })
+        serve(rep, transferID: transferID, generation: 1, on: harness)
 
         for outcome in await [firstAttempt, secondAttempt] {
             guard case .delivered(let received) = outcome else {
@@ -646,24 +658,26 @@ struct LazyPullCoordinatorTests {
             }
             #expect(received.inMemoryData == bytes)
         }
-        // One registration and one Begin covered both.
+        // One registration and one connection covered both.
         #expect(starts.value == 1)
-        #expect(harness.collector.completedCount == 0)
         #expect(coordinator.pendingSlotCountForTesting == 0)
     }
 
-    @Test("awaitTransfer fires onProgress once per durably-written chunk")
+    @Test("awaitTransfer reports arriving bytes as they land, not once at the end")
     func awaitTransferReportsProgress() async throws {
-        let harness = try StreamHarness(
-            chunkSize: 4096, windowBytes: 1 << 20,
-            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        let harness = TransferHarness()
         defer { harness.tearDown() }
 
         let progress = ProgressCounter()
         let box = RepBox()
         let gate = AsyncGate()
-        harness.receiver.awaitTransfer(
-            1,
+        // A payload spanning several socket reads: the cadence is one report per
+        // read the receiver takes, which is what a parked pull re-arms its
+        // inactivity backstop on.
+        let bytes = patternedBytes(
+            count: 3 * ClipboardStreamTuning.dataReadBufferBytes + 7, multiplier: 7, offset: 1)
+        harness.inbox.awaitTransfer(
+            1, plan: textPlan(advertising: bytes.count),
             onComplete: { rep in
                 box.setRep(rep)
                 gate.notify()
@@ -672,20 +686,14 @@ struct LazyPullCoordinatorTests {
                 box.setAbort(info)
                 gate.notify()
             },
-            onProgress: { bytes, total in progress.bump(bytes: bytes, total: total) })
+            onProgress: { received, total in progress.bump(bytes: received, total: total) })
 
-        // 3 full chunks + a partial → 4 chunks → 4 progress callbacks, all of
-        // which precede onComplete on the transfer's serial queue.
-        var bytes = Data()
-        for i in 0..<(4096 * 3 + 7) { bytes.append(UInt8((i * 7 + 1) & 0xFF)) }
         let rep = ClipboardContent.Representation(uti: ClipboardContent.utf8TextUTI, data: bytes)
-        harness.sender.startTransfer(
-            transferID: 1, generation: 1, representation: rep, maxAcceptByteCount: .max,
-            isInline: true, isCurrent: { _ in true })
+        serve(rep, transferID: 1, generation: 1, on: harness)
 
         try await gate.wait { box.representation != nil }
         #expect(box.representation?.inMemoryData == bytes)
-        #expect(progress.value == 4)
+        #expect(progress.value > 1)
         // The callback carries cumulative bytes: monotonic, constant total, final
         // == the full payload.
         #expect(progress.isMonotonic)
@@ -693,19 +701,25 @@ struct LazyPullCoordinatorTests {
         #expect(progress.lastBytesReceived == bytes.count)
     }
 
-    @Test("a registered awaiter receives a peer abort instead of the channel-wide onAbort")
+    @Test("a registered awaiter is woken by the abort its own transfer raised")
     func awaitTransferReceivesAbort() async throws {
         // A tiny free-space provider forces the receiver to reject the file rep
         // up front with disk.full, exercising the awaiter abort path.
-        let harness = try StreamHarness(
-            chunkSize: 4096, windowBytes: 16384,
-            freeSpaceProvider: { _ in 0 })
+        let harness = TransferHarness(freeSpaceProvider: { _ in 0 })
         defer { harness.tearDown() }
+
+        let bytes = Data(repeating: 7, count: 4096 * 2)
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: false)
+        try bytes.write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
 
         let box = RepBox()
         let gate = AsyncGate()
-        harness.receiver.awaitTransfer(
+        harness.inbox.awaitTransfer(
             2,
+            plan: ClipboardTransferReceiver.Plan(
+                uti: "public.data", filename: "f.bin", advertisedByteCount: bytes.count),
             onComplete: { rep in
                 box.setRep(rep)
                 gate.notify()
@@ -715,37 +729,27 @@ struct LazyPullCoordinatorTests {
                 gate.notify()
             })
 
-        let bytes = Data(repeating: 7, count: 4096 * 2)
-        let source = FileManager.default.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString, isDirectory: false)
-        try bytes.write(to: source)
-        defer { try? FileManager.default.removeItem(at: source) }
         let rep = ClipboardContent.Representation(
             uti: "public.data", fileURL: source, byteCount: bytes.count, filename: "f.bin")
-        harness.sender.startTransfer(
-            transferID: 2, generation: 1, representation: rep, maxAcceptByteCount: .max,
-            isInline: false, isCurrent: { _ in true })
+        serve(rep, transferID: 2, generation: 1, isInline: false, on: harness)
 
         try await gate.wait { box.abortInfo != nil }
         #expect(box.abortInfo?.code == .diskFull)
-        #expect(harness.collector.abortCount == 0)
     }
 
-    @Test("an awaiter is woken by an abort that arrives with no preceding Begin")
-    func awaitTransferAbortWithoutBegin() async throws {
-        // The sender refuses a transfer that exceeds max_accept by sending an
-        // Abort BEFORE any Begin; the awaiter (a blocked lazy pull) must still
+    @Test("an awaiter is woken by a refusal that arrives before any payload byte")
+    func awaitTransferAbortWithoutPayload() async throws {
+        // The sender refuses a transfer the requester cannot accept with a reply
+        // and no bytes at all; the awaiter — a blocked lazy pull — must still
         // wake rather than park to its timeout.
-        let harness = try StreamHarness(
-            chunkSize: 4096, windowBytes: 16384,
-            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        let harness = TransferHarness()
         defer { harness.tearDown() }
 
         let box = RepBox()
         let gate = AsyncGate()
         let transferID = ClipboardTransferID.make(generation: 5, repIndex: 0, hostMinted: true)
-        harness.receiver.awaitTransfer(
-            transferID,
+        harness.inbox.awaitTransfer(
+            transferID, plan: textPlan(),
             onComplete: {
                 box.setRep($0)
                 gate.notify()
@@ -755,29 +759,29 @@ struct LazyPullCoordinatorTests {
                 gate.notify()
             })
 
-        harness.receiver.handleAbort(
-            .with {
-                $0.transferID = transferID
-                $0.code = ClipboardStreamAbortCode.diskFull.rawValue
-                $0.message = "refused before begin"
-            })
+        let inbox = harness.inbox
+        let fd = try dialToPeer { far in
+            try? refuseTransfer(
+                fd: far, transferID: transferID,
+                code: ClipboardStreamAbortCode.diskFull.rawValue, message: "refused up front")
+        }
+        let reply = await offCooperativePool { readTransferReply(fd: fd) }
+        inbox.adopt(fd: fd, reply: try #require(reply))
 
         try await gate.wait { box.abortInfo != nil }
         #expect(box.abortInfo?.code == .diskFull)
     }
 
-    @Test("cancel(generation:) wakes an awaiter whose transfer never produced a Begin")
+    @Test("cancel(generation:) wakes an awaiter whose transfer never opened a connection")
     func cancelDrainsAwaiter() async throws {
-        let harness = try StreamHarness(
-            chunkSize: 4096, windowBytes: 16384,
-            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        let harness = TransferHarness()
         defer { harness.tearDown() }
 
         let box = RepBox()
         let gate = AsyncGate()
         let transferID = ClipboardTransferID.make(generation: 7, repIndex: 2, hostMinted: true)
-        harness.receiver.awaitTransfer(
-            transferID,
+        harness.inbox.awaitTransfer(
+            transferID, plan: textPlan(),
             onComplete: {
                 box.setRep($0)
                 gate.notify()
@@ -787,24 +791,22 @@ struct LazyPullCoordinatorTests {
                 gate.notify()
             })
 
-        harness.receiver.cancel(generation: 7)
+        harness.inbox.cancel(generation: 7)
 
         try await gate.wait { box.abortInfo != nil }
         #expect(box.abortInfo?.code == .cancelled)
     }
 
-    @Test("cancelAll() wakes an awaiter whose transfer never produced a Begin")
+    @Test("cancelAll() wakes an awaiter whose transfer never opened a connection")
     func cancelAllDrainsAwaiter() async throws {
-        let harness = try StreamHarness(
-            chunkSize: 4096, windowBytes: 16384,
-            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        let harness = TransferHarness()
         defer { harness.tearDown() }
 
         let box = RepBox()
         let gate = AsyncGate()
         let transferID = ClipboardTransferID.make(generation: 9, repIndex: 0, hostMinted: true)
-        harness.receiver.awaitTransfer(
-            transferID,
+        harness.inbox.awaitTransfer(
+            transferID, plan: textPlan(),
             onComplete: {
                 box.setRep($0)
                 gate.notify()
@@ -814,7 +816,7 @@ struct LazyPullCoordinatorTests {
                 gate.notify()
             })
 
-        harness.receiver.cancelAll()
+        harness.inbox.cancelAll()
 
         try await gate.wait { box.abortInfo != nil }
         #expect(box.abortInfo?.code == .cancelled)
@@ -827,33 +829,33 @@ struct LazyPullCoordinatorTests {
         // `ClipboardTransferID` is intentionally reproducible from
         // (generation, repIndex, direction), so a retried pull of the identical
         // offer/rep registers under the SAME id as the attempt it's retrying —
-        // after that attempt's own pull retired its awaiter. A delayed abort
-        // meant for #1 (a reordered wire frame, or a local cancel that raced the
-        // retry) is keyed purely on that id, so it lands on #2 instead. This
-        // test pins the CURRENT, accepted behavior — a bounded, benign collision
-        // (#2 observes a spurious abort it can retry from), not a crash, hang,
-        // or corrupted registration table. See `ClipboardTransferID`'s doc for
-        // why a per-attempt discriminator was deferred rather than implemented.
-        let harness = try StreamHarness(
-            chunkSize: 4096, windowBytes: 16384,
-            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        // after that attempt's own pull retired its awaiter. A delayed connection
+        // meant for #1 (one the peer opened before the local cancel reached it)
+        // is keyed purely on that id, so it lands on #2 instead. This test pins
+        // the CURRENT, accepted behavior — a bounded, benign collision (#2
+        // observes a spurious abort it can retry from), not a crash, hang, or
+        // corrupted registration table. See `ClipboardTransferID`'s doc for why
+        // a per-attempt discriminator was deferred rather than implemented.
+        let harness = TransferHarness()
         defer { harness.tearDown() }
 
         let transferID = ClipboardTransferID.make(generation: 11, repIndex: 0, hostMinted: true)
+        let inbox = harness.inbox
+        let plan = textPlan()
 
         let firstBox = RepBox()
-        harness.receiver.awaitTransfer(
-            transferID,
+        inbox.awaitTransfer(
+            transferID, plan: plan,
             onComplete: { _ in Issue.record("attempt #1's awaiter was retired — must never fire") },
             onAbort: { firstBox.setAbort($0) })
         // Attempt #1 gives up, retiring its registration — the one live awaiter
-        // per id the receiver expects.
-        harness.receiver.cancelAwait(transferID)
+        // per id the inbox expects.
+        inbox.cancelAwait(transferID)
 
         let secondBox = RepBox()
         let secondGate = AsyncGate()
-        harness.receiver.awaitTransfer(
-            transferID,
+        inbox.awaitTransfer(
+            transferID, plan: plan,
             onComplete: {
                 secondBox.setRep($0)
                 secondGate.notify()
@@ -863,14 +865,16 @@ struct LazyPullCoordinatorTests {
                 secondGate.notify()
             })
 
-        // The straggler: attempt #1's delayed cancel/abort signal, arriving now
-        // that attempt #2 owns the registration for this id.
-        harness.receiver.handleAbort(
-            .with {
-                $0.transferID = transferID
-                $0.code = ClipboardStreamAbortCode.cancelled.rawValue
-                $0.message = "stale abort from attempt #1"
-            })
+        // The straggler: attempt #1's connection, opened before its cancel
+        // landed and arriving now that attempt #2 owns the registration.
+        let fd = try dialToPeer { far in
+            try? abortTransfer(
+                fd: far, transferID: transferID,
+                code: ClipboardStreamAbortCode.cancelled.rawValue, sent: Data("par".utf8),
+                declaredBytes: 32)
+        }
+        let reply = await offCooperativePool { readTransferReply(fd: fd) }
+        inbox.adopt(fd: fd, reply: try #require(reply))
 
         try await secondGate.wait { secondBox.abortInfo != nil }
         #expect(secondBox.abortInfo?.code == .cancelled)
@@ -881,8 +885,8 @@ struct LazyPullCoordinatorTests {
         // orphaned state" case (CLIPBOARD.md §9) — completes cleanly.
         let thirdBox = RepBox()
         let thirdGate = AsyncGate()
-        harness.receiver.awaitTransfer(
-            transferID,
+        inbox.awaitTransfer(
+            transferID, plan: plan,
             onComplete: {
                 thirdBox.setRep($0)
                 thirdGate.notify()
@@ -891,10 +895,7 @@ struct LazyPullCoordinatorTests {
                 thirdBox.setAbort($0)
                 thirdGate.notify()
             })
-        let rep = inlineRep("attempt three")
-        harness.sender.startTransfer(
-            transferID: transferID, generation: 11, representation: rep, maxAcceptByteCount: .max,
-            isInline: true, isCurrent: { _ in true })
+        serve(inlineRep("attempt three"), transferID: transferID, generation: 11, on: harness)
 
         try await thirdGate.wait { thirdBox.representation != nil }
         #expect(thirdBox.representation?.inMemoryData == Data("attempt three".utf8))

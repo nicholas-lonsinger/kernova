@@ -1,22 +1,25 @@
 import Foundation
 
-/// One clipboard-protocol connection — either end of either chunk-streamed
-/// channel — as its owner sees it.
+/// One clipboard-protocol connection — either end of either clipboard channel —
+/// as its owner sees it.
 ///
-/// Everything the protocol itself decides is here: the streaming engine and its
-/// frame routing, what this side has offered and the transfers answering the
-/// peer's pulls, what the peer has offered and every pull that materializes it,
-/// and the control-frame vocabulary each `(role, kind)` pair accepts. An owner
-/// holds one of these, conforms to ``ClipboardEndpointDelegate``, and decides
-/// only what its own surface does with what arrives — what to snapshot, when to
-/// publish, where to render.
+/// Everything the protocol itself decides is here: the control channel and the
+/// per-transfer data connections beside it, what this side has offered and the
+/// transfers answering the peer's pulls, what the peer has offered and every
+/// pull that materializes it, and the control-frame vocabulary each
+/// `(role, kind)` pair accepts. An owner holds one of these, conforms to
+/// ``ClipboardEndpointDelegate``, and decides only what its own surface does
+/// with what arrives — what to snapshot, when to publish, where to render.
 @MainActor
 public final class ClipboardEndpoint {
     /// Which end of the wire this connection is.
-    public typealias Role = ClipboardStreamSession.Role
+    public typealias Role = ClipboardControlSession.Role
 
     /// Which channel this connection serves.
-    public typealias Kind = ClipboardStreamSession.Kind
+    public typealias Kind = ClipboardControlSession.Kind
+
+    /// How this side obtains each transfer's data connection.
+    public typealias DataLink = ClipboardControlSession.DataLink
 
     /// One offer the peer has made, as its owner reads it back.
     public typealias InboundOffer = ClipboardInboundOffers.InboundOffer
@@ -83,6 +86,9 @@ public final class ClipboardEndpoint {
         public var progressIdleGap: TimeInterval
         /// Time source for the refusal-burst window.
         public var clock: any EngineClock
+        /// How each transfer's data connection is obtained: the guest dials the
+        /// kind's data port, the host takes what its listener accepted.
+        public var dataLink: DataLink
         /// The generation this connection's first offer carries, so a counter
         /// outliving the channel is never reused.
         public var firstGeneration: UInt64
@@ -100,6 +106,7 @@ public final class ClipboardEndpoint {
             progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
             progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
             clock: any EngineClock = makePlatformEngineClock(),
+            dataLink: DataLink = .accepts,
             firstGeneration: UInt64 = 1
         ) {
             self.role = role
@@ -112,6 +119,7 @@ public final class ClipboardEndpoint {
             self.progressRevealDelay = progressRevealDelay
             self.progressIdleGap = progressIdleGap
             self.clock = clock
+            self.dataLink = dataLink
             self.firstGeneration = firstGeneration
         }
     }
@@ -144,7 +152,7 @@ public final class ClipboardEndpoint {
     /// ``stop()`` or the channel's own end.
     public private(set) var isConnected = false
 
-    nonisolated private let session: ClipboardStreamSession
+    nonisolated private let session: ClipboardControlSession
     private let outbound: ClipboardOutboundOffers
 
     /// `nonisolated` so a paste-time provider fire can serve from whichever
@@ -169,9 +177,10 @@ public final class ClipboardEndpoint {
         self.kind = configuration.kind
         self.reporter = reporter
         self.label = configuration.label
-        let session = ClipboardStreamSession(
+        let session = ClipboardControlSession(
             channel: channel, role: configuration.role, kind: configuration.kind,
-            label: configuration.label, staging: configuration.staging)
+            label: configuration.label, staging: configuration.staging,
+            dataLink: configuration.dataLink)
         self.session = session
         self.outbound = ClipboardOutboundOffers(
             session: session, reporter: reporter, peerName: configuration.peerName,
@@ -400,14 +409,98 @@ public final class ClipboardEndpoint {
             generation: generation, outcome: outcome, code: code, message: message)
     }
 
+    // MARK: - Data connections
+
+    /// Where an accepted data connection's opening frame is read, for every
+    /// connection in the process.
+    ///
+    /// Concurrent, and never the main actor's: the read blocks until the peer's
+    /// header arrives, and several transfers can be opening at once.
+    nonisolated private static let dataAcceptQueue = DispatchQueue(
+        label: "app.kernova.clipboard.data-accept", qos: .userInitiated, attributes: .concurrent)
+
+    /// This connection's share of that queue.
+    ///
+    /// Per connection rather than shared, so the peer that saturates its own
+    /// share is the only one held up by it.
+    nonisolated private let dataAccepts = BoundedWorkQueue(
+        width: ClipboardStreamTuning.maxConcurrentDataAccepts,
+        queue: ClipboardEndpoint.dataAcceptQueue)
+
+    /// Takes over a data connection this side's listener accepted.
+    ///
+    /// Takes ownership of `fd` on every path. The stall bound goes on here
+    /// rather than at the listener because this is the first read on the
+    /// descriptor — the transfer that adopts it then states its own — and these
+    /// reads run under ``dataAccepts``, so a peer that connects and then says
+    /// nothing parks a bounded number of workers however many connections it
+    /// opens (docs/CLIPBOARD.md §10).
+    public func acceptDataConnection(fd: Int32) {
+        guard isConnected, !session.hasStopped else {
+            ClipboardDataConnection.end(fd: fd)
+            return
+        }
+        ClipboardDataConnection.applySocketOptions(fd: fd)
+        dataAccepts.submit { [weak self] in
+            guard let frame = try? ClipboardDataConnection.readFrame(fd: fd) else {
+                ClipboardDataConnection.end(fd: fd)
+                return
+            }
+            guard let self, !self.session.hasStopped else {
+                ClipboardDataConnection.end(fd: fd)
+                return
+            }
+            // A reply answers a pull this side already opened, and is taken on
+            // right here rather than through the main actor: the paste fire that
+            // opened that pull can be holding the main thread inside a tracking
+            // or modal loop, which runs nothing queued to main until it returns
+            // — and what would let it return is this very connection. [M1]
+            if case .clipboardTransferReply(let reply) = frame.payload {
+                guard let inbound = self.inbound else {
+                    return self.refuseDataConnection(fd: fd, saying: "a transfer reply")
+                }
+                inbound.adoptDataConnection(fd: fd, reply: reply)
+                return
+            }
+            // A request opens a transfer this side has to look up an offer and a
+            // readout for, which are the owner's actor's to read.
+            MainActorBridge.async { self.handleDataRequest(frame, fd: fd) }
+        }
+    }
+
+    /// Hands one accepted data connection to the outbound half.
+    ///
+    /// A frame outside this `(role, kind)` pair's vocabulary closes the
+    /// connection alone: it is one transfer's peer crossing wires, not the
+    /// control channel's, so the session it belongs to keeps running.
+    private func handleDataRequest(_ frame: Frame, fd: Int32) {
+        guard !session.hasStopped else {
+            ClipboardDataConnection.end(fd: fd)
+            return
+        }
+        guard case .clipboardTransferRequest(let request) = frame.payload,
+            ClipboardControlSession.sends(role: role, kind: kind)
+        else {
+            return refuseDataConnection(fd: fd, saying: "a payload this side cannot answer")
+        }
+        outbound.handleRequest(ClipboardPullRequest(request), link: .accepted(fd))
+    }
+
+    nonisolated private func refuseDataConnection(fd: Int32, saying what: String) {
+        Self.logger.warning(
+            "Closing a \(self.channelWord, privacy: .public) data connection for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public)) — it opened with \(what, privacy: .public) this side cannot answer"
+        )
+        ClipboardDataConnection.end(fd: fd)
+    }
+
     // MARK: - Frame consumer
 
     /// Dispatches one control frame to the half that owns it.
     ///
     /// A payload outside this `(role, kind)` pair's vocabulary is a peer that
     /// crossed wires: the connection ends, and a conformant agent reconnects.
-    /// Stream payloads never arrive here — the consume loop routes them straight
-    /// to the engine off the main actor.
+    /// No payload byte arrives here — each transfer carries its own on a data
+    /// connection of its own.
     ///
     /// A frame the peer sent and then closed on is still delivered; one queued
     /// behind a local ``stop()`` is not, because that is this side deciding it
@@ -422,10 +515,15 @@ public final class ClipboardEndpoint {
             guard kind == .clipboard, let inbound else { return closeOnWrongPort() }
             inbound.handleRelease(release)
         case .clipboardRequest(let request):
-            guard ClipboardStreamSession.sends(role: role, kind: kind) else {
+            // Only a side that cannot dial ever asks over the control channel,
+            // and only the guest can answer, so this frame travels host→guest
+            // on the clipboard channel and nowhere else.
+            guard role == .guest, ClipboardControlSession.sends(role: role, kind: kind),
+                let dial = session.dataDialer
+            else {
                 return closeOnWrongPort()
             }
-            outbound.handleRequest(request)
+            outbound.handleRequest(ClipboardPullRequest(request), link: .dial(dial))
         case .dropOffer(let offer):
             guard kind == .drop, let inbound else { return closeOnWrongPort() }
             inbound.handleDropOffer(offer)
@@ -445,14 +543,11 @@ public final class ClipboardEndpoint {
                 return
             }
             inbound.handlePeerError(error)
-        case .clipboardStreamAbort(let abort):
-            // Only a sender-bound abort reaches here; see `ClipboardStreamRouting`.
-            session.sender?.handleAbort(transferID: abort.transferID)
-        case .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck:
-            // Routed off-main by the consume loop; never reaches here.
-            break
         case .hello, .heartbeat, .policyUpdate, .logRecord:
             // Control-plane and log payloads have their own channels.
+            closeOnWrongPort()
+        case .clipboardTransferRequest, .clipboardTransferReply:
+            // A transfer's header frames belong to its own data connection.
             closeOnWrongPort()
         case .none:
             Self.logger.debug(
@@ -513,6 +608,12 @@ public final class ClipboardEndpoint {
     /// Test seam for the refusal hop's staleness check.
     public func recordRefusalForTesting(_ code: ClipboardErrorCode, generation: UInt64) {
         inbound?.recordRefusalForTesting(code, generation: generation)
+    }
+
+    /// Accepted data connections whose opening frame is being read right now,
+    /// and those waiting for a slot to read it in.
+    nonisolated var dataAcceptsForTesting: (running: Int, waiting: Int) {
+        (dataAccepts.runningCountForTesting, dataAccepts.waitingCountForTesting)
     }
     #endif
 }

@@ -1,7 +1,6 @@
 import Testing
 import Foundation
 import AppKit
-import CryptoKit
 import Darwin
 import KernovaKit
 import KernovaTestSupport
@@ -154,8 +153,14 @@ struct VsockGuestClipboardAgentTests {
     /// The short retry interval keeps the pause/resume wake-up snappy — the agent
     /// is now default-paused at construction, and `applyPolicy(enabled: true, …)` only
     /// takes effect on the next loop iteration after the current sleep.
+    ///
+    /// `dialled` collects the peer end of every data connection the agent opens,
+    /// standing in for the host's data listener: a guest only ever dials, so
+    /// every transfer in either direction arrives there. A test that drives one
+    /// passes its own collector and closes it on teardown.
     private func makeAgent(
         pasteboard: FakePasteboard, agentFd: Int32,
+        dialled: DialledDataConnections = DialledDataConnections(),
         clock: any EngineClock = MonotonicEngineClock(),
         stagingTempRoot: URL? = nil,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
@@ -181,6 +186,7 @@ struct VsockGuestClipboardAgentTests {
                     UUID().uuidString, isDirectory: true),
             reporter: reporter,
             progressRevealDelay: progressRevealDelay, progressIdleGap: progressIdleGap,
+            dataDialer: dialled.dialer,
             onClipboardNotice: onClipboardNotice)
         return agent
     }
@@ -214,7 +220,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -241,13 +249,15 @@ struct VsockGuestClipboardAgentTests {
         try hostChannel.send(
             makeRequestFrame(
                 generation: offer.generation, transferID: transferID, uti: info.uti))
-        // Collect Begin→Chunk(s)→End; the collector sends the go-signal on Begin.
-        let transfer = try await collectOutboundTransfer(transferID: transferID, from: hostChannel)
-        #expect(transfer.begin.uti == ClipboardContent.utf8TextUTI)
-        #expect(transfer.begin.isInline)
-        #expect(transfer.bytes == Data(text.utf8))
-        #expect(transfer.end.totalBytes == UInt64(Data(text.utf8).count))
-        #expect(transfer.end.sha256 == Data(SHA256.hash(data: Data(text.utf8))))
+        // The agent answers by dialling the transfer's own connection: reply,
+        // payload, trailer.
+        let transfer = try await collectOutboundTransfer(transferID: transferID, from: dialled)
+        #expect(transfer.reply.isInline)
+        #expect(!transfer.reply.isArchive)
+        #expect(transfer.payload == Data(text.utf8))
+        #expect(transfer.reply.totalBytes == UInt64(Data(text.utf8).count))
+        // The trailer's digest covers exactly the payload that arrived.
+        #expect(transfer.isComplete)
     }
 
     @Test("outbound copied file: offered by stat (no read), streamed from disk on request")
@@ -258,7 +268,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -296,17 +308,19 @@ struct VsockGuestClipboardAgentTests {
                 generation: offer.generation, transferID: transferID, uti: info.uti))
 
         let transfer = try await collectOutboundTransfer(
-            transferID: transferID, from: hostChannel)
-        #expect(!transfer.begin.isInline)
-        #expect(transfer.begin.filename == "notes.bin")
+            transferID: transferID, from: dialled)
+        #expect(!transfer.reply.isInline)
         // The file crosses as a one-entry archive, so its wire size is unknown
-        // at Begin and End carries the authoritative count and digest.
-        #expect(transfer.begin.isArchive)
-        #expect(transfer.begin.totalBytes == 0)
-        #expect(transfer.end.totalBytes == UInt64(transfer.bytes.count))
-        #expect(transfer.end.sha256 == Data(SHA256.hash(data: transfer.bytes)))
-        let unpacked = try extractedClipboardArchive(transfer.bytes)
+        // when the reply goes out and the trailer carries the digest that proves
+        // the payload arrived whole.
+        #expect(transfer.reply.isArchive)
+        #expect(transfer.reply.totalBytes == 0)
+        #expect(transfer.isComplete)
+        let unpacked = try extractedClipboardArchive(transfer.payload)
         defer { try? FileManager.default.removeItem(at: unpacked) }
+        // Nothing on a data connection repeats the offer's filename, so the name
+        // the transfer delivers is the archive entry's.
+        #expect(try FileManager.default.contentsOfDirectory(atPath: unpacked.path) == ["notes.bin"])
         #expect(try Data(contentsOf: unpacked.appendingPathComponent("notes.bin")) == contents)
     }
 
@@ -318,7 +332,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -348,13 +364,15 @@ struct VsockGuestClipboardAgentTests {
                 generation: offer.generation, transferID: transferID, uti: info.uti))
 
         let transfer = try await collectOutboundTransfer(
-            transferID: transferID, from: hostChannel)
-        #expect(transfer.begin.totalBytes == 0)
-        #expect(transfer.begin.filename == "empty.bin")
-        #expect(transfer.begin.isArchive)
-        #expect(transfer.end.sha256 == Data(SHA256.hash(data: transfer.bytes)))
-        let unpacked = try extractedClipboardArchive(transfer.bytes)
+            transferID: transferID, from: dialled)
+        #expect(transfer.reply.totalBytes == 0)
+        #expect(transfer.reply.isArchive)
+        #expect(transfer.isComplete)
+        let unpacked = try extractedClipboardArchive(transfer.payload)
         defer { try? FileManager.default.removeItem(at: unpacked) }
+        // The offer's filename is not repeated on the connection; the entry the
+        // archive delivers carries it.
+        #expect(try FileManager.default.contentsOfDirectory(atPath: unpacked.path) == ["empty.bin"])
         #expect(try Data(contentsOf: unpacked.appendingPathComponent("empty.bin")).isEmpty)
     }
 
@@ -371,9 +389,11 @@ struct VsockGuestClipboardAgentTests {
         // hands to `AgentStatusItemController.transferReportChanged`.
         let reports = await MainActor.run { ClipboardTransferReports() }
         let reporter = await MainActor.run { reports.reporter }
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
         let agent = makeAgent(
-            pasteboard: pasteboard, agentFd: agentFd, progressRevealDelay: 0, progressIdleGap: 0,
-            reporter: reporter)
+            pasteboard: pasteboard, agentFd: agentFd, dialled: dialled,
+            progressRevealDelay: 0, progressIdleGap: 0, reporter: reporter)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -394,8 +414,8 @@ struct VsockGuestClipboardAgentTests {
         try hostChannel.send(
             makeRequestFrame(
                 generation: offer.generation, transferID: transferID, uti: info.uti))
-        let transfer = try await collectOutboundTransfer(transferID: transferID, from: hostChannel)
-        let unpacked = try extractedClipboardArchive(transfer.bytes)
+        let transfer = try await collectOutboundTransfer(transferID: transferID, from: dialled)
+        let unpacked = try extractedClipboardArchive(transfer.payload)
         defer { try? FileManager.default.removeItem(at: unpacked) }
         #expect(try Data(contentsOf: unpacked.appendingPathComponent("notes.bin")) == contents)
 
@@ -421,7 +441,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -450,8 +472,8 @@ struct VsockGuestClipboardAgentTests {
         try hostChannel.send(
             makeRequestFrame(
                 generation: offer.generation, transferID: transferID, uti: info.uti))
-        let transfer = try await collectOutboundTransfer(transferID: transferID, from: hostChannel)
-        #expect(transfer.bytes == png)
+        let transfer = try await collectOutboundTransfer(transferID: transferID, from: dialled)
+        #expect(transfer.payload == png)
     }
 
     @Test("outbound multiple files: every copied file is offered as its own rep, in order")
@@ -493,7 +515,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -510,9 +534,8 @@ struct VsockGuestClipboardAgentTests {
                 ]))
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.fileURL) }
         let pull = lazyPull(pasteboard, forType: .fileURL)
-        try await driveInboundStream(
-            generation: 3, uti: txtUTI, filename: "notes.txt", payload: contents, isInline: false,
-            on: hostChannel)
+        try await serveInboundTransfer(
+            on: dialled, generation: 3, filename: "notes.txt", payload: contents, isInline: false)
         let staged = try #require(
             (await pull.value).flatMap { String(data: $0, encoding: .utf8) }
                 .flatMap(URL.init(string:)))
@@ -546,8 +569,11 @@ struct VsockGuestClipboardAgentTests {
         let agentStagingRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: agentStagingRoot) }
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
         let agent = makeAgent(
-            pasteboard: pasteboard, agentFd: agentFd, stagingTempRoot: agentStagingRoot)
+            pasteboard: pasteboard, agentFd: agentFd, dialled: dialled,
+            stagingTempRoot: agentStagingRoot)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -577,18 +603,18 @@ struct VsockGuestClipboardAgentTests {
         try hostChannel.send(
             makeRequestFrame(generation: offer.generation, transferID: transferID, uti: info.uti))
         let transfer = try await collectOutboundTransfer(
-            transferID: transferID, from: hostChannel)
-        #expect(!transfer.begin.isInline)
-        #expect(transfer.begin.filename == "Project")
+            transferID: transferID, from: dialled)
+        #expect(!transfer.reply.isInline)
+        #expect(transfer.reply.isArchive)
         // The tree is compressed straight onto the wire, so its size is unknown
-        // at Begin; End carries the authoritative count.
-        #expect(transfer.begin.totalBytes == 0)
-        #expect(transfer.end.totalBytes == UInt64(transfer.bytes.count))
-        #expect(transfer.end.sha256 == Data(SHA256.hash(data: transfer.bytes)))
+        // when the reply goes out; the trailer's digest is what proves the whole
+        // archive arrived.
+        #expect(transfer.reply.totalBytes == 0)
+        #expect(transfer.isComplete)
         // The tree was compressed onto the wire, so nothing was staged to send it.
         #expect(materializedFiles(under: agentStagingRoot).isEmpty)
 
-        let dest = try extractedClipboardArchive(transfer.bytes)
+        let dest = try extractedClipboardArchive(transfer.payload)
         defer { try? FileManager.default.removeItem(at: dest.deletingLastPathComponent()) }
         #expect(
             try String(contentsOf: dest.appendingPathComponent("README.md"), encoding: .utf8)
@@ -653,7 +679,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -675,18 +703,18 @@ struct VsockGuestClipboardAgentTests {
         #expect(offer.repInfo.map(\.byteCount) == [0, 0])
 
         // The zero estimate gates nothing: each rep streams its tree on request
-        // and the arriving archive bytes rebuild it.
+        // and the arriving archive bytes rebuild it. Which rep each transfer
+        // carries is its id — nothing on the connection repeats the offer's
+        // filename — so the trees themselves are what tell the two apart.
         let emptyTransfer = try await requestOutboundRep(
-            offer: offer, repIndex: 0, from: hostChannel)
-        #expect(emptyTransfer.begin.filename == "Empty")
-        let emptyOut = try extractedClipboardArchive(emptyTransfer.bytes)
+            offer: offer, repIndex: 0, from: hostChannel, dialled: dialled)
+        let emptyOut = try extractedClipboardArchive(emptyTransfer.payload)
         defer { try? FileManager.default.removeItem(at: emptyOut.deletingLastPathComponent()) }
         #expect(try FileManager.default.contentsOfDirectory(atPath: emptyOut.path).isEmpty)
 
         let scaffoldTransfer = try await requestOutboundRep(
-            offer: offer, repIndex: 1, from: hostChannel)
-        #expect(scaffoldTransfer.begin.filename == "Scaffold")
-        let scaffoldOut = try extractedClipboardArchive(scaffoldTransfer.bytes)
+            offer: offer, repIndex: 1, from: hostChannel, dialled: dialled)
+        let scaffoldOut = try extractedClipboardArchive(scaffoldTransfer.payload)
         defer { try? FileManager.default.removeItem(at: scaffoldOut.deletingLastPathComponent()) }
         #expect(
             FileManager.default.fileExists(
@@ -863,20 +891,22 @@ struct VsockGuestClipboardAgentTests {
         ])
         await MainActor.run { agent.checkClipboardChange() }
 
-        let extra = try await maybeNextFrame(from: hostChannel, skippingAcks: true)
+        let extra = try await maybeNextFrame(from: hostChannel)
         #expect(extra == nil)
     }
 
-    /// Requests representation `repIndex` of `offer` and collects its stream.
+    /// Requests representation `repIndex` of `offer` and reads the transfer the
+    /// agent dials to answer it.
     private func requestOutboundRep(
-        offer: Kernova_V1_ClipboardOffer, repIndex: UInt64, from channel: VsockChannel
-    ) async throws -> CollectedTransfer {
+        offer: Kernova_V1_ClipboardOffer, repIndex: UInt64, from channel: VsockChannel,
+        dialled: DialledDataConnections
+    ) async throws -> ReceivedTransfer {
         let transferID = (offer.generation << 16) | repIndex
         try channel.send(
             makeRequestFrame(
                 generation: offer.generation, transferID: transferID,
                 uti: offer.repInfo[Int(repIndex)].uti))
-        return try await collectOutboundTransfer(transferID: transferID, from: channel)
+        return try await collectOutboundTransfer(transferID: transferID, from: dialled)
     }
 
     @Test("inbound directory stream with a digest mismatch delivers nothing — no folder appears")
@@ -887,7 +917,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -907,24 +939,29 @@ struct VsockGuestClipboardAgentTests {
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.fileURL) }
 
         let pull = lazyPull(pasteboard, forType: .fileURL)
-        let req = try await awaitRequest(on: hostChannel)
-        try hostChannel.send(
-            makeBeginFrame(
-                generation: 9, transferID: req.transferID, uti: UTType.folder.identifier,
-                totalBytes: 0, filename: "Broken", isInline: false, isArchive: true))
-        try hostChannel.send(
-            makeChunkFrame(transferID: req.transferID, offset: 0, data: aarBytes))
-        // End carries the right byte count but the digest of DIFFERENT bytes —
-        // the receiver must refuse to commit, so the pull serves nothing and no
-        // folder materializes.
-        var endFrame = Frame()
-        endFrame.protocolVersion = 1
-        endFrame.clipboardStreamEnd = Kernova_V1_ClipboardStreamEnd.with {
-            $0.transferID = req.transferID
-            $0.totalBytes = UInt64(aarBytes.count)
-            $0.sha256 = Data(SHA256.hash(data: Data("not the archive".utf8)))
+        let connection = try await acceptPull(on: dialled, generation: 9)
+        // The whole archive crosses, but the trailer carries the digest of
+        // DIFFERENT bytes — the receiver must refuse to commit, so the pull
+        // serves nothing and no folder materializes.
+        let served = await offCooperativePool {
+            defer { ClipboardDataConnection.end(fd: connection.fd) }
+            do {
+                try ClipboardDataConnection.writeFrame(
+                    makeTransferReplyFrame(
+                        transferID: connection.request.transferID, isArchive: true,
+                        isInline: false, totalBytes: 0),
+                    fd: connection.fd)
+                try writeTransferBytes(fd: connection.fd, aarBytes)
+                try ClipboardDataConnection.writeTrailer(
+                    ClipboardTransferTrailer(
+                        ending: .complete(digest: sha256(Data("not the archive".utf8)))),
+                    fd: connection.fd)
+                return true
+            } catch {
+                return false
+            }
         }
-        try hostChannel.send(endFrame)
+        #expect(served)
         #expect(await pull.value == nil)
     }
 
@@ -1042,16 +1079,19 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
-        // Host offers text → agent registers a lazy promise (no pull, no request).
-        // The post-write changeCount is captured so the poll can't self-trigger.
+        // Host offers text → agent registers a lazy promise (no pull, so no data
+        // connection). The post-write changeCount is captured so the poll can't
+        // self-trigger.
         try hostChannel.send(makeTextOfferFrame(generation: 1, text: "from host"))
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.string) }
-        try await expectNoRequest(from: hostChannel)
+        try await expectNoPull(on: dialled)
 
         // A poll right after the promise is registered must not re-offer it.
         await MainActor.run { agent.checkClipboardChange() }
@@ -1066,7 +1106,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1086,9 +1128,8 @@ struct VsockGuestClipboardAgentTests {
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.fileURL) }
 
         let pull = lazyPull(pasteboard, forType: .fileURL)
-        try await driveInboundStream(
-            generation: 3, uti: txtUTI, filename: "notes.txt", payload: contents,
-            isInline: false, on: hostChannel)
+        try await serveInboundTransfer(
+            on: dialled, generation: 3, filename: "notes.txt", payload: contents, isInline: false)
         let urlData = await pull.value
         let staged = try #require(
             urlData.flatMap { String(data: $0, encoding: .utf8) }
@@ -1111,16 +1152,18 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
         // Host announces one inline text rep. The agent registers a lazy promise
-        // for the text UTI and pulls NOTHING — no ClipboardRequest is sent.
+        // for the text UTI and pulls NOTHING — no data connection is opened.
         try hostChannel.send(makeTextOfferFrame(generation: 42, text: "clipboard payload"))
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.string] }
-        try await expectNoRequest(from: hostChannel)
+        try await expectNoPull(on: dialled)
 
         // The promise write is scoped `.currentHostOnly` so the guest's
         // continuity-pasteboard advertiser can't fetch the promised flavors at
@@ -1143,7 +1186,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -1160,9 +1205,8 @@ struct VsockGuestClipboardAgentTests {
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
 
         let pull = lazyPull(pasteboard, forType: .fileURL)
-        try await driveInboundStream(
-            generation: 3, uti: txtUTI, filename: "kept.txt", payload: contents,
-            isInline: false, on: hostChannel)
+        try await serveInboundTransfer(
+            on: dialled, generation: 3, filename: "kept.txt", payload: contents, isInline: false)
         let urlData = await pull.value
         let staged = try #require(
             urlData.flatMap { String(data: $0, encoding: .utf8) }
@@ -1192,7 +1236,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1213,7 +1259,7 @@ struct VsockGuestClipboardAgentTests {
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
 
         #expect(pasteboard.lastPrepareOptionsForTesting == .currentHostOnly)
-        try await expectNoRequest(from: hostChannel)
+        try await expectNoPull(on: dialled)
     }
 
     @Test("after the connection ends a cached rep still pastes and an unstaged file set is refused")
@@ -1224,7 +1270,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -1248,15 +1296,13 @@ struct VsockGuestClipboardAgentTests {
         try await pasteboard.changed.wait { pasteboard.promisedItemCountForTesting == 3 }
 
         let textPull = lazyPull(pasteboard, forType: .string)
-        try await driveInboundStream(
-            generation: 44, uti: ClipboardContent.utf8TextUTI, filename: "", payload: text,
-            isInline: true, on: hostChannel)
+        try await serveInboundTransfer(
+            on: dialled, generation: 44, payload: text, isInline: true)
         #expect(await textPull.value == text)
 
         let filePull = lazyPull(pasteboard, forType: .fileURL, itemIndex: 1)
-        try await driveInboundStream(
-            generation: 44, uti: txtUTI, filename: "kept.txt", payload: fileBytes,
-            isInline: false, on: hostChannel)
+        try await serveInboundTransfer(
+            on: dialled, generation: 44, filename: "kept.txt", payload: fileBytes, isInline: false)
         #expect(await filePull.value != nil)
 
         // The host goes away. The promise stays on the pasteboard, held alive by
@@ -1285,7 +1331,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -1308,13 +1356,14 @@ struct VsockGuestClipboardAgentTests {
         try await pasteboard.changed.wait { pasteboard.promisedItemCountForTesting == 2 }
         #expect(pasteboard.promisedTypesForTesting == [.fileURL, .fileURL])
 
-        // Pull item 0's `.fileURL` → a request for rep 0 (transfer_id low bits 0).
+        // Pull item 0's `.fileURL` → a connection for rep 0 (transfer_id low
+        // bits 0).
         let pull0 = lazyPull(pasteboard, forType: .fileURL, itemIndex: 0)
-        try await driveInboundStream(
-            generation: 9, uti: txtUTI, filename: "a.txt", payload: bodyA, isInline: false,
-            on: hostChannel
-        ) { req in
-            #expect(req.transferID & 0xFFFF == 0)
+        try await serveInboundTransfer(
+            on: dialled, generation: 9, filename: "a.txt", payload: bodyA, isInline: false
+        ) { request in
+            #expect(request.transferID & 0xFFFF == 0)
+            #expect(request.uti == txtUTI)
         }
         let staged0 = try #require(
             (await pull0.value).flatMap { String(data: $0, encoding: .utf8) }
@@ -1322,14 +1371,14 @@ struct VsockGuestClipboardAgentTests {
         #expect(staged0.lastPathComponent == "a.txt")
         #expect(try Data(contentsOf: staged0) == bodyA)
 
-        // Pull item 1's `.fileURL` → a distinct request for rep 1 (low bits 1),
-        // with no cache cross-talk: the second file's bytes, not the first's.
+        // Pull item 1's `.fileURL` → a distinct connection for rep 1 (low bits
+        // 1), with no cache cross-talk: the second file's bytes, not the first's.
         let pull1 = lazyPull(pasteboard, forType: .fileURL, itemIndex: 1)
-        try await driveInboundStream(
-            generation: 9, uti: txtUTI, filename: "b.txt", payload: bodyB, isInline: false,
-            on: hostChannel
-        ) { req in
-            #expect(req.transferID & 0xFFFF == 1)
+        try await serveInboundTransfer(
+            on: dialled, generation: 9, filename: "b.txt", payload: bodyB, isInline: false
+        ) { request in
+            #expect(request.transferID & 0xFFFF == 1)
+            #expect(request.uti == txtUTI)
         }
         let staged1 = try #require(
             (await pull1.value).flatMap { String(data: $0, encoding: .utf8) }
@@ -1349,7 +1398,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1357,16 +1408,18 @@ struct VsockGuestClipboardAgentTests {
         try hostChannel.send(makeTextOfferFrame(generation: 16, text: "released"))
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.string) }
 
-        // The host opens the transfer, then releases the offer instead of
-        // streaming: the release cancels the live transfer and fails the pull,
-        // and its retract clears the promise the fire was serving.
+        // The host answers the transfer's connection with the reply describing
+        // the payload, then releases the offer instead of streaming it: the
+        // release cancels the live transfer and fails the pull, and its retract
+        // clears the promise the fire was serving.
         let pull = lazyPull(pasteboard, forType: .string)
-        let req = try await awaitRequest(on: hostChannel)
-        #expect(req.generation == 16)
-        try hostChannel.send(
-            makeBeginFrame(
-                generation: 16, transferID: req.transferID, uti: ClipboardContent.utf8TextUTI,
-                totalBytes: 8, filename: "", isInline: true))
+        let connection = try await acceptPull(on: dialled, generation: 16)
+        defer { ClipboardDataConnection.end(fd: connection.fd) }
+        try ClipboardDataConnection.writeFrame(
+            makeTransferReplyFrame(
+                transferID: connection.request.transferID, isArchive: false, isInline: true,
+                totalBytes: 8),
+            fd: connection.fd)
         try hostChannel.send(makeReleaseFrame(generation: 16))
 
         let provided = await pull.value
@@ -1385,7 +1438,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -1414,13 +1469,12 @@ struct VsockGuestClipboardAgentTests {
         try await pasteboard.changed.wait { Set(pasteboard.promisedTypesForTesting) == [pngType, .fileURL] }
 
         let pull = lazyPull(pasteboard, forType: .fileURL)
-        try await driveInboundStream(
-            generation: 7, uti: UTType.png.identifier, filename: "shot.png", payload: png,
-            isInline: true, on: hostChannel
-        ) { req in
+        try await serveInboundTransfer(
+            on: dialled, generation: 7, filename: "shot.png", payload: png, isInline: true
+        ) { request in
             // The request must target the legit PNG rep, never the smuggled file-url
             // rep (whose UTI would be "public.file-url" if repIndex skipped the gate).
-            #expect(req.uti == UTType.png.identifier)
+            #expect(request.uti == UTType.png.identifier)
         }
         let urlData = await pull.value
         let staged = try #require(
@@ -1437,7 +1491,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1465,8 +1521,8 @@ struct VsockGuestClipboardAgentTests {
         #expect(!promised.contains(.fileURL))
         #expect(!promised.contains(NSPasteboard.PasteboardType("org.nspasteboard.TransientType")))
         #expect(!promised.contains(NSPasteboard.PasteboardType("public.file-url")))
-        // Pulling is lazy — the offer issues no request.
-        try await expectNoRequest(from: hostChannel)
+        // Pulling is lazy — the offer opens no data connection.
+        try await expectNoPull(on: dialled)
     }
 
     // MARK: - Disk full
@@ -1536,8 +1592,11 @@ struct VsockGuestClipboardAgentTests {
         defer { hostChannel.close() }
 
         let notices = AtomicInt()
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
         let agent = makeAgent(
-            pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
+            pasteboard: pasteboard, agentFd: agentFd, dialled: dialled,
+            onClipboardNotice: { notices.increment() })
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1550,13 +1609,14 @@ struct VsockGuestClipboardAgentTests {
             ))
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
 
-        // A real pull that the host then kills: the failure is the user's paste
+        // A real pull the host then gives up on mid-payload, naming the code in
+        // the trailer that ends the stream: the failure is the user's paste
         // failing, so it is answered in the guest as well as on the wire.
         let pull = lazyPull(pasteboard, forType: .fileURL)
-        let request = try await awaitRequest(on: hostChannel)
-        try hostChannel.send(
-            makeAbortFrame(
-                transferID: request.transferID, code: abortCode, message: "test abort"))
+        let connection = try await acceptPull(on: dialled, generation: 34)
+        try abortTransfer(
+            fd: connection.fd, transferID: connection.request.transferID, code: abortCode,
+            declaredBytes: 1024)
         #expect(await pull.value == nil)
 
         let frame = try await maybeNextFrame(from: hostChannel)
@@ -1767,7 +1827,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         let lowered = 512 * 1024 * 1024
@@ -1787,7 +1849,7 @@ struct VsockGuestClipboardAgentTests {
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
 
         #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
-        try await expectNoRequest(from: hostChannel)
+        try await expectNoPull(on: dialled)
     }
 
     @Test("deadline cap: raising the ceiling after a refusal does not rewrite the figure it named")
@@ -1843,7 +1905,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         let raised = 16 * 1024 * 1024 * 1024
@@ -1860,12 +1924,12 @@ struct VsockGuestClipboardAgentTests {
                 ]))
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
 
-        // A real request going out is the proof it was admitted; abort it so the
+        // A real transfer opening is the proof it was admitted; abort it so the
         // pull resolves without streaming the payload in-test.
         let pull = lazyPull(pasteboard, forType: .fileURL)
-        let req = try await awaitRequest(on: hostChannel)
-        try hostChannel.send(
-            makeAbortFrame(transferID: req.transferID, code: "host.abort", message: "test abort"))
+        let connection = try await acceptPull(on: dialled, generation: 42)
+        try abortTransfer(
+            fd: connection.fd, transferID: connection.request.transferID, code: "host.abort")
         _ = await pull.value
     }
 
@@ -1900,8 +1964,11 @@ struct VsockGuestClipboardAgentTests {
             return .success(fd)
         }
 
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
         let agent = VsockGuestClipboardAgent(
-            pasteboard: pasteboard, client: client, reporter: ClipboardTransferReporter())
+            pasteboard: pasteboard, client: client, reporter: ClipboardTransferReporter(),
+            dataDialer: dialled.dialer)
         defer { agent.stop() }
 
         agent.start()
@@ -1965,8 +2032,11 @@ struct VsockGuestClipboardAgentTests {
             }
             return .success(fd)
         }
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
         let agent = VsockGuestClipboardAgent(
-            pasteboard: pasteboard, client: client, reporter: ClipboardTransferReporter())
+            pasteboard: pasteboard, client: client, reporter: ClipboardTransferReporter(),
+            dataDialer: dialled.dialer)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1978,9 +2048,8 @@ struct VsockGuestClipboardAgentTests {
         try host0.send(makeTextOfferFrame(generation: 1, text: mac))
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.string) }
         let paste = lazyPull(pasteboard, forType: .string)
-        try await driveInboundStream(
-            generation: 1, uti: ClipboardContent.utf8TextUTI, filename: "",
-            payload: Data(mac.utf8), isInline: true, on: host0)
+        try await serveInboundTransfer(
+            on: dialled, generation: 1, payload: Data(mac.utf8), isInline: true)
         #expect(await paste.value == Data(mac.utf8))
         #expect(pasteboard.providerInvocationCountForTesting == 1)
 
@@ -2045,8 +2114,11 @@ struct VsockGuestClipboardAgentTests {
             return .success(fd)
         }
 
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
         let agent = VsockGuestClipboardAgent(
-            pasteboard: pasteboard, client: client, reporter: ClipboardTransferReporter())
+            pasteboard: pasteboard, client: client, reporter: ClipboardTransferReporter(),
+            dataDialer: dialled.dialer)
         defer { agent.stop() }
 
         agent.start()
@@ -2162,8 +2234,11 @@ struct VsockGuestClipboardAgentTests {
             provideCount.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no more fds"))
         }
 
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
         let agent = VsockGuestClipboardAgent(
-            pasteboard: pasteboard, client: client, reporter: ClipboardTransferReporter())
+            pasteboard: pasteboard, client: client, reporter: ClipboardTransferReporter(),
+            dataDialer: dialled.dialer)
         defer { agent.stop() }
         agent.start()
         // Production agents are default-disabled until host policy enables them.
@@ -2190,7 +2265,7 @@ struct VsockGuestClipboardAgentTests {
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.string) }
         let promiseGen = DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting }
         #expect(promiseGen == 1)
-        try await expectNoRequest(from: hostChannel)
+        try await expectNoPull(on: dialled)
     }
 
     @Test("a failed pasteboard promise write clears the inbound promise generation")
@@ -2201,7 +2276,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -2216,7 +2293,7 @@ struct VsockGuestClipboardAgentTests {
         // The write attempt bumps the changeCount via clearContents; wait for
         // that observable side effect, then confirm no promise was retained.
         try await pasteboard.changed.wait { pasteboard.changeCount > 0 }
-        try await expectNoRequest(from: hostChannel)
+        try await expectNoPull(on: dialled)
         let promiseGen = DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting }
         #expect(promiseGen == nil)
         #expect(pasteboard.promisedTypesForTesting.isEmpty)
@@ -2236,7 +2313,10 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        // Every data connection this agent dials is answered by a peer that
+        // closes it at once, so the transfer's reply is written into a dead
+        // connection.
+        let agent = makeAgentWithDeadDataPeer(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -2249,20 +2329,45 @@ struct VsockGuestClipboardAgentTests {
             throw TestFailure("Expected ClipboardOffer, got \(String(describing: offerFrame.payload))")
         }
 
-        // Queue a request in the kernel buffer, then close the host end so the
-        // agent's stream reply (Begin/...) arrives at a dead peer.
+        // Queue a request in the kernel buffer, then close the host end too, so
+        // neither the transfer's connection nor the control channel survives.
         let transferID: UInt64 = (offer.generation << 16) | 0
         try hostChannel.send(
             makeRequestFrame(
                 generation: offer.generation, transferID: transferID,
                 uti: ClipboardContent.utf8TextUTI))
-        try hostChannel.send(makeAckFrame(transferID: transferID))
         hostChannel.close()
 
-        // The agent reads the request, tries to stream, fails (peer gone), and
-        // must not crash; liveChannel is cleared once the receive loop observes EOF.
+        // The agent reads the request, dials, tries to stream, fails (peer gone),
+        // and must not crash; liveChannel is cleared once the receive loop
+        // observes EOF.
         try await waitUntil { agent.liveChannelForTesting == nil }
         #expect(agent.liveChannelForTesting == nil, "liveChannel should be nil after peer EOF")
+    }
+
+    /// An agent every data connection of which is already dead when it is handed
+    /// over — the peer's end is closed before the dial returns, so the transfer's
+    /// first write fails.
+    private func makeAgentWithDeadDataPeer(
+        pasteboard: FakePasteboard, agentFd: Int32
+    ) -> VsockGuestClipboardAgent {
+        let provided = AtomicInt()
+        let client = VsockGuestClient(
+            port: 49152, label: "clipboard-dead-peer-test", clock: MonotonicEngineClock(),
+            retryInterval: 0.05
+        ) { _, _ in
+            provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
+        }
+        return VsockGuestClipboardAgent(
+            pasteboard: pasteboard, client: client,
+            stagingTempRoot: FileManager.default.temporaryDirectory.appendingPathComponent(
+                UUID().uuidString, isDirectory: true),
+            reporter: ClipboardTransferReporter(),
+            dataDialer: { _ in
+                let (near, far) = try makeRawSocketPair()
+                ClipboardDataConnection.end(fd: far)
+                return near
+            })
     }
 
     // MARK: - Policy enforcement
@@ -2339,7 +2444,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -2348,9 +2455,8 @@ struct VsockGuestClipboardAgentTests {
 
         let payload = Data("payload".utf8)
         let pull = lazyPull(pasteboard, forType: .string)
-        try await driveInboundStream(
-            generation: 1, uti: ClipboardContent.utf8TextUTI, filename: "", payload: payload,
-            isInline: true, on: hostChannel)
+        try await serveInboundTransfer(
+            on: dialled, generation: 1, payload: payload, isInline: true)
         _ = await pull.value
 
         let after = await MainActor.run { agent.clipboardActivity }
@@ -2386,7 +2492,9 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        let dialled = DialledDataConnections()
+        defer { dialled.closeAll() }
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -2398,9 +2506,9 @@ struct VsockGuestClipboardAgentTests {
         let transferID: UInt64 = (offer.generation << 16) | 0
         try hostChannel.send(
             makeRequestFrame(generation: offer.generation, transferID: transferID, uti: info.uti))
-        // Once the streamed transfer is collected, handleRequest has run on main
-        // (Begin can't precede startTransfer), so the activity is set.
-        _ = try await collectOutboundTransfer(transferID: transferID, from: hostChannel)
+        // Once the transfer is read off its connection, handleRequest has run on
+        // main (the dial can't precede it), so the activity is set.
+        _ = try await collectOutboundTransfer(transferID: transferID, from: dialled)
 
         let after = await MainActor.run { agent.clipboardActivity }
         #expect(after == .sentToHost)
@@ -2439,7 +2547,7 @@ struct VsockGuestClipboardAgentTests {
     /// or `nil` on abort/timeout/disk-full).
     ///
     /// The caller streams the response on the host channel concurrently — e.g.
-    /// via `driveInboundStream` — before awaiting `.value`.
+    /// via `serveInboundTransfer` — before awaiting `.value`.
     private func lazyPull(
         _ pasteboard: FakePasteboard, forType type: NSPasteboard.PasteboardType,
         itemIndex: Int? = nil
@@ -2451,160 +2559,122 @@ struct VsockGuestClipboardAgentTests {
         }
     }
 
-    /// Reads frames until a `ClipboardRequest` arrives, draining `ack` frames a
-    /// prior inbound stream left queued (so two sequential pulls on one channel
-    /// don't trip over the first stream's acks).
-    private func awaitRequest(on channel: VsockChannel) async throws -> Kernova_V1_ClipboardRequest {
-        while true {
-            let frame = try await nextFrame(from: channel)
-            switch frame.payload {
-            case .clipboardRequest(let req):
-                return req
-            case .clipboardStreamAck:
-                continue
-            default:
-                throw TestFailure(
-                    "Expected ClipboardRequest, got \(String(describing: frame.payload))")
-            }
-        }
-    }
-
-    /// Reads frames until a `ClipboardOffer` arrives, draining `ack` frames a
-    /// prior inbound stream left queued.
+    /// Awaits the next `ClipboardOffer` on `channel`.
     private func awaitOffer(on channel: VsockChannel) async throws -> Kernova_V1_ClipboardOffer {
-        while true {
-            let frame = try await nextFrame(from: channel)
-            switch frame.payload {
-            case .clipboardOffer(let offer):
-                return offer
-            case .clipboardStreamAck:
-                continue
-            default:
-                throw TestFailure(
-                    "Expected ClipboardOffer, got \(String(describing: frame.payload))")
-            }
+        let frame = try await nextFrame(from: channel)
+        guard case .clipboardOffer(let offer) = frame.payload else {
+            throw TestFailure("Expected ClipboardOffer, got \(String(describing: frame.payload))")
         }
+        return offer
     }
 
-    /// Awaits the next `ClipboardRelease` on `channel`, skipping stream acks.
+    /// Awaits the next `ClipboardRelease` on `channel`.
     private func awaitRelease(on channel: VsockChannel) async throws
         -> Kernova_V1_ClipboardRelease
     {
-        while true {
-            let frame = try await nextFrame(from: channel)
-            switch frame.payload {
-            case .clipboardRelease(let release):
-                return release
-            case .clipboardStreamAck:
-                continue
-            default:
-                throw TestFailure(
-                    "Expected ClipboardRelease, got \(String(describing: frame.payload))")
-            }
+        let frame = try await nextFrame(from: channel)
+        guard case .clipboardRelease(let release) = frame.payload else {
+            throw TestFailure("Expected ClipboardRelease, got \(String(describing: frame.payload))")
         }
+        return release
     }
 
-    /// Responds to the agent's lazy pull by streaming the requested rep.
+    /// Takes the data connection the agent dialled for its lazy pull, with the
+    /// `ClipboardTransferRequest` that opened it, and leaves it unanswered.
     ///
-    /// Awaits the `ClipboardRequest` (running `validate` against it), then
-    /// streams `Begin`/`Chunk`(s)/`End` for the request's transfer. The agent's
-    /// `ClipboardStreamReceiver` acks each chunk automatically, so we just push
-    /// frames and let it reassemble.
-    private func driveInboundStream(
-        generation: UInt64, uti: String, filename: String, payload: Data, isInline: Bool,
-        payloadIsArchived: Bool = false,
-        chunkSize: Int = 64 * 1024, on channel: VsockChannel,
-        validate: (Kernova_V1_ClipboardRequest) -> Void = { _ in }
+    /// The caller owns the descriptor. A guest never accepts a connection, so a
+    /// pull *is* the connection it opens — nothing about it crosses the control
+    /// channel.
+    private func acceptPull(
+        on connections: DialledDataConnections, generation: UInt64
+    ) async throws -> (fd: Int32, request: Kernova_V1_ClipboardTransferRequest) {
+        let fd = try await connections.next()
+        let request = await offCooperativePool { readTransferRequest(fd: fd) }
+        guard let request else {
+            ClipboardDataConnection.end(fd: fd)
+            throw TestFailure("A dialled data connection carried no transfer request")
+        }
+        guard request.generation == generation else {
+            ClipboardDataConnection.end(fd: fd)
+            throw TestFailure(
+                "A dialled data connection pulled gen=\(request.generation), not \(generation)")
+        }
+        return (fd, request)
+    }
+
+    /// Answers the agent's lazy pull on the connection it dialled: the reply
+    /// describing the payload, the payload, a completion trailer, then EOF.
+    ///
+    /// `validate` runs against the request that opened the connection. `payload`
+    /// is what the user sees: an inline rep crosses raw, everything else crosses
+    /// as the one-entry archive the host's sender would encode, named `filename`.
+    private func serveInboundTransfer(
+        on connections: DialledDataConnections, generation: UInt64, filename: String = "",
+        payload: Data, isInline: Bool,
+        validate: (Kernova_V1_ClipboardTransferRequest) -> Void = { _ in }
     ) async throws {
-        let req = try await awaitRequest(on: channel)
-        validate(req)
-        try streamInbound(
-            generation: generation, transferID: req.transferID, uti: uti, filename: filename,
-            payload: payload, isInline: isInline, payloadIsArchived: payloadIsArchived,
-            chunkSize: chunkSize, on: channel)
-    }
-
-    /// Streams `Begin`/`Chunk`(s)/`End` for one inbound transfer to the agent.
-    ///
-    /// `payload` is what the user sees: an inline rep crosses raw, everything
-    /// else crosses as the archive the host's sender would encode. Pass
-    /// `payloadIsArchived` when `payload` is already that archive — a folder's
-    /// tree, or bytes a test wants the extract itself to reject.
-    ///
-    /// Chunked rather than sent as one frame so a large payload can't outrun the
-    /// receiver's flow-control window — the host's sender chunks for the same
-    /// reason.
-    private func streamInbound(
-        generation: UInt64, transferID: UInt64, uti: String, filename: String = "", payload: Data,
-        isInline: Bool, payloadIsArchived: Bool = false, chunkSize: Int = 64 * 1024,
-        on channel: VsockChannel
-    ) throws {
         let isArchive = !isInline
         let wire: Data
-        if !isArchive || payloadIsArchived {
-            wire = payload
-        } else {
+        if isArchive {
             wire = try clipboardArchiveBytes(
                 of: .blob(payload, name: filename.isEmpty ? "data" : filename))
+        } else {
+            wire = payload
         }
-        try channel.send(
-            makeBeginFrame(
-                generation: generation, transferID: transferID, uti: uti,
-                // An archive's wire size isn't known until its last byte.
-                totalBytes: isArchive ? 0 : wire.count, filename: filename,
-                isInline: isInline, isArchive: isArchive))
-        var offset = 0
-        while offset < wire.count {
-            let end = min(offset + chunkSize, wire.count)
-            let slice = wire.subdata(in: offset..<end)
-            try channel.send(makeChunkFrame(transferID: transferID, offset: offset, data: slice))
-            offset = end
+        let connection = try await acceptPull(on: connections, generation: generation)
+        validate(connection.request)
+        let served = await offCooperativePool {
+            (try? serveTransfer(
+                fd: connection.fd, transferID: connection.request.transferID, payload: wire,
+                isArchive: isArchive, isInline: isInline)) != nil
         }
-        try channel.send(makeEndFrame(transferID: transferID, payload: wire))
+        guard served else {
+            throw TestFailure("Serving transfer \(connection.request.transferID) failed")
+        }
     }
 
     // MARK: - Negative-wait helpers
 
     /// Asserts no `ClipboardOffer` arrives on `channel` within a short window.
     private func expectNoOffer(from channel: VsockChannel) async throws {
-        if let frame = try await maybeNextFrame(from: channel, skippingAcks: true),
+        if let frame = try await maybeNextFrame(from: channel),
             case .clipboardOffer = frame.payload
         {
             throw TestFailure("Unexpected ClipboardOffer; echo/skip suppression failed")
         }
     }
 
-    /// Asserts no `ClipboardRequest` arrives on `channel` within a short window.
-    private func expectNoRequest(from channel: VsockChannel) async throws {
-        if let frame = try await maybeNextFrame(from: channel, skippingAcks: true),
-            case .clipboardRequest = frame.payload
-        {
-            throw TestFailure("Unexpected ClipboardRequest")
+    /// Asserts the agent pulls nothing within a short window.
+    ///
+    /// A pull is the data connection it opens, so a dial that never happened is
+    /// what "nothing was requested" looks like now.
+    ///
+    /// NOTE: a bounded negative wait — there is no event to await for "no
+    /// connection will ever be dialled", and the agent's reaction (if any) runs
+    /// on the main queue and would have been dispatched before this window
+    /// elapses.
+    private func expectNoPull(
+        on connections: DialledDataConnections, window: TimeInterval = 0.2
+    ) async throws {
+        try await MonotonicEngineClock().sleep(for: window)
+        guard connections.count == 0 else {
+            throw TestFailure(
+                "Unexpected pull: the agent dialled \(connections.count) data connection(s)")
         }
     }
 
     /// Reads one frame if one arrives within a short window, else returns nil.
-    ///
-    /// Pass `skippingAcks` to drain the `ack` frames a prior inbound stream left
-    /// queued (as `awaitRequest` does) — without it a negative assertion made
-    /// after a stream consumes an ack and passes vacuously, never seeing the
-    /// frame it was meant to rule out.
     ///
     /// NOTE: This is a bounded negative wait. There's no event to await for "no
     /// frame will ever arrive," so a small sleep is the pragmatic backstop — the
     /// agent's reaction (if any) runs on the main queue and would have been
     /// dispatched before this window elapses.
     private func maybeNextFrame(
-        from channel: VsockChannel, window: TimeInterval = 0.2,
-        skippingAcks: Bool = false
+        from channel: VsockChannel, window: TimeInterval = 0.2
     ) async throws -> Frame? {
         let receiver = Task<Frame?, Never> {
             var iterator = channel.incoming.makeAsyncIterator()
-            while let frame = try? await iterator.next() {
-                if skippingAcks, case .clipboardStreamAck = frame.payload { continue }
-                return frame
-            }
-            return nil
+            return try? await iterator.next()
         }
         try await MonotonicEngineClock().sleep(for: window)
         receiver.cancel()

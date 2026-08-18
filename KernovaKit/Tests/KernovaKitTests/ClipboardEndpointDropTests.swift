@@ -149,15 +149,22 @@ struct ClipboardEndpointDropTests {
     func hostCancelReleasesTheDrop() async throws {
         let harness = try RawPeerHarness(kind: .drop, receives: false)
         defer { harness.tearDown() }
+        // Incompressible and larger than the connection's send buffer, so the
+        // item is still streaming when the Cancel lands: a peer that opens the
+        // transfer and stops reading leaves the sender parked mid-payload.
         harness.endpoint.offer(
-            ClipboardContent(representations: [try dropRep("one.bin", Data("one".utf8))]))
+            ClipboardContent(representations: [
+                try dropRep("one.bin", try randomBytes(count: 4 << 20))
+            ]))
 
         // The guest asks for the first item, which is what puts the drop's
         // readout on screen for the user to cancel.
-        try harness.send(
-            makeRequestFrame(
+        let connection = try harness.openDataConnection()
+        try ClipboardDataConnection.writeFrame(
+            makeTransferRequestFrame(
                 generation: 1, transferID: harness.peerTransferID(generation: 1, repIndex: 0),
-                uti: "public.data"))
+                uti: "public.data"),
+            fd: connection)
         try await harness.side.reports.wait { harness.side.reports.runningSnapshot != nil }
 
         harness.endpoint.cancelOutbound(generation: 1)
@@ -168,13 +175,10 @@ struct ClipboardEndpointDropTests {
                 return false
             }
         }
-        // The item already streaming is called off too, not left to run out the
-        // credit it is parked on.
-        try await harness.recorder.waitForFrames {
-            harness.recorder.aborts.contains {
-                $0.code == ClipboardStreamAbortCode.superseded.rawValue
-            }
-        }
+        // The item already streaming is called off too, and says so in the
+        // trailer that ends its payload rather than running to completion.
+        let received = await offCooperativePool { try? receiveTransfer(fd: connection) }
+        #expect(try #require(received).abortCode == ClipboardStreamAbortCode.superseded.rawValue)
         try await harness.side.reports.wait {
             dropFinishes(harness.side.reports).contains { isCancelledFinish($0) }
         }
@@ -194,7 +198,9 @@ struct ClipboardEndpointDropTests {
 
         let operation = harness.side.makeOperation(gesture: .drop, direction: .inbound)
         let pull = harness.side.startPull(generation: 1, repIndex: 0, operation: operation)
-        try await harness.waitForRequest(generation: 1, repIndex: 0)
+        // The pull is open on its own connection, which nothing answers.
+        let connection = try await harness.acceptPull(generation: 1, repIndex: 0)
+        defer { ClipboardDataConnection.end(fd: connection.fd) }
 
         try harness.send(makeDropReleaseFrame(generation: 1))
 
@@ -222,18 +228,20 @@ struct ClipboardEndpointDropTests {
 
         let operation = harness.side.makeOperation(gesture: .drop, direction: .inbound)
         let pull = harness.side.startPull(generation: 1, repIndex: 0, operation: operation)
-        try await harness.waitForRequest(generation: 1, repIndex: 0)
+        let connection = try await harness.acceptPull(generation: 1, repIndex: 0)
+        defer { ClipboardDataConnection.end(fd: connection.fd) }
         harness.endpoint.cancelInbound(generation: 1)
 
         guard case .aborted(let info) = await pull.value, info.code == .cancelled else {
             Issue.record("Expected the cancelled pull to wake with a cancelled abort")
             return
         }
-        try await harness.recorder.waitForFrames {
-            harness.recorder.aborts.contains {
-                $0.code == ClipboardStreamAbortCode.userCancelled.rawValue
-            }
+        // Closing this side of the transfer's connection is how the peer is told
+        // to stop: its next write fails rather than streaming into nothing.
+        let ended = await offCooperativePool {
+            (try? readToEnd(fd: connection.fd))?.isEmpty ?? false
         }
+        #expect(ended)
     }
 
     @Test("an abort that retires the transfer stays retiring at the caller")
@@ -249,11 +257,11 @@ struct ClipboardEndpointDropTests {
 
         let operation = harness.side.makeOperation(gesture: .drop, direction: .inbound)
         let pull = harness.side.startPull(generation: 1, repIndex: 0, operation: operation)
-        try await harness.waitForRequest(generation: 1, repIndex: 0)
-        try harness.send(
-            makeAbortFrame(
-                transferID: harness.transferID(generation: 1, repIndex: 0),
-                code: ClipboardStreamAbortCode.cancelled.rawValue, message: "torn down"))
+        let connection = try await harness.acceptPull(generation: 1, repIndex: 0)
+        try abortTransfer(
+            fd: connection.fd, transferID: connection.request.transferID,
+            code: ClipboardStreamAbortCode.cancelled.rawValue, sent: Data("par".utf8),
+            declaredBytes: 8)
 
         guard case .aborted(let info) = await pull.value else {
             Issue.record("Expected the pull to report the abort")
