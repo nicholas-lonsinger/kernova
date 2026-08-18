@@ -13,7 +13,7 @@ import os
 /// pulled only when the window's preview displays them or a paste consumes them.
 @MainActor
 @Observable
-final class VsockClipboardService: ClipboardServicing {
+final class VsockClipboardService: ClipboardServicing, VsockDataConnectionAccepting {
     // MARK: - Observable state
 
     /// Bidirectional clipboard buffer.
@@ -213,10 +213,10 @@ final class VsockClipboardService: ClipboardServicing {
     }
 
     /// Takes over one transfer's data connection, accepted on the clipboard
-    /// data port.
+    /// data port, from whatever thread the listener hands it over on.
     ///
     /// Takes ownership of `fd` on every path.
-    func acceptDataConnection(fd: Int32) {
+    nonisolated func acceptDataConnection(fd: Int32) {
         endpoint.acceptDataConnection(fd: fd)
     }
 

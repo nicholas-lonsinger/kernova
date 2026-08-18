@@ -167,6 +167,31 @@ struct ClipboardEndpointTests {
         #expect(pair.guest.endpoint.materializationEpoch(generation: 1) == 1)
     }
 
+    @Test("a data connection accepted off the main actor adopts a reply")
+    func offMainAcceptAdoptsReply() async throws {
+        let harness = try RawPeerHarness()
+        defer { harness.tearDown() }
+        let payload = Data("off-main bytes".utf8)
+
+        try harness.send(makeTextOfferFrame(generation: 1, text: "off-main bytes"))
+        try await harness.side.recorder.waitForOffer()
+
+        let serve = harness.side.startDataServe(generation: 1, repIndex: 0, uti: textUTI)
+        try await harness.waitForRequest(generation: 1, repIndex: 0)
+
+        // The listener hands a reply's connection over on the VM's queue, so
+        // the accept runs off the main actor, as production drives it.
+        let (peerEnd, endpointEnd) = try makeRawSocketPair()
+        let endpoint = harness.endpoint
+        await offCooperativePool { endpoint.acceptDataConnection(fd: endpointEnd) }
+        try serveTransfer(
+            fd: peerEnd, transferID: harness.transferID(generation: 1, repIndex: 0),
+            payload: payload, isArchive: false, isInline: true)
+
+        let served = await serve.value
+        #expect(served == payload)
+    }
+
     @Test("a payload past one socket read reassembles")
     func multiReadPayloadReassembles() async throws {
         let pair = try EndpointPair()

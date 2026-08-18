@@ -150,7 +150,12 @@ public final class ClipboardEndpoint {
 
     /// Whether this connection is live — `true` between ``start()`` and either
     /// ``stop()`` or the channel's own end.
-    public private(set) var isConnected = false
+    ///
+    /// `nonisolated` so the accept path can gate on it from the listener's
+    /// queue; written only on the main actor, at the lifecycle transitions.
+    nonisolated public var isConnected: Bool { connectedFlag.value }
+
+    nonisolated private let connectedFlag = LockedFlag()
 
     nonisolated private let session: ClipboardControlSession
     private let outbound: ClipboardOutboundOffers
@@ -221,7 +226,7 @@ public final class ClipboardEndpoint {
     /// what it described is a transfer of a session that is over.
     public func start() {
         guard !isConnected else { return }
-        isConnected = true
+        connectedFlag.value = true
         if kind == .clipboard { reporter.clearFinished() }
         session.start(
             handleControlFrame: { [weak self] frame in self?.handleControlFrame(frame) },
@@ -250,7 +255,7 @@ public final class ClipboardEndpoint {
         session.stop()
         inbound?.endSession()
         outbound.endSession()
-        isConnected = false
+        connectedFlag.value = false
     }
 
     /// Settles a connection the channel ended under, and tells the owner.
@@ -259,7 +264,7 @@ public final class ClipboardEndpoint {
     /// deciding, and it needs no answer.
     private func channelDidEnd() {
         guard isConnected else { return }
-        isConnected = false
+        connectedFlag.value = false
         delegate?.endpointDidEnd(self)
     }
 
@@ -427,7 +432,8 @@ public final class ClipboardEndpoint {
         width: ClipboardStreamTuning.maxConcurrentDataAccepts,
         queue: ClipboardEndpoint.dataAcceptQueue)
 
-    /// Takes over a data connection this side's listener accepted.
+    /// Takes over a data connection this side's listener accepted, from
+    /// whatever thread the listener hands it over on.
     ///
     /// Takes ownership of `fd` on every path. The stall bound goes on here
     /// rather than at the listener because this is the first read on the
@@ -435,7 +441,7 @@ public final class ClipboardEndpoint {
     /// reads run under ``dataAccepts``, so a peer that connects and then says
     /// nothing parks a bounded number of workers however many connections it
     /// opens (docs/CLIPBOARD.md §10).
-    public func acceptDataConnection(fd: Int32) {
+    nonisolated public func acceptDataConnection(fd: Int32) {
         guard isConnected, !session.hasStopped else {
             ClipboardDataConnection.end(fd: fd)
             return
@@ -616,6 +622,18 @@ public final class ClipboardEndpoint {
         (dataAccepts.runningCountForTesting, dataAccepts.waitingCountForTesting)
     }
     #endif
+}
+
+/// Reversible thread-safe flag — for lifecycle state any thread reads and the
+/// main actor sets and clears.
+private final class LockedFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = false
+
+    var value: Bool {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
 }
 
 // MARK: - Promise serving

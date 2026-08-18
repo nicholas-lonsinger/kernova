@@ -140,6 +140,12 @@ final class VsockControlService {
     /// owner-requested `stop()`.
     private let onChannelLost: (@MainActor () -> Void)?
 
+    /// Where the feature listeners' accept path reads this handshake's state.
+    ///
+    /// Published on `Hello` and reset when the service settles, whichever of
+    /// the owner, the watchdog, or the channel's own end settles it.
+    private let admissionGate: VsockAdmissionGate?
+
     private var consumeTask: Task<Void, Never>?
     private var outboundHeartbeatTask: Task<Void, Never>?
     private var livenessTask: Task<Void, Never>?
@@ -204,7 +210,8 @@ final class VsockControlService {
         policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil,
         onAgentInfoObserved: (@MainActor (ObservedAgentInfo) -> Void)? = nil,
         isGuestSuspended: (@MainActor () -> Bool)? = nil,
-        onChannelLost: (@MainActor () -> Void)? = nil
+        onChannelLost: (@MainActor () -> Void)? = nil,
+        admissionGate: VsockAdmissionGate? = nil
     ) {
         // The two-stage watchdog requires `unresponsiveAfter < terminateAfter`:
         // reversed, `terminateAfter` fires first and `.unresponsive` is never
@@ -226,6 +233,7 @@ final class VsockControlService {
         self.onAgentInfoObserved = onAgentInfoObserved
         self.isGuestSuspended = isGuestSuspended
         self.onChannelLost = onChannelLost
+        self.admissionGate = admissionGate
     }
 
     // MARK: - Lifecycle
@@ -308,6 +316,7 @@ final class VsockControlService {
         lastInboundFrame = nil
         guestSupportsClipboardStreamingStorage = false
         guestSupportsDropFilesStorage = false
+        admissionGate?.clear()
         Self.logger.info("Vsock control service stopped for '\(self.label, privacy: .public)'")
         // Last, so the owner observes fully-settled state — notably a nil
         // `agentVersion` — from inside the callback.
@@ -493,6 +502,9 @@ final class VsockControlService {
                 KernovaCapability.clipboardTransferV3)
             guestSupportsDropFilesStorage = hello.capabilities.contains(
                 KernovaCapability.dropFilesV3)
+            admissionGate?.publish(
+                VsockAdmissionGate.State(
+                    handshakeComplete: true, capabilities: Set(hello.capabilities)))
             // Every peer-supplied piece of this line is filtered first — the
             // version by `boundedField`, the capability tags by
             // `logDescription` — so none of them can write arbitrary content

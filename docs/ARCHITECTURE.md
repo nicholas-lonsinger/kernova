@@ -167,12 +167,16 @@ The vsock stack (macOS guests only):
   `KernovaMacOSAgent/VsockPorts.swift` mirrors the same assignments guest-side. What a connection
   costs, and why nothing above the kernel meters a
   stream: [research/2026-08-17-vsock-stalled-receiver-and-accept-latency.md](research/2026-08-17-vsock-stalled-receiver-and-accept-latency.md).
-- `VsockListenerHost` — one `VZVirtioSocketListener` per port, bridging an accepted connection to a
-  `VsockChannel` or, on a data port, handing the raw descriptor to an `onAcceptFd` closure instead.
-  Its `shouldAdmit` predicate refuses a connection before any channel is built; `VMInstance` wires
-  the log, clipboard, drop and both data listeners to `featureChannelAdmission`, so no feature
-  channel is accepted before the control handshake completes, and each names the guest
-  capability it additionally requires. Socket-buffer sizing and its
+- `VsockListenerHost` — one `VZVirtioSocketListener` per port, nonisolated so the whole accept
+  path runs on whatever queue VZ delivers the callback on: a framed port builds and starts the
+  `VsockChannel` there and hops only the hand-off to the main actor, while a data port's
+  `onAcceptFd` takes the raw descriptor synchronously. Its `shouldAdmit` predicate refuses a
+  connection before any channel is built; `VMInstance` wires the log, clipboard, drop and both
+  data listeners to its `VsockAdmissionGate` — a lock-guarded snapshot the control service
+  publishes its completed handshake and advertised capabilities into — so no feature channel is
+  accepted before the handshake completes, and each names the guest capability it additionally
+  requires. The two data listeners forward through a `VsockDataConnectionSink` apiece, pointed at
+  the live service generation. Socket-buffer sizing and its
   measurements: [research/2026-07-13-vsock-transport-throughput.md](research/2026-07-13-vsock-transport-throughput.md).
 - `VsockControlService` — `@MainActor` `@Observable` owner of the always-on control channel:
   `Hello`/`Heartbeat` exchange, a liveness watchdog, the observed `agentVersion`, and `PolicyUpdate`

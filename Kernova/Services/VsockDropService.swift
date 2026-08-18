@@ -18,7 +18,7 @@ import os
 /// generations, because the user asked for both sets of files.
 @MainActor
 @Observable
-final class VsockDropService {
+final class VsockDropService: VsockDataConnectionAccepting {
     // MARK: - Observable state
 
     /// `true` between `start()` and `stop()`.
@@ -30,7 +30,10 @@ final class VsockDropService {
 
     /// This connection: the drops offered to the guest, and the transfers
     /// answering its pulls.
-    private let endpoint: ClipboardEndpoint
+    ///
+    /// `nonisolated` so an accepted data connection can be forwarded from the
+    /// listener's queue.
+    nonisolated private let endpoint: ClipboardEndpoint
 
     /// Log coordinate for this connection: generations and transfer ids restart
     /// with every accepted channel, and one instance serves exactly one.
@@ -105,10 +108,11 @@ final class VsockDropService {
         )
     }
 
-    /// Takes over one item's data connection, accepted on the drop data port.
+    /// Takes over one item's data connection, accepted on the drop data port,
+    /// from whatever thread the listener hands it over on.
     ///
     /// Takes ownership of `fd` on every path.
-    func acceptDataConnection(fd: Int32) {
+    nonisolated func acceptDataConnection(fd: Int32) {
         endpoint.acceptDataConnection(fd: fd)
     }
 

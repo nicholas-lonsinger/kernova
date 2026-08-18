@@ -174,6 +174,21 @@ final class VMInstance {
     /// drop channel it belongs to.
     var vsockDropDataListenerHost: VsockListenerHost?
 
+    /// Where the feature listeners read admission verdicts, off the main actor.
+    ///
+    /// One per VM across every control-service generation: the accept path
+    /// reads it without touching this instance. The live control service
+    /// publishes into it; replaced or torn down, the gate is cleared.
+    @ObservationIgnored let vsockAdmissionGate = VsockAdmissionGate()
+
+    /// Where the clipboard data listener lands each accepted transfer
+    /// connection, pointed at the live `VsockClipboardService`.
+    @ObservationIgnored let clipboardDataSink = VsockDataConnectionSink()
+
+    /// Where the drop data listener lands each accepted item connection,
+    /// pointed at the live `VsockDropService`.
+    @ObservationIgnored let dropDataSink = VsockDataConnectionSink()
+
     /// `true` when this VM has reached `.running`, the host previously saw a
     /// guest agent connect (`configuration.lastSeenAgentVersion != nil`), and a
     /// grace period has elapsed without a `Hello` arriving over the control
@@ -725,6 +740,7 @@ final class VMInstance {
     func stopClipboardService() {
         clipboardService?.stop()
         clipboardService = nil
+        clipboardDataSink.set(nil)
         closeSpiceClipboardPipes()
     }
 
@@ -827,54 +843,6 @@ final class VMInstance {
         Self.logger.info("Vsock services started for '\(self.name, privacy: .public)'")
     }
 
-    // MARK: - Vsock Feature-Channel Admission
-
-    /// The guest capability a feature vsock channel needs before it may be
-    /// admitted, beyond the completed control handshake every one of them
-    /// requires.
-    enum FeatureChannelRequirement {
-        /// Log forwarding — the handshake alone.
-        case none
-        /// The clipboard channel: `clipboard.transfer.v3`.
-        case clipboardStreaming
-        /// The drop channel: `drop.files.v3`.
-        case dropFiles
-
-        /// The capability tag a guest must advertise, or `nil` when none is
-        /// needed.
-        var capability: String? {
-            switch self {
-            case .none: return nil
-            case .clipboardStreaming: return KernovaCapability.clipboardTransferV3
-            case .dropFiles: return KernovaCapability.dropFilesV3
-            }
-        }
-    }
-
-    /// Whether a feature vsock channel may be admitted right now: a control
-    /// channel whose `Hello` handshake completed must exist, and its `Hello` must
-    /// have advertised whatever capability `requirement` names.
-    ///
-    /// Evaluated at accept time so it tracks reconnects.
-    func featureChannelAdmission(_ requirement: FeatureChannelRequirement) -> VsockAdmission {
-        guard let control = vsockControlService, control.isConnected else {
-            return .notReady(reason: "no control channel has completed its handshake")
-        }
-        let advertised: Bool
-        switch requirement {
-        case .none: advertised = true
-        case .clipboardStreaming: advertised = control.guestSupportsClipboardStreaming
-        case .dropFiles: advertised = control.guestSupportsDropFiles
-        }
-        guard advertised else {
-            return .denied(
-                reason:
-                    "the connected guest agent does not advertise \(requirement.capability ?? "")"
-            )
-        }
-        return .admit
-    }
-
     // MARK: - Agent Policy
 
     /// The policy pushed to a guest with nothing to push through — every
@@ -949,7 +917,8 @@ final class VMInstance {
                 // escalates to `.expectedMissing` instead of spinning at
                 // `.connecting` for the rest of the session.
                 self?.startAgentPostStartWatchdog()
-            }
+            },
+            admissionGate: vsockAdmissionGate
         )
     }
 
@@ -958,10 +927,7 @@ final class VMInstance {
     private func makeLogListenerHost() -> VsockListenerHost {
         VsockListenerHost(
             port: KernovaVsockPort.log,
-            shouldAdmit: { [weak self] in
-                self?.featureChannelAdmission(.none)
-                    ?? .notReady(reason: "the VM instance is gone")
-            }
+            shouldAdmit: { [gate = vsockAdmissionGate] in gate.admission(for: .none) }
         ) { [weak self] channel in
             guard let self else {
                 channel.close()
@@ -979,10 +945,7 @@ final class VMInstance {
     private func makeDropListenerHost() -> VsockListenerHost {
         VsockListenerHost(
             port: KernovaVsockPort.drop,
-            shouldAdmit: { [weak self] in
-                self?.featureChannelAdmission(.dropFiles)
-                    ?? .notReady(reason: "the VM instance is gone")
-            }
+            shouldAdmit: { [gate = vsockAdmissionGate] in gate.admission(for: .dropFiles) }
         ) { [weak self] channel in
             guard let self else {
                 channel.close()
@@ -992,6 +955,7 @@ final class VMInstance {
             let service = VsockDropService(
                 channel: channel, label: self.name, reporter: self.clipboardTransfers)
             self.vsockDropService = service
+            self.dropDataSink.set(service)
             service.start()
         }
     }
@@ -1001,19 +965,8 @@ final class VMInstance {
     private func makeDropDataListenerHost() -> VsockListenerHost {
         VsockListenerHost(
             port: KernovaVsockPort.dropData,
-            shouldAdmit: { [weak self] in
-                self?.featureChannelAdmission(.dropFiles)
-                    ?? .notReady(reason: "the VM instance is gone")
-            },
-            onAcceptFd: { [weak self] fd in
-                // A connection that beats the drop channel's own accept has
-                // nothing to belong to; the guest redials with the next pull.
-                guard let service = self?.vsockDropService else {
-                    ClipboardDataConnection.end(fd: fd)
-                    return
-                }
-                service.acceptDataConnection(fd: fd)
-            })
+            shouldAdmit: { [gate = vsockAdmissionGate] in gate.admission(for: .dropFiles) },
+            onAcceptFd: { [sink = dropDataSink] fd in sink.accept(fd: fd) })
     }
 
     /// Builds the clipboard data listener, which hands each accepted connection
@@ -1021,17 +974,10 @@ final class VMInstance {
     private func makeClipboardDataListenerHost() -> VsockListenerHost {
         VsockListenerHost(
             port: KernovaVsockPort.clipboardData,
-            shouldAdmit: { [weak self] in
-                self?.featureChannelAdmission(.clipboardStreaming)
-                    ?? .notReady(reason: "the VM instance is gone")
+            shouldAdmit: { [gate = vsockAdmissionGate] in
+                gate.admission(for: .clipboardStreaming)
             },
-            onAcceptFd: { [weak self] fd in
-                guard let service = self?.clipboardService as? VsockClipboardService else {
-                    ClipboardDataConnection.end(fd: fd)
-                    return
-                }
-                service.acceptDataConnection(fd: fd)
-            })
+            onAcceptFd: { [sink = clipboardDataSink] fd in sink.accept(fd: fd) })
     }
 
     /// Builds the clipboard-channel listener; each accepted channel replaces any
@@ -1039,9 +985,8 @@ final class VMInstance {
     private func makeClipboardListenerHost() -> VsockListenerHost {
         VsockListenerHost(
             port: KernovaVsockPort.clipboard,
-            shouldAdmit: { [weak self] in
-                self?.featureChannelAdmission(.clipboardStreaming)
-                    ?? .notReady(reason: "the VM instance is gone")
+            shouldAdmit: { [gate = vsockAdmissionGate] in
+                gate.admission(for: .clipboardStreaming)
             }
         ) { [weak self] channel in
             guard let self else {
@@ -1067,6 +1012,7 @@ final class VMInstance {
                 return publisher.retractPromisedWrite()
             }
             self.clipboardService = service
+            self.clipboardDataSink.set(service)
             service.start()
         }
     }
@@ -1194,6 +1140,9 @@ final class VMInstance {
         vsockControlService?.stop()
         vsockControlService = nil
         vsockControlListenerHost = nil
+        // The stopped service cleared the gate; this also covers a service torn
+        // down before it ever published.
+        vsockAdmissionGate.clear()
 
         vsockLogService?.stop()
         vsockLogService = nil
@@ -1203,6 +1152,7 @@ final class VMInstance {
         vsockDropService = nil
         vsockDropListenerHost = nil
         vsockDropDataListenerHost = nil
+        dropDataSink.set(nil)
 
         if clipboardService is VsockClipboardService {
             clipboardService?.stop()
@@ -1210,6 +1160,7 @@ final class VMInstance {
         }
         vsockClipboardListenerHost = nil
         vsockClipboardDataListenerHost = nil
+        clipboardDataSink.set(nil)
     }
 
     /// Reacts to a configuration change while the VM is running by installing
@@ -1343,6 +1294,7 @@ final class VMInstance {
             clipboardService = nil
             vsockClipboardListenerHost = nil
             vsockClipboardDataListenerHost = nil
+            clipboardDataSink.set(nil)
         }
     }
 }
