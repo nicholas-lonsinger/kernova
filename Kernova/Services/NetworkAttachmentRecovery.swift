@@ -70,25 +70,44 @@ protocol NetworkDeviceControlling: AnyObject {
     func attachmentWasDisconnected()
 }
 
+/// The queue-side half of a live VM's network device, as the main-actor
+/// handle drives it.
+protocol NetworkAttachmentInstalling: Sendable {
+    /// Builds an attachment on the VM's queue via `make` and installs it,
+    /// calling `onBuildFailure` there when `make` finds nothing to build and
+    /// the device is left detached.
+    func applyNetworkAttachment(
+        _ make: @escaping @Sendable () -> VZNetworkDeviceAttachment?,
+        onBuildFailure: @escaping @Sendable () -> Void)
+    func detachNetworkAttachment()
+}
+
+extension VMSession: NetworkAttachmentInstalling {}
+
 /// Drives a session's network device from the main actor: feasibility is
 /// answered here, synchronously, from host state and a mirror of the plan
 /// last applied, while the VZ writes are forwarded to the session's queue in
 /// program order and never awaited — a live attachment install reports
 /// failure only asynchronously, through a later disconnect callback, so there
-/// is nothing to wait for. The queue-side factories re-fetch the concrete
-/// `VZBridgedNetworkInterface` by identifier at each attach — a VZ interface
-/// object held across a link change is stale.
+/// is nothing to wait for. The one queue-side outcome that reaches back is a
+/// build finding nothing to install, which clears the mirror. The queue-side
+/// factories re-fetch the concrete `VZBridgedNetworkInterface` by identifier
+/// at each attach — a VZ interface object held across a link change is stale.
 @MainActor
 final class VZNetworkDeviceHandle: NetworkDeviceControlling {
-    private let session: VMSession
+    private let session: any NetworkAttachmentInstalling
     private let vmnetNetworks: any VmnetNetworkProviding
 
     /// The plan the device is on: what `apply`/`detach` last installed,
     /// cleared when the framework reports the attachment disconnected.
     private var appliedPlan: NetworkAttachmentPlan?
 
+    /// Counts the applies made, so a build failure reported after a later
+    /// apply has landed cannot pull the mirror backwards.
+    private var appliedGeneration = 0
+
     init(
-        session: VMSession,
+        session: any NetworkAttachmentInstalling,
         initialPlan: NetworkAttachmentPlan?,
         vmnetNetworks: any VmnetNetworkProviding = VmnetNetworkService.shared
     ) {
@@ -123,12 +142,13 @@ final class VZNetworkDeviceHandle: NetworkDeviceControlling {
     var currentPlan: NetworkAttachmentPlan? { appliedPlan }
 
     func apply(_ plan: NetworkAttachmentPlan) -> Bool {
+        let make: @Sendable () -> VZNetworkDeviceAttachment?
         switch plan {
         case .nat:
-            session.applyNetworkAttachment { VZNATNetworkDeviceAttachment() }
+            make = { VZNATNetworkDeviceAttachment() }
         case .bridged(let identifier):
             guard Self.bridgedInterface(identifier) != nil else { return false }
-            session.applyNetworkAttachment {
+            make = {
                 Self.bridgedInterface(identifier)
                     .map(VZBridgedNetworkDeviceAttachment.init(interface:))
             }
@@ -139,12 +159,23 @@ final class VZNetworkDeviceHandle: NetworkDeviceControlling {
             guard let kind = plan.vmnetKind,
                 vmnetNetworks.attachmentIfMaterialized(for: kind) != nil
             else { return false }
-            session.applyNetworkAttachment { [vmnetNetworks] in
-                vmnetNetworks.attachmentIfMaterialized(for: kind)
-            }
+            make = { [vmnetNetworks] in vmnetNetworks.attachmentIfMaterialized(for: kind) }
         }
         appliedPlan = plan
+        appliedGeneration += 1
+        let generation = appliedGeneration
+        session.applyNetworkAttachment(make) { [weak self] in
+            Task { @MainActor in self?.buildFoundNothing(generation: generation) }
+        }
         return true
+    }
+
+    /// The queue-side build of generation `generation` found nothing, so the
+    /// device is detached — unless a later apply has already moved the mirror
+    /// on, in which case that apply's own outcome governs.
+    private func buildFoundNothing(generation: Int) {
+        guard generation == appliedGeneration else { return }
+        appliedPlan = nil
     }
 
     private nonisolated static func bridgedInterface(_ identifier: String) -> VZBridgedNetworkInterface? {

@@ -401,8 +401,12 @@ actor VMSession {
     /// only asynchronously, through a later disconnect callback, so there is
     /// nothing to await. `make` returning `nil` detaches the device — the
     /// honest state when what the caller's feasibility check saw vanished
-    /// before this write ran.
-    nonisolated func applyNetworkAttachment(_ make: @escaping @Sendable () -> VZNetworkDeviceAttachment?) {
+    /// before this write ran — and `onBuildFailure` runs on the queue so the
+    /// caller can follow the device into detached.
+    nonisolated func applyNetworkAttachment(
+        _ make: @escaping @Sendable () -> VZNetworkDeviceAttachment?,
+        onBuildFailure: @escaping @Sendable () -> Void
+    ) {
         queue.async {
             self.assumeIsolated { session in
                 guard let device = session.vm.networkDevices.first else {
@@ -411,18 +415,19 @@ actor VMSession {
                     return
                 }
                 let attachment = make()
+                device.attachment = attachment
                 if attachment == nil {
                     Self.logger.warning(
                         "Network attachment could not be built at install time — leaving the device detached"
                     )
+                    onBuildFailure()
                 }
-                device.attachment = attachment
             }
         }
     }
 
     /// Detaches the VM's network device. Same ordered fire-and-forget contract
-    /// as ``applyNetworkAttachment(_:)``.
+    /// as ``applyNetworkAttachment(_:onBuildFailure:)``.
     nonisolated func detachNetworkAttachment() {
         queue.async {
             self.assumeIsolated { session in
