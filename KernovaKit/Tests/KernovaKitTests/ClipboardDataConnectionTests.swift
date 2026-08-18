@@ -5,11 +5,29 @@ import Testing
 
 @testable import KernovaKit
 
-/// The socket options every data connection is opened under: the throughput
-/// lever on the accepting side, and the stall bound both sides read and write
-/// against.
+/// The socket options a data connection is opened under: the stall bound both
+/// ends read and write against, and the throughput lever only the end that
+/// accepted the descriptor *and* streams on it takes.
 @Suite("ClipboardDataConnection socket options")
 struct ClipboardDataConnectionTests {
+    /// A connected descriptor and the peer end that keeps it connected.
+    ///
+    /// The peer is never read or written: it is held open only so `near` stays
+    /// a live connection, since the options under test are read back off it.
+    private struct ConnectedSocket {
+        let near: Int32
+        private let peer: Int32
+
+        init() throws {
+            (near, peer) = try makeRawSocketPair()
+        }
+
+        func close() {
+            Darwin.close(near)
+            Darwin.close(peer)
+        }
+    }
+
     /// The seconds a `timeval` socket option holds.
     private func timeout(_ option: Int32, on fd: Int32) -> Int? {
         var value = timeval()
@@ -25,68 +43,70 @@ struct ClipboardDataConnectionTests {
         return value
     }
 
-    @Test("both roles carry the stall bound in both directions")
-    func bothRolesCarryTheStallBound() throws {
-        for role in [ClipboardDataConnection.Role.host, .guest] {
-            let (a, b) = try makeRawSocketPair()
-            defer {
-                close(a)
-                close(b)
-            }
+    @Test("the stall bound is carried in both directions")
+    func stallBoundAppliedBothWays() throws {
+        let socket = try ConnectedSocket()
+        defer { socket.close() }
 
-            ClipboardDataConnection.applySocketOptions(fd: a, role: role)
+        ClipboardDataConnection.applySocketOptions(fd: socket.near)
 
-            #expect(timeout(SO_RCVTIMEO, on: a) == Int(ClipboardStreamTuning.dataSocketTimeout))
-            #expect(timeout(SO_SNDTIMEO, on: a) == Int(ClipboardStreamTuning.dataSocketTimeout))
-        }
-    }
-
-    /// The accepting side owns the throughput lever: a freshly accepted socket
-    /// is born at 8 KiB, which is what caps host→guest streaming
-    /// (docs/research/2026-07-13-vsock-transport-throughput.md). Asserted at the
-    /// measured 256 KiB knee rather than the exact request, which the kernel may
-    /// clamp.
-    @Test("the accepting side raises its send buffer past the throughput knee")
-    func hostRaisesTheSendBuffer() throws {
-        let (a, b) = try makeRawSocketPair()
-        defer {
-            close(a)
-            close(b)
-        }
-
-        ClipboardDataConnection.applySocketOptions(fd: a, role: .host)
-
-        #expect((sendBuffer(on: a) ?? 0) >= 256 * 1024)
-    }
-
-    /// The dialling side's socket lives in the guest, where the writer is
-    /// Apple's VM helper rather than this process, so raising the buffer here
-    /// would cost memory and unlock nothing.
-    @Test("the dialling side leaves its send buffer alone")
-    func guestLeavesTheSendBufferAlone() throws {
-        let (a, b) = try makeRawSocketPair()
-        defer {
-            close(a)
-            close(b)
-        }
-        let before = try #require(sendBuffer(on: a))
-
-        ClipboardDataConnection.applySocketOptions(fd: a, role: .guest)
-
-        #expect(sendBuffer(on: a) == before)
+        let bound = Int(ClipboardStreamTuning.dataSocketTimeout)
+        #expect(timeout(SO_RCVTIMEO, on: socket.near) == bound)
+        #expect(timeout(SO_SNDTIMEO, on: socket.near) == bound)
     }
 
     @Test("an injected timeout is what the socket carries")
     func injectedTimeoutIsApplied() throws {
-        let (a, b) = try makeRawSocketPair()
-        defer {
-            close(a)
-            close(b)
-        }
+        let socket = try ConnectedSocket()
+        defer { socket.close() }
 
-        ClipboardDataConnection.applySocketOptions(fd: a, role: .guest, timeout: 5)
+        ClipboardDataConnection.applySocketOptions(fd: socket.near, timeout: 5)
 
-        #expect(timeout(SO_RCVTIMEO, on: a) == 5)
-        #expect(timeout(SO_SNDTIMEO, on: a) == 5)
+        #expect(timeout(SO_RCVTIMEO, on: socket.near) == 5)
+        #expect(timeout(SO_SNDTIMEO, on: socket.near) == 5)
+    }
+
+    /// Applying the connection's options twice is what the accept path and the
+    /// transfer that adopts the descriptor between them do, and the second is
+    /// the one whose timeout stands.
+    @Test("re-applying the options replaces the bound rather than compounding it")
+    func optionsAreIdempotent() throws {
+        let socket = try ConnectedSocket()
+        defer { socket.close() }
+
+        ClipboardDataConnection.applySocketOptions(fd: socket.near)
+        ClipboardDataConnection.applySocketOptions(fd: socket.near, timeout: 7)
+
+        #expect(timeout(SO_RCVTIMEO, on: socket.near) == 7)
+        #expect(timeout(SO_SNDTIMEO, on: socket.near) == 7)
+    }
+
+    /// The connection's own options leave the send buffer where the kernel put
+    /// it: a descriptor this side only ever reads from spends nothing on one,
+    /// and a dialler has already sized its own.
+    @Test("the connection's options leave the send buffer alone")
+    func optionsLeaveTheSendBufferAlone() throws {
+        let socket = try ConnectedSocket()
+        defer { socket.close() }
+        let before = try #require(sendBuffer(on: socket.near))
+
+        ClipboardDataConnection.applySocketOptions(fd: socket.near)
+
+        #expect(sendBuffer(on: socket.near) == before)
+    }
+
+    /// The end that accepted the descriptor owns the throughput lever: a freshly
+    /// accepted socket is born at 8 KiB, which is what caps host→guest streaming
+    /// (docs/research/2026-07-13-vsock-transport-throughput.md). Asserted at the
+    /// measured 256 KiB knee rather than the exact request, which the kernel may
+    /// clamp.
+    @Test("raising the send buffer clears the throughput knee")
+    func raisingTheSendBufferClearsTheKnee() throws {
+        let socket = try ConnectedSocket()
+        defer { socket.close() }
+
+        ClipboardDataConnection.raiseSendBuffer(fd: socket.near)
+
+        #expect((sendBuffer(on: socket.near) ?? 0) >= 256 * 1024)
     }
 }

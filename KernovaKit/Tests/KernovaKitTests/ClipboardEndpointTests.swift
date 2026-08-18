@@ -427,4 +427,34 @@ struct ClipboardEndpointTests {
             generation: 1, repIndex: 0, uti: "public.data")
         #expect(refused.reply.refusalCode == ClipboardStreamAbortCode.requestStale.rawValue)
     }
+
+    // MARK: - Bounding accepted data connections
+
+    /// A wedged or compromised guest is in scope (docs/CLIPBOARD.md §10), and
+    /// each accepted connection's opening frame is read on a blocking worker —
+    /// so what a peer that connects and then says nothing costs the host is a
+    /// constant, not one worker per connection it opens.
+    @Test("a peer that dials and says nothing parks a bounded number of header reads")
+    func silentDialsAreBounded() async throws {
+        let harness = try RawPeerHarness()
+        defer { harness.tearDown() }
+        let endpoint = harness.endpoint
+        let width = ClipboardStreamTuning.maxConcurrentDataAccepts
+
+        var peers: [Int32] = []
+        for _ in 0...width { peers.append(try harness.openDataConnection()) }
+
+        #expect(endpoint.dataAcceptsForTesting.running == width)
+        #expect(endpoint.dataAcceptsForTesting.waiting == peers.count - width)
+
+        // Closing every peer end is the end of stream each parked read is
+        // waiting on, so the connection held back gets its slot as they clear.
+        for fd in peers { ClipboardDataConnection.end(fd: fd) }
+        // RATIONALE: no-signal predicate — nothing publishes a notification when
+        // a header read finishes and frees its slot (docs/TESTING.md).
+        try await waitUntil {
+            endpoint.dataAcceptsForTesting.running == 0
+                && endpoint.dataAcceptsForTesting.waiting == 0
+        }
+    }
 }

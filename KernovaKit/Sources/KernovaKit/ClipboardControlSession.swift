@@ -194,11 +194,9 @@ public final class ClipboardControlSession {
         let sent = Self.sentDirectionWord(role: role)
         let received = Self.sentDirectionWord(role: role == .host ? .guest : .host)
         let subject = kind == .clipboard ? "clipboard transfer" : "drop"
-        let connectionRole: ClipboardDataConnection.Role = role == .host ? .host : .guest
 
         if Self.sends(role: role, kind: kind) {
             outboxStorage = ClipboardTransferOutbox(
-                role: connectionRole,
                 // The only measured throughput number for what this side sends,
                 // so it logs at `.notice` (persisted) rather than `.debug`.
                 onTransferTimed: { metrics in
@@ -209,7 +207,7 @@ public final class ClipboardControlSession {
         }
         if let staging, Self.receives(role: role, kind: kind) {
             inboxHolder.value = ClipboardTransferInbox(
-                staging: staging, role: connectionRole,
+                staging: staging,
                 onTransferTimed: { metrics in
                     Self.logger.notice(
                         "\(received, privacy: .public) \(subject, privacy: .public) \(metrics.transferID, privacy: .public) ('\(label, privacy: .public)', conn=\(tag, privacy: .public)) completed: \(metrics.logSummary, privacy: .public)"

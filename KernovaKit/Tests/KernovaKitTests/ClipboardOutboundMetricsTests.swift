@@ -272,7 +272,7 @@ struct ClipboardOutboundMetricsTests {
         let timed = Box<[ClipboardTransferMetrics]>([])
         let reported = AsyncGate()
         let outbox = ClipboardTransferOutbox(
-            role: .guest, clock: clock,
+            clock: clock,
             onTransferTimed: { metrics in
                 timed.value.append(metrics)
                 reported.notify()

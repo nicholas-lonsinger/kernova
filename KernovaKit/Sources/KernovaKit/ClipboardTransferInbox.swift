@@ -20,7 +20,6 @@ public final class ClipboardTransferInbox: @unchecked Sendable {
     }
 
     private let staging: ClipboardFileStaging
-    private let role: ClipboardDataConnection.Role
     private let clock: any EngineClock
     private let socketTimeout: TimeInterval
     private let maxResidentInlineBytes: Int
@@ -36,7 +35,6 @@ public final class ClipboardTransferInbox: @unchecked Sendable {
     ///
     /// - Parameters:
     ///   - staging: where archived payloads are extracted.
-    ///   - role: which end of a data connection this side holds.
     ///   - clock: the timeline stage timings are measured on.
     ///   - socketTimeout: each connection's `SO_RCVTIMEO`/`SO_SNDTIMEO`.
     ///   - maxResidentInlineBytes: the most a raw payload may declare.
@@ -46,7 +44,6 @@ public final class ClipboardTransferInbox: @unchecked Sendable {
     ///   - onTransferTimed: fired once per successful transfer.
     public init(
         staging: ClipboardFileStaging,
-        role: ClipboardDataConnection.Role,
         clock: any EngineClock = makePlatformEngineClock(),
         socketTimeout: TimeInterval = ClipboardStreamTuning.dataSocketTimeout,
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
@@ -55,7 +52,6 @@ public final class ClipboardTransferInbox: @unchecked Sendable {
         onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)? = nil
     ) {
         self.staging = staging
-        self.role = role
         self.clock = clock
         self.socketTimeout = socketTimeout
         self.maxResidentInlineBytes = maxResidentInlineBytes
@@ -172,7 +168,7 @@ public final class ClipboardTransferInbox: @unchecked Sendable {
         source: ClipboardTransferReceiver.Source
     ) {
         let receiver = ClipboardTransferReceiver(
-            transferID: transferID, generation: generation, source: source, role: role, plan: plan,
+            transferID: transferID, generation: generation, source: source, plan: plan,
             staging: staging, clock: clock, socketTimeout: socketTimeout,
             maxResidentInlineBytes: maxResidentInlineBytes,
             minimumExtractAllowance: minimumExtractAllowance,

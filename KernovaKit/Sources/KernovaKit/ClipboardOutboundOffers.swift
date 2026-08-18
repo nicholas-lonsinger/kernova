@@ -303,10 +303,13 @@ public final class ClipboardOutboundOffers {
         let xid = request.transferID
         let live = entry.live
         let isClipboard = kind == .clipboard
-        operation.unitBegan(
-            id: xid, expectedBytes: UInt64(max(0, representation.byteCount)),
-            name: unitName(for: representation))
-        outbox.serve(
+        let expectedBytes = UInt64(max(0, representation.byteCount))
+        let unitName = unitName(for: representation)
+        // The readout hears about the transfer from inside `serve`, once it has
+        // taken the id: a request the outbox turns away as a duplicate of one
+        // already streaming must not re-announce that live unit, which would
+        // reset its byte count to zero and run its bar backwards.
+        let served = outbox.serve(
             transferID: xid,
             generation: request.generation,
             representation: representation,
@@ -316,6 +319,9 @@ public final class ClipboardOutboundOffers {
             isInline: isClipboard && representation.shouldInlineOnPasteboard,
             isCurrent: { live.isCurrent($0) },
             link: link,
+            onBegin: {
+                operation.unitBegan(id: xid, expectedBytes: expectedBytes, name: unitName)
+            },
             onProgress: { sent, total in
                 operation.unitProgressed(
                     id: xid, bytesTransferred: UInt64(max(0, sent)),
@@ -328,6 +334,12 @@ public final class ClipboardOutboundOffers {
                 // whole set and ends with the peer's `DropComplete`.
                 if isClipboard { operation.finishWhenIdle() }
             })
+        guard served else {
+            Self.logger.warning(
+                "Ignoring a second request for transfer \(xid, privacy: .public), which is already streaming to '\(self.peerName, privacy: .public)' (conn=\(self.session.connectionTag, privacy: .public))"
+            )
+            return
+        }
         onActivity(.transferServed)
         Self.logger.debug(
             "Streaming rep \(repIndex, privacy: .public) to '\(self.peerName, privacy: .public)' (gen=\(request.generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public), \(representation.byteCount, privacy: .public) bytes offered)"

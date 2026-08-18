@@ -411,26 +411,37 @@ public final class ClipboardEndpoint {
 
     // MARK: - Data connections
 
-    /// Where an accepted data connection's opening frame is read.
+    /// Where an accepted data connection's opening frame is read, for every
+    /// connection in the process.
     ///
     /// Concurrent, and never the main actor's: the read blocks until the peer's
     /// header arrives, and several transfers can be opening at once.
-    nonisolated private static let dataAccepts = DispatchQueue(
+    nonisolated private static let dataAcceptQueue = DispatchQueue(
         label: "app.kernova.clipboard.data-accept", qos: .userInitiated, attributes: .concurrent)
+
+    /// This connection's share of that queue.
+    ///
+    /// Per connection rather than shared, so the peer that saturates its own
+    /// share is the only one held up by it.
+    nonisolated private let dataAccepts = BoundedWorkQueue(
+        width: ClipboardStreamTuning.maxConcurrentDataAccepts,
+        queue: ClipboardEndpoint.dataAcceptQueue)
 
     /// Takes over a data connection this side's listener accepted.
     ///
-    /// Takes ownership of `fd` on every path. The socket options are applied
-    /// here rather than by the listener because this is the first read on the
-    /// descriptor: without them a peer that connects and then says nothing
-    /// would park a worker with no bound.
+    /// Takes ownership of `fd` on every path. The stall bound goes on here
+    /// rather than at the listener because this is the first read on the
+    /// descriptor — the transfer that adopts it then states its own — and these
+    /// reads run under ``dataAccepts``, so a peer that connects and then says
+    /// nothing parks a bounded number of workers however many connections it
+    /// opens (docs/CLIPBOARD.md §10).
     public func acceptDataConnection(fd: Int32) {
         guard isConnected, !session.hasStopped else {
             ClipboardDataConnection.end(fd: fd)
             return
         }
-        ClipboardDataConnection.applySocketOptions(fd: fd, role: role == .host ? .host : .guest)
-        Self.dataAccepts.async { [weak self] in
+        ClipboardDataConnection.applySocketOptions(fd: fd)
+        dataAccepts.submit { [weak self] in
             guard let frame = try? ClipboardDataConnection.readFrame(fd: fd) else {
                 ClipboardDataConnection.end(fd: fd)
                 return
@@ -597,6 +608,12 @@ public final class ClipboardEndpoint {
     /// Test seam for the refusal hop's staleness check.
     public func recordRefusalForTesting(_ code: ClipboardErrorCode, generation: UInt64) {
         inbound?.recordRefusalForTesting(code, generation: generation)
+    }
+
+    /// Accepted data connections whose opening frame is being read right now,
+    /// and those waiting for a slot to read it in.
+    nonisolated var dataAcceptsForTesting: (running: Int, waiting: Int) {
+        (dataAccepts.runningCountForTesting, dataAccepts.waitingCountForTesting)
     }
     #endif
 }

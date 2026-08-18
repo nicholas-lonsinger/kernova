@@ -405,20 +405,19 @@ struct ClipboardTransferStreamTests {
         let harness = TransferHarness()
         defer { harness.tearDown() }
 
-        // Incompressible and far larger than anything that can cross between
-        // the first progress report and the cancellation below, so the transfer
-        // is certainly mid-stream when the receiver gives up.
+        // Incompressible, so the wire carries the whole tree and the stream is
+        // many blocks long whatever the connection's throughput.
         let source = scratch.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
         try randomBytes(count: 32 * 1024 * 1024)
             .write(to: source.appendingPathComponent("big.bin"))
         let estimate = ClipboardArchive.estimatedByteCount(at: source)
         let transferID: UInt64 = 0xB1
-        // Cancel from inside the stream, on the first bytes released, so the
-        // point the pull gives up at is the transfer's own rather than whatever
-        // the runner scheduled next.
+        // Cancel on the sender's first block away, so the point the pull gives
+        // up at is pinned to the stream itself rather than to how fast the two
+        // ends happen to run against each other.
         let cancelled = Box(false)
-        harness.onReceiveProgress.value = { [weak harness] _, _ in
+        harness.onSendProgress.value = { [weak harness] _, _ in
             guard !cancelled.value else { return }
             cancelled.value = true
             harness?.inbox.cancel(transferID: transferID)
@@ -464,9 +463,75 @@ struct ClipboardTransferStreamTests {
         #expect(collector.outboundMetrics.isEmpty)
     }
 
+    /// Runs one sender to its terminal and reports what it ended with.
+    private func runToCompletion(
+        _ sender: ClipboardTransferSender, representation: ClipboardContent.Representation
+    ) async throws -> Bool {
+        let ended = AsyncGate()
+        let outcome = Box<Bool?>(nil)
+        sender.start(
+            representation: representation,
+            maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount, isInline: true,
+            isCurrent: { _ in true },
+            onComplete: {
+                outcome.value = $0
+                ended.notify()
+            })
+        try await ended.wait { outcome.value != nil }
+        return try #require(outcome.value)
+    }
+
+    /// A peer that stops draining leaves its receive buffer full, so the abort
+    /// trailer has nowhere to go: attempting it parks the transfer's queue, its
+    /// descriptor and its outbox slot for a second whole `socketTimeout` to
+    /// deliver a reason the peer is not reading. Asserted on the attempt rather
+    /// than on the clock, since the wire carries the same bytes either way.
+    @Test("a stalled write ends the transfer without attempting a trailer")
+    func aStalledWriteAttemptsNoTrailer() async throws {
+        let (near, peer) = try makeRawSocketPair()
+        defer { ClipboardDataConnection.end(fd: peer) }
+        let sender = ClipboardTransferSender(
+            transferID: 0x1C1, generation: 28, link: .accepted(near), socketTimeout: 0.3)
+
+        // Past everything the connection can buffer, with nothing reading the
+        // peer end at any point.
+        let succeeded = try await runToCompletion(
+            sender,
+            representation: .init(
+                uti: "public.data", data: Data(repeating: 0x5A, count: 4 * 1024 * 1024)))
+
+        #expect(succeeded == false)
+        #expect(sender.trailerAttemptsForTesting == 0)
+    }
+
+    /// The other side of that guard: every ending a peer can still take rides
+    /// the trailer, so skipping one is the stall's exception and not the rule
+    /// (docs/CLIPBOARD.md §9).
+    @Test("a peer that is draining still gets the trailer that ends the payload")
+    func aDrainedTransferWritesItsTrailer() async throws {
+        let received = Box<ReceivedTransfer?>(nil)
+        let taken = AsyncGate()
+        let payload = Data("still reading".utf8)
+        let sender = ClipboardTransferSender(
+            transferID: 0x1C2, generation: 28,
+            link: .accepted(
+                try dialToPeer { far in
+                    received.value = try? receiveTransfer(fd: far)
+                    taken.notify()
+                }), socketTimeout: 0.3)
+
+        let succeeded = try await runToCompletion(
+            sender, representation: .init(uti: "public.data", data: payload))
+        try await taken.wait { received.value != nil }
+
+        #expect(succeeded)
+        #expect(sender.trailerAttemptsForTesting == 1)
+        #expect(try #require(received.value).isComplete)
+    }
+
     // MARK: - Opening the connection
 
-    @Test("a second connection for a transfer already streaming is closed, not orphaned")
+    @Test("a second connection for a transfer already streaming is closed, and announces nothing")
     func duplicateTransferIDClosesItsConnection() async throws {
         let harness = TransferHarness()
         defer { harness.tearDown() }
@@ -475,6 +540,8 @@ struct ClipboardTransferStreamTests {
         // A key of its own for the duplicate's terminal, so an outcome recorded
         // for it cannot be mistaken for the running transfer's.
         let duplicateKey: UInt64 = 0x182
+        let begins = Box(0)
+        let duplicateBegins = Box(0)
 
         // Past everything the socket can buffer, with nothing reading the peer
         // end yet: the first transfer is parked mid-payload, and registered —
@@ -488,16 +555,24 @@ struct ClipboardTransferStreamTests {
             representation: .init(uti: "public.data", data: payload),
             maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount, isInline: true,
             isCurrent: { _ in true }, link: .accepted(first),
+            onBegin: { begins.value += 1 },
             onComplete: { collector.sendFinished(transferID, success: $0) })
 
         let (second, secondPeer) = try makeRawSocketPair()
         defer { ClipboardDataConnection.end(fd: secondPeer) }
-        harness.outbox.serve(
+        let served = harness.outbox.serve(
             transferID: transferID, generation: 24,
             representation: .init(uti: "public.data", data: Data("second".utf8)),
             maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount, isInline: true,
             isCurrent: { _ in true }, link: .accepted(second),
+            onBegin: { duplicateBegins.value += 1 },
             onComplete: { collector.sendFinished(duplicateKey, success: $0) })
+
+        // The duplicate announces nothing: a readout told about it would reset
+        // the live unit's byte count to zero and run its bar backwards.
+        #expect(served == false)
+        #expect(begins.value == 1)
+        #expect(duplicateBegins.value == 0)
 
         // The refused link is given up as `serve` returns, so its peer reaches
         // EOF instead of parking on a connection nothing owns.
@@ -624,6 +699,65 @@ struct ClipboardTransferStreamTests {
         #expect(info.code == code)
         #expect(info.message == "refused")
         #expect(info.isRetiring == ClipboardStreamAbortCode.retiring.contains(code))
+    }
+
+    /// The refusal is for a file this side cannot read at all, which is the one
+    /// thing the resident-inline path gives up on — a file that is merely bigger
+    /// than the threshold takes the archived route instead.
+    @Test("a source file that cannot be read is refused rather than archived")
+    func unreadableInlineSourceIsRefused() async throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+        let harness = TransferHarness()
+        defer { harness.tearDown() }
+
+        let file = scratch.appendingPathComponent("locked.png")
+        try patternedBytes(count: 2048, multiplier: 23, offset: 7).write(to: file)
+        try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path)
+        let transferID: UInt64 = 0xE2
+        harness.pull(
+            transferID: transferID, generation: 29,
+            plan: .init(uti: "public.png", filename: "locked.png", advertisedByteCount: 2048),
+            representation: .init(
+                uti: "public.png", fileURL: file, byteCount: 2048, filename: "locked.png"),
+            isInline: true)
+        try await settle(harness, transferID)
+
+        #expect(try abort(harness).code == .readError)
+        #expect(harness.collector.representation(transferID) == nil)
+    }
+
+    /// The resident-inline path is for what fits in RAM on both ends, so a file
+    /// that outgrew the threshold since its offer was measured takes the
+    /// archived route rather than being refused for being too big to hold.
+    @Test("an inline file that outgrew its offer is archived, not refused")
+    func grownInlineFileIsArchived() async throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+        let harness = TransferHarness(maxResidentInlineBytes: 4096)
+        defer { harness.tearDown() }
+
+        let payload = patternedBytes(count: 64 * 1024, multiplier: 29, offset: 3)
+        let file = scratch.appendingPathComponent("grew.png")
+        try payload.write(to: file)
+        let transferID: UInt64 = 0xE3
+        // The offer measured 1 KiB; the file is 64 KiB by the time the transfer
+        // resolves it.
+        harness.pull(
+            transferID: transferID, generation: 30,
+            plan: .init(
+                uti: "public.png", filename: "grew.png", advertisedByteCount: payload.count),
+            representation: .init(
+                uti: "public.png", fileURL: file, byteCount: 1024, filename: "grew.png"),
+            isInline: true)
+        try await settle(harness, transferID)
+
+        #expect(harness.collector.abortCount == 0)
+        // Still an inline payload on the pasteboard, and every byte of it.
+        #expect(harness.collector.representation(transferID)?.inMemoryData == payload)
+        #expect(try #require(harness.collector.inboundMetrics.first).inbound?.streamedToDisk == true)
     }
 
     @Test("a sender that cannot meet the requester's ceiling refuses before any byte")
@@ -770,7 +904,8 @@ struct ClipboardTransferStreamTests {
         let fm = FileManager.default
         let scratch = try makeScratch()
         defer { try? fm.removeItem(at: scratch) }
-        let harness = TransferHarness()
+        let probe = StagingProbe()
+        let harness = TransferHarness(freeSpaceProvider: probe.provider)
         defer { harness.tearDown() }
 
         let source = scratch.appendingPathComponent("source", isDirectory: true)
@@ -790,6 +925,9 @@ struct ClipboardTransferStreamTests {
 
         let info = try abort(harness)
         #expect(info.code == .payloadInvalid)
+        // Every way a transfer can fail after its extract disposes of the tree,
+        // so a refused payload leaves the staging volume as it found it.
+        #expect(try probe.stagedFiles().isEmpty)
     }
 
     @Test("a sender that goes quiet trips the connection's own stall bound")

@@ -29,7 +29,7 @@ enum VsockGuestDataDialer {
             }
         switch provider(port, label) {
         case .success(let fd):
-            ClipboardDataConnection.applySocketOptions(fd: fd, role: .guest)
+            ClipboardDataConnection.applySocketOptions(fd: fd)
             return fd
         case .failure(let error):
             throw error

@@ -98,15 +98,6 @@ public struct ClipboardTransferTrailer: Equatable, Sendable {
 /// a peer that stops reading costs the host nothing
 /// (docs/research/2026-08-17-vsock-stalled-receiver-and-accept-latency.md).
 public enum ClipboardDataConnection {
-    /// Which end of a data connection an fd is, which decides whether the send
-    /// buffer is raised on it.
-    public enum Role: Sendable {
-        /// The accepting side, which owns the throughput lever.
-        case host
-        /// The dialling side, whose dialler already sized its socket.
-        case guest
-    }
-
     /// The most a data connection's header frame may declare: 64 KiB.
     ///
     /// A `ClipboardTransferRequest`/`Reply` is tens of bytes; the bound keeps a
@@ -124,18 +115,18 @@ public enum ClipboardDataConnection {
         signal(SIGPIPE, SIG_IGN)
     }()
 
-    /// Applies a data connection's socket options to `fd`.
+    /// Applies the safety and stall bounds every data connection carries,
+    /// whichever end of it `fd` is and whichever direction it will carry.
     ///
-    /// Best-effort: a `setsockopt` this socket family does not honor changes
-    /// throughput or the stall bound, never correctness, and surfaces through
-    /// the next read or write.
+    /// Idempotent, so the side that opens the descriptor can bound it before
+    /// anything reads on it and the transfer that adopts it can still state its
+    /// own `timeout`.
     ///
-    /// - Parameters:
-    ///   - fd: the connected socket.
-    ///   - role: `.host` also raises `SO_SNDBUF`.
-    ///   - timeout: the `SO_RCVTIMEO`/`SO_SNDTIMEO` value.
+    /// Best-effort: a `setsockopt` this socket family does not honor changes the
+    /// stall bound, never correctness, and surfaces through the next read or
+    /// write.
     public static func applySocketOptions(
-        fd: Int32, role: Role, timeout: TimeInterval = ClipboardStreamTuning.dataSocketTimeout
+        fd: Int32, timeout: TimeInterval = ClipboardStreamTuning.dataSocketTimeout
     ) {
         _ = suppressSIGPIPEOnce
         var enabled: Int32 = 1
@@ -145,7 +136,15 @@ public enum ClipboardDataConnection {
             tv_sec: Int(timeout), tv_usec: Int32((timeout - Double(Int(timeout))) * 1_000_000))
         _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &window, socklen_t(MemoryLayout<timeval>.size))
         _ = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &window, socklen_t(MemoryLayout<timeval>.size))
-        guard role == .host else { return }
+    }
+
+    /// Raises `SO_SNDBUF` on an accepted descriptor this side is about to stream
+    /// a payload on.
+    ///
+    /// Both halves of that sentence decide it: an accepted socket is the one
+    /// born at 8 KiB, where a dialler has already sized its own, and a send
+    /// buffer is only ever spent by the end that sends. Best-effort, as above.
+    public static func raiseSendBuffer(fd: Int32) {
         var sendBuffer = Int32(ClipboardStreamTuning.dataSendBufferBytes)
         _ = setsockopt(
             fd, SOL_SOCKET, SO_SNDBUF, &sendBuffer, socklen_t(MemoryLayout<Int32>.size))

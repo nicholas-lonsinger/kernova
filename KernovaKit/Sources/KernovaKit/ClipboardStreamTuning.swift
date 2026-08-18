@@ -64,7 +64,17 @@ public enum ClipboardStreamTuning {
     /// parked pull keeps.
     public static let dataSocketTimeout: TimeInterval = 30
 
-    /// `SO_SNDBUF` on the host's end of a data connection: 1 MiB.
+    /// The most accepted data connections one clipboard connection may be
+    /// reading an opening frame on at once: 16.
+    ///
+    /// That read blocks until the peer's header arrives, up to
+    /// ``dataSocketTimeout``, so the cap is what keeps a peer that connects and
+    /// then says nothing from parking a worker per connection. Past it the
+    /// descriptors wait as queued work rather than as parked threads, so the
+    /// delay lands on the connection that caused it and nowhere else.
+    public static let maxConcurrentDataAccepts = 16
+
+    /// `SO_SNDBUF` on the accepted end of a data connection: 1 MiB.
     ///
     /// The throughput lever, not a buffer budget: a freshly accepted vsock fd
     /// is born at 8 KiB, which caps host→guest at ~715 MiB/s; at 256 KiB and

@@ -50,7 +50,6 @@ public final class ClipboardTransferSender: @unchecked Sendable {
     public let generation: UInt64
 
     private let link: ClipboardTransferLink
-    private let role: ClipboardDataConnection.Role
     private let socketTimeout: TimeInterval
     private let clock: any EngineClock
     private let maxResidentInlineBytes: Int
@@ -59,6 +58,9 @@ public final class ClipboardTransferSender: @unchecked Sendable {
     private let queue: DispatchQueue
     private let lock = NSLock()
     private var retiredAs: ClipboardStreamAbortCode?
+    #if DEBUG
+    private var trailerAttemptCount = 0
+    #endif
     /// The first stop this side raised, kept apart from what the archive
     /// reports, since AppleArchive rewraps an error thrown out of a callback.
     private let stopBox = ArchiveRefusalBox()
@@ -68,9 +70,8 @@ public final class ClipboardTransferSender: @unchecked Sendable {
     /// - Parameters:
     ///   - transferID: identifies the transfer the reply names.
     ///   - generation: the offer generation `isCurrent` is re-checked against.
-    ///   - link: how the connection is obtained.
-    ///   - role: which end of the connection this is, deciding whether the send
-    ///     buffer is raised on it.
+    ///   - link: how the connection is obtained, which also decides whether the
+    ///     send buffer is raised on it.
     ///   - clock: the timeline the stage timings are measured on.
     ///   - socketTimeout: the connection's `SO_RCVTIMEO`/`SO_SNDTIMEO`.
     ///   - maxResidentInlineBytes: the largest inline payload streamed raw; a
@@ -82,7 +83,6 @@ public final class ClipboardTransferSender: @unchecked Sendable {
         transferID: UInt64,
         generation: UInt64,
         link: ClipboardTransferLink,
-        role: ClipboardDataConnection.Role,
         clock: any EngineClock = makePlatformEngineClock(),
         socketTimeout: TimeInterval = ClipboardStreamTuning.dataSocketTimeout,
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
@@ -91,7 +91,6 @@ public final class ClipboardTransferSender: @unchecked Sendable {
         self.transferID = transferID
         self.generation = generation
         self.link = link
-        self.role = role
         self.clock = clock
         self.socketTimeout = socketTimeout
         self.maxResidentInlineBytes = max(0, maxResidentInlineBytes)
@@ -228,7 +227,7 @@ public final class ClipboardTransferSender: @unchecked Sendable {
             guard isCurrent(generation) else { try raise(.superseded) }
         }
         let counted = ArchiveByteCounter()
-        var failure: ClipboardStreamAbortCode?
+        var failure: (code: ClipboardStreamAbortCode, stalled: Bool)?
         do {
             switch payload {
             case .raw(let data):
@@ -239,15 +238,32 @@ public final class ClipboardTransferSender: @unchecked Sendable {
                     maxAcceptByteCount: maxAcceptByteCount, onProgress: onProgress)
             }
         } catch {
-            failure = code(for: error)
+            // The writer is asked too: on the archived path a local stop this
+            // side raised is what surfaces, and the stalled write underneath it
+            // is what decides whether a trailer can still cross.
+            failure = (
+                code(for: error),
+                Self.isWriteStall(error) || Self.isWriteStall(writer.failure)
+            )
         }
 
-        let trailer =
-            failure.map { ClipboardTransferTrailer(ending: .aborted(rawCode: $0.rawValue)) }
-            ?? ClipboardTransferTrailer(ending: .complete(digest: writer.digest()))
-        // Best-effort: a connection that died under the payload cannot carry the
-        // reason it died for, and the peer already knows.
-        try? ClipboardDataConnection.writeTrailer(trailer, fd: fd)
+        // A trailer is skipped only after a stalled write: the peer's receive
+        // buffer is full and it is not draining, so the reason has nowhere to go
+        // and attempting it parks this transfer's queue, its descriptor and its
+        // outbox slot for a second whole `socketTimeout`. Every other ending
+        // still rides the payload's own stream (docs/CLIPBOARD.md §9).
+        if failure?.stalled != true {
+            let trailer =
+                failure.map {
+                    ClipboardTransferTrailer(ending: .aborted(rawCode: $0.code.rawValue))
+                } ?? ClipboardTransferTrailer(ending: .complete(digest: writer.digest()))
+            #if DEBUG
+            lock.withLock { trailerAttemptCount += 1 }
+            #endif
+            // Best-effort: a connection that died under the payload cannot carry
+            // the reason it died for, and the peer already knows.
+            try? ClipboardDataConnection.writeTrailer(trailer, fd: fd)
+        }
         guard failure == nil else { return }
         didComplete = true
 
@@ -283,16 +299,23 @@ public final class ClipboardTransferSender: @unchecked Sendable {
     }
 
     /// Obtains the connection and applies its socket options, or gives up.
+    ///
+    /// The send buffer is raised only on an accepted descriptor: that is the one
+    /// born at 8 KiB, and this is the end that streams the payload on it.
     private func openConnection() -> Int32? {
         let fd: Int32
+        let isAccepted: Bool
         switch link {
         case .accepted(let accepted):
             fd = accepted
+            isAccepted = true
         case .dial(let dial):
             guard let dialled = try? dial() else { return nil }
             fd = dialled
+            isAccepted = false
         }
-        ClipboardDataConnection.applySocketOptions(fd: fd, role: role, timeout: socketTimeout)
+        ClipboardDataConnection.applySocketOptions(fd: fd, timeout: socketTimeout)
+        if isAccepted { ClipboardDataConnection.raiseSendBuffer(fd: fd) }
         return fd
     }
 
@@ -306,10 +329,11 @@ public final class ClipboardTransferSender: @unchecked Sendable {
         case .file(let url, let byteCount, _) where isInline && byteCount <= maxResidentInlineBytes:
             // An inline payload is resident bytes on both ends, so resolve the
             // file to bytes here — bounded by the threshold the receiver holds
-            // it resident under — rather than stream it raw from disk. The size
-            // is re-read first: a file that grew past the threshold since the
-            // offer's stat is archived from disk, as any oversize payload is,
-            // rather than loaded whole.
+            // it resident under — rather than stream it raw from disk. A file
+            // that outgrew that threshold since the offer's stat is archived
+            // from disk, as any oversize payload is: the re-stat catches most
+            // of that, and the bytes actually read decide, so one that grew
+            // inside the re-stat's own window is archived, not refused.
             let currentByteCount =
                 (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? byteCount
             if currentByteCount > maxResidentInlineBytes {
@@ -318,10 +342,13 @@ public final class ClipboardTransferSender: @unchecked Sendable {
                         url, name: Self.entryName(for: representation),
                         byteCount: currentByteCount))
             }
-            guard let data = try? Data(contentsOf: url), data.count <= maxResidentInlineBytes
-            else {
+            guard let data = try? Data(contentsOf: url) else {
                 refuse(fd: fd, code: .readError, message: "Cannot read source file")
                 return nil
+            }
+            guard data.count <= maxResidentInlineBytes else {
+                return .archived(
+                    .file(url, name: Self.entryName(for: representation), byteCount: data.count))
             }
             return .raw(data)
         case .pendingRemote:
@@ -405,6 +432,14 @@ public final class ClipboardTransferSender: @unchecked Sendable {
         throw stop
     }
 
+    /// Whether `error` is a write that reached the socket's own stall bound.
+    ///
+    /// This side only ever writes on a data connection, so a `timedOut` here is
+    /// always a peer that stopped draining rather than one that went quiet.
+    private static func isWriteStall(_ error: Error?) -> Bool {
+        (error as? ClipboardDataConnectionError) == .timedOut
+    }
+
     /// The abort code `error` ends the transfer with.
     private func code(for error: Error) -> ClipboardStreamAbortCode {
         if case SenderStop.abort(let code) = error { return code }
@@ -441,4 +476,13 @@ public final class ClipboardTransferSender: @unchecked Sendable {
         try? ClipboardDataConnection.writeFrame(
             .clipboardTransferRefusal(transferID: transferID, code: code, message: message), fd: fd)
     }
+
+    #if DEBUG
+    /// Trailer writes this transfer attempted.
+    ///
+    /// The only thing separating an ending whose reason crossed from one whose
+    /// reason had nowhere to go: a stalled write leaves the peer's buffer full
+    /// either way, so the wire carries the same bytes for both.
+    var trailerAttemptsForTesting: Int { lock.withLock { trailerAttemptCount } }
+    #endif
 }

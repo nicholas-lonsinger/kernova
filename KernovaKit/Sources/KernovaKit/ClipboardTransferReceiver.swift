@@ -90,7 +90,6 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
     public let generation: UInt64
 
     private let source: Source
-    private let role: ClipboardDataConnection.Role
     private let socketTimeout: TimeInterval
     private let plan: Plan
     private let staging: ClipboardFileStaging
@@ -117,7 +116,6 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
     ///   - transferID: identifies the transfer the reply must name.
     ///   - generation: the offer generation the transfer belongs to.
     ///   - source: how the connection is obtained.
-    ///   - role: which end of the connection this is.
     ///   - plan: what the pull expects to receive.
     ///   - staging: where an archived payload is extracted.
     ///   - clock: the timeline the stage timings are measured on.
@@ -134,7 +132,6 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
         transferID: UInt64,
         generation: UInt64,
         source: Source,
-        role: ClipboardDataConnection.Role,
         plan: Plan,
         staging: ClipboardFileStaging,
         clock: any EngineClock = makePlatformEngineClock(),
@@ -147,7 +144,6 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
         self.transferID = transferID
         self.generation = generation
         self.source = source
-        self.role = role
         self.plan = plan
         self.staging = staging
         self.clock = clock
@@ -249,7 +245,7 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
                 throw openStop(error, "Dialling the transfer's data connection")
             }
         }
-        ClipboardDataConnection.applySocketOptions(fd: fd, role: role, timeout: socketTimeout)
+        ClipboardDataConnection.applySocketOptions(fd: fd, timeout: socketTimeout)
         lock.withLock { descriptor = fd }
         // A cancellation that landed while the connection was being opened had
         // nothing to interrupt, so honor it here rather than start a transfer
@@ -437,14 +433,19 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
             throw stop(for: failure)
         }
 
+        // One place the extracted tree is disposed of, so every way this
+        // transfer can still fail after the extract — a surplus, a bad digest,
+        // a payload that does not match the pull, a mapping that failed —
+        // leaves the staging volume as it found it.
         do {
             try reader.drain(allowance: ClipboardStreamTuning.archiveTailAllowance)
             try verify(reader.trailer(), against: reader)
+            return try finishStaged(
+                reply: reply, at: destination, counted: counted, reader: reader)
         } catch {
             try? FileManager.default.removeItem(at: destination)
             throw error
         }
-        return try finishStaged(reply: reply, at: destination, counted: counted, reader: reader)
     }
 
     /// Drains what is left after a failed extract so the sender's trailer can be
@@ -481,7 +482,6 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
         // the offer described, and the peer that produced it is not trusted to
         // have meant well.
         guard let file = Self.singleRegularFile(in: destination) else {
-            try? FileManager.default.removeItem(at: destination)
             throw ReceiveStop(
                 code: .payloadInvalid, message: "The archive did not unpack to exactly one file")
         }
@@ -491,7 +491,6 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
         // exempt — one resolved from a file that grew since its offer is
         // legitimately larger, and it is bounded by the ceiling instead.
         if !reply.isInline, file.byteCount != plan.advertisedByteCount {
-            try? FileManager.default.removeItem(at: destination)
             throw ReceiveStop(
                 code: .sizeOverrun,
                 message:

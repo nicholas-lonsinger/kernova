@@ -6,7 +6,6 @@ import Foundation
 /// above this; the outbox turns a verdict into a connection, keeps the live
 /// transfers reachable for supersession, and forgets each one as it ends.
 public final class ClipboardTransferOutbox: @unchecked Sendable {
-    private let role: ClipboardDataConnection.Role
     private let clock: any EngineClock
     private let socketTimeout: TimeInterval
     private let maxResidentInlineBytes: Int
@@ -24,19 +23,16 @@ public final class ClipboardTransferOutbox: @unchecked Sendable {
     /// Creates an outbox for one peer.
     ///
     /// - Parameters:
-    ///   - role: which end of a data connection this side holds.
     ///   - clock: the timeline stage timings are measured on.
     ///   - socketTimeout: each connection's `SO_RCVTIMEO`/`SO_SNDTIMEO`.
     ///   - maxResidentInlineBytes: the largest inline payload streamed raw.
     ///   - onTransferTimed: fired once per successful transfer.
     public init(
-        role: ClipboardDataConnection.Role,
         clock: any EngineClock = makePlatformEngineClock(),
         socketTimeout: TimeInterval = ClipboardStreamTuning.dataSocketTimeout,
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
         onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)? = nil
     ) {
-        self.role = role
         self.clock = clock
         self.socketTimeout = socketTimeout
         self.maxResidentInlineBytes = maxResidentInlineBytes
@@ -47,9 +43,9 @@ public final class ClipboardTransferOutbox: @unchecked Sendable {
     ///
     /// A duplicate `transferID` never displaces the transfer already streaming
     /// under it: the second `link` is abandoned — its accepted descriptor
-    /// closed, its dialler never called — and `onComplete` does not fire for it,
-    /// since the id's own transfer is still running and owes its owner that one
-    /// terminal.
+    /// closed, its dialler never called — and neither `onBegin` nor
+    /// `onComplete` fires for it, since the id's own transfer is still running
+    /// and owes its owner that one pair.
     ///
     /// - Parameters:
     ///   - transferID: identifies the transfer, and keys it for cancellation.
@@ -60,8 +56,14 @@ public final class ClipboardTransferOutbox: @unchecked Sendable {
     ///     bytes.
     ///   - isCurrent: supersession check, called off the caller's actor.
     ///   - link: how the connection is obtained.
+    ///   - onBegin: fired on the caller's own turn once the transfer is
+    ///     registered and before any byte moves, so an owner announces a
+    ///     transfer only after the duplicate check has admitted it and never
+    ///     after its first progress report.
     ///   - onProgress: cumulative `(bytesSent, totalBytes)` as bytes leave.
     ///   - onComplete: fired exactly once when the transfer ends.
+    /// - Returns: whether this call is the one serving `transferID`.
+    @discardableResult
     public func serve(
         transferID: UInt64,
         generation: UInt64,
@@ -70,11 +72,12 @@ public final class ClipboardTransferOutbox: @unchecked Sendable {
         isInline: Bool,
         isCurrent: @escaping @Sendable (UInt64) -> Bool,
         link: ClipboardTransferLink,
+        onBegin: (@Sendable () -> Void)? = nil,
         onProgress: (@Sendable (_ bytesSent: Int, _ totalBytes: Int) -> Void)? = nil,
         onComplete: (@Sendable (_ success: Bool) -> Void)? = nil
-    ) {
+    ) -> Bool {
         let sender = ClipboardTransferSender(
-            transferID: transferID, generation: generation, link: link, role: role, clock: clock,
+            transferID: transferID, generation: generation, link: link, clock: clock,
             socketTimeout: socketTimeout, maxResidentInlineBytes: maxResidentInlineBytes,
             onTransferTimed: onTransferTimed)
         let inserted = lock.withLock { () -> Bool in
@@ -84,8 +87,9 @@ public final class ClipboardTransferOutbox: @unchecked Sendable {
         }
         guard inserted else {
             link.abandon()
-            return
+            return false
         }
+        onBegin?()
         sender.start(
             representation: representation, maxAcceptByteCount: maxAcceptByteCount,
             isInline: isInline, isCurrent: isCurrent, onProgress: onProgress
@@ -93,6 +97,7 @@ public final class ClipboardTransferOutbox: @unchecked Sendable {
             self?.forget(transferID)
             onComplete?(success)
         }
+        return true
     }
 
     /// Answers a request this side will not serve: a reply naming `code`, no
@@ -105,7 +110,6 @@ public final class ClipboardTransferOutbox: @unchecked Sendable {
         link: ClipboardTransferLink, transferID: UInt64, code: ClipboardStreamAbortCode,
         message: String
     ) {
-        let role = self.role
         let socketTimeout = self.socketTimeout
         refusals.async {
             let fd: Int32
@@ -116,7 +120,7 @@ public final class ClipboardTransferOutbox: @unchecked Sendable {
                 guard let dialled = try? dial() else { return }
                 fd = dialled
             }
-            ClipboardDataConnection.applySocketOptions(fd: fd, role: role, timeout: socketTimeout)
+            ClipboardDataConnection.applySocketOptions(fd: fd, timeout: socketTimeout)
             defer { ClipboardDataConnection.end(fd: fd) }
             try? ClipboardDataConnection.writeFrame(
                 .clipboardTransferRefusal(transferID: transferID, code: code, message: message),

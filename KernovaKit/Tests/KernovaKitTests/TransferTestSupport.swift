@@ -51,7 +51,7 @@ func relayFlippingOneByte(from source: Int32, to destination: Int32) {
 /// The read is bounded by a socket timeout, so a descriptor a regression left
 /// open fails the test rather than parking it forever.
 func drainUntilPeerCloses(_ fd: Int32, timeout: TimeInterval = 5) throws -> Data {
-    ClipboardDataConnection.applySocketOptions(fd: fd, role: .guest, timeout: timeout)
+    ClipboardDataConnection.applySocketOptions(fd: fd, timeout: timeout)
     return try readToEnd(fd: fd)
 }
 
@@ -206,6 +206,14 @@ final class TransferHarness: @unchecked Sendable {
     /// far the transfer got first.
     let onReceiveProgress = Box<(@Sendable (Int, Int) -> Void)?>(nil)
 
+    /// An extra hook on each send-progress report, for a test that must act at a
+    /// point inside the *stream* rather than inside the extract behind it.
+    ///
+    /// Fires on the sending transfer's own queue, after each block that got
+    /// away — so a test pinning an event to "the transfer is under way" pins it
+    /// to the transfer rather than to how fast the two ends happen to run.
+    let onSendProgress = Box<(@Sendable (Int, Int) -> Void)?>(nil)
+
     init(
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         socketTimeout: TimeInterval = ClipboardStreamTuning.dataSocketTimeout,
@@ -220,13 +228,13 @@ final class TransferHarness: @unchecked Sendable {
             freeSpaceProvider: freeSpaceProvider)
         let collector = self.collector
         inbox = ClipboardTransferInbox(
-            staging: staging, role: .host, socketTimeout: socketTimeout,
+            staging: staging, socketTimeout: socketTimeout,
             maxResidentInlineBytes: maxResidentInlineBytes,
             minimumExtractAllowance: minimumExtractAllowance,
             extractPacingBytes: extractPacingBytes,
             onTransferTimed: { collector.timedInbound($0) })
         outbox = ClipboardTransferOutbox(
-            role: .guest, socketTimeout: socketTimeout,
+            socketTimeout: socketTimeout,
             maxResidentInlineBytes: maxResidentInlineBytes,
             onTransferTimed: { collector.timedOutbound($0) })
     }
@@ -245,7 +253,7 @@ final class TransferHarness: @unchecked Sendable {
         source: ClipboardTransferReceiver.Source
     ) -> ClipboardTransferReceiver {
         ClipboardTransferReceiver(
-            transferID: transferID, generation: generation, source: source, role: .host,
+            transferID: transferID, generation: generation, source: source,
             plan: plan, staging: staging)
     }
 
@@ -293,6 +301,7 @@ final class TransferHarness: @unchecked Sendable {
         expect(transferID: transferID, plan: plan)
         let outbox = self.outbox
         let collector = self.collector
+        let onSendProgress = self.onSendProgress
         openPull(
             transferID: transferID, generation: generation, maxAcceptByteCount: maxAcceptByteCount
         ) { far, request in
@@ -300,7 +309,10 @@ final class TransferHarness: @unchecked Sendable {
                 transferID: request.transferID, generation: request.generation,
                 representation: representation, maxAcceptByteCount: request.maxAcceptByteCount,
                 isInline: isInline, isCurrent: isCurrent, link: .accepted(far),
-                onProgress: { collector.sendProgress($0, $1) },
+                onProgress: { bytes, total in
+                    collector.sendProgress(bytes, total)
+                    onSendProgress.value?(bytes, total)
+                },
                 onComplete: { collector.sendFinished(request.transferID, success: $0) })
         }
     }
@@ -316,6 +328,7 @@ final class TransferHarness: @unchecked Sendable {
         expect(transferID: transferID, plan: plan)
         let inbox = self.inbox
         let collector = self.collector
+        let onSendProgress = self.onSendProgress
         outbox.serve(
             transferID: transferID, generation: generation, representation: representation,
             maxAcceptByteCount: maxAcceptByteCount, isInline: isInline, isCurrent: isCurrent,
@@ -328,7 +341,10 @@ final class TransferHarness: @unchecked Sendable {
                     inbox.adopt(fd: far, reply: reply)
                 }
             },
-            onProgress: { collector.sendProgress($0, $1) },
+            onProgress: { bytes, total in
+                collector.sendProgress(bytes, total)
+                onSendProgress.value?(bytes, total)
+            },
             onComplete: { collector.sendFinished(transferID, success: $0) })
     }
 }

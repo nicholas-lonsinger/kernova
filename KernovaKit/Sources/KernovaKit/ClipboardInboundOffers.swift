@@ -432,17 +432,14 @@ public final class ClipboardInboundOffers {
     /// Stops the pulls an owner's readout started for `generation`, leaving one
     /// another gesture is also waiting on.
     ///
-    /// Leaving is the step; its answer is whether this side is done with the
-    /// transfer, and only then is it torn down — on both sides, so the peer's
-    /// sender stops producing bytes and the local partial file goes.
+    /// Leaving is the whole step: its answer is whether this side is done with
+    /// the transfer, and the last waiter out retires the pull's slot, which runs
+    /// the `retire` hook that deregisters the awaiter and closes this side's end
+    /// of the connection — so the peer's next write fails and it stops producing
+    /// bytes for a pull nothing is waiting on.
     public func cancelJoinedPulls(generation: UInt64) {
         guard let entry = entries[generation] else { return }
-        for (repIndex, waiter) in entry.joinedWaiters where !coordinator.leave(waiter) {
-            // Closing this side's end of the transfer's connection is the whole
-            // cancellation: the peer's next write fails and it stops producing
-            // bytes for a pull nothing is waiting on.
-            session.inbox?.cancel(transferID: transferID(generation: generation, repIndex: repIndex))
-        }
+        for waiter in entry.joinedWaiters.values { _ = coordinator.leave(waiter) }
         Self.logger.notice(
             "User cancelled the inbound transfer from '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.tag, privacy: .public))"
         )
