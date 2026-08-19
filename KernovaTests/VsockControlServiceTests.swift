@@ -1312,7 +1312,9 @@ struct VsockControlServiceTests {
 /// MainActor-isolated recorder for the `onAgentInfoObserved` closure.
 ///
 /// Reference type so the observer's closure capture and the test's read site
-/// see the same buffer without `inout` shenanigans.
+/// see the same buffer without `inout` shenanigans. Main-bound because
+/// `onAgentInfoObserved` is `@MainActor` in production, not by convenience
+/// (docs/TESTING.md).
 @MainActor
 private final class ObservedRecorder {
     private(set) var values: [ObservedAgentInfo] = []
@@ -1328,6 +1330,9 @@ private final class ObservedRecorder {
 
 /// Stand-in for `VMInstance.isLivePaused`, flipped by the test to freeze and
 /// thaw the guest.
+///
+/// Main-bound because `isGuestSuspended` is `@MainActor` in production — the
+/// heartbeat reads it from there — not by convenience (docs/TESTING.md).
 @MainActor
 private final class SuspensionFlag {
     var isSuspended = false
@@ -1336,7 +1341,9 @@ private final class SuspensionFlag {
 /// Counts `onChannelLost` invocations, sampling service state at callback time.
 ///
 /// `sampleAgentVersion` is assigned after the service exists, since the thing
-/// worth sampling is the service the recorder is wired into.
+/// worth sampling is the service the recorder is wired into. Main-bound because
+/// `onChannelLost` is `@MainActor` in production, not by convenience
+/// (docs/TESTING.md).
 @MainActor
 private final class ChannelLostRecorder {
     private(set) var count = 0
