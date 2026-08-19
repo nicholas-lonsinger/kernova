@@ -985,6 +985,15 @@ public final class ClipboardInboundOffers {
                 "Inbound pull \(plan.transferID, privacy: .public) (conn=\(self.tag, privacy: .public)) cancelled"
             )
             recordInterruption(caller: caller)
+        case .mainThreadUnavailable:
+            Self.logger.warning(
+                "Inbound pull \(plan.transferID, privacy: .public) (conn=\(self.tag, privacy: .public)) refused: the fire holds the main thread where the event-loop wait is unavailable — serving nothing rather than freezing the app"
+            )
+            guard caller == .paste else { return }
+            raiseRefusal(.paste, .transferFailed)
+            announceRefusal(
+                .pasteFailed, "The paste could not be served from this window",
+                generation: plan.generation, caller: caller)
         }
     }
 

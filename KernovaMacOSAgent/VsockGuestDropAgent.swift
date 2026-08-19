@@ -291,6 +291,10 @@ final class VsockGuestDropAgent: @unchecked Sendable {
                 outcome = .failed(.dropFailed, "The transfer stopped making progress")
             case .cancelled:
                 outcome = .cancelled
+            case .mainThreadUnavailable:
+                // Unreachable: this loop runs on `jobQueue`, as the precondition
+                // above asserts, and the refusal is the main thread's alone.
+                outcome = .failed(.dropFailed, "The transfer could not be started")
             }
             if case .completed = outcome { continue }
             break

@@ -103,6 +103,33 @@ struct LazyPullCoordinatorTests {
         ClipboardContent.Representation(uti: ClipboardContent.utf8TextUTI, data: Data(text.utf8))
     }
 
+    // MARK: - The main thread is never parked
+
+    @Test("a main-thread pull with no event loop available is refused, not parked")
+    @MainActor
+    func mainThreadPullWithoutEventLoopIsRefused() {
+        // This bundle is not app-hosted, so `NSApp` is nil and
+        // `NestedEventLoopWait.current()` declines — the same answer it gives
+        // inside a tracking or modal loop in the app. Parking here is what used
+        // to freeze the main thread for the length of a transfer
+        // (docs/CLIPBOARD.md §8); the app-hosted counterpart proving the served
+        // wait still wins is `LazyPullCoordinatorMainThreadTests`.
+        let coordinator = LazyPullCoordinator()
+        let starts = Tally()
+
+        let outcome = coordinator.pull(
+            transferID: 77, timeout: testWaitBackstop, retire: {}, start: { starts.bump() })
+
+        guard case .mainThreadUnavailable = outcome else {
+            Issue.record("Expected .mainThreadUnavailable, got \(outcome)")
+            return
+        }
+        // Refused before anything was registered: no awaiter to retire, no
+        // request on the wire, and no slot left behind for the next pull.
+        #expect(starts.value == 0)
+        #expect(coordinator.pendingSlotCountForTesting == 0)
+    }
+
     // MARK: - Slot machinery
 
     // RATIONALE: sanctioned no-signal polls (docs/TESTING.md "Async waits in

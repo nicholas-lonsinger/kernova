@@ -13,6 +13,10 @@ public enum LazyPullOutcome: Sendable {
     /// The pull was cancelled — by `failAll` (channel close / supersession /
     /// release), or by this waiter leaving it.
     case cancelled
+    /// Nothing waited: the caller holds the main thread somewhere the live
+    /// event-loop wait is unavailable, where the only alternative is parking the
+    /// app for the transfer's length (docs/CLIPBOARD.md §8).
+    case mainThreadUnavailable
 }
 
 /// One in-flight pull per `transfer_id`, shared by every caller that asks for it.
@@ -27,11 +31,13 @@ public enum LazyPullOutcome: Sendable {
 /// Waiters come in two kinds:
 ///
 /// - A **synchronous** waiter (``pull(transferID:timeout:onProgress:retire:start:)``)
-///   holds the calling thread. At the base of the main run loop the wait runs the
-///   application's event loop (`NestedEventLoopWait`), so the app keeps drawing,
-///   dispatching input and running main-queue work; everywhere else it parks on a
-///   semaphore, and there `deliver`/`abort`/`failAll` MUST come from another
-///   thread — routed through the parked one, the wakeup could never run.
+///   holds the calling thread. On the main thread the wait runs the application's
+///   event loop (`NestedEventLoopWait`), so the app keeps drawing, dispatching
+///   input and running main-queue work; **the main thread is never parked**, and a
+///   caller holding it where that wait is unavailable is refused
+///   (`.mainThreadUnavailable`) rather than frozen. Off the main thread the wait
+///   parks on a semaphore, and there `deliver`/`abort`/`failAll` MUST come from
+///   another thread — routed through the parked one, the wakeup could never run.
 /// - An **asynchronous** waiter (``join(transferID:timeout:onProgress:retire:start:onResolve:)``)
 ///   hands over a callback, invoked from whichever thread resolved the slot. So
 ///   an `async` caller's resolution never crosses the main thread a synchronous
@@ -144,7 +150,9 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     ///
     /// On the main thread the wait runs the event loop, so a resolve may arrive
     /// from main-queue work; on any other thread it parks, and the resolve MUST
-    /// come from elsewhere or the wakeup deadlocks.
+    /// come from elsewhere or the wakeup deadlocks. A main-thread caller the
+    /// event loop is unavailable to gets `.mainThreadUnavailable` without a pull
+    /// being started at all.
     ///
     /// - Parameters:
     ///   - transferID: correlates this pull with its `ClipboardRequest` and the
@@ -170,9 +178,16 @@ public final class LazyPullCoordinator: @unchecked Sendable {
         retire: @escaping @Sendable () -> Void,
         start: () -> Void
     ) -> LazyPullOutcome {
-        let semaphore = DispatchSemaphore(value: 0)
         // Decided before registration, so a resolve that races `start` finds it.
         let eventLoop = NestedEventLoopWait.current()
+        // The main thread is never parked. `current()` declines only inside a
+        // tracking or modal loop, which owns the events a nested wait would have
+        // to dispatch; the semaphore below is the off-main branch, and taking it
+        // here would freeze the app for the length of the transfer
+        // (docs/CLIPBOARD.md §8). Refusing costs this one fire, which the caller
+        // reports; parking would cost every frame until the pull resolved.
+        guard eventLoop != nil || !Thread.isMainThread else { return .mainThreadUnavailable }
+        let semaphore = DispatchSemaphore(value: 0)
         let waiter = Waiter(
             transferID: transferID, wakeup: .synchronous(semaphore, eventLoop),
             onProgress: onProgress)
