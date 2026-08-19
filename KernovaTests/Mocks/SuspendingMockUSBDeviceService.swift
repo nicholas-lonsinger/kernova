@@ -10,11 +10,6 @@ import Foundation
 ///   operation is already suspended will trigger a precondition failure.
 @MainActor
 final class SuspendingMockUSBDeviceService: USBDeviceProviding {
-    /// When `true`, `attach` will suspend.
-    ///
-    /// Set to `false` to allow subsequent calls through immediately.
-    var shouldSuspendOnAttach = true
-
     var attachCallCount = 0
     var detachCallCount = 0
     var lastAttachedPath: String?
@@ -72,7 +67,7 @@ final class SuspendingMockUSBDeviceService: USBDeviceProviding {
         attachCallCount += 1
         lastAttachedPath = diskImagePath
         lastAttachedReadOnly = readOnly
-        if shouldSuspendOnAttach { await suspendIfNeeded() }
+        await suspendIfNeeded()
         let id = desiredUUID ?? UUID()
         return USBDeviceInfo(id: id, path: diskImagePath, readOnly: readOnly)
     }

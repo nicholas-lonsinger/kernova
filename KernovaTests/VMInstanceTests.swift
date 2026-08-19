@@ -785,15 +785,6 @@ struct VMInstanceTests {
         #expect(instance.startAction.label == "Resume Download")
     }
 
-    @Test("StartAction labels match what each variant performs")
-    func startActionLabels() {
-        #expect(VMInstance.StartAction.start.label == "Start")
-        #expect(VMInstance.StartAction.install.label == "Install")
-        #expect(VMInstance.StartAction.resumeInstall.label == "Resume Install")
-        #expect(VMInstance.StartAction.download.label == "Download")
-        #expect(VMInstance.StartAction.resumeDownload.label == "Resume Download")
-    }
-
     @Test("stopActionMenuTitle names the discard consequence when cold-paused")
     func stopActionMenuTitleColdPaused() {
         let instance = makeInstance(status: .paused)

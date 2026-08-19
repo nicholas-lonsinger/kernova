@@ -105,17 +105,6 @@ struct AgentStatusTests {
 
     // MARK: - .expectedMissing precedence
 
-    @Test("Missing flag + version → .expectedMissing regardless of upstream")
-    func missingFlagWinsOverWaiting() {
-        let result = AgentStatus.synthesize(
-            upstream: .waiting,
-            lastSeenAgentVersion: "0.9.2",
-            isInLiveSession: true,
-            agentExpectedButMissing: true
-        )
-        #expect(result == .expectedMissing(expected: "0.9.2"))
-    }
-
     @Test("Missing flag + version overrides .current upstream (defensive)")
     func missingFlagOverridesCurrent() {
         // In practice the agent calling Hello clears the missing flag

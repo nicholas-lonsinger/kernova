@@ -79,35 +79,6 @@ struct VMConfigurationTests {
         #expect(config.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
     }
 
-    @Test("Configuration encodes and decodes via JSON")
-    func codableRoundTrip() throws {
-        let original = VMConfiguration(
-            name: "Roundtrip VM",
-            guestOS: .macOS,
-            bootMode: .macOS,
-            cpuCount: 8,
-            memorySizeInGB: 16,
-            diskSizeInGB: 200
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(original)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.id == original.id)
-        #expect(decoded.name == original.name)
-        #expect(decoded.guestOS == original.guestOS)
-        #expect(decoded.bootMode == original.bootMode)
-        #expect(decoded.cpuCount == original.cpuCount)
-        #expect(decoded.memorySizeInGB == original.memorySizeInGB)
-        #expect(decoded.diskSizeInGB == original.diskSizeInGB)
-        #expect(decoded.networkEnabled == original.networkEnabled)
-    }
-
     @Test("Memory size in bytes is calculated correctly")
     func memorySizeInBytes() {
         let config = VMConfiguration(

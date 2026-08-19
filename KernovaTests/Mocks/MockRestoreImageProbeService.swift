@@ -6,7 +6,6 @@ import Foundation
 final class MockRestoreImageProbeService: RestoreImageProbing, @unchecked Sendable {
     var probeCallCount = 0
     var lastProbedURL: URL?
-    var sizeCallCount = 0
     var lastSizedURL: URL?
 
     /// Thrown instead of returning, per the per-method `<method>Error` convention.
@@ -24,7 +23,6 @@ final class MockRestoreImageProbeService: RestoreImageProbing, @unchecked Sendab
     }
 
     func size(of url: URL) async throws -> UInt64 {
-        sizeCallCount += 1
         lastSizedURL = url
         if let error = sizeError { throw error }
         return sizeResult

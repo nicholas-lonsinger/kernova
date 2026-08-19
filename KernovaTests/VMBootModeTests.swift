@@ -15,27 +15,17 @@ struct VMBootModeTests {
 
     // MARK: - Codable Round-Trip
 
-    @Test("macOS boot mode round-trips through JSON")
-    func codableRoundTripMacOS() throws {
-        let original = VMBootMode.macOS
-        let data = try JSONEncoder().encode(original)
-        let decoded = try JSONDecoder().decode(VMBootMode.self, from: data)
-        #expect(decoded == original)
-    }
-
-    @Test("EFI boot mode round-trips through JSON")
-    func codableRoundTripEFI() throws {
-        let original = VMBootMode.efi
-        let data = try JSONEncoder().encode(original)
-        let decoded = try JSONDecoder().decode(VMBootMode.self, from: data)
-        #expect(decoded == original)
-    }
-
-    @Test("linuxKernel boot mode round-trips through JSON")
-    func codableRoundTripLinuxKernel() throws {
-        let original = VMBootMode.linuxKernel
-        let data = try JSONEncoder().encode(original)
-        let decoded = try JSONDecoder().decode(VMBootMode.self, from: data)
-        #expect(decoded == original)
+    @Test(
+        "Each mode encodes to its persisted spelling and decodes back",
+        arguments: zip(
+            [VMBootMode.macOS, .efi, .linuxKernel],
+            ["macOS", "efi", "linuxKernel"]))
+    func codableRoundTrip(mode: VMBootMode, persisted: String) throws {
+        // The raw string is the on-disk shape in every bundle's config.json, so
+        // it is asserted literally: a symmetric encode/decode round-trip stays
+        // green through a case rename that no existing bundle can decode.
+        let data = try JSONEncoder().encode(mode)
+        #expect(String(decoding: data, as: UTF8.self) == "\"\(persisted)\"")
+        #expect(try JSONDecoder().decode(VMBootMode.self, from: data) == mode)
     }
 }

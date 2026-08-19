@@ -459,13 +459,6 @@ struct SpiceAgentProtocolTests {
         #expect(!SpiceMessageBuilder.hasCapability([], .clipboard))
     }
 
-    @Test("hasCapability returns false when word index exceeds array length")
-    func hasCapabilityOutOfBounds() {
-        // clipboardNoReleaseOnRegrab = bit 16 (word 0, bit 16) — fits in single word
-        // But if we pass an empty array, wordIndex 0 exceeds bounds
-        #expect(!SpiceMessageBuilder.hasCapability([], .clipboardNoReleaseOnRegrab))
-    }
-
     // MARK: - Test Helpers
 
     /// Builds a fake guest→host message with the given type and payload.

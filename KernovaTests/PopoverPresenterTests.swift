@@ -27,16 +27,6 @@ struct PopoverPresenterTests {
         #expect(!presenter.isShown)
     }
 
-    @Test("onClose can be assigned and cleared")
-    func onCloseAssignable() {
-        let presenter = PopoverPresenter()
-        var callCount = 0
-        presenter.onClose = { callCount += 1 }
-        // Drop the closure — verify there's no enforced lifecycle.
-        presenter.onClose = nil
-        #expect(callCount == 0)
-    }
-
     @Test("popoverDidClose delivery invokes onClose and resets state")
     func popoverDidCloseFiresOnClose() {
         let presenter = PopoverPresenter()

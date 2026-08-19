@@ -172,7 +172,6 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, @unchecked Sendable
     private(set) var declaredForwardingRules: [(mac: String, rules: [PortForwardingRule])] = []
     /// Scripted answer for `networkConfigurationIsPending(for:)`.
     var scriptedPendingKinds: Set<VmnetNetworkKind> = []
-    private(set) var pendingQueriedKinds: [VmnetNetworkKind] = []
 
     func setPortForwardingRules(
         _ rules: [PortForwardingRule], for mac: String, kind: VmnetNetworkKind
@@ -181,16 +180,12 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, @unchecked Sendable
     }
 
     func networkConfigurationIsPending(for kind: VmnetNetworkKind) -> Bool {
-        pendingQueriedKinds.append(kind)
         // Mirrors the service: nothing pends against a network that is not
         // materialized — its next materialization installs what is declared then.
-        return materializedKinds.contains(kind) && scriptedPendingKinds.contains(kind)
+        materializedKinds.contains(kind) && scriptedPendingKinds.contains(kind)
     }
 
-    /// Scripted answer for `kind(ofNetwork:)`.
-    var scriptedNetworkKind: VmnetNetworkKind?
-
     func kind(ofNetwork network: vmnet_network_ref) -> VmnetNetworkKind? {
-        scriptedNetworkKind
+        nil
     }
 }
