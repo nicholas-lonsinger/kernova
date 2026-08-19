@@ -352,10 +352,15 @@ struct VsockControlServiceTests {
         // Production-scale windows, because the clock below never advances on
         // its own: the heartbeat loop moves one step per release, and the
         // liveness loop stays parked on its very first tick, so neither
-        // watchdog stage can fire while the test asserts. `unresponsiveAfter`
-        // is picked so the derived liveness tick differs from the heartbeat
-        // interval, which is what tells the two parked sleeps apart.
-        let heartbeatSeconds: TimeInterval = 5
+        // watchdog stage can fire while the test asserts.
+        //
+        // 7 s is a value no default of this type produces, and it has to stay
+        // that way: at the 5 s default, a loop that ignored the injected
+        // interval and slept a literal 5 would park the sleep this test
+        // releases and pass every round. `unresponsiveAfter` then puts the
+        // derived liveness tick at 3 s, which is what tells the two parked
+        // sleeps apart.
+        let heartbeatSeconds: TimeInterval = 7
         let clock = GatedEngineClock()
         let service = makeService(
             channel: host,

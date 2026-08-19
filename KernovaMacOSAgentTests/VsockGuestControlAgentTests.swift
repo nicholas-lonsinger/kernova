@@ -37,9 +37,8 @@ struct VsockGuestControlAgentTests {
         return frame
     }
 
-    /// Default outbound-heartbeat cadence: small so `heartbeatOutboundCadence`
-    /// doesn't drag, and harmless to every other test (extra heartbeats only
-    /// keep the connection alive).
+    /// Default outbound-heartbeat cadence: small, and harmless to every test
+    /// (extra heartbeats only keep the connection alive).
     private static let testHeartbeat: TimeInterval = 0.04
 
     /// Default liveness windows, set far beyond any test's wall-clock budget.
@@ -157,10 +156,15 @@ struct VsockGuestControlAgentTests {
         // Production-scale windows, because the clock below never advances on
         // its own: the heartbeat loop moves one step per release, and the
         // liveness loop stays parked on its very first tick, so neither
-        // watchdog stage can fire while the test asserts. `unresponsiveAfter`
-        // is picked so the derived liveness tick differs from the heartbeat
-        // interval, which is what tells the two parked sleeps apart.
-        let heartbeatSeconds: TimeInterval = 5
+        // watchdog stage can fire while the test asserts.
+        //
+        // 7 s is a value no default of this type produces, and it has to stay
+        // that way: at the 5 s default, a loop that ignored the injected
+        // interval and slept a literal 5 would park the sleep this test
+        // releases and pass every round. `unresponsiveAfter` then puts the
+        // derived liveness tick at 3 s, which is what tells the two parked
+        // sleeps apart.
+        let heartbeatSeconds: TimeInterval = 7
         let clock = GatedEngineClock()
         let agent = makeAgent(
             clock: clock,
@@ -210,8 +214,6 @@ struct VsockGuestControlAgentTests {
         host.start()
         defer { host.close() }
 
-        // Wider heartbeat cadence (100 ms) + final-read timeout (800 ms) for
-        // the same CI-jitter reason as `heartbeatOutboundCadence`.
         let agent = makeAgent(agentFd: agentFd, heartbeatInterval: 0.1)
         defer { agent.stop() }
         agent.start()
