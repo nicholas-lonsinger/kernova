@@ -373,7 +373,10 @@ struct VsockControlServiceTests {
         // the heartbeat loop asked for exactly the configured interval — not a
         // hardcoded constant, not a multiple, and not zero.
         try await clock.sleepRequested.wait { clock.parked.count >= 2 }
-        #expect(
+        // `#require`, not `#expect`: every release below picks its sleeper by
+        // this interval, so a failure here leaves the loop waiting on a sleep
+        // nothing will ever match — a backstop hang in place of this message.
+        try #require(
             clock.parked.filter { $0.seconds == heartbeatSeconds }.count == 1,
             "Expected exactly one parked sleep of \(heartbeatSeconds) s; parked: \(clock.parked.map(\.seconds))"
         )
