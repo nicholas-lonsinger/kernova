@@ -478,7 +478,7 @@ struct ClipboardTransferStreamTests {
                 ended.notify()
             })
         try await ended.wait { outcome.value != nil }
-        return try #require(outcome.value)
+        return try #require(outcome.value as Bool?)
     }
 
     /// A peer that stops draining leaves its receive buffer full, so the abort

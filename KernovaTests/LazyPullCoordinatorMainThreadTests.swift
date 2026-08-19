@@ -17,7 +17,7 @@ struct LazyPullCoordinatorMainThreadTests {
     // path here is ms-scale and same-thread, so the value never masks a failure.
     private static let window: TimeInterval = 5
 
-    private func inlineRep(_ text: String) -> ClipboardContent.Representation {
+    private nonisolated func inlineRep(_ text: String) -> ClipboardContent.Representation {
         ClipboardContent.Representation(uti: ClipboardContent.utf8TextUTI, data: Data(text.utf8))
     }
 

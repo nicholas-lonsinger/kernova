@@ -1812,7 +1812,6 @@ struct VsockClipboardServiceTests {
         // menu-bar surfaces render what lands *here*, so the assertions below
         // cover the service→center hop a closed clipboard window depends on.
         let reports = ClipboardTransferReports()
-        let vmID = UUID()
         let service = VsockClipboardService(
             channel: host, label: "Build VM", reporter: reports.reporter)
         service.start()

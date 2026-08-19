@@ -3,6 +3,11 @@
 // Local.xcconfig included below — docs/BUILD.md "Signing identity" owns the
 // full story.
 
+// Project targets only — package targets never read a project xcconfig, so
+// KernovaKit/Package.swift carries the same gate as a `swiftSettings` entry.
+SWIFT_TREAT_WARNINGS_AS_ERRORS = YES
+GCC_TREAT_WARNINGS_AS_ERRORS = YES
+
 // Ad-hoc, so a fresh clone builds with no team or certificate.
 CODE_SIGN_IDENTITY = -
 
