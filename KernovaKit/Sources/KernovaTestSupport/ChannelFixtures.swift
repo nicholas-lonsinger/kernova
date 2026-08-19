@@ -145,6 +145,14 @@ public final class FrameRecorder: @unchecked Sendable {
         }
     }
 
+    /// Every recorded `Heartbeat`, in arrival order.
+    public var heartbeats: [Kernova_V1_Heartbeat] {
+        frames.compactMap {
+            guard case .heartbeat(let heartbeat) = $0.payload else { return nil }
+            return heartbeat
+        }
+    }
+
     /// Every recorded `Error`, in arrival order.
     public var errors: [Kernova_V1_Error] {
         frames.compactMap {

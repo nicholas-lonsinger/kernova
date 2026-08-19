@@ -115,10 +115,15 @@ final class VsockControlService {
     private let channel: VsockChannel
     private let label: String
     private let bundledAgentVersion: String?
-    private let heartbeatInterval: Duration
-    private let unresponsiveAfter: Duration
-    private let terminateAfter: Duration
-    private let livenessTickInterval: Duration
+
+    /// Time source for both timer loops and every liveness measurement — one
+    /// seam, so a test stepping the heartbeat cadence also holds the watchdog's
+    /// clock.
+    private let clock: any EngineClock
+    private let heartbeatInterval: TimeInterval
+    private let unresponsiveAfter: TimeInterval
+    private let terminateAfter: TimeInterval
+    private let livenessTickInterval: TimeInterval
 
     /// Reads the latest policy from the host configuration.
     ///
@@ -167,7 +172,7 @@ final class VsockControlService {
 
     /// Instant of the most recent inbound frame of any kind — `Hello` and
     /// `Heartbeat` both count as liveness signals.
-    private var lastInboundFrame: ContinuousClock.Instant?
+    private var lastInboundFrame: EngineInstant?
 
     /// Outbound heartbeat sequence number, for diagnostics only — the peer does
     /// not respond to a specific nonce.
@@ -204,9 +209,10 @@ final class VsockControlService {
         channel: VsockChannel,
         label: String,
         bundledAgentVersion: String? = KernovaMacOSAgentInfo.bundledVersion,
-        heartbeatInterval: Duration = .seconds(5),
-        unresponsiveAfter: Duration = .seconds(15),
-        terminateAfter: Duration = .seconds(30),
+        clock: any EngineClock = makePlatformEngineClock(),
+        heartbeatInterval: TimeInterval = 5,
+        unresponsiveAfter: TimeInterval = 15,
+        terminateAfter: TimeInterval = 30,
         policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil,
         onAgentInfoObserved: (@MainActor (ObservedAgentInfo) -> Void)? = nil,
         isGuestSuspended: (@MainActor () -> Bool)? = nil,
@@ -223,6 +229,7 @@ final class VsockControlService {
         self.channel = channel
         self.label = label
         self.bundledAgentVersion = bundledAgentVersion
+        self.clock = clock
         self.heartbeatInterval = heartbeatInterval
         self.unresponsiveAfter = unresponsiveAfter
         self.terminateAfter = terminateAfter
@@ -254,11 +261,12 @@ final class VsockControlService {
             self?.stop(reason: .channelLost)
         }
 
+        let clock = self.clock
         let heartbeatInterval = self.heartbeatInterval
         outboundHeartbeatTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: heartbeatInterval)
+                    try await clock.sleep(for: heartbeatInterval)
                 } catch {
                     return
                 }
@@ -271,7 +279,7 @@ final class VsockControlService {
         livenessTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: livenessTickInterval)
+                    try await clock.sleep(for: livenessTickInterval)
                 } catch {
                     return
                 }
@@ -421,26 +429,26 @@ final class VsockControlService {
         // host-side elapsed time says nothing about the agent's health. Hold
         // the clock at now for as long as it stays frozen, so the deadline the
         // guest is judged against runs only while it is executing. This is also
-        // what survives host sleep: the VM is auto-paused for it, but
-        // `ContinuousClock` keeps advancing across it.
+        // what survives host sleep: the VM is auto-paused for it, and an
+        // `EngineClock` counts the time the system spends asleep.
         if isGuestSuspended?() ?? false {
-            lastInboundFrame = ContinuousClock.now
+            lastInboundFrame = clock.now
             // Guarded like the branches below: an unconditional write to an
             // `@Observable` property notifies on every tick, and a pause can
             // last hours.
             if isUnresponsive { isUnresponsive = false }
             return
         }
-        let elapsed = ContinuousClock.now - last
+        let elapsed = clock.seconds(since: last)
         if elapsed > terminateAfter {
             Self.logger.warning(
-                "Control channel for '\(self.label, privacy: .public)' silent for \(elapsed.formatted(.units(allowed: [.seconds])), privacy: .public) — closing"
+                "Control channel for '\(self.label, privacy: .public)' silent for \(Int(elapsed.rounded()), privacy: .public) s — closing"
             )
             stop(reason: .channelLost)
         } else if elapsed > unresponsiveAfter {
             if !isUnresponsive {
                 Self.logger.warning(
-                    "Control channel for '\(self.label, privacy: .public)' silent for \(elapsed.formatted(.units(allowed: [.seconds])), privacy: .public) — marking unresponsive"
+                    "Control channel for '\(self.label, privacy: .public)' silent for \(Int(elapsed.rounded()), privacy: .public) s — marking unresponsive"
                 )
                 isUnresponsive = true
             }
@@ -487,7 +495,7 @@ final class VsockControlService {
 
         // Any inbound traffic counts as liveness. Refresh before dispatch so a
         // recovering channel clears `.unresponsive` on the next liveness tick.
-        lastInboundFrame = ContinuousClock.now
+        lastInboundFrame = clock.now
 
         switch frame.payload {
         case .hello(let hello):
