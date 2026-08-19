@@ -122,7 +122,8 @@ struct VsockGuestClientTests {
         // fixed observation window, per docs/TESTING.md "Async waits in tests".
         // The provider only returns `.success(localFd)` after the release above,
         // so the window has to span the loop's post-provider `stopped` check.
-        try await Task.sleep(for: .milliseconds(300))
+        // `nanoseconds:`, not `for:` — this target deploys to macOS 12.
+        try await Task.sleep(nanoseconds: 300_000_000)
 
         #expect(serveCallCount.value == 0)
         #expect(client.liveChannel == nil)

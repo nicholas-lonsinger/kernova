@@ -145,6 +145,14 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
 
 @Suite("VsockGuestClipboardAgent state machine")
 struct VsockGuestClipboardAgentTests {
+    // RATIONALE: every `…ForTesting` lifecycle poll in this suite is the
+    // sanctioned no-signal kind (docs/TESTING.md "Async waits in tests") —
+    // `liveChannelForTesting` and `inboundPromiseGenerationForTesting` read
+    // main-queue-confined SUT internals that are neither `@Observable` nor
+    // owned by a test double, and the agent publishes no transition a test
+    // could arm on. Pasteboard-write waits use `pasteboard.changed` instead,
+    // and the one filesystem-appearance poll names itself at its call site.
+
     // MARK: - Agent factory helpers
 
     /// Sets up an agent with the given pasteboard and a socket provider that
@@ -203,10 +211,6 @@ struct VsockGuestClipboardAgentTests {
     ) async throws {
         agent.start()
         agent.applyPolicy(enabled: true, maxPasteBytes: maxPasteBytes)
-        // RATIONALE: sanctioned no-signal polls (docs/TESTING.md "Async waits
-        // in tests") — the `…ForTesting` lifecycle reads are SUT-internal
-        // state, not @Observable or a test double; the pasteboard-write waits
-        // use `pasteboard.changed` instead.
         try await waitUntil { agent.liveChannelForTesting != nil }
     }
 
@@ -2123,9 +2127,6 @@ struct VsockGuestClipboardAgentTests {
 
         agent.start()
         agent.applyPolicy(enabled: true, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
-        // RATIONALE: sanctioned no-signal polls (docs/TESTING.md "Async waits in
-        // tests") — `liveChannelForTesting` is SUT-internal state, as in
-        // `startAgentAndWaitForLiveChannel`.
         try await waitUntil { agent.liveChannelForTesting != nil }
 
         // The host hangs up, as a refused feature channel does.
@@ -2527,12 +2528,16 @@ struct VsockGuestClipboardAgentTests {
         try await startAgentAndWaitForLiveChannel(agent: agent)  // leaves it enabled
         #expect(await MainActor.run { agent.clipboardActivity } == .enabled)
 
+        // `applyPolicy` applies its change in one `DispatchQueue.main.async` hop
+        // and the main actor's executor is that same serial queue, so each read
+        // below is ordered behind it — the state is settled when it runs, with
+        // no poll and no per-iteration `main.sync`.
         agent.applyPolicy(enabled: false, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
-        try await waitUntil { DispatchQueue.main.sync { agent.isEnabledForTesting } == false }
+        #expect(await MainActor.run { agent.isEnabledForTesting } == false)
         #expect(await MainActor.run { agent.clipboardActivity } == .disabled)
 
         agent.applyPolicy(enabled: true, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
-        try await waitUntil { DispatchQueue.main.sync { agent.isEnabledForTesting } == true }
+        #expect(await MainActor.run { agent.isEnabledForTesting } == true)
         #expect(await MainActor.run { agent.clipboardActivity } == .enabled)
     }
 
