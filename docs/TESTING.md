@@ -26,11 +26,20 @@ Polling (`waitUntil` / `pollUntil`) is acceptable **only** for a genuine no-sign
 
 **A main-thread bridge call runs a nested event loop; drive it at the coordinator level, and never let its resolution depend on main-queue work.**
 On the main thread the pull services the run loop (`NestedEventLoopWait`), so a call from a main-run-loop callout (`RunLoop.main.perform`) reentrantly runs *other* queued main-actor work — in the parallel bundle, every concurrent test. If the pull resolves only once some main-queue work runs, the loop drains the whole bundle's backlog first and everything stalls.
-So test the serviced wait against `LazyPullCoordinator`, where a pre-scheduled `RunLoop.main.perform` or an off-thread `deliver` resolves it in milliseconds, and prove progress-during-a-pull through the off-main `offCooperativePool` bridge. A `@MainActor` test body is a GCD main-queue job, where the nested loop cannot drain the main queue at all.
+So test the serviced wait against `LazyPullCoordinator`, where a pre-scheduled `RunLoop.main.perform` or an off-thread `deliver` resolves it in milliseconds, and prove progress-during-a-pull through the off-main `offCooperativePool` bridge.
+
+**Never let a synchronous pull *wait* from a `@MainActor` test function.** That body is a GCD main-queue job, where the nested loop cannot drain the main queue at all, so whatever the pull needs from the main actor — under a parallel gate, every concurrent test's doubles — never runs and the pull dies at its backstop.
+Reach a waiting bridge from the run loop's base with `performOnMainRunLoop`, the way pboard fires it, or off-main with `offCooperativePool`. A fire that provably refuses *before* it waits — a failed pre-flight, a stale generation — waits for nothing and belongs on the main thread, where the ordering it has to survive is real.
 
 **A timeout that bounds a hostage window stays small — the one exception to the ≥60 s rule below.** When a test *synchronously blocks the main thread* for up to an injected timeout, that timeout caps how long every concurrent test's MainActor-bound waits freeze; it must sit far *below* `testWaitBackstop` so a lost fast path fails that one test instead of mass-failing the bundle. The ≥60 s sizing applies only to timers that hold no thread or actor hostage.
 
 **Every other injected production timeout is either the behavior under test — where a small value is correct — or the production default / ≥60 s.** A shortened timeout is a second clock racing the test body: if it fires before the test reaches the line that depends on the pre-timeout state, a starved runner loses the race and the test flakes even with perfect event-driven waits. A lingering dispatch timer delays nothing, so shrinking one buys nothing.
+
+## Test-double isolation
+
+**A double that plays a peer gets its own isolation domain — never `@MainActor`.** It has to speak while the subject holds the main thread, so main-actor isolation makes it unanswerable exactly when the test needs an answer. Guard its state with a lock, and keep its wait seams isolation-agnostic (`AsyncGate` takes the caller's). `defer` cannot `await`, so one a test tears down there needs a `nonisolated` synchronous `cancel()`.
+
+**A double a production contract pins stays pinned.** One conforming to a `@MainActor` protocol is main-bound by that protocol, not by convenience, and moving it would only move the violation.
 
 ## Test-only seams
 

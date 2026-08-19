@@ -187,8 +187,9 @@ transfer wakes it immediately (§9). That wait is reentrant by design: a superse
 a second promise callback can land inside it, so a pull a callback owns must be visible to every
 other requester of its transfer id, and state captured before the wait is checked against the
 live offer after it. It nests only at the base of the main run loop — inside a tracking or modal
-loop, which owns the events, the callback parks as any off-main caller does, and nothing that
-resolves a parked wait may be routed through the parked thread — and whatever on this side reads
+loop, which owns the events, the fire is refused and reported (§13) rather than served, because
+the main thread is never parked; only an off-main caller parks, and nothing that resolves such a
+wait may be routed through the parked thread — and whatever on this side reads
 a promised flavor of Kernova's own write does so from that base, as an event or a run-loop timer,
 never from a main-queue callout, whose drain the nested loop cannot re-enter.
 
