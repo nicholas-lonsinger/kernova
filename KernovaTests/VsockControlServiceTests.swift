@@ -47,7 +47,7 @@ struct VsockControlServiceTests {
 
     /// Default outbound-heartbeat cadence: small, and harmless to every test
     /// (extra heartbeats only keep the connection alive).
-    private static let testHeartbeat: Duration = .milliseconds(40)
+    private static let testHeartbeat: TimeInterval = 0.04
 
     /// Starts a background task sending guest heartbeats every `interval`,
     /// until cancelled (callers pair it with a `defer { task.cancel() }`).
@@ -78,15 +78,15 @@ struct VsockControlServiceTests {
     /// that *exercise* the watchdog (silence/recovery/terminate) pass explicit
     /// short windows to opt back in.
     ///
-    /// The watchdog measures `ContinuousClock.now - lastInboundFrame`, which
+    /// The watchdog measures elapsed time since `lastInboundFrame`, which
     /// keeps advancing while a contended CI MainActor stalls the test: a
     /// sub-second window makes every test's runtime an implicit deadline, so a
     /// test that pauses past it (waiting on a frame, a `waitUntil`, or scheduler
     /// jitter) sees the channel closed out from under it as an EOF / `.closed`
     /// flake. These values make the watchdog an explicit opt-in instead. See
     /// docs/TESTING.md "Async waits in tests".
-    private static let watchdogDisabledUnresponsive: Duration = .seconds(3_600)
-    private static let watchdogDisabledTerminate: Duration = .seconds(7_200)
+    private static let watchdogDisabledUnresponsive: TimeInterval = 3_600
+    private static let watchdogDisabledTerminate: TimeInterval = 7_200
 
     /// Builds a service with the test cadences applied.
     ///
@@ -96,9 +96,10 @@ struct VsockControlServiceTests {
     private func makeService(
         channel: VsockChannel,
         bundledAgentVersion: String? = "0.9.0",
-        heartbeatInterval: Duration? = nil,
-        unresponsiveAfter: Duration? = nil,
-        terminateAfter: Duration? = nil,
+        clock: any EngineClock = makePlatformEngineClock(),
+        heartbeatInterval: TimeInterval? = nil,
+        unresponsiveAfter: TimeInterval? = nil,
+        terminateAfter: TimeInterval? = nil,
         policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil,
         onAgentInfoObserved: (@MainActor (ObservedAgentInfo) -> Void)? = nil,
         isGuestSuspended: (@MainActor () -> Bool)? = nil,
@@ -108,6 +109,7 @@ struct VsockControlServiceTests {
             channel: channel,
             label: "test",
             bundledAgentVersion: bundledAgentVersion,
+            clock: clock,
             heartbeatInterval: heartbeatInterval ?? Self.testHeartbeat,
             unresponsiveAfter: unresponsiveAfter ?? Self.watchdogDisabledUnresponsive,
             terminateAfter: terminateAfter ?? Self.watchdogDisabledTerminate,
@@ -122,7 +124,7 @@ struct VsockControlServiceTests {
     /// `terminateAfter`, latching the Hello instead of observing `isConnected`.
     ///
     /// Those tests cannot wait on `isConnected`: it is a transient the watchdog
-    /// reverts. The watchdog measures `ContinuousClock.now - lastInboundFrame`,
+    /// reverts. The watchdog measures elapsed time since `lastInboundFrame`,
     /// so a MainActor stall longer than the window leaves the next liveness tick
     /// already past its deadline — and if that tick runs before the waiter's
     /// continuation, the service settles `isConnected` back to `false` before
@@ -335,6 +337,70 @@ struct VsockControlServiceTests {
 
     // MARK: - Heartbeat
 
+    @Test("Every outbound heartbeat costs one sleep of the configured interval")
+    func outboundHeartbeatSleepsTheConfiguredInterval() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // The recorder owns the guest's inbound stream for the whole test:
+        // `nextFrame` would consume from the same single-consumer stream.
+        let recorder = FrameRecorder(channel: guest)
+        defer { recorder.cancel() }
+
+        // Production-scale windows, because the clock below never advances on
+        // its own: the heartbeat loop moves one step per release, and the
+        // liveness loop stays parked on its very first tick, so neither
+        // watchdog stage can fire while the test asserts.
+        //
+        // 7 s is a value no default of this type produces, and it has to stay
+        // that way: at the 5 s default, a loop that ignored the injected
+        // interval and slept a literal 5 would park the sleep this test
+        // releases and pass every round. `unresponsiveAfter` then puts the
+        // derived liveness tick at 3 s, which is what tells the two parked
+        // sleeps apart.
+        let heartbeatSeconds: TimeInterval = 7
+        let clock = GatedEngineClock()
+        let service = makeService(
+            channel: host,
+            clock: clock,
+            heartbeatInterval: heartbeatSeconds,
+            unresponsiveAfter: 9,
+            terminateAfter: 30)
+        service.start()
+        defer { service.stop() }
+
+        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
+        try await waitForChange { service.isConnected }
+
+        // Both timer loops park on their first sleep. The property under test:
+        // the heartbeat loop asked for exactly the configured interval — not a
+        // hardcoded constant, not a multiple, and not zero.
+        try await clock.sleepRequested.wait { clock.parked.count >= 2 }
+        // `#require`, not `#expect`: every release below picks its sleeper by
+        // this interval, so a failure here leaves the loop waiting on a sleep
+        // nothing will ever match — a backstop hang in place of this message.
+        try #require(
+            clock.parked.filter { $0.seconds == heartbeatSeconds }.count == 1,
+            "Expected exactly one parked sleep of \(heartbeatSeconds) s; parked: \(clock.parked.map(\.seconds))"
+        )
+
+        for round in 1...3 {
+            let sleeper = try #require(clock.parked.first { $0.seconds == heartbeatSeconds })
+            clock.release(sleeper)
+            try await recorder.waitForFrames { recorder.heartbeats.count == round }
+            // The loop parks again on the same interval before it can send
+            // anything else, so the next heartbeat costs another full interval.
+            try await clock.sleepRequested.wait {
+                clock.requestedSeconds.filter { $0 == heartbeatSeconds }.count == round + 1
+            }
+            #expect(recorder.heartbeats.count == round)
+            // Nonces number the sends, so a repeat would show a duplicate here.
+            #expect(recorder.heartbeats.map(\.nonce) == Array(1...UInt64(round)))
+        }
+    }
+
     @Test("Inbound heartbeat keeps agentStatus .current past unresponsiveAfter")
     func inboundHeartbeatPreservesLiveness() async throws {
         let (guest, host) = try makePair()
@@ -356,8 +422,8 @@ struct VsockControlServiceTests {
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: .milliseconds(200),
-            unresponsiveAfter: .milliseconds(400)
+            heartbeatInterval: 0.2,
+            unresponsiveAfter: 0.4
         )
         service.start()
         defer { service.stop() }
@@ -397,8 +463,8 @@ struct VsockControlServiceTests {
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: .milliseconds(60),
-            unresponsiveAfter: .milliseconds(100)
+            heartbeatInterval: 0.06,
+            unresponsiveAfter: 0.1
         )
         service.start()
         defer { service.stop() }
@@ -428,8 +494,8 @@ struct VsockControlServiceTests {
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: .milliseconds(60),
-            unresponsiveAfter: .milliseconds(100)
+            heartbeatInterval: 0.06,
+            unresponsiveAfter: 0.1
         )
         service.start()
         defer { service.stop() }
@@ -472,9 +538,9 @@ struct VsockControlServiceTests {
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: .milliseconds(100),
-            unresponsiveAfter: .milliseconds(200),
-            terminateAfter: .milliseconds(500),
+            heartbeatInterval: 0.1,
+            unresponsiveAfter: 0.2,
+            terminateAfter: 0.5,
             onAgentInfoObserved: { helloObserved.append($0) }
         )
 
@@ -581,9 +647,9 @@ struct VsockControlServiceTests {
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: .milliseconds(50),
-            unresponsiveAfter: .milliseconds(100),
-            terminateAfter: .milliseconds(200),
+            heartbeatInterval: 0.05,
+            unresponsiveAfter: 0.1,
+            terminateAfter: 0.2,
             onAgentInfoObserved: { helloObserved.append($0) },
             isGuestSuspended: { suspension.isSuspended }
         )
@@ -619,9 +685,9 @@ struct VsockControlServiceTests {
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: .milliseconds(50),
-            unresponsiveAfter: .milliseconds(100),
-            terminateAfter: .milliseconds(200),
+            heartbeatInterval: 0.05,
+            unresponsiveAfter: 0.1,
+            terminateAfter: 0.2,
             onAgentInfoObserved: { helloObserved.append($0) },
             isGuestSuspended: { suspension.isSuspended }
         )
@@ -659,17 +725,17 @@ struct VsockControlServiceTests {
         // drains nothing. Sending to one is a main-thread hang waiting to
         // happen, so nothing may go out.
         //
-        // The collector owns the guest's inbound stream for the whole test:
+        // The recorder owns the guest's inbound stream for the whole test:
         // `nextFrame` would consume from the same single-consumer stream and
         // race it for frames.
-        let collector = FrameCollector(channel: guest)
-        defer { collector.cancel() }
+        let recorder = FrameRecorder(channel: guest)
+        defer { recorder.cancel() }
 
         let suspension = SuspensionFlag()
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: .milliseconds(50),
+            heartbeatInterval: 0.05,
             isGuestSuspended: { suspension.isSuspended }
         )
         service.start()
@@ -679,24 +745,21 @@ struct VsockControlServiceTests {
         try await waitForChange { service.isConnected }
         // Prove the sender is genuinely running before freezing it, so a
         // silent-for-another-reason service can't pass this test.
-        try await collector.received.wait { collector.count >= 2 }
+        try await recorder.waitForFrameCount(2)
 
         // Snapshot the baseline only after a settle window: a heartbeat written
-        // just before the flip flipped is still in flight through the socket and
-        // the collector's task, and counting it against the frozen guest would
-        // be a false failure.
+        // just before the flip is still in flight through the socket and the
+        // recorder's task, and counting it against the frozen guest would be a
+        // false failure.
+        //
+        // RATIONALE: no signal marks "the in-flight frame has landed", so the
+        // settle is a fixed window like the negative assertion it precedes
+        // (docs/TESTING.md "Async waits in tests").
         suspension.isSuspended = true
         try await Task.sleep(for: .milliseconds(150))
-        let baseline = collector.count
 
-        // RATIONALE: negative assertion ("prove no frame arrived") — a fixed
-        // observation window, per docs/TESTING.md "Async waits in tests". Spans
-        // many heartbeat intervals.
-        try await Task.sleep(for: .milliseconds(400))
-        #expect(
-            collector.count == baseline,
-            "Expected no outbound frames while the guest was suspended; got \(collector.count - baseline)"
-        )
+        // Spans many heartbeat intervals.
+        try await recorder.expectNoNewFrames(sinceCount: recorder.count, for: 0.4)
     }
 
     // MARK: - onChannelLost
@@ -712,9 +775,9 @@ struct VsockControlServiceTests {
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: .milliseconds(100),
-            unresponsiveAfter: .milliseconds(200),
-            terminateAfter: .milliseconds(500),
+            heartbeatInterval: 0.1,
+            unresponsiveAfter: 0.2,
+            terminateAfter: 0.5,
             onChannelLost: { lost.record() }
         )
         lost.sampleAgentVersion = { [weak service] in service?.agentVersion }
@@ -1289,32 +1352,4 @@ private final class ChannelLostRecorder {
         sampledAgentVersions.append(sampleAgentVersion.flatMap { $0() })
         changed.notify()
     }
-}
-
-/// Records every frame arriving on a channel, for negative assertions about
-/// outbound traffic.
-@MainActor
-private final class FrameCollector {
-    private(set) var count = 0
-    private var consumeTask: Task<Void, Never>?
-
-    /// Fires on every recorded frame; await it instead of polling `count`.
-    let received = AsyncGate()
-
-    init(channel: VsockChannel) {
-        consumeTask = Task { @MainActor [weak self] in
-            do {
-                for try await _ in channel.incoming {
-                    self?.count += 1
-                    self?.received.notify()
-                }
-            } catch {
-                // The stream errored — recording stops, and the count so far
-                // is what the assertion reads.
-            }
-        }
-    }
-
-    func cancel() { consumeTask?.cancel() }
-    deinit { consumeTask?.cancel() }
 }

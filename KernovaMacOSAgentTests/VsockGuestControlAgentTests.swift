@@ -37,9 +37,8 @@ struct VsockGuestControlAgentTests {
         return frame
     }
 
-    /// Default outbound-heartbeat cadence: small so `heartbeatOutboundCadence`
-    /// doesn't drag, and harmless to every other test (extra heartbeats only
-    /// keep the connection alive).
+    /// Default outbound-heartbeat cadence: small, and harmless to every test
+    /// (extra heartbeats only keep the connection alive).
     private static let testHeartbeat: TimeInterval = 0.04
 
     /// Default liveness windows, set far beyond any test's wall-clock budget.
@@ -63,7 +62,7 @@ struct VsockGuestControlAgentTests {
     /// `client` provider hands `agentFd` on the first call, transient failure
     /// after — so reconnect tests must use a multi-fd provider explicitly.
     private func makeAgent(
-        kind: EngineClockKind = .monotonic,
+        clock: any EngineClock = MonotonicEngineClock(),
         agentFd: Int32,
         heartbeatInterval: TimeInterval? = nil,
         unresponsiveAfter: TimeInterval? = nil,
@@ -76,7 +75,6 @@ struct VsockGuestControlAgentTests {
         let provider: VsockSocketProvider = { _, _ in
             provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
         }
-        let clock = kind.makeClock()
         return VsockGuestControlAgent(
             clock: clock,
             client: VsockGuestClient(
@@ -143,61 +141,68 @@ struct VsockGuestControlAgentTests {
 
     // MARK: - Heartbeat
 
-    @Test("Emits heartbeat frames on the configured cadence", arguments: EngineClockKind.allCases)
-    func heartbeatOutboundCadence(kind: EngineClockKind) async throws {
+    @Test("Every outbound heartbeat costs one sleep of the configured interval")
+    func outboundHeartbeatSleepsTheConfiguredInterval() async throws {
         let (agentFd, hostFd) = try makeRawSocketPair()
         let host = VsockChannel(fileDescriptor: hostFd)
         host.start()
         defer { host.close() }
 
-        // Property under test: heartbeats fire repeatedly on the cadence.
+        // The recorder owns the host's inbound stream for the whole test:
+        // `nextFrame` would consume from the same single-consumer stream.
+        let recorder = FrameRecorder(channel: host)
+        defer { recorder.cancel() }
+
+        // Production-scale windows, because the clock below never advances on
+        // its own: the heartbeat loop moves one step per release, and the
+        // liveness loop stays parked on its very first tick, so neither
+        // watchdog stage can fire while the test asserts.
         //
-        // Gap-based, not a count inside a fixed wall-clock window: on macos-26
-        // GitHub Actions runners a single MainActor stall slides multiple ticks
-        // outside such a window even though the timer is firing correctly.
-        //
-        // Read three consecutive heartbeats and check
-        // that the maximum inter-frame gap stays within a generous tolerance
-        // of the cadence. This proves "the timer fires repeatedly at roughly
-        // the configured rate" without coupling to absolute wall-clock time.
-        //
-        // Note: gaps are measured at receive time, not at the timer's fire
-        // time. If MainActor stalls and the kernel buffers heartbeats during
-        // the stall, the test reads them back-to-back with near-zero gaps and
-        // passes — which is correct for "is the timer running" but does NOT
-        // catch "MainActor → late delivery".
-        let cadence: TimeInterval = 0.1
-        let agent = makeAgent(kind: kind, agentFd: agentFd, heartbeatInterval: cadence)
+        // 7 s is a value no default of this type produces, and it has to stay
+        // that way: at the 5 s default, a loop that ignored the injected
+        // interval and slept a literal 5 would park the sleep this test
+        // releases and pass every round. `unresponsiveAfter` then puts the
+        // derived liveness tick at 3 s, which is what tells the two parked
+        // sleeps apart.
+        let heartbeatSeconds: TimeInterval = 7
+        let clock = GatedEngineClock()
+        let agent = makeAgent(
+            clock: clock,
+            agentFd: agentFd,
+            heartbeatInterval: heartbeatSeconds,
+            unresponsiveAfter: 9,
+            terminateAfter: 30)
         defer { agent.stop() }
         agent.start()
 
-        // First frame is the agent Hello — discard.
-        _ = try await nextFrame(from: host)
-
-        let wallClock = MonotonicEngineClock()
-        var stamps: [EngineInstant] = []
-        while stamps.count < 3 {
-            // Use the shared 5 s default. If the timer is genuinely broken
-            // we'll still fail in bounded time (≤15 s); if it's just slow,
-            // returning the frame lets the maxGap assertion below produce a
-            // sharper "cadence drift" error than a generic timeout.
-            let frame = try await nextFrame(from: host)
-            if case .heartbeat = frame.payload {
-                stamps.append(wallClock.now)
-            }
-        }
-
-        // Loop above guarantees stamps.count == 3, so gaps has exactly 2
-        // elements and reduce(0, max) is the natural non-optional form.
-        let gaps = zip(stamps.dropFirst(), stamps).map { $1.seconds(to: $0) }
-        let maxGap = gaps.reduce(0, max)
-        // 10× cadence tolerance: catches "timer not running" / "cadence
-        // misconfigured" without flagging single-tick scheduling jitter.
-        let tolerance = cadence * 10
-        #expect(
-            maxGap < tolerance,
-            "Heartbeat cadence drift: max gap \(maxGap) exceeds \(tolerance) (10× cadence). Gaps: \(gaps)"
+        // Both timer loops park on their first sleep; reaching that point is
+        // also proof the channel is up, since `serve` is what starts them.
+        //
+        // The property under test: the heartbeat loop asked for exactly the
+        // configured interval — not a hardcoded constant, not a multiple, and
+        // not zero.
+        try await clock.sleepRequested.wait { clock.parked.count >= 2 }
+        // `#require`, not `#expect`: every release below picks its sleeper by
+        // this interval, so a failure here leaves the loop waiting on a sleep
+        // nothing will ever match — a backstop hang in place of this message.
+        try #require(
+            clock.parked.filter { $0.seconds == heartbeatSeconds }.count == 1,
+            "Expected exactly one parked sleep of \(heartbeatSeconds) s; parked: \(clock.parked.map(\.seconds))"
         )
+
+        for round in 1...3 {
+            let sleeper = try #require(clock.parked.first { $0.seconds == heartbeatSeconds })
+            clock.release(sleeper)
+            try await recorder.waitForFrames { recorder.heartbeats.count == round }
+            // The loop parks again on the same interval before it can send
+            // anything else, so the next heartbeat costs another full interval.
+            try await clock.sleepRequested.wait {
+                clock.requestedSeconds.filter { $0 == heartbeatSeconds }.count == round + 1
+            }
+            #expect(recorder.heartbeats.count == round)
+            // Nonces number the sends, so a repeat would show a duplicate here.
+            #expect(recorder.heartbeats.map(\.nonce) == Array(1...UInt64(round)))
+        }
     }
 
     // MARK: - Inbound
@@ -209,8 +214,6 @@ struct VsockGuestControlAgentTests {
         host.start()
         defer { host.close() }
 
-        // Wider heartbeat cadence (100 ms) + final-read timeout (800 ms) for
-        // the same CI-jitter reason as `heartbeatOutboundCadence`.
         let agent = makeAgent(agentFd: agentFd, heartbeatInterval: 0.1)
         defer { agent.stop() }
         agent.start()
@@ -285,7 +288,7 @@ struct VsockGuestControlAgentTests {
         // channel down during the test.
         let states = StateBox()
         let agent = makeAgent(
-            kind: kind,
+            clock: kind.makeClock(),
             agentFd: agentFd,
             heartbeatInterval: 0.05,
             unresponsiveAfter: 0.15,
