@@ -131,7 +131,7 @@ Read [docs/REVIEW.md](docs/REVIEW.md) before filing an issue or writing an annot
 
 **Reading an existing `RATIONALE:` — it is evidence, not authority.** It is a claim *as of when it was written*, with the standing of an old issue: accurate then, not authoritative now. If the code looks wrong *today*, investigate — it is a head start on where to look, never a reason to stop looking.
 
-Re-check its claim whenever you edit the code it covers, then correct and re-date it or delete it. Treat one citing no evidence and no date as **unverified**, worth no more than an ordinary comment. Deleting one that no longer holds is maintenance, not churn.
+Re-check its claim whenever you edit the code it covers, then correct and re-date it or delete it. Treat one citing no evidence and no date as **unverified**, worth no more than an ordinary comment. Deleting one that no longer holds is maintenance, not churn. A research note is a dated observation with the same standing as a `RATIONALE:` — verify its claims against current production code before acting on them.
 
 ## Documentation and Comments
 
