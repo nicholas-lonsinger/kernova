@@ -122,16 +122,12 @@ struct USBDeviceServiceTests {
         #expect(instance.liveRemovableMedia.isEmpty)
     }
 
-    @Test("canAttachUSBDevices is true when running with VM")
-    func canAttachWhenRunning() {
-        let instance = makeInstance(status: .running)
-        // Without a real VZVirtualMachine, this is false
-        #expect(instance.canAttachUSBDevices == false)
-    }
-
-    @Test("canAttachUSBDevices is false when stopped")
-    func cannotAttachWhenStopped() {
-        let instance = makeInstance(status: .stopped)
-        #expect(instance.canAttachUSBDevices == false)
+    @Test(
+        "canAttachUSBDevices admits a live VM only at a settled status",
+        arguments: zip([VMStatus.running, .paused, .stopped], [true, true, false]))
+    func canAttachFollowsLiveSession(status: VMStatus, expected: Bool) {
+        let instance = makeInstance(status: status)
+        instance.hasLiveVirtualMachineOverrideForTesting = true
+        #expect(instance.canAttachUSBDevices == expected)
     }
 }

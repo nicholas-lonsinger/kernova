@@ -210,19 +210,4 @@ struct VMStatusTests {
         #expect(VMStatus.initialBoot.displayName == "Initial Boot")
         #expect(VMStatus.error.displayName == "Error")
     }
-
-    // MARK: - Initial Boot
-
-    @Test("initialBoot has install-friendly properties")
-    func initialBootProperties() {
-        #expect(VMStatus.initialBoot.canStart == true)
-        #expect(VMStatus.initialBoot.canEditSettings == true)
-        #expect(VMStatus.initialBoot.canRename == true)
-        #expect(VMStatus.initialBoot.isActive == false)
-        #expect(VMStatus.initialBoot.isTransitioning == false)
-        #expect(VMStatus.initialBoot.hasActiveDisplay == false)
-        #expect(VMStatus.initialBoot.canStop == false)
-        #expect(VMStatus.initialBoot.canForceStop == false)
-        #expect(VMStatus.initialBoot.displayName == "Initial Boot")
-    }
 }

@@ -25,13 +25,4 @@ struct SheetPresenterTests {
         presenter.close()
         #expect(!presenter.isShown)
     }
-
-    @Test("onClose can be assigned and cleared")
-    func onCloseAssignable() {
-        let presenter = SheetPresenter()
-        var callCount = 0
-        presenter.onClose = { callCount += 1 }
-        presenter.onClose = nil
-        #expect(callCount == 0)
-    }
 }

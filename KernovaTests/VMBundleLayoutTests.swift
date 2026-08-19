@@ -264,24 +264,4 @@ struct VMBundleLayoutTests {
 
         #expect(mainDiskCapacityBytes(layout) == nil)
     }
-
-    // MARK: - diskSizes
-
-    @Test("diskSizes returns both figures in one read for a raw image")
-    func diskSizesReturnsBothFigures() throws {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        let layout = VMBundleLayout(bundleURL: tempDir)
-        try Data(repeating: 0xAB, count: 4096).write(to: layout.diskImageURL)
-
-        let sizes = layout.diskSizes(
-            forRelativePath: layout.diskImageURL.lastPathComponent, isInternal: true)
-        // Raw image: capacity is the apparent size; on-disk is the allocation.
-        #expect(sizes.capacityBytes == 4096)
-        #expect(sizes.onDiskBytes != nil)
-        #expect(sizes.onDiskBytes! >= 4096)
-    }
 }

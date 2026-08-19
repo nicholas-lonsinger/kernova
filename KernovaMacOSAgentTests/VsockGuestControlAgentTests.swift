@@ -248,19 +248,26 @@ struct VsockGuestControlAgentTests {
         host.start()
         defer { host.close() }
 
-        let agent = makeAgent(agentFd: agentFd, heartbeatInterval: 0.1)
+        let notified = AtomicInt()
+        let agent = makeAgent(
+            agentFd: agentFd,
+            heartbeatInterval: 0.1,
+            onHostCapabilitiesChanged: { notified.increment() })
         defer { agent.stop() }
         agent.start()
 
         // Once the agent's outbound Hello has been sent, serve() has already
         // marked the channel connected.
         _ = try await nextFrame(from: host)
+        // The connection itself clears the previous host's capabilities.
+        try await notified.changed.wait { notified.value >= 1 }
         #expect(agent.connectionState == .connected)
         // No Hello received yet → host bundled version still unknown (empty).
         #expect(agent.hostBundledAgentVersion == "")
 
         try host.send(makeHostHelloFrame(bundledAgentVersion: "9.9.9"))
-        try await waitUntil { agent.hostBundledAgentVersion == "9.9.9" }
+        try await notified.changed.wait { notified.value >= 2 }
+        #expect(agent.hostBundledAgentVersion == "9.9.9")
         #expect(agent.connectionState == .connected)
     }
 

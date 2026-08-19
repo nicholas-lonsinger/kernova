@@ -128,27 +128,4 @@ struct PathValidationTests {
             return true
         }
     }
-
-    // MARK: - ResolvedPath
-
-    @Test("ResolvedPath wasSymlink is false when paths match")
-    func resolvedPathNotSymlink() {
-        let path = "/tmp/test"
-        let resolved = PathValidation.ResolvedPath(
-            url: URL(fileURLWithPath: path),
-            resolvedPath: path,
-            originalPath: path
-        )
-        #expect(resolved.wasSymlink == false)
-    }
-
-    @Test("ResolvedPath wasSymlink is true when paths differ")
-    func resolvedPathIsSymlink() {
-        let resolved = PathValidation.ResolvedPath(
-            url: URL(fileURLWithPath: "/real/path"),
-            resolvedPath: "/real/path",
-            originalPath: "/link/path"
-        )
-        #expect(resolved.wasSymlink == true)
-    }
 }

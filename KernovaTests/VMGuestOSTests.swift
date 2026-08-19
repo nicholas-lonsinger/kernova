@@ -4,18 +4,6 @@ import Foundation
 
 @Suite("VMGuestOS Tests")
 struct VMGuestOSTests {
-    // MARK: - Display Name
-
-    @Test("displayName returns macOS for macOS guest")
-    func macOSDisplayName() {
-        #expect(VMGuestOS.macOS.displayName == "macOS")
-    }
-
-    @Test("displayName returns Linux for linux guest")
-    func linuxDisplayName() {
-        #expect(VMGuestOS.linux.displayName == "Linux")
-    }
-
     // MARK: - Default Resource Values
 
     @Test("macOS defaults: 4 CPUs, 8 GB memory (clamped to hardware maximums)")

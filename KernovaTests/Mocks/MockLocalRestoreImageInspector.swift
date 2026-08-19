@@ -4,7 +4,6 @@ import Foundation
 
 /// Scripted stand-in for `LocalRestoreImageInspecting`.
 final class MockLocalRestoreImageInspector: LocalRestoreImageInspecting, @unchecked Sendable {
-    var inspectCallCount = 0
     var lastInspectedURL: URL?
 
     /// Thrown instead of returning, per the per-method `<method>Error` convention.
@@ -14,7 +13,6 @@ final class MockLocalRestoreImageInspector: LocalRestoreImageInspecting, @unchec
         version: "15.6.1", build: "24G90", isSupportedOnThisHost: true)
 
     func inspect(_ url: URL) async throws -> InspectedRestoreImage {
-        inspectCallCount += 1
         lastInspectedURL = url
         if let error = inspectError { throw error }
         return inspectResult
