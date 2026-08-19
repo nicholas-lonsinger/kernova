@@ -9,6 +9,10 @@ import Testing
 @Suite("VMLifecycleCoordinator Tests")
 @MainActor
 struct VMLifecycleCoordinatorTests {
+    /// The pinned catalog image the `.catalogVersion` cases install from.
+    private static let pinnedRestoreImageURL = URL(
+        string: "https://updates.cdn-apple.com/x/UniversalMac_15.6.1_24G90_Restore.ipsw")
+
     /// `downloadsDirectory` moves the coordinator's Downloads-only destination
     /// invariant to a test-owned directory, so destination tests can name paths
     /// that must be honored without touching the user's Downloads.
@@ -516,8 +520,7 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSCatalogUsesPinnedURL() async throws {
         let (coordinator, _, installService, ipswService, _) = makeCoordinator()
         let instance = makeInstance()
-        let pinned = try #require(
-            URL(string: "https://updates.cdn-apple.com/x/UniversalMac_15.6.1_24G90_Restore.ipsw"))
+        let pinned = try #require(Self.pinnedRestoreImageURL)
         let context = MacOSInstallContext(
             source: .catalogVersion,
             downloadDestinationPath: FileManager.default.temporaryDirectory
@@ -557,8 +560,7 @@ struct VMLifecycleCoordinatorTests {
     func normalizedDestinationKeepsPinnedFilename() throws {
         let (coordinator, _, _, _, _) = makeCoordinator()
         let elsewhere = URL(fileURLWithPath: "/Users/Shared/UniversalMac_15.6.1_24G90_Restore.ipsw")
-        let pinned = try #require(
-            URL(string: "https://updates.cdn-apple.com/x/UniversalMac_15.6.1_24G90_Restore.ipsw"))
+        let pinned = try #require(Self.pinnedRestoreImageURL)
 
         let normalized = coordinator.normalizedDownloadDestination(
             for: elsewhere, remoteURL: pinned)
@@ -837,10 +839,7 @@ struct VMLifecycleCoordinatorTests {
             downloadDestinationPath: temp.appendingPathComponent("important.doc")
                 .path(percentEncoded: false),
             requestedFreshDownload: true,
-            remoteURL: try #require(
-                URL(
-                    string:
-                        "https://updates.cdn-apple.com/x/UniversalMac_15.6.1_24G90_Restore.ipsw"))
+            remoteURL: Self.pinnedRestoreImageURL
         )
         instance.configuration.installContext = context
         instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
