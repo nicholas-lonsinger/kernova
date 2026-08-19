@@ -944,36 +944,6 @@ struct VMInstanceTests {
         #expect(instance.agentStatus == .waiting)
     }
 
-    // MARK: - applyLivePolicy guards
-
-    @Test("applyLivePolicy is a no-op when the VM is stopped")
-    func applyLivePolicyNoopWhenStopped() {
-        let instance = makeInstance(status: .stopped)
-        let oldConfig = instance.configuration
-        var newConfig = oldConfig
-        newConfig.agentLogForwardingEnabled = true
-
-        // No session set — applyLivePolicy must early-exit cleanly.
-        instance.applyLivePolicy(oldConfig: oldConfig, newConfig: newConfig)
-
-        #expect(instance.vsockLogListenerHost == nil)
-        #expect(instance.vsockClipboardListenerHost == nil)
-    }
-
-    @Test("applyLivePolicy is a no-op when no hot fields changed")
-    func applyLivePolicyNoopWithoutDiff() {
-        let instance = makeInstance(status: .running)
-        let config = instance.configuration
-
-        // Same on both sides — no listener changes should occur. Without a
-        // session the function exits even earlier; this asserts the
-        // guard order doesn't crash on equal inputs.
-        instance.applyLivePolicy(oldConfig: config, newConfig: config)
-
-        #expect(instance.vsockLogListenerHost == nil)
-        #expect(instance.vsockClipboardListenerHost == nil)
-    }
-
     // MARK: - Session Events
 
     @Test("a session event whose id matches no live session is dropped")

@@ -92,6 +92,15 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate, @unchec
         Self.logger.info("Listening on vsock port \(self.port, privacy: .public)")
     }
 
+    /// Removes this listener from the supplied socket device.
+    ///
+    /// VZ unbinds by port and offers no way to name the listener bound there,
+    /// so this removes whatever occupies this host's port.
+    func detach(from socketDevice: VZVirtioSocketDevice) {
+        socketDevice.removeSocketListener(forPort: port)
+        Self.logger.info("Stopped listening on vsock port \(self.port, privacy: .public)")
+    }
+
     // MARK: - VZVirtioSocketListenerDelegate
 
     // Resolve the fd (and capture errno) here, in the delegate method, so the
@@ -232,3 +241,12 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate, @unchec
     /// (8 MiB) — see `applySendBuffer` for why it is raised at all.
     private static let sendBufferBytes = ClipboardStreamTuning.dataSendBufferBytes
 }
+
+/// The queue-side install of a VM's vsock listeners, as the main actor drives
+/// it.
+protocol VsockListenerInstalling: Sendable {
+    func attach(_ hosts: [VsockListenerHost]) async
+    func detach(ports: [UInt32]) async
+}
+
+extension VMSession: VsockListenerInstalling {}

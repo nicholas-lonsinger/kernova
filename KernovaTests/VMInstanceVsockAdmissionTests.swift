@@ -260,22 +260,6 @@ struct VMInstanceVsockAdmissionTests {
         #expect(Set(ports).count == ports.count)
     }
 
-    /// A data listener outliving its session would keep admitting transfers into
-    /// a service that is gone.
-    @Test("Tearing the vsock services down withdraws the data listeners too")
-    func stopWithdrawsDataListeners() {
-        let instance = makeInstance()
-        instance.vsockClipboardDataListenerHost = VsockListenerHost(
-            port: KernovaVsockPort.clipboardData, onAcceptFd: { _ in })
-        instance.vsockDropDataListenerHost = VsockListenerHost(
-            port: KernovaVsockPort.dropData, onAcceptFd: { _ in })
-
-        instance.stopVsockServices()
-
-        #expect(instance.vsockClipboardDataListenerHost == nil)
-        #expect(instance.vsockDropDataListenerHost == nil)
-    }
-
     @Test("Tearing the vsock services down clears the gate and the data sinks")
     func stopClearsGateAndSinks() throws {
         let instance = makeInstance()
@@ -336,6 +320,11 @@ struct VMInstanceVsockAdmissionTests {
     /// published so the feature ports admit a connection.
     private func makeInstanceWithLiveSession() -> (instance: VMInstance, sessionID: UUID) {
         let instance = makeInstance()
+        // A feature listener exists only while its setting is on, and its
+        // hand-off re-reads that setting — so a fixture standing in for a bound
+        // feature port has to have them on.
+        instance.configuration.clipboardSharingEnabled = true
+        instance.configuration.agentLogForwardingEnabled = true
         let sessionID = UUID()
         instance.liveSessionIDOverrideForTesting = sessionID
         instance.vsockAdmissionGate.publish(

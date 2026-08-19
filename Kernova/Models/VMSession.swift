@@ -303,22 +303,53 @@ actor VMSession {
 
     // MARK: - Vsock Listeners
 
-    /// Installs `host`'s listener on the VM's virtio socket device.
-    func attach(_ host: VsockListenerHost) {
-        guard let device = virtioSocketDevice() else { return }
-        host.attach(to: device)
-    }
+    /// The listener hosts bound to this VM's socket device, keyed by port.
+    ///
+    /// VZ holds a `VZVirtioSocketListener`'s delegate weakly and its accept
+    /// method is `@optional`, so a listener whose host has been released stays
+    /// bound to its port with undocumented admission behavior. The session
+    /// retains each host for exactly as long as its listener is bound.
+    private var socketListenerHosts: [UInt32: VsockListenerHost] = [:]
 
-    /// Installs every listener in `hosts` in one hop.
+    /// Installs every listener in `hosts` in one hop, replacing whatever was
+    /// bound to the ports they serve.
     func attach(_ hosts: [VsockListenerHost]) {
         guard let device = virtioSocketDevice() else { return }
         for host in hosts {
+            // Store after the bind: `setSocketListener` has already replaced
+            // the prior listener, so a displaced host is never released while
+            // it is still the one bound.
             host.attach(to: device)
+            socketListenerHosts[host.port] = host
         }
     }
 
-    func removeSocketListener(port: UInt32) {
-        virtioSocketDevice()?.removeSocketListener(forPort: port)
+    /// Unbinds every port in `ports` in one hop and releases the host that
+    /// served it. A port this session never bound is skipped.
+    func detach(ports: [UInt32]) {
+        guard !ports.isEmpty, let device = virtioSocketDevice() else { return }
+        for port in ports {
+            guard let host = socketListenerHosts.removeValue(forKey: port) else { continue }
+            // `host` outlives the unbind, so the delegate is released only
+            // once the port it served is gone.
+            host.detach(from: device)
+        }
+    }
+
+    /// Unbinds every listener this session still has bound.
+    ///
+    /// Ordered fire-and-forget on the session's queue, the same contract as
+    /// ``detachNetworkAttachment()``: the queued unbind retains the session,
+    /// which retains the hosts, so releasing the session cannot leave a port
+    /// bound to a delegate that is already gone. Releasing it is not enough on
+    /// its own — the `VZVirtualMachine` outlives the session whenever the
+    /// display view is still holding it.
+    nonisolated func detachRemainingListeners() {
+        queue.async {
+            self.assumeIsolated { session in
+                session.detach(ports: Array(session.socketListenerHosts.keys))
+            }
+        }
     }
 
     private func virtioSocketDevice() -> VZVirtioSocketDevice? {
