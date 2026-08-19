@@ -477,11 +477,12 @@ struct VsockClipboardServiceTests {
     /// for an unregistered rep are ignored (the host's continuation stays parked
     /// until the test tears down or supersedes).
     ///
-    /// Off the main actor by construction (docs/TESTING.md): it answers while the
-    /// service under test holds the main thread, so main-actor isolation would
-    /// make it unanswerable exactly when a test needs an answer. `@unchecked
-    /// Sendable` — every mutable field is read and written under `lock`, and the
-    /// gates and connections it holds are thread-safe in their own right.
+    /// Off the main actor by construction (docs/TESTING.md): it answers while an
+    /// off-main pull holds the main thread, so main-actor isolation would make it
+    /// unanswerable exactly when a test needs an answer. `@unchecked Sendable` —
+    /// every mutable field is read and written under `lock`, and the gates and
+    /// connections it holds are thread-safe in their own right. `openConnection`
+    /// bounds what "while main is held" covers.
     private final class FakeGuestResponder: @unchecked Sendable {
         /// What the connection carries.
         enum Payload {
@@ -768,22 +769,20 @@ struct VsockClipboardServiceTests {
         /// Dials one transfer's data connection into the service — the guest's
         /// half of every answer — and returns the guest's end of it.
         ///
-        /// Delivered as a main **run-loop** block, not a main-queue one: a pull
-        /// holding the main thread runs a nested event loop, which drains run-loop
-        /// blocks but leaves the main queue alone when it was entered from a
-        /// main-queue callout (`performOnMainRunLoop`). A queue block would make
-        /// this double unable to answer in exactly the case it exists for. The
-        /// guest's end is writable whenever the accept lands, so nothing here
-        /// waits for it.
+        /// Queued onto the main actor exactly the way `VsockListenerHost` delivers
+        /// an accepted connection in production, so the double's timing is the
+        /// service's real timing. The guest's end is writable whenever the accept
+        /// lands, so nothing here waits for it.
+        ///
+        /// This is what bounds the claim above: the responder answers while the
+        /// main thread is held by an **off-main** pull, and by a nested wait
+        /// entered at the run loop's base — not by one entered from a main-queue
+        /// callout, whose drain the nested loop cannot re-enter. docs/TESTING.md
+        /// forbids a test from putting a waiting pull there at all.
         private func openConnection() throws -> Int32 {
             let (peerEnd, hostEnd) = try makeRawSocketPair()
             let service = self.service
-            // `CFRunLoop` is callable from any thread; the block itself runs on
-            // the main thread, which is what makes the isolation assumption hold.
-            CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
-                MainActor.assumeIsolated { service.acceptDataConnection(fd: hostEnd) }
-            }
-            CFRunLoopWakeUp(CFRunLoopGetMain())
+            MainActorBridge.async { service.acceptDataConnection(fd: hostEnd) }
             return peerEnd
         }
     }
