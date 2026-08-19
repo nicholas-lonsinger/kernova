@@ -5,7 +5,7 @@ import Testing
 
 /// Unit tests for `ClipboardProgressMenuAutoOpener` — the rules that let a
 /// materializing paste open the status-item dropdown by itself, once (#643, #652).
-@Suite("ClipboardProgressMenuAutoOpener")
+@Suite("ClipboardProgressMenuAutoOpener", .admissionGated)
 struct ClipboardProgressMenuAutoOpenerTests {
     /// A readout that clears every gate, so each test varies only what it is about.
     ///

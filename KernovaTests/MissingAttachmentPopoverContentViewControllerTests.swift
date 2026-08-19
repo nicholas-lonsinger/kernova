@@ -2,7 +2,7 @@ import Testing
 import AppKit
 @testable import Kernova
 
-@Suite("MissingAttachmentPopoverContentViewController Tests")
+@Suite("MissingAttachmentPopoverContentViewController Tests", .admissionGated)
 @MainActor
 struct MissingAttachmentPopoverContentViewControllerTests {
     @Test("loadView fits the CalloutStyle width")

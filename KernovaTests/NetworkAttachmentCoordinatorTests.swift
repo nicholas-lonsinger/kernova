@@ -3,7 +3,7 @@ import KernovaTestSupport
 import Testing
 @testable import Kernova
 
-@Suite("NetworkAttachmentCoordinator Tests")
+@Suite("NetworkAttachmentCoordinator Tests", .admissionGated)
 @MainActor
 struct NetworkAttachmentCoordinatorTests {
     private static let wiFi = BridgedInterface(identifier: "en0", localizedDisplayName: "Wi-Fi")

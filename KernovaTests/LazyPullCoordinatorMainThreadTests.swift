@@ -7,7 +7,7 @@ import Testing
 /// The main-thread branch of `LazyPullCoordinator.pull` — the wait that runs the
 /// application's event loop instead of parking. It needs a live `NSApplication`,
 /// which only this app-hosted bundle has.
-@Suite("LazyPullCoordinator on the main thread")
+@Suite("LazyPullCoordinator on the main thread", .admissionGated)
 @MainActor
 struct LazyPullCoordinatorMainThreadTests {
     // RATIONALE: 5 s, far below `testWaitBackstop`. Each test holds the real

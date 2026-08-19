@@ -4,7 +4,7 @@ import KernovaTestSupport
 
 @testable import KernovaKit
 
-@Suite("LazyPullCoordinator")
+@Suite("LazyPullCoordinator", .admissionGated)
 struct LazyPullCoordinatorTests {
     /// A `Sendable` slot to ferry a representation out of an off-actor awaiter
     /// closure.

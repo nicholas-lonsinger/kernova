@@ -2,7 +2,7 @@ import Testing
 import AppKit
 @testable import Kernova
 
-@Suite("DeleteVMSheetContentViewController Tests")
+@Suite("DeleteVMSheetContentViewController Tests", .admissionGated)
 @MainActor
 struct DeleteVMSheetContentViewControllerTests {
     @Test("header title includes the VM name")

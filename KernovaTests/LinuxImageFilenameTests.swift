@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("LinuxImageFilename Tests")
+@Suite("LinuxImageFilename Tests", .admissionGated)
 struct LinuxImageFilenameTests {
     private func url(_ text: String) throws -> URL {
         try #require(URL(string: text))

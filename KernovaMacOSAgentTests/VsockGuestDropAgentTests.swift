@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// Unit tests for the guest side of a display drop: pulling each offered file,
 /// landing it in Downloads with Finder's own naming, revealing the result, and
 /// what it reports when the drop is cancelled or cannot be written.
-@Suite("VsockGuestDropAgent")
+@Suite("VsockGuestDropAgent", .admissionGated)
 struct VsockGuestDropAgentTests {
     // MARK: - Harness
 

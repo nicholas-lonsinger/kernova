@@ -8,7 +8,7 @@ import Testing
 /// The two detectors a data connection has: the 33-byte trailer that says how a
 /// payload ended, and the reader that holds those bytes back so the payload the
 /// consumer sees ends exactly where the sender ended it.
-@Suite("ClipboardTransferTrailer and ClipboardPayloadReader")
+@Suite("ClipboardTransferTrailer and ClipboardPayloadReader", .admissionGated)
 struct ClipboardTransferTrailerTests {
     /// A well-sized trailer whose body is all zeroes, so a test can write one
     /// the encoder would never produce.

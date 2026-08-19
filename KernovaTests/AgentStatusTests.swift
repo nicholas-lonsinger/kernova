@@ -8,7 +8,7 @@ import Testing
 /// The function is
 /// extracted from `VMInstance.agentStatus` specifically to make this logic
 /// testable without standing up a `VZVirtualMachine`.
-@Suite("AgentStatus.synthesize")
+@Suite("AgentStatus.synthesize", .admissionGated)
 struct AgentStatusTests {
     // MARK: - Pass-through (no synthesis)
 

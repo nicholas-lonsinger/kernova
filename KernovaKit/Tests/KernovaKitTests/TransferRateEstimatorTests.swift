@@ -8,7 +8,7 @@ import Testing
 ///
 /// The estimator takes its sample times as arguments, so every case here is a
 /// pure calculation with no clock and no wait.
-@Suite("TransferRateEstimator")
+@Suite("TransferRateEstimator", .admissionGated)
 struct TransferRateEstimatorTests {
     @Test("one sample is not enough for a rate")
     func firstSampleEstablishesOnlyAnAnchor() {

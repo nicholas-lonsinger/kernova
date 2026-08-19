@@ -10,7 +10,7 @@ import Testing
 /// on repetitive data — so every guard and every readout that reasons about "how big is
 /// this" has to be expressed in the tree's unit, not the wire's. These are the
 /// tests that fail when one of them slips back to counting wire bytes.
-@Suite("ClipboardDirectoryAccounting")
+@Suite("ClipboardDirectoryAccounting", .admissionGated)
 struct ClipboardDirectoryAccountingTests {
     private func makeScratch() -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent(

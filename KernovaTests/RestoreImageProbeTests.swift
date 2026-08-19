@@ -5,7 +5,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("ProbedRestoreImage Tests")
+@Suite("ProbedRestoreImage Tests", .admissionGated)
 struct ProbedRestoreImageTests {
     private func host(_ major: Int, _ minor: Int, _ patch: Int) -> OperatingSystemVersion {
         OperatingSystemVersion(majorVersion: major, minorVersion: minor, patchVersion: patch)
@@ -123,7 +123,7 @@ struct ProbedRestoreImageTests {
     }
 }
 
-@Suite("LatestRestoreImage Tests")
+@Suite("LatestRestoreImage Tests", .admissionGated)
 struct LatestRestoreImageTests {
     @Test("The destination is Apple's filename for the URL the lookup returned")
     func suggestedFilename() {
@@ -140,7 +140,7 @@ struct LatestRestoreImageTests {
     }
 }
 
-@Suite("RestoreImageFilename Tests")
+@Suite("RestoreImageFilename Tests", .admissionGated)
 struct RestoreImageFilenameTests {
     @Test("A plain .ipsw filename passes through")
     func acceptsPlainFilename() {
@@ -186,7 +186,7 @@ struct RestoreImageFilenameTests {
     }
 }
 
-@Suite("MacOSVersion Tests")
+@Suite("MacOSVersion Tests", .admissionGated)
 struct MacOSVersionTests {
     @Test("What KernovaOSVersion renders is what the catalog's own version strings parse as")
     func displayStringRoundTripsThroughTheParser() {
@@ -312,7 +312,7 @@ enum PoisonedZip64Field: Sendable {
     case sizeBeyondEndOfFile
 }
 
-@Suite("RestoreImageProbeService Tests", .serialized)
+@Suite("RestoreImageProbeService Tests", .serialized, .admissionGated)
 struct RestoreImageProbeServiceTests {
     private func makeService() -> RestoreImageProbeService {
         let configuration = URLSessionConfiguration.ephemeral

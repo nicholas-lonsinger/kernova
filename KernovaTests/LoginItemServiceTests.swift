@@ -8,7 +8,7 @@ import Testing
 /// Uses an injectable `LoginItemRegistration` fake so register/unregister and
 /// status mapping are exercised without touching the real login-item database
 /// (mirrors the injectable-`UserDefaults` seam in `AppPreferences`).
-@Suite("LoginItemService")
+@Suite("LoginItemService", .admissionGated)
 struct LoginItemServiceTests {
     /// Configurable fake: records calls, optionally throws, and flips `status` to
     /// mimic `SMAppService` on a successful register/unregister.

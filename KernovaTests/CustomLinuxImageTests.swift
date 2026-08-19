@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("CustomLinuxImage Tests")
+@Suite("CustomLinuxImage Tests", .admissionGated)
 struct CustomLinuxImageTests {
     private let digest = "9866e6b13a12f8dfdda382d414ccd90da60b898beeaa80cd87e55b25fdc11a06"
 

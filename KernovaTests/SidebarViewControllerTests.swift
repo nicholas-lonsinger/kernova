@@ -12,7 +12,7 @@ import Testing
 /// drag-reorder index math, and the status-dependent context menu. Pure
 /// layout/rendering is left to manual verification, per the project's testing
 /// guidance.
-@Suite("Sidebar Tests", .serialized)
+@Suite("Sidebar Tests", .serialized, .admissionGated)
 @MainActor
 struct SidebarViewControllerTests {
     /// Isolated, pre-cleaned preferences for this suite's global state.

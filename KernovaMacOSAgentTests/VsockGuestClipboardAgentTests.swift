@@ -143,7 +143,7 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
 
 // MARK: - Test Suite
 
-@Suite("VsockGuestClipboardAgent state machine")
+@Suite("VsockGuestClipboardAgent state machine", .admissionGated)
 struct VsockGuestClipboardAgentTests {
     // MARK: - Agent factory helpers
 

@@ -10,7 +10,7 @@ import Testing
 /// what they leave behind on the instance. The session owns the listener hosts,
 /// so a port coming down and its host being released are one queue hop; these
 /// pin the ports each toggle moves and that the clipboard pair moves together.
-@Suite("VMInstance live vsock policy")
+@Suite("VMInstance live vsock policy", .admissionGated)
 @MainActor
 struct VMInstanceLiveVsockPolicyTests {
     // MARK: - Helpers

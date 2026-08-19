@@ -9,7 +9,7 @@ import Testing
 
 /// One data port's routing between the listener's accept thread and the service
 /// generation that currently owns its connections.
-@Suite("VsockDataConnectionSink")
+@Suite("VsockDataConnectionSink", .admissionGated)
 struct VsockDataConnectionSinkTests {
     private final class RecordingAcceptor: VsockDataConnectionAccepting {
         private let fds = Mutex<[Int32]>([])

@@ -8,7 +8,7 @@ import KernovaTestSupport
 // footprint to a single tombstone plist regardless of how many times the
 // suite runs; `.serialized` below keeps the two tests from racing over that
 // shared domain. See #449.
-@Suite("AppPreferences", .serialized)
+@Suite("AppPreferences", .serialized, .admissionGated)
 struct AppPreferencesTests {
     private static let suiteName = "test.kernova.appprefs"
 

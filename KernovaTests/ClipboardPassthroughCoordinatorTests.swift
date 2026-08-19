@@ -14,7 +14,7 @@ import Testing
 /// `ClipboardServicing` so the assertions are deterministic: the poll's outbound
 /// grab is recorded, and the inbound publish's write lands on the private
 /// pasteboard.
-@Suite("ClipboardPassthroughCoordinator")
+@Suite("ClipboardPassthroughCoordinator", .admissionGated)
 @MainActor
 struct ClipboardPassthroughCoordinatorTests {
     /// In-memory `ClipboardServicing` for the coordinator: records outbound grabs

@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import Kernova
 
-@Suite("SpiceAgentProtocol Tests")
+@Suite("SpiceAgentProtocol Tests", .admissionGated)
 struct SpiceAgentProtocolTests {
     // MARK: - VDI Chunk Header
 

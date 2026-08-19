@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("ScrollMoreIndicator Tests")
+@Suite("ScrollMoreIndicator Tests", .admissionGated)
 @MainActor
 struct ScrollMoreIndicatorTests {
     private static let viewportHeight: CGFloat = 200

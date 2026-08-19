@@ -3,7 +3,7 @@ import Foundation
 import KernovaKit
 @testable import Kernova
 
-@Suite("SpiceClipboardService Tests")
+@Suite("SpiceClipboardService Tests", .admissionGated)
 @MainActor
 struct SpiceClipboardServiceTests {
     // MARK: - Helpers

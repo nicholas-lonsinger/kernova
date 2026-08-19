@@ -4,7 +4,7 @@ import Foundation
 import Virtualization
 @testable import Kernova
 
-@Suite("VMLibraryViewModel Tests", .serialized)
+@Suite("VMLibraryViewModel Tests", .serialized, .admissionGated)
 @MainActor
 struct VMLibraryViewModelTests {
     private let presenter = MockVMLibraryPresenting()

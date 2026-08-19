@@ -5,7 +5,7 @@ import Testing
 
 /// Exercises the pure `ClipboardPasteboardItemPlan.plan(for:)` grouping shared by
 /// the host "Copy to Mac" path and the guest inbound-paste path.
-@Suite("ClipboardPasteboardItemPlan.plan")
+@Suite("ClipboardPasteboardItemPlan.plan", .admissionGated)
 struct ClipboardPasteboardItemPlanTests {
     private func inline(_ uti: String) -> ClipboardRepresentationDescriptor {
         ClipboardRepresentationDescriptor(uti: uti, filename: "", isInline: true, isPromisable: true)

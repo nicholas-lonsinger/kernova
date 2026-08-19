@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import Kernova
 
-@Suite("VMConfiguration Clone Tests")
+@Suite("VMConfiguration Clone Tests", .admissionGated)
 struct VMConfigurationCloneTests {
     private func makeConfig(
         name: String = "My VM",

@@ -1,7 +1,7 @@
 import Testing
 @testable import Kernova
 
-@Suite("DetailRoute Tests")
+@Suite("DetailRoute Tests", .admissionGated)
 struct DetailRouteTests {
     // MARK: - Preparing wins over everything
 

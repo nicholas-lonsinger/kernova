@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("SerialLogWriter")
+@Suite("SerialLogWriter", .admissionGated)
 struct SerialLogWriterTests {
     private func makeTempDir() throws -> URL {
         let tempDir = FileManager.default.temporaryDirectory

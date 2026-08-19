@@ -71,7 +71,7 @@ private func makeClipboardInstance(passthroughEnabled: Bool = false) -> VMInstan
 /// than `.general`, and to an injected fresh registry, so the test exercises the
 /// real write/promise path without touching the developer's clipboard or
 /// leaking state across tests.
-@Suite("ClipboardContentViewController Copy-to-Mac retention")
+@Suite("ClipboardContentViewController Copy-to-Mac retention", .admissionGated)
 @MainActor
 struct ClipboardContentViewControllerRetentionTests {
     /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
@@ -188,7 +188,7 @@ struct ClipboardContentViewControllerRetentionTests {
 /// Verifies the editor commit path (#394): per-keystroke work is hash-free and
 /// the buffer is committed off-actor on a debounce, while blur/copy/close flush a
 /// still-pending edit and an external update cancels a superseded one.
-@Suite("ClipboardContentViewController editor commit")
+@Suite("ClipboardContentViewController editor commit", .admissionGated)
 @MainActor
 struct ClipboardContentViewControllerEditTests {
     /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
@@ -369,7 +369,7 @@ struct ClipboardContentViewControllerEditTests {
 /// responder-chain `paste:`/`copy:` equivalents — are withdrawn while automatic
 /// passthrough is on, both at window-open time and live as the toggle changes,
 /// and restored when it's turned back off.
-@Suite("ClipboardContentViewController passthrough chrome")
+@Suite("ClipboardContentViewController passthrough chrome", .admissionGated)
 @MainActor
 struct ClipboardContentViewControllerPassthroughChromeTests {
     /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
@@ -547,7 +547,7 @@ private final class CopyOutcomeLatch {
 /// The refused cases are the point: a refusal the user can't read is the same
 /// as no refusal at all, and a mixed offer that drops its files must not lead
 /// with an unqualified success.
-@Suite("ClipboardContentViewController copy-outcome messages")
+@Suite("ClipboardContentViewController copy-outcome messages", .admissionGated)
 @MainActor
 struct ClipboardContentViewControllerCopyOutcomeTests {
     /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.

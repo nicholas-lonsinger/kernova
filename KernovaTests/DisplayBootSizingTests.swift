@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("DisplayBootSizing Tests")
+@Suite("DisplayBootSizing Tests", .admissionGated)
 struct DisplayBootSizingTests {
     // MARK: - Fitting a surface
 

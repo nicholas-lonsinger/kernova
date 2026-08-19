@@ -13,7 +13,19 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: macos-26
-    timeout-minutes: 15
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        # SPIKE (test admission gate): the two arms of the A/B measurement.
+        # "0" is pass-through — today's behavior, every test in flight at once.
+        # "16" bounds the in-flight set per test-host process. Same binary in
+        # both arms; only the resolved width differs.
+        admission_width: ["0", "16"]
+    name: build-and-test (admission width ${{ matrix.admission_width }})
+    env:
+      KERNOVA_TEST_ADMISSION_WIDTH: ${{ matrix.admission_width }}
+      TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH: ${{ matrix.admission_width }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -55,6 +67,21 @@ jobs:
             COMPILER_INDEX_STORE_ENABLE=NO \
             2>&1 | if command -v xcbeautify &>/dev/null; then xcbeautify --renderer github-actions; else cat; fi
 
+      # SPIKE: the test host does not inherit this shell's environment, and the
+      # app-hosted bundle is sandboxed, so the width is also dropped where each
+      # host can read it: the sandboxed host's container, the unhosted bundles'
+      # real home, and /tmp. TestAdmission logs which source won.
+      - name: Publish admission width
+        run: |
+          width="${KERNOVA_TEST_ADMISSION_WIDTH}"
+          name="kernova-test-admission-width"
+          container="$HOME/Library/Containers/app.kernova/Data"
+          mkdir -p "$container"
+          for path in "/tmp/$name" "$HOME/$name" "$container/$name"; do
+            printf '%s\n' "$width" > "$path" || echo "could not write $path"
+          done
+          ls -l "/tmp/$name" "$HOME/$name" "$container/$name" || true
+
       - name: Test without building
         run: |
           set -o pipefail
@@ -68,6 +95,16 @@ jobs:
             -skipPackagePluginValidation \
             COMPILER_INDEX_STORE_ENABLE=NO \
             2>&1 | if command -v xcbeautify &>/dev/null; then xcbeautify --renderer github-actions; else cat; fi
+
+      # SPIKE: `Logger` writes to the unified log, not to the test host's
+      # stdout, so the arm's one-line self-report is only visible here. Each
+      # test-host process emits exactly one line, so this also counts the hosts.
+      - name: Report admission arm
+        if: always()
+        run: |
+          log show \
+            --predicate 'subsystem == "app.kernova" AND category == "TestAdmission"' \
+            --last 45m --style compact || echo "log show unavailable"
 
       # Kernova.xctestplan runs with retryOnFailure (maximumTestRepetitions: 2):
       # it re-runs the whole bundle and lets a test that failed its first attempt
@@ -123,11 +160,82 @@ jobs:
             echo "- \`${name}\`" >> "$GITHUB_STEP_SUMMARY" || true
           done <<< "$flaky"
 
+      # SPIKE: the per-arm distribution the experiment is measuring. Reads the
+      # result bundle rather than the xcbeautify stream, which reports no
+      # per-test duration under the github-actions renderer.
+      - name: Test duration stats
+        if: always()
+        run: |
+          bundle="artifacts/TestResults.xcresult"
+          [ -d "$bundle" ] || { echo "No result bundle — skipping duration stats."; exit 0; }
+          xcrun xcresulttool get test-results tests --path "$bundle" > /tmp/test-results.json 2>/dev/null \
+            || { echo "Could not export test results."; exit 0; }
+          python3 - <<'PY'
+          import json
+          import re
+
+          with open("/tmp/test-results.json") as handle:
+              doc = json.load(handle)
+
+
+          def seconds(text):
+              total = 0.0
+              found = False
+              for value, unit in re.findall(r"([0-9]*\.?[0-9]+)\s*(ms|m|s)", text):
+                  found = True
+                  scale = {"ms": 0.001, "s": 1.0, "m": 60.0}[unit]
+                  total += float(value) * scale
+              return total if found else None
+
+
+          cases = []
+          stack = list(doc.get("testNodes", []))
+          while stack:
+              node = stack.pop()
+              if isinstance(node, dict):
+                  if node.get("nodeType") == "Test Case":
+                      duration = seconds(str(node.get("duration", "")))
+                      if duration is not None:
+                          cases.append((duration, node.get("nodeIdentifier") or node.get("name"), node.get("result")))
+                  stack.extend(node.get("children", []) or [])
+
+          if not cases:
+              print("No per-test durations in the result bundle.")
+              raise SystemExit(0)
+
+          durations = sorted(d for d, _, _ in cases)
+          count = len(durations)
+
+
+          def quantile(fraction):
+              index = min(count - 1, max(0, int(round(fraction * (count - 1)))))
+              return durations[index]
+
+
+          results = {}
+          for _, _, result in cases:
+              results[result] = results.get(result, 0) + 1
+
+          print(f"ADMISSION-STATS cases={count} results={results}")
+          print(f"ADMISSION-STATS total_test_seconds={sum(durations):.1f}")
+          print(
+              "ADMISSION-STATS "
+              f"median={quantile(0.5):.3f} p90={quantile(0.90):.3f} "
+              f"p95={quantile(0.95):.3f} p99={quantile(0.99):.3f} max={durations[-1]:.3f}"
+          )
+          for threshold in (1, 5, 10, 30, 55):
+              over = sum(1 for d in durations if d >= threshold)
+              print(f"ADMISSION-STATS over_{threshold}s={over}")
+          print("ADMISSION-STATS slowest:")
+          for duration, name, result in sorted(cases, key=lambda case: -case[0])[:15]:
+              print(f"ADMISSION-SLOW {duration:9.3f}  {result}  {name}")
+          PY
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: test-results
+          name: test-results-width-${{ matrix.admission_width }}
           # RATIONALE: upload the PARENT dir, not the `.xcresult` bundle directly.
           # upload-artifact roots the archive at the lowest common ancestor of the
           # matched files, so pointing it at the bundle drops the `.xcresult`

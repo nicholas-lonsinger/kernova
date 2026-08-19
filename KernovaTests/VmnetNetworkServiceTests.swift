@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VmnetNetworkService Tests")
+@Suite("VmnetNetworkService Tests", .admissionGated)
 struct VmnetNetworkServiceTests {
     // MARK: - Helpers
 

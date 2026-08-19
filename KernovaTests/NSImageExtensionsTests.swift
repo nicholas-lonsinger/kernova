@@ -2,7 +2,7 @@ import Testing
 import Cocoa
 @testable import Kernova
 
-@Suite("NSImage.systemSymbol Tests")
+@Suite("NSImage.systemSymbol Tests", .admissionGated)
 struct NSImageExtensionsTests {
     @Test("Returns a valid image for a known system symbol")
     func knownSymbol() {

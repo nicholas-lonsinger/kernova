@@ -1,7 +1,7 @@
 import KernovaKit
 import Testing
 
-@Suite("AgentMenuText")
+@Suite("AgentMenuText", .admissionGated)
 struct AgentMenuTextTests {
     // MARK: - updateAvailableLine
 

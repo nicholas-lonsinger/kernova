@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import Kernova
 
-@Suite("VMInstance Recovery Eligibility")
+@Suite("VMInstance Recovery Eligibility", .admissionGated)
 @MainActor
 struct VMInstanceRecoveryEligibilityTests {
     private func makeInstance(status: VMStatus, guestOS: VMGuestOS) -> VMInstance {

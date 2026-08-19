@@ -9,7 +9,7 @@ import Testing
 /// `VMInstance.makeControlService(for:)` wires the hooks the accept path
 /// installs, so an agent that disappears mid-session escalates past
 /// `.connecting` instead of spinning there for the rest of the session.
-@Suite("VMInstance agent reconnect escalation")
+@Suite("VMInstance agent reconnect escalation", .admissionGated)
 @MainActor
 struct VMInstanceAgentReconnectTests {
     // MARK: - Helpers

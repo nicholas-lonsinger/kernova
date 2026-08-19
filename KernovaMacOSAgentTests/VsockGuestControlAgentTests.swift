@@ -4,7 +4,7 @@ import Darwin
 import KernovaKit
 import KernovaTestSupport
 
-@Suite("VsockGuestControlAgent")
+@Suite("VsockGuestControlAgent", .admissionGated)
 struct VsockGuestControlAgentTests {
     // MARK: - Helpers
 

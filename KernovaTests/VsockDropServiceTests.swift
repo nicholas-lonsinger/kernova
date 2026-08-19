@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
 /// Unit tests for the host side of dragging files onto the VM display: the offer
 /// it announces, the bytes it streams when the guest pulls, and what it reports
 /// when a drop is cancelled or the guest cannot finish it.
-@Suite("VsockDropService")
+@Suite("VsockDropService", .admissionGated)
 @MainActor
 struct VsockDropServiceTests {
     // MARK: - Harness

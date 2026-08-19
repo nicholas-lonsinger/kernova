@@ -6,7 +6,7 @@ import Foundation
 /// The detail pane across the library's empty-until-read interval. The app now
 /// presents its window before the library has been read, so the pane has to
 /// distinguish "no VMs" from "no VMs *yet*".
-@Suite("DetailContainer library-load state", .serialized)
+@Suite("DetailContainer library-load state", .serialized, .admissionGated)
 @MainActor
 struct DetailContainerLibraryLoadTests {
     private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.detail-load")

@@ -2,7 +2,7 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("ClipboardPasteLimit")
+@Suite("ClipboardPasteLimit", .admissionGated)
 struct ClipboardPasteLimitTests {
     /// Binary multiplier for each unit the display renderer can pick.
     private static let multipliers: [String: Double] = [

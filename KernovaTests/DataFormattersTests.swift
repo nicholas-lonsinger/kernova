@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import Kernova
 
-@Suite("DataFormatters Tests")
+@Suite("DataFormatters Tests", .admissionGated)
 struct DataFormattersTests {
     // MARK: - formatBytes
 

@@ -1,7 +1,7 @@
 import Testing
 @testable import Kernova
 
-@Suite("VMStatus Tests")
+@Suite("VMStatus Tests", .admissionGated)
 struct VMStatusTests {
     // MARK: - State Checks
 

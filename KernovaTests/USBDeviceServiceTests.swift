@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import Kernova
 
-@Suite("USBDeviceService Tests")
+@Suite("USBDeviceService Tests", .admissionGated)
 @MainActor
 struct USBDeviceServiceTests {
     private func makeInstance(status: VMStatus = .running) -> VMInstance {

@@ -5,7 +5,7 @@ import Testing
 @testable import KernovaKit
 
 /// The sender's own stage timings, over a real data connection.
-@Suite("ClipboardOutboundMetrics")
+@Suite("ClipboardOutboundMetrics", .admissionGated)
 struct ClipboardOutboundMetricsTests {
     /// How far a check on the sender's own thread moves the test clock, in the
     /// case that measures where a transfer's seconds are charged.

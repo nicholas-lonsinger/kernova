@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMDisplayBackingView Tests")
+@Suite("VMDisplayBackingView Tests", .admissionGated)
 @MainActor
 struct VMDisplayBackingViewTests {
     @Test("update carries automaticallyReconfiguresDisplay through to the machine view")
