@@ -515,7 +515,9 @@ public final class ClipboardInboundOffers {
     ///
     /// Safe to call on the main thread: the receiver resolves the pull off-main,
     /// and on the main run loop's base the wait runs the event loop rather than
-    /// parking (`LazyPullCoordinator`).
+    /// parking. Where that wait is unavailable — a tracking or modal loop owns
+    /// the events — the main thread is refused rather than parked, and nothing
+    /// is served (`LazyPullCoordinator`).
     nonisolated public func pull(
         generation: UInt64, repIndex: Int, operation: ClipboardTransferOperation
     ) -> LazyPullOutcome {
@@ -535,7 +537,9 @@ public final class ClipboardInboundOffers {
     /// Serves the pasteboard `.fileURL` for a promised representation at paste
     /// time: the materialization cache first, else a deadline-bound pull.
     ///
-    /// Safe to call on the main thread even though it blocks.
+    /// Safe to call on the main thread even though it blocks; where the
+    /// event-loop wait is unavailable there it serves nothing rather than
+    /// parking (`LazyPullCoordinator`).
     nonisolated public func serveFileURL(generation: UInt64, repIndex: Int) -> URL? {
         let plan: PullPlan
         switch MainActorBridge.sync({
@@ -558,7 +562,9 @@ public final class ClipboardInboundOffers {
     /// Inline representations are exempt from the paste-budget cap — Kernova
     /// imposes no size cap on inline content (docs/CLIPBOARD.md §1).
     ///
-    /// Safe to call on the main thread even though it blocks.
+    /// Safe to call on the main thread even though it blocks; where the
+    /// event-loop wait is unavailable there it serves nothing rather than
+    /// parking (`LazyPullCoordinator`).
     nonisolated public func serveData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
         let plan: PullPlan
         switch MainActorBridge.sync({

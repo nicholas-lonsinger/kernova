@@ -541,6 +541,7 @@ struct VsockClipboardServiceTests {
         private var recordedRequests: [Kernova_V1_ClipboardRequest] = []
         private var replyReleased = false
         private var holdsTrailer = false
+        private var isCancelled = false
 
         /// Fires after each request is answered; await it to observe progress.
         let answered = AsyncGate()
@@ -665,7 +666,15 @@ struct VsockClipboardServiceTests {
                     // Channel closed — stop answering.
                 }
             }
-            lock.withLock { consumeTask = task }
+            // A `cancel()` that landed between creating the task and taking the
+            // lock has already run; storing the task then would leave a responder
+            // answering after teardown, so honour the flag instead of keeping it.
+            let alreadyCancelled = lock.withLock { () -> Bool in
+                guard !isCancelled else { return true }
+                consumeTask = task
+                return false
+            }
+            if alreadyCancelled { task.cancel() }
         }
 
         /// Records one arrived request and returns the reply registered for it,
@@ -685,6 +694,7 @@ struct VsockClipboardServiceTests {
         /// a `defer`, which cannot `await` (docs/TESTING.md).
         func cancel() {
             let (task, held) = lock.withLock { () -> (Task<Void, Never>?, [ParkedDataConnection]) in
+                isCancelled = true
                 let task = consumeTask
                 consumeTask = nil
                 let held = parked.values.map(\.connection)
@@ -758,13 +768,22 @@ struct VsockClipboardServiceTests {
         /// Dials one transfer's data connection into the service — the guest's
         /// half of every answer — and returns the guest's end of it.
         ///
-        /// The accept is queued onto the main actor the way the VZ listener
-        /// delivers a connection in production; the guest's end is writable
-        /// whenever that lands, so nothing here waits for it.
+        /// Delivered as a main **run-loop** block, not a main-queue one: a pull
+        /// holding the main thread runs a nested event loop, which drains run-loop
+        /// blocks but leaves the main queue alone when it was entered from a
+        /// main-queue callout (`performOnMainRunLoop`). A queue block would make
+        /// this double unable to answer in exactly the case it exists for. The
+        /// guest's end is writable whenever the accept lands, so nothing here
+        /// waits for it.
         private func openConnection() throws -> Int32 {
             let (peerEnd, hostEnd) = try makeRawSocketPair()
             let service = self.service
-            MainActorBridge.async { service.acceptDataConnection(fd: hostEnd) }
+            // `CFRunLoop` is callable from any thread; the block itself runs on
+            // the main thread, which is what makes the isolation assumption hold.
+            CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
+                MainActor.assumeIsolated { service.acceptDataConnection(fd: hostEnd) }
+            }
+            CFRunLoopWakeUp(CFRunLoopGetMain())
             return peerEnd
         }
     }
