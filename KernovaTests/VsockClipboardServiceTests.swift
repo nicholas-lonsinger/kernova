@@ -2363,7 +2363,11 @@ struct VsockClipboardServiceTests {
         #expect(reports.snapshot?.isCancellable == false)
 
         // Releasing the trailer resolves the pull; the terminal clears the readout (§13:
-        // never leave a stuck bar).
+        // never leave a stuck bar). Gated on the responder having parked the
+        // transfer: `releaseTrailer()` reads its `parked` map at call time, and
+        // the readout above is published before the request is even sent, so it
+        // is no evidence the entry exists yet.
+        try await responder.answered.wait { responder.requests.count == 1 }
         responder.releaseTrailer()
         let url = await pull.value
         #expect(url != nil)
@@ -2414,6 +2418,14 @@ struct VsockClipboardServiceTests {
         // Wait until the paste's transfer is live (its progress revealed), then
         // trigger the preview into the parked pull.
         try await reports.wait { reports.snapshot?.direction == .inbound }
+        // …and until the responder has actually parked it. `releaseTrailer()`
+        // reads the responder's `parked` map at call time, so a release issued
+        // before `serve` stored the entry is silently lost and the pull runs to
+        // its backstop. The readout above cannot stand in for that: it is
+        // published host-side at `unitBegan`, before the request is even sent.
+        // Gate on the responder's own signal, as
+        // `concurrentPreviewTriggersSendOneRequest` does.
+        try await responder.answered.wait { responder.requests.count == 1 }
         let preview = Task { await service.materializeForPreview() }
         // RATIONALE: sanctioned no-signal poll (docs/TESTING.md "Async waits in
         // tests") — the waiter count is NSLock-guarded SUT state, not
@@ -3713,10 +3725,20 @@ struct VsockClipboardServiceTests {
         // Reaching rep 1 and finding it already pulled, the preview begins no
         // transfer for it, so its readout lands on the bytes it actually moved —
         // at 100%, rather than stalling for the rest of the operation.
-        try await reports.wait { !reports.finalSnapshots.isEmpty }
-        let final = try #require(reports.finalSnapshots.last)
+        //
+        // Two operations finish here — the paste's own and the preview's — and
+        // their terminals are queued from different threads, so position
+        // identifies neither. The denominator does: only the preview's readout
+        // counts rep 0's bytes, which is what this asserted all along.
+        let previewBytes = UInt64(text.utf8.count)
+        try await reports.wait {
+            reports.finalSnapshots.contains { $0.totalBytes == previewBytes }
+        }
+        let final = try #require(
+            reports.finalSnapshots.last(where: { $0.totalBytes == previewBytes }),
+            "No finished readout carried the preview's denominator; saw \(reports.finalSnapshots.map(\.totalBytes))"
+        )
         #expect(final.fractionComplete == 1)
-        #expect(final.totalBytes == UInt64(text.utf8.count))
         #expect(final.fileCount == 1)
     }
 
