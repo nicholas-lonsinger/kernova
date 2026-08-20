@@ -1766,7 +1766,15 @@ struct VsockClipboardServiceTests {
             makeOfferFrame(
                 generation: 3,
                 reps: [RepInfo(uti: "public.data", byteCount: 32, filename: "c.bin", isInline: false)]))
-        try await reports.wait { reports.failure == nil }
+        // Gate on gen=3 being published, which `handleOffer` does *after* it has
+        // decided whether to retract — so the pasteboard reads below are ordered
+        // behind that decision. Waiting for the absence of a failure instead
+        // resolves on the report `handleOffer` clears on the way in, which is
+        // ahead of the decision rather than behind it.
+        try await waitForChange {
+            service.clipboardContent.representations.first?.filename == "c.bin"
+        }
+        #expect(reports.failure == nil)
         #expect(pasteboard.changeCount == countBefore)
         #expect(pasteboard.string(forType: .string) == "mine")
     }
@@ -3767,12 +3775,11 @@ struct VsockClipboardServiceTests {
         // here, and which of their terminals the shared reporter publishes is
         // decided by the order they end in. `ClipboardTransferOperationTests`
         // owns what a declared unit does to the bar.
-        let requestedIDs = responder.requests.map(\.transferID).sorted()
-        #expect(
-            requestedIDs == [
-                inboundTransferID(generation: 7, repIndex: 0),
-                inboundTransferID(generation: 7, repIndex: 1),
-            ].sorted())
+        let expectedIDs = [
+            inboundTransferID(generation: 7, repIndex: 0),
+            inboundTransferID(generation: 7, repIndex: 1),
+        ].sorted()
+        #expect(responder.requests.map(\.transferID).sorted() == expectedIDs)
         #expect(service.clipboardContent.text == text)
 
         // Serving rep 1 again adds no request either — the cache the preview

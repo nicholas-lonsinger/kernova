@@ -69,8 +69,25 @@ struct BoundedWorkQueueTests {
         for _ in 0..<jobCount { release.signal() }
         try await tally.gate.wait { tally.finishedCount == jobCount }
         #expect(tally.concurrentPeak == width)
-        #expect(queue.runningCountForTesting == 0)
+
+        // Every slot the first wave held came back. Read that from the queue
+        // admitting a second wave, never from the tally: a job's `ended()` runs
+        // *inside* the job, and the worker gives its slot back only after the
+        // job returns — so `finishedCount == jobCount` is true while the queue
+        // may still count the last one running. `width` fresh jobs all running
+        // at once is only possible once every slot is free.
+        let second = DispatchSemaphore(value: 0)
+        for _ in 0..<width {
+            queue.submit {
+                tally.began()
+                second.wait()
+                tally.ended()
+            }
+        }
+        try await tally.gate.wait { tally.runningNow == width }
         #expect(queue.waitingCountForTesting == 0)
+        for _ in 0..<width { second.signal() }
+        try await tally.gate.wait { tally.finishedCount == jobCount + width }
     }
 
     @Test("jobs that never fill the width all run at once")
