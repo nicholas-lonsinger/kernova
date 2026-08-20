@@ -42,7 +42,7 @@ private let fedoraManifest = """
     -----END PGP SIGNATURE-----
     """
 
-@Suite("ChecksumManifest Tests")
+@Suite("ChecksumManifest Tests", .admissionGated)
 struct ChecksumManifestTests {
     @Test("GNU binary mode reads the filename past its asterisk")
     func parsesUbuntuBinaryMode() {
@@ -120,7 +120,7 @@ struct ChecksumManifestTests {
     }
 }
 
-@Suite("ISOFilenameGlob Tests")
+@Suite("ISOFilenameGlob Tests", .admissionGated)
 struct ISOFilenameGlobTests {
     private func glob(_ pattern: String) throws -> ISOFilenameGlob {
         try #require(ISOFilenameGlob(pattern))
@@ -218,7 +218,7 @@ struct ISOFilenameGlobTests {
     }
 }
 
-@Suite("SafeFilename Tests")
+@Suite("SafeFilename Tests", .admissionGated)
 struct SafeFilenameTests {
     @Test("One visible component with the required extension passes through")
     func acceptsPlainFilename() {
@@ -337,7 +337,7 @@ final class ResolveStubURLProtocol: URLProtocol, @unchecked Sendable {
     override func stopLoading() {}
 }
 
-@Suite("LinuxImageResolveService Tests", .serialized)
+@Suite("LinuxImageResolveService Tests", .serialized, .admissionGated)
 struct LinuxImageResolveServiceTests {
     private func makeService() -> LinuxImageResolveService {
         let configuration = URLSessionConfiguration.ephemeral

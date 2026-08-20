@@ -4,7 +4,7 @@ import Darwin
 import KernovaTestSupport
 @testable import KernovaKit
 
-@Suite("VsockChannel")
+@Suite("VsockChannel", .admissionGated)
 struct VsockChannelTests {
     // MARK: - Helpers
 

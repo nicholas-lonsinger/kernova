@@ -7,7 +7,14 @@ import Testing
 /// The main-thread branch of `LazyPullCoordinator.pull` — the wait that runs the
 /// application's event loop instead of parking. It needs a live `NSApplication`,
 /// which only this app-hosted bundle has.
-@Suite("LazyPullCoordinator on the main thread")
+///
+/// `.serialized` because `offThreadDeliverWakesPull` stretches
+/// `NestedEventLoopWait.sliceSecondsForTesting`, which is process-wide: run
+/// concurrently, it hands `nestedWaitsBothResolve` a 5 s re-check slice, and a
+/// 5 s slice is exactly the stranding that test asserts against. Observed
+/// 2026-08-20 (run 32341761480): all four cases reported the same 15.58 s and
+/// two of them failed.
+@Suite("LazyPullCoordinator on the main thread", .serialized, .admissionGated)
 @MainActor
 struct LazyPullCoordinatorMainThreadTests {
     // RATIONALE: 5 s, far below `testWaitBackstop`. Each test holds the real
@@ -82,8 +89,11 @@ struct LazyPullCoordinatorMainThreadTests {
         }
         #expect(rep.inMemoryData == Data("outer".utf8))
         #expect(innerResolved.value)
-        // Both resolved well under the 5 s window rather than blocking to it.
-        #expect(clock.now - started < .seconds(2))
+        // Both resolved rather than blocking to the 5 s window. The bound sits
+        // just under it: stranding takes the whole window, the per-slice
+        // re-check returns in ~0.1 s, and every second between the two is
+        // jitter tolerance rather than a sharper assertion.
+        #expect(clock.now - started < .seconds(4))
     }
 
     @Test("a resolve from another thread breaks the wait at once, not at the next slice")
@@ -94,15 +104,30 @@ struct LazyPullCoordinatorMainThreadTests {
         // Stretch the re-check slice to the whole window: without the wake the
         // loop still returns `.delivered`, but only once a slice elapses, so the
         // duration is the assertion — the deadline itself (docs/TESTING.md), and
-        // the 2 s bound leaves the ms-scale wake room under scheduling jitter.
+        // the 4 s bound leaves the ms-scale wake room under scheduling jitter.
         NestedEventLoopWait.sliceSecondsForTesting = Self.window
         defer { NestedEventLoopWait.sliceSecondsForTesting = nil }
-        let started = clock.now
 
+        // The delivering thread is created and scheduled *before* the clock
+        // starts: spawning a thread is the jitter-prone part of this, and inside
+        // the measured window a starved runner's thread-creation latency is
+        // timed as if it were wake latency. It parks on `release` — a semaphore,
+        // so the signal cannot be missed however the two are ordered — and the
+        // pull's `start:` closure below opens it once the slot is registered.
+        let running = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        Thread {
+            running.signal()
+            release.wait()
+            coordinator.deliver(9, rep)
+        }.start()
+        #expect(running.wait(timeout: .now() + Self.window) == .success)
+
+        let started = clock.now
         let outcome = coordinator.pull(transferID: 9, timeout: Self.window, retire: {}) {
             // Runs on this thread once the slot is registered, so the deliver
-            // below cannot be missed.
-            Thread { coordinator.deliver(9, rep) }.start()
+            // it releases cannot be missed.
+            release.signal()
         }
 
         guard case .delivered(let delivered) = outcome else {
@@ -110,6 +135,6 @@ struct LazyPullCoordinatorMainThreadTests {
             return
         }
         #expect(delivered.inMemoryData == Data("woken".utf8))
-        #expect(clock.now - started < .seconds(2))
+        #expect(clock.now - started < .seconds(4))
     }
 }

@@ -143,7 +143,7 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
 
 // MARK: - Test Suite
 
-@Suite("VsockGuestClipboardAgent state machine")
+@Suite("VsockGuestClipboardAgent state machine", .admissionGated)
 struct VsockGuestClipboardAgentTests {
     // RATIONALE: every `…ForTesting` lifecycle poll in this suite is the
     // sanctioned no-signal kind (docs/TESTING.md "Async waits in tests") —

@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("ResourceConfigContentViewController Tests")
+@Suite("ResourceConfigContentViewController Tests", .admissionGated)
 @MainActor
 struct ResourceConfigContentViewControllerTests {
     @Test("Name field writes back to the model on edit")

@@ -10,7 +10,7 @@ import AppKit
 /// `xcodebuild test` headless execution. Manual verification of presentation
 /// timing belongs to integration testing of the call sites in the detail
 /// pane.
-@Suite("PopoverPresenter Tests")
+@Suite("PopoverPresenter Tests", .admissionGated)
 @MainActor
 struct PopoverPresenterTests {
     @Test("isShown is false before show")

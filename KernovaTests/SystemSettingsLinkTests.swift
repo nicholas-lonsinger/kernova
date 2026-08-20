@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("SystemSettingsLink Tests")
+@Suite("SystemSettingsLink Tests", .admissionGated)
 @MainActor
 struct SystemSettingsLinkTests {
     private let anchored = "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"

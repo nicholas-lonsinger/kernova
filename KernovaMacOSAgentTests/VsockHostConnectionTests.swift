@@ -7,7 +7,7 @@ import KernovaTestSupport
 /// Tests that seed the ring directly call `bufferFrameUnlessDisabled` on a
 /// fresh connection, whose policy is `.undecided` — the state that buffers, so
 /// they run through the in-lock policy re-check on its appending branch.
-@Suite("VsockHostConnection log buffer")
+@Suite("VsockHostConnection log buffer", .admissionGated)
 struct VsockHostConnectionTests {
     // MARK: - Buffer helpers
 

@@ -7,7 +7,7 @@ import KernovaTestSupport
 import UniformTypeIdentifiers
 @testable import Kernova
 
-@Suite("VsockClipboardService")
+@Suite("VsockClipboardService", .admissionGated)
 @MainActor
 struct VsockClipboardServiceTests {
     // MARK: - Helpers

@@ -2,7 +2,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("BridgedInterfaceSelection Tests")
+@Suite("BridgedInterfaceSelection Tests", .admissionGated)
 struct BridgedInterfaceSelectionTests {
     @Test("A persisted interface that is still available wins over the primary one")
     func persistedAvailableWins() {

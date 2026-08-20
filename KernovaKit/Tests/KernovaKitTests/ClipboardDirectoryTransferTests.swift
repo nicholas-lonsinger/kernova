@@ -6,7 +6,7 @@ import Testing
 
 /// A folder crossing the real sender and receiver over one data connection, with
 /// no archive file at either end.
-@Suite("ClipboardDirectoryTransfer")
+@Suite("ClipboardDirectoryTransfer", .admissionGated)
 struct ClipboardDirectoryTransferTests {
     private func makeScratch() -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent(

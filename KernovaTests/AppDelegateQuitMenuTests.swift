@@ -5,7 +5,7 @@ import Testing
 /// Unit tests for `AppDelegate.appMenuQuitItems(isTestHost:keepInMenuBar:)` — the
 /// pure helper that decides the app menu's quit section so every mode presents an
 /// *honest* command (#624).
-@Suite("AppDelegate.appMenuQuitItems")
+@Suite("AppDelegate.appMenuQuitItems", .admissionGated)
 struct AppDelegateQuitMenuTests {
     /// The single-item presentation shared by the test host and the resident app
     /// with the preference off: one "Quit Kernova" ⌘Q routed through the gate.

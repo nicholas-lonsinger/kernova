@@ -28,7 +28,7 @@ import Testing
 /// `presentDeleteSheet` through the follow-up call/`stop()`, so the off-main
 /// resolution Task can't run until the test `await`s the captured handle's
 /// `.value` — event-driven, no polling.
-@Suite("DetailAlertsPresenter Tests", .serialized)
+@Suite("DetailAlertsPresenter Tests", .serialized, .admissionGated)
 @MainActor
 struct DetailAlertsPresenterTests {
     /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.

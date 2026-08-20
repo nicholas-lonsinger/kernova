@@ -10,7 +10,7 @@ import Testing
 /// open; `sync(to:)` covers the in-place edits applied while the menu is on
 /// screen, where item identity matters: a surviving row must be retitled, never
 /// replaced, so the menu doesn't collapse under the cursor.
-@Suite("StatusMenuVMSection")
+@Suite("StatusMenuVMSection", .admissionGated)
 @MainActor
 struct StatusMenuVMSectionTests {
     private final class RowTarget: NSObject {

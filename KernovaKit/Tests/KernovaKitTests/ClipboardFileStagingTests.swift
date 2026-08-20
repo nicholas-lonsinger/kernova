@@ -3,7 +3,7 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("ClipboardFileStaging")
+@Suite("ClipboardFileStaging", .admissionGated)
 struct ClipboardFileStagingTests {
     /// A fresh staging instance rooted in a unique temp directory.
     private func makeStaging(

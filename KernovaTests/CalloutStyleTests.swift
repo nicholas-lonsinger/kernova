@@ -2,7 +2,7 @@ import Testing
 import AppKit
 @testable import Kernova
 
-@Suite("CalloutStyle Tests")
+@Suite("CalloutStyle Tests", .admissionGated)
 @MainActor
 struct CalloutStyleTests {
     @Test("bodyWidth equals width minus 2× padding")

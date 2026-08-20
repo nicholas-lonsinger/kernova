@@ -1,7 +1,7 @@
 import Testing
 @testable import Kernova
 
-@Suite("VZNetworkDeviceHandle Tests")
+@Suite("VZNetworkDeviceHandle Tests", .admissionGated)
 @MainActor
 struct VZNetworkDeviceHandleTests {
     private struct Harness {

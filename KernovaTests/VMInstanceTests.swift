@@ -5,7 +5,7 @@ import KernovaKit
 import KernovaTestSupport
 @testable import Kernova
 
-@Suite("VMInstance Tests")
+@Suite("VMInstance Tests", .admissionGated)
 @MainActor
 struct VMInstanceTests {
     private func makeInstance(status: VMStatus = .stopped) -> VMInstance {

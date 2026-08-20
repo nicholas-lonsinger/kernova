@@ -6,7 +6,7 @@ import Testing
 /// Exercises the shared `shouldInlineOnPasteboard` predicate that both the host
 /// "Copy to Mac" path and the guest inbound-paste path apply to decide whether a
 /// representation rides the pasteboard inline or as a file-only URL.
-@Suite("ClipboardContent.Representation.shouldInlineOnPasteboard")
+@Suite("ClipboardContent.Representation.shouldInlineOnPasteboard", .admissionGated)
 struct ClipboardRepresentationPasteboardTests {
     private let dummyURL = URL(fileURLWithPath: "/tmp/kernova-rep-test")
 

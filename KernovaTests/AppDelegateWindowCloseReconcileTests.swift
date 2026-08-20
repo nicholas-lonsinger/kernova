@@ -12,7 +12,7 @@ import Testing
 /// menu's borderless window closes before the menu action fires, and letting it
 /// run the reconcile flipped the app back to `.accessory` mid-summon, leaving
 /// the summoned app last in the ⌘-Tab switcher.
-@Suite("AppDelegate.windowCloseAffectsActivationPolicy", .serialized)
+@Suite("AppDelegate.windowCloseAffectsActivationPolicy", .serialized, .admissionGated)
 @MainActor
 struct AppDelegateWindowCloseReconcileTests {
     @Test("A titled window's close runs the reconcile")

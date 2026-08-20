@@ -2,7 +2,7 @@ import Testing
 import AppKit
 @testable import Kernova
 
-@Suite("AgentStatusPopoverContentViewController Tests")
+@Suite("AgentStatusPopoverContentViewController Tests", .admissionGated)
 @MainActor
 struct AgentStatusPopoverContentViewControllerTests {
     @Test("default state — title/body/action-button reflect .waiting")

@@ -6,7 +6,7 @@ import Testing
 /// Unit tests for `GuestAgentDiskMenuItem.model(status:isInstallerMounted:)` —
 /// the single source of truth shared by `AppDelegate.validateMenuItem` and
 /// `toggleGuestAgentDisk`, so the menu title can never disagree with the action.
-@Suite("GuestAgentDiskMenuItem.model")
+@Suite("GuestAgentDiskMenuItem.model", .admissionGated)
 struct GuestAgentDiskMenuTests {
     @Test("Attached installer → eject mode, regardless of agent status")
     func attachedEjectsRegardlessOfStatus() {
@@ -84,7 +84,7 @@ struct GuestAgentDiskMenuTests {
 
 /// Unit tests for `VMInstance.canManageGuestAgentDisk` — the hard gate
 /// `AppDelegate.validateMenuItem` applies before consulting the model above.
-@Suite("VMInstance.canManageGuestAgentDisk")
+@Suite("VMInstance.canManageGuestAgentDisk", .admissionGated)
 @MainActor
 struct GuestAgentDiskEligibilityTests {
     private func makeInstance(guestOS: VMGuestOS, status: VMStatus, isLive: Bool) -> VMInstance {

@@ -8,7 +8,7 @@ import Testing
 /// The feature-channel admission verdicts, judged where the listeners judge
 /// them: a channel is admitted only while a published control handshake exists,
 /// and clipboard and drop additionally require their negotiated capability.
-@Suite("VsockAdmissionGate")
+@Suite("VsockAdmissionGate", .admissionGated)
 struct VsockAdmissionGateTests {
     private let allRequirements: [FeatureChannelRequirement] = [
         .none, .clipboardStreaming, .dropFiles,

@@ -3,7 +3,7 @@ import Foundation
 import Virtualization
 @testable import Kernova
 
-@Suite("VirtualizationService Tests")
+@Suite("VirtualizationService Tests", .admissionGated)
 @MainActor
 struct VirtualizationServiceTests {
     private let service = VirtualizationService()

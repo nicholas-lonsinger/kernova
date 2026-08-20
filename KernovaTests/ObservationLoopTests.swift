@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import Kernova
 
-@Suite("ObservationLoop Tests")
+@Suite("ObservationLoop Tests", .admissionGated)
 @MainActor
 struct ObservationLoopTests {
     @Observable

@@ -55,6 +55,12 @@ jobs:
             COMPILER_INDEX_STORE_ENABLE=NO \
             2>&1 | if command -v xcbeautify &>/dev/null; then xcbeautify --renderer github-actions; else cat; fi
 
+      # No KERNOVA_TEST_ADMISSION_WIDTH is set, so `TestAdmission` resolves to
+      # pass-through and the gate bounds nothing. Measured on #924 over serialized
+      # samples of this suite: width 16 flaked 2 of 4 runs against 1 of 3 for the
+      # same tree ungated, and width 8 turned a job red outright. Setting either
+      # spelling here — the plain name, or TEST_RUNNER_-prefixed, both of which
+      # reach the test hosts — is all it takes to gate a run and re-measure.
       - name: Test without building
         run: |
           set -o pipefail
@@ -68,6 +74,20 @@ jobs:
             -skipPackagePluginValidation \
             COMPILER_INDEX_STORE_ENABLE=NO \
             2>&1 | if command -v xcbeautify &>/dev/null; then xcbeautify --renderer github-actions; else cat; fi
+
+      # `TestAdmission` resolves its width once per test-host process and logs
+      # the outcome through `Logger`, which writes to the unified log rather
+      # than the runner's stdout — so this is the only place the resolved arm is
+      # visible. Each test-host process emits exactly one line, so this also
+      # counts the hosts the width had to reach. Without it a width that never
+      # arrived is indistinguishable from one that did, and the run silently
+      # measures pass-through.
+      - name: Report admission arm
+        if: always()
+        run: |
+          log show \
+            --predicate 'subsystem == "app.kernova" AND category == "TestAdmission"' \
+            --last 30m --style compact || echo "log show unavailable"
 
       # Kernova.xctestplan runs with retryOnFailure (maximumTestRepetitions: 2):
       # it re-runs the whole bundle and lets a test that failed its first attempt

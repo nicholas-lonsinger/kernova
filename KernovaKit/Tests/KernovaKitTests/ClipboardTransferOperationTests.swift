@@ -83,7 +83,7 @@ private func settle() async {
     }
 }
 
-@Suite("ClipboardTransferOperation")
+@Suite("ClipboardTransferOperation", .admissionGated)
 @MainActor
 struct ClipboardTransferOperationTests {
     private static let revealDelay: TimeInterval = 0.3

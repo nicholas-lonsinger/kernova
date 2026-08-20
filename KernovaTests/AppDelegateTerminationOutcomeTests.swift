@@ -4,7 +4,7 @@ import Testing
 
 /// Unit tests for `AppDelegate.terminationOutcome` — what the termination gate
 /// replies to a quit request (#805).
-@Suite("AppDelegate termination outcome")
+@Suite("AppDelegate termination outcome", .admissionGated)
 struct AppDelegateTerminationOutcomeTests {
     private func outcome(
         shouldTerminateAgent: Bool = true,
@@ -81,7 +81,7 @@ struct AppDelegateTerminationOutcomeTests {
 
 /// Unit tests for `AppDelegate.terminationSaveStep` — what the termination save
 /// pass does with one VM it has selected (#807).
-@Suite("AppDelegate termination save step")
+@Suite("AppDelegate termination save step", .admissionGated)
 struct AppDelegateTerminationSaveStepTests {
     private func step(
         hasLiveSession: Bool = true,

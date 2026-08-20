@@ -10,7 +10,7 @@ import Testing
 /// IPSW, so it is exercised manually; this suite pins the seam that
 /// regressed — VZ is only ever handed a symlink-free URL.
 @MainActor
-@Suite("MacOSInstallService Tests")
+@Suite("MacOSInstallService Tests", .admissionGated)
 struct MacOSInstallServiceTests {
     private func makeTempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory

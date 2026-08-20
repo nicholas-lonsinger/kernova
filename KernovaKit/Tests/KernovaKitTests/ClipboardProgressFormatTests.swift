@@ -5,7 +5,7 @@ import Testing
 
 /// Unit tests for `ClipboardProgressFormat` — the wording the host app and the guest
 /// agent both render for a clipboard transfer (#643, #652).
-@Suite("ClipboardProgressFormat")
+@Suite("ClipboardProgressFormat", .admissionGated)
 struct ClipboardProgressFormatTests {
     /// A snapshot with everything but the fields under test held constant.
     private static func snapshot(

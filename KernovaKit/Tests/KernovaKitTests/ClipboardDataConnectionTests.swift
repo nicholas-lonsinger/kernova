@@ -8,7 +8,7 @@ import Testing
 /// The socket options a data connection is opened under: the stall bound both
 /// ends read and write against, and the throughput lever only the end that
 /// accepted the descriptor *and* streams on it takes.
-@Suite("ClipboardDataConnection socket options")
+@Suite("ClipboardDataConnection socket options", .admissionGated)
 struct ClipboardDataConnectionTests {
     /// A connected descriptor and the peer end that keeps it connected.
     ///

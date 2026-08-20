@@ -14,7 +14,7 @@ import Testing
 /// other live sender — plus `loginwindow` and the unattributable fail-safe (#438:
 /// no PID, or a PID that no longer resolves) — terminate-and-save, and System
 /// Settings/TCC terminates-and-relaunches.
-@Suite("AppDelegate.classifyQuit")
+@Suite("AppDelegate.classifyQuit", .admissionGated)
 struct AppDelegateQuitClassificationTests {
     private static let tccBundleID = "com.apple.settings.PrivacySecurity.extension"
     private static let loginwindowBundleID = "com.apple.loginwindow"

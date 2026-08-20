@@ -5,7 +5,7 @@ import KernovaKit
 import KernovaTestSupport
 @testable import Kernova
 
-@Suite("VsockControlService")
+@Suite("VsockControlService", .admissionGated)
 @MainActor
 struct VsockControlServiceTests {
     // MARK: - Helpers

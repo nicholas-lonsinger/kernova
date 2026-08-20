@@ -4,7 +4,7 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("EngineInstant arithmetic")
+@Suite("EngineInstant arithmetic", .admissionGated)
 struct EngineInstantTests {
     @Test("seconds(to:) converts the nanosecond gap forward")
     func secondsForward() {
@@ -41,7 +41,7 @@ struct EngineInstantTests {
     }
 }
 
-@Suite("EngineClock conformances")
+@Suite("EngineClock conformances", .admissionGated)
 struct EngineClockTests {
     @Test("now never goes backwards", arguments: EngineClockKind.allCases)
     func nowIsMonotonic(kind: EngineClockKind) {

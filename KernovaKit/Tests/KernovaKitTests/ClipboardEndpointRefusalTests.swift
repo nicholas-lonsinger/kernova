@@ -7,7 +7,7 @@ import Testing
 /// What a connection refuses and how it says so: the paste-budget gate, the
 /// free-space pre-flight, the outcomes a failed pull maps to, the `Error` frame
 /// a guest owes its peer, and what a stopped connection still serves.
-@Suite("ClipboardEndpoint refusals")
+@Suite("ClipboardEndpoint refusals", .admissionGated)
 @MainActor
 struct ClipboardEndpointRefusalTests {
     private let textUTI = ClipboardContent.utf8TextUTI

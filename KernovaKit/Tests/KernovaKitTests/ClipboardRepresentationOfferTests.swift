@@ -6,7 +6,7 @@ import Testing
 /// Exercises the shared `offerRepresentationInfo` projection that both the host
 /// "Copy to Mac" offer path and the guest inbound-offer path use to populate
 /// `ClipboardOffer.repInfo` from a representation.
-@Suite("ClipboardContent.Representation.offerRepresentationInfo")
+@Suite("ClipboardContent.Representation.offerRepresentationInfo", .admissionGated)
 struct ClipboardRepresentationOfferTests {
     private let dummyURL = URL(fileURLWithPath: "/tmp/kernova-rep-test")
 

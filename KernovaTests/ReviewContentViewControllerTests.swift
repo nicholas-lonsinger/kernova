@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("ReviewContentViewController Tests")
+@Suite("ReviewContentViewController Tests", .admissionGated)
 @MainActor
 struct ReviewContentViewControllerTests {
     @Test("General rows reflect the model")

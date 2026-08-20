@@ -3,7 +3,7 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("ClipboardArchive")
+@Suite("ClipboardArchive", .admissionGated)
 struct ClipboardArchiveTests {
     /// A unique scratch directory removed when the test ends.
     private func makeScratch() throws -> URL {

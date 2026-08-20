@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMToolbarManager Tests")
+@Suite("VMToolbarManager Tests", .admissionGated)
 @MainActor
 struct VMToolbarManagerTests {
     // MARK: - Factories

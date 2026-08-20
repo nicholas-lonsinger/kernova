@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import KernovaKit
 
-@Suite("VsockFrame")
+@Suite("VsockFrame", .admissionGated)
 struct VsockFrameTests {
     // MARK: - encode
 
