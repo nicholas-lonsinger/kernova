@@ -5,6 +5,7 @@ on:
     types: [opened, synchronize, reopened]
   push:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -12,8 +13,19 @@ concurrency:
 
 jobs:
   build-and-test:
+    name: build-and-test (admission width ${{ matrix.admission_width }})
     runs-on: macos-26
-    timeout-minutes: 15
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        admission_width: ["8"]
+    env:
+      # Both spellings, because a host variable reaches the test runner either
+      # verbatim or with the `TEST_RUNNER_` prefix stripped depending on how
+      # xcodebuild launches it; `TestAdmission` reads whichever arrives.
+      KERNOVA_TEST_ADMISSION_WIDTH: ${{ matrix.admission_width }}
+      TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH: ${{ matrix.admission_width }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -55,12 +67,12 @@ jobs:
             COMPILER_INDEX_STORE_ENABLE=NO \
             2>&1 | if command -v xcbeautify &>/dev/null; then xcbeautify --renderer github-actions; else cat; fi
 
-      # No KERNOVA_TEST_ADMISSION_WIDTH is set, so `TestAdmission` resolves to
-      # pass-through and the gate bounds nothing. Measured on #924 over serialized
-      # samples of this suite: width 16 flaked 2 of 4 runs against 1 of 3 for the
-      # same tree ungated, and width 8 turned a job red outright. Setting either
-      # spelling here — the plain name, or TEST_RUNNER_-prefixed, both of which
-      # reach the test hosts — is all it takes to gate a run and re-measure.
+      # The job-level env sets KERNOVA_TEST_ADMISSION_WIDTH, so `TestAdmission`
+      # gates at the matrix width instead of passing through. Width 8 was the
+      # known-red arm: it failed outright in two independent campaigns, both
+      # times on `previewLargeInlineReassembles`. #926 deleted that test and
+      # reworked the clipboard fake's release latching, so this re-runs the same
+      # width against the fixed tree. Measurement rig only — not for merge.
       - name: Test without building
         run: |
           set -o pipefail
@@ -87,7 +99,7 @@ jobs:
         run: |
           log show \
             --predicate 'subsystem == "app.kernova" AND category == "TestAdmission"' \
-            --last 30m --style compact || echo "log show unavailable"
+            --last 120m --style compact || echo "log show unavailable"
 
       # Kernova.xctestplan runs with retryOnFailure (maximumTestRepetitions: 2):
       # it re-runs the whole bundle and lets a test that failed its first attempt
@@ -147,7 +159,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: test-results
+          # Matrix-qualified: upload-artifact rejects two jobs in one run
+          # uploading the same artifact name.
+          name: test-results-width-${{ matrix.admission_width }}
           # RATIONALE: upload the PARENT dir, not the `.xcresult` bundle directly.
           # upload-artifact roots the archive at the lowest common ancestor of the
           # matched files, so pointing it at the bundle drops the `.xcresult`
