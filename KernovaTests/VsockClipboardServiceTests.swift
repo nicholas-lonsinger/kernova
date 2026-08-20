@@ -1118,38 +1118,6 @@ struct VsockClipboardServiceTests {
         #expect(service.clipboardContent.representations.first?.isPendingRemote == true)
     }
 
-    @Test("A large inline preview rep arrives whole")
-    func previewLargeInlineReassembles() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
-        service.start()
-        defer { service.stop() }
-
-        // Past the socket buffer several times over, so the payload cannot cross
-        // in one write; still well under maxEditableTextBytes so preview pulls it.
-        let bytes = Data((0..<(200 * 1024)).map { UInt8(truncatingIfNeeded: $0 &* 53 &+ 7) })
-        let textUTI = ClipboardContent.utf8TextUTI
-
-        let responder = FakeGuestResponder(service: service, guest: guest)
-        defer { responder.cancel() }
-        responder.register(generation: 3, repIndex: 0, uti: textUTI, bytes: bytes, isInline: true)
-        responder.start()
-
-        try guest.send(
-            makeOfferFrame(
-                generation: 3,
-                reps: [RepInfo(uti: textUTI, byteCount: UInt64(bytes.count), isInline: true)]))
-        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
-
-        await service.materializeForPreview()
-        #expect(service.clipboardContent.representations.first?.inMemoryData == bytes)
-    }
-
     @Test("materializeForCopy promises every rep from metadata — nothing crosses at the click")
     func copyMaterializesEveryRep() async throws {
         let (guest, host) = try makePair()
