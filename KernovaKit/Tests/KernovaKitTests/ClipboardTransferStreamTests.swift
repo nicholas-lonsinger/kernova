@@ -430,9 +430,17 @@ struct ClipboardTransferStreamTests {
         let harness = TransferHarness()
         defer { harness.tearDown() }
 
+        // Incompressible and several times the connection's send buffer, so the
+        // sender cannot hand the whole payload to the socket and walk away: past
+        // the buffer every write blocks until the receiver drains, and a
+        // receiver that has given up never drains, so a write is guaranteed to
+        // fail. Sized off the buffer rather than picked — at 64 KiB the archive
+        // fit inside it and the send completed in ~1 ms whatever the receiver
+        // did, reporting success and its metrics.
         let source = scratch.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
-        try randomBytes(count: 64 * 1024).write(to: source.appendingPathComponent("big.bin"))
+        try randomBytes(count: 4 * ClipboardStreamTuning.dataSendBufferBytes)
+            .write(to: source.appendingPathComponent("big.bin"))
         let estimate = ClipboardArchive.estimatedByteCount(at: source)
         let transferID: UInt64 = 0xB1
         // Cancelled from the sender's own pre-write check, which runs on its
