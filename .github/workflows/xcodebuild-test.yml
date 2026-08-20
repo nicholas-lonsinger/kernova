@@ -55,16 +55,13 @@ jobs:
             COMPILER_INDEX_STORE_ENABLE=NO \
             2>&1 | if command -v xcbeautify &>/dev/null; then xcbeautify --renderer github-actions; else cat; fi
 
-      # KERNOVA_TEST_ADMISSION_WIDTH bounds how many test cases each test-host
-      # process runs at once (`TestAdmission`); unset or 0 is pass-through. Both
-      # spellings are set because only one of them arrives and which one is not
-      # documented: xcodebuild strips the TEST_RUNNER_ prefix when it launches
-      # the runner, so either spelling can land as the plain name the test host
-      # reads. The `Report admission arm` step below names the one that won.
+      # No KERNOVA_TEST_ADMISSION_WIDTH is set, so `TestAdmission` resolves to
+      # pass-through and the gate bounds nothing. Measured on #924 over serialized
+      # samples of this suite: width 16 flaked 2 of 4 runs against 1 of 3 for the
+      # same tree ungated, and width 8 turned a job red outright. Setting either
+      # spelling here — the plain name, or TEST_RUNNER_-prefixed, both of which
+      # reach the test hosts — is all it takes to gate a run and re-measure.
       - name: Test without building
-        env:
-          KERNOVA_TEST_ADMISSION_WIDTH: 16
-          TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH: 16
         run: |
           set -o pipefail
           xcodebuild test-without-building \
