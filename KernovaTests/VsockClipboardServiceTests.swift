@@ -543,18 +543,16 @@ struct VsockClipboardServiceTests {
         private var replyReleased = false
         private var holdsTrailer = false
         private var isCancelled = false
-        /// Ids ``finishTransfer(_:)`` named before their stream had parked, so
-        /// each is finished the moment it does.
+        /// Ids a release named before their stream had parked, so each is
+        /// finished the moment it does.
         private var latchedFinishes: Set<UInt64> = []
-        /// Whether ``releaseTrailer()`` has run, so a stream that parks before
-        /// its trailer afterwards is finished as it parks.
-        private var trailerReleased = false
 
         /// Fires as each request arrives, before its transfer opens.
         let requested = AsyncGate()
-        /// Fires as each transfer's stream parks at its hold — the signal that
-        /// the guest end of a held transfer exists to release, cancel or tear
-        /// down.
+        /// Fires as each transfer's stream parks at its hold: the guest end is
+        /// open with its remainder withheld, so there is a connection to release,
+        /// cancel or tear down. The reply itself is written on the connection's
+        /// own queue, so this is not evidence the host has read it.
         let parkedTransfers = AsyncGate()
         /// The transfers whose data connection the host closed under a parked
         /// reply — how a receiver's cancellation reads from the guest, with
@@ -577,13 +575,27 @@ struct VsockClipboardServiceTests {
         }
 
         /// Releases every transfer parked before its trailer, so it ends — and
-        /// latches, so one that parks later ends as it parks.
+        /// latches the registered ones that have yet to park, so each ends as it
+        /// parks.
+        ///
+        /// The latch names ids rather than setting a flag: a reply registered
+        /// *after* this call is a hold a later part of the test asked for, and
+        /// must still park.
         func releaseTrailer() {
-            let held = lock.withLock { () -> [UInt64] in
-                trailerReleased = true
-                return parked.filter { $0.value.hold == .beforeTrailer }.map(\.key)
+            let held = lock.withLock { () -> [ParkedDataConnection] in
+                for (xid, reply) in replies where parked[xid] == nil && holdsTrailerLocked(reply) {
+                    latchedFinishes.insert(xid)
+                }
+                let matching = parked.filter { $0.value.hold == .beforeTrailer }
+                for xid in matching.keys { parked[xid] = nil }
+                return matching.values.map(\.connection)
             }
-            for id in held { finishTransfer(id) }
+            for connection in held { connection.resume() }
+        }
+
+        /// Whether `reply` would park before its trailer. Caller holds `lock`.
+        private func holdsTrailerLocked(_ reply: Reply) -> Bool {
+            reply.hold == .beforeTrailer || (reply.hold == .whole && holdsTrailer)
         }
 
         /// Finishes one transfer parked before its payload or its trailer,
@@ -724,6 +736,7 @@ struct VsockClipboardServiceTests {
                 consumeTask = nil
                 let held = parked.values.map(\.connection)
                 parked.removeAll()
+                latchedFinishes.removeAll()
                 return (task, held)
             }
             task?.cancel()
@@ -791,8 +804,7 @@ struct VsockClipboardServiceTests {
             // than being dropped, so the stream ends whichever side got there
             // first.
             let alreadyReleased = lock.withLock { () -> Bool in
-                if latchedFinishes.remove(xid) != nil { return true }
-                if hold == .beforeTrailer, trailerReleased { return true }
+                guard latchedFinishes.remove(xid) == nil else { return true }
                 parked[xid] = (connection: connection, hold: hold)
                 return false
             }
@@ -2698,8 +2710,8 @@ struct VsockClipboardServiceTests {
         let paste = Task {
             await offCooperativePool { service.serveFileURL(generation: 49, repIndex: 0) }
         }
-        // The release must land on a transfer that is live, not merely
-        // requested: the fire's own connection is what it has to tear down.
+        // The release must land on a transfer whose connection exists, not
+        // merely on a recorded request: that connection is what it tears down.
         let heldTransfer = inboundTransferID(generation: 49, repIndex: 0)
         try await responder.parkedTransfers.wait { responder.isParked(heldTransfer) }
 
@@ -2838,7 +2850,7 @@ struct VsockClipboardServiceTests {
 
         // Start a preview that issues the gen=1 pull and parks (no payload arrives).
         let previewTask = Task { await service.materializeForPreview() }
-        // Wait until the transfer is live — a reply written, its payload
+        // Wait until the transfer's connection is open with its payload
         // withheld. That, not the request alone, is the in-flight window the
         // supersede has to interrupt.
         let heldTransfer = inboundTransferID(generation: 1, repIndex: 0)
@@ -3147,7 +3159,7 @@ struct VsockClipboardServiceTests {
         // (no payload arrives). Run it detached so the test keeps driving.
         let firstPreview = Task { await service.materializeForPreview() }
 
-        // Wait until rep 0's transfer is live and holding its payload back —
+        // Wait until rep 0's connection is open and holding its payload back —
         // the in-flight window we want the second caller to coalesce into.
         let rep0XID = inboundTransferID(generation: generation, repIndex: 0)
         try await responder.parkedTransfers.wait { responder.isParked(rep0XID) }
@@ -3772,6 +3784,13 @@ struct VsockClipboardServiceTests {
         released = true
         release.notify()
         await previewTask.value
+        // The loop's `defer` ran `operation.finish` before the task completed,
+        // and a terminal publishes through one `DispatchQueue.main.async` hop —
+        // enqueued ahead of this resumption. So the preview's terminal needs an
+        // ordering barrier, not a wait: waiting for it instead spends the whole
+        // 60 s backstop on a report that either landed already or never will,
+        // and says nothing about which.
+        await drainMainQueue()
 
         // Reaching rep 1 and finding it already pulled, the preview begins no
         // transfer for it, so its readout lands on the bytes it actually moved —
@@ -3782,9 +3801,6 @@ struct VsockClipboardServiceTests {
         // identifies neither. The denominator does: only the preview's readout
         // counts rep 0's bytes, which is what this asserted all along.
         let previewBytes = UInt64(text.utf8.count)
-        try await reports.wait {
-            reports.finalSnapshots.contains { $0.totalBytes == previewBytes }
-        }
         let final = try #require(
             reports.finalSnapshots.last(where: { $0.totalBytes == previewBytes }),
             "No finished readout carried the preview's denominator; saw \(reports.finalSnapshots.map(\.totalBytes))"
