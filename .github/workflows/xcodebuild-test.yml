@@ -55,7 +55,14 @@ jobs:
             COMPILER_INDEX_STORE_ENABLE=NO \
             2>&1 | if command -v xcbeautify &>/dev/null; then xcbeautify --renderer github-actions; else cat; fi
 
+      # KERNOVA_TEST_ADMISSION_WIDTH bounds how many test cases each test-host
+      # process runs at once (`TestAdmission`). Set on the host step: xcodebuild
+      # forwards the host environment to the test runner, so the variable
+      # reaches the test hosts without the TEST_RUNNER_ prefix or the container
+      # width file. Unset or 0 is pass-through.
       - name: Test without building
+        env:
+          KERNOVA_TEST_ADMISSION_WIDTH: 16
         run: |
           set -o pipefail
           xcodebuild test-without-building \
