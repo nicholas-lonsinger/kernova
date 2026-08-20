@@ -63,8 +63,8 @@ jobs:
       # reads. The `Report admission arm` step below names the one that won.
       - name: Test without building
         env:
-          KERNOVA_TEST_ADMISSION_WIDTH: 8
-          TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH: 8
+          KERNOVA_TEST_ADMISSION_WIDTH: 16
+          TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH: 16
         run: |
           set -o pipefail
           xcodebuild test-without-building \
