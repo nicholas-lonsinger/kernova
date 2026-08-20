@@ -90,6 +90,31 @@ struct ClipboardTransferStreamTests {
         #expect(inbound.wireByteCount == payload.count)
     }
 
+    @Test("a raw inline payload past every buffer round-trips byte-identically")
+    func multiBufferInlineRoundTrips() async throws {
+        let harness = TransferHarness()
+        defer { harness.tearDown() }
+
+        // Past the socket buffer and the receiver's read buffer several times
+        // over, so the payload crosses in many writes and is reassembled from
+        // as many reads — the shape the trailer's digest is the only detector
+        // for. Incompressible enough that nothing about it collapses.
+        let payload = patternedBytes(count: 200 * 1024, multiplier: 53, offset: 7)
+        let transferID: UInt64 = 0x12
+        harness.push(
+            transferID: transferID, generation: 1,
+            plan: .init(uti: "public.utf8-plain-text", advertisedByteCount: payload.count),
+            representation: .init(uti: "public.utf8-plain-text", data: payload), isInline: true)
+        try await settle(harness, transferID)
+
+        let representation = try #require(harness.collector.representation(transferID))
+        #expect(representation.inMemoryData == payload)
+        #expect(harness.collector.abortCount == 0)
+        let inbound = try #require(harness.collector.inboundMetrics.first)
+        #expect(inbound.inbound?.streamedToDisk == false)
+        #expect(inbound.wireByteCount == payload.count)
+    }
+
     @Test("a file round-trips byte-identically under its offer's name")
     func fileRoundTrips() async throws {
         let fm = FileManager.default
@@ -405,30 +430,33 @@ struct ClipboardTransferStreamTests {
         let harness = TransferHarness()
         defer { harness.tearDown() }
 
-        // Incompressible, so the wire carries the whole tree and the stream is
-        // many blocks long whatever the connection's throughput.
         let source = scratch.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
-        try randomBytes(count: 32 * 1024 * 1024)
-            .write(to: source.appendingPathComponent("big.bin"))
+        try randomBytes(count: 64 * 1024).write(to: source.appendingPathComponent("big.bin"))
         let estimate = ClipboardArchive.estimatedByteCount(at: source)
         let transferID: UInt64 = 0xB1
-        // Cancel on the sender's first block away, so the point the pull gives
-        // up at is pinned to the stream itself rather than to how fast the two
-        // ends happen to run against each other.
+        // Cancelled from the sender's own pre-write check, which runs on its
+        // thread before each socket write: the sender has written nothing while
+        // the cancel is applied, so the receiver cannot have taken a payload
+        // that was never sent. Cancelling from a progress callback instead
+        // raced the stream against the cancel — the faster and less contended
+        // the machine, the more of the tree crossed first, and a pull that had
+        // already delivered has no awaiter left for the cancel to abort.
+        let inbox = harness.inbox
         let cancelled = Box(false)
-        harness.onSendProgress.value = { [weak harness] _, _ in
-            guard !cancelled.value else { return }
-            cancelled.value = true
-            harness?.inbox.cancel(transferID: transferID)
-        }
         harness.pull(
             transferID: transferID, generation: 11,
             plan: .init(
                 uti: ClipboardArchive.directoryUTI, filename: "source",
                 extractsDirectoryNamed: "source", advertisedByteCount: estimate),
             representation: .init(
-                directorySourceURL: source, estimatedByteCount: estimate, filename: "source"))
+                directorySourceURL: source, estimatedByteCount: estimate, filename: "source"),
+            isCurrent: { _ in
+                guard !cancelled.value else { return true }
+                cancelled.value = true
+                inbox.cancel(transferID: transferID)
+                return true
+            })
         try await settle(harness, transferID)
         try await harness.collector.gate.wait { harness.collector.sendCount == 1 }
 

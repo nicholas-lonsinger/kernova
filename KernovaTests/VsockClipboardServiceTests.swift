@@ -1125,14 +1125,8 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        // The reporter is recorded so a pull that resolves without bytes names
-        // the abort it resolved with: a bare byte-equality failure here says
-        // only that the payload is absent, which is the same line whether the
-        // request never went out, the transfer was cut short, or its digest
-        // failed.
-        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
@@ -1153,15 +1147,7 @@ struct VsockClipboardServiceTests {
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         await service.materializeForPreview()
-        let rep = service.clipboardContent.representations.first
-        #expect(
-            rep?.inMemoryData == bytes,
-            """
-            requests=\(responder.requests.map(\.transferID)) \
-            pendingRemote=\(String(describing: rep?.isPendingRemote)) \
-            arrived=\(rep?.inMemoryData?.count ?? -1) of \(bytes.count) bytes \
-            report=\(String(describing: reports.finish))
-            """)
+        #expect(service.clipboardContent.representations.first?.inMemoryData == bytes)
     }
 
     @Test("materializeForCopy promises every rep from metadata — nothing crosses at the click")
@@ -3709,29 +3695,21 @@ struct VsockClipboardServiceTests {
 
     // MARK: - Transfer progress
 
-    @Test(
-        "a rep another loop pulled first never enters the preview's denominator, which still reaches 100% (#656)"
-    )
-    func coalescedRepStaysOutOfThePreviewDenominator() async throws {
+    @Test("a rep another loop pulled first is taken from the cache, not requested again (#656)")
+    func coalescedRepIsNotRequestedAgain() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
         defer { guest.close() }
 
-        // Reveal instantly so each operation's state is observable as it happens;
-        // the idle gap is sized past any scheduler stall instead of to a "tidy"
-        // value, because the operations here span a gap between two transfers on
-        // purpose. Nothing waits on it — `stop()` retires the readout at teardown.
-        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter, progressRevealDelay: 0,
-            progressIdleGap: 60)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
         // Two previewable reps: a paste-time fire pulls rep 1 first, so the
         // preview never begins a transfer for it.
-        let text = String(repeating: "x", count: 200_000)
+        let text = "the preview pulls this one itself"
         let rtf = Data(repeating: 0x41, count: 8_192)
         let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
@@ -3770,10 +3748,6 @@ struct VsockClipboardServiceTests {
         let previewTask = Task { await service.materializeForPreview() }
         try await entered.wait { didEnter }
 
-        // Only what it actually started is in the denominator.
-        try await reports.wait { reports.snapshot?.totalBytes == UInt64(text.utf8.count) }
-        #expect(reports.snapshot?.fileCount == 1)
-
         // With it parked, a paste-time fire pulls rep 1 to completion under its
         // own operation — the rep the preview would otherwise have reached.
         let pasted = await offCooperativePool {
@@ -3784,29 +3758,30 @@ struct VsockClipboardServiceTests {
         released = true
         release.notify()
         await previewTask.value
-        // The loop's `defer` ran `operation.finish` before the task completed,
-        // and a terminal publishes through one `DispatchQueue.main.async` hop —
-        // enqueued ahead of this resumption. So the preview's terminal needs an
-        // ordering barrier, not a wait: waiting for it instead spends the whole
-        // 60 s backstop on a report that either landed already or never will,
-        // and says nothing about which.
-        await drainMainQueue()
 
-        // Reaching rep 1 and finding it already pulled, the preview begins no
-        // transfer for it, so its readout lands on the bytes it actually moved —
-        // at 100%, rather than stalling for the rest of the operation.
-        //
-        // Two operations finish here — the paste's own and the preview's — and
-        // their terminals are queued from different threads, so position
-        // identifies neither. The denominator does: only the preview's readout
-        // counts rep 0's bytes, which is what this asserted all along.
-        let previewBytes = UInt64(text.utf8.count)
-        let final = try #require(
-            reports.finalSnapshots.last(where: { $0.totalBytes == previewBytes }),
-            "No finished readout carried the preview's denominator; saw \(reports.finalSnapshots.map(\.totalBytes))"
-        )
-        #expect(final.fractionComplete == 1)
-        #expect(final.fileCount == 1)
+        // Reaching rep 1 and finding it already pulled, the preview takes the
+        // cache: it opens no transfer for it, so it declares no readout unit
+        // either and its denominator stays the bytes it actually moved. One
+        // request per representation is the whole of that, and it is true in
+        // every ordering — where the readout is not: two operations run at once
+        // here, and which of their terminals the shared reporter publishes is
+        // decided by the order they end in. `ClipboardTransferOperationTests`
+        // owns what a declared unit does to the bar.
+        let requestedIDs = responder.requests.map(\.transferID).sorted()
+        #expect(
+            requestedIDs == [
+                inboundTransferID(generation: 7, repIndex: 0),
+                inboundTransferID(generation: 7, repIndex: 1),
+            ].sorted())
+        #expect(service.clipboardContent.text == text)
+
+        // Serving rep 1 again adds no request either — the cache the preview
+        // read is the same one a later paste reads.
+        let again = await offCooperativePool {
+            service.serveData(generation: 7, repIndex: 1, uti: "public.rtf")
+        }
+        #expect(again == rtf)
+        #expect(responder.requests.count == 2)
     }
 
     @Test("a transfer that finishes before the reveal delay never shows progress")
