@@ -3790,8 +3790,8 @@ private final class HostClosedTransfers: @unchecked Sendable {
 /// ``abandon()`` is the one caller off that queue, so it and the close share
 /// `lock`: a `shutdown(2)` decided outside the critical section the descriptor
 /// is closed in lands on whatever the kernel has since handed that number to —
-/// another test's live socket, in a parallel bundle — which is the same hazard
-/// `ClipboardTransferReceiver.cancel()` holds its own lock for.
+/// another case's live socket in the same test host. `ClipboardTransferReceiver`
+/// holds its own lock across `cancel()` for that hazard.
 private final class ParkedDataConnection: @unchecked Sendable {
     private let fd: Int32
     private let transferID: UInt64
