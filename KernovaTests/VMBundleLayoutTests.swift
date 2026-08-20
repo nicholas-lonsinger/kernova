@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import Kernova
 
-@Suite("VMBundleLayout Tests")
+@Suite("VMBundleLayout Tests", .admissionGated)
 struct VMBundleLayoutTests {
     private let bundleURL = URL(fileURLWithPath: "/tmp/TestVM.bundle", isDirectory: true)
 

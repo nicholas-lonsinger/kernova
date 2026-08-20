@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("GuestSetupState Tests")
+@Suite("GuestSetupState Tests", .admissionGated)
 struct GuestSetupStateTests {
     // MARK: - macOS install flow
 

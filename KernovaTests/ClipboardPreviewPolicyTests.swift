@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 @testable import Kernova
 
-@Suite("ClipboardPreviewPolicy")
+@Suite("ClipboardPreviewPolicy", .admissionGated)
 struct ClipboardPreviewPolicyTests {
     @Test("empty content renders the empty editor")
     func emptyContent() {

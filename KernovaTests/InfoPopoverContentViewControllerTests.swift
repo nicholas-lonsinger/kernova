@@ -2,7 +2,7 @@ import Testing
 import AppKit
 @testable import Kernova
 
-@Suite("InfoPopoverContentViewController Tests")
+@Suite("InfoPopoverContentViewController Tests", .admissionGated)
 @MainActor
 struct InfoPopoverContentViewControllerTests {
     @Test("loadView fits the CalloutStyle width")

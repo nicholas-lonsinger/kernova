@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import Kernova
 
-@Suite("PathValidation Tests")
+@Suite("PathValidation Tests", .admissionGated)
 struct PathValidationTests {
     private func makeTempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory

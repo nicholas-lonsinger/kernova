@@ -4,7 +4,7 @@ import KernovaTestSupport
 
 @testable import KernovaKit
 
-@Suite("LazyPullCoordinator")
+@Suite("LazyPullCoordinator", .admissionGated)
 struct LazyPullCoordinatorTests {
     // RATIONALE: sanctioned no-signal polls (docs/TESTING.md "Async waits in
     // tests") — `pendingSlotCountForTesting` and `waiterCountForTesting` are

@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("PortForwardingRuleSheetContentViewController Tests")
+@Suite("PortForwardingRuleSheetContentViewController Tests", .admissionGated)
 @MainActor
 struct PortForwardingRuleSheetContentViewControllerTests {
     private func makeSheet(

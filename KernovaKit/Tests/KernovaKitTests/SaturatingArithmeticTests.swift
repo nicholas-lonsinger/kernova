@@ -2,7 +2,7 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("SaturatingArithmetic")
+@Suite("SaturatingArithmetic", .admissionGated)
 struct SaturatingArithmeticTests {
     @Test("a sum that fits is the ordinary sum")
     func inRangeSum() {

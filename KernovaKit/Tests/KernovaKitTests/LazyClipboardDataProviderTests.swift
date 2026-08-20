@@ -11,7 +11,7 @@ import Testing
 /// (inbound paste) and the host app ("Copy to Mac") write to a pasteboard. The
 /// callbacks are invoked directly so the tests stay deterministic and never
 /// touch a live pasteboard.
-@Suite("LazyClipboardDataProvider")
+@Suite("LazyClipboardDataProvider", .admissionGated)
 struct LazyClipboardDataProviderTests {
     private let textType = NSPasteboard.PasteboardType("public.utf8-plain-text")
 

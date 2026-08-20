@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("MacOSInstallContext Tests")
+@Suite("MacOSInstallContext Tests", .admissionGated)
 struct MacOSInstallContextTests {
     @Test("Default initializer leaves requestedFreshDownload false")
     func defaultsFreshFalse() {

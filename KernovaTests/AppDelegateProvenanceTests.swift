@@ -9,7 +9,7 @@ import Testing
 /// so the copy that actually launched need not be the one the developer
 /// expected; this one greppable line makes "which copy is this" legible from the
 /// log alone.
-@Suite("AppDelegate.residentProvenanceLine")
+@Suite("AppDelegate.residentProvenanceLine", .admissionGated)
 struct AppDelegateProvenanceTests {
     @Test("formats bundle path, build, configuration, and entitlement state into one line")
     func formatsAllFields() {

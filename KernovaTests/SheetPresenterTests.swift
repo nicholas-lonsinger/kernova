@@ -9,7 +9,7 @@ import AppKit
 /// parent window with active key state — neither is reliably available
 /// under headless `xcodebuild test` execution. Manual verification of
 /// presentation timing belongs to integration testing of the call sites.
-@Suite("SheetPresenter Tests")
+@Suite("SheetPresenter Tests", .admissionGated)
 @MainActor
 struct SheetPresenterTests {
     @Test("isShown is false before show")

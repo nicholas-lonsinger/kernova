@@ -11,7 +11,7 @@ import Testing
 /// handshake into the instance's `VsockAdmissionGate`, and replacing or tearing
 /// the service down withdraws admission. The verdict semantics themselves are
 /// `VsockAdmissionGateTests`'.
-@Suite("VMInstance vsock feature-channel admission")
+@Suite("VMInstance vsock feature-channel admission", .admissionGated)
 @MainActor
 struct VMInstanceVsockAdmissionTests {
     // MARK: - Helpers

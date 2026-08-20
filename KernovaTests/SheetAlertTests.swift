@@ -8,7 +8,7 @@ import AppKit
 /// two pure helpers it delegates to (`configureNSAlertButton` and
 /// `dispatchAction(for:buttons:)`) are testable in isolation and carry
 /// the logic worth verifying.
-@Suite("SheetAlert Tests")
+@Suite("SheetAlert Tests", .admissionGated)
 @MainActor
 struct SheetAlertTests {
     // MARK: - configureNSAlertButton

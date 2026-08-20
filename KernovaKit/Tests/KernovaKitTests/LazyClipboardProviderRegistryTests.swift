@@ -6,7 +6,7 @@ import Testing
 
 /// Focused tests for the shared registry's retain/release bookkeeping,
 /// independent of any controller or a live pasteboard.
-@Suite("LazyClipboardProviderRegistry")
+@Suite("LazyClipboardProviderRegistry", .admissionGated)
 @MainActor
 struct LazyClipboardProviderRegistryTests {
     private func makeProvider() -> LazyClipboardDataProvider {

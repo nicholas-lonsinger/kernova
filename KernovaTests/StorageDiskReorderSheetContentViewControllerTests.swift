@@ -3,7 +3,7 @@ import AppKit
 import Foundation
 @testable import Kernova
 
-@Suite("StorageDiskReorderSheetContentViewController Tests")
+@Suite("StorageDiskReorderSheetContentViewController Tests", .admissionGated)
 @MainActor
 struct StorageDiskReorderSheetContentViewControllerTests {
     @Test("header includes Boot Order title and an info button")

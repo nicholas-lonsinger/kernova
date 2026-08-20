@@ -6,7 +6,7 @@ import Testing
 
 /// How one connection's pulls share a transfer, what a gesture retiring under
 /// them means, what they leave on the readout, and how the connection ends.
-@Suite("ClipboardEndpoint pulls and lifecycle")
+@Suite("ClipboardEndpoint pulls and lifecycle", .admissionGated)
 @MainActor
 struct ClipboardEndpointPullTests {
     private let textUTI = ClipboardContent.utf8TextUTI

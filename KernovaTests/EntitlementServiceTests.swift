@@ -2,7 +2,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("EntitlementService")
+@Suite("EntitlementService", .admissionGated)
 struct EntitlementServiceTests {
     @Test("hasVMNetworking is true exactly when the signature claims com.apple.vm.networking")
     func vmNetworkingReflectsReader() {

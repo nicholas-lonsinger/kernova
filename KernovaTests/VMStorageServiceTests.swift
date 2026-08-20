@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import Kernova
 
-@Suite("VMStorageService Tests")
+@Suite("VMStorageService Tests", .admissionGated)
 struct VMStorageServiceTests {
     private let service = VMStorageService()
 

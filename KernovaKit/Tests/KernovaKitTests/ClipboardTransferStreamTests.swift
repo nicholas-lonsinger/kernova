@@ -8,7 +8,7 @@ import Testing
 /// The per-transfer data connection end to end: a real
 /// ``ClipboardTransferSender`` and ``ClipboardTransferReceiver`` over a
 /// socketpair with both ends running, in both header orders.
-@Suite("ClipboardTransferStream")
+@Suite("ClipboardTransferStream", .admissionGated)
 struct ClipboardTransferStreamTests {
     /// What a stubbed dial throws, shaped like the guest dialler's own error —
     /// a plain enum carrying its reason — so a test can look for that reason in

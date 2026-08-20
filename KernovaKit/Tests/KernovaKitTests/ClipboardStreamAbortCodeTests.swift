@@ -5,7 +5,7 @@ import Testing
 /// Pins the wire spelling of every stream abort code and the set that retires a
 /// transfer quietly: a renamed raw value either silences a real failure or
 /// starts reporting a routine teardown, and neither shows up as a build error.
-@Suite("ClipboardStreamAbortCode")
+@Suite("ClipboardStreamAbortCode", .admissionGated)
 struct ClipboardStreamAbortCodeTests {
     @Test("every code round-trips through its wire spelling")
     func roundTrips() {

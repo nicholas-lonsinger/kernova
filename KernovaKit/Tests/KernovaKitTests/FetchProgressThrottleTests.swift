@@ -11,7 +11,7 @@ import Testing
 /// `FetchProgressThrottleTests` below; this suite covers the bookkeeping wrapped
 /// around it: advancing the last-forwarded byte count and refusing a non-forward
 /// update.
-@Suite("FetchProgressCoalescer")
+@Suite("FetchProgressCoalescer", .admissionGated)
 struct FetchProgressCoalescerTests {
     private let total: UInt64 = 1_000_000
 
@@ -28,7 +28,7 @@ struct FetchProgressCoalescerTests {
     }
 }
 
-@Suite("FetchProgressThrottle")
+@Suite("FetchProgressThrottle", .admissionGated)
 struct FetchProgressThrottleTests {
     private let total: UInt64 = 1_000_000
 

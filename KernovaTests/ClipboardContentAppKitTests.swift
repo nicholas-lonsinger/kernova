@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 @testable import Kernova
 
-@Suite("ClipboardContent AppKit helpers")
+@Suite("ClipboardContent AppKit helpers", .admissionGated)
 struct ClipboardContentAppKitTests {
     // `shouldInlineOnPasteboard` moved to KernovaKit (shared by host + guest);
     // its cases live in `ClipboardRepresentationPasteboardTests` in the package.

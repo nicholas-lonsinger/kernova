@@ -8,7 +8,7 @@ import Testing
 /// The three-state gate on dragging files onto a VM display: a VM that has never
 /// run the agent is not a drag destination at all, one whose agent is away takes
 /// part and refuses, and a reachable one accepts.
-@Suite("VMInstance display drop availability")
+@Suite("VMInstance display drop availability", .admissionGated)
 @MainActor
 struct VMInstanceDisplayDropTests {
     /// A VM instance plus the socket pairs its control and drop services run on.

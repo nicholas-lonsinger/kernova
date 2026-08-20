@@ -7,7 +7,7 @@ import Testing
 /// The dialler every clipboard and drop transfer opens its data connection
 /// through: its own gate label, and the socket options a transfer's reads and
 /// writes are bounded by.
-@Suite("VsockGuestDataDialer")
+@Suite("VsockGuestDataDialer", .admissionGated)
 struct VsockGuestDataDialerTests {
     /// The seconds a `timeval` socket option holds.
     private func timeout(_ option: Int32, on fd: Int32) -> Int? {

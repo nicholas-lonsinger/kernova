@@ -11,7 +11,7 @@ import Testing
 /// controller, and a hug constraint that outranks the text's compression
 /// resistance resolves the shortfall by collapsing every section header and
 /// caption to zero height instead of scrolling.
-@Suite("Reminders Settings Tests", .serialized)
+@Suite("Reminders Settings Tests", .serialized, .admissionGated)
 @MainActor
 struct RemindersSettingsViewControllerTests {
     private let preferences: AppPreferences

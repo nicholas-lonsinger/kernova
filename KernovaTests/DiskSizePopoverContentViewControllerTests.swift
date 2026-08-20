@@ -2,7 +2,7 @@ import Testing
 import AppKit
 @testable import Kernova
 
-@Suite("DiskSizePopoverContentViewController Tests")
+@Suite("DiskSizePopoverContentViewController Tests", .admissionGated)
 @MainActor
 struct DiskSizePopoverContentViewControllerTests {
     @Test("loadView fits the CalloutStyle width")

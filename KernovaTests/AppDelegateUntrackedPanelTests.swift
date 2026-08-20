@@ -11,7 +11,7 @@ import Testing
 /// Regression coverage for #437: closing a tracked auxiliary window (a display or
 /// clipboard window) while only the About panel remains visible must not drop the
 /// resident agent to `.accessory`.
-@Suite("AppDelegate.isUntrackedUserPanel", .serialized)
+@Suite("AppDelegate.isUntrackedUserPanel", .serialized, .admissionGated)
 @MainActor
 struct AppDelegateUntrackedPanelTests {
     @Test("A visible, titled, normal-level window counts as an untracked user panel")

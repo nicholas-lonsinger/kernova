@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("LinuxInstallContext Tests")
+@Suite("LinuxInstallContext Tests", .admissionGated)
 struct LinuxInstallContextTests {
     private func roundTrip(_ context: LinuxInstallContext) throws
         -> LinuxInstallContext

@@ -8,7 +8,7 @@ import Testing
 /// The one place a clipboard publication reaches a pasteboard: how every write
 /// is marked, what a failed one leaves behind, when a write is still this
 /// publisher's to withdraw, and how a plan's promised types reach their bytes.
-@Suite("ClipboardPasteboardPublisher")
+@Suite("ClipboardPasteboardPublisher", .admissionGated)
 @MainActor
 struct ClipboardPasteboardPublisherTests {
     private let textUTI = ClipboardContent.utf8TextUTI

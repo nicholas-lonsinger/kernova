@@ -3,7 +3,7 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("KernovaOSVersion")
+@Suite("KernovaOSVersion", .admissionGated)
 struct KernovaOSVersionTests {
     // MARK: - displayString
 

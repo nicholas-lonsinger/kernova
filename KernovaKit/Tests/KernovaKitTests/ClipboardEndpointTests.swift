@@ -7,7 +7,7 @@ import Testing
 /// What one clipboard connection does with an offer — announcing one, taking
 /// the peer's, and answering the requests it draws — driven end to end through a
 /// real host endpoint and a real guest endpoint over a socketpair.
-@Suite("ClipboardEndpoint offers and serving")
+@Suite("ClipboardEndpoint offers and serving", .admissionGated)
 @MainActor
 struct ClipboardEndpointTests {
     private let textUTI = ClipboardContent.utf8TextUTI

@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("GuestInputDevices Tests")
+@Suite("GuestInputDevices Tests", .admissionGated)
 struct GuestInputDevicesTests {
     // MARK: - Helpers
 

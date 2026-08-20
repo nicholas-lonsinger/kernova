@@ -2,7 +2,7 @@ import Testing
 import AppKit
 @testable import Kernova
 
-@Suite("MicrophonePermissionPopoverContentViewController Tests")
+@Suite("MicrophonePermissionPopoverContentViewController Tests", .admissionGated)
 @MainActor
 struct MicrophonePermissionPopoverContentViewControllerTests {
     @Test("loadView fits the CalloutStyle width")

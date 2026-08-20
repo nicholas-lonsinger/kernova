@@ -2,7 +2,7 @@ import Testing
 import Virtualization
 @testable import Kernova
 
-@Suite("VirtualizationService Recovery Options")
+@Suite("VirtualizationService Recovery Options", .admissionGated)
 @MainActor
 struct VirtualizationServiceRecoveryOptionsTests {
     @Test("A macOS guest with recovery requested gets startUpFromMacOSRecovery options")

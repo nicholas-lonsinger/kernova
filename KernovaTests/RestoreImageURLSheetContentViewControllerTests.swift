@@ -5,7 +5,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("RestoreImageURLSheetContentViewController Tests")
+@Suite("RestoreImageURLSheetContentViewController Tests", .admissionGated)
 @MainActor
 struct RestoreImageURLSheetContentViewControllerTests {
     private func makeSheet(
