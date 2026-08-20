@@ -477,10 +477,13 @@ struct VsockClipboardServiceTests {
     /// for an unregistered rep are ignored (the host's continuation stays parked
     /// until the test tears down or supersedes).
     ///
-    /// Every read and write on a data connection runs off this suite's actor:
-    /// the socket parks, and the service streams from the main actor.
-    @MainActor
-    private final class FakeGuestResponder {
+    /// Off the main actor by construction (docs/TESTING.md): it answers while an
+    /// off-main pull holds the main thread, so main-actor isolation would make it
+    /// unanswerable exactly when a test needs an answer. `@unchecked Sendable` —
+    /// every mutable field is read and written under `lock`, and the gates and
+    /// connections it holds are thread-safe in their own right. `openConnection`
+    /// bounds what "while main is held" covers.
+    private final class FakeGuestResponder: @unchecked Sendable {
         /// What the connection carries.
         enum Payload {
             /// Streamed verbatim: an inline rep's raw bytes, or an archive a
@@ -531,46 +534,57 @@ struct VsockClipboardServiceTests {
 
         private let service: VsockClipboardService
         private let guest: VsockChannel
+        private let lock = NSLock()
         private var replies: [UInt64: Reply] = [:]
         private var consumeTask: Task<Void, Never>?
         /// Connections whose stream stopped at its hold, by transfer id.
         private var parked: [UInt64: (connection: ParkedDataConnection, hold: Hold)] = [:]
+        private var recordedRequests: [Kernova_V1_ClipboardRequest] = []
+        private var replyReleased = false
+        private var holdsTrailer = false
+        private var isCancelled = false
 
         /// Fires after each request is answered; await it to observe progress.
         let answered = AsyncGate()
         /// Fires as each request arrives, before its transfer opens — for a
         /// request whose reply then parks.
         let requested = AsyncGate()
-        /// Every `ClipboardRequest` the host sent, in arrival order.
-        private(set) var requests: [Kernova_V1_ClipboardRequest] = []
         /// The transfers whose data connection the host closed under a parked
         /// reply — how a receiver's cancellation reads from the guest, with
         /// nothing crossing the control channel.
         fileprivate let hostClosed = HostClosedTransfers()
 
+        /// Every `ClipboardRequest` the host sent, in arrival order.
+        var requests: [Kernova_V1_ClipboardRequest] { lock.withLock { recordedRequests } }
+
         /// When `true`, every reply registered without a hold of its own parks
         /// before its trailer.
-        var holdTrailer = false
+        var holdTrailer: Bool {
+            get { lock.withLock { holdsTrailer } }
+            set { lock.withLock { holdsTrailer = newValue } }
+        }
 
         /// Releases every transfer parked before its trailer, so it ends.
         func releaseTrailer() {
-            let held = parked.filter { $0.value.hold == .beforeTrailer }.map(\.key)
+            let held = lock.withLock {
+                parked.filter { $0.value.hold == .beforeTrailer }.map(\.key)
+            }
             for id in held { finishTransfer(id) }
         }
 
         /// Finishes one transfer parked before its payload or its trailer,
         /// writing what is left of the stream.
         func finishTransfer(_ transferID: UInt64) {
-            guard let entry = parked.removeValue(forKey: transferID) else { return }
+            guard let entry = lock.withLock({ parked.removeValue(forKey: transferID) })
+            else { return }
             entry.connection.resume()
         }
 
         private let replyGate = AsyncGate()
-        private var replyReleased = false
 
         /// Releases every reply registered with `.beforeReply` so it streams.
         func releaseReplies() {
-            replyReleased = true
+            lock.withLock { replyReleased = true }
             replyGate.notify()
         }
 
@@ -627,24 +641,24 @@ struct VsockClipboardServiceTests {
         ) {
             let xid = ClipboardTransferID.make(
                 generation: generation, repIndex: Int(repIndex), hostMinted: true)
-            replies[xid] = Reply(
-                uti: uti, payload: payload, isInline: isInline, isArchive: isArchive, hold: hold)
+            lock.withLock {
+                replies[xid] = Reply(
+                    uti: uti, payload: payload, isInline: isInline, isArchive: isArchive, hold: hold)
+            }
         }
 
         /// Starts draining the channel and answering requests.
         ///
-        /// The closure runs off-actor on the channel iterator but hops back to
-        /// `@MainActor` to touch `replies`/`requests`, matching this suite's
-        /// isolation.
+        /// The task inherits no actor, so the whole conversation — reading the
+        /// request, writing the reply, streaming the payload — runs while the
+        /// service under test holds the main thread.
         func start() {
-            consumeTask = Task { @MainActor [weak self] in
+            let task = Task { [weak self] in
                 guard let self else { return }
                 do {
                     for try await frame in self.guest.incoming {
                         guard case .clipboardRequest(let req) = frame.payload else { continue }
-                        self.requests.append(req)
-                        self.requested.notify()
-                        if let reply = self.replies[req.transferID] {
+                        if let reply = self.record(req) {
                             try await self.serve(req: req, reply: reply)
                         }
                         self.answered.notify()
@@ -653,12 +667,43 @@ struct VsockClipboardServiceTests {
                     // Channel closed — stop answering.
                 }
             }
+            // A `cancel()` that landed between creating the task and taking the
+            // lock has already run; storing the task then would leave a responder
+            // answering after teardown, so honour the flag instead of keeping it.
+            let alreadyCancelled = lock.withLock { () -> Bool in
+                guard !isCancelled else { return true }
+                consumeTask = task
+                return false
+            }
+            if alreadyCancelled { task.cancel() }
         }
 
+        /// Records one arrived request and returns the reply registered for it,
+        /// announcing the arrival before anything is served.
+        private func record(_ req: Kernova_V1_ClipboardRequest) -> Reply? {
+            let reply = lock.withLock { () -> Reply? in
+                recordedRequests.append(req)
+                return replies[req.transferID]
+            }
+            requested.notify()
+            return reply
+        }
+
+        /// Stops answering and abandons every parked connection.
+        ///
+        /// Synchronous and isolation-free so a `@MainActor` test can call it from
+        /// a `defer`, which cannot `await` (docs/TESTING.md).
         func cancel() {
-            consumeTask?.cancel()
-            for entry in parked.values { entry.connection.abandon() }
-            parked.removeAll()
+            let (task, held) = lock.withLock { () -> (Task<Void, Never>?, [ParkedDataConnection]) in
+                isCancelled = true
+                let task = consumeTask
+                consumeTask = nil
+                let held = parked.values.map(\.connection)
+                parked.removeAll()
+                return (task, held)
+            }
+            task?.cancel()
+            for connection in held { connection.abandon() }
         }
         deinit { consumeTask?.cancel() }
 
@@ -669,7 +714,9 @@ struct VsockClipboardServiceTests {
             // some other UTI would make its shape a coincidence.
             #expect(req.uti == reply.uti)
             let hold: Hold = reply.hold == .whole && holdTrailer ? .beforeTrailer : reply.hold
-            if hold == .beforeReply { try await replyGate.wait { self.replyReleased } }
+            if hold == .beforeReply {
+                try await replyGate.wait { self.lock.withLock { self.replyReleased } }
+            }
             let xid = req.transferID
             let wire: Data
             switch reply.payload {
@@ -705,27 +752,37 @@ struct VsockClipboardServiceTests {
                 totalBytes: isArchive ? 0 : wire.count)
             let trailer = ClipboardTransferTrailer(ending: .complete(digest: sha256(wire)))
             let stopsBeforePayload = hold == .beforePayload
-            parked[xid] = (
-                connection: ParkedDataConnection(
-                    fd: peerEnd, transferID: xid, closed: hostClosed,
-                    prefix: { fd in
-                        try? ClipboardDataConnection.writeFrame(replyFrame, fd: fd)
-                        guard !stopsBeforePayload else { return }
-                        try? writeTransferBytes(fd: fd, wire)
-                    },
-                    remainder: { fd in
-                        if stopsBeforePayload { try? writeTransferBytes(fd: fd, wire) }
-                        try? ClipboardDataConnection.writeTrailer(trailer, fd: fd)
-                    }),
-                hold: hold
-            )
+            let connection = ParkedDataConnection(
+                fd: peerEnd, transferID: xid, closed: hostClosed,
+                prefix: { fd in
+                    try? ClipboardDataConnection.writeFrame(replyFrame, fd: fd)
+                    guard !stopsBeforePayload else { return }
+                    try? writeTransferBytes(fd: fd, wire)
+                },
+                remainder: { fd in
+                    if stopsBeforePayload { try? writeTransferBytes(fd: fd, wire) }
+                    try? ClipboardDataConnection.writeTrailer(trailer, fd: fd)
+                })
+            lock.withLock { parked[xid] = (connection: connection, hold: hold) }
         }
 
         /// Dials one transfer's data connection into the service — the guest's
         /// half of every answer — and returns the guest's end of it.
+        ///
+        /// Queued onto the main actor exactly the way `VsockListenerHost` delivers
+        /// an accepted connection in production, so the double's timing is the
+        /// service's real timing. The guest's end is writable whenever the accept
+        /// lands, so nothing here waits for it.
+        ///
+        /// This is what bounds the claim above: the responder answers while the
+        /// main thread is held by an **off-main** pull, and by a nested wait
+        /// entered at the run loop's base — not by one entered from a main-queue
+        /// callout, whose drain the nested loop cannot re-enter. docs/TESTING.md
+        /// forbids a test from putting a waiting pull there at all.
         private func openConnection() throws -> Int32 {
             let (peerEnd, hostEnd) = try makeRawSocketPair()
-            service.acceptDataConnection(fd: hostEnd)
+            let service = self.service
+            MainActorBridge.async { service.acceptDataConnection(fd: hostEnd) }
             return peerEnd
         }
     }
@@ -2306,7 +2363,11 @@ struct VsockClipboardServiceTests {
         #expect(reports.snapshot?.isCancellable == false)
 
         // Releasing the trailer resolves the pull; the terminal clears the readout (§13:
-        // never leave a stuck bar).
+        // never leave a stuck bar). Gated on the responder having parked the
+        // transfer: `releaseTrailer()` reads its `parked` map at call time, and
+        // the readout above is published before the request is even sent, so it
+        // is no evidence the entry exists yet.
+        try await responder.answered.wait { responder.requests.count == 1 }
         responder.releaseTrailer()
         let url = await pull.value
         #expect(url != nil)
@@ -2357,6 +2418,14 @@ struct VsockClipboardServiceTests {
         // Wait until the paste's transfer is live (its progress revealed), then
         // trigger the preview into the parked pull.
         try await reports.wait { reports.snapshot?.direction == .inbound }
+        // …and until the responder has actually parked it. `releaseTrailer()`
+        // reads the responder's `parked` map at call time, so a release issued
+        // before `serve` stored the entry is silently lost and the pull runs to
+        // its backstop. The readout above cannot stand in for that: it is
+        // published host-side at `unitBegan`, before the request is even sent.
+        // Gate on the responder's own signal, as
+        // `concurrentPreviewTriggersSendOneRequest` does.
+        try await responder.answered.wait { responder.requests.count == 1 }
         let preview = Task { await service.materializeForPreview() }
         // RATIONALE: sanctioned no-signal poll (docs/TESTING.md "Async waits in
         // tests") — the waiter count is NSLock-guarded SUT state, not
@@ -3656,10 +3725,20 @@ struct VsockClipboardServiceTests {
         // Reaching rep 1 and finding it already pulled, the preview begins no
         // transfer for it, so its readout lands on the bytes it actually moved —
         // at 100%, rather than stalling for the rest of the operation.
-        try await reports.wait { !reports.finalSnapshots.isEmpty }
-        let final = try #require(reports.finalSnapshots.last)
+        //
+        // Two operations finish here — the paste's own and the preview's — and
+        // their terminals are queued from different threads, so position
+        // identifies neither. The denominator does: only the preview's readout
+        // counts rep 0's bytes, which is what this asserted all along.
+        let previewBytes = UInt64(text.utf8.count)
+        try await reports.wait {
+            reports.finalSnapshots.contains { $0.totalBytes == previewBytes }
+        }
+        let final = try #require(
+            reports.finalSnapshots.last(where: { $0.totalBytes == previewBytes }),
+            "No finished readout carried the preview's denominator; saw \(reports.finalSnapshots.map(\.totalBytes))"
+        )
         #expect(final.fractionComplete == 1)
-        #expect(final.totalBytes == UInt64(text.utf8.count))
         #expect(final.fileCount == 1)
     }
 

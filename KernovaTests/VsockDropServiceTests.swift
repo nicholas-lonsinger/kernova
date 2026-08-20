@@ -16,6 +16,11 @@ struct VsockDropServiceTests {
 
     /// A socketpair, the service under test on one end, and a frame recorder
     /// standing in for the guest agent on the other.
+    ///
+    /// Main-bound because it owns `@MainActor` production types — the service
+    /// and the transfer report — rather than playing the peer itself; the frame
+    /// recorder that does is already off-actor, and `pull` runs off-main
+    /// (docs/TESTING.md).
     @MainActor
     private final class Harness {
         let service: VsockDropService

@@ -376,13 +376,17 @@ public final class ClipboardEndpoint {
     }
 
     /// Serves the pasteboard `.fileURL` for a promised representation at paste
-    /// time. Safe to call on the main thread even though it blocks.
+    /// time. Safe to call on the main thread even though it blocks; where the
+    /// event-loop wait is unavailable there it serves nothing rather than
+    /// parking (`LazyPullCoordinator`).
     nonisolated public func serveFileURL(generation: UInt64, repIndex: Int) -> URL? {
         inbound?.serveFileURL(generation: generation, repIndex: repIndex)
     }
 
     /// Serves an inline pasteboard flavor's bytes for a promised representation
-    /// at paste time. Safe to call on the main thread even though it blocks.
+    /// at paste time. Safe to call on the main thread even though it blocks; where the
+    /// event-loop wait is unavailable there it serves nothing rather than
+    /// parking (`LazyPullCoordinator`).
     nonisolated public func serveData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
         inbound?.serveData(generation: generation, repIndex: repIndex, uti: uti)
     }

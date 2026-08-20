@@ -106,18 +106,23 @@ struct VsockGuestClientTests {
         }
 
         // Wait (on a background thread) until the provider is entered, then
-        // stop the client, then release the provider. We must not block the
-        // cooperative pool here, so bridge via a detached thread.
-        let stopDone = DispatchSemaphore(value: 0)
+        // stop the client, then release the provider. The provider parks its own
+        // thread by contract, so this hand-off must not ride the cooperative
+        // pool.
+        let stopDone = AtomicInt()
         DispatchQueue.global(qos: .userInitiated).async {
             providerEnteredGate.wait()
             client.stop()
             providerReleaseGate.signal()
-            stopDone.signal()
+            stopDone.increment()
         }
+        try await stopDone.changed.wait { stopDone.value > 0 }
 
-        // Await the background work by sleeping; the provider returns .success(localFd)
-        // but aborted==true so serve is not invoked.
+        // RATIONALE: negative assertion ("prove serve was never invoked") — a
+        // fixed observation window, per docs/TESTING.md "Async waits in tests".
+        // The provider only returns `.success(localFd)` after the release above,
+        // so the window has to span the loop's post-provider `stopped` check.
+        // `nanoseconds:`, not `for:` — this target deploys to macOS 12.
         try await Task.sleep(nanoseconds: 300_000_000)
 
         #expect(serveCallCount.value == 0)
@@ -525,7 +530,6 @@ struct ClassifySocketErrnoTests {
         defer { remote.close() }
 
         let attempts = AtomicInt()
-        let firstAttemptEntered = DispatchSemaphore(value: 0)
         let firstAttemptRelease = DispatchSemaphore(value: 0)
 
         let client = makeTestClient(
@@ -534,7 +538,6 @@ struct ClassifySocketErrnoTests {
             // The provider runs synchronously on the loop's own task, so the
             // loop is provably mid-attempt — not parked — while it blocks here.
             guard attempts.increment() == 1 else { return .success(localFd) }
-            firstAttemptEntered.signal()
             firstAttemptRelease.wait()
             return .failure(.transient("test: first attempt refused"))
         }
@@ -546,14 +549,10 @@ struct ClassifySocketErrnoTests {
             do { for try await _ in channel.incoming {} } catch {}
         }
 
-        // Blocking waits go to GCD so the cooperative pool keeps its threads
-        // (docs/TESTING.md, "Blocking bridge calls"). A raw semaphore wait
-        // bypasses the stopwatch helpers, so arm the session activity itself.
-        armTestSessionActivity()
-        let entered = await offCooperativePool {
-            firstAttemptEntered.wait(timeout: .now() + testWaitBackstop) == .success
-        }
-        try #require(entered)
+        // The increment is the provider's first statement and it cannot return
+        // until released below, so observing it is observing the loop mid-attempt
+        // — no second signal, and no blocking wait on the test's side.
+        try await attempts.changed.wait { attempts.value >= 1 }
         client.resume()
         firstAttemptRelease.signal()
 
