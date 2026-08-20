@@ -1694,8 +1694,11 @@ struct VsockClipboardServiceTests {
         let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
-        pasteboard.clearContents()
+        // The write-only seam rather than a real `NSPasteboard`: the pasteboard
+        // server is a shared system service, so a real write can fail for
+        // reasons this test does not control — and `.written` is a
+        // precondition of everything below it, not the subject.
+        let pasteboard = FakeWritePasteboard()
         let publisher = HostClipboardPublisher(
             writePasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
         service.retractStaleHostWrite = { publisher.retractPromisedWrite() }
@@ -1713,7 +1716,7 @@ struct VsockClipboardServiceTests {
             Issue.record("Expected the publish to land on the pasteboard, got \(outcome)")
             return
         }
-        #expect(pasteboard.pasteboardItems?.isEmpty == false)
+        #expect(pasteboard.promisedItemCount > 0)
 
         // The guest copies again while the pasteboard still holds our write:
         // the stale promise is retracted and the issue explains.
@@ -1722,13 +1725,13 @@ struct VsockClipboardServiceTests {
                 generation: 2,
                 reps: [RepInfo(uti: "public.data", byteCount: 64, filename: "b.bin", isInline: false)]))
         try await reports.waitForFailure()
-        #expect(pasteboard.pasteboardItems?.isEmpty ?? true)
+        #expect(pasteboard.promisedItemCount == 0)
 
-        // Publish gen=2, then the user copies their own content over it: the
-        // next supersession must leave the user's pasteboard untouched.
+        // Publish gen=2, then the user copies their own content over it — a
+        // write of their own is a change count this publisher's write no longer
+        // matches, which is the whole of what makes the pasteboard theirs.
         _ = await publisher.publish(from: service)
         pasteboard.clearContents()
-        pasteboard.setString("mine", forType: .string)
         let countBefore = pasteboard.changeCount
         try guest.send(
             makeOfferFrame(
@@ -1743,8 +1746,9 @@ struct VsockClipboardServiceTests {
             service.clipboardContent.representations.first?.filename == "c.bin"
         }
         #expect(reports.failure == nil)
+        // A wrongly-permissive retraction clears the pasteboard, and clearing it
+        // moves the change count — so this is the whole assertion.
         #expect(pasteboard.changeCount == countBefore)
-        #expect(pasteboard.string(forType: .string) == "mine")
     }
 
     @Test("a resolved (non-promised) write is never retracted by a later offer")
@@ -1757,8 +1761,10 @@ struct VsockClipboardServiceTests {
         let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter)
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
-        pasteboard.clearContents()
+        // The write-only seam, as `retractionRespectsPasteboardOwnership` uses:
+        // a real pasteboard write can fail for reasons outside this test, and
+        // `.written` is a precondition of everything below it.
+        let pasteboard = FakeWritePasteboard()
         let publisher = HostClipboardPublisher(
             writePasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
         service.retractStaleHostWrite = { publisher.retractPromisedWrite() }
@@ -2044,6 +2050,7 @@ struct VsockClipboardServiceTests {
         _ = service.materializeForCopy()
         let refusal = try #require(reports.finish)
         #expect(refusal.failure == .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes))
+        let publishedByTheRefusal = reports.reports.count
 
         // The preview pulls the text rep successfully. That says nothing about
         // the refused file set, which is still the only thing the user must act
@@ -2051,6 +2058,15 @@ struct VsockClipboardServiceTests {
         // nothing and the refusal stays up.
         await service.materializeForPreview()
         #expect(service.clipboardContent.text == "note")
+        // Asserted as this operation's own contribution — it published nothing
+        // — rather than as the reporter's standing slot still reading the
+        // refusal. The slot is arbitrated across every operation the service
+        // runs, so reading it conflates "nothing was published" with "something
+        // was published and something else restored the refusal"; the recorded
+        // history distinguishes them, and names what landed when it does not.
+        #expect(
+            reports.reports.count == publishedByTheRefusal,
+            "The sibling pull published \(reports.reports.suffix(from: publishedByTheRefusal))")
         #expect(reports.finish == refusal)
     }
 
