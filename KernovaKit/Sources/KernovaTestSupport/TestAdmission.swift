@@ -88,10 +88,12 @@ public final class TestAdmissionGate: @unchecked Sendable {
 public enum TestAdmission {
     private static let logger = Logger(subsystem: "app.kernova", category: "TestAdmission")
 
-    /// Environment variable naming the width. `xcodebuild` strips the
-    /// `TEST_RUNNER_` prefix from host variables when it launches the test
-    /// runner, so a CI host that sets either spelling delivers this one; the
-    /// prefixed spelling is read too, for a runner that forwards it verbatim.
+    /// Environment variable naming the width. `xcodebuild` forwards only
+    /// `TEST_RUNNER_`-prefixed variables from its own environment into the test
+    /// runner, stripping the prefix — so a CI host must set
+    /// `TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH`, and the plain spelling set
+    /// there reaches nothing (observed 2026-08-20). The prefixed name is read
+    /// here too, for a runner that forwards it verbatim.
     private static let environmentKey = "KERNOVA_TEST_ADMISSION_WIDTH"
 
     /// Marks a task that already holds a permit, so a trait applied at more than

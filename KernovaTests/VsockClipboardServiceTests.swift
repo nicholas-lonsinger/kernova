@@ -3786,6 +3786,12 @@ private final class HostClosedTransfers: @unchecked Sendable {
 /// Every touch of the descriptor runs on one serial queue, so a resumed write
 /// can never overlap the close. The watcher thread only reads, which ends when
 /// the receiver closes its end, and a descriptor is closed exactly once.
+///
+/// ``abandon()`` is the one caller off that queue, so it and the close share
+/// `lock`: a `shutdown(2)` decided outside the critical section the descriptor
+/// is closed in lands on whatever the kernel has since handed that number to —
+/// another case's live socket in the same test host. `ClipboardTransferReceiver`
+/// holds its own lock across `cancel()` for that hazard.
 private final class ParkedDataConnection: @unchecked Sendable {
     private let fd: Int32
     private let transferID: UInt64
@@ -3832,8 +3838,11 @@ private final class ParkedDataConnection: @unchecked Sendable {
     /// Wakes the watcher at teardown, so a connection nothing resolved is closed
     /// rather than left parked — and is not read as a cancellation.
     func abandon() {
-        lock.withLock { isAbandoned = true }
-        ClipboardDataConnection.interrupt(fd: fd)
+        lock.withLock {
+            isAbandoned = true
+            guard !isEnded else { return }
+            ClipboardDataConnection.interrupt(fd: fd)
+        }
     }
 
     /// Closes the descriptor once the receiver's end is gone, recording the
@@ -3841,10 +3850,10 @@ private final class ParkedDataConnection: @unchecked Sendable {
     private func end() {
         let (resumed, abandoned) = lock.withLock { () -> (Bool, Bool) in
             isEnded = true
+            ClipboardDataConnection.end(fd: fd)
             return (isResumed, isAbandoned)
         }
         if !resumed, !abandoned { closed.record(transferID) }
-        ClipboardDataConnection.end(fd: fd)
     }
 }
 

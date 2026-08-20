@@ -58,12 +58,19 @@ jobs:
       # No KERNOVA_TEST_ADMISSION_WIDTH is set, so `TestAdmission` resolves to
       # pass-through and the gate bounds nothing. Measured on #924 over serialized
       # samples of this suite: width 16 flaked 2 of 4 runs against 1 of 3 for the
-      # same tree ungated, and width 8 turned a job red outright. Setting either
-      # spelling here — the plain name, or TEST_RUNNER_-prefixed, both of which
-      # reach the test hosts — is all it takes to gate a run and re-measure.
+      # same tree ungated, and width 8 turned a job red outright. To gate a run
+      # and re-measure, set `TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH` in this
+      # step's `env:`. Only the prefixed spelling reaches the test hosts:
+      # `xcodebuild` forwards `TEST_RUNNER_`-prefixed variables to the test
+      # runner with the prefix stripped and passes nothing else through, so the
+      # plain name set here silently no-ops and the run measures pass-through
+      # (observed 2026-08-20).
+      #
+      # Raw xcodebuild output rather than xcbeautify: the github-actions renderer
+      # prints failing test names alone, dropping the `#expect` text and the
+      # source line that say what actually failed.
       - name: Test without building
         run: |
-          set -o pipefail
           xcodebuild test-without-building \
             -project Kernova.xcodeproj \
             -scheme Kernova \
@@ -73,7 +80,41 @@ jobs:
             -resultBundlePath artifacts/TestResults.xcresult \
             -skipPackagePluginValidation \
             COMPILER_INDEX_STORE_ENABLE=NO \
-            2>&1 | if command -v xcbeautify &>/dev/null; then xcbeautify --renderer github-actions; else cat; fi
+            2>&1
+
+      # xcodebuild's own stream interleaves parallel test hosts, so a failure's
+      # message can land far from the test that raised it. This pairs each
+      # failed case with every message it recorded, in one block.
+      - name: Report failure messages
+        if: always()
+        run: |
+          bundle="artifacts/TestResults.xcresult"
+          if [ ! -d "$bundle" ]; then
+            echo "No test result bundle at $bundle — skipping failure report."
+            exit 0
+          fi
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "jq not found — skipping failure report."
+            exit 0
+          fi
+          # Keep stderr: a rejected flag or an unreadable bundle otherwise
+          # degrades this step to a silent no-op with nothing to debug from.
+          if ! error="$(xcrun xcresulttool get test-results tests --path "$bundle" --format json 2>&1 >/tmp/tests.json)"; then
+            echo "Could not read test results at $bundle — skipping failure report. Output: $error"
+            exit 0
+          fi
+          # A retried case passes overall while one Repetition failed, so match
+          # on either: the masked attempt's message is the one worth reading.
+          jq -r '
+            [ .. | objects
+              | select(.nodeType? == "Test Case")
+              | select(.result == "Failed"
+                       or any(.children[]?; .nodeType == "Repetition" and .result == "Failed")) ]
+            | .[]
+            | "=== " + (.nodeIdentifier // .name) + "\n"
+              + ( [ .. | objects | select(.nodeType? == "Failure Message") | .name ]
+                  | unique | join("\n") )
+          ' /tmp/tests.json || echo "Could not parse test results — skipping failure report."
 
       # `TestAdmission` resolves its width once per test-host process and logs
       # the outcome through `Logger`, which writes to the unified log rather
