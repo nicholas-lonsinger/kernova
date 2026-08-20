@@ -56,13 +56,15 @@ jobs:
             2>&1 | if command -v xcbeautify &>/dev/null; then xcbeautify --renderer github-actions; else cat; fi
 
       # KERNOVA_TEST_ADMISSION_WIDTH bounds how many test cases each test-host
-      # process runs at once (`TestAdmission`). Set on the host step: xcodebuild
-      # forwards the host environment to the test runner, so the variable
-      # reaches the test hosts without the TEST_RUNNER_ prefix or the container
-      # width file. Unset or 0 is pass-through.
+      # process runs at once (`TestAdmission`); unset or 0 is pass-through. Both
+      # spellings are set because only one of them arrives and which one is not
+      # documented: xcodebuild strips the TEST_RUNNER_ prefix when it launches
+      # the runner, so either spelling can land as the plain name the test host
+      # reads. The `Report admission arm` step below names the one that won.
       - name: Test without building
         env:
           KERNOVA_TEST_ADMISSION_WIDTH: 16
+          TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH: 16
         run: |
           set -o pipefail
           xcodebuild test-without-building \
@@ -75,6 +77,20 @@ jobs:
             -skipPackagePluginValidation \
             COMPILER_INDEX_STORE_ENABLE=NO \
             2>&1 | if command -v xcbeautify &>/dev/null; then xcbeautify --renderer github-actions; else cat; fi
+
+      # `TestAdmission` resolves its width once per test-host process and logs
+      # the outcome through `Logger`, which writes to the unified log rather
+      # than the runner's stdout — so this is the only place the resolved arm is
+      # visible. Each test-host process emits exactly one line, so this also
+      # counts the hosts the width had to reach. Without it a width that never
+      # arrived is indistinguishable from one that did, and the run silently
+      # measures pass-through.
+      - name: Report admission arm
+        if: always()
+        run: |
+          log show \
+            --predicate 'subsystem == "app.kernova" AND category == "TestAdmission"' \
+            --last 30m --style compact || echo "log show unavailable"
 
       # Kernova.xctestplan runs with retryOnFailure (maximumTestRepetitions: 2):
       # it re-runs the whole bundle and lets a test that failed its first attempt

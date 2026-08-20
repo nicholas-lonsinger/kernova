@@ -90,15 +90,9 @@ public enum TestAdmission {
 
     /// Environment variable naming the width. `xcodebuild` strips the
     /// `TEST_RUNNER_` prefix from host variables when it launches the test
-    /// runner, so both spellings are read.
+    /// runner, so a CI host that sets either spelling delivers this one; the
+    /// prefixed spelling is read too, for a runner that forwards it verbatim.
     private static let environmentKey = "KERNOVA_TEST_ADMISSION_WIDTH"
-
-    /// File naming the width, for the sandboxed host that receives no
-    /// environment at all. Only the container path is consulted: a world-
-    /// writable `/tmp` entry would silently gate every later run on the same
-    /// machine, including a developer's, with nothing but one log line to say
-    /// why.
-    private static let fileName = "kernova-test-admission-width"
 
     /// Marks a task that already holds a permit, so a trait applied at more than
     /// one level in a suite hierarchy admits once rather than once per level.
@@ -143,13 +137,18 @@ public enum TestAdmission {
 
     /// Width sources in priority order, each paired with the label the log line
     /// reports so a run shows which mechanism actually delivered the value.
+    ///
+    /// The environment is the only source. A dropped width *file* was tried and
+    /// removed: `NSHomeDirectory()` is the container only for the sandboxed
+    /// app-hosted bundle, so for the two unsandboxed ones it resolves to the
+    /// developer's real home, where a leftover file would silently gate every
+    /// later local run — the same failure the world-writable `/tmp` entry was
+    /// dropped for.
     private static func candidates() -> [(String, String?)] {
         let environment = ProcessInfo.processInfo.environment
-        let home = NSHomeDirectory() + "/" + fileName
         return [
             ("env \(environmentKey)", environment[environmentKey]),
             ("env TEST_RUNNER_\(environmentKey)", environment["TEST_RUNNER_" + environmentKey]),
-            ("file \(home)", try? String(contentsOfFile: home, encoding: .utf8)),
         ]
     }
 }

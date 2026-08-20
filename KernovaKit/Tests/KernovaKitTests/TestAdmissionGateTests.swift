@@ -66,7 +66,18 @@ struct TestAdmissionGateTests {
             try await waitUntil { gate.waiterCountForTesting == index + 1 }
         }
 
-        for _ in 0..<3 { gate.release() }
+        // One release at a time, each awaited before the next. Releasing all
+        // three together would pin only the order they are *dequeued* in: the
+        // three resumed tasks then reach `record` on whatever pool threads pick
+        // them up, in any order, so the log could read [1, 0, 2] with the gate
+        // behaving exactly as documented. Waiting on the log rather than on
+        // `tasks[expected]` keeps a wrong admission a failed expectation rather
+        // than a wait for a task that was never given a permit.
+        for expected in 0..<3 {
+            gate.release()
+            try await order.gate.wait { order.entries.count == expected + 1 }
+            #expect(order.entries.last == expected)
+        }
         for task in tasks { await task.value }
 
         #expect(order.entries == [0, 1, 2])
@@ -90,7 +101,11 @@ struct TestAdmissionGateTests {
     private final class OrderLog: @unchecked Sendable {
         private let lock = NSLock()
         private var steps: [Int] = []
-        func record(_ step: Int) { lock.withLock { steps.append(step) } }
+        let gate = AsyncGate()
+        func record(_ step: Int) {
+            lock.withLock { steps.append(step) }
+            gate.notify()
+        }
         var entries: [Int] { lock.withLock { steps } }
     }
 }
