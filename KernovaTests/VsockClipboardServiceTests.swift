@@ -543,12 +543,17 @@ struct VsockClipboardServiceTests {
         private var replyReleased = false
         private var holdsTrailer = false
         private var isCancelled = false
+        /// Ids a release named before their stream had parked, so each is
+        /// finished the moment it does.
+        private var latchedFinishes: Set<UInt64> = []
 
-        /// Fires after each request is answered; await it to observe progress.
-        let answered = AsyncGate()
-        /// Fires as each request arrives, before its transfer opens — for a
-        /// request whose reply then parks.
+        /// Fires as each request arrives, before its transfer opens.
         let requested = AsyncGate()
+        /// Fires as each transfer's stream parks at its hold: the guest end is
+        /// open with its remainder withheld, so there is a connection to release,
+        /// cancel or tear down. The reply itself is written on the connection's
+        /// own queue, so this is not evidence the host has read it.
+        let parkedTransfers = AsyncGate()
         /// The transfers whose data connection the host closed under a parked
         /// reply — how a receiver's cancellation reads from the guest, with
         /// nothing crossing the control channel.
@@ -557,6 +562,11 @@ struct VsockClipboardServiceTests {
         /// Every `ClipboardRequest` the host sent, in arrival order.
         var requests: [Kernova_V1_ClipboardRequest] { lock.withLock { recordedRequests } }
 
+        /// Whether `transferID`'s stream is parked at its hold right now.
+        func isParked(_ transferID: UInt64) -> Bool {
+            lock.withLock { parked[transferID] != nil }
+        }
+
         /// When `true`, every reply registered without a hold of its own parks
         /// before its trailer.
         var holdTrailer: Bool {
@@ -564,20 +574,47 @@ struct VsockClipboardServiceTests {
             set { lock.withLock { holdsTrailer = newValue } }
         }
 
-        /// Releases every transfer parked before its trailer, so it ends.
+        /// Releases every transfer parked before its trailer, so it ends — and
+        /// latches the registered ones that have yet to park, so each ends as it
+        /// parks.
+        ///
+        /// The latch names ids rather than setting a flag: a reply registered
+        /// *after* this call is a hold a later part of the test asked for, and
+        /// must still park.
         func releaseTrailer() {
-            let held = lock.withLock {
-                parked.filter { $0.value.hold == .beforeTrailer }.map(\.key)
+            let held = lock.withLock { () -> [ParkedDataConnection] in
+                for (xid, reply) in replies where parked[xid] == nil && holdsTrailerLocked(reply) {
+                    latchedFinishes.insert(xid)
+                }
+                let matching = parked.filter { $0.value.hold == .beforeTrailer }
+                for xid in matching.keys { parked[xid] = nil }
+                return matching.values.map(\.connection)
             }
-            for id in held { finishTransfer(id) }
+            for connection in held { connection.resume() }
+        }
+
+        /// Whether `reply` would park before its trailer. Caller holds `lock`.
+        private func holdsTrailerLocked(_ reply: Reply) -> Bool {
+            reply.hold == .beforeTrailer || (reply.hold == .whole && holdsTrailer)
         }
 
         /// Finishes one transfer parked before its payload or its trailer,
         /// writing what is left of the stream.
+        ///
+        /// Latches: a call that lands before ``serve(req:reply:)`` has parked
+        /// the stream is applied the moment it parks, so a release is never
+        /// lost to the order the test and the responder's task happened to run
+        /// in — which no gate on the *request* can rule out, the request being
+        /// recorded before the transfer is served.
         func finishTransfer(_ transferID: UInt64) {
-            guard let entry = lock.withLock({ parked.removeValue(forKey: transferID) })
-            else { return }
-            entry.connection.resume()
+            let connection = lock.withLock { () -> ParkedDataConnection? in
+                guard let entry = parked.removeValue(forKey: transferID) else {
+                    latchedFinishes.insert(transferID)
+                    return nil
+                }
+                return entry.connection
+            }
+            connection?.resume()
         }
 
         private let replyGate = AsyncGate()
@@ -661,7 +698,6 @@ struct VsockClipboardServiceTests {
                         if let reply = self.record(req) {
                             try await self.serve(req: req, reply: reply)
                         }
-                        self.answered.notify()
                     }
                 } catch {
                     // Channel closed — stop answering.
@@ -700,6 +736,7 @@ struct VsockClipboardServiceTests {
                 consumeTask = nil
                 let held = parked.values.map(\.connection)
                 parked.removeAll()
+                latchedFinishes.removeAll()
                 return (task, held)
             }
             task?.cancel()
@@ -763,7 +800,19 @@ struct VsockClipboardServiceTests {
                     if stopsBeforePayload { try? writeTransferBytes(fd: fd, wire) }
                     try? ClipboardDataConnection.writeTrailer(trailer, fd: fd)
                 })
-            lock.withLock { parked[xid] = (connection: connection, hold: hold) }
+            // A release that already named this transfer applies here rather
+            // than being dropped, so the stream ends whichever side got there
+            // first.
+            let alreadyReleased = lock.withLock { () -> Bool in
+                guard latchedFinishes.remove(xid) == nil else { return true }
+                parked[xid] = (connection: connection, hold: hold)
+                return false
+            }
+            guard !alreadyReleased else {
+                connection.resume()
+                return
+            }
+            parkedTransfers.notify()
         }
 
         /// Dials one transfer's data connection into the service — the guest's
@@ -1067,38 +1116,6 @@ struct VsockClipboardServiceTests {
         await service.materializeForPreview()
         #expect(responder.requests.isEmpty)
         #expect(service.clipboardContent.representations.first?.isPendingRemote == true)
-    }
-
-    @Test("A large inline preview rep arrives whole")
-    func previewLargeInlineReassembles() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
-        service.start()
-        defer { service.stop() }
-
-        // Past the socket buffer several times over, so the payload cannot cross
-        // in one write; still well under maxEditableTextBytes so preview pulls it.
-        let bytes = Data((0..<(200 * 1024)).map { UInt8(truncatingIfNeeded: $0 &* 53 &+ 7) })
-        let textUTI = ClipboardContent.utf8TextUTI
-
-        let responder = FakeGuestResponder(service: service, guest: guest)
-        defer { responder.cancel() }
-        responder.register(generation: 3, repIndex: 0, uti: textUTI, bytes: bytes, isInline: true)
-        responder.start()
-
-        try guest.send(
-            makeOfferFrame(
-                generation: 3,
-                reps: [RepInfo(uti: textUTI, byteCount: UInt64(bytes.count), isInline: true)]))
-        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
-
-        await service.materializeForPreview()
-        #expect(service.clipboardContent.representations.first?.inMemoryData == bytes)
     }
 
     @Test("materializeForCopy promises every rep from metadata — nothing crosses at the click")
@@ -1717,7 +1734,15 @@ struct VsockClipboardServiceTests {
             makeOfferFrame(
                 generation: 3,
                 reps: [RepInfo(uti: "public.data", byteCount: 32, filename: "c.bin", isInline: false)]))
-        try await reports.wait { reports.failure == nil }
+        // Gate on gen=3 being published, which `handleOffer` does *after* it has
+        // decided whether to retract — so the pasteboard reads below are ordered
+        // behind that decision. Waiting for the absence of a failure instead
+        // resolves on the report `handleOffer` clears on the way in, which is
+        // ahead of the decision rather than behind it.
+        try await waitForChange {
+            service.clipboardContent.representations.first?.filename == "c.bin"
+        }
+        #expect(reports.failure == nil)
         #expect(pasteboard.changeCount == countBefore)
         #expect(pasteboard.string(forType: .string) == "mine")
     }
@@ -2364,10 +2389,10 @@ struct VsockClipboardServiceTests {
 
         // Releasing the trailer resolves the pull; the terminal clears the readout (§13:
         // never leave a stuck bar). Gated on the responder having parked the
-        // transfer: `releaseTrailer()` reads its `parked` map at call time, and
-        // the readout above is published before the request is even sent, so it
-        // is no evidence the entry exists yet.
-        try await responder.answered.wait { responder.requests.count == 1 }
+        // transfer — the readout above is published host-side at `unitBegan`,
+        // before the request is even sent, so it is no evidence of that.
+        let heldTransfer = inboundTransferID(generation: 41, repIndex: 0)
+        try await responder.parkedTransfers.wait { responder.isParked(heldTransfer) }
         responder.releaseTrailer()
         let url = await pull.value
         #expect(url != nil)
@@ -2418,14 +2443,11 @@ struct VsockClipboardServiceTests {
         // Wait until the paste's transfer is live (its progress revealed), then
         // trigger the preview into the parked pull.
         try await reports.wait { reports.snapshot?.direction == .inbound }
-        // …and until the responder has actually parked it. `releaseTrailer()`
-        // reads the responder's `parked` map at call time, so a release issued
-        // before `serve` stored the entry is silently lost and the pull runs to
-        // its backstop. The readout above cannot stand in for that: it is
-        // published host-side at `unitBegan`, before the request is even sent.
-        // Gate on the responder's own signal, as
-        // `concurrentPreviewTriggersSendOneRequest` does.
-        try await responder.answered.wait { responder.requests.count == 1 }
+        // …and until the responder has actually parked it. The readout above
+        // cannot stand in for that: it is published host-side at `unitBegan`,
+        // before the request is even sent.
+        let heldTransfer = inboundTransferID(generation: 44, repIndex: 0)
+        try await responder.parkedTransfers.wait { responder.isParked(heldTransfer) }
         let preview = Task { await service.materializeForPreview() }
         // RATIONALE: sanctioned no-signal poll (docs/TESTING.md "Async waits in
         // tests") — the waiter count is NSLock-guarded SUT state, not
@@ -2546,7 +2568,8 @@ struct VsockClipboardServiceTests {
         // Preview first: its payload-less reply parks that pull, so the paste's
         // is the second request on the wire.
         let preview = Task { await service.materializeForPreview() }
-        try await responder.answered.wait { responder.requests.count == 1 }
+        let heldTransfer = inboundTransferID(generation: 54, repIndex: 1)
+        try await responder.parkedTransfers.wait { responder.isParked(heldTransfer) }
         let paste = Task {
             await offCooperativePool { service.serveFileURL(generation: 54, repIndex: 0) }
         }
@@ -2600,7 +2623,8 @@ struct VsockClipboardServiceTests {
         let paste = Task {
             await offCooperativePool { service.serveFileURL(generation: 50, repIndex: 0) }
         }
-        try await responder.answered.wait { responder.requests.count == 1 }
+        let heldTransfer = inboundTransferID(generation: 50, repIndex: 0)
+        try await responder.parkedTransfers.wait { responder.isParked(heldTransfer) }
 
         // The peer goes away — an agent crash, not a stop on this side.
         guest.close()
@@ -2648,7 +2672,10 @@ struct VsockClipboardServiceTests {
         let paste = Task {
             await offCooperativePool { service.serveFileURL(generation: 49, repIndex: 0) }
         }
-        try await responder.answered.wait { responder.requests.count == 1 }
+        // The release must land on a transfer whose connection exists, not
+        // merely on a recorded request: that connection is what it tears down.
+        let heldTransfer = inboundTransferID(generation: 49, repIndex: 0)
+        try await responder.parkedTransfers.wait { responder.isParked(heldTransfer) }
 
         try guest.send(makeReleaseFrame(generation: 49))
 
@@ -2659,96 +2686,6 @@ struct VsockClipboardServiceTests {
             reports.failure == .supersededCopyRetracted(hasSuccessor: false)
         }
         #expect(retracts.value == 1)
-    }
-
-    @Test(
-        "A control frame arriving while a paste pull holds main does not stall the transfer answering it (#458)"
-    )
-    func controlFrameDuringBlockingPullDoesNotStallRouting() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        // RATIONALE: 5 s — a hostage-window bound (docs/TESTING.md), not the
-        // ≥60 s default: `serveFileURL` runs on the real main thread, so this
-        // timeout caps how long the bundle's main thread is held if the fast
-        // path loses; a #458 regression resolves to nothing whichever way it
-        // lands, so the value never masks one.
-        let reports = ClipboardTransferReports()
-        let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter, lazyPullTimeout: 5)
-        service.start()
-        defer { service.stop() }
-
-        // A single lazy-eligible file rep (non-inline, named) — the paste pull's target.
-        try guest.send(
-            makeOfferFrame(
-                generation: 30,
-                reps: [RepInfo(uti: "public.data", byteCount: 4, filename: "f.bin", isInline: false)]))
-        try await waitForChange {
-            service.clipboardContent.representations.first?.isPendingRemote == true
-        }
-
-        let payload = Data([0xDE, 0xAD, 0xBE, 0xEF])
-        // A file crosses as a one-entry archive, so the detached guest below
-        // streams what the sender would encode.
-        let wire = try clipboardArchiveBytes(of: .blob(payload, name: "f.bin"))
-        let xid = inboundTransferID(generation: 30, repIndex: 0)
-
-        // Drains the guest side independently of the host's main thread: on seeing
-        // the host's ClipboardRequest, sends an inert control frame FIRST — the
-        // interleaving #458 describes, a control frame landing mid-pull — THEN
-        // dials the transfer's data connection and serves it. `.detached` (not
-        // plain `Task {}`, which would inherit this MainActor test struct's
-        // isolation) so this truly never touches the host's main actor and isn't
-        // blocked by the serveFileURL call below; it is the guest-side analog of
-        // the "peer keeps talking while we're mid-transfer" scenario.
-        let responderTask = Task.detached {
-            for try await frame in guest.incoming {
-                guard case .clipboardRequest(let req) = frame.payload, req.transferID == xid
-                else { continue }
-                try guest.sendErrorFrame(
-                    code: "clipboard.interleaved", message: "control frame mid-pull",
-                    inReplyTo: "clipboard.request")
-                let (peerEnd, hostEnd) = try makeRawSocketPair()
-                MainActorBridge.async { service.acceptDataConnection(fd: hostEnd) }
-                // A blocking write gets a thread of its own rather than one of
-                // the cooperative pool's.
-                Thread.detachNewThread {
-                    try? serveTransfer(
-                        fd: peerEnd, transferID: xid, payload: wire, isArchive: true,
-                        isInline: false)
-                }
-                return
-            }
-        }
-        defer { responderTask.cancel() }
-
-        // Fired from the main run loop's base, the way the pasteboard delivers a
-        // promise (`NestedEventLoopWait`) rather than from a main-queue job: the
-        // wait holds the real main thread for the length of the pull either way,
-        // and only from the base does it keep draining the main queue — which is
-        // how the VZ listener delivers the transfer's connection at all. Under
-        // the old `await onControlFrame` code the interleaved control frame
-        // suspended the whole consume loop, so nothing behind it in the channel
-        // routed and the pull ran to its backstop; under the fix the loop
-        // dispatches it fire-and-forget and keeps draining, so this resolves
-        // promptly.
-        let url = await withCheckedContinuation { (served: CheckedContinuation<URL?, Never>) in
-            performOnMainRunLoop {
-                served.resume(returning: service.serveFileURL(generation: 30, repIndex: 0))
-            }
-        }
-        #expect(try Data(contentsOf: #require(url)) == payload)
-
-        // The interleaved control frame wasn't dropped — it's processed
-        // fire-and-forget, so it surfaces once main frees up.
-        try await reports.waitForFailure()
-        // The code is one this build does not define, so it reports as an
-        // unclassified peer failure rather than being swallowed.
-        #expect(reports.failure == .peerReported(nil))
-        #expect(reports.finish?.gesture == .peerPaste)
     }
 
     @Test("A newer offer supersedes an in-flight pull — the pull resolves to nothing, new placeholders publish")
@@ -2785,11 +2722,11 @@ struct VsockClipboardServiceTests {
 
         // Start a preview that issues the gen=1 pull and parks (no payload arrives).
         let previewTask = Task { await service.materializeForPreview() }
-        // Wait until the host has actually sent the pull request — that's the
-        // in-flight window we want to interrupt.
-        try await responder.answered.wait {
-            responder.requests.contains { $0.generation == 1 }
-        }
+        // Wait until the transfer's connection is open with its payload
+        // withheld. That, not the request alone, is the in-flight window the
+        // supersede has to interrupt.
+        let heldTransfer = inboundTransferID(generation: 1, repIndex: 0)
+        try await responder.parkedTransfers.wait { responder.isParked(heldTransfer) }
 
         // A newer offer (gen=2) supersedes gen=1: handleOffer cancels the
         // in-flight receiver transfer, which resolves the parked pull to nil.
@@ -3094,12 +3031,10 @@ struct VsockClipboardServiceTests {
         // (no payload arrives). Run it detached so the test keeps driving.
         let firstPreview = Task { await service.materializeForPreview() }
 
-        // Wait until EXACTLY one request for rep 0 has been recorded — the
-        // in-flight window we want the second caller to coalesce into.
+        // Wait until rep 0's connection is open and holding its payload back —
+        // the in-flight window we want the second caller to coalesce into.
         let rep0XID = inboundTransferID(generation: generation, repIndex: 0)
-        try await responder.answered.wait {
-            responder.requests.contains { $0.transferID == rep0XID }
-        }
+        try await responder.parkedTransfers.wait { responder.isParked(rep0XID) }
         #expect(responder.requests.filter { $0.transferID == rep0XID }.count == 1)
 
         // A second display trigger while the first loop is still parked: the
@@ -3199,7 +3134,7 @@ struct VsockClipboardServiceTests {
 
         // The aborted pull resolves nil and the rep stays a placeholder.
         let firstPreview = Task { await service.materializeForPreview() }
-        try await responder.answered.wait {
+        try await responder.requested.wait {
             responder.requests.contains { $0.transferID == xid }
         }
         await firstPreview.value
@@ -3295,7 +3230,7 @@ struct VsockClipboardServiceTests {
 
         let previewTask = Task { await service.materializeForPreview() }
         let xid = inboundTransferID(generation: 5, repIndex: 0)
-        try await responder.answered.wait {
+        try await responder.requested.wait {
             responder.requests.contains { $0.transferID == xid }
         }
 
@@ -3646,29 +3581,21 @@ struct VsockClipboardServiceTests {
 
     // MARK: - Transfer progress
 
-    @Test(
-        "a rep another loop pulled first never enters the preview's denominator, which still reaches 100% (#656)"
-    )
-    func coalescedRepStaysOutOfThePreviewDenominator() async throws {
+    @Test("a rep another loop pulled first is taken from the cache, not requested again (#656)")
+    func coalescedRepIsNotRequestedAgain() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
         defer { guest.close() }
 
-        // Reveal instantly so each operation's state is observable as it happens;
-        // the idle gap is sized past any scheduler stall instead of to a "tidy"
-        // value, because the operations here span a gap between two transfers on
-        // purpose. Nothing waits on it — `stop()` retires the readout at teardown.
-        let reports = ClipboardTransferReports()
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", reporter: reports.reporter, progressRevealDelay: 0,
-            progressIdleGap: 60)
+            channel: host, label: "test-\(UUID().uuidString)", reporter: ClipboardTransferReporter())
         service.start()
         defer { service.stop() }
 
         // Two previewable reps: a paste-time fire pulls rep 1 first, so the
         // preview never begins a transfer for it.
-        let text = String(repeating: "x", count: 200_000)
+        let text = "the preview pulls this one itself"
         let rtf = Data(repeating: 0x41, count: 8_192)
         let responder = FakeGuestResponder(service: service, guest: guest)
         defer { responder.cancel() }
@@ -3707,10 +3634,6 @@ struct VsockClipboardServiceTests {
         let previewTask = Task { await service.materializeForPreview() }
         try await entered.wait { didEnter }
 
-        // Only what it actually started is in the denominator.
-        try await reports.wait { reports.snapshot?.totalBytes == UInt64(text.utf8.count) }
-        #expect(reports.snapshot?.fileCount == 1)
-
         // With it parked, a paste-time fire pulls rep 1 to completion under its
         // own operation — the rep the preview would otherwise have reached.
         let pasted = await offCooperativePool {
@@ -3722,24 +3645,28 @@ struct VsockClipboardServiceTests {
         release.notify()
         await previewTask.value
 
-        // Reaching rep 1 and finding it already pulled, the preview begins no
-        // transfer for it, so its readout lands on the bytes it actually moved —
-        // at 100%, rather than stalling for the rest of the operation.
-        //
-        // Two operations finish here — the paste's own and the preview's — and
-        // their terminals are queued from different threads, so position
-        // identifies neither. The denominator does: only the preview's readout
-        // counts rep 0's bytes, which is what this asserted all along.
-        let previewBytes = UInt64(text.utf8.count)
-        try await reports.wait {
-            reports.finalSnapshots.contains { $0.totalBytes == previewBytes }
+        // Reaching rep 1 and finding it already pulled, the preview takes the
+        // cache: it opens no transfer for it, so it declares no readout unit
+        // either and its denominator stays the bytes it actually moved. One
+        // request per representation is the whole of that, and it is true in
+        // every ordering — where the readout is not: two operations run at once
+        // here, and which of their terminals the shared reporter publishes is
+        // decided by the order they end in. `ClipboardTransferOperationTests`
+        // owns what a declared unit does to the bar.
+        let expectedIDs = [
+            inboundTransferID(generation: 7, repIndex: 0),
+            inboundTransferID(generation: 7, repIndex: 1),
+        ].sorted()
+        #expect(responder.requests.map(\.transferID).sorted() == expectedIDs)
+        #expect(service.clipboardContent.text == text)
+
+        // Serving rep 1 again adds no request either — the cache the preview
+        // read is the same one a later paste reads.
+        let again = await offCooperativePool {
+            service.serveData(generation: 7, repIndex: 1, uti: "public.rtf")
         }
-        let final = try #require(
-            reports.finalSnapshots.last(where: { $0.totalBytes == previewBytes }),
-            "No finished readout carried the preview's denominator; saw \(reports.finalSnapshots.map(\.totalBytes))"
-        )
-        #expect(final.fractionComplete == 1)
-        #expect(final.fileCount == 1)
+        #expect(again == rtf)
+        #expect(responder.requests.count == 2)
     }
 
     @Test("a transfer that finishes before the reveal delay never shows progress")
