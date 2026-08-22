@@ -35,6 +35,26 @@ jobs:
           # and, existing, block a save at the new path.
           path: DerivedData/Kernova/SourcePackages
           key: ${{ runner.os }}-spm2-${{ env.XCODE_BUILD }}-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          # A Package.resolved or Xcode bump misses the exact key; a stale
+          # checkout is still a valid seed (SwiftPM reconciles against
+          # Package.resolved and fetches only the delta). Checkouts are plain
+          # git clones, so the Xcode-agnostic prefix is a valid last resort.
+          restore-keys: |
+            ${{ runner.os }}-spm2-${{ env.XCODE_BUILD }}-
+            ${{ runner.os }}-spm2-
+
+      - name: Cache compilation cache
+        uses: actions/cache@v5
+        with:
+          # Xcode 26's compilation cache (COMPILATION_CACHE_ENABLE_CACHING on
+          # the build step below) lives inside DerivedData; the glob tracks
+          # the store's folder whatever exact name Xcode gives it.
+          path: DerivedData/Kernova/CompilationCache*
+          # The store is content-addressed, so any prior snapshot is a valid
+          # seed. The per-commit key exists only so every run saves its
+          # updated store; the prefix restore pulls the most recent one.
+          key: ${{ runner.os }}-cas-${{ env.XCODE_BUILD }}-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-cas-${{ env.XCODE_BUILD }}-
 
       # These invocations mirror the Makefile's XCODEBUILD_FLAGS by hand.
       #
@@ -53,7 +73,14 @@ jobs:
             -configuration Debug \
             -skipPackagePluginValidation \
             COMPILER_INDEX_STORE_ENABLE=NO \
+            COMPILATION_CACHE_ENABLE_CACHING=YES \
             2>&1 | if command -v xcbeautify &>/dev/null; then xcbeautify --renderer github-actions; else cat; fi
+
+      # The store's size after a build is the signal that caching engaged:
+      # empty or missing means COMPILATION_CACHE_ENABLE_CACHING no-opped, and
+      # the build step's wall clock across runs is then measuring nothing.
+      - name: Report compilation cache size
+        run: du -sh DerivedData/Kernova/CompilationCache* 2>/dev/null || echo "No compilation cache store found."
 
       # No KERNOVA_TEST_ADMISSION_WIDTH is set, so `TestAdmission` resolves to
       # pass-through and the gate bounds nothing. Measured on #924 over serialized
