@@ -48,6 +48,25 @@ Reach a waiting bridge from the run loop's base with `performOnMainRunLoop`, the
 
 **A double a production contract pins stays pinned.** One conforming to a `@MainActor` protocol is main-bound by that protocol, not by convenience, and moving it would only move the violation.
 
+## Flaky tests
+
+A flaky test is a defect, never weather. **Fix it or delete it — do not
+patch it.** Every flake gets one of three outcomes: fixed by construction
+(the race is impossible, not merely rarer), rearchitected (the test asserts
+what holds in every legal ordering), or deleted, with maintainer sign-off.
+Widened timeouts, retries, sleeps, reduced concurrency, and
+diagnostics-as-the-fix are not outcomes; they trade the failure's
+visibility for its persistence.
+
+Hunt flakes with contention rather than hiding them from it. Gating a CI
+run at `TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH=8` amplifies
+scheduling-sensitive defects (2026-08-20: one gated run reproduced, with
+failure text, a family ungated CI had surfaced only piecemeal over weeks),
+and the "Report failure messages" step prints each failure's `#expect`
+text. `main`'s width is a herd cap sized for headroom, never a tuning knob:
+lowering it to quiet a flake is a patch wearing configuration's clothes —
+the suite must stay green at any width.
+
 ## Test-only seams
 
 When a test needs to observe state that is `private` in production, pick the tightest exposure that still works:

@@ -82,21 +82,23 @@ jobs:
       - name: Report compilation cache size
         run: du -sh DerivedData/Kernova/CompilationCache* 2>/dev/null || echo "No compilation cache store found."
 
-      # No KERNOVA_TEST_ADMISSION_WIDTH is set, so `TestAdmission` resolves to
-      # pass-through and the gate bounds nothing. Measured on #924 over serialized
-      # samples of this suite: width 16 flaked 2 of 4 runs against 1 of 3 for the
-      # same tree ungated, and width 8 turned a job red outright. To gate a run
-      # and re-measure, set `TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH` in this
-      # step's `env:`. Only the prefixed spelling reaches the test hosts:
-      # `xcodebuild` forwards `TEST_RUNNER_`-prefixed variables to the test
-      # runner with the prefix stripped and passes nothing else through, so the
-      # plain name set here silently no-ops and the run measures pass-through
-      # (observed 2026-08-20).
+      # The admission width caps concurrent test cases per host process (three
+      # hosts run at once, so the machine-wide bound is 3×). It is a herd cap
+      # sized for headroom as the suite grows, not a tuning knob: the suite
+      # must stay green at any width, and a flake a width change surfaces gets
+      # fixed or deleted (docs/TESTING.md, "Flaky tests"), never quieted by
+      # re-tuning this number. Only the prefixed spelling reaches the test
+      # hosts: `xcodebuild` forwards `TEST_RUNNER_`-prefixed variables to the
+      # test runner with the prefix stripped and passes nothing else through,
+      # so the plain name set here silently no-ops and the run measures
+      # pass-through (observed 2026-08-20).
       #
       # Raw xcodebuild output rather than xcbeautify: the github-actions renderer
       # prints failing test names alone, dropping the `#expect` text and the
       # source line that say what actually failed.
       - name: Test without building
+        env:
+          TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH: "32"
         run: |
           xcodebuild test-without-building \
             -project Kernova.xcodeproj \
