@@ -31,7 +31,7 @@ struct VsockGuestDataDialerTests {
     }
 
     /// A parked data connect must not spend the reconnect loop's own budget of
-    /// blocking-connect slots, so it claims the gate under a label of its own.
+    /// parked attempts, so it goes through the gate under a label of its own.
     @Test("a dial claims the gate under the data label, not a channel's")
     func dialsUnderItsOwnGateLabel() throws {
         let (near, far) = try makeRawSocketPair()
