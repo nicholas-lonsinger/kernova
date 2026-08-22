@@ -55,33 +55,43 @@ final class BlockingConnectHandoff: @unchecked Sendable {
     var outcome: Int32? { lock.withLock { recorded } }
 }
 
-/// Bounds the in-flight blocking `connect(2)` attempts per client label.
+/// Rations blocking `connect(2)` attempts per client label once earlier
+/// attempts have parked in the kernel.
 ///
 /// A parked connect never returns and never surfaces to the host — the queued
 /// request appears at the listener only when the guest closes the fd
 /// (docs/research/2026-08-02-macos12-vsock-blocking-connect-parks.md,
-/// 2026-08-02-macos12-vsock-nonblocking-connect.md) — so a slot held by one
-/// frees only at process exit, and a recovered host cannot drain it. Unbounded,
-/// a host that never accepts would strand one thread per retry for the life of
-/// the process; a hard cap would let `maxPromptSlots` parks refuse every later
-/// attempt just as permanently. So below the cap attempts are admitted
-/// promptly, and past it one attempt is admitted per backoff interval —
-/// starting at `backoffFloor` and doubling per additional held slot up to
-/// `backoffCeiling` — which keeps a healed host reachable within the current
-/// interval while a persistent wedge strands threads at a rate that decays to
-/// one per `backoffCeiling`.
+/// 2026-08-02-macos12-vsock-nonblocking-connect.md) — so the thread behind one
+/// is stranded for the life of the process and no recovery drains it.
+/// Unbounded, a host that never accepts would strand one thread per retry
+/// forever. Only *parked* attempts are charged: an attempt whose syscall
+/// returns inside its deadline costs nothing, however many run at once, so
+/// concurrent healthy dials are never refused.
+///
+/// Past `maxParkedAttempts` parked attempts one attempt is admitted per
+/// backoff interval — `backoffFloor`, doubling per additional parked attempt
+/// up to `backoffCeiling` — so a persistent wedge strands threads at a rate
+/// that decays to one per `backoffCeiling`. Any attempt that then completes
+/// inside its deadline, connected or refused with an errno, proves the host's
+/// vsock stack is answering and lifts the rationing outright: the parked
+/// threads are sunk cost that traffic the host can serve must not pay for.
 final class BlockingConnectGate: @unchecked Sendable {
-    /// Slots admitted promptly; past this, admission rides the backoff.
-    static let maxPromptSlots = 3
-    /// Wait before the first over-cap admission, doubled per held slot beyond
-    /// the cap.
+    /// Parked attempts tolerated before admission rides the backoff.
+    static let maxParkedAttempts = 3
+    /// Wait before the first admission past the cap, doubled per parked
+    /// attempt beyond it.
     static let backoffFloor: TimeInterval = 10
     static let backoffCeiling: TimeInterval = 600
 
     private struct LabelState {
-        var held = 0
+        /// Attempts abandoned past their deadline whose syscall has not
+        /// returned.
+        var parked = 0
         /// When the most recent admission was granted.
-        var lastClaimAt = EngineInstant(nanoseconds: 0)
+        var lastAdmissionAt = EngineInstant(nanoseconds: 0)
+        /// Whether the most recent attempt to complete did so inside its
+        /// deadline — the evidence that the host is answering.
+        var lastCompletedNormally = true
     }
 
     private let lock = NSLock()
@@ -94,38 +104,76 @@ final class BlockingConnectGate: @unchecked Sendable {
         self.clock = clock
     }
 
-    /// Claims a slot for `label`; past the prompt cap, admits only once the
-    /// label's current backoff has elapsed since its last admission.
+    /// Decides whether `label` may start a blocking connect now.
     ///
-    /// - Returns: `true` when the attempt is admitted and now holds a slot.
-    func claim(_ label: String) -> Bool {
+    /// - Returns: `true` unless the label is over its parked cap with nothing
+    ///   completed since and its current backoff has not elapsed.
+    func admit(_ label: String) -> Bool {
         lock.withLock {
             var state = states[label] ?? LabelState()
-            if state.held >= Self.maxPromptSlots {
-                let over = state.held - Self.maxPromptSlots
+            if state.parked >= Self.maxParkedAttempts, !state.lastCompletedNormally {
+                let over = state.parked - Self.maxParkedAttempts
                 let backoff = min(
                     Self.backoffFloor * pow(2, Double(over)), Self.backoffCeiling)
-                guard clock.seconds(since: state.lastClaimAt) >= backoff else { return false }
+                guard clock.seconds(since: state.lastAdmissionAt) >= backoff else { return false }
             }
-            state.held += 1
-            state.lastClaimAt = clock.now
+            state.lastAdmissionAt = clock.now
             states[label] = state
             return true
         }
     }
 
-    func release(_ label: String) {
+    /// Charges `label` for an attempt whose deadline passed with the syscall
+    /// still in the kernel.
+    ///
+    /// Called *before* `BlockingConnectHandoff.abandon()`, so that every
+    /// `markParkReturned` — which only a worker that saw the abandoned flag
+    /// can reach — is preceded by its own increment.
+    func markParked(_ label: String) {
         lock.withLock {
-            guard var state = states[label] else { return }
-            state.held = max(0, state.held - 1)
+            var state = states[label] ?? LabelState()
+            state.parked += 1
+            state.lastCompletedNormally = false
             states[label] = state
         }
     }
 
-    /// Whether `label` currently holds at least one slot — for tests.
-    func isClaimed(_ label: String) -> Bool {
-        lock.withLock { (states[label]?.held ?? 0) > 0 }
+    /// Undoes a `markParked` whose syscall turned out to have beaten the
+    /// deadline, leaving the attempt counted as completed.
+    func revertPark(_ label: String) {
+        lock.withLock {
+            var state = states[label] ?? LabelState()
+            state.parked = max(0, state.parked - 1)
+            state.lastCompletedNormally = true
+            states[label] = state
+        }
     }
+
+    /// Discharges a parked attempt whose syscall has finally returned.
+    func markParkReturned(_ label: String) {
+        lock.withLock {
+            guard var state = states[label] else { return }
+            state.parked = max(0, state.parked - 1)
+            states[label] = state
+        }
+    }
+
+    /// Records that an attempt completed inside its deadline, whatever its
+    /// outcome — the host is answering, so rationing lifts.
+    func markCompleted(_ label: String) {
+        lock.withLock {
+            var state = states[label] ?? LabelState()
+            state.lastCompletedNormally = true
+            states[label] = state
+        }
+    }
+
+    #if DEBUG
+    /// How many of `label`'s attempts are parked in the kernel.
+    func parkedCountForTesting(_ label: String) -> Int {
+        lock.withLock { states[label]?.parked ?? 0 }
+    }
+    #endif
 }
 
 private let blockingConnectGate = BlockingConnectGate()
@@ -454,7 +502,7 @@ final class VsockGuestClient: @unchecked Sendable {
             case .busy:
                 close(fd)
                 logger.warning(
-                    "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) held back: earlier attempts are still parked; the gate admits the next one after its backoff"
+                    "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) held back: earlier attempts are parked with none completing since; the gate admits the next one after its backoff"
                 )
                 return .failure(
                     .transient("connect() to '\(label)' port \(port) is gated behind parked earlier attempts"))
@@ -514,16 +562,17 @@ final class VsockGuestClient: @unchecked Sendable {
         deadline: TimeInterval = TimeInterval(VsockGuestClient.connectTimeoutSeconds),
         connectCall: @escaping @Sendable () -> Int32
     ) -> BlockingConnectOutcome {
-        guard gate.claim(label) else { return .busy }
+        guard gate.admit(label) else { return .busy }
 
         let handoff = BlockingConnectHandoff()
         let ready = DispatchSemaphore(value: 0)
         let worker = Thread {
             let waiterPresent = handoff.finish(errno: connectCall())
-            gate.release(label)
             if waiterPresent {
+                gate.markCompleted(label)
                 ready.signal()
             } else {
+                gate.markParkReturned(label)
                 close(fd)
             }
         }
@@ -535,12 +584,14 @@ final class VsockGuestClient: @unchecked Sendable {
         {
             return err == 0 ? .connected : .failed(errno: err)
         }
+        gate.markParked(label)
         if handoff.abandon() {
             logger.warning(
                 "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) still blocked after \(deadline, privacy: .public)s — abandoning it"
             )
             return .abandoned
         }
+        gate.revertPark(label)
         // The syscall landed between the deadline expiring and the abandon: the
         // worker saw the waiter present and skipped its close, so the caller
         // owns `fd` on every arm below — the fallback must never say otherwise.

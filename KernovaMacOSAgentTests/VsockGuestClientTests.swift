@@ -561,7 +561,7 @@ struct ClassifySocketErrnoTests {
     }
 }
 
-@Suite("Bounded blocking connect: socket ownership and the one-per-label gate", .admissionGated)
+@Suite("Bounded blocking connect: socket ownership and the parked-attempt gate", .admissionGated)
 struct BlockingConnectTests {
     @Test("A syscall that beats the deadline hands the socket to the waiter")
     func syscallBeatsDeadline() {
@@ -590,126 +590,188 @@ struct BlockingConnectTests {
         #expect(handoff.outcome == ECONNREFUSED)
     }
 
-    @Test("Past the prompt cap, admission waits out a doubling backoff")
-    func gateBacksOffPastPromptCap() {
+    @Test("Attempts that never park are admitted however many run in a row")
+    func gateAdmitsEveryHealthyAttempt() {
         let clock = TestEngineClock()
         let gate = BlockingConnectGate(clock: clock)
 
-        for _ in 0..<BlockingConnectGate.maxPromptSlots {
-            #expect(gate.claim("control"))
+        for _ in 0..<(BlockingConnectGate.maxParkedAttempts * 8) {
+            #expect(gate.admit("data"))
         }
-        #expect(gate.claim("control") == false)
-
-        clock.advance(seconds: BlockingConnectGate.backoffFloor - 1)
-        #expect(gate.claim("control") == false)
-        clock.advance(seconds: 1)
-        #expect(gate.claim("control"))
-
-        // One slot past the cap doubles the wait.
-        clock.advance(seconds: BlockingConnectGate.backoffFloor)
-        #expect(gate.claim("control") == false)
-        clock.advance(seconds: BlockingConnectGate.backoffFloor)
-        #expect(gate.claim("control"))
+        #expect(gate.parkedCountForTesting("data") == 0)
     }
 
-    @Test("The backoff never exceeds its ceiling however many slots are parked")
+    @Test("Concurrent attempts on one label are all admitted while none is parked")
+    func gateAdmitsEveryConcurrentHealthyAttempt() async {
+        let clock = TestEngineClock()
+        let gate = BlockingConnectGate(clock: clock)
+        let dials = 32
+        let winners = CallCounter()
+
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<dials {
+                group.addTask {
+                    if gate.admit("data") { await winners.increment() }
+                }
+            }
+        }
+
+        #expect(await winners.value == dials)
+    }
+
+    @Test("Past the parked cap, admission waits out a doubling backoff")
+    func gateBacksOffPastParkedCap() {
+        let clock = TestEngineClock()
+        let gate = BlockingConnectGate(clock: clock)
+
+        for _ in 0..<BlockingConnectGate.maxParkedAttempts {
+            #expect(gate.admit("control"))
+            gate.markParked("control")
+        }
+        #expect(gate.admit("control") == false)
+
+        clock.advance(seconds: BlockingConnectGate.backoffFloor - 1)
+        #expect(gate.admit("control") == false)
+        clock.advance(seconds: 1)
+        #expect(gate.admit("control"))
+        gate.markParked("control")
+
+        // One attempt past the cap doubles the wait.
+        clock.advance(seconds: BlockingConnectGate.backoffFloor)
+        #expect(gate.admit("control") == false)
+        clock.advance(seconds: BlockingConnectGate.backoffFloor)
+        #expect(gate.admit("control"))
+    }
+
+    @Test("The backoff never exceeds its ceiling however many attempts are parked")
     func gateBackoffStopsAtCeiling() {
         let clock = TestEngineClock()
         let gate = BlockingConnectGate(clock: clock)
 
-        for _ in 0..<BlockingConnectGate.maxPromptSlots {
-            #expect(gate.claim("control"))
+        for _ in 0..<BlockingConnectGate.maxParkedAttempts {
+            #expect(gate.admit("control"))
+            gate.markParked("control")
         }
         var backoff = BlockingConnectGate.backoffFloor
         while backoff < BlockingConnectGate.backoffCeiling {
-            #expect(gate.claim("control") == false)
+            #expect(gate.admit("control") == false)
             clock.advance(seconds: backoff)
-            #expect(gate.claim("control"))
+            #expect(gate.admit("control"))
+            gate.markParked("control")
             backoff *= 2
         }
         // From here every admission needs exactly the ceiling, never more.
         for _ in 0..<2 {
             clock.advance(seconds: BlockingConnectGate.backoffCeiling - 1)
-            #expect(gate.claim("control") == false)
+            #expect(gate.admit("control") == false)
             clock.advance(seconds: 1)
-            #expect(gate.claim("control"))
+            #expect(gate.admit("control"))
+            gate.markParked("control")
         }
     }
 
-    @Test("A release below the cap restores prompt admission")
-    func gateRestoresPromptAdmissionOnRelease() {
+    @Test("An attempt completing inside its deadline lifts the rationing")
+    func gateHealsOnACompletedAttempt() {
         let clock = TestEngineClock()
         let gate = BlockingConnectGate(clock: clock)
 
-        for _ in 0..<BlockingConnectGate.maxPromptSlots {
-            #expect(gate.claim("control"))
+        for _ in 0..<BlockingConnectGate.maxParkedAttempts {
+            #expect(gate.admit("control"))
+            gate.markParked("control")
         }
-        #expect(gate.claim("control") == false)
-        gate.release("control")
-        #expect(gate.claim("control"))
-        #expect(gate.claim("control") == false)
+        #expect(gate.admit("control") == false)
+
+        gate.markCompleted("control")
+
+        #expect(gate.admit("control"))
+        #expect(gate.admit("control"))
+        #expect(gate.parkedCountForTesting("control") == BlockingConnectGate.maxParkedAttempts)
     }
 
-    @Test("Releasing every slot clears the label entirely")
-    func gateClearsWhenAllSlotsRelease() {
+    @Test("A park after a heal restores the rationing")
+    func gateRationsAgainAfterAParkFollowingAHeal() {
+        let clock = TestEngineClock()
+        let gate = BlockingConnectGate(clock: clock)
+
+        for _ in 0..<BlockingConnectGate.maxParkedAttempts {
+            #expect(gate.admit("control"))
+            gate.markParked("control")
+        }
+        gate.markCompleted("control")
+        #expect(gate.admit("control"))
+        gate.markParked("control")
+
+        #expect(gate.admit("control") == false)
+        clock.advance(seconds: BlockingConnectGate.backoffFloor * 2)
+        #expect(gate.admit("control"))
+    }
+
+    @Test("A parked syscall returning discharges its attempt")
+    func gateDischargesAReturnedPark() {
+        let clock = TestEngineClock()
+        let gate = BlockingConnectGate(clock: clock)
+
+        for _ in 0..<BlockingConnectGate.maxParkedAttempts {
+            #expect(gate.admit("control"))
+            gate.markParked("control")
+        }
+        #expect(gate.admit("control") == false)
+
+        gate.markParkReturned("control")
+
+        #expect(gate.parkedCountForTesting("control") == BlockingConnectGate.maxParkedAttempts - 1)
+        #expect(gate.admit("control"))
+    }
+
+    @Test("A park reverted because the syscall beat the deadline leaves the count unchanged")
+    func gateRevertedParkLeavesTheCountUnchanged() {
+        let clock = TestEngineClock()
+        let gate = BlockingConnectGate(clock: clock)
+
+        for _ in 0..<BlockingConnectGate.maxParkedAttempts {
+            #expect(gate.admit("control"))
+            gate.markParked("control")
+        }
+        gate.markParked("control")
+        gate.revertPark("control")
+
+        #expect(gate.parkedCountForTesting("control") == BlockingConnectGate.maxParkedAttempts)
+        // The reverted attempt completed after all, so nothing is rationed.
+        #expect(gate.admit("control"))
+    }
+
+    @Test("More discharges than parks never drive the count below zero")
+    func gateParkedCountFloorsAtZero() {
         let gate = BlockingConnectGate()
 
-        #expect(gate.claim("control"))
-        #expect(gate.claim("control"))
-        gate.release("control")
-        #expect(gate.isClaimed("control"))
-        gate.release("control")
-        #expect(gate.isClaimed("control") == false)
+        gate.markParkReturned("control")
+        gate.markParked("control")
+        gate.markParkReturned("control")
+        gate.markParkReturned("control")
+
+        #expect(gate.parkedCountForTesting("control") == 0)
+        #expect(gate.admit("control"))
     }
 
-    @Test("Labels hold their slots independently")
+    @Test("Labels carry their parked attempts independently")
     func gateSeparatesLabels() {
         let clock = TestEngineClock()
         let gate = BlockingConnectGate(clock: clock)
 
-        for _ in 0..<BlockingConnectGate.maxPromptSlots {
-            #expect(gate.claim("control"))
+        for _ in 0..<BlockingConnectGate.maxParkedAttempts {
+            #expect(gate.admit("control"))
+            gate.markParked("control")
         }
-        #expect(gate.claim("clipboard"))
-        #expect(gate.claim("control") == false)
+        #expect(gate.admit("control") == false)
 
-        gate.release("control")
-        #expect(gate.claim("clipboard"))
-        #expect(gate.isClaimed("clipboard"))
-    }
-
-    @Test("Releasing a label that never claimed one is inert")
-    func gateReleaseIsIdempotent() {
-        let gate = BlockingConnectGate()
-
-        gate.release("control")
-        #expect(gate.claim("control"))
-        gate.release("control")
-        gate.release("control")
-        #expect(gate.claim("control"))
-    }
-
-    @Test("Concurrent claims on one label admit exactly the prompt cap")
-    func gateAdmitsExactlyTheCapUnderContention() async {
-        let clock = TestEngineClock()
-        let gate = BlockingConnectGate(clock: clock)
-        let winners = CallCounter()
-
-        await withTaskGroup(of: Void.self) { group in
-            for _ in 0..<32 {
-                group.addTask {
-                    if gate.claim("control") { await winners.increment() }
-                }
-            }
-        }
-
-        #expect(await winners.value == BlockingConnectGate.maxPromptSlots)
+        #expect(gate.admit("clipboard"))
+        #expect(gate.parkedCountForTesting("clipboard") == 0)
     }
 }
 
 @Suite("boundedBlockingConnect: outcome arms over real descriptors", .admissionGated)
 struct BoundedBlockingConnectTests {
-    @Test("A prompt success hands the open fd to the caller and frees the gate")
+    @Test("A prompt success hands the open fd to the caller and charges the gate nothing")
     func promptSuccessKeepsCallerOwnership() throws {
         var fds: [Int32] = [0, 0]
         try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
@@ -725,7 +787,7 @@ struct BoundedBlockingConnectTests {
 
         #expect(outcome == .connected)
         #expect(fcntl(fds[0], F_GETFD) >= 0)
-        #expect(gate.isClaimed("test") == false)
+        #expect(gate.parkedCountForTesting("test") == 0)
     }
 
     @Test("A prompt failure reports its errno with the caller still owning the fd")
@@ -744,7 +806,7 @@ struct BoundedBlockingConnectTests {
 
         #expect(outcome == .failed(errno: ECONNREFUSED))
         #expect(fcntl(fds[0], F_GETFD) >= 0)
-        #expect(gate.isClaimed("test") == false)
+        #expect(gate.parkedCountForTesting("test") == 0)
     }
 
     @Test("An outrun deadline abandons the worker, which closes the fd when the call returns")
@@ -764,16 +826,16 @@ struct BoundedBlockingConnectTests {
         }
 
         #expect(outcome == .abandoned)
-        #expect(gate.isClaimed("test"))
+        #expect(gate.parkedCountForTesting("test") == 1)
         #expect(fcntl(fd, F_GETFD) >= 0)
 
-        // The kernel finally returns; the worker releases its slot, then
-        // closes the fd it now owns.
+        // The kernel finally returns; the worker discharges the parked
+        // attempt, then closes the fd it now owns.
         parked.signal()
         // RATIONALE: another thread's close(2) emits no signal — genuinely
         // signal-less predicate.
         try await waitUntil { fcntl(fd, F_GETFD) == -1 }
-        #expect(gate.isClaimed("test") == false)
+        #expect(gate.parkedCountForTesting("test") == 0)
     }
 
     @Test("A gate refusal reports busy without running the connect or touching the fd")
@@ -786,8 +848,9 @@ struct BoundedBlockingConnectTests {
         }
         let clock = TestEngineClock()
         let gate = BlockingConnectGate(clock: clock)
-        for _ in 0..<BlockingConnectGate.maxPromptSlots {
-            #expect(gate.claim("test"))
+        for _ in 0..<BlockingConnectGate.maxParkedAttempts {
+            #expect(gate.admit("test"))
+            gate.markParked("test")
         }
         let calls = AtomicInt()
 
@@ -801,6 +864,33 @@ struct BoundedBlockingConnectTests {
         #expect(outcome == .busy)
         #expect(calls.value == 0)
         #expect(fcntl(fds[0], F_GETFD) >= 0)
+    }
+
+    @Test("An attempt that completes lifts the backoff parked attempts imposed")
+    func completedAttemptLiftsTheBackoff() throws {
+        var fds: [Int32] = [0, 0]
+        try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
+        defer {
+            close(fds[0])
+            close(fds[1])
+        }
+        let clock = TestEngineClock()
+        let gate = BlockingConnectGate(clock: clock)
+        for _ in 0..<BlockingConnectGate.maxParkedAttempts {
+            #expect(gate.admit("test"))
+            gate.markParked("test")
+        }
+        clock.advance(seconds: BlockingConnectGate.backoffFloor)
+
+        let outcome = VsockGuestClient.boundedBlockingConnect(
+            fd: fds[0], label: "test", port: 0, gate: gate
+        ) { ECONNREFUSED }
+
+        // A refusal inside the deadline proves the host answers, so the next
+        // attempt waits out no backoff even with the parks still outstanding.
+        #expect(outcome == .failed(errno: ECONNREFUSED))
+        #expect(gate.parkedCountForTesting("test") == BlockingConnectGate.maxParkedAttempts)
+        #expect(gate.admit("test"))
     }
 }
 
