@@ -688,13 +688,15 @@ struct BlockingConnectTests {
         #expect(gate.parkedCountForTesting("control") == BlockingConnectGate.maxParkedAttempts)
     }
 
-    @Test("A park after a heal restores the rationing")
-    func gateRationsAgainAfterAParkFollowingAHeal() {
+    @Test("A park after a heal is rationed from the floor, not the escalated wait")
+    func gateRationsAgainFromTheFloorAfterAHeal() {
         let clock = TestEngineClock()
         let gate = BlockingConnectGate(clock: clock)
 
-        for _ in 0..<BlockingConnectGate.maxParkedAttempts {
-            #expect(gate.admit("control"))
+        // Escalate the first wedge well past the floor. Parked attempts are
+        // never reclaimed, so their count alone would pin every later wedge at
+        // the ceiling.
+        for _ in 0..<(BlockingConnectGate.maxParkedAttempts + 8) {
             gate.markParked("control")
         }
         gate.markCompleted("control")
@@ -702,7 +704,9 @@ struct BlockingConnectTests {
         gate.markParked("control")
 
         #expect(gate.admit("control") == false)
-        clock.advance(seconds: BlockingConnectGate.backoffFloor * 2)
+        clock.advance(seconds: BlockingConnectGate.backoffFloor - 1)
+        #expect(gate.admit("control") == false)
+        clock.advance(seconds: 1)
         #expect(gate.admit("control"))
     }
 

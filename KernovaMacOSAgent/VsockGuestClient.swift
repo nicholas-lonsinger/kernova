@@ -69,12 +69,16 @@ final class BlockingConnectHandoff: @unchecked Sendable {
 /// concurrent healthy dials are never refused.
 ///
 /// Past `maxParkedAttempts` parked attempts one attempt is admitted per
-/// backoff interval — `backoffFloor`, doubling per additional parked attempt
-/// up to `backoffCeiling` — so a persistent wedge strands threads at a rate
-/// that decays to one per `backoffCeiling`. Any attempt that then completes
-/// inside its deadline, connected or refused with an errno, proves the host's
-/// vsock stack is answering and lifts the rationing outright: the parked
-/// threads are sunk cost that traffic the host can serve must not pay for.
+/// backoff interval — `backoffFloor`, doubling per additional park in the
+/// current episode up to `backoffCeiling` — so a persistent wedge strands
+/// threads at a rate that decays to one per `backoffCeiling`. Any attempt that
+/// then completes inside its deadline, connected or refused with an errno,
+/// proves the host's vsock stack is answering and lifts the rationing
+/// outright: the parked threads are sunk cost that traffic the host can serve
+/// must not pay for. A completion also ends the episode, so the next wedge is
+/// rationed from the floor again rather than from wherever the last one
+/// escalated to — parked threads are never reclaimed, so an escalation carried
+/// across episodes would only ratchet.
 final class BlockingConnectGate: @unchecked Sendable {
     /// Parked attempts tolerated before admission rides the backoff.
     static let maxParkedAttempts = 3
@@ -87,11 +91,12 @@ final class BlockingConnectGate: @unchecked Sendable {
         /// Attempts abandoned past their deadline whose syscall has not
         /// returned.
         var parked = 0
+        /// Parks since the last attempt to complete inside its deadline —
+        /// zero exactly while the host is known to be answering, and the
+        /// escalation driver for the current wedge.
+        var parksThisEpisode = 0
         /// When the most recent admission was granted.
         var lastAdmissionAt = EngineInstant(nanoseconds: 0)
-        /// Whether the most recent attempt to complete did so inside its
-        /// deadline — the evidence that the host is answering.
-        var lastCompletedNormally = true
     }
 
     private let lock = NSLock()
@@ -111,8 +116,8 @@ final class BlockingConnectGate: @unchecked Sendable {
     func admit(_ label: String) -> Bool {
         lock.withLock {
             var state = states[label] ?? LabelState()
-            if state.parked >= Self.maxParkedAttempts, !state.lastCompletedNormally {
-                let over = state.parked - Self.maxParkedAttempts
+            if state.parked >= Self.maxParkedAttempts, state.parksThisEpisode > 0 {
+                let over = max(0, state.parksThisEpisode - Self.maxParkedAttempts)
                 let backoff = min(
                     Self.backoffFloor * pow(2, Double(over)), Self.backoffCeiling)
                 guard clock.seconds(since: state.lastAdmissionAt) >= backoff else { return false }
@@ -133,7 +138,7 @@ final class BlockingConnectGate: @unchecked Sendable {
         lock.withLock {
             var state = states[label] ?? LabelState()
             state.parked += 1
-            state.lastCompletedNormally = false
+            state.parksThisEpisode += 1
             states[label] = state
         }
     }
@@ -144,7 +149,7 @@ final class BlockingConnectGate: @unchecked Sendable {
         lock.withLock {
             var state = states[label] ?? LabelState()
             state.parked = max(0, state.parked - 1)
-            state.lastCompletedNormally = true
+            state.parksThisEpisode = 0
             states[label] = state
         }
     }
@@ -159,11 +164,12 @@ final class BlockingConnectGate: @unchecked Sendable {
     }
 
     /// Records that an attempt completed inside its deadline, whatever its
-    /// outcome — the host is answering, so rationing lifts.
+    /// outcome — the host is answering, so rationing lifts and the wedge
+    /// episode ends.
     func markCompleted(_ label: String) {
         lock.withLock {
             var state = states[label] ?? LabelState()
-            state.lastCompletedNormally = true
+            state.parksThisEpisode = 0
             states[label] = state
         }
     }
