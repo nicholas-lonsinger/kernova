@@ -83,6 +83,9 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case itemsUnreadable
     /// The drop offer itself could not be sent.
     case sendFailed
+    /// The peer never asked for a single item of an offered drop, so the batch
+    /// was called off rather than left waiting forever.
+    case unclaimed
 }
 
 extension ClipboardTransferFailure {

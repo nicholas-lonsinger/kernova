@@ -19,16 +19,18 @@ struct VMInstanceDisplayDropTests {
         @MainActor
         init(
             guestOS: VMGuestOS = .macOS, lastSeenAgentVersion: String? = "1.0.0",
-            clipboardSharingEnabled: Bool = true
+            clipboardSharingEnabled: Bool = true, dropFilesEnabled: Bool = true,
+            status: VMStatus = .running
         ) {
             var config = VMConfiguration(
                 name: "Drop VM", guestOS: guestOS,
                 bootMode: guestOS == .macOS ? .macOS : .efi)
             config.lastSeenAgentVersion = lastSeenAgentVersion
             config.clipboardSharingEnabled = clipboardSharingEnabled
+            config.dropFilesEnabled = dropFilesEnabled
             let bundleURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent(config.id.uuidString, isDirectory: true)
-            instance = VMInstance(configuration: config, bundleURL: bundleURL)
+            instance = VMInstance(configuration: config, bundleURL: bundleURL, status: status)
         }
 
         /// Installs a started control service and hands back the guest end, so a
@@ -138,6 +140,59 @@ struct VMInstanceDisplayDropTests {
 
         try guest.send(makeHello(capabilities: KernovaCapability.controlChannelDefaults))
         try await waitForChange { harness.instance.displayDropAvailability == .available }
+    }
+
+    // MARK: - The per-VM toggle
+
+    @Test("a VM with drag and drop switched off is not a drag destination")
+    func dropToggleOffIsNotADestination() async throws {
+        let harness = Harness(dropFilesEnabled: false)
+        defer { harness.tearDown() }
+        let guest = try harness.attachControl()
+        try harness.attachDrop()
+
+        try guest.send(makeHello(capabilities: KernovaCapability.controlChannelDefaults))
+        try await waitForChange {
+            harness.instance.vsockControlService?.guestSupportsDropFiles == true
+        }
+
+        // `.none` rather than `.disconnected`: the display unregisters, so a drag
+        // over it behaves as if Kernova were not there at all.
+        #expect(harness.instance.displayDropAvailability == .none)
+        #expect(!harness.instance.sendDroppedFilesToGuest([URL(fileURLWithPath: "/tmp/a.txt")]))
+    }
+
+    @Test("Clipboard Sharing has no say over the drop gate — the drop toggle does")
+    func clipboardSharingDoesNotGateDrops() async throws {
+        let harness = Harness(clipboardSharingEnabled: false)
+        defer { harness.tearDown() }
+        let guest = try harness.attachControl()
+        try harness.attachDrop()
+
+        try guest.send(makeHello(capabilities: KernovaCapability.controlChannelDefaults))
+        try await waitForChange { harness.instance.displayDropAvailability == .available }
+
+        #expect(!harness.instance.configuration.clipboardSharingEnabled)
+    }
+
+    // MARK: - A VM that isn't running
+
+    @Test("a paused VM refuses the drag — its guest is frozen, not gone")
+    func pausedRefusesTheDrag() async throws {
+        let harness = Harness()
+        defer { harness.tearDown() }
+        let guest = try harness.attachControl()
+        try harness.attachDrop()
+        try guest.send(makeHello(capabilities: KernovaCapability.controlChannelDefaults))
+        try await waitForChange { harness.instance.displayDropAvailability == .available }
+
+        // Pausing tears down no vsock, so every channel below still reads as
+        // connected — only `status` says the guest cannot answer.
+        harness.instance.status = .paused
+
+        #expect(harness.instance.vsockDropService?.isConnected == true)
+        #expect(harness.instance.displayDropAvailability == .disconnected)
+        #expect(!harness.instance.sendDroppedFilesToGuest([URL(fileURLWithPath: "/tmp/a.txt")]))
     }
 
     @Test("a stopped drop service downgrades an available VM back to a refusal")

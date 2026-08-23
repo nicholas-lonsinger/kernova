@@ -63,6 +63,14 @@ public final class ClipboardOutboundOffers {
         /// Whether the user called the offer off, so later requests are refused
         /// rather than answered.
         var isCancelled = false
+        /// Whether the peer has asked for at least one of this offer's items.
+        var isClaimed = false
+        /// Whether a deadline is scheduled for this offer, which is true in every
+        /// state but "something else is streaming".
+        var isClaimDeadlineArmed = false
+        /// Which arming of that deadline is live: a stand-down or a re-arm bumps
+        /// it, so one already scheduled can tell it was superseded.
+        var claimArming: UInt64 = 0
 
         init(generation: UInt64, content: ClipboardContent) {
             self.generation = generation
@@ -76,6 +84,12 @@ public final class ClipboardOutboundOffers {
     private let peerName: String
     private let progressRevealDelay: TimeInterval
     private let progressIdleGap: TimeInterval
+    private let dropClaimTimeout: TimeInterval
+    /// Runs the unclaimed-drop deadline after a delay — its only trigger, since
+    /// by definition nothing arrives to drive it.
+    private let dropClaimSchedule:
+        @Sendable (_ after: TimeInterval, _ work: @escaping @MainActor @Sendable () -> Void) ->
+            Void
 
     /// Called with what this side just did, for a surface to render.
     ///
@@ -100,6 +114,16 @@ public final class ClipboardOutboundOffers {
 
     private var kind: ClipboardControlSession.Kind { session.kind }
 
+    /// The production deadline scheduler: the main queue, where every other
+    /// readout event is already serialized.
+    nonisolated public static let scheduleOnMainQueue:
+        @Sendable (TimeInterval, @escaping @MainActor @Sendable () -> Void) -> Void = {
+            after, work in
+            DispatchQueue.main.asyncAfter(deadline: .now() + after) {
+                MainActor.assumeIsolated { work() }
+            }
+        }
+
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardOutboundOffers")
 
@@ -114,6 +138,11 @@ public final class ClipboardOutboundOffers {
         peerName: String,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
+        dropClaimTimeout: TimeInterval = ClipboardStreamTuning.dropClaimTimeout,
+        dropClaimSchedule:
+            @escaping @Sendable (
+                TimeInterval, @escaping @MainActor @Sendable () -> Void
+            ) -> Void = ClipboardOutboundOffers.scheduleOnMainQueue,
         firstGeneration: UInt64 = 1
     ) {
         self.session = session
@@ -121,6 +150,8 @@ public final class ClipboardOutboundOffers {
         self.peerName = peerName
         self.progressRevealDelay = progressRevealDelay
         self.progressIdleGap = progressIdleGap
+        self.dropClaimTimeout = dropClaimTimeout
+        self.dropClaimSchedule = dropClaimSchedule
         self.nextGenerationStorage = max(1, firstGeneration)
     }
 
@@ -190,7 +221,10 @@ public final class ClipboardOutboundOffers {
         // The peer serves drops one job at a time, so a batch offered while
         // another is streaming waits its turn. Announcing it keeps it counted on
         // the readout that is showing instead of invisible until its first byte.
-        if kind == .drop { operation?.markQueued() }
+        if kind == .drop {
+            operation?.markQueued()
+            armClaimDeadlines()
+        }
         if kind == .clipboard {
             currentGeneration = generation
             lastOfferedDigestStorage = content.digest
@@ -305,6 +339,14 @@ public final class ClipboardOutboundOffers {
             return
         }
 
+        if kind == .drop, !entry.isClaimed {
+            entry.isClaimed = true
+            // Something is streaming now, so every batch behind it is waiting its
+            // turn rather than going unclaimed — the guest serves one job at a
+            // time. Their deadlines resume when this one ends.
+            standDownClaimDeadlines()
+        }
+
         let xid = request.transferID
         let live = entry.live
         let isClipboard = kind == .clipboard
@@ -380,6 +422,7 @@ public final class ClipboardOutboundOffers {
             // visibly what happened.
             entry.operation?.finish(.cancelled)
             entries[generation] = nil
+            armClaimDeadlines()
         }
         Self.logger.notice(
             "User cancelled the outbound transfer to '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
@@ -390,6 +433,7 @@ public final class ClipboardOutboundOffers {
     public func handleDropComplete(_ complete: Kernova_V1_DropComplete) {
         guard let entry = entries.removeValue(forKey: complete.generation) else { return }
         entry.live.set(0)
+        defer { armClaimDeadlines() }
         switch complete.outcome {
         case .completed:
             entry.operation?.finish(.completed)
@@ -433,6 +477,54 @@ public final class ClipboardOutboundOffers {
     }
 
     // MARK: - Private
+
+    // MARK: - The unclaimed-drop deadline
+
+    /// Starts the deadline on every drop the peer has not begun, unless one it
+    /// *has* begun is still open.
+    ///
+    /// A drop's readout is closed by the peer's `DropComplete`, so a peer that
+    /// never pulls leaves the gesture with no progress, no failure and no end
+    /// until the channel itself dies. This is what answers for it.
+    private func armClaimDeadlines() {
+        guard kind == .drop, !entries.values.contains(where: \.isClaimed) else { return }
+        for entry in entries.values where !entry.isClaimed && !entry.isClaimDeadlineArmed {
+            entry.isClaimDeadlineArmed = true
+            entry.claimArming &+= 1
+            let generation = entry.generation
+            let arming = entry.claimArming
+            dropClaimSchedule(dropClaimTimeout) { [weak self] in
+                self?.claimDeadlineExpired(generation: generation, arming: arming)
+            }
+        }
+    }
+
+    /// Stands every armed deadline down, so a batch queued behind one the peer
+    /// is streaming is not called off for waiting its turn.
+    private func standDownClaimDeadlines() {
+        for entry in entries.values {
+            entry.claimArming &+= 1
+            entry.isClaimDeadlineArmed = false
+        }
+    }
+
+    /// Calls off a drop the peer never began.
+    private func claimDeadlineExpired(generation: UInt64, arming: UInt64) {
+        guard let entry = entries[generation], entry.claimArming == arming, !entry.isClaimed,
+            !entry.isCancelled
+        else { return }
+        entry.isClaimDeadlineArmed = false
+        entry.live.set(0)
+        entries[generation] = nil
+        // The peer may be wedged rather than gone, so the release is what stops
+        // it pulling an offer this side has already answered for.
+        try? session.sendRelease(generation: generation)
+        entry.operation?.finish(.failed(.unclaimed))
+        Self.logger.warning(
+            "Drop to '\(self.peerName, privacy: .public)' went unclaimed for \(self.dropClaimTimeout, privacy: .public)s (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
+        )
+        armClaimDeadlines()
+    }
 
     /// Drops `entry` from the live set and ends the transfers still riding it.
     private func retire(_ entry: Entry) {

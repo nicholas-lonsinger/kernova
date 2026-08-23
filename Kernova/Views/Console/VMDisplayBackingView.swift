@@ -27,20 +27,52 @@ final class VMDisplayBackingView: NSView {
     /// Sends dropped file URLs to the guest, reporting whether they were taken.
     var onDropFiles: ([URL]) -> Bool = { _ in false }
 
+    /// Reports a drag this display took that produced no file to send — a file
+    /// promise whose source failed to write it.
+    ///
+    /// The drag is over by then, so this is the only surface left to say so.
+    var onDropUnreadable: () -> Void = {}
+
+    /// How the display finds the file promises a drag carries.
+    ///
+    /// Injected so a test can stand in for a promise source: a promise cannot be
+    /// written onto a pasteboard from the receiving side.
+    var promiseSource = DisplayDropPromiseSource.pasteboard
+
+    /// Shows or hides the "not allowed" cursor over a drag this display refuses.
+    ///
+    /// Injected so a test can see the pushes and pops pair up without a live
+    /// cursor stack.
+    var applyRejectCursor: (Bool) -> Void = { showing in
+        if showing {
+            NSCursor.operationNotAllowed.push()
+        } else {
+            NSCursor.pop()
+        }
+    }
+
     /// Whether `registerForDraggedTypes` is currently in effect, so
     /// ``applyDropRegistration()`` can be called on every observation tick
     /// without churning AppKit's registration.
     private var isDropRegistered = false
 
+    /// Whether the reject cursor is pushed, so pushes and pops stay paired
+    /// across every way a drag can leave or end.
+    private var rejectCursorShowing = false
+
     private static let logger = Logger(subsystem: "app.kernova", category: "VMDisplayBackingView")
 
-    /// The only pasteboard reading options a display drop ever uses: concrete
-    /// file URLs, never a file promise. A Finder drag carries these; a
-    /// promise-only drag never enters, because `.fileURL` is the sole registered
-    /// type.
+    /// The reading options a concrete file URL takes — a Finder drag's own form.
     private static let fileURLReadingOptions: [NSPasteboard.ReadingOptionKey: Any] = [
         .urlReadingFileURLsOnly: true
     ]
+
+    /// Every type a display drop takes: concrete file URLs, plus the promise
+    /// types a source that writes its files on demand advertises — Photos, a
+    /// Mail attachment, an image dragged out of a browser.
+    private static var draggedTypes: [NSPasteboard.PasteboardType] {
+        [.fileURL] + NSFilePromiseReceiver.readableDraggedTypes.map { .init($0) }
+    }
 
     /// Mirrors `machineView.automaticallyReconfiguresDisplay`, so ``apply(automaticallyReconfiguresDisplay:)``
     /// writes the framework property only when it actually changes.
@@ -152,7 +184,7 @@ final class VMDisplayBackingView: NSView {
         guard shouldRegister != isDropRegistered else { return }
         isDropRegistered = shouldRegister
         if shouldRegister {
-            registerForDraggedTypes([.fileURL])
+            registerForDraggedTypes(Self.draggedTypes)
             // A `VZVirtualMachineView` covering this view would take the drag
             // first if it registered types of its own. It does not today, and
             // this is the line that says so if that ever changes.
@@ -168,33 +200,162 @@ final class VMDisplayBackingView: NSView {
     }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        dragOperation(for: sender)
+        verdict(for: sender)
     }
 
     override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        dragOperation(for: sender)
+        verdict(for: sender)
+    }
+
+    override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+        showRejectCursor(false)
+    }
+
+    override func draggingEnded(_ sender: any NSDraggingInfo) {
+        showRejectCursor(false)
+    }
+
+    /// This drag's operation, with the pointer told the same thing.
+    ///
+    /// Recomputed on every drag event rather than latched at entry, so a VM that
+    /// pauses — or an agent that goes away — mid-drag flips the cursor on the
+    /// next pointer move, and one that becomes reachable clears it.
+    private func verdict(for sender: any NSDraggingInfo) -> NSDragOperation {
+        let operation = dragOperation(for: sender)
+        showRejectCursor(operation.isEmpty)
+        return operation
+    }
+
+    /// Puts the standard "not allowed" cursor under the pointer while this
+    /// display is refusing, which is the only thing that distinguishes a refusal
+    /// from a destination that simply takes no badge.
+    private func showRejectCursor(_ showing: Bool) {
+        guard showing != rejectCursorShowing else { return }
+        rejectCursorShowing = showing
+        applyRejectCursor(showing)
     }
 
     /// `.copy` when this drag can be sent to the guest, else the empty operation
     /// AppKit renders as "no" — no accept badge, and a release springs back.
     private func dragOperation(for sender: any NSDraggingInfo) -> NSDragOperation {
-        guard dropAvailability() == .available,
-            sender.draggingPasteboard.canReadObject(
-                forClasses: [NSURL.self], options: Self.fileURLReadingOptions)
-        else { return [] }
+        guard dropAvailability() == .available, carriesFiles(sender.draggingPasteboard) else {
+            return []
+        }
         return .copy
     }
 
+    /// Whether a pasteboard holds anything a drop can send: files, or promises of
+    /// files.
+    private func carriesFiles(_ pasteboard: NSPasteboard) -> Bool {
+        pasteboard.canReadObject(forClasses: [NSURL.self], options: Self.fileURLReadingOptions)
+            || promiseSource.carriesPromises(pasteboard)
+    }
+
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        guard
-            let urls = sender.draggingPasteboard.readObjects(
-                forClasses: [NSURL.self], options: Self.fileURLReadingOptions) as? [URL],
-            !urls.isEmpty
-        else { return false }
         // Re-checked here rather than trusted from `draggingUpdated`: the guest
         // agent can go away between the last pointer move and the release.
         guard dropAvailability() == .available else { return false }
-        return onDropFiles(urls)
+        let pasteboard = sender.draggingPasteboard
+        let urls =
+            pasteboard.readObjects(forClasses: [NSURL.self], options: Self.fileURLReadingOptions)
+            as? [URL] ?? []
+        let receivers = promiseSource.receivers(pasteboard)
+        guard !receivers.isEmpty else {
+            guard !urls.isEmpty else { return false }
+            return onDropFiles(urls)
+        }
+        receivePromises(receivers, alongside: urls)
+        // The promised files are written asynchronously, so the drag ends taken
+        // and the offer follows once they land.
+        return true
+    }
+
+    /// Materializes `receivers` into a directory of this drop's own, then offers
+    /// them together with the concrete `urls` the same drag carried.
+    ///
+    /// One drop, not two: a mixed drag is one gesture, and one offer gives it one
+    /// readout to report and cancel through.
+    private func receivePromises(
+        _ receivers: [any DisplayDropPromiseReceiving], alongside urls: [URL]
+    ) {
+        let expected = receivers.reduce(0) { $0 + $1.fileNames.count }
+        guard expected > 0, let directory = DropPromiseStaging.makeDropDirectory() else {
+            // Nothing will ever be written, so the drag the display just took has
+            // to answer for itself here.
+            onDropUnreadable()
+            return
+        }
+        let collection = PromiseCollection(expected: expected, alongside: urls)
+        for receiver in receivers {
+            // `OperationQueue.main`: the reader only tallies what landed, and the
+            // promise's own writing already happens off it.
+            receiver.receivePromisedFiles(
+                atDestination: directory, options: [:], operationQueue: .main
+            ) { [weak self] url, error in
+                guard let self, let outcome = collection.received(url, error: error) else { return }
+                self.finishPromiseDrop(outcome, stagedIn: directory)
+            }
+        }
+    }
+
+    /// Offers a promise drag's whole set, or answers for one that never
+    /// completed.
+    private func finishPromiseDrop(_ outcome: PromiseCollection.Outcome, stagedIn directory: URL) {
+        switch outcome {
+        case .ready(let files):
+            guard onDropFiles(files) else {
+                // The VM stopped taking drops while the source was still
+                // writing; the service that would report it is already gone.
+                Self.logger.warning("A promise drag's files landed after the VM stopped taking them")
+                try? FileManager.default.removeItem(at: directory)
+                return
+            }
+        case .failed(let error):
+            Self.logger.warning(
+                "A dropped file promise was never written: \(error?.localizedDescription ?? "no file", privacy: .public)"
+            )
+            try? FileManager.default.removeItem(at: directory)
+            onDropUnreadable()
+        }
+    }
+
+    /// Tallies what one drag's promises write, so the drop is offered exactly
+    /// once — with the concrete files the same drag carried alongside them.
+    @MainActor
+    private final class PromiseCollection {
+        /// What the drag became once it stopped waiting.
+        enum Outcome {
+            /// Every promise was written; these are the drag's files, the
+            /// promised ones last.
+            case ready([URL])
+            /// A promise's source failed to write, so the set is never whole.
+            case failed((any Error)?)
+        }
+
+        private let expected: Int
+        private var files: [URL]
+        private var received = 0
+        private var isSettled = false
+
+        init(expected: Int, alongside files: [URL]) {
+            self.expected = expected
+            self.files = files
+        }
+
+        /// Records one promise's result, returning the outcome when this is what
+        /// settled the drag and `nil` while it is still waiting.
+        func received(_ url: URL, error: (any Error)?) -> Outcome? {
+            guard !isSettled else { return nil }
+            guard error == nil else {
+                isSettled = true
+                return .failed(error)
+            }
+            files.append(url)
+            received += 1
+            guard received == expected else { return nil }
+            isSettled = true
+            return .ready(files)
+        }
     }
 
     // MARK: - Overlay Animation

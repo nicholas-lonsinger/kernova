@@ -122,6 +122,17 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// confirmation. Off by default.
     var clipboardPassthroughEnabled: Bool
 
+    // MARK: - Drag and Drop
+
+    /// When `true`, files dragged onto this VM's display are sent to the guest
+    /// agent, which writes them into the guest's Downloads folder.
+    ///
+    /// Independent of `clipboardSharingEnabled` — a drop never touches either
+    /// pasteboard — and honored at runtime, so the display stops being a drag
+    /// destination the moment it is switched off. Linux guests have no Kernova
+    /// agent and ignore this flag.
+    var dropFilesEnabled: Bool
+
     // MARK: - Serial Console
 
     /// When `true`, the running VM exposes its serial port over a host-side
@@ -280,6 +291,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         portForwardingRules: [PortForwardingRule] = [],
         clipboardSharingEnabled: Bool = false,
         clipboardPassthroughEnabled: Bool = false,
+        dropFilesEnabled: Bool = true,
         serialSocketRelayEnabled: Bool = false,
         audioInputEnabled: Bool = false,
         audioOutputEnabled: Bool = true,
@@ -327,6 +339,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.portForwardingRules = portForwardingRules
         self.clipboardSharingEnabled = clipboardSharingEnabled
         self.clipboardPassthroughEnabled = clipboardPassthroughEnabled
+        self.dropFilesEnabled = dropFilesEnabled
         self.serialSocketRelayEnabled = serialSocketRelayEnabled
         self.audioInputEnabled = audioInputEnabled
         self.audioOutputEnabled = audioOutputEnabled
@@ -388,6 +401,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.clipboardSharingEnabled = try c.decode(Bool.self, forKey: .clipboardSharingEnabled)
         self.clipboardPassthroughEnabled =
             try c.decodeIfPresent(Bool.self, forKey: .clipboardPassthroughEnabled) ?? false
+        self.dropFilesEnabled = try c.decodeIfPresent(Bool.self, forKey: .dropFilesEnabled) ?? true
         self.serialSocketRelayEnabled =
             try c.decodeIfPresent(Bool.self, forKey: .serialSocketRelayEnabled) ?? false
         self.audioInputEnabled = try c.decodeIfPresent(Bool.self, forKey: .audioInputEnabled) ?? false

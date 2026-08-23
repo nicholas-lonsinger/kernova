@@ -196,14 +196,17 @@ The vsock stack (macOS guests only):
 - `VsockDropService` — `@MainActor` `@Observable` owner of the drop channel, send-only, driving
   `KernovaKit`'s `ClipboardEndpoint`. Files dragged onto `VMDisplayBackingView` become a
   `DropOffer` the guest pulls representation by representation over the same transfer machinery the
-  clipboard uses; the guest writes them into its Downloads folder and replies `DropComplete`.
-  Installed for every guest with a socket device, gated only on the guest's `drop.files.v3`.
+  clipboard uses; the guest writes them into its Downloads folder and replies `DropComplete`. A drag
+  of *promised* files is written into `DropPromiseStaging` first, so an offer always names real
+  files.
+  Installed for a guest with a socket device whose `dropFilesEnabled` is set, and gated in turn on
+  the guest's `drop.files.v3`.
   `VMInstance.displayDropAvailability` is the single read site deciding whether the display
   registers as a drag destination at all.
 
-The log and clipboard listeners are gated on their configuration toggles and re-evaluated at
-runtime through `VMInstance.applyLivePolicy(oldConfig:newConfig:)`, the clipboard's data listener
-rising and falling with it; the control, drop and drop-data listeners have no toggle to track.
+The log, clipboard and drop listeners are gated on their configuration toggles and re-evaluated at
+runtime through `VMInstance.applyLivePolicy(oldConfig:newConfig:)`, each pair's data listener rising
+and falling with its channel; only the control listener has no toggle to track.
 Linux clipboard sharing is restart-only — its SPICE port must be declared at config-build time.
 
 Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):

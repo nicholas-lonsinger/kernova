@@ -1,4 +1,7 @@
 import AppKit
+import Foundation
+import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
@@ -113,11 +116,12 @@ struct VMDisplayBackingViewTests {
         backing.dropAvailability = { availability }
 
         backing.applyDropRegistration()
-        #expect(backing.registeredDraggedTypes == [.fileURL])
+        #expect(backing.registeredDraggedTypes.contains(.fileURL))
 
         // Registration is idempotent, and follows availability back down.
+        let registered = backing.registeredDraggedTypes
         backing.applyDropRegistration()
-        #expect(backing.registeredDraggedTypes == [.fileURL])
+        #expect(backing.registeredDraggedTypes == registered)
 
         availability = .none
         backing.applyDropRegistration()
@@ -198,5 +202,181 @@ struct VMDisplayBackingViewTests {
         backing.onDropFiles = { _ in false }
 
         #expect(!backing.performDragOperation(makeFileDrag([URL(fileURLWithPath: "/tmp/a.txt")])))
+    }
+
+    @Test("a file promise's types are registered alongside concrete file URLs")
+    func registersPromiseTypes() {
+        let backing = VMDisplayBackingView(frame: .zero)
+        backing.dropAvailability = { .available }
+
+        backing.applyDropRegistration()
+
+        for promised in NSFilePromiseReceiver.readableDraggedTypes {
+            #expect(backing.registeredDraggedTypes.contains(.init(promised)))
+        }
+    }
+
+    // MARK: - The reject cursor
+
+    @Test("a refused drag shows the not-allowed cursor, and leaving clears it")
+    func refusedDragShowsTheRejectCursor() {
+        let backing = VMDisplayBackingView(frame: .zero)
+        backing.dropAvailability = { .disconnected }
+        var pushes: [Bool] = []
+        backing.applyRejectCursor = { pushes.append($0) }
+        let drag = makeFileDrag([URL(fileURLWithPath: "/tmp/a.txt")])
+
+        #expect(backing.draggingEntered(drag) == [])
+        #expect(pushes == [true])
+        // Repeated updates leave the pushed cursor where it is rather than
+        // stacking a second one.
+        #expect(backing.draggingUpdated(drag) == [])
+        #expect(pushes == [true])
+
+        backing.draggingExited(drag)
+        #expect(pushes == [true, false])
+    }
+
+    @Test("a drag this display accepts pushes no cursor at all")
+    func acceptedDragPushesNothing() {
+        let backing = VMDisplayBackingView(frame: .zero)
+        backing.dropAvailability = { .available }
+        var pushes: [Bool] = []
+        backing.applyRejectCursor = { pushes.append($0) }
+
+        #expect(backing.draggingEntered(makeFileDrag([URL(fileURLWithPath: "/tmp/a.txt")])) == .copy)
+        #expect(pushes.isEmpty)
+    }
+
+    @Test("availability changing mid-drag flips the cursor on the next update")
+    func cursorFollowsAvailabilityMidDrag() {
+        let backing = VMDisplayBackingView(frame: .zero)
+        var availability = DisplayDropAvailability.disconnected
+        backing.dropAvailability = { availability }
+        var pushes: [Bool] = []
+        backing.applyRejectCursor = { pushes.append($0) }
+        let drag = makeFileDrag([URL(fileURLWithPath: "/tmp/a.txt")])
+
+        // A drag that began while the VM was paused, over a VM that then resumes.
+        #expect(backing.draggingEntered(drag) == [])
+        availability = .available
+        #expect(backing.draggingUpdated(drag) == .copy)
+        #expect(pushes == [true, false])
+
+        // …and back, when the agent goes away under the same drag.
+        availability = .disconnected
+        #expect(backing.draggingUpdated(drag) == [])
+        #expect(pushes == [true, false, true])
+
+        // The drop itself is the last thing that can leave a cursor pushed.
+        backing.draggingEnded(drag)
+        #expect(pushes == [true, false, true, false])
+    }
+
+    // MARK: - File promises
+
+    /// A promise source that writes its files where it is asked to, or fails.
+    @MainActor
+    private final class StubPromiseReceiver: DisplayDropPromiseReceiving {
+        struct Failure: Error {}
+
+        let fileNames: [String]
+        private let fails: Bool
+
+        init(fileNames: [String], fails: Bool = false) {
+            self.fileNames = fileNames
+            self.fails = fails
+        }
+
+        func receivePromisedFiles(
+            atDestination destination: URL, options: [AnyHashable: Any],
+            operationQueue: OperationQueue, reader: @escaping (URL, (any Error)?) -> Void
+        ) {
+            let failure: Failure? = fails ? Failure() : nil
+            for name in fileNames {
+                let url = destination.appendingPathComponent(name)
+                if failure == nil { try? Data("promised".utf8).write(to: url) }
+                // The real receiver answers asynchronously; so does this, so the
+                // test exercises the wait rather than a synchronous shortcut.
+                MainActorBridge.async { reader(url, failure) }
+            }
+        }
+    }
+
+    private func makePromiseSource(_ receivers: [any DisplayDropPromiseReceiving])
+        -> DisplayDropPromiseSource
+    {
+        DisplayDropPromiseSource(carriesPromises: { _ in true }, receivers: { _ in receivers })
+    }
+
+    @Test("a drag carrying only promises is accepted")
+    func promiseOnlyDragIsAccepted() {
+        let backing = VMDisplayBackingView(frame: .zero)
+        backing.dropAvailability = { .available }
+        backing.promiseSource = makePromiseSource([StubPromiseReceiver(fileNames: ["a.png"])])
+
+        // The pasteboard holds no file URL at all — a Photos drag's shape.
+        #expect(backing.draggingEntered(makeTextDrag("hello")) == .copy)
+    }
+
+    @Test("a mixed drag is offered once, with the promised files written")
+    func mixedPromiseDragIsOfferedTogether() async throws {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VMDisplayBackingViewTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let concrete = scratch.appendingPathComponent("dropped.txt")
+        try Data("a".utf8).write(to: concrete)
+
+        let backing = VMDisplayBackingView(frame: .zero)
+        backing.dropAvailability = { .available }
+        backing.promiseSource = makePromiseSource([
+            StubPromiseReceiver(fileNames: ["a.png"]), StubPromiseReceiver(fileNames: ["b.png"]),
+        ])
+        let gate = AsyncGate()
+        var offered: [[URL]] = []
+        backing.onDropFiles = { urls in
+            offered.append(urls)
+            gate.notify()
+            return true
+        }
+
+        #expect(backing.performDragOperation(makeFileDrag([concrete])))
+        try await gate.wait { !offered.isEmpty }
+
+        // One gesture, one offer — so the drop has one readout to report and
+        // cancel through.
+        #expect(offered.count == 1)
+        let files = try #require(offered.first)
+        #expect(files.map(\.lastPathComponent) == ["dropped.txt", "a.png", "b.png"])
+        // The promised bytes are on disk where the guest's pull will read them.
+        #expect(files.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+    }
+
+    @Test("a promise its source never writes is reported rather than dropped in silence")
+    func failedPromiseReportsTheDrop() async throws {
+        let backing = VMDisplayBackingView(frame: .zero)
+        backing.dropAvailability = { .available }
+        backing.promiseSource = makePromiseSource([
+            StubPromiseReceiver(fileNames: ["a.png", "b.png"], fails: true)
+        ])
+        let gate = AsyncGate()
+        var offered = false
+        var reported = false
+        backing.onDropFiles = { _ in
+            offered = true
+            return true
+        }
+        backing.onDropUnreadable = {
+            reported = true
+            gate.notify()
+        }
+
+        // The drag is taken: nothing on this side knows yet that the source
+        // cannot deliver.
+        #expect(backing.performDragOperation(makeTextDrag("promise")))
+        try await gate.wait { reported }
+
+        #expect(!offered)
     }
 }

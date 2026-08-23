@@ -50,8 +50,10 @@ struct ClipboardTransferWordingTests {
             (.unpackFailed, .preview),
             (.stagingFailed, .paste),
             (.itemsSkipped(note: "Some items couldn't be read."), .forward),
+            (.itemsSkipped(note: "One item couldn't be read."), .drop),
             (.itemsUnreadable, .drop),
             (.sendFailed, .drop),
+            (.unclaimed, .drop),
         ]
     }
 
@@ -255,6 +257,8 @@ struct ClipboardTransferWordingTests {
             ),
             (.peerReported(.dropFailed), .drop, "Drop: the files didn't reach the VM"),
             (.sendFailed, .drop, "Drop: the files didn't reach the VM"),
+            (.itemsSkipped(note: "n"), .drop, "Drop: some files weren't sent"),
+            (.unclaimed, .drop, "Drop: the VM never took the files"),
         ]
         for (failure, gesture, line) in expected {
             #expect(

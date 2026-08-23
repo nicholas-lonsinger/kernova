@@ -61,7 +61,7 @@ struct VsockGuestDropAgentTests {
         /// hook does, and waits for the channel to land.
         func start() async throws {
             agent.start()
-            agent.syncEnablement()
+            agent.applyPolicy(enabled: true)
             // RATIONALE: sanctioned no-signal poll (docs/TESTING.md) — the
             // lifecycle read is SUT-internal state with nothing to await on.
             try await waitUntil { agent.liveChannelForTesting != nil }
@@ -440,7 +440,7 @@ struct VsockGuestDropAgentTests {
         harness.agent.hostSupportsDrop = { false }
 
         harness.agent.start()
-        harness.agent.syncEnablement()
+        harness.agent.applyPolicy(enabled: true)
         // A host with no drop listener is never redialled, so no channel lands.
         // Several retry intervals' worth of silence is the assertion.
         try await MonotonicEngineClock().sleep(for: 0.2)
@@ -449,6 +449,25 @@ struct VsockGuestDropAgentTests {
         // The capability arriving is what starts the client.
         harness.agent.hostSupportsDrop = { true }
         harness.agent.syncEnablement()
+        try await waitUntil { harness.agent.liveChannelForTesting != nil }
+    }
+
+    @Test("the client stays paused while the host's policy has drag and drop off")
+    func staysPausedWhilePolicyIsOff() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        // The host binds no drop port while its per-VM toggle is off, so a
+        // capable host that has switched the feature off must not be dialled
+        // either.
+        harness.agent.applyPolicy(enabled: false)
+
+        harness.agent.start()
+        try await MonotonicEngineClock().sleep(for: 0.2)
+        #expect(harness.agent.liveChannelForTesting == nil)
+
+        harness.agent.applyPolicy(enabled: true)
+        // RATIONALE: sanctioned no-signal poll (docs/TESTING.md) — the lifecycle
+        // read is SUT-internal state with nothing to await on.
         try await waitUntil { harness.agent.liveChannelForTesting != nil }
     }
 }

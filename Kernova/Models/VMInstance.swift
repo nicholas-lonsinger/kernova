@@ -812,8 +812,9 @@ final class VMInstance {
     ///
     /// A no-op when no socket device is present. Idempotent: any previously
     /// installed listeners are torn down first. The control listener is always
-    /// installed; the log and clipboard listeners are gated on
-    /// `agentLogForwardingEnabled` / `clipboardSharingEnabled`.
+    /// installed; the log, clipboard and drop listeners are gated on
+    /// `agentLogForwardingEnabled` / `clipboardSharingEnabled` /
+    /// `dropFilesEnabled`.
     func startVsockServices() async {
         stopVsockServices()
         guard let session, session.hasVirtioSocketDevice else { return }
@@ -821,10 +822,9 @@ final class VMInstance {
         let sessionID = session.id
         let controlHost = makeControlListenerHost(sessionID: sessionID)
 
-        // Drop is unconditional, like control: there is no drop setting — the
-        // display simply refuses the gesture when the guest can't take it.
-        let dropHost = makeDropListenerHost(sessionID: sessionID)
-        let dropDataHost = makeDropDataListenerHost()
+        let dropHost =
+            configuration.dropFilesEnabled ? makeDropListenerHost(sessionID: sessionID) : nil
+        let dropDataHost = configuration.dropFilesEnabled ? makeDropDataListenerHost() : nil
         let logHost =
             configuration.agentLogForwardingEnabled
             ? makeLogListenerHost(sessionID: sessionID) : nil
@@ -852,6 +852,7 @@ final class VMInstance {
     static let disabledAgentPolicy = AgentPolicySnapshot(
         logForwardingEnabled: false,
         clipboardSharingEnabled: false,
+        dropFilesEnabled: false,
         clipboardMaxPasteBytes: ClipboardPasteLimit.defaultBytes)
 
     /// The policy a given configuration produces, combined with the app-wide
@@ -863,6 +864,7 @@ final class VMInstance {
         AgentPolicySnapshot(
             logForwardingEnabled: configuration.agentLogForwardingEnabled,
             clipboardSharingEnabled: configuration.clipboardSharingEnabled,
+            dropFilesEnabled: configuration.dropFilesEnabled,
             clipboardMaxPasteBytes: preferences.clipboardMaxPasteBytes)
     }
 
@@ -979,7 +981,11 @@ final class VMInstance {
             port: KernovaVsockPort.drop,
             shouldAdmit: { [gate = vsockAdmissionGate] in gate.admission(for: .dropFiles) }
         ) { [weak self] channel in
-            guard let self, self.liveSessionID == sessionID else {
+            // Re-read on the hop, as the clipboard listener does: a toggle-off
+            // between the accept and this hand-off must not reinstate the
+            // service and data sink it just cleared.
+            guard let self, self.liveSessionID == sessionID, self.configuration.dropFilesEnabled
+            else {
                 channel.close()
                 return
             }
@@ -1210,10 +1216,10 @@ final class VMInstance {
     /// or tearing down vsock listeners and pushing a fresh `PolicyUpdate` to
     /// the guest agent.
     ///
-    /// Only `agentLogForwardingEnabled` and `clipboardSharingEnabled` are
-    /// honored at runtime, and the clipboard branch is skipped for Linux guests:
-    /// the SPICE port must be declared at config-build time, so sharing is
-    /// restart-only there.
+    /// Only `agentLogForwardingEnabled`, `clipboardSharingEnabled` and
+    /// `dropFilesEnabled` are honored at runtime, and the clipboard branch is
+    /// skipped for Linux guests: the SPICE port must be declared at config-build
+    /// time, so sharing is restart-only there.
     func applyLivePolicy(oldConfig: VMConfiguration, newConfig: VMConfiguration) {
         guard status == .running || status == .paused else { return }
 
@@ -1248,11 +1254,13 @@ final class VMInstance {
             oldConfig.agentLogForwardingEnabled != newConfig.agentLogForwardingEnabled
         let clipboardChanged =
             oldConfig.clipboardSharingEnabled != newConfig.clipboardSharingEnabled
-        guard logChanged || clipboardChanged else { return }
+        let dropChanged = oldConfig.dropFilesEnabled != newConfig.dropFilesEnabled
+        guard logChanged || clipboardChanged || dropChanged else { return }
 
         let logEnabled = newConfig.agentLogForwardingEnabled
         let clipboardEnabled = newConfig.clipboardSharingEnabled
         let clipboardApplies = clipboardChanged && newConfig.guestOS == .macOS
+        let dropEnabled = newConfig.dropFilesEnabled
         let snapshot = agentPolicySnapshot(for: newConfig)
 
         let sessionID = session.id
@@ -1278,6 +1286,11 @@ final class VMInstance {
             }
 
             guard self.session === session else { return }
+            if dropChanged && dropEnabled {
+                await self.applyLiveDropPolicy(enabled: true, on: session, sessionID: sessionID)
+            }
+
+            guard self.session === session else { return }
             // The control service is nil in the window between accepting a
             // connection and the guest's Hello — the next Hello-driven send
             // catches that up.
@@ -1293,9 +1306,12 @@ final class VMInstance {
             if clipboardApplies && !clipboardEnabled {
                 await self.applyLiveClipboardPolicy(enabled: false, on: session, sessionID: sessionID)
             }
+            if dropChanged && !dropEnabled {
+                await self.applyLiveDropPolicy(enabled: false, on: session, sessionID: sessionID)
+            }
 
             Self.logger.notice(
-                "Applied live policy for '\(self.name, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public), clipboard=\(newConfig.clipboardSharingEnabled, privacy: .public))"
+                "Applied live policy for '\(self.name, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public), clipboard=\(newConfig.clipboardSharingEnabled, privacy: .public), dropFiles=\(newConfig.dropFilesEnabled, privacy: .public))"
             )
         }
     }
@@ -1351,6 +1367,24 @@ final class VMInstance {
             clipboardDataSink.set(nil)
             await installer.detach(
                 ports: [KernovaVsockPort.clipboard, KernovaVsockPort.clipboardData])
+        }
+    }
+
+    /// Installs or withdraws the drop channel and its per-item data port
+    /// together, for the same reason the clipboard pair moves as one.
+    func applyLiveDropPolicy(
+        enabled: Bool, on installer: any VsockListenerInstalling, sessionID: UUID
+    ) async {
+        if enabled {
+            await installer.attach([
+                makeDropListenerHost(sessionID: sessionID),
+                makeDropDataListenerHost(),
+            ])
+        } else {
+            vsockDropService?.stop()
+            vsockDropService = nil
+            dropDataSink.set(nil)
+            await installer.detach(ports: [KernovaVsockPort.drop, KernovaVsockPort.dropData])
         }
     }
 }

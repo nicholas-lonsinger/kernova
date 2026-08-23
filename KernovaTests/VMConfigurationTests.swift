@@ -161,6 +161,16 @@ struct VMConfigurationTests {
         #expect(config.macAddress == nil)
     }
 
+    @Test("A config written before the drag-and-drop toggle decodes with it on")
+    func missingDropFilesFlagDecodesEnabled() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+
+        #expect(config.dropFilesEnabled)
+        #expect(VMConfiguration(name: "New VM", guestOS: .macOS, bootMode: .macOS).dropFilesEnabled)
+    }
+
     // MARK: - SharedDirectory Tests
 
     @Test("SharedDirectory encodes and decodes via JSON")

@@ -38,6 +38,14 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     /// dials a host that has a drop listener.
     var hostSupportsDrop: @Sendable () -> Bool = { false }
 
+    /// Whether the host's latest `PolicyUpdate` has drag and drop switched on.
+    ///
+    /// Default-off with the client paused: the host binds the drop ports only
+    /// while the setting is on, so dialling before the first policy arrives buys
+    /// a refused connect per retry interval.
+    private let policyLock = NSLock()
+    private var dropEnabledByPolicy = false
+
     /// Runs one drop job at a time, in offer order.
     ///
     /// Serial and separate from main: an inbound pull blocks its caller, and a
@@ -131,13 +139,21 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         Self.logger.notice("Vsock drop agent started")
     }
 
-    /// Matches the reconnect loop to what the host advertises.
+    /// Records the host's drag-and-drop setting and matches the reconnect loop
+    /// to it.
+    func applyPolicy(enabled: Bool) {
+        policyLock.withLock { dropEnabledByPolicy = enabled }
+        syncEnablement()
+    }
+
+    /// Matches the reconnect loop to what the host advertises and permits.
     ///
     /// Called whenever the control agent learns the host's capabilities — its
-    /// `Hello`, and the clearing that precedes the next one — so a host without a
-    /// drop listener is never redialled every retry interval.
+    /// `Hello`, and the clearing that precedes the next one — and on every
+    /// policy update, so a host with no drop listener is never redialled every
+    /// retry interval.
     func syncEnablement() {
-        if hostSupportsDrop() {
+        if hostSupportsDrop() && policyLock.withLock({ dropEnabledByPolicy }) {
             client.resume()
         } else {
             client.pause()

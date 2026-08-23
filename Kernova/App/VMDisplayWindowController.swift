@@ -69,6 +69,9 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         backing.onDropFiles = { [weak instance] urls in
             instance?.sendDroppedFilesToGuest(urls) ?? false
         }
+        backing.onDropUnreadable = { [weak instance] in
+            instance?.reportUnreadableDropToGuest()
+        }
         backing.applyDropRegistration()
         backing.update(
             display: instance.session?.displayHandle,
@@ -198,10 +201,11 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 _ = self.instance.configuration.displayAutoResizes
                 // Everything `displayDropAvailability` reads, so the display
                 // registers and unregisters as a drag destination when the guest
-                // agent comes and goes.
+                // agent comes and goes, the VM pauses, or the toggle flips.
+                _ = self.instance.configuration.dropFilesEnabled
                 _ = self.instance.configuration.lastSeenAgentVersion
                 _ = self.instance.vsockDropService?.isConnected
-                _ = self.instance.vsockControlService?.isConnected
+                _ = self.instance.vsockControlService?.guestSupportsDropFiles
             },
             apply: { [weak self] in
                 guard let self else { return }

@@ -112,15 +112,17 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             })
         let dropAgent = VsockGuestDropAgent(reporter: transferReporter)
 
-        // `onPolicy` gates the log + clipboard capabilities; `onStateChange`
-        // drives the status-item icon; `onHostCapabilitiesChanged` is what tells
-        // the drop client whether this host has a drop listener at all.
+        // `onPolicy` gates the log, clipboard and drop capabilities;
+        // `onStateChange` drives the status-item icon;
+        // `onHostCapabilitiesChanged` is what tells the drop client whether this
+        // host has a drop listener at all.
         let controlAgent = VsockGuestControlAgent(
             onPolicy: { [weak self] policy in
                 vsockConnection.setEnabled(policy.logForwardingEnabled)
                 clipboardAgent.applyPolicy(
                     enabled: policy.clipboardSharingEnabled,
                     maxPasteBytes: ClipboardPasteLimit.fromPolicy(policy.clipboardMaxPasteBytes))
+                dropAgent.applyPolicy(enabled: policy.dropFilesEnabled)
                 Task { @MainActor in
                     self?.updateAppNap(clipboardEnabled: policy.clipboardSharingEnabled)
                 }

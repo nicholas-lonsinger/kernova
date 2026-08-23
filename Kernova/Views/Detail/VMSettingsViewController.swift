@@ -216,6 +216,9 @@ final class VMSettingsViewController: NSViewController {
     /// app-wide; hidden otherwise.
     private var installReminderOverrideCaption = NSView()
 
+    // Drag and drop (macOS guests only)
+    private var dropFilesSwitch = NSSwitch()
+
     // Clipboard
     private var clipboardSwitch = NSSwitch()
     private var clipboardPassthroughSwitch = NSSwitch()
@@ -1604,7 +1607,7 @@ extension VMSettingsViewController {
 
     /// Caption shown beneath the macOS Guest Agent card.
     static let agentDependencyCaption =
-        "Clipboard sharing and log forwarding require the Kernova guest agent. Kernova offers to install or update it from the clipboard window."
+        "Clipboard sharing, drag and drop, and log forwarding require the Kernova guest agent. Kernova offers to install or update it from the clipboard window."
 
     /// Shown under the Guest Agent card while the app-wide preference turns the
     /// install prompt off, so the greyed row reads as controlled elsewhere.
@@ -1629,6 +1632,7 @@ extension VMSettingsViewController {
         installReminderSwitch = makeSwitch(action: #selector(installReminderToggled))
         clipboardSwitch = makeSwitch(action: #selector(clipboardToggled))
         clipboardPassthroughSwitch = makeSwitch(action: #selector(clipboardPassthroughToggled))
+        dropFilesSwitch = makeSwitch(action: #selector(dropFilesToggled))
         // Not lockable — every toggle here takes effect live.
         let card = makeGroupedFormCard(rows: [
             makeToggleRowWithInfo(
@@ -1650,6 +1654,13 @@ extension VMSettingsViewController {
                     "Automatic Clipboard Passthrough", control: clipboardPassthroughSwitch,
                     paragraphs: Self.passthroughInfoParagraphs,
                     titleLabel: { [weak self] in self?.clipboardPassthroughLabel = $0 })),
+            makeToggleRowWithInfo(
+                "Drag and Drop Files", control: dropFilesSwitch,
+                paragraphs: [
+                    .body(
+                        "Lets you drag files and folders from this Mac onto the VM display; the guest agent saves them to the guest's Downloads folder. Independent of clipboard sharing, and can be toggled while the VM is running."
+                    )
+                ]),
             makeToggleRowWithInfo(
                 "Show install reminder", control: installReminderSwitch,
                 paragraphs: [
@@ -2236,6 +2247,7 @@ extension VMSettingsViewController {
     private func refreshGuestAgent() {
         guard isGuestAgentSectionVisible(guestOS: instance.configuration.guestOS) else { return }
         logForwardingSwitch.state = instance.configuration.agentLogForwardingEnabled ? .on : .off
+        dropFilesSwitch.state = instance.configuration.dropFilesEnabled ? .on : .off
         // The per-VM flag keeps its value while the app-wide preference overrides
         // it, so the switch still shows what this VM reverts to when the
         // preference is turned back on — it just can't be changed from here.
@@ -2775,6 +2787,10 @@ extension VMSettingsViewController: NSMenuItemValidation {
 
     @objc private func clipboardToggled() {
         writeConfig { $0.clipboardSharingEnabled = clipboardSwitch.state == .on }
+    }
+
+    @objc private func dropFilesToggled() {
+        writeConfig { $0.dropFilesEnabled = dropFilesSwitch.state == .on }
     }
 
     @objc private func clipboardPassthroughToggled() {

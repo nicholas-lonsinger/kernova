@@ -7,6 +7,11 @@ struct AgentPolicySnapshot: Equatable, Sendable {
     var logForwardingEnabled: Bool
     var clipboardSharingEnabled: Bool
 
+    /// Whether the guest's drop agent should dial the drop port. The host binds
+    /// that port only while this is set, so a guest told otherwise would be
+    /// refused on every retry.
+    var dropFilesEnabled: Bool
+
     /// The user-selected ceiling on a paste's file-representation total, which
     /// the guest enforces against its own inbound pastes.
     var clipboardMaxPasteBytes: Int
@@ -378,11 +383,12 @@ final class VsockControlService {
             $0.logForwardingEnabled = policy.logForwardingEnabled
             $0.clipboardSharingEnabled = clipboardEnabled
             $0.clipboardMaxPasteBytes = UInt64(policy.clipboardMaxPasteBytes)
+            $0.dropFilesEnabled = policy.dropFilesEnabled
         }
         do {
             try channel.send(frame)
             Self.logger.notice(
-                "Sent policy update for '\(self.label, privacy: .public)' (logForwarding=\(policy.logForwardingEnabled, privacy: .public), clipboard=\(clipboardEnabled, privacy: .public), maxPasteBytes=\(policy.clipboardMaxPasteBytes, privacy: .public))"
+                "Sent policy update for '\(self.label, privacy: .public)' (logForwarding=\(policy.logForwardingEnabled, privacy: .public), clipboard=\(clipboardEnabled, privacy: .public), maxPasteBytes=\(policy.clipboardMaxPasteBytes, privacy: .public), dropFiles=\(policy.dropFilesEnabled, privacy: .public))"
             )
         } catch {
             Self.logger.error(

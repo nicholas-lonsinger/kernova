@@ -79,6 +79,11 @@ public final class ClipboardEndpoint {
         public var staging: ClipboardFileStaging?
         /// How long a pull waits without progress before giving up.
         public var lazyPullTimeout: TimeInterval
+        /// How long an offered drop waits for the peer to ask for its first item
+        /// before this side calls it off.
+        public var dropClaimTimeout: TimeInterval
+        /// Runs that deadline after its delay; tests fire it by hand.
+        public var dropClaimSchedule: @Sendable (TimeInterval, @escaping @MainActor @Sendable () -> Void) -> Void
         /// How long a transfer runs before its readout surfaces.
         public var progressRevealDelay: TimeInterval
         /// How long a readout waits after its last unit before calling the
@@ -103,6 +108,11 @@ public final class ClipboardEndpoint {
             maxPasteBytes: @escaping @MainActor () -> Int = { ClipboardPasteLimit.defaultBytes },
             staging: ClipboardFileStaging? = nil,
             lazyPullTimeout: TimeInterval = ClipboardStreamTuning.lazyPullTimeout,
+            dropClaimTimeout: TimeInterval = ClipboardStreamTuning.dropClaimTimeout,
+            dropClaimSchedule:
+                @escaping @Sendable (
+                    TimeInterval, @escaping @MainActor @Sendable () -> Void
+                ) -> Void = ClipboardOutboundOffers.scheduleOnMainQueue,
             progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
             progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
             clock: any EngineClock = makePlatformEngineClock(),
@@ -116,6 +126,8 @@ public final class ClipboardEndpoint {
             self.maxPasteBytes = maxPasteBytes
             self.staging = staging
             self.lazyPullTimeout = lazyPullTimeout
+            self.dropClaimTimeout = dropClaimTimeout
+            self.dropClaimSchedule = dropClaimSchedule
             self.progressRevealDelay = progressRevealDelay
             self.progressIdleGap = progressIdleGap
             self.clock = clock
@@ -191,6 +203,8 @@ public final class ClipboardEndpoint {
             session: session, reporter: reporter, peerName: configuration.peerName,
             progressRevealDelay: configuration.progressRevealDelay,
             progressIdleGap: configuration.progressIdleGap,
+            dropClaimTimeout: configuration.dropClaimTimeout,
+            dropClaimSchedule: configuration.dropClaimSchedule,
             firstGeneration: configuration.firstGeneration)
         // A send-only connection has no staging and never receives a byte; the
         // session raises the fault for any other combination.

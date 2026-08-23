@@ -194,6 +194,12 @@ struct ClipboardTransferWording: Equatable {
                 menuLine: "Clipboard: paste from the guest failed",
                 mentionsMacClipboardKept: false)
 
+        case (.itemsSkipped(let note), .drop):
+            return ClipboardTransferWording(
+                headline: "Some files not copied to \(vm).", message: note,
+                menuLine: "Drop: some files weren't sent",
+                mentionsMacClipboardKept: false)
+
         case (.itemsSkipped(let note), _):
             return ClipboardTransferWording(
                 headline: "Clipboard not copied to \(vm).", message: note,
@@ -212,6 +218,13 @@ struct ClipboardTransferWording: Equatable {
                 headline: "Files not copied to \(vm).",
                 message: "The connection to the VM dropped, so the files weren't sent.",
                 menuLine: "Drop: the files didn't reach the VM",
+                mentionsMacClipboardKept: false)
+
+        case (.unclaimed, _):
+            return ClipboardTransferWording(
+                headline: "Files not copied to \(vm).",
+                message: "The VM never started taking the files, so the drop was called off.",
+                menuLine: "Drop: the VM never took the files",
                 mentionsMacClipboardKept: false)
         }
     }
