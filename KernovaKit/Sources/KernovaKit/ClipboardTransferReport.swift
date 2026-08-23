@@ -76,8 +76,8 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case unpackFailed
     /// The bytes arrived but could not be written to a file on this side.
     case stagingFailed
-    /// A passthrough forward left unreadable items out of the offer; `note` is
-    /// the intake's own wording.
+    /// Items this side could not read were left out of what it sent, and the
+    /// rest crossed; `note` is the sentence the raising side words it in.
     case itemsSkipped(note: String)
     /// None of the dropped items could be read, so nothing was sent.
     case itemsUnreadable

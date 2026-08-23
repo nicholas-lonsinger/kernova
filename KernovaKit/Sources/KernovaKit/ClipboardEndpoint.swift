@@ -297,9 +297,13 @@ public final class ClipboardEndpoint {
     }
 
     /// Announces `content` to the peer, reporting what became of it.
+    ///
+    /// `skippedBeforeOffer` is how many of the gesture's items this side already
+    /// knows it cannot send, counted into a drop's verdict alongside the ones
+    /// that fail once the peer asks.
     @discardableResult
-    public func offer(_ content: ClipboardContent) -> OfferOutcome {
-        outbound.offer(content)
+    public func offer(_ content: ClipboardContent, skippedBeforeOffer: Int = 0) -> OfferOutcome {
+        outbound.offer(content, skippedBeforeOffer: skippedBeforeOffer)
     }
 
     /// Forgets what was last offered, so re-announcing the same content counts

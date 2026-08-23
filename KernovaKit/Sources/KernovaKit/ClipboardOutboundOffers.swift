@@ -39,21 +39,35 @@ public struct ClipboardPullRequest: Sendable {
     }
 }
 
-/// Which of one offer's representations this side could not read for the peer,
+/// How many of one gesture's items this side had nothing to send the peer,
 /// recorded from whichever transfer queue found out.
 ///
-/// Keyed by index rather than counted, so a representation the peer asks for
-/// twice is one item however often it fails.
+/// The two stages an item can be lost at count into one number, so the batch's
+/// verdict names the whole of what the user is missing rather than whichever
+/// stage spoke last: `skippedBeforeOffer` never reached the peer, and the
+/// indices failed once it asked for them. Keyed by index rather than counted,
+/// so a representation the peer asks for twice is one item however often it
+/// fails.
+///
+/// `@unchecked Sendable`: `indices` is read and written under `lock`, and
+/// `skippedBeforeOffer` is immutable.
 private final class UnreadableReps: @unchecked Sendable {
+    /// Items left out of the offer, which have no rep index of their own —
+    /// the peer was never told they existed.
+    let skippedBeforeOffer: Int
     private let lock = NSLock()
     private var indices: Set<Int> = []
+
+    init(skippedBeforeOffer: Int) {
+        self.skippedBeforeOffer = skippedBeforeOffer
+    }
 
     func record(repIndex: Int) {
         lock.withLock { _ = indices.insert(repIndex) }
     }
 
-    /// How many of the offer's items this side had nothing to send for.
-    var count: Int { lock.withLock { indices.count } }
+    /// How many of the gesture's items this side had nothing to send for.
+    var count: Int { lock.withLock { skippedBeforeOffer + indices.count } }
 }
 
 /// What this side has offered the peer, and the transfers it serves in answer.
@@ -88,13 +102,20 @@ public final class ClipboardOutboundOffers {
         /// Which arming of that deadline is live: a stand-down or a re-arm bumps
         /// it, so one already scheduled can tell it was superseded.
         var claimArming: UInt64 = 0
-        /// The items of this drop this side turned out to have nothing to
-        /// send for, so the verdict can say what it left out.
-        let unreadable = UnreadableReps()
+        /// The items of this drop this side had nothing to send for, so the
+        /// verdict can say what it left out.
+        let unreadable: UnreadableReps
 
-        init(generation: UInt64, content: ClipboardContent) {
+        /// Every item the gesture carried, including the ones the offer left
+        /// out — what "none of them crossed" is measured against.
+        var gesturedCount: Int {
+            content.representations.count + unreadable.skippedBeforeOffer
+        }
+
+        init(generation: UInt64, content: ClipboardContent, skippedBeforeOffer: Int) {
             self.generation = generation
             self.content = content
+            self.unreadable = UnreadableReps(skippedBeforeOffer: skippedBeforeOffer)
             live.set(generation)
         }
     }
@@ -199,8 +220,15 @@ public final class ClipboardOutboundOffers {
     /// a drop is registered alongside whatever is already streaming, and opens
     /// its readout before the send so a failure has something to report on, then
     /// announces itself as queued once the offer is away.
+    ///
+    /// `skippedBeforeOffer` is how many of the gesture's items this side already
+    /// knows it cannot send. A drop's verdict counts them alongside the ones that
+    /// fail once the peer asks, so the two stages an item can be lost at reach
+    /// the user as one number.
     @discardableResult
-    public func offer(_ content: ClipboardContent) -> ClipboardEndpoint.OfferOutcome {
+    public func offer(
+        _ content: ClipboardContent, skippedBeforeOffer: Int = 0
+    ) -> ClipboardEndpoint.OfferOutcome {
         if kind == .clipboard, content.digest == lastOfferedDigestStorage { return .duplicate }
         // Cap to the 16-bit rep-index limit a transfer id can address; the
         // uncapped digest stays the dedup key, so unchanged content isn't
@@ -235,7 +263,9 @@ public final class ClipboardOutboundOffers {
             retire(previous)
             session.outbox?.cancel(generation: previous.generation)
         }
-        let entry = Entry(generation: generation, content: offered)
+        let entry = Entry(
+            generation: generation, content: offered,
+            skippedBeforeOffer: max(0, skippedBeforeOffer))
         entry.operation = operation
         entries[generation] = entry
         // The peer serves drops one job at a time, so a batch offered while
@@ -478,28 +508,29 @@ public final class ClipboardOutboundOffers {
         }
     }
 
-    /// Ends the readout of a drop the peer served to its end, saying which of
-    /// its items this side could not read for it.
+    /// Ends the readout of a drop the peer served to its end, saying how many of
+    /// the gesture's items this side could not send it.
     ///
     /// The peer only ever pulls what it was offered, so what it reports as
-    /// complete is every item that reached it — the ones whose transfers failed
-    /// here are the batch's own news, and are owed the sentence naming them. The
-    /// refusal is raised after the readout has finished, which dates it beside
-    /// the operation rather than before it, so the completion does not clear it.
+    /// complete is every item that reached it — the ones this side never offered
+    /// and the ones whose transfers failed here are the batch's own news, and are
+    /// owed one sentence naming them together. The refusal carries a date later
+    /// than the operation's own start, which is what leaves it standing over the
+    /// completion published beside it (`ClipboardTransferReporter.record`).
     private func reportCompletedDrop(_ entry: Entry, generation: UInt64) {
         let unreadable = entry.unreadable.count
-        let offered = entry.content.representations.count
+        let gestured = entry.gesturedCount
         guard unreadable > 0 else {
             entry.operation?.finish(.completed)
             Self.logger.notice(
-                "Drop to '\(self.peerName, privacy: .public)' completed (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public), \(offered, privacy: .public) item(s))"
+                "Drop to '\(self.peerName, privacy: .public)' completed (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public), \(gestured, privacy: .public) item(s))"
             )
             return
         }
         Self.logger.warning(
-            "Drop to '\(self.peerName, privacy: .public)' left \(unreadable, privacy: .public) of \(offered, privacy: .public) item(s) unsent (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
+            "Drop to '\(self.peerName, privacy: .public)' left \(unreadable, privacy: .public) of \(gestured, privacy: .public) item(s) unsent (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
         )
-        guard unreadable < offered else {
+        guard unreadable < gestured else {
             // Not one item crossed, so there is no rest of the batch to speak of.
             entry.operation?.finish(.failed(.itemsUnreadable))
             return

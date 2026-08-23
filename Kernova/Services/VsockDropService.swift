@@ -296,7 +296,11 @@ final class VsockDropService: VsockDataConnectionAccepting {
     /// The readout carries the Cancel the user reaches a drop through; it runs
     /// on the endpoint, so nothing here handles one.
     private func offer(_ reps: [ClipboardContent.Representation], skipped: Int) {
-        let outcome = endpoint.offer(ClipboardContent(representations: reps))
+        // Handed to the offer as well as reported here: the drop's own verdict
+        // counts these alongside whatever fails once the guest asks, so the two
+        // stages an item can be lost at reach the user as one number.
+        let outcome = endpoint.offer(
+            ClipboardContent(representations: reps), skippedBeforeOffer: skipped)
         // "The rest were" sent is the whole point of the notice, and a failed
         // offer sent none of them — the readout the offer already failed carries
         // that news instead.
