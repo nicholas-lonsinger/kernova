@@ -247,7 +247,7 @@ Clipboard (principles and trade-off rules: [CLIPBOARD.md](CLIPBOARD.md)):
   `VsockDropService` and `ClipboardPassthroughCoordinator`. `VMInstance.clipboardTransferReport`
   mirrors it as the observable value every surface renders — the clipboard window's bar and
   banner, the toolbar button's ring, and `HostAgentStatusItemController`'s dropdown line and
-  notice popover. The status item computes the newest running report across
+  notice popover. The status item ranks the running reports across
   `VMLibraryViewModel.instances` rather than holding a registry of its own.
 - `ClipboardTransferOperation` — KernovaKit's lock-based per-operation accumulator, opened by
   both host services and by the guest agent's clipboard and drop agents, which drive it from
