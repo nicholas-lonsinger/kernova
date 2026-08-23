@@ -9,12 +9,15 @@ import Testing
 struct VMToolbarManagerTests {
     // MARK: - Factories
 
-    private func makeInstance(status: VMStatus = .stopped) -> VMInstance {
-        let config = VMConfiguration(
+    private func makeInstance(status: VMStatus = .stopped, clipboardSharing: Bool = true)
+        -> VMInstance
+    {
+        var config = VMConfiguration(
             name: "Test VM",
             guestOS: .linux,
             bootMode: .efi
         )
+        config.clipboardSharingEnabled = clipboardSharing
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
         return VMInstance(configuration: config, bundleURL: bundleURL, status: status)
@@ -184,10 +187,11 @@ struct VMToolbarManagerTests {
     /// returning the operation — the reporter holds only a weak reference, so the
     /// caller must keep it alive for the length of the test.
     private func publishProgress(
-        transferred: UInt64, total: UInt64, on instance: VMInstance
+        transferred: UInt64, total: UInt64, on instance: VMInstance,
+        gesture: ClipboardTransferGesture = .paste
     ) -> ClipboardTransferOperation {
         let operation = ClipboardTransferOperation(
-            gesture: .paste, direction: .inbound, peerName: instance.name, revealDelay: 0,
+            gesture: gesture, direction: .inbound, peerName: instance.name, revealDelay: 0,
             now: { 0 }, schedule: { _, _ in }, reporter: instance.clipboardTransfers)
         instance.clipboardTransfers.publish(
             from: operation,
@@ -195,7 +199,7 @@ struct VMToolbarManagerTests {
                 ClipboardProgressSnapshot(
                     direction: .inbound, peerName: instance.name, currentItemName: nil,
                     filesCompleted: 0, fileCount: 1, bytesTransferred: transferred,
-                    totalBytes: total, bytesPerSecond: nil, secondsRemaining: nil, gesture: .paste,
+                    totalBytes: total, bytesPerSecond: nil, secondsRemaining: nil, gesture: gesture,
                     elapsedSeconds: 1), since: Date()))
         return operation
     }
@@ -301,6 +305,23 @@ struct VMToolbarManagerTests {
         manager.updateToolbarItems(in: toolbar)
 
         #expect(clipboardButton(in: toolbar)?.transferFraction == nil)
+    }
+
+    @Test("the Clipboard button stays blank for a drop on a VM with sharing switched off")
+    func clipboardBarSilentForADropWithSharingOff() {
+        let instance = makeInstance(status: .running, clipboardSharing: false)
+        let operation = publishProgress(
+            transferred: 25, total: 100, on: instance, gesture: .drop)
+        let manager = makeManager(instance: instance)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+
+        manager.updateToolbarItems(in: toolbar)
+
+        // The item the ring rides is disabled by the same toggle; the drop's
+        // readout belongs to the menu-bar status item instead.
+        #expect(clipboardButton(in: toolbar)?.isEnabled == false)
+        #expect(clipboardButton(in: toolbar)?.transferFraction == nil)
+        withExtendedLifetime(operation) {}
     }
 
     // MARK: - Preparing State

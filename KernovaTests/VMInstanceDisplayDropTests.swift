@@ -17,11 +17,15 @@ struct VMInstanceDisplayDropTests {
         private var channels: [VsockChannel] = []
 
         @MainActor
-        init(guestOS: VMGuestOS = .macOS, lastSeenAgentVersion: String? = "1.0.0") {
+        init(
+            guestOS: VMGuestOS = .macOS, lastSeenAgentVersion: String? = "1.0.0",
+            clipboardSharingEnabled: Bool = true
+        ) {
             var config = VMConfiguration(
                 name: "Drop VM", guestOS: guestOS,
                 bootMode: guestOS == .macOS ? .macOS : .efi)
             config.lastSeenAgentVersion = lastSeenAgentVersion
+            config.clipboardSharingEnabled = clipboardSharingEnabled
             let bundleURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent(config.id.uuidString, isDirectory: true)
             instance = VMInstance(configuration: config, bundleURL: bundleURL)
@@ -150,5 +154,43 @@ struct VMInstanceDisplayDropTests {
         #expect(harness.instance.displayDropAvailability == .disconnected)
         // And a drop attempted in that state is refused rather than swallowed.
         #expect(!harness.instance.sendDroppedFilesToGuest([URL(fileURLWithPath: "/tmp/a.txt")]))
+    }
+
+    // MARK: - Reporting a drop the clipboard toggle has no say over
+
+    @Test("a drop reports itself on a VM whose Clipboard Sharing is switched off")
+    func dropReportsWithClipboardSharingOff() throws {
+        let harness = Harness(clipboardSharingEnabled: false)
+        defer { harness.tearDown() }
+        let instance = harness.instance
+        // The toggle closes the Clipboard window and disables the toolbar item
+        // that carries the ring, which is why the menu-bar status item — driven
+        // by this report alone — is where the drop has to show.
+        #expect(!instance.canShowClipboard)
+
+        let operation = ClipboardTransferOperation(
+            gesture: .drop, direction: .outbound, peerName: instance.name, revealDelay: 0,
+            now: { 0 }, schedule: { _, _ in }, onCancelRequested: {},
+            reporter: instance.clipboardTransfers)
+        let readout = ClipboardProgressSnapshot(
+            direction: .outbound, peerName: instance.name, currentItemName: "a.txt",
+            filesCompleted: 0, fileCount: 1, bytesTransferred: 10, totalBytes: 100,
+            bytesPerSecond: 10, secondsRemaining: 9, gesture: .drop, elapsedSeconds: 5,
+            isCancellable: true, operationID: operation.id)
+        instance.clipboardTransfers.publish(from: operation, .running(readout, since: Date()))
+
+        guard case .running(let shown, _) = instance.clipboardTransferReport else {
+            Issue.record("the drop left the status item's readout empty")
+            return
+        }
+        #expect(shown.gesture == .drop)
+        #expect(shown.isCancellable)
+        // And that readout opens the dropdown on its own, so the drop is seen
+        // without the user going looking for it.
+        var opener = ClipboardProgressMenuAutoOpener()
+        #expect(opener.readoutChanged(shown, menuIsOpen: false, canOpen: true) == .open)
+        // The Cancel it carries reaches the drop through the same report.
+        #expect(instance.clipboardTransfers.cancel(shown.operationID))
+        withExtendedLifetime(operation) {}
     }
 }

@@ -347,7 +347,12 @@ final class VMToolbarManager: NSObject {
                 ? nil
                 : observeRecurring(
                     track: { [weak self] in
-                        _ = self?.clipboardObservedInstance?.clipboardTransferReport
+                        guard let observed = self?.clipboardObservedInstance else { return }
+                        _ = observed.clipboardTransferReport
+                        // Read too, so flipping the toggle mid-transfer clears
+                        // the ring instead of leaving it turning on a button the
+                        // same flip disabled.
+                        _ = observed.configuration.clipboardSharingEnabled
                     },
                     apply: { [weak self] in self?.refreshClipboardTransferBar() })
         }
@@ -361,7 +366,11 @@ final class VMToolbarManager: NSObject {
                 as? ClipboardToolbarButton
         else { return }
 
-        guard case .running(let snapshot, _) = clipboardObservedInstance?.clipboardTransferReport
+        // The ring rides a button the clipboard toggle disables, so it says
+        // nothing while that toggle is off — including about a drop, which runs
+        // regardless and reports itself on the menu-bar status item instead.
+        guard clipboardObservedInstance?.configuration.clipboardSharingEnabled == true,
+            case .running(let snapshot, _) = clipboardObservedInstance?.clipboardTransferReport
         else {
             button.transferFraction = nil
             return
