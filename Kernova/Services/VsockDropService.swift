@@ -270,8 +270,11 @@ final class VsockDropService: VsockDataConnectionAccepting {
     /// The readout carries the Cancel the user reaches a drop through; it runs
     /// on the endpoint, so nothing here handles one.
     private func offer(_ reps: [ClipboardContent.Representation], skipped: Int) {
-        endpoint.offer(ClipboardContent(representations: reps))
-        guard skipped > 0 else { return }
+        let outcome = endpoint.offer(ClipboardContent(representations: reps))
+        // "The rest were" sent is the whole point of the notice, and a failed
+        // offer sent none of them — the readout the offer already failed carries
+        // that news instead.
+        guard skipped > 0, case .sent = outcome else { return }
         Self.logger.warning(
             "Skipped \(skipped, privacy: .public) unreadable dropped item(s) for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )

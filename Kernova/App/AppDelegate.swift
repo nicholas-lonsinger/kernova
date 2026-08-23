@@ -311,6 +311,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // never sweeps on close — only here, before any clipboard use.
         ClipboardFileStaging.reclaimAll()
 
+        // Same reason, for the files a promise drag writes before it is offered:
+        // the guest pulls a queued drop only when its turn comes, so launch is
+        // the one moment nothing staged can still be owed to it.
+        DropPromiseStaging.reclaimAll()
+
         // Intercept the Quit Apple Event so `classifyQuit` can inspect its sender.
         NSAppleEventManager.shared().setEventHandler(
             self,

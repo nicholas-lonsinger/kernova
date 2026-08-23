@@ -42,10 +42,20 @@ public final class ClipboardTransferReporter {
         /// announced — nothing has begun, so there is no bar to render.
         var snapshot: ClipboardProgressSnapshot?
         var since: Date
+        /// Where this operation falls in the order the live set first published
+        /// bars, which is what settles a tie between equal ranks. `0` until it
+        /// publishes one.
+        var revealOrder: UInt64 = 0
     }
 
     /// Live operations in the order they first announced themselves.
     private var live: [Live] = []
+
+    /// Hands out ``Live/revealOrder``. Announcement order cannot stand in for
+    /// it: a drop joins the live set when it is offered and publishes its first
+    /// bar only once the peer starts pulling, which can be long after something
+    /// offered later has been running for minutes.
+    private var revealCount: UInt64 = 0
 
     /// The last operation to finish, until something displaces it, the dwell
     /// retires it, or a caller clears it.
@@ -122,13 +132,21 @@ public final class ClipboardTransferReporter {
         case .running(let snapshot, let since):
             let key = ObjectIdentifier(operation)
             if let index = live.firstIndex(where: { $0.key == key }) {
+                // Only the first bar takes an order: re-ordering the live set on
+                // every progress tick would hand the readout back and forth
+                // between two transfers running side by side.
+                if live[index].snapshot == nil {
+                    revealCount &+= 1
+                    live[index].revealOrder = revealCount
+                }
                 live[index].snapshot = snapshot
                 live[index].since = since
             } else {
+                revealCount &+= 1
                 live.append(
                     Live(
                         key: key, id: operation.id, operation: operation, snapshot: snapshot,
-                        since: since))
+                        since: since, revealOrder: revealCount))
             }
             absorbsRepeats = false
             // The bar takes the readout back from a refusal that has had its
@@ -242,14 +260,16 @@ public final class ClipboardTransferReporter {
     ///
     /// Ranked by gesture rather than by which published last, so a drop started
     /// during a paste never takes the bar off the transfer an app is blocked on
-    /// (docs/CLIPBOARD.md §13); equal ranks fall back to publish recency.
+    /// (docs/CLIPBOARD.md §13); equal ranks fall back to the last to open a bar.
     private func shownReadout() -> (snapshot: ClipboardProgressSnapshot, since: Date)? {
-        typealias Candidate = (rank: Int, offset: Int, snapshot: ClipboardProgressSnapshot, since: Date)
-        let candidates: [Candidate] = live.enumerated().compactMap { offset, entry in
+        typealias Candidate = (
+            rank: Int, revealOrder: UInt64, snapshot: ClipboardProgressSnapshot, since: Date
+        )
+        let candidates: [Candidate] = live.compactMap { entry in
             guard let snapshot = entry.snapshot else { return nil }
-            return (snapshot.gesture.readoutRank, offset, snapshot, entry.since)
+            return (snapshot.gesture.readoutRank, entry.revealOrder, snapshot, entry.since)
         }
-        guard let best = candidates.max(by: { ($0.rank, $0.offset) < ($1.rank, $1.offset) })
+        guard let best = candidates.max(by: { ($0.rank, $0.revealOrder) < ($1.rank, $1.revealOrder) })
         else { return nil }
         return (best.snapshot, best.since)
     }

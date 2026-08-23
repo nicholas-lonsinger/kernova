@@ -35,7 +35,7 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
     public var isAwaited: Bool { self == .peerPaste || self == .drop }
 
     /// Which of several concurrent readouts a single-value surface shows —
-    /// higher wins, ties settled by publish recency.
+    /// higher wins, ties settled by which opened its bar last.
     ///
     /// A paste that blocks an app outranks work the user can walk away from, so
     /// a drop started mid-paste never takes the bar off the transfer someone is

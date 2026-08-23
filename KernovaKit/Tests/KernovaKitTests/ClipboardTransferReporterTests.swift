@@ -383,6 +383,39 @@ struct ClipboardTransferReporterTests {
         #expect(runningSnapshot(reporter)?.bytesTransferred == 2)
     }
 
+    @Test("a queued operation takes the readout once it opens a bar of its own")
+    func aQueuedOperationTakesTheReadoutWhenItStarts() {
+        let scheduler = DwellScheduler()
+        let reporter = makeReporter(scheduler: scheduler)
+        let waiting = makeOperation(reporter, gesture: .drop)
+        let started = makeOperation(reporter, gesture: .drop)
+
+        // The drop joins the live set when it is offered, so it is the *oldest*
+        // entry while the peer is still busy with something offered after it.
+        reporter.queued(waiting)
+        reporter.publish(from: started, .running(snapshot(bytes: 1, gesture: .drop), since: Date()))
+        #expect(runningSnapshot(reporter)?.bytesTransferred == 1)
+
+        reporter.publish(from: waiting, .running(snapshot(bytes: 2, gesture: .drop), since: Date()))
+        #expect(runningSnapshot(reporter)?.bytesTransferred == 2)
+    }
+
+    @Test("progress on the older of two running readouts does not take the bar back")
+    func progressOnAnOlderReadoutDoesNotTakeTheBarBack() {
+        let scheduler = DwellScheduler()
+        let reporter = makeReporter(scheduler: scheduler)
+        let older = makeOperation(reporter, gesture: .drop)
+        let newer = makeOperation(reporter, gesture: .drop)
+
+        reporter.publish(from: older, .running(snapshot(bytes: 1, gesture: .drop), since: Date()))
+        reporter.publish(from: newer, .running(snapshot(bytes: 2, gesture: .drop), since: Date()))
+        // Both are streaming: without this the bar would change hands on every
+        // tick, since each publication would be the most recent one.
+        reporter.publish(from: older, .running(snapshot(bytes: 9, gesture: .drop), since: Date()))
+
+        #expect(runningSnapshot(reporter)?.bytesTransferred == 2)
+    }
+
     // MARK: - Work behind the readout
 
     @Test("a queued operation is counted on the readout rather than replacing it")

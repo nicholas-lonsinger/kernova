@@ -314,7 +314,9 @@ final class VMDisplayBackingView: NSView {
             Self.logger.warning(
                 "A dropped file promise was never written: \(error?.localizedDescription ?? "no file", privacy: .public)"
             )
-            try? FileManager.default.removeItem(at: directory)
+            // Left for the launch reclaim rather than removed here: the drag's
+            // other promises settle on the first failure and may still be
+            // writing into this directory.
             onDropUnreadable()
         }
     }
