@@ -91,9 +91,10 @@ final class BlockingConnectGate: @unchecked Sendable {
         /// Attempts abandoned past their deadline whose syscall has not
         /// returned.
         var parked = 0
-        /// Parks since the last attempt to complete inside its deadline —
-        /// zero exactly while the host is known to be answering, and the
-        /// escalation driver for the current wedge.
+        /// Parks since the last attempt to complete inside its deadline whose
+        /// syscalls have still not returned — the escalation driver for the
+        /// current wedge, zero exactly while the host is known to be
+        /// answering. Never exceeds `parked`.
         var parksThisEpisode = 0
         /// When the most recent admission was granted.
         var lastAdmissionAt = EngineInstant(nanoseconds: 0)
@@ -154,11 +155,14 @@ final class BlockingConnectGate: @unchecked Sendable {
         }
     }
 
-    /// Discharges a parked attempt whose syscall has finally returned.
+    /// Discharges a parked attempt whose syscall has finally returned —
+    /// including from the current wedge's escalation, so a later wedge is not
+    /// rationed for threads no longer stranded.
     func markParkReturned(_ label: String) {
         lock.withLock {
             guard var state = states[label] else { return }
             state.parked = max(0, state.parked - 1)
+            state.parksThisEpisode = max(0, state.parksThisEpisode - 1)
             states[label] = state
         }
     }

@@ -727,6 +727,31 @@ struct BlockingConnectTests {
         #expect(gate.admit("control"))
     }
 
+    @Test("Parks whose syscalls returned no longer escalate a later wedge")
+    func gateReturnedParksDoNotEscalateTheNextWedge() {
+        let clock = TestEngineClock()
+        let gate = BlockingConnectGate(clock: clock)
+
+        // Strand a tall wedge, then let every parked syscall return — a
+        // torn-down transport, not a completion, so no heal fires.
+        for _ in 0..<(BlockingConnectGate.maxParkedAttempts + 8) {
+            gate.markParked("control")
+        }
+        for _ in 0..<(BlockingConnectGate.maxParkedAttempts + 8) {
+            gate.markParkReturned("control")
+        }
+
+        // The next wedge is rationed from the floor, not from an exponent
+        // counting threads that are no longer stranded.
+        for _ in 0..<BlockingConnectGate.maxParkedAttempts {
+            #expect(gate.admit("control"))
+            gate.markParked("control")
+        }
+        #expect(gate.admit("control") == false)
+        clock.advance(seconds: BlockingConnectGate.backoffFloor)
+        #expect(gate.admit("control"))
+    }
+
     @Test("A park reverted because the syscall beat the deadline leaves the count unchanged")
     func gateRevertedParkLeavesTheCountUnchanged() {
         let clock = TestEngineClock()
