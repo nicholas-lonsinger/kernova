@@ -31,6 +31,10 @@ struct VsockDropServiceTests {
         private let host: VsockChannel
 
         init(
+            // Zeroed so a transfer's readout is on screen while it runs; a test
+            // about what a drop *finishing inside the gate* leaves behind raises
+            // it past anything the run can reach.
+            progressRevealDelay: TimeInterval = 0,
             directoryByteCount: @escaping @Sendable (URL) -> Int = { _ in 0 },
             // Inline, so reading the items needs no cross-thread wait.
             runOffMainActor: @escaping (@escaping @Sendable () -> Void) -> Void = { work in
@@ -49,8 +53,7 @@ struct VsockDropServiceTests {
             recorder = FrameRecorder(channel: guest)
             service = VsockDropService(
                 channel: host, label: "Drop VM", reporter: reports.reporter,
-                // Zeroed so a transfer's readout is on screen while it runs.
-                progressRevealDelay: 0, progressIdleGap: 0,
+                progressRevealDelay: progressRevealDelay, progressIdleGap: 0,
                 directoryByteCount: directoryByteCount,
                 runOffMainActor: runOffMainActor,
                 scheduleDropDeadline: scheduleDropDeadline)
@@ -554,6 +557,72 @@ struct VsockDropServiceTests {
         // The one item that was offered is the one that failed, so the drag as a
         // whole delivered nothing — "the rest were" sent has nothing to describe.
         try await harness.reports.wait { harness.failure == .itemsUnreadable }
+    }
+
+    @Test("a later drag losing an item raises its own refusal, not an echo of the last")
+    func aRepeatedPartialLossIsAnnouncedAgain() async throws {
+        // Further out than the run can reach, so every drop here ends inside its
+        // reveal gate the way a drag of two small files does: announced as
+        // queued, retired without ever opening a bar.
+        let harness = try Harness(progressRevealDelay: 60)
+        defer { harness.tearDown() }
+        let scratch = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+
+        let first = try await dropLosingOneItem(harness, generation: 1, in: scratch)
+        #expect(first.failure == .itemsSkipped(note: harness.skippedNote()))
+
+        // A clean drag in between, which the guest serves to its end.
+        let plain = try makeFile(in: scratch, named: "plain.txt", bytes: Data("plain".utf8))
+        #expect(harness.service.startDrop(urls: [plain]))
+        try await harness.recorder.waitForFrames { harness.recorder.dropOffers.count == 2 }
+        let clean = try #require(harness.recorder.dropOffers.last?.repInfo)
+        let served = try await harness.pull(
+            generation: 2, transferID: transferID(generation: 2, repIndex: 0), uti: clean[0].uti)
+        #expect(served.isComplete)
+        try harness.guest.send(makeDropCompleteFrame(generation: 2, outcome: .completed))
+
+        // A third drag loses an item exactly as the first did. Same sentence,
+        // separate gesture over separate files — so it is owed its own message
+        // rather than collapsed into the one still standing.
+        let third = try await dropLosingOneItem(harness, generation: 3, in: scratch)
+        #expect(third.failure == .itemsSkipped(note: harness.skippedNote()))
+        #expect(third.date != first.date)
+    }
+
+    /// Runs one drag of a readable file beside one that turns unreadable between
+    /// the offer and the guest's pull, returning the refusal it leaves standing.
+    private func dropLosingOneItem(
+        _ harness: Harness, generation: UInt64, in scratch: URL
+    ) async throws -> ClipboardTransferFinish {
+        let standing = harness.reports.finish
+        let locked = try makeFile(
+            in: scratch, named: "locked-\(generation).bin", bytes: Data("locked".utf8))
+        let readable = try makeFile(
+            in: scratch, named: "notes-\(generation).txt", bytes: Data("still here".utf8))
+
+        #expect(harness.service.startDrop(urls: [locked, readable]))
+        try await harness.recorder.waitForFrames {
+            harness.recorder.dropOffers.count == Int(generation)
+        }
+        let reps = try #require(harness.recorder.dropOffers.last?.repInfo)
+
+        // Readable when the drag was gathered and unopenable by the time the
+        // guest asks: the shape a folder holding a mode-000 entry arrives in,
+        // where only the pull finds out.
+        try makeUnopenable(locked)
+        let lost = try await harness.pull(
+            generation: generation, transferID: transferID(generation: generation, repIndex: 0),
+            uti: reps[0].uti)
+        #expect(lost.abortCode == ClipboardStreamAbortCode.readError.rawValue)
+        let sent = try await harness.pull(
+            generation: generation, transferID: transferID(generation: generation, repIndex: 1),
+            uti: reps[1].uti)
+        #expect(sent.isComplete)
+
+        try harness.guest.send(makeDropCompleteFrame(generation: generation, outcome: .completed))
+        try await harness.reports.wait { harness.reports.finish?.date != standing?.date }
+        return try #require(harness.reports.finish)
     }
 
     // MARK: - Several drops at once

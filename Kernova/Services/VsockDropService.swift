@@ -308,11 +308,10 @@ final class VsockDropService: VsockDataConnectionAccepting {
         Self.logger.warning(
             "Skipped \(skipped, privacy: .public) unreadable dropped item(s) for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )
-        // Queued behind the offer's own `markQueued`, which is what dates this
-        // refusal *after* the drop's readout began: `ClipboardTransferReporter`
-        // lets a completion clear a refusal older than the operation it ran
-        // beside, and the rest of the batch arriving disproves nothing about the
-        // items left out.
+        // Queued behind the offer's own `markQueued`, so this drop has joined
+        // the reporter's live set before the refusal lands: a fresh operation is
+        // what makes it news rather than an echo of whatever the last drag left
+        // standing (`ClipboardTransferReporter.record`).
         MainActorBridge.async { [weak self] in
             guard let self else { return }
             self.reportRefusal(.itemsSkipped(count: skipped))

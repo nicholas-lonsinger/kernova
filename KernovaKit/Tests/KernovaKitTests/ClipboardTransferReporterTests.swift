@@ -285,6 +285,45 @@ struct ClipboardTransferReporterTests {
         #expect(reporter.report == .finished(later))
     }
 
+    @Test("the same refusal from a later gesture is announced again, bar or no bar")
+    func reannouncesAfterAnOperationThatOpenedNoBar() {
+        let scheduler = DwellScheduler()
+        let reporter = makeReporter(scheduler: scheduler)
+        var announced: [ClipboardTransferFinish] = []
+        reporter.onReportChanged = { report in
+            guard case .finished(let finish) = report, finish.failure != nil else { return }
+            announced.append(finish)
+        }
+
+        // One drop lost an item of its batch and said so.
+        let first = makeOperation(reporter, gesture: .drop)
+        reporter.queued(first)
+        reporter.publish(
+            from: first,
+            .finished(
+                finish(
+                    .itemsSkipped(count: 1), gesture: .drop,
+                    at: Date(timeIntervalSince1970: 1))))
+
+        // The next drop ran to its end inside the reveal gate: it announced
+        // itself as queued and retired without ever opening a bar.
+        let quick = makeOperation(reporter, gesture: .drop)
+        reporter.queued(quick)
+        reporter.retire(quick)
+
+        // A third drop loses an item of its own. It is a separate gesture over
+        // separate files, so it is owed its own message rather than collapsed
+        // into the one the first drop raised.
+        let third = makeOperation(reporter, gesture: .drop)
+        reporter.queued(third)
+        let later = finish(
+            .itemsSkipped(count: 1), gesture: .drop, at: Date(timeIntervalSince1970: 2))
+        reporter.publish(from: third, .finished(later))
+
+        #expect(reporter.report == .finished(later))
+        #expect(announced.count == 2)
+    }
+
     // MARK: - Surface entry points
 
     @Test("clearing a finished report leaves a running one alone")

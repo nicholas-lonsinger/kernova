@@ -64,8 +64,11 @@ public final class ClipboardTransferReporter {
     /// Whether a repeat of ``lastFinish`` should collapse into it rather than be
     /// announced again.
     ///
-    /// Cleared by any running readout, so the same refusal after another
-    /// operation ran is news again.
+    /// Cleared as soon as another operation joins the live set, so the same
+    /// refusal raised by a later gesture is news again. Joining is the trigger
+    /// rather than opening a bar: an operation whose transfers all end inside
+    /// the reveal gate publishes no readout at all, and two gestures that each
+    /// lost a file would otherwise reach the user as a single message.
     private var absorbsRepeats = false
 
     /// Whether ``lastFinish`` is a refusal that has not yet been displaced by a
@@ -171,6 +174,7 @@ public final class ClipboardTransferReporter {
         guard !live.contains(where: { $0.key == key }) else { return }
         live.append(
             Live(key: key, id: operation.id, operation: operation, snapshot: nil, since: Date()))
+        absorbsRepeats = false
         recompute()
     }
 
@@ -226,8 +230,8 @@ public final class ClipboardTransferReporter {
     /// news.
     ///
     /// The N pasteboard fires of one refused multi-file paste each report the
-    /// same refusal, and one message is what the user is owed. A running report
-    /// in between is a new operation, so the next repeat is announced again.
+    /// same refusal, and one message is what the user is owed. An operation
+    /// joining in between is a later gesture, so its repeat is announced again.
     ///
     /// `startedAt` is when the finishing operation began, for the one finish that
     /// must not install itself: a completion or cancellation leaves a refusal

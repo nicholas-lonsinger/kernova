@@ -514,9 +514,10 @@ public final class ClipboardOutboundOffers {
     /// The peer only ever pulls what it was offered, so what it reports as
     /// complete is every item that reached it — the ones this side never offered
     /// and the ones whose transfers failed here are the batch's own news, and are
-    /// owed one sentence naming them together. The refusal carries a date later
-    /// than the operation's own start, which is what leaves it standing over the
-    /// completion published beside it (`ClipboardTransferReporter.record`).
+    /// owed one sentence naming them together. That sentence *is* the drop's
+    /// terminal: one gesture ends once, so a batch that lost a file finishes as
+    /// the refusal rather than as a completion with a refusal published beside
+    /// it, where only their relative dates would keep the refusal standing.
     private func reportCompletedDrop(_ entry: Entry, generation: UInt64) {
         let unreadable = entry.unreadable.count
         let gestured = entry.gesturedCount
@@ -530,16 +531,11 @@ public final class ClipboardOutboundOffers {
         Self.logger.warning(
             "Drop to '\(self.peerName, privacy: .public)' left \(unreadable, privacy: .public) of \(gestured, privacy: .public) item(s) unsent (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
         )
-        guard unreadable < gestured else {
-            // Not one item crossed, so there is no rest of the batch to speak of.
-            entry.operation?.finish(.failed(.itemsUnreadable))
-            return
-        }
-        entry.operation?.finish(.completed)
-        reporter.finish(
-            ClipboardTransferFinish(
-                gesture: .drop, outcome: .failed(.itemsSkipped(count: unreadable)),
-                peerName: peerName))
+        // With not one item across there is no rest of the batch to speak of,
+        // which is the whole of what the skipped sentence promises.
+        entry.operation?.finish(
+            .failed(
+                unreadable < gestured ? .itemsSkipped(count: unreadable) : .itemsUnreadable))
     }
 
     /// Retires every offer because the connection is over.
