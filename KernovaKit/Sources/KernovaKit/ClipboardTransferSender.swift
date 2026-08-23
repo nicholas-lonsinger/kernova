@@ -120,6 +120,10 @@ public final class ClipboardTransferSender: @unchecked Sendable {
     ///     the cumulative `(bytesSent, totalBytes)` in the unit the offer
     ///     advertised. An archived transfer reports `0` for the total — the
     ///     progress tracker keeps the offer's own figure.
+    ///   - onSourceUnreadable: fired when the source cannot be read, *before*
+    ///     the reason is written to the peer. An owner counting what it failed
+    ///     to send has therefore counted this transfer before the peer can
+    ///     learn of it, let alone report the batch it belongs to.
     ///   - onComplete: fired off the caller's actor exactly once when the
     ///     transfer ends, with `success` true only when every byte was streamed
     ///     and the completion trailer written.
@@ -129,13 +133,14 @@ public final class ClipboardTransferSender: @unchecked Sendable {
         isInline: Bool,
         isCurrent: @escaping @Sendable (UInt64) -> Bool,
         onProgress: (@Sendable (_ bytesSent: Int, _ totalBytes: Int) -> Void)? = nil,
+        onSourceUnreadable: (@Sendable () -> Void)? = nil,
         onComplete: (@Sendable (_ success: Bool) -> Void)? = nil
     ) {
         queue.async { [self] in
             run(
                 representation: representation, maxAcceptByteCount: maxAcceptByteCount,
                 isInline: isInline, isCurrent: isCurrent, onProgress: onProgress,
-                onComplete: onComplete)
+                onSourceUnreadable: onSourceUnreadable, onComplete: onComplete)
         }
     }
 
@@ -166,6 +171,7 @@ public final class ClipboardTransferSender: @unchecked Sendable {
         isInline: Bool,
         isCurrent: @escaping @Sendable (UInt64) -> Bool,
         onProgress: (@Sendable (_ bytesSent: Int, _ totalBytes: Int) -> Void)?,
+        onSourceUnreadable: (@Sendable () -> Void)?,
         onComplete: (@Sendable (_ success: Bool) -> Void)?
     ) {
         // Declared first so it ends last: the interval covers the whole
@@ -204,7 +210,11 @@ public final class ClipboardTransferSender: @unchecked Sendable {
             return
         }
 
-        guard let payload = classify(representation, isInline: isInline, fd: fd) else { return }
+        guard
+            let payload = classify(
+                representation, isInline: isInline, fd: fd,
+                onSourceUnreadable: onSourceUnreadable)
+        else { return }
         let isArchive: Bool
         let declaredByteCount: Int
         switch payload {
@@ -246,6 +256,9 @@ public final class ClipboardTransferSender: @unchecked Sendable {
                 Self.isWriteStall(error) || Self.isWriteStall(writer.failure)
             )
         }
+        // Ahead of the trailer, so an owner counting what it could not send has
+        // this transfer counted before the peer can see how it ended.
+        if failure?.code == .readError { onSourceUnreadable?() }
 
         // A trailer is skipped only after a stalled write: the peer's receive
         // buffer is full and it is not draining, so the reason has nowhere to go
@@ -321,7 +334,8 @@ public final class ClipboardTransferSender: @unchecked Sendable {
 
     /// Decides how `representation` crosses, or refuses the transfer.
     private func classify(
-        _ representation: ClipboardContent.Representation, isInline: Bool, fd: Int32
+        _ representation: ClipboardContent.Representation, isInline: Bool, fd: Int32,
+        onSourceUnreadable: (@Sendable () -> Void)?
     ) -> Payload? {
         switch representation.source {
         case .inMemory(let data) where isInline && data.count <= maxResidentInlineBytes:
@@ -343,6 +357,7 @@ public final class ClipboardTransferSender: @unchecked Sendable {
                         byteCount: currentByteCount))
             }
             guard let data = try? Data(contentsOf: url) else {
+                onSourceUnreadable?()
                 refuse(fd: fd, code: .readError, message: "Cannot read source file")
                 return nil
             }
@@ -355,6 +370,7 @@ public final class ClipboardTransferSender: @unchecked Sendable {
             // The sender is only ever handed materialized reps we offered; a
             // not-yet-pulled placeholder has no bytes to stream.
             assertionFailure("Cannot stream a pending-remote representation")
+            onSourceUnreadable?()
             refuse(
                 fd: fd, code: .readError,
                 message: "Cannot stream a pending-remote representation")

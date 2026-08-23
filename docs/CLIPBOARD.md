@@ -255,6 +255,12 @@ gesture**, since the user owed the message is the one who acted. **A refusal bel
 to the connection that raised it** — a promise outlives the service that published it (§3), so every
 surface renders the per-VM record rather than a live service's own property.
 
+**One item the sending side cannot read never cancels the batch.** A gesture over several items
+delivers the ones it can — whether the item is unreadable before the offer or turns out to be once
+the peer asks for it — and the refusal names how many were left out. The receiving side skips what
+it is told it cannot have and keeps going; a batch that delivers nothing at all is the only one
+reported as delivering nothing.
+
 **Progress is aggregate per operation, never per file.** An operation is one
 user-visible gesture — a paste, a Copy to Mac, a preview fetch, a drop, one side
 serving a peer's pulls — and its bar climbs once, whether its transfers run

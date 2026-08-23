@@ -71,7 +71,7 @@ the suite must stay green at any width.
 
 A live test — anything driven through the running app against a real VM (clipboard, drop, control channel) — runs on the agent bundled in the build under test, the only one the product supports.
 
-Before the first scenario, open the sidebar agent-status popover: it must read "connected with guest agent <version>" at the bundled version. An "Update available" state is resolved with its **Update Guest Agent…** action before anything is observed.
+Before the first scenario, read the connected agent's version off a surface the healthy state keeps up. With Clipboard Sharing on, the VM's Clipboard window's status bar reads `Connected (<version>)`, or `Update available (<installed> → <bundled>)` beside its **Update Guest Agent…** button. The unified log answers whatever the toggles say: `Guest agent connected for '<vm>' … agent=<version>`, subsystem `app.kernova`, category `VsockControlService`. It must be the bundled version; an update available is taken before anything is observed.
 
 A stale agent discovered mid-run voids the run: update, then restart from the first scenario rather than resuming, and report both the starting and ending agent version.
 

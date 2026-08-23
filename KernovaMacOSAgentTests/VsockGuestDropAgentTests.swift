@@ -386,6 +386,37 @@ struct VsockGuestDropAgentTests {
         #expect(harness.revealed.value == nil)
     }
 
+    @Test("an item the host cannot read is skipped and the rest of the drop lands")
+    func unreadableItemIsSkippedNotFatal() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        try await harness.start()
+
+        let landing = Data("the readable one".utf8)
+        try harness.host.send(
+            makeDropOfferFrame(
+                generation: 1,
+                reps: [
+                    fileRep("locked.bin", bytes: Data(repeating: 0x33, count: 64)),
+                    fileRep("notes.txt", bytes: landing),
+                ]))
+
+        // What the host sends for an item it turns out it cannot open. The job
+        // carries on: this is one item's failure, not the batch's.
+        let locked = try await acceptPull(on: harness.dialled, generation: 1, repIndex: 0)
+        try abortTransfer(
+            fd: locked.fd, transferID: locked.request.transferID,
+            code: ClipboardStreamAbortCode.readError.rawValue, isArchive: true, isInline: false)
+        try await serveRequest(on: harness.dialled, generation: 1, repIndex: 1, payload: landing)
+
+        let complete = try await awaitCompletion(on: harness.host)
+        #expect(complete.outcome == .completed)
+        #expect(complete.code.isEmpty)
+        #expect(harness.downloadNames == ["notes.txt"])
+        #expect(harness.downloadContents("notes.txt") == landing)
+        #expect(harness.revealed.value == [harness.downloads.appendingPathComponent("notes.txt")])
+    }
+
     // MARK: - Failures
 
     @Test("a Downloads folder that cannot be written fails the drop with a code")

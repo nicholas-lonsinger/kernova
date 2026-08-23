@@ -39,6 +39,23 @@ public struct ClipboardPullRequest: Sendable {
     }
 }
 
+/// Which of one offer's representations this side could not read for the peer,
+/// recorded from whichever transfer queue found out.
+///
+/// Keyed by index rather than counted, so a representation the peer asks for
+/// twice is one item however often it fails.
+private final class UnreadableReps: @unchecked Sendable {
+    private let lock = NSLock()
+    private var indices: Set<Int> = []
+
+    func record(repIndex: Int) {
+        lock.withLock { _ = indices.insert(repIndex) }
+    }
+
+    /// How many of the offer's items this side had nothing to send for.
+    var count: Int { lock.withLock { indices.count } }
+}
+
 /// What this side has offered the peer, and the transfers it serves in answer.
 ///
 /// The peer decides what it pulls and when — a paste can take two waves minutes
@@ -71,6 +88,9 @@ public final class ClipboardOutboundOffers {
         /// Which arming of that deadline is live: a stand-down or a re-arm bumps
         /// it, so one already scheduled can tell it was superseded.
         var claimArming: UInt64 = 0
+        /// The items of this drop this side turned out to have nothing to
+        /// send for, so the verdict can say what it left out.
+        let unreadable = UnreadableReps()
 
         init(generation: UInt64, content: ClipboardContent) {
             self.generation = generation
@@ -349,6 +369,7 @@ public final class ClipboardOutboundOffers {
 
         let xid = request.transferID
         let live = entry.live
+        let unreadable = entry.unreadable
         let isClipboard = kind == .clipboard
         let expectedBytes = UInt64(max(0, representation.byteCount))
         let unitName = unitName(for: representation)
@@ -374,6 +395,10 @@ public final class ClipboardOutboundOffers {
                     id: xid, bytesTransferred: UInt64(max(0, sent)),
                     totalBytes: UInt64(max(0, total)))
             },
+            // One item this side cannot read never cancels the batch: the peer
+            // skips it and keeps pulling, and this is what lets the verdict name
+            // how many were left behind.
+            onSourceUnreadable: { unreadable.record(repIndex: repIndex) },
             onComplete: { success in
                 operation.unitEnded(id: xid, succeeded: success)
                 // Nothing on this side knows the peer has stopped asking, so the
@@ -436,10 +461,7 @@ public final class ClipboardOutboundOffers {
         defer { armClaimDeadlines() }
         switch complete.outcome {
         case .completed:
-            entry.operation?.finish(.completed)
-            Self.logger.notice(
-                "Drop to '\(self.peerName, privacy: .public)' completed (gen=\(complete.generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public), \(entry.content.representations.count, privacy: .public) item(s))"
-            )
+            reportCompletedDrop(entry, generation: complete.generation)
         case .cancelled:
             entry.operation?.finish(.cancelled)
             Self.logger.notice(
@@ -454,6 +476,39 @@ public final class ClipboardOutboundOffers {
             )
             entry.operation?.finish(.failed(.peerReported(code)))
         }
+    }
+
+    /// Ends the readout of a drop the peer served to its end, saying which of
+    /// its items this side could not read for it.
+    ///
+    /// The peer only ever pulls what it was offered, so what it reports as
+    /// complete is every item that reached it — the ones whose transfers failed
+    /// here are the batch's own news, and are owed the sentence naming them. The
+    /// refusal is raised after the readout has finished, which dates it beside
+    /// the operation rather than before it, so the completion does not clear it.
+    private func reportCompletedDrop(_ entry: Entry, generation: UInt64) {
+        let unreadable = entry.unreadable.count
+        let offered = entry.content.representations.count
+        guard unreadable > 0 else {
+            entry.operation?.finish(.completed)
+            Self.logger.notice(
+                "Drop to '\(self.peerName, privacy: .public)' completed (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public), \(offered, privacy: .public) item(s))"
+            )
+            return
+        }
+        Self.logger.warning(
+            "Drop to '\(self.peerName, privacy: .public)' left \(unreadable, privacy: .public) of \(offered, privacy: .public) item(s) unsent (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
+        )
+        guard unreadable < offered else {
+            // Not one item crossed, so there is no rest of the batch to speak of.
+            entry.operation?.finish(.failed(.itemsUnreadable))
+            return
+        }
+        entry.operation?.finish(.completed)
+        reporter.finish(
+            ClipboardTransferFinish(
+                gesture: .drop, outcome: .failed(.itemsSkipped(count: unreadable)),
+                peerName: peerName))
     }
 
     /// Retires every offer because the connection is over.

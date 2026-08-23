@@ -61,6 +61,8 @@ public final class ClipboardTransferOutbox: @unchecked Sendable {
     ///     transfer only after the duplicate check has admitted it and never
     ///     after its first progress report.
     ///   - onProgress: cumulative `(bytesSent, totalBytes)` as bytes leave.
+    ///   - onSourceUnreadable: fired before the peer is told, when the source
+    ///     turns out not to be readable.
     ///   - onComplete: fired exactly once when the transfer ends.
     /// - Returns: whether this call is the one serving `transferID`.
     @discardableResult
@@ -74,6 +76,7 @@ public final class ClipboardTransferOutbox: @unchecked Sendable {
         link: ClipboardTransferLink,
         onBegin: (@Sendable () -> Void)? = nil,
         onProgress: (@Sendable (_ bytesSent: Int, _ totalBytes: Int) -> Void)? = nil,
+        onSourceUnreadable: (@Sendable () -> Void)? = nil,
         onComplete: (@Sendable (_ success: Bool) -> Void)? = nil
     ) -> Bool {
         let sender = ClipboardTransferSender(
@@ -92,7 +95,8 @@ public final class ClipboardTransferOutbox: @unchecked Sendable {
         onBegin?()
         sender.start(
             representation: representation, maxAcceptByteCount: maxAcceptByteCount,
-            isInline: isInline, isCurrent: isCurrent, onProgress: onProgress
+            isInline: isInline, isCurrent: isCurrent, onProgress: onProgress,
+            onSourceUnreadable: onSourceUnreadable
         ) { [weak self] success in
             self?.forget(transferID)
             onComplete?(success)

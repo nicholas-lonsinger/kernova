@@ -89,6 +89,17 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
 }
 
 extension ClipboardTransferFailure {
+    /// The refusal a drop raises for `count` items it could not send, whether
+    /// they were left out of the offer or failed to be read once the guest
+    /// asked for them.
+    public static func itemsSkipped(count: Int) -> ClipboardTransferFailure {
+        .itemsSkipped(
+            note: count == 1
+                ? "One item couldn\u{2019}t be read, so it wasn\u{2019}t sent to the VM. The rest were."
+                : "\(count) items couldn\u{2019}t be read, so they weren\u{2019}t sent to the VM. The rest were."
+        )
+    }
+
     /// The failure a `diskFull` abort carries, from whatever numbers it knew.
     public static func diskFull(from info: ClipboardStreamAbortInfo) -> ClipboardTransferFailure {
         .diskFull(

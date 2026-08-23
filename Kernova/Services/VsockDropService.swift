@@ -208,7 +208,13 @@ final class VsockDropService: VsockDataConnectionAccepting {
         var unreadable = 0
     }
 
-    /// Reads every dropped item's metadata, sizing any folder among them.
+    /// Reads every dropped item's metadata, sizing any folder among them and
+    /// leaving out the ones this Mac cannot read.
+    ///
+    /// A folder is checked at its root only: AppleArchive's directory encoder
+    /// has no per-entry skip, so an entry inside one that cannot be read fails
+    /// that folder's own transfer, which the batch then leaves out the way it
+    /// leaves out any other unreadable item.
     ///
     /// `nonisolated`: each `resourceValues` call is a `stat(2)` and a folder's
     /// estimate walks its whole tree, so a drag of several hundred items — or one
@@ -221,30 +227,50 @@ final class VsockDropService: VsockDataConnectionAccepting {
     ) -> GatheredDrop {
         var gathered = GatheredDrop()
         for url in urls {
-            guard
-                let values = try? url.resourceValues(forKeys: [
+            guard let source = readableSource(for: url),
+                let values = try? source.resourceValues(forKeys: [
                     .contentTypeKey, .isDirectoryKey, .fileSizeKey,
                 ])
             else {
                 gathered.unreadable += 1
                 continue
             }
+            // The name the user dragged, whatever the bytes are read from.
+            let filename = url.lastPathComponent
             if values.isDirectory == true {
                 gathered.candidates.append(
                     DropCandidate(
-                        url: url, uti: (values.contentType ?? .folder).identifier,
-                        filename: url.lastPathComponent, byteCount: nil, isDirectory: true))
-                gathered.sizes[url] = sizeOf(url)
+                        url: source, uti: (values.contentType ?? .folder).identifier,
+                        filename: filename, byteCount: nil, isDirectory: true))
+                gathered.sizes[source] = sizeOf(source)
             } else if let type = values.contentType, let size = values.fileSize {
                 gathered.candidates.append(
                     DropCandidate(
-                        url: url, uti: type.identifier, filename: url.lastPathComponent,
+                        url: source, uti: type.identifier, filename: filename,
                         byteCount: size, isDirectory: false))
             } else {
                 gathered.unreadable += 1
             }
         }
         return gathered
+    }
+
+    /// Where one dropped item's bytes are read from, or `nil` when there are
+    /// none to read: a link with nothing at the end of it, an item this process
+    /// cannot open, one deleted since the drag began.
+    ///
+    /// A symlink crosses as its target's content under the dragged name, which
+    /// is what copying one in Finder delivers. `stat(2)` alone answers none of
+    /// this — a mode-`000` file stats exactly like a readable one — so the
+    /// open permission is asked for separately.
+    nonisolated private static func readableSource(for url: URL) -> URL? {
+        let isSymbolicLink =
+            (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
+        let source = isSymbolicLink ? url.resolvingSymlinksInPath() : url
+        guard (try? source.checkResourceIsReachable()) == true,
+            FileManager.default.isReadableFile(atPath: source.path)
+        else { return nil }
+        return source
     }
 
     /// Builds one representation per dropped item, taking a folder's size from
@@ -285,15 +311,8 @@ final class VsockDropService: VsockDataConnectionAccepting {
         // items left out.
         MainActorBridge.async { [weak self] in
             guard let self else { return }
-            self.reportRefusal(.itemsSkipped(note: Self.skippedNote(count: skipped)))
+            self.reportRefusal(.itemsSkipped(count: skipped))
         }
-    }
-
-    /// The sentence a partly-unreadable drop shows.
-    private static func skippedNote(count: Int) -> String {
-        count == 1
-            ? "One item couldn\u{2019}t be read, so it wasn\u{2019}t sent to the VM. The rest were."
-            : "\(count) items couldn\u{2019}t be read, so they weren\u{2019}t sent to the VM. The rest were."
     }
 }
 
