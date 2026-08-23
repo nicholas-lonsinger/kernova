@@ -324,6 +324,32 @@ struct ClipboardTransferReporterTests {
         #expect(announced.count == 2)
     }
 
+    @Test("a gesture that opens no operation at all is still owed its own message")
+    func reannouncesAfterAGestureThatOpenedNoOperation() {
+        let scheduler = DwellScheduler()
+        let reporter = makeReporter(scheduler: scheduler)
+        var announced: [ClipboardTransferFinish] = []
+        reporter.onReportChanged = { report in
+            guard case .finished(let finish) = report, finish.failure != nil else { return }
+            announced.append(finish)
+        }
+
+        // A drag whose items were all unreadable: nothing was offered, so no
+        // operation ever measured it.
+        reporter.gestureBegan()
+        reporter.finish(
+            finish(.itemsUnreadable, gesture: .drop, at: Date(timeIntervalSince1970: 1)))
+
+        // The next drag fails the same way. It is a separate gesture, so the
+        // same sentence is owed again rather than collapsed into the first.
+        reporter.gestureBegan()
+        let later = finish(.itemsUnreadable, gesture: .drop, at: Date(timeIntervalSince1970: 2))
+        reporter.finish(later)
+
+        #expect(reporter.report == .finished(later))
+        #expect(announced.count == 2)
+    }
+
     // MARK: - Surface entry points
 
     @Test("clearing a finished report leaves a running one alone")

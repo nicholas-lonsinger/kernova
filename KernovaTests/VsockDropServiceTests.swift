@@ -111,6 +111,13 @@ struct VsockDropServiceTests {
         return url
     }
 
+    /// A path with nothing at the end of it, which a drag can only find out
+    /// about once the off-main pass stats it.
+    private func missingFileURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("does-not-exist-\(UUID().uuidString)")
+    }
+
     private func makeFile(in directory: URL, named name: String, bytes: Data) throws -> URL {
         let url = directory.appendingPathComponent(name)
         try bytes.write(to: url)
@@ -189,15 +196,32 @@ struct VsockDropServiceTests {
     func refusesUnreadableItems() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let missing = FileManager.default.temporaryDirectory
-            .appendingPathComponent("does-not-exist-\(UUID().uuidString)")
 
         // Taken on: whether an item can be read is only known once the off-main
         // pass has stat'd it, which is after the drag session has ended.
-        #expect(harness.service.startDrop(urls: [missing]))
+        #expect(harness.service.startDrop(urls: [missingFileURL()]))
         // The gesture happened on this Mac and produced nothing, so the silence
         // is explained here.
         try await harness.reports.waitForFailure()
+        #expect(harness.failure == .itemsUnreadable)
+        #expect(harness.recorder.dropOffers.isEmpty)
+    }
+
+    @Test("a second drag that can read nothing raises its own refusal, not an echo")
+    func aRepeatedUnreadableDragIsAnnouncedAgain() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+
+        #expect(harness.service.startDrop(urls: [missingFileURL()]))
+        try await harness.reports.waitForFailure()
+        let first = try #require(harness.reports.finish)
+        #expect(first.failure == .itemsUnreadable)
+
+        // A second drag fails exactly as the first did. Nothing was ever
+        // offered, so no operation measured either one — the drag itself is
+        // what says this is a separate gesture owed its own message.
+        #expect(harness.service.startDrop(urls: [missingFileURL()]))
+        try await harness.reports.wait { harness.reports.finish?.date != first.date }
         #expect(harness.failure == .itemsUnreadable)
         #expect(harness.recorder.dropOffers.isEmpty)
     }

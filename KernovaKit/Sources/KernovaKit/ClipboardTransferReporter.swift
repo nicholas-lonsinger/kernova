@@ -64,11 +64,13 @@ public final class ClipboardTransferReporter {
     /// Whether a repeat of ``lastFinish`` should collapse into it rather than be
     /// announced again.
     ///
-    /// Cleared as soon as another operation joins the live set, so the same
-    /// refusal raised by a later gesture is news again. Joining is the trigger
-    /// rather than opening a bar: an operation whose transfers all end inside
-    /// the reveal gate publishes no readout at all, and two gestures that each
-    /// lost a file would otherwise reach the user as a single message.
+    /// Cleared as soon as a later gesture announces itself — an operation
+    /// joining the live set, or ``gestureBegan()`` from a gesture that opens
+    /// none — so the same refusal raised by that gesture is news again.
+    /// Announcing is the trigger rather than opening a bar: an operation whose
+    /// transfers all end inside the reveal gate publishes no readout at all, and
+    /// two gestures that each lost a file would otherwise reach the user as a
+    /// single message.
     private var absorbsRepeats = false
 
     /// Whether ``lastFinish`` is a refusal that has not yet been displaced by a
@@ -174,8 +176,21 @@ public final class ClipboardTransferReporter {
         guard !live.contains(where: { $0.key == key }) else { return }
         live.append(
             Live(key: key, id: operation.id, operation: operation, snapshot: nil, since: Date()))
-        absorbsRepeats = false
+        gestureBegan()
         recompute()
+    }
+
+    /// Records that a gesture has begun, so a repeat of what the last one
+    /// reported is announced again rather than collapsed into it.
+    ///
+    /// ``queued(_:)`` says this for a gesture that opens an operation. This is
+    /// for the one that opens none — a drag whose items all turn out to be
+    /// unreadable, one the channel outlived, one whose offer never got away —
+    /// where the refusal is the only trace of the gesture there is, and is owed
+    /// the message the identical refusal before it got. What stands is left
+    /// alone: a report an earlier gesture raised is not this one's to clear.
+    public func gestureBegan() {
+        absorbsRepeats = false
     }
 
     /// Records a refusal raised without a transfer behind it — a pre-flight
@@ -230,8 +245,8 @@ public final class ClipboardTransferReporter {
     /// news.
     ///
     /// The N pasteboard fires of one refused multi-file paste each report the
-    /// same refusal, and one message is what the user is owed. An operation
-    /// joining in between is a later gesture, so its repeat is announced again.
+    /// same refusal, and one message is what the user is owed. A gesture
+    /// announced in between is a later one, so its repeat is announced again.
     ///
     /// `startedAt` is when the finishing operation began, for the one finish that
     /// must not install itself: a completion or cancellation leaves a refusal

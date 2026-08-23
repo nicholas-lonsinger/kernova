@@ -152,7 +152,11 @@ final class VsockDropService: VsockDataConnectionAccepting {
     /// Reports a drag this side took that produced no file to send, for a caller
     /// that resolved the drag's items itself — a file promise the source failed
     /// to write.
+    ///
+    /// Announced as a gesture of its own: this drag never reaches
+    /// ``startDrop(urls:)``, so nothing else tells the reporter it happened.
     func reportUnreadableDrop() {
+        reporter.gestureBegan()
         reportRefusal(.itemsUnreadable)
     }
 
@@ -171,6 +175,12 @@ final class VsockDropService: VsockDataConnectionAccepting {
     @discardableResult
     func startDrop(urls: [URL]) -> Bool {
         guard isConnected, !urls.isEmpty else { return false }
+        // Announced the moment the drag is taken, so this one's verdict is its
+        // own however it ends: a drag that turns out to carry nothing sendable,
+        // or whose offer never gets away, opens no operation to announce it, and
+        // its refusal would otherwise collapse into the identical one the last
+        // drag left standing (`ClipboardTransferReporter.gestureBegan`).
+        reporter.gestureBegan()
         let dropped = urls
         let sizeOf = directoryByteCount
         runOffMainActor { [weak self] in
