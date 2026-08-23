@@ -61,7 +61,7 @@ struct VsockGuestDropAgentTests {
         /// hook does, and waits for the channel to land.
         func start() async throws {
             agent.start()
-            agent.syncEnablement()
+            agent.applyPolicy(enabled: true)
             // RATIONALE: sanctioned no-signal poll (docs/TESTING.md) — the
             // lifecycle read is SUT-internal state with nothing to await on.
             try await waitUntil { agent.liveChannelForTesting != nil }
@@ -320,7 +320,12 @@ struct VsockGuestDropAgentTests {
         let pending = try await acceptPull(on: harness.dialled, generation: 1, repIndex: 0)
         defer { ClipboardDataConnection.end(fd: pending.fd) }
         try await running.changed.wait { running.value == true }
-        await MainActor.run { reporter.cancelRunning() }
+        // The click carries the identity the readout on screen was rendered for.
+        let cancelled = await MainActor.run { () -> Bool in
+            guard case .running(let shown, _) = reporter.report else { return false }
+            return reporter.cancel(shown.operationID)
+        }
+        #expect(cancelled)
 
         // The agent closing its end of the transfer's connection is how the host
         // is told to stop: a receiver that gives up names no code, it stops
@@ -381,6 +386,37 @@ struct VsockGuestDropAgentTests {
         #expect(harness.revealed.value == nil)
     }
 
+    @Test("an item the host cannot read is skipped and the rest of the drop lands")
+    func unreadableItemIsSkippedNotFatal() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        try await harness.start()
+
+        let landing = Data("the readable one".utf8)
+        try harness.host.send(
+            makeDropOfferFrame(
+                generation: 1,
+                reps: [
+                    fileRep("locked.bin", bytes: Data(repeating: 0x33, count: 64)),
+                    fileRep("notes.txt", bytes: landing),
+                ]))
+
+        // What the host sends for an item it turns out it cannot open. The job
+        // carries on: this is one item's failure, not the batch's.
+        let locked = try await acceptPull(on: harness.dialled, generation: 1, repIndex: 0)
+        try abortTransfer(
+            fd: locked.fd, transferID: locked.request.transferID,
+            code: ClipboardStreamAbortCode.readError.rawValue, isArchive: true, isInline: false)
+        try await serveRequest(on: harness.dialled, generation: 1, repIndex: 1, payload: landing)
+
+        let complete = try await awaitCompletion(on: harness.host)
+        #expect(complete.outcome == .completed)
+        #expect(complete.code.isEmpty)
+        #expect(harness.downloadNames == ["notes.txt"])
+        #expect(harness.downloadContents("notes.txt") == landing)
+        #expect(harness.revealed.value == [harness.downloads.appendingPathComponent("notes.txt")])
+    }
+
     // MARK: - Failures
 
     @Test("a Downloads folder that cannot be written fails the drop with a code")
@@ -435,7 +471,7 @@ struct VsockGuestDropAgentTests {
         harness.agent.hostSupportsDrop = { false }
 
         harness.agent.start()
-        harness.agent.syncEnablement()
+        harness.agent.applyPolicy(enabled: true)
         // A host with no drop listener is never redialled, so no channel lands.
         // Several retry intervals' worth of silence is the assertion.
         try await MonotonicEngineClock().sleep(for: 0.2)
@@ -444,6 +480,25 @@ struct VsockGuestDropAgentTests {
         // The capability arriving is what starts the client.
         harness.agent.hostSupportsDrop = { true }
         harness.agent.syncEnablement()
+        try await waitUntil { harness.agent.liveChannelForTesting != nil }
+    }
+
+    @Test("the client stays paused while the host's policy has drag and drop off")
+    func staysPausedWhilePolicyIsOff() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        // The host binds no drop port while its per-VM toggle is off, so a
+        // capable host that has switched the feature off must not be dialled
+        // either.
+        harness.agent.applyPolicy(enabled: false)
+
+        harness.agent.start()
+        try await MonotonicEngineClock().sleep(for: 0.2)
+        #expect(harness.agent.liveChannelForTesting == nil)
+
+        harness.agent.applyPolicy(enabled: true)
+        // RATIONALE: sanctioned no-signal poll (docs/TESTING.md) — the lifecycle
+        // read is SUT-internal state with nothing to await on.
         try await waitUntil { harness.agent.liveChannelForTesting != nil }
     }
 }

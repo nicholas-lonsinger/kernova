@@ -165,6 +165,10 @@ final class DetailContainerViewController: NSViewController {
             else { return false }
             return target.sendDroppedFilesToGuest(urls)
         }
+        backing.onDropUnreadable = { [weak viewModel] in
+            viewModel?.instances.first(where: { $0.id == instanceID })?
+                .reportUnreadableDropToGuest()
+        }
         backing.applyDropRegistration()
 
         backing.translatesAutoresizingMaskIntoConstraints = false
@@ -229,10 +233,12 @@ final class DetailContainerViewController: NSViewController {
                         _ = inst.configuration.displayAutoResizes
                         // Everything `displayDropAvailability` reads, so the
                         // display registers and unregisters as a drag
-                        // destination when the guest agent comes and goes.
+                        // destination when the guest agent comes and goes, the
+                        // VM pauses, or the toggle flips.
+                        _ = inst.configuration.dropFilesEnabled
                         _ = inst.configuration.lastSeenAgentVersion
                         _ = inst.vsockDropService?.isConnected
-                        _ = inst.vsockControlService?.isConnected
+                        _ = inst.vsockControlService?.guestSupportsDropFiles
                     }
                 }
             },

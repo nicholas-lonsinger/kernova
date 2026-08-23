@@ -2590,11 +2590,12 @@ struct VsockClipboardServiceTests {
             await offCooperativePool { service.serveFileURL(generation: 54, repIndex: 0) }
         }
         try await responder.requested.wait { responder.requests.count == 2 }
-        // The paste fire carries no Cancel, which is what routes `cancelRunning`
-        // to the preview underneath it.
+        // The paste fire's readout covers the preview's, so the Cancel acts on the
+        // identity the preview's own readout carried while it was on screen.
         try await reports.wait { reports.runningSnapshot?.isCancellable == false }
+        let previewReadout = try #require(reports.lastRunningSnapshot(gesture: .preview))
 
-        reports.reporter.cancelRunning()
+        #expect(reports.reporter.cancel(previewReadout.operationID))
         await preview.value
         #expect(service.clipboardContent.representations[1].isPendingRemote)
 

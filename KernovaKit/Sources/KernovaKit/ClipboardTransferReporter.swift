@@ -4,8 +4,11 @@ import Foundation
 /// keeps one per VM, the guest agent one per process.
 ///
 /// Several producers publish here (a VM's clipboard service, its drop service,
-/// its passthrough coordinator), and the report is the newest running operation,
-/// else the last one to finish, else nothing. A refusal belongs to the *peer*,
+/// its passthrough coordinator), and the report is the highest-ranked running
+/// operation, else the last one to finish, else nothing. Whatever the readout
+/// leaves out is counted on it as ``ClipboardProgressSnapshot/pendingBehind``,
+/// so work queued behind the bar is legible rather than absent. A refusal
+/// belongs to the *peer*,
 /// not to the connection that raised it (docs/CLIPBOARD.md §13): a service
 /// superseded by a reconnect still reports the failures of the pasteboard
 /// promises it published, and they land here.
@@ -25,20 +28,34 @@ public final class ClipboardTransferReporter {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardTransfer")
 
-    /// One running operation's latest readout.
+    /// One live operation — either its latest readout, or its place in the queue
+    /// while it waits for the peer to start pulling.
     ///
     /// The operation reference is weak: a producer that goes away without
     /// finishing would otherwise be kept alive by the readout, and a gone
     /// operation has nothing left to cancel.
-    private struct Running {
+    private struct Live {
         let key: ObjectIdentifier
+        let id: ClipboardTransferOperationID
         weak var operation: ClipboardTransferOperation?
-        var snapshot: ClipboardProgressSnapshot
+        /// The latest readout, or `nil` for an operation that has only been
+        /// announced — nothing has begun, so there is no bar to render.
+        var snapshot: ClipboardProgressSnapshot?
         var since: Date
+        /// Where this operation falls in the order the live set first published
+        /// bars, which is what settles a tie between equal ranks. `0` until it
+        /// publishes one.
+        var revealOrder: UInt64 = 0
     }
 
-    /// Running operations in recency order, newest last.
-    private var running: [Running] = []
+    /// Live operations in the order they first announced themselves.
+    private var live: [Live] = []
+
+    /// Hands out ``Live/revealOrder``. Announcement order cannot stand in for
+    /// it: a drop joins the live set when it is offered and publishes its first
+    /// bar only once the peer starts pulling, which can be long after something
+    /// offered later has been running for minutes.
+    private var revealCount: UInt64 = 0
 
     /// The last operation to finish, until something displaces it, the dwell
     /// retires it, or a caller clears it.
@@ -47,8 +64,13 @@ public final class ClipboardTransferReporter {
     /// Whether a repeat of ``lastFinish`` should collapse into it rather than be
     /// announced again.
     ///
-    /// Cleared by any running readout, so the same refusal after another
-    /// operation ran is news again.
+    /// Cleared as soon as a later gesture announces itself — an operation
+    /// joining the live set, or ``gestureBegan()`` from a gesture that opens
+    /// none — so the same refusal raised by that gesture is news again.
+    /// Announcing is the trigger rather than opening a bar: an operation whose
+    /// transfers all end inside the reveal gate publishes no readout at all, and
+    /// two gestures that each lost a file would otherwise reach the user as a
+    /// single message.
     private var absorbsRepeats = false
 
     /// Whether ``lastFinish`` is a refusal that has not yet been displaced by a
@@ -114,12 +136,22 @@ public final class ClipboardTransferReporter {
         switch update {
         case .running(let snapshot, let since):
             let key = ObjectIdentifier(operation)
-            if let index = running.firstIndex(where: { $0.key == key }) {
-                running[index].snapshot = snapshot
-                running[index].since = since
+            if let index = live.firstIndex(where: { $0.key == key }) {
+                // Only the first bar takes an order: re-ordering the live set on
+                // every progress tick would hand the readout back and forth
+                // between two transfers running side by side.
+                if live[index].snapshot == nil {
+                    revealCount &+= 1
+                    live[index].revealOrder = revealCount
+                }
+                live[index].snapshot = snapshot
+                live[index].since = since
             } else {
-                running.append(
-                    Running(key: key, operation: operation, snapshot: snapshot, since: since))
+                revealCount &+= 1
+                live.append(
+                    Live(
+                        key: key, id: operation.id, operation: operation, snapshot: snapshot,
+                        since: since, revealOrder: revealCount))
             }
             absorbsRepeats = false
             // The bar takes the readout back from a refusal that has had its
@@ -127,12 +159,38 @@ public final class ClipboardTransferReporter {
             failureAwaitsDisplacement = false
             recompute()
         case .finished(let finish):
-            let since = running.first { $0.key == ObjectIdentifier(operation) }?.since
+            let since = live.first { $0.key == ObjectIdentifier(operation) }?.since
             remove(operation)
             record(finish, startedAt: since)
         case .idle:
             retire(operation)
         }
+    }
+
+    /// Records that `operation` has been accepted but has nothing in flight yet.
+    ///
+    /// It joins the live set without a readout, so it is counted behind whatever
+    /// bar is on screen rather than replacing it with a bar at zero.
+    public func queued(_ operation: ClipboardTransferOperation) {
+        let key = ObjectIdentifier(operation)
+        guard !live.contains(where: { $0.key == key }) else { return }
+        live.append(
+            Live(key: key, id: operation.id, operation: operation, snapshot: nil, since: Date()))
+        gestureBegan()
+        recompute()
+    }
+
+    /// Records that a gesture has begun, so a repeat of what the last one
+    /// reported is announced again rather than collapsed into it.
+    ///
+    /// ``queued(_:)`` says this for a gesture that opens an operation. This is
+    /// for the one that opens none — a drag whose items all turn out to be
+    /// unreadable, one the channel outlived, one whose offer never got away —
+    /// where the refusal is the only trace of the gesture there is, and is owed
+    /// the message the identical refusal before it got. What stands is left
+    /// alone: a report an earlier gesture raised is not this one's to clear.
+    public func gestureBegan() {
+        absorbsRepeats = false
     }
 
     /// Records a refusal raised without a transfer behind it — a pre-flight
@@ -161,33 +219,34 @@ public final class ClipboardTransferReporter {
         recompute()
     }
 
-    /// Stops the newest running operation that can be stopped.
+    /// Stops the operation `id` names, reporting whether one was reached.
     ///
     /// The readout is the only handle the user has on a transfer, so a Cancel on
-    /// it must reach *that* operation and no other — and it does: a surface
-    /// offers Cancel only while the readout it shows reports itself cancellable,
-    /// and the readout it shows is the newest running operation. Skipping a newer
-    /// one that cannot be stopped (a paste fire, which the pasteboard drives one
-    /// item at a time) is what keeps the button the user *can* see working while
-    /// it happens to be on screen underneath.
-    public func cancelRunning() {
-        running.reversed().lazy.compactMap(\.operation).first(where: \.isCancellable)?
-            .requestCancel()
+    /// it must reach *that* operation and no other. The identity comes off the
+    /// readout the surface rendered, which is what keeps the click honest while
+    /// several operations run at once and the ranking decides which is shown.
+    @discardableResult
+    public func cancel(_ id: ClipboardTransferOperationID) -> Bool {
+        guard let operation = live.first(where: { $0.id == id })?.operation,
+            operation.isCancellable
+        else { return false }
+        operation.requestCancel()
+        return true
     }
 
     // MARK: - Private
 
     private func remove(_ operation: ClipboardTransferOperation) {
         let key = ObjectIdentifier(operation)
-        running.removeAll { $0.key == key }
+        live.removeAll { $0.key == key }
     }
 
     /// Installs `finish` as the standing report, absorbing a repeat of the same
     /// news.
     ///
     /// The N pasteboard fires of one refused multi-file paste each report the
-    /// same refusal, and one message is what the user is owed. A running report
-    /// in between is a new operation, so the next repeat is announced again.
+    /// same refusal, and one message is what the user is owed. A gesture
+    /// announced in between is a later one, so its repeat is announced again.
     ///
     /// `startedAt` is when the finishing operation began, for the one finish that
     /// must not install itself: a completion or cancellation leaves a refusal
@@ -216,13 +275,34 @@ public final class ClipboardTransferReporter {
         recompute()
     }
 
+    /// The one running readout every surface shows.
+    ///
+    /// Ranked by gesture rather than by which published last, so a drop started
+    /// during a paste never takes the bar off the transfer an app is blocked on
+    /// (docs/CLIPBOARD.md §13); equal ranks fall back to the last to open a bar.
+    private func shownReadout() -> (snapshot: ClipboardProgressSnapshot, since: Date)? {
+        typealias Candidate = (
+            rank: Int, revealOrder: UInt64, snapshot: ClipboardProgressSnapshot, since: Date
+        )
+        let candidates: [Candidate] = live.compactMap { entry in
+            guard let snapshot = entry.snapshot else { return nil }
+            return (snapshot.gesture.readoutRank, entry.revealOrder, snapshot, entry.since)
+        }
+        guard let best = candidates.max(by: { ($0.rank, $0.revealOrder) < ($1.rank, $1.revealOrder) })
+        else { return nil }
+        return (best.snapshot, best.since)
+    }
+
     /// Rebuilds ``report`` and notifies when it changed.
     private func recompute() {
+        // An operation that went away without a terminal leaves nothing to show
+        // and nothing to cancel; counting it would inflate the queue forever.
+        live.removeAll { $0.operation == nil && $0.snapshot == nil }
         let next: ClipboardTransferReport
         if failureAwaitsDisplacement, let lastFinish {
             next = .finished(lastFinish)
-        } else if let newest = running.last {
-            next = .running(newest.snapshot, since: newest.since)
+        } else if let shown = shownReadout() {
+            next = .running(shown.snapshot.withPendingBehind(live.count - 1), since: shown.since)
         } else if let lastFinish {
             next = .finished(lastFinish)
         } else {

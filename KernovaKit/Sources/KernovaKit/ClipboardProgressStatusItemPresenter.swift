@@ -1,7 +1,7 @@
 import AppKit
 
-/// Presents a materializing paste's progress readout inside a menu-bar status
-/// item's dropdown, and runs the one-shot automatic open that reveals it.
+/// Presents a transfer's progress readout inside a menu-bar status item's
+/// dropdown, and runs the one-shot automatic open that reveals it.
 ///
 /// A status-item controller keeps its own icon and menu structure, drives this
 /// from its `NSMenuDelegate` callbacks, and reads `snapshot` back to compose the
@@ -20,11 +20,11 @@ public final class ClipboardProgressStatusItemPresenter {
     /// the reminder's dismissal handler instead of opening the menu.
     private let willAutoOpen: (() -> Void)?
 
-    /// Stops the operation the readout is showing, for a readout that reports
-    /// itself cancellable. `nil` leaves every readout without a Cancel button.
-    private let onCancel: (() -> Void)?
+    /// Stops the operation the readout is showing, named by the identity that
+    /// readout carried. `nil` leaves every readout without a Cancel button.
+    private let onCancel: ((ClipboardTransferOperationID) -> Void)?
 
-    /// The paste currently materializing, or `nil` when none is.
+    /// The readout on screen, or `nil` when there is none.
     public private(set) var snapshot: ClipboardProgressSnapshot?
 
     /// The dropdown's live readout, built on first use and then kept so it
@@ -48,11 +48,12 @@ public final class ClipboardProgressStatusItemPresenter {
 
     /// Creates a presenter bound to a status item and its dropdown.
     ///
-    /// `onCancel` stops whichever operation the readout is currently showing; the
-    /// button appears only while that readout reports itself cancellable.
+    /// `onCancel` stops the operation whose identity it is handed — the one the
+    /// readout on screen was rendered for; the button appears only while that
+    /// readout reports itself cancellable.
     public init(
         statusItem: NSStatusItem, menu: NSMenu, willAutoOpen: (() -> Void)? = nil,
-        onCancel: (() -> Void)? = nil
+        onCancel: ((ClipboardTransferOperationID) -> Void)? = nil
     ) {
         self.statusItem = statusItem
         self.menu = menu
@@ -83,30 +84,33 @@ public final class ClipboardProgressStatusItemPresenter {
         self.snapshot = rendered
         if let rendered {
             view.apply(rendered)
-            view.onCancel = allowsCancel ? cancelHandler() : nil
+            view.onCancel = allowsCancel ? cancelHandler(for: rendered.operationID) : nil
         }
         syncItems()
         applyAutoOpen(rendered)
     }
 
     /// The click handler installed on the readout: dismiss the dropdown the user
-    /// clicked in, then cancel.
+    /// clicked in, then cancel the operation that readout was rendered for.
+    ///
+    /// `id` is bound here rather than resolved at click time, so the click stops
+    /// what the user was looking at even if a newer transfer has published since.
     ///
     /// The dropdown goes first because the cancel's own effect on the readout
     /// arrives asynchronously — the transfers abort, the session ends below
     /// 100 %, and the linger clears it — so leaving the menu up would strand the
     /// user in front of a row that keeps ticking for a moment after they stopped
     /// it.
-    private func cancelHandler() -> (() -> Void)? {
+    private func cancelHandler(for id: ClipboardTransferOperationID) -> (() -> Void)? {
         guard let onCancel else { return nil }
         return { [weak self] in
             self?.menu.cancelTracking()
-            onCancel()
+            onCancel(id)
         }
     }
 
     /// Inserts the readout rows at the top of a dropdown being rebuilt, when a
-    /// paste is live.
+    /// transfer is live.
     ///
     /// Call from the controller's `menuNeedsUpdate`.
     public func insertItemsIfActive() {
@@ -203,7 +207,7 @@ public final class ClipboardProgressStatusItemPresenter {
         case .none:
             break
         case .open:
-            // The paste can end inside that turn (a cancel lands as a pull
+            // The transfer can end inside that turn (a cancel lands as a pull
             // failure); opening for a readout that is already gone would leave a
             // dropdown nothing will close.
             openDropdown(while: { [weak self] in self?.snapshot != nil })

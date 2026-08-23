@@ -34,6 +34,17 @@ public enum ClipboardProgressFormat {
         return "\(position) of \(total)"
     }
 
+    /// What is live behind the readout ("2 more transfers pending"), or `nil`
+    /// when the bar on screen is the whole of the work.
+    ///
+    /// "Pending" rather than "queued": some of what it counts is a batch waiting
+    /// its turn, and some is a second transfer already running where only one
+    /// readout can be shown.
+    public static func pendingNote(count: Int) -> String? {
+        guard count > 0 else { return nil }
+        return "\(count) more transfer\(count == 1 ? "" : "s") pending"
+    }
+
     /// Throughput ("1.2 GB/s"), or `nil` before an estimate exists.
     public static func speed(bytesPerSecond: Double?) -> String? {
         guard let bytesPerSecond, bytesPerSecond > 0 else { return nil }
@@ -106,6 +117,9 @@ public enum ClipboardProgressFormat {
             parts.append(counter)
         } else if let name = snapshot.currentItemName {
             parts.append(name)
+        }
+        if let pending = pendingNote(count: snapshot.pendingBehind) {
+            parts.append(pending)
         }
         return parts.joined(separator: " — ")
     }

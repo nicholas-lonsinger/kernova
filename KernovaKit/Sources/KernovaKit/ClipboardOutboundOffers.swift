@@ -39,6 +39,37 @@ public struct ClipboardPullRequest: Sendable {
     }
 }
 
+/// How many of one gesture's items this side had nothing to send the peer,
+/// recorded from whichever transfer queue found out.
+///
+/// The two stages an item can be lost at count into one number, so the batch's
+/// verdict names the whole of what the user is missing rather than whichever
+/// stage spoke last: `skippedBeforeOffer` never reached the peer, and the
+/// indices failed once it asked for them. Keyed by index rather than counted,
+/// so a representation the peer asks for twice is one item however often it
+/// fails.
+///
+/// `@unchecked Sendable`: `indices` is read and written under `lock`, and
+/// `skippedBeforeOffer` is immutable.
+private final class UnreadableReps: @unchecked Sendable {
+    /// Items left out of the offer, which have no rep index of their own —
+    /// the peer was never told they existed.
+    let skippedBeforeOffer: Int
+    private let lock = NSLock()
+    private var indices: Set<Int> = []
+
+    init(skippedBeforeOffer: Int) {
+        self.skippedBeforeOffer = skippedBeforeOffer
+    }
+
+    func record(repIndex: Int) {
+        lock.withLock { _ = indices.insert(repIndex) }
+    }
+
+    /// How many of the gesture's items this side had nothing to send for.
+    var count: Int { lock.withLock { skippedBeforeOffer + indices.count } }
+}
+
 /// What this side has offered the peer, and the transfers it serves in answer.
 ///
 /// The peer decides what it pulls and when — a paste can take two waves minutes
@@ -63,10 +94,28 @@ public final class ClipboardOutboundOffers {
         /// Whether the user called the offer off, so later requests are refused
         /// rather than answered.
         var isCancelled = false
+        /// Whether the peer has asked for at least one of this offer's items.
+        var isClaimed = false
+        /// Whether a deadline is scheduled for this offer, which is true in every
+        /// state but "something else is streaming".
+        var isClaimDeadlineArmed = false
+        /// Which arming of that deadline is live: a stand-down or a re-arm bumps
+        /// it, so one already scheduled can tell it was superseded.
+        var claimArming: UInt64 = 0
+        /// The items of this drop this side had nothing to send for, so the
+        /// verdict can say what it left out.
+        let unreadable: UnreadableReps
 
-        init(generation: UInt64, content: ClipboardContent) {
+        /// Every item the gesture carried, including the ones the offer left
+        /// out — what "none of them crossed" is measured against.
+        var gesturedCount: Int {
+            content.representations.count + unreadable.skippedBeforeOffer
+        }
+
+        init(generation: UInt64, content: ClipboardContent, skippedBeforeOffer: Int) {
             self.generation = generation
             self.content = content
+            self.unreadable = UnreadableReps(skippedBeforeOffer: skippedBeforeOffer)
             live.set(generation)
         }
     }
@@ -76,6 +125,12 @@ public final class ClipboardOutboundOffers {
     private let peerName: String
     private let progressRevealDelay: TimeInterval
     private let progressIdleGap: TimeInterval
+    private let dropClaimTimeout: TimeInterval
+    /// Runs the unclaimed-drop deadline after a delay — its only trigger, since
+    /// by definition nothing arrives to drive it.
+    private let dropClaimSchedule:
+        @Sendable (_ after: TimeInterval, _ work: @escaping @MainActor @Sendable () -> Void) ->
+            Void
 
     /// Called with what this side just did, for a surface to render.
     ///
@@ -100,6 +155,16 @@ public final class ClipboardOutboundOffers {
 
     private var kind: ClipboardControlSession.Kind { session.kind }
 
+    /// The production deadline scheduler: the main queue, where every other
+    /// readout event is already serialized.
+    nonisolated public static let scheduleOnMainQueue:
+        @Sendable (TimeInterval, @escaping @MainActor @Sendable () -> Void) -> Void = {
+            after, work in
+            DispatchQueue.main.asyncAfter(deadline: .now() + after) {
+                MainActor.assumeIsolated { work() }
+            }
+        }
+
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardOutboundOffers")
 
@@ -114,6 +179,11 @@ public final class ClipboardOutboundOffers {
         peerName: String,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
+        dropClaimTimeout: TimeInterval = ClipboardStreamTuning.dropClaimTimeout,
+        dropClaimSchedule:
+            @escaping @Sendable (
+                TimeInterval, @escaping @MainActor @Sendable () -> Void
+            ) -> Void = ClipboardOutboundOffers.scheduleOnMainQueue,
         firstGeneration: UInt64 = 1
     ) {
         self.session = session
@@ -121,6 +191,8 @@ public final class ClipboardOutboundOffers {
         self.peerName = peerName
         self.progressRevealDelay = progressRevealDelay
         self.progressIdleGap = progressIdleGap
+        self.dropClaimTimeout = dropClaimTimeout
+        self.dropClaimSchedule = dropClaimSchedule
         self.nextGenerationStorage = max(1, firstGeneration)
     }
 
@@ -146,9 +218,17 @@ public final class ClipboardOutboundOffers {
     /// leaves nothing registered for the peer to request. A clipboard offer
     /// dedups against the digest it last announced and retires the one before it;
     /// a drop is registered alongside whatever is already streaming, and opens
-    /// its readout before the send so a failure has something to report on.
+    /// its readout before the send so a failure has something to report on, then
+    /// announces itself as queued once the offer is away.
+    ///
+    /// `skippedBeforeOffer` is how many of the gesture's items this side already
+    /// knows it cannot send. A drop's verdict counts them alongside the ones that
+    /// fail once the peer asks, so the two stages an item can be lost at reach
+    /// the user as one number.
     @discardableResult
-    public func offer(_ content: ClipboardContent) -> ClipboardEndpoint.OfferOutcome {
+    public func offer(
+        _ content: ClipboardContent, skippedBeforeOffer: Int = 0
+    ) -> ClipboardEndpoint.OfferOutcome {
         if kind == .clipboard, content.digest == lastOfferedDigestStorage { return .duplicate }
         // Cap to the 16-bit rep-index limit a transfer id can address; the
         // uncapped digest stays the dedup key, so unchanged content isn't
@@ -183,9 +263,18 @@ public final class ClipboardOutboundOffers {
             retire(previous)
             session.outbox?.cancel(generation: previous.generation)
         }
-        let entry = Entry(generation: generation, content: offered)
+        let entry = Entry(
+            generation: generation, content: offered,
+            skippedBeforeOffer: max(0, skippedBeforeOffer))
         entry.operation = operation
         entries[generation] = entry
+        // The peer serves drops one job at a time, so a batch offered while
+        // another is streaming waits its turn. Announcing it keeps it counted on
+        // the readout that is showing instead of invisible until its first byte.
+        if kind == .drop {
+            operation?.markQueued()
+            armClaimDeadlines()
+        }
         if kind == .clipboard {
             currentGeneration = generation
             lastOfferedDigestStorage = content.digest
@@ -300,8 +389,17 @@ public final class ClipboardOutboundOffers {
             return
         }
 
+        if kind == .drop, !entry.isClaimed {
+            entry.isClaimed = true
+            // Something is streaming now, so every batch behind it is waiting its
+            // turn rather than going unclaimed — the guest serves one job at a
+            // time. Their deadlines resume when this one ends.
+            standDownClaimDeadlines()
+        }
+
         let xid = request.transferID
         let live = entry.live
+        let unreadable = entry.unreadable
         let isClipboard = kind == .clipboard
         let expectedBytes = UInt64(max(0, representation.byteCount))
         let unitName = unitName(for: representation)
@@ -327,6 +425,10 @@ public final class ClipboardOutboundOffers {
                     id: xid, bytesTransferred: UInt64(max(0, sent)),
                     totalBytes: UInt64(max(0, total)))
             },
+            // One item this side cannot read never cancels the batch: the peer
+            // skips it and keeps pulling, and this is what lets the verdict name
+            // how many were left behind.
+            onSourceUnreadable: { unreadable.record(repIndex: repIndex) },
             onComplete: { success in
                 operation.unitEnded(id: xid, succeeded: success)
                 // Nothing on this side knows the peer has stopped asking, so the
@@ -375,6 +477,7 @@ public final class ClipboardOutboundOffers {
             // visibly what happened.
             entry.operation?.finish(.cancelled)
             entries[generation] = nil
+            armClaimDeadlines()
         }
         Self.logger.notice(
             "User cancelled the outbound transfer to '\(self.peerName, privacy: .public)' (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
@@ -385,12 +488,10 @@ public final class ClipboardOutboundOffers {
     public func handleDropComplete(_ complete: Kernova_V1_DropComplete) {
         guard let entry = entries.removeValue(forKey: complete.generation) else { return }
         entry.live.set(0)
+        defer { armClaimDeadlines() }
         switch complete.outcome {
         case .completed:
-            entry.operation?.finish(.completed)
-            Self.logger.notice(
-                "Drop to '\(self.peerName, privacy: .public)' completed (gen=\(complete.generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public), \(entry.content.representations.count, privacy: .public) item(s))"
-            )
+            reportCompletedDrop(entry, generation: complete.generation)
         case .cancelled:
             entry.operation?.finish(.cancelled)
             Self.logger.notice(
@@ -405,6 +506,36 @@ public final class ClipboardOutboundOffers {
             )
             entry.operation?.finish(.failed(.peerReported(code)))
         }
+    }
+
+    /// Ends the readout of a drop the peer served to its end, saying how many of
+    /// the gesture's items this side could not send it.
+    ///
+    /// The peer only ever pulls what it was offered, so what it reports as
+    /// complete is every item that reached it — the ones this side never offered
+    /// and the ones whose transfers failed here are the batch's own news, and are
+    /// owed one sentence naming them together. That sentence *is* the drop's
+    /// terminal: one gesture ends once, so a batch that lost a file finishes as
+    /// the refusal rather than as a completion with a refusal published beside
+    /// it, where only their relative dates would keep the refusal standing.
+    private func reportCompletedDrop(_ entry: Entry, generation: UInt64) {
+        let unreadable = entry.unreadable.count
+        let gestured = entry.gesturedCount
+        guard unreadable > 0 else {
+            entry.operation?.finish(.completed)
+            Self.logger.notice(
+                "Drop to '\(self.peerName, privacy: .public)' completed (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public), \(gestured, privacy: .public) item(s))"
+            )
+            return
+        }
+        Self.logger.warning(
+            "Drop to '\(self.peerName, privacy: .public)' left \(unreadable, privacy: .public) of \(gestured, privacy: .public) item(s) unsent (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
+        )
+        // With not one item across there is no rest of the batch to speak of,
+        // which is the whole of what the skipped sentence promises.
+        entry.operation?.finish(
+            .failed(
+                unreadable < gestured ? .itemsSkipped(count: unreadable) : .itemsUnreadable))
     }
 
     /// Retires every offer because the connection is over.
@@ -428,6 +559,54 @@ public final class ClipboardOutboundOffers {
     }
 
     // MARK: - Private
+
+    // MARK: - The unclaimed-drop deadline
+
+    /// Starts the deadline on every drop the peer has not begun, unless one it
+    /// *has* begun is still open.
+    ///
+    /// A drop's readout is closed by the peer's `DropComplete`, so a peer that
+    /// never pulls leaves the gesture with no progress, no failure and no end
+    /// until the channel itself dies. This is what answers for it.
+    private func armClaimDeadlines() {
+        guard kind == .drop, !entries.values.contains(where: \.isClaimed) else { return }
+        for entry in entries.values where !entry.isClaimed && !entry.isClaimDeadlineArmed {
+            entry.isClaimDeadlineArmed = true
+            entry.claimArming &+= 1
+            let generation = entry.generation
+            let arming = entry.claimArming
+            dropClaimSchedule(dropClaimTimeout) { [weak self] in
+                self?.claimDeadlineExpired(generation: generation, arming: arming)
+            }
+        }
+    }
+
+    /// Stands every armed deadline down, so a batch queued behind one the peer
+    /// is streaming is not called off for waiting its turn.
+    private func standDownClaimDeadlines() {
+        for entry in entries.values {
+            entry.claimArming &+= 1
+            entry.isClaimDeadlineArmed = false
+        }
+    }
+
+    /// Calls off a drop the peer never began.
+    private func claimDeadlineExpired(generation: UInt64, arming: UInt64) {
+        guard let entry = entries[generation], entry.claimArming == arming, !entry.isClaimed,
+            !entry.isCancelled
+        else { return }
+        entry.isClaimDeadlineArmed = false
+        entry.live.set(0)
+        entries[generation] = nil
+        // The peer may be wedged rather than gone, so the release is what stops
+        // it pulling an offer this side has already answered for.
+        try? session.sendRelease(generation: generation)
+        entry.operation?.finish(.failed(.unclaimed))
+        Self.logger.warning(
+            "Drop to '\(self.peerName, privacy: .public)' went unclaimed for \(self.dropClaimTimeout, privacy: .public)s (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
+        )
+        armClaimDeadlines()
+    }
 
     /// Drops `entry` from the live set and ends the transfers still riding it.
     private func retire(_ entry: Entry) {

@@ -1,6 +1,6 @@
 # TESTING.md
 
-Read this before writing any test that waits on async state or needs access to private production state: the async-wait seams, the injected-timeout rule, and test-only exposure patterns. The basic conventions (Swift Testing, mocks, factories, happy + error paths) are in [AGENTS.md](../AGENTS.md#unit-tests).
+Read this before writing any test that waits on async state or needs access to private production state: the async-wait seams, the injected-timeout rule, test-only exposure patterns, and the guest-agent precondition for live tests. The basic conventions (Swift Testing, mocks, factories, happy + error paths) are in [AGENTS.md](../AGENTS.md#unit-tests).
 
 ## Async waits in tests
 
@@ -66,6 +66,14 @@ and the "Report failure messages" step prints each failure's `#expect`
 text. `main`'s width is a herd cap sized for headroom, never a tuning knob:
 lowering it to quiet a flake is a patch wearing configuration's clothes —
 the suite must stay green at any width.
+
+## Live tests against a guest
+
+A live test — anything driven through the running app against a real VM (clipboard, drop, control channel) — runs on the agent bundled in the build under test, the only one the product supports.
+
+Before the first scenario, read the connected agent's version off a surface the healthy state keeps up. With Clipboard Sharing on, the VM's Clipboard window's status bar reads `Connected (<version>)`, or `Update available (<installed> → <bundled>)` beside its **Update Guest Agent…** button. The unified log answers whatever the toggles say: `Guest agent connected for '<vm>' … agent=<version>`, subsystem `app.kernova`, category `VsockControlService`. It must be the bundled version; an update available is taken before anything is observed.
+
+A stale agent discovered mid-run voids the run: update, then restart from the first scenario rather than resuming, and report both the starting and ending agent version.
 
 ## Test-only seams
 

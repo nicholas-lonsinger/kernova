@@ -38,6 +38,14 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     /// dials a host that has a drop listener.
     var hostSupportsDrop: @Sendable () -> Bool = { false }
 
+    /// Whether the host's latest `PolicyUpdate` has drag and drop switched on.
+    ///
+    /// Default-off with the client paused: the host binds the drop ports only
+    /// while the setting is on, so dialling before the first policy arrives buys
+    /// a refused connect per retry interval.
+    private let policyLock = NSLock()
+    private var dropEnabledByPolicy = false
+
     /// Runs one drop job at a time, in offer order.
     ///
     /// Serial and separate from main: an inbound pull blocks its caller, and a
@@ -131,13 +139,21 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         Self.logger.notice("Vsock drop agent started")
     }
 
-    /// Matches the reconnect loop to what the host advertises.
+    /// Records the host's drag-and-drop setting and matches the reconnect loop
+    /// to it.
+    func applyPolicy(enabled: Bool) {
+        policyLock.withLock { dropEnabledByPolicy = enabled }
+        syncEnablement()
+    }
+
+    /// Matches the reconnect loop to what the host advertises and permits.
     ///
     /// Called whenever the control agent learns the host's capabilities — its
-    /// `Hello`, and the clearing that precedes the next one — so a host without a
-    /// drop listener is never redialled every retry interval.
+    /// `Hello`, and the clearing that precedes the next one — and on every
+    /// policy update, so a host with no drop listener is never redialled every
+    /// retry interval.
     func syncEnablement() {
-        if hostSupportsDrop() {
+        if hostSupportsDrop() && policyLock.withLock({ dropEnabledByPolicy }) {
             client.resume()
         } else {
             client.pause()
@@ -235,7 +251,8 @@ final class VsockGuestDropAgent: @unchecked Sendable {
 
     // MARK: - Job execution (worker queue)
 
-    /// Pulls each of the drop's files in order and lands it in Downloads.
+    /// Pulls each of the drop's files in order and lands it in Downloads,
+    /// carrying on past any the host turns out not to be able to read.
     private func run(
         _ offer: ClipboardEndpoint.InboundOffer, operation: ClipboardTransferOperation,
         on endpoint: ClipboardEndpoint
@@ -243,6 +260,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         dispatchPrecondition(condition: .notOnQueue(.main))
         let generation = offer.generation
         var landed: [URL] = []
+        var skipped = 0
         var outcome: JobOutcome = .completed
 
         for index in offer.reps.indices {
@@ -280,6 +298,15 @@ final class VsockGuestDropAgent: @unchecked Sendable {
                 // so the job's entry is still standing when the abort lands.
                 if abort.isRetiring || !endpoint.hasLiveInboundOffer(generation: generation) {
                     outcome = .cancelled
+                } else if abort.code == .readError {
+                    // The host could not read this one item's source. That is the
+                    // item's failure and not the batch's: everything else in the
+                    // drop is still there to pull, and the side that made the
+                    // gesture is the side that names what it left out.
+                    skipped += 1
+                    Self.logger.warning(
+                        "Skipping dropped file \(index, privacy: .public) of gen=\(generation, privacy: .public): the host couldn't read it"
+                    )
                 } else {
                     Self.logger.warning(
                         "Dropped file \(index, privacy: .public) of gen=\(generation, privacy: .public) aborted (\(abort.rawCode, privacy: .public))"
@@ -323,7 +350,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
             self?.jobs[generation] = nil
         }
         Self.logger.notice(
-            "Drop job finished (gen=\(generation, privacy: .public), \(landed.count, privacy: .public) file(s) in Downloads)"
+            "Drop job finished (gen=\(generation, privacy: .public), \(landed.count, privacy: .public) file(s) in Downloads, \(skipped, privacy: .public) skipped)"
         )
     }
 

@@ -608,6 +608,12 @@ public nonisolated struct Kernova_V1_PolicyUpdate: Sendable {
   /// `0` means unset — the receiver uses its own built-in default.
   public var clipboardMaxPasteBytes: UInt64 = 0
 
+  /// Whether the guest's drop agent should dial the drop port and take
+  /// `DropOffer` frames. The host binds the drop and drop-data ports only
+  /// while this is set, so a guest that dials anyway is refused every retry
+  /// interval for as long as the setting is off.
+  public var dropFilesEnabled: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1464,7 +1470,7 @@ nonisolated extension Kernova_V1_Heartbeat: SwiftProtobuf.Message, SwiftProtobuf
 
 nonisolated extension Kernova_V1_PolicyUpdate: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PolicyUpdate"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}log_forwarding_enabled\0\u{3}clipboard_sharing_enabled\0\u{3}clipboard_max_paste_bytes\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}log_forwarding_enabled\0\u{3}clipboard_sharing_enabled\0\u{3}clipboard_max_paste_bytes\0\u{3}drop_files_enabled\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1475,6 +1481,7 @@ nonisolated extension Kernova_V1_PolicyUpdate: SwiftProtobuf.Message, SwiftProto
       case 1: try { try decoder.decodeSingularBoolField(value: &self.logForwardingEnabled) }()
       case 2: try { try decoder.decodeSingularBoolField(value: &self.clipboardSharingEnabled) }()
       case 3: try { try decoder.decodeSingularUInt64Field(value: &self.clipboardMaxPasteBytes) }()
+      case 4: try { try decoder.decodeSingularBoolField(value: &self.dropFilesEnabled) }()
       default: break
       }
     }
@@ -1490,6 +1497,9 @@ nonisolated extension Kernova_V1_PolicyUpdate: SwiftProtobuf.Message, SwiftProto
     if self.clipboardMaxPasteBytes != 0 {
       try visitor.visitSingularUInt64Field(value: self.clipboardMaxPasteBytes, fieldNumber: 3)
     }
+    if self.dropFilesEnabled != false {
+      try visitor.visitSingularBoolField(value: self.dropFilesEnabled, fieldNumber: 4)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1497,6 +1507,7 @@ nonisolated extension Kernova_V1_PolicyUpdate: SwiftProtobuf.Message, SwiftProto
     if lhs.logForwardingEnabled != rhs.logForwardingEnabled {return false}
     if lhs.clipboardSharingEnabled != rhs.clipboardSharingEnabled {return false}
     if lhs.clipboardMaxPasteBytes != rhs.clipboardMaxPasteBytes {return false}
+    if lhs.dropFilesEnabled != rhs.dropFilesEnabled {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -55,6 +55,30 @@ public final class ClipboardTransferReports {
         return snapshot
     }
 
+    /// The identity a surface's Cancel would carry right now, or `nil` while no
+    /// running readout is on screen to carry one.
+    public var shownOperationID: ClipboardTransferOperationID? { runningSnapshot?.operationID }
+
+    /// Cancels exactly what a surface is showing, the way its Cancel button does.
+    @discardableResult
+    public func cancelShownTransfer() -> Bool {
+        guard let id = shownOperationID else { return false }
+        return reporter.cancel(id)
+    }
+
+    /// The newest recorded running readout for `gesture`, for a test acting on an
+    /// operation the ranking has put underneath another.
+    public func lastRunningSnapshot(gesture: ClipboardTransferGesture)
+        -> ClipboardProgressSnapshot?
+    {
+        reports.reversed().lazy.compactMap { report -> ClipboardProgressSnapshot? in
+            guard case .running(let snapshot, _) = report, snapshot.gesture == gesture else {
+                return nil
+            }
+            return snapshot
+        }.first
+    }
+
     /// Suspends until `predicate` holds, re-checked on each report.
     public func wait(
         timeout: TimeInterval = testWaitBackstop,

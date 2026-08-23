@@ -3,12 +3,14 @@ import KernovaKit
 
 /// Whether the VM display takes files dragged onto it, and if not, why.
 enum DisplayDropAvailability {
-    /// This VM has never run a guest agent, so the display is not a drag
-    /// destination at all — a drag over it behaves as if Kernova were not there.
+    /// This VM has never run a guest agent, or has drag and drop switched off, so
+    /// the display is not a drag destination at all — a drag over it behaves as
+    /// if Kernova were not there.
     case none
-    /// The agent has connected before but is not reachable now. The display takes
-    /// part in the drag and refuses it, which is what makes the pointer show no
-    /// accept badge and a release spring back.
+    /// The feature is on and the agent has connected before, but the guest cannot
+    /// take a drop now — it is paused or stopped, or the channel is down. The
+    /// display takes part in the drag and refuses it, which is what puts the
+    /// "not allowed" cursor under the pointer and springs a release back.
     case disconnected
     /// Files dropped now will be sent to the guest.
     case available
@@ -19,14 +21,19 @@ extension VMInstance {
     /// Whether files dragged onto this VM's display can be sent to the guest.
     ///
     /// The single read site for the gesture's three states. `.none` is decided
-    /// from persisted state (`lastSeenAgentVersion`), so it survives restarts and
-    /// a VM that has never had an agent never advertises a drop it cannot do;
-    /// the live channel decides the rest, so an agent that goes away mid-session
+    /// from persisted state (`dropFilesEnabled`, `lastSeenAgentVersion`), so it
+    /// survives restarts and a VM that has never had an agent — or has the
+    /// feature switched off — never advertises a drop it cannot do; the live
+    /// channel decides the rest, so an agent that goes away mid-session
     /// downgrades to a refusal on the next observation tick.
+    ///
+    /// A VM that is not running refuses too: pausing tears down no vsock, so the
+    /// channel stays connected while the guest is frozen and cannot answer.
     var displayDropAvailability: DisplayDropAvailability {
-        guard configuration.guestOS == .macOS, configuration.lastSeenAgentVersion != nil else {
-            return .none
-        }
+        guard configuration.guestOS == .macOS, configuration.dropFilesEnabled,
+            configuration.lastSeenAgentVersion != nil
+        else { return .none }
+        guard status == .running else { return .disconnected }
         guard let drop = vsockDropService, drop.isConnected,
             vsockControlService?.guestSupportsDropFiles == true
         else { return .disconnected }
@@ -45,6 +52,13 @@ extension VMInstance {
         }
         return service.startDrop(urls: urls)
     }
+
+    /// Reports a drag the display took that produced no file to send — a file
+    /// promise the source failed to write.
+    func reportUnreadableDropToGuest() {
+        vsockDropService?.reportUnreadableDrop()
+    }
+
     /// Display name that distinguishes preparing, cold-paused ("Suspended"), and live-paused ("Paused").
     var statusDisplayName: String {
         if let state = preparingState { return state.displayLabel }

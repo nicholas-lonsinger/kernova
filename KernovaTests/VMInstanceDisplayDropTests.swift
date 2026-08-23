@@ -17,14 +17,20 @@ struct VMInstanceDisplayDropTests {
         private var channels: [VsockChannel] = []
 
         @MainActor
-        init(guestOS: VMGuestOS = .macOS, lastSeenAgentVersion: String? = "1.0.0") {
+        init(
+            guestOS: VMGuestOS = .macOS, lastSeenAgentVersion: String? = "1.0.0",
+            clipboardSharingEnabled: Bool = true, dropFilesEnabled: Bool = true,
+            status: VMStatus = .running
+        ) {
             var config = VMConfiguration(
                 name: "Drop VM", guestOS: guestOS,
                 bootMode: guestOS == .macOS ? .macOS : .efi)
             config.lastSeenAgentVersion = lastSeenAgentVersion
+            config.clipboardSharingEnabled = clipboardSharingEnabled
+            config.dropFilesEnabled = dropFilesEnabled
             let bundleURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent(config.id.uuidString, isDirectory: true)
-            instance = VMInstance(configuration: config, bundleURL: bundleURL)
+            instance = VMInstance(configuration: config, bundleURL: bundleURL, status: status)
         }
 
         /// Installs a started control service and hands back the guest end, so a
@@ -136,6 +142,59 @@ struct VMInstanceDisplayDropTests {
         try await waitForChange { harness.instance.displayDropAvailability == .available }
     }
 
+    // MARK: - The per-VM toggle
+
+    @Test("a VM with drag and drop switched off is not a drag destination")
+    func dropToggleOffIsNotADestination() async throws {
+        let harness = Harness(dropFilesEnabled: false)
+        defer { harness.tearDown() }
+        let guest = try harness.attachControl()
+        try harness.attachDrop()
+
+        try guest.send(makeHello(capabilities: KernovaCapability.controlChannelDefaults))
+        try await waitForChange {
+            harness.instance.vsockControlService?.guestSupportsDropFiles == true
+        }
+
+        // `.none` rather than `.disconnected`: the display unregisters, so a drag
+        // over it behaves as if Kernova were not there at all.
+        #expect(harness.instance.displayDropAvailability == .none)
+        #expect(!harness.instance.sendDroppedFilesToGuest([URL(fileURLWithPath: "/tmp/a.txt")]))
+    }
+
+    @Test("Clipboard Sharing has no say over the drop gate — the drop toggle does")
+    func clipboardSharingDoesNotGateDrops() async throws {
+        let harness = Harness(clipboardSharingEnabled: false)
+        defer { harness.tearDown() }
+        let guest = try harness.attachControl()
+        try harness.attachDrop()
+
+        try guest.send(makeHello(capabilities: KernovaCapability.controlChannelDefaults))
+        try await waitForChange { harness.instance.displayDropAvailability == .available }
+
+        #expect(!harness.instance.configuration.clipboardSharingEnabled)
+    }
+
+    // MARK: - A VM that isn't running
+
+    @Test("a paused VM refuses the drag — its guest is frozen, not gone")
+    func pausedRefusesTheDrag() async throws {
+        let harness = Harness()
+        defer { harness.tearDown() }
+        let guest = try harness.attachControl()
+        try harness.attachDrop()
+        try guest.send(makeHello(capabilities: KernovaCapability.controlChannelDefaults))
+        try await waitForChange { harness.instance.displayDropAvailability == .available }
+
+        // Pausing tears down no vsock, so every channel below still reads as
+        // connected — only `status` says the guest cannot answer.
+        harness.instance.status = .paused
+
+        #expect(harness.instance.vsockDropService?.isConnected == true)
+        #expect(harness.instance.displayDropAvailability == .disconnected)
+        #expect(!harness.instance.sendDroppedFilesToGuest([URL(fileURLWithPath: "/tmp/a.txt")]))
+    }
+
     @Test("a stopped drop service downgrades an available VM back to a refusal")
     func stoppingTheServiceRefusesAgain() async throws {
         let harness = Harness()
@@ -150,5 +209,43 @@ struct VMInstanceDisplayDropTests {
         #expect(harness.instance.displayDropAvailability == .disconnected)
         // And a drop attempted in that state is refused rather than swallowed.
         #expect(!harness.instance.sendDroppedFilesToGuest([URL(fileURLWithPath: "/tmp/a.txt")]))
+    }
+
+    // MARK: - Reporting a drop the clipboard toggle has no say over
+
+    @Test("a drop reports itself on a VM whose Clipboard Sharing is switched off")
+    func dropReportsWithClipboardSharingOff() throws {
+        let harness = Harness(clipboardSharingEnabled: false)
+        defer { harness.tearDown() }
+        let instance = harness.instance
+        // The toggle closes the Clipboard window and disables the toolbar item
+        // that carries the ring, which is why the menu-bar status item — driven
+        // by this report alone — is where the drop has to show.
+        #expect(!instance.canShowClipboard)
+
+        let operation = ClipboardTransferOperation(
+            gesture: .drop, direction: .outbound, peerName: instance.name, revealDelay: 0,
+            now: { 0 }, schedule: { _, _ in }, onCancelRequested: {},
+            reporter: instance.clipboardTransfers)
+        let readout = ClipboardProgressSnapshot(
+            direction: .outbound, peerName: instance.name, currentItemName: "a.txt",
+            filesCompleted: 0, fileCount: 1, bytesTransferred: 10, totalBytes: 100,
+            bytesPerSecond: 10, secondsRemaining: 9, gesture: .drop, elapsedSeconds: 5,
+            isCancellable: true, operationID: operation.id)
+        instance.clipboardTransfers.publish(from: operation, .running(readout, since: Date()))
+
+        guard case .running(let shown, _) = instance.clipboardTransferReport else {
+            Issue.record("the drop left the status item's readout empty")
+            return
+        }
+        #expect(shown.gesture == .drop)
+        #expect(shown.isCancellable)
+        // And that readout opens the dropdown on its own, so the drop is seen
+        // without the user going looking for it.
+        var opener = ClipboardProgressMenuAutoOpener()
+        #expect(opener.readoutChanged(shown, menuIsOpen: false, canOpen: true) == .open)
+        // The Cancel it carries reaches the drop through the same report.
+        #expect(instance.clipboardTransfers.cancel(shown.operationID))
+        withExtendedLifetime(operation) {}
     }
 }

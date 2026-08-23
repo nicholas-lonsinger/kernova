@@ -255,15 +255,30 @@ gesture**, since the user owed the message is the one who acted. **A refusal bel
 to the connection that raised it** — a promise outlives the service that published it (§3), so every
 surface renders the per-VM record rather than a live service's own property.
 
+**One item the sending side cannot read never cancels the batch.** A gesture over several items
+delivers the ones it can — whether the item is unreadable before the offer or turns out to be once
+the peer asks for it — and the refusal names how many were left out. The receiving side skips what
+it is told it cannot have and keeps going; a batch that delivers nothing at all is the only one
+reported as delivering nothing.
+
 **Progress is aggregate per operation, never per file.** An operation is one
 user-visible gesture — a paste, a Copy to Mac, a preview fetch, a drop, one side
 serving a peer's pulls — and its bar climbs once, whether its transfers run
 sequentially or concurrently.
 
 - **One value per peer**, running or finished, that every surface renders. Both
-  directions and every producer for that peer publish into it, and an app-level
-  readout showing several peers picks the newest running one rather than keeping
-  a registry of its own.
+  directions and every producer for that peer publish into it. It shows the
+  gesture someone is waiting on ahead of one they can walk away from, ties by
+  recency; an app-level readout spanning several peers ranks them the same way
+  rather than keeping a registry of its own.
+- **What the one value leaves out is still counted on it.** An operation the peer
+  has accepted but not started, and a second one running where only one bar fits,
+  are both work the user asked for: carry their number on the readout, so a queue
+  reads as a queue instead of as nothing at all.
+- **A Cancel stops what its own readout showed.** The readout is the user's only
+  handle on a transfer, so the affordance carries the identity of the operation it
+  was rendered for. Resolving one at click time reaches whichever transfer is
+  newest by then, which is not the one they were looking at.
 - **Evaluate the reveal delay on each event, not from a timer**, so an operation
   finishing inside the gate never flashes UI and one stalled before its first
   byte shows nothing rather than a frozen bar. Emission past the gate is
@@ -275,10 +290,12 @@ sequentially or concurrently.
   finished report carrying the gesture that produced it, and its wording is
   derived once from that pair rather than composed per surface.
 - **Only a surface that interrupts gets a stricter bar.** A menu that opens
-  itself takes over the screen: open it only for a paste the *peer* performs,
-  only once, only after the operation is worth interrupting for, and only while
-  enough work remains that the answer still matters when read. Never over an open
-  menu, never from a status item macOS has hidden.
+  itself takes over the screen: open it only for a gesture someone is waiting on
+  — a peer's paste, which holds the app it is pasting into, and a drop, whose
+  files are not in the guest until it lands — only once, only after the operation
+  is worth interrupting for, and only while enough work remains that the answer
+  still matters when read. Never over an open menu, never from a status item
+  macOS has hidden.
 - **Render the readout on the side where the bytes land or leave.**
 
 ---

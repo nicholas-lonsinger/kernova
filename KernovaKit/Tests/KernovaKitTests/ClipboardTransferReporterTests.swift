@@ -66,6 +66,14 @@ struct ClipboardTransferReporterTests {
             secondsRemaining: nil, gesture: gesture, elapsedSeconds: 1)
     }
 
+    /// The readout a surface would render, or `nil` when none is running.
+    private func runningSnapshot(_ reporter: ClipboardTransferReporter)
+        -> ClipboardProgressSnapshot?
+    {
+        guard case .running(let snapshot, _) = reporter.report else { return nil }
+        return snapshot
+    }
+
     private func finish(
         _ failure: ClipboardTransferFailure, gesture: ClipboardTransferGesture = .paste,
         at date: Date = Date()
@@ -277,6 +285,71 @@ struct ClipboardTransferReporterTests {
         #expect(reporter.report == .finished(later))
     }
 
+    @Test("the same refusal from a later gesture is announced again, bar or no bar")
+    func reannouncesAfterAnOperationThatOpenedNoBar() {
+        let scheduler = DwellScheduler()
+        let reporter = makeReporter(scheduler: scheduler)
+        var announced: [ClipboardTransferFinish] = []
+        reporter.onReportChanged = { report in
+            guard case .finished(let finish) = report, finish.failure != nil else { return }
+            announced.append(finish)
+        }
+
+        // One drop lost an item of its batch and said so.
+        let first = makeOperation(reporter, gesture: .drop)
+        reporter.queued(first)
+        reporter.publish(
+            from: first,
+            .finished(
+                finish(
+                    .itemsSkipped(count: 1), gesture: .drop,
+                    at: Date(timeIntervalSince1970: 1))))
+
+        // The next drop ran to its end inside the reveal gate: it announced
+        // itself as queued and retired without ever opening a bar.
+        let quick = makeOperation(reporter, gesture: .drop)
+        reporter.queued(quick)
+        reporter.retire(quick)
+
+        // A third drop loses an item of its own. It is a separate gesture over
+        // separate files, so it is owed its own message rather than collapsed
+        // into the one the first drop raised.
+        let third = makeOperation(reporter, gesture: .drop)
+        reporter.queued(third)
+        let later = finish(
+            .itemsSkipped(count: 1), gesture: .drop, at: Date(timeIntervalSince1970: 2))
+        reporter.publish(from: third, .finished(later))
+
+        #expect(reporter.report == .finished(later))
+        #expect(announced.count == 2)
+    }
+
+    @Test("a gesture that opens no operation at all is still owed its own message")
+    func reannouncesAfterAGestureThatOpenedNoOperation() {
+        let scheduler = DwellScheduler()
+        let reporter = makeReporter(scheduler: scheduler)
+        var announced: [ClipboardTransferFinish] = []
+        reporter.onReportChanged = { report in
+            guard case .finished(let finish) = report, finish.failure != nil else { return }
+            announced.append(finish)
+        }
+
+        // A drag whose items were all unreadable: nothing was offered, so no
+        // operation ever measured it.
+        reporter.gestureBegan()
+        reporter.finish(
+            finish(.itemsUnreadable, gesture: .drop, at: Date(timeIntervalSince1970: 1)))
+
+        // The next drag fails the same way. It is a separate gesture, so the
+        // same sentence is owed again rather than collapsed into the first.
+        reporter.gestureBegan()
+        let later = finish(.itemsUnreadable, gesture: .drop, at: Date(timeIntervalSince1970: 2))
+        reporter.finish(later)
+
+        #expect(reporter.report == .finished(later))
+        #expect(announced.count == 2)
+    }
+
     // MARK: - Surface entry points
 
     @Test("clearing a finished report leaves a running one alone")
@@ -293,8 +366,8 @@ struct ClipboardTransferReporterTests {
         }
     }
 
-    @Test("a cancel reaches the newest running operation, not an older one")
-    func cancelReachesTheNewestOperation() {
+    @Test("a cancel reaches the operation its readout named, not the newest one")
+    func cancelReachesTheOperationItsReadoutNamed() {
         let scheduler = DwellScheduler()
         let reporter = makeReporter(scheduler: scheduler)
         let olderStopped = AtomicFlag()
@@ -304,14 +377,14 @@ struct ClipboardTransferReporterTests {
 
         reporter.publish(from: older, .running(snapshot(bytes: 1), since: Date()))
         reporter.publish(from: newer, .running(snapshot(bytes: 2), since: Date()))
-        reporter.cancelRunning()
+        #expect(reporter.cancel(older.id))
 
-        #expect(newerStopped.value)
-        #expect(!olderStopped.value)
+        #expect(olderStopped.value)
+        #expect(!newerStopped.value)
     }
 
-    @Test("a cancel skips a newer operation that cannot be stopped")
-    func cancelSkipsANonCancellableNewestOperation() {
+    @Test("a cancel of an operation that cannot be stopped reaches nothing else")
+    func cancelOfANonCancellableOperationStopsNothing() {
         let scheduler = DwellScheduler()
         let reporter = makeReporter(scheduler: scheduler)
         let stopped = AtomicFlag()
@@ -322,9 +395,147 @@ struct ClipboardTransferReporterTests {
 
         reporter.publish(from: cancellable, .running(snapshot(bytes: 1), since: Date()))
         reporter.publish(from: pasteFire, .running(snapshot(bytes: 2), since: Date()))
-        reporter.cancelRunning()
 
-        #expect(stopped.value)
+        #expect(!reporter.cancel(pasteFire.id))
+        #expect(!stopped.value)
+    }
+
+    @Test("a cancel for an operation that has ended reports it reached nothing")
+    func cancelOfAFinishedOperationIsANoOp() {
+        let scheduler = DwellScheduler()
+        let reporter = makeReporter(scheduler: scheduler)
+        let stopped = AtomicFlag()
+        let operation = makeOperation(reporter, onCancelRequested: { stopped.set() })
+
+        reporter.publish(from: operation, .running(snapshot(bytes: 1), since: Date()))
+        reporter.publish(
+            from: operation,
+            .finished(
+                ClipboardTransferFinish(
+                    gesture: .drop, outcome: .completed(final: snapshot(bytes: 1)),
+                    peerName: "macOS TEST")))
+
+        #expect(!reporter.cancel(operation.id))
+        #expect(!stopped.value)
+    }
+
+    // MARK: - Ranking
+
+    @Test("a drop started during a peer's paste leaves the paste on the readout")
+    func aPeerPasteOutranksADropStartedUnderIt() {
+        let scheduler = DwellScheduler()
+        let reporter = makeReporter(scheduler: scheduler)
+        let paste = makeOperation(reporter, gesture: .peerPaste)
+        let drop = makeOperation(reporter, gesture: .drop)
+
+        reporter.publish(
+            from: paste, .running(snapshot(bytes: 1, gesture: .peerPaste), since: Date()))
+        reporter.publish(from: drop, .running(snapshot(bytes: 2, gesture: .drop), since: Date()))
+
+        #expect(runningSnapshot(reporter)?.gesture == .peerPaste)
+    }
+
+    @Test("equal-ranked operations keep the newest readout")
+    func equalRanksFallBackToRecency() {
+        let scheduler = DwellScheduler()
+        let reporter = makeReporter(scheduler: scheduler)
+        let older = makeOperation(reporter, gesture: .drop)
+        let newer = makeOperation(reporter, gesture: .drop)
+
+        reporter.publish(from: older, .running(snapshot(bytes: 1, gesture: .drop), since: Date()))
+        reporter.publish(from: newer, .running(snapshot(bytes: 2, gesture: .drop), since: Date()))
+
+        #expect(runningSnapshot(reporter)?.bytesTransferred == 2)
+    }
+
+    @Test("a queued operation takes the readout once it opens a bar of its own")
+    func aQueuedOperationTakesTheReadoutWhenItStarts() {
+        let scheduler = DwellScheduler()
+        let reporter = makeReporter(scheduler: scheduler)
+        let waiting = makeOperation(reporter, gesture: .drop)
+        let started = makeOperation(reporter, gesture: .drop)
+
+        // The drop joins the live set when it is offered, so it is the *oldest*
+        // entry while the peer is still busy with something offered after it.
+        reporter.queued(waiting)
+        reporter.publish(from: started, .running(snapshot(bytes: 1, gesture: .drop), since: Date()))
+        #expect(runningSnapshot(reporter)?.bytesTransferred == 1)
+
+        reporter.publish(from: waiting, .running(snapshot(bytes: 2, gesture: .drop), since: Date()))
+        #expect(runningSnapshot(reporter)?.bytesTransferred == 2)
+    }
+
+    @Test("progress on the older of two running readouts does not take the bar back")
+    func progressOnAnOlderReadoutDoesNotTakeTheBarBack() {
+        let scheduler = DwellScheduler()
+        let reporter = makeReporter(scheduler: scheduler)
+        let older = makeOperation(reporter, gesture: .drop)
+        let newer = makeOperation(reporter, gesture: .drop)
+
+        reporter.publish(from: older, .running(snapshot(bytes: 1, gesture: .drop), since: Date()))
+        reporter.publish(from: newer, .running(snapshot(bytes: 2, gesture: .drop), since: Date()))
+        // Both are streaming: without this the bar would change hands on every
+        // tick, since each publication would be the most recent one.
+        reporter.publish(from: older, .running(snapshot(bytes: 9, gesture: .drop), since: Date()))
+
+        #expect(runningSnapshot(reporter)?.bytesTransferred == 2)
+    }
+
+    // MARK: - Work behind the readout
+
+    @Test("a queued operation is counted on the readout rather than replacing it")
+    func aQueuedOperationIsCountedOnTheReadout() {
+        let scheduler = DwellScheduler()
+        let reporter = makeReporter(scheduler: scheduler)
+        let running = makeOperation(reporter, gesture: .drop)
+        let waiting = makeOperation(reporter, gesture: .drop)
+
+        reporter.publish(from: running, .running(snapshot(bytes: 1, gesture: .drop), since: Date()))
+        #expect(runningSnapshot(reporter)?.pendingBehind == 0)
+
+        reporter.queued(waiting)
+        #expect(runningSnapshot(reporter)?.bytesTransferred == 1)
+        #expect(runningSnapshot(reporter)?.pendingBehind == 1)
+    }
+
+    @Test("a queued operation alone shows nothing — there is no bar to show yet")
+    func aQueuedOperationAloneShowsNothing() {
+        let scheduler = DwellScheduler()
+        let reporter = makeReporter(scheduler: scheduler)
+        let waiting = makeOperation(reporter, gesture: .drop)
+
+        reporter.queued(waiting)
+
+        #expect(reporter.report == .idle)
+    }
+
+    @Test("a queued operation stops being counted once it retires")
+    func aQueuedOperationStopsBeingCountedWhenItRetires() {
+        let scheduler = DwellScheduler()
+        let reporter = makeReporter(scheduler: scheduler)
+        let running = makeOperation(reporter, gesture: .drop)
+        let waiting = makeOperation(reporter, gesture: .drop)
+
+        reporter.publish(from: running, .running(snapshot(bytes: 1, gesture: .drop), since: Date()))
+        reporter.queued(waiting)
+        reporter.retire(waiting)
+
+        #expect(runningSnapshot(reporter)?.pendingBehind == 0)
+    }
+
+    @Test("an operation that started is counted behind the readout that outranks it")
+    func aRunningOperationUnderTheReadoutIsCountedToo() {
+        let scheduler = DwellScheduler()
+        let reporter = makeReporter(scheduler: scheduler)
+        let paste = makeOperation(reporter, gesture: .peerPaste)
+        let drop = makeOperation(reporter, gesture: .drop)
+
+        reporter.publish(
+            from: paste, .running(snapshot(bytes: 1, gesture: .peerPaste), since: Date()))
+        reporter.publish(from: drop, .running(snapshot(bytes: 2, gesture: .drop), since: Date()))
+
+        #expect(runningSnapshot(reporter)?.gesture == .peerPaste)
+        #expect(runningSnapshot(reporter)?.pendingBehind == 1)
     }
 
     @Test("a surface hears once per distinct value")

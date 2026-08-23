@@ -362,6 +362,12 @@ message PolicyUpdate {
   //
   // `0` means unset — the receiver uses its own built-in default.
   uint64 clipboard_max_paste_bytes = 3;
+
+  // Whether the guest's drop agent should dial the drop port and take
+  // `DropOffer` frames. The host binds the drop and drop-data ports only
+  // while this is set, so a guest that dials anyway is refused every retry
+  // interval for as long as the setting is off.
+  bool drop_files_enabled = 4;
 }
 
 // Reported by either side when a request cannot be fulfilled, or as an

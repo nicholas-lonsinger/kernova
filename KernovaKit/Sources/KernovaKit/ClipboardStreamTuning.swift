@@ -56,6 +56,14 @@ public enum ClipboardStreamTuning {
     /// still-progressing transfers that need more than one window to stream.
     public static let lazyPullTimeout: TimeInterval = 120
 
+    /// How long an offered drop may sit with the peer never having asked for one
+    /// item of it before this side calls the drop off: 120 s.
+    ///
+    /// The clock runs only while nothing else on the connection is streaming:
+    /// the guest serves drops one job at a time, so a batch waiting its turn is
+    /// not an unclaimed one.
+    public static let dropClaimTimeout: TimeInterval = 120
+
     /// `SO_RCVTIMEO`/`SO_SNDTIMEO` on a transfer's data connection: 30 s.
     ///
     /// A `read(2)` or `write(2)` that reaches it is the stall — the peer has

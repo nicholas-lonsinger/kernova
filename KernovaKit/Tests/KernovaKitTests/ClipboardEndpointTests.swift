@@ -437,7 +437,7 @@ struct ClipboardEndpointTests {
             fd: parked)
         try await harness.side.reports.wait { harness.side.reports.runningSnapshot != nil }
 
-        harness.side.reports.reporter.cancelRunning()
+        #expect(harness.side.reports.cancelShownTransfer())
         // The tracker hops to main to call the cancel off, and the wave stops
         // between socket writes — so the hop has to land before this side reads
         // anything back, or the payload would simply finish.

@@ -897,6 +897,7 @@ struct VsockControlServiceTests {
             policyProvider: {
                 AgentPolicySnapshot(
                     logForwardingEnabled: true, clipboardSharingEnabled: false,
+                    dropFilesEnabled: true,
                     clipboardMaxPasteBytes: ClipboardPasteLimit.defaultBytes)
             }
         )
@@ -1124,6 +1125,7 @@ struct VsockControlServiceTests {
         service.sendPolicyUpdate(
             AgentPolicySnapshot(
                 logForwardingEnabled: false, clipboardSharingEnabled: true,
+                dropFilesEnabled: true,
                 clipboardMaxPasteBytes: ClipboardPasteLimit.defaultBytes)
         )
 
@@ -1159,6 +1161,7 @@ struct VsockControlServiceTests {
         service.sendPolicyUpdate(
             AgentPolicySnapshot(
                 logForwardingEnabled: true, clipboardSharingEnabled: true,
+                dropFilesEnabled: true,
                 clipboardMaxPasteBytes: ClipboardPasteLimit.defaultBytes)
         )
 
@@ -1188,6 +1191,7 @@ struct VsockControlServiceTests {
             policyProvider: {
                 AgentPolicySnapshot(
                     logForwardingEnabled: false, clipboardSharingEnabled: true,
+                    dropFilesEnabled: true,
                     clipboardMaxPasteBytes: ClipboardPasteLimit.defaultBytes)
             })
         service.start()
@@ -1221,7 +1225,7 @@ struct VsockControlServiceTests {
             policyProvider: {
                 AgentPolicySnapshot(
                     logForwardingEnabled: false, clipboardSharingEnabled: true,
-                    clipboardMaxPasteBytes: requested)
+                    dropFilesEnabled: true, clipboardMaxPasteBytes: requested)
             })
         service.start()
         defer { service.stop() }
