@@ -1,6 +1,6 @@
 # TESTING.md
 
-Read this before writing any test that waits on async state or needs access to private production state: the async-wait seams, the injected-timeout rule, and test-only exposure patterns. The basic conventions (Swift Testing, mocks, factories, happy + error paths) are in [AGENTS.md](../AGENTS.md#unit-tests).
+Read this before writing any test that waits on async state or needs access to private production state: the async-wait seams, the injected-timeout rule, test-only exposure patterns, and the guest-agent precondition for live tests. The basic conventions (Swift Testing, mocks, factories, happy + error paths) are in [AGENTS.md](../AGENTS.md#unit-tests).
 
 ## Async waits in tests
 
@@ -66,6 +66,14 @@ and the "Report failure messages" step prints each failure's `#expect`
 text. `main`'s width is a herd cap sized for headroom, never a tuning knob:
 lowering it to quiet a flake is a patch wearing configuration's clothes —
 the suite must stay green at any width.
+
+## Live tests against a guest
+
+A live test — anything driven through the running app against a real VM (clipboard, drop, control channel) — runs on the agent bundled in the build under test, the only one the product supports.
+
+Before the first scenario, open the sidebar agent-status popover: it must read "connected with guest agent <version>" at the bundled version. An "Update available" state is resolved with its **Update Guest Agent…** action before anything is observed.
+
+A stale agent discovered mid-run voids the run: update, then restart from the first scenario rather than resuming, and report both the starting and ending agent version.
 
 ## Test-only seams
 
