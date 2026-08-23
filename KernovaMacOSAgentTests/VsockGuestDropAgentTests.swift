@@ -320,7 +320,12 @@ struct VsockGuestDropAgentTests {
         let pending = try await acceptPull(on: harness.dialled, generation: 1, repIndex: 0)
         defer { ClipboardDataConnection.end(fd: pending.fd) }
         try await running.changed.wait { running.value == true }
-        await MainActor.run { reporter.cancelRunning() }
+        // The click carries the identity the readout on screen was rendered for.
+        let cancelled = await MainActor.run { () -> Bool in
+            guard case .running(let shown, _) = reporter.report else { return false }
+            return reporter.cancel(shown.operationID)
+        }
+        #expect(cancelled)
 
         // The agent closing its end of the transfer's connection is how the host
         // is told to stop: a receiver that gives up names no code, it stops

@@ -40,14 +40,14 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private var libraryObservation: ObservationLoop?
 
     /// The dropdown readout, its one-shot automatic open, and the shared menu
-    /// wiring for a materializing paste.
+    /// wiring for a transfer in flight.
     ///
     /// Dismisses any transient popover before an automatic open, so the click
     /// reaches the reattached menu rather than the popover's dismissal handler.
-    private lazy var pasteProgressPresenter = ClipboardProgressStatusItemPresenter(
+    private lazy var transferProgressPresenter = ClipboardProgressStatusItemPresenter(
         statusItem: statusItem, menu: menu,
         willAutoOpen: { [weak self] in self?.transientPopover.dismiss() },
-        onCancel: { [weak self] in self?.newestRunning()?.instance.clipboardTransfers.cancelRunning() })
+        onCancel: { [weak self] id in self?.cancelTransfer(id) })
 
     /// The status item's one transient-popover slot, shared by the soft-quit
     /// reminder and the clipboard notice.
@@ -131,38 +131,54 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     // MARK: - Transfer readout
 
-    /// The VM whose transfer started most recently, with its readout — the one
-    /// the status item's single readout shows.
+    /// The running readout the status item's single bar shows, across every VM.
+    ///
+    /// Ranked the way each VM's own reporter ranks its operations — the gesture
+    /// someone is waiting on first, then recency — so one VM's drop cannot take
+    /// the bar off another's blocked paste.
     ///
     /// Computed from the instances rather than kept in a registry: the report is
     /// a per-VM value, so nothing has to be registered or unregistered as
     /// services come and go.
-    private func newestRunning() -> (instance: VMInstance, snapshot: ClipboardProgressSnapshot, since: Date)? {
+    private func topRunning() -> (snapshot: ClipboardProgressSnapshot, since: Date)? {
         viewModel.instances
-            .compactMap { instance -> (instance: VMInstance, snapshot: ClipboardProgressSnapshot, since: Date)? in
+            .compactMap { instance -> (snapshot: ClipboardProgressSnapshot, since: Date)? in
                 guard case .running(let snapshot, let since) = instance.clipboardTransferReport
                 else { return nil }
-                return (instance, snapshot, since)
+                return (snapshot, since)
             }
-            .max { $0.since < $1.since }
+            .max {
+                ($0.snapshot.gesture.readoutRank, $0.since)
+                    < ($1.snapshot.gesture.readoutRank, $1.since)
+            }
     }
 
-    /// Applies the readout across every VM: the newest running transfer, else the
-    /// most recent VM report that still has a bar to dwell on.
+    /// Stops the operation the readout on screen was rendered for.
+    ///
+    /// The identity comes off that readout, so the click reaches it through
+    /// whichever VM owns it — never whatever happens to be newest by the time it
+    /// lands.
+    private func cancelTransfer(_ id: ClipboardTransferOperationID) {
+        for instance in viewModel.instances where instance.clipboardTransfers.cancel(id) { return }
+        Self.logger.notice("Cancel found no live transfer for the readout it was shown on")
+    }
+
+    /// Applies the readout across every VM: the top-ranked running transfer, else
+    /// the most recent VM report that still has a bar to dwell on.
     ///
     /// The tooltip is rebuilt every pass — it also carries the running-VM count —
     /// while the readout itself is applied only when it changed, so a start or a
     /// status transition doesn't re-run the automatic-open decision.
     private func transferReportsChanged() {
         let readout: ClipboardTransferReport
-        if let newest = newestRunning() {
-            readout = .running(newest.snapshot, since: newest.since)
+        if let top = topRunning() {
+            readout = .running(top.snapshot, since: top.since)
         } else {
             readout = dwellingReport() ?? .idle
         }
         if readout != lastAppliedReadout {
             lastAppliedReadout = readout
-            pasteProgressPresenter.apply(readout)
+            transferProgressPresenter.apply(readout)
             setIcon()
         }
         updateTooltip()
@@ -256,7 +272,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             return
         }
         image.isTemplate = true
-        if let snapshot = pasteProgressPresenter.snapshot {
+        if let snapshot = transferProgressPresenter.snapshot {
             statusItem.button?.image = image.withProgressRing(
                 fraction: snapshot.fractionComplete)
             return
@@ -277,7 +293,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         case 1: lines = ["Kernova — 1 virtual machine running"]
         default: lines = ["Kernova — \(count) virtual machines running"]
         }
-        if let snapshot = pasteProgressPresenter.snapshot {
+        if let snapshot = transferProgressPresenter.snapshot {
             lines.append(ClipboardProgressFormat.summary(snapshot))
         }
         statusItem.button?.toolTip = lines.joined(separator: "\n")
@@ -292,7 +308,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
         menu.removeAllItems()
 
-        pasteProgressPresenter.insertItemsIfActive()
+        transferProgressPresenter.insertItemsIfActive()
 
         let open = NSMenuItem(title: "Open Kernova", action: #selector(openTapped), keyEquivalent: "")
         open.target = self
@@ -311,12 +327,12 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         isMenuOpen = true
-        pasteProgressPresenter.menuWillOpen()
+        transferProgressPresenter.menuWillOpen()
     }
 
     func menuDidClose(_ menu: NSMenu) {
         isMenuOpen = false
-        pasteProgressPresenter.menuDidClose()
+        transferProgressPresenter.menuDidClose()
     }
 
     /// Re-syncs the dropdown's VM rows if it is on screen; a closed menu is

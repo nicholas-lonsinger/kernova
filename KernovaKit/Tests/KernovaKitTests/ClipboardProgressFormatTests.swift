@@ -12,13 +12,14 @@ struct ClipboardProgressFormatTests {
         direction: ClipboardProgressSnapshot.Direction = .outbound, peerName: String = "VM",
         currentItemName: String? = nil, filesCompleted: Int = 0, fileCount: Int = 1,
         bytesTransferred: UInt64 = 0, totalBytes: UInt64 = 1_000,
-        gesture: ClipboardTransferGesture = .peerPaste
+        gesture: ClipboardTransferGesture = .peerPaste, pendingBehind: Int = 0
     ) -> ClipboardProgressSnapshot {
         ClipboardProgressSnapshot(
             direction: direction, peerName: peerName, currentItemName: currentItemName,
             filesCompleted: filesCompleted, fileCount: fileCount,
             bytesTransferred: bytesTransferred, totalBytes: totalBytes, bytesPerSecond: nil,
-            secondsRemaining: nil, gesture: gesture, elapsedSeconds: 1)
+            secondsRemaining: nil, gesture: gesture, elapsedSeconds: 1,
+            pendingBehind: pendingBehind)
     }
 
     @Test("the headline names the peer in quotes and says what is happening")
@@ -121,5 +122,22 @@ struct ClipboardProgressFormatTests {
             direction: .inbound, currentItemName: "big.mov", bytesTransferred: 250,
             gesture: .paste)
         #expect(ClipboardProgressFormat.summary(snapshot) == "Receiving from “VM”… — 25% — big.mov")
+    }
+
+    @Test("work behind the readout is named, and singular reads as one")
+    func pendingNoteCountsWhatIsBehind() {
+        #expect(ClipboardProgressFormat.pendingNote(count: 0) == nil)
+        #expect(ClipboardProgressFormat.pendingNote(count: 1) == "1 more transfer pending")
+        #expect(ClipboardProgressFormat.pendingNote(count: 4) == "4 more transfers pending")
+    }
+
+    @Test("the summary carries what is queued behind the transfer it describes")
+    func summaryCarriesWhatIsPending() {
+        let snapshot = Self.snapshot(
+            direction: .outbound, currentItemName: "big.mov", bytesTransferred: 250,
+            gesture: .drop, pendingBehind: 2)
+        #expect(
+            ClipboardProgressFormat.summary(snapshot)
+                == "Sending to “VM”… — 25% — big.mov — 2 more transfers pending")
     }
 }

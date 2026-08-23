@@ -1,7 +1,7 @@
 import AppKit
 
-/// The live transfer readout inside a status-item dropdown, for a paste
-/// materializing in the background.
+/// The live transfer readout inside a status-item dropdown, for a transfer
+/// running in the background.
 ///
 /// Every label must stay single-line and truncate rather than wrap: a menu item
 /// that changed height while its menu was open would re-lay-out the dropdown
@@ -29,6 +29,7 @@ public final class ClipboardProgressMenuItemView: NSView {
     private let byteProgress = NSTextField(labelWithString: "")
     private let itemCounter = NSTextField(labelWithString: "")
     private let timeRemaining = NSTextField(labelWithString: "")
+    private let pendingNote = NSTextField(labelWithString: "")
 
     /// Stops the transfer the readout is showing.
     ///
@@ -54,6 +55,7 @@ public final class ClipboardProgressMenuItemView: NSView {
         // too short for the first readout that *can* be cancelled — and an
         // `NSMenu` takes a custom item's height from the frame, once.
         cancelButton.isHidden = true
+        pendingNote.isHidden = true
     }
 
     @available(*, unavailable)
@@ -84,11 +86,19 @@ public final class ClipboardProgressMenuItemView: NSView {
         bar.doubleValue = 0
         bar.controlSize = .small
 
-        for label in [byteProgress, itemCounter, timeRemaining] {
+        for label in [byteProgress, itemCounter, timeRemaining, pendingNote] {
             label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
             label.textColor = .secondaryLabelColor
             label.lineBreakMode = .byTruncatingMiddle
         }
+        // Shares the time row's line rather than taking one of its own: the menu
+        // takes this view's height once, so a row that comes and goes has to cost
+        // nothing vertically.
+        pendingNote.alignment = .right
+        pendingNote.lineBreakMode = .byClipping
+        pendingNote.setContentCompressionResistancePriority(.required, for: .horizontal)
+        pendingNote.setContentHuggingPriority(.required, for: .horizontal)
+        timeRemaining.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         // The counter is the fixed-width anchor of its row; the byte line gives
         // way to it when space runs out.
         itemCounter.alignment = .right
@@ -109,7 +119,13 @@ public final class ClipboardProgressMenuItemView: NSView {
         headlineRow.distribution = .fill
         headlineRow.spacing = 8
 
-        let stack = NSStackView(views: [headlineRow, bar, byteRow, timeRemaining])
+        let timeRow = NSStackView(views: [timeRemaining, pendingNote])
+        timeRow.orientation = .horizontal
+        timeRow.alignment = .firstBaseline
+        timeRow.distribution = .fill
+        timeRow.spacing = 8
+
+        let stack = NSStackView(views: [headlineRow, bar, byteRow, timeRow])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Self.rowSpacing
@@ -123,6 +139,7 @@ public final class ClipboardProgressMenuItemView: NSView {
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.trailingInset),
             headlineRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             byteRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            timeRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             bar.widthAnchor.constraint(equalTo: stack.widthAnchor),
             // Pin the content width so the rows lay out (and the height measures)
             // against the width the menu will actually give this view.
@@ -145,7 +162,7 @@ public final class ClipboardProgressMenuItemView: NSView {
         if window != nil {
             bar.doubleValue = pendingFraction
         } else {
-            // The view is kept across pastes: park the control at zero so its
+            // The view is kept across transfers: park the control at zero so its
             // next appearance fills from empty again.
             bar.doubleValue = 0
         }
@@ -169,6 +186,9 @@ public final class ClipboardProgressMenuItemView: NSView {
                 completed: snapshot.filesCompleted, total: snapshot.fileCount) ?? ""
         timeRemaining.stringValue =
             ClipboardProgressFormat.timeRemaining(seconds: snapshot.secondsRemaining) ?? ""
+        let pending = ClipboardProgressFormat.pendingNote(count: snapshot.pendingBehind)
+        pendingNote.stringValue = pending ?? ""
+        pendingNote.isHidden = pending == nil
         setAccessibilityLabel(ClipboardProgressFormat.summary(snapshot))
     }
 

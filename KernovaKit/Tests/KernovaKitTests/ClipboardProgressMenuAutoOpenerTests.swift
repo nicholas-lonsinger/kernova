@@ -4,7 +4,7 @@ import Testing
 @testable import KernovaKit
 
 /// Unit tests for `ClipboardProgressMenuAutoOpener` — the rules that let a
-/// materializing paste open the status-item dropdown by itself, once (#643, #652).
+/// transfer someone is waiting on open the status-item dropdown by itself, once.
 @Suite("ClipboardProgressMenuAutoOpener", .admissionGated)
 struct ClipboardProgressMenuAutoOpenerTests {
     /// A readout that clears every gate, so each test varies only what it is about.
@@ -122,16 +122,49 @@ struct ClipboardProgressMenuAutoOpenerTests {
 
     // MARK: - Worth-interrupting gate
 
-    @Test("a transfer that is not a paste never opens the dropdown")
-    func nonPasteNeverOpens() {
+    @Test("a transfer nobody is waiting on never opens the dropdown")
+    func unawaitedGestureNeverOpens() {
         var opener = ClipboardProgressMenuAutoOpener()
         #expect(
             opener.readoutChanged(Self.readout(gesture: .paste), menuIsOpen: false, canOpen: true)
                 == .none)
     }
 
-    @Test("a non-paste readout does not spend the paste's one open, even in an open menu")
-    func nonPasteDoesNotSpendTheOpen() {
+    @Test("a drop opens the dropdown the way a peer's paste does")
+    func aDropOpensTheDropdown() {
+        var opener = ClipboardProgressMenuAutoOpener()
+        #expect(
+            opener.readoutChanged(Self.readout(gesture: .drop), menuIsOpen: false, canOpen: true)
+                == .open)
+    }
+
+    @Test("a drop takes its one open and no more, however long it runs")
+    func aDropOpensOnlyOnce() {
+        var opener = ClipboardProgressMenuAutoOpener()
+        #expect(
+            opener.readoutChanged(
+                Self.readout(elapsed: 3, secondsRemaining: 600, gesture: .drop), menuIsOpen: false,
+                canOpen: true) == .open)
+        opener.menuOpened(automatically: true)
+        for elapsed in [30.0, 300.0] {
+            #expect(
+                opener.readoutChanged(
+                    Self.readout(elapsed: elapsed, secondsRemaining: 600, gesture: .drop),
+                    menuIsOpen: true, canOpen: true) == .none)
+        }
+    }
+
+    @Test("a drop about to finish is not worth interrupting for either")
+    func aDropAboutToFinishDoesNotOpen() {
+        var opener = ClipboardProgressMenuAutoOpener()
+        #expect(
+            opener.readoutChanged(
+                Self.readout(secondsRemaining: 0.5, gesture: .drop), menuIsOpen: false,
+                canOpen: true) == .none)
+    }
+
+    @Test("a readout nobody is waiting on does not spend the one open, even in an open menu")
+    func unawaitedReadoutDoesNotSpendTheOpen() {
         var opener = ClipboardProgressMenuAutoOpener()
         // A preview fetch reveals while the dropdown happens to be open. If that
         // spent the open, a paste following it in the same continuous run of

@@ -146,7 +146,8 @@ public final class ClipboardOutboundOffers {
     /// leaves nothing registered for the peer to request. A clipboard offer
     /// dedups against the digest it last announced and retires the one before it;
     /// a drop is registered alongside whatever is already streaming, and opens
-    /// its readout before the send so a failure has something to report on.
+    /// its readout before the send so a failure has something to report on, then
+    /// announces itself as queued once the offer is away.
     @discardableResult
     public func offer(_ content: ClipboardContent) -> ClipboardEndpoint.OfferOutcome {
         if kind == .clipboard, content.digest == lastOfferedDigestStorage { return .duplicate }
@@ -186,6 +187,10 @@ public final class ClipboardOutboundOffers {
         let entry = Entry(generation: generation, content: offered)
         entry.operation = operation
         entries[generation] = entry
+        // The peer serves drops one job at a time, so a batch offered while
+        // another is streaming waits its turn. Announcing it keeps it counted on
+        // the readout that is showing instead of invisible until its first byte.
+        if kind == .drop { operation?.markQueued() }
         if kind == .clipboard {
             currentGeneration = generation
             lastOfferedDigestStorage = content.digest

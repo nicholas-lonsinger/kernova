@@ -237,7 +237,67 @@ struct VsockDropServiceTests {
             received.trailer == ClipboardTransferTrailer(ending: .complete(digest: sha256(wire))))
     }
 
+    // MARK: - Several drops at once
+
+    @Test("a second drop is counted on the readout of the one the guest is serving")
+    func aSecondDropIsCountedBehindTheOneStreaming() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let scratch = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let first = try makeFile(in: scratch, named: "a.txt", bytes: Data(repeating: 0x41, count: 8))
+        let second = try makeFile(in: scratch, named: "b.txt", bytes: Data(repeating: 0x42, count: 8))
+
+        // The guest serves drops one job at a time, so the second waits its turn
+        // with nothing of its own in flight.
+        #expect(harness.service.startDrop(urls: [first]))
+        #expect(harness.service.startDrop(urls: [second]))
+        try await harness.recorder.waitForFrames { harness.recorder.dropOffers.count == 2 }
+
+        let uti = try #require(harness.recorder.dropOffers.first?.repInfo.first?.uti)
+        let served = try await harness.pull(
+            generation: 1, transferID: transferID(generation: 1, repIndex: 0), uti: uti)
+        #expect(served.isComplete)
+        try await harness.reports.wait { harness.reports.runningSnapshot != nil }
+
+        // One bar, and the batch behind it counted rather than invisible.
+        let readout = try #require(harness.reports.runningSnapshot)
+        #expect(readout.gesture == .drop)
+        #expect(readout.pendingBehind == 1)
+        #expect(ClipboardProgressFormat.summary(readout).contains("1 more transfer pending"))
+    }
+
     // MARK: - Cancelling
+
+    @Test("the Cancel on a drop's readout stops that drop")
+    func cancelFromTheReadoutStopsTheDrop() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let scratch = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
+
+        #expect(harness.service.startDrop(urls: [file]))
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
+        let uti = try #require(harness.recorder.dropOffers.first?.repInfo.first?.uti)
+        let served = try await harness.pull(
+            generation: 1, transferID: transferID(generation: 1, repIndex: 0), uti: uti)
+        #expect(served.isComplete)
+        try await harness.reports.wait { harness.reports.runningSnapshot != nil }
+
+        // What the dropdown renders: a drop's readout carries a Cancel, and the
+        // click reaches the operation that readout names.
+        let readout = try #require(harness.reports.runningSnapshot)
+        #expect(readout.gesture == .drop)
+        #expect(readout.isCancellable)
+        #expect(harness.reports.cancelShownTransfer())
+
+        // The job is retired on the wire and the bar stops where the cancel left
+        // it rather than reading as a failure.
+        try await harness.recorder.waitForFrames { !harness.recorder.dropReleases.isEmpty }
+        try await harness.reports.wait { harness.reports.runningSnapshot == nil }
+        #expect(harness.failure == nil)
+    }
 
     @Test("cancelling a drop that is already over does nothing")
     func cancelAfterCompletionIsANoOp() async throws {
@@ -256,12 +316,15 @@ struct VsockDropServiceTests {
         let served = try await harness.pull(generation: 1, transferID: xid, uti: uti)
         #expect(served.isComplete)
         try await harness.reports.wait { harness.reports.runningSnapshot != nil }
+        // The Cancel the user could have clicked, taken while it was still on
+        // screen — the drop then finishes underneath it.
+        let shown = try #require(harness.reports.shownOperationID)
 
         try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
         try await harness.reports.wait { harness.reports.runningSnapshot == nil }
 
-        harness.reports.reporter.cancelRunning()
-        harness.reports.reporter.cancelRunning()
+        #expect(!harness.reports.reporter.cancel(shown))
+        #expect(!harness.reports.reporter.cancel(shown))
 
         #expect(harness.recorder.dropReleases.isEmpty)
         #expect(harness.failure == nil)
@@ -372,7 +435,7 @@ struct VsockDropServiceTests {
         let served = try await harness.pull(generation: 1, transferID: xid, uti: uti)
         #expect(served.isComplete)
         try await harness.reports.wait { harness.reports.runningSnapshot != nil }
-        harness.reports.reporter.cancelRunning()
+        #expect(harness.reports.cancelShownTransfer())
         try await harness.recorder.waitForFrames { !harness.recorder.dropReleases.isEmpty }
 
         harness.recorder.cancel()

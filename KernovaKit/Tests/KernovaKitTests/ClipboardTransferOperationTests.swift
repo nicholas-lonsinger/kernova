@@ -416,4 +416,52 @@ struct ClipboardTransferOperationTests {
         // A no-op rather than a crash for a caller that asks anyway.
         operation.requestCancel()
     }
+
+    // MARK: - Queued
+
+    @Test("an operation announced as queued shows no bar of its own")
+    func queuedShowsNoBar() async {
+        let recorder = Recorder()
+        let clock = TestClock()
+        let operation = makeOperation(recorder: recorder, clock: clock, gesture: .drop)
+
+        operation.markQueued()
+        await settle()
+
+        // Nothing has begun, so there is nothing to draw — the reporter counts it
+        // behind whatever readout is on screen instead.
+        #expect(recorder.latest == .idle)
+        withExtendedLifetime(operation) {}
+    }
+
+    @Test("a queued operation that ends without ever revealing leaves nothing behind")
+    func queuedOperationRetiresOnItsTerminal() async {
+        let recorder = Recorder()
+        let clock = TestClock()
+        let operation = makeOperation(recorder: recorder, clock: clock, gesture: .drop)
+
+        operation.markQueued()
+        await settle()
+        operation.finish(.completed)
+        await settle()
+
+        #expect(recorder.latest == .idle)
+        #expect(recorder.finish == nil)
+    }
+
+    @Test("the readout takes over from the queued announcement once bytes move")
+    func queuedGivesWayToTheReadout() async {
+        let recorder = Recorder()
+        let clock = TestClock()
+        let operation = makeOperation(recorder: recorder, clock: clock, gesture: .drop)
+
+        operation.markQueued()
+        clock.advance(Self.revealDelay)
+        operation.unitBegan(id: 1, expectedBytes: 100)
+        operation.unitProgressed(id: 1, bytesTransferred: 40)
+        await settle()
+
+        #expect(recorder.runningSnapshot?.bytesTransferred == 40)
+        #expect(recorder.runningSnapshot?.pendingBehind == 0)
+    }
 }

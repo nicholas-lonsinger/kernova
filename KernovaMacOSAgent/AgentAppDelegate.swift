@@ -153,8 +153,8 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
                 vsockConnection?.isLogForwardingEnabled ?? false
             },
             clipboardActivity: { [weak clipboardAgent] in clipboardAgent?.clipboardActivity ?? .disabled },
-            onCancelTransfer: { [weak transferReporter] in
-                transferReporter?.cancelRunning()
+            onCancelTransfer: { [weak transferReporter] id in
+                transferReporter?.cancel(id)
             },
             onQuit: { NSApp.terminate(nil) }
         )

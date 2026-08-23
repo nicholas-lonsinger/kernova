@@ -5,9 +5,8 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
     /// This side's user pasted the peer's offer — a pasteboard promise firing and
     /// pulling the bytes it advertised.
     case paste
-    /// The peer's user pasted and this side serves the pull. The one gesture
-    /// whose readout may open the status-item dropdown by itself, because the app
-    /// the user pasted into sits blocked until the bytes land.
+    /// The peer's user pasted and this side serves the pull. The app pasted into
+    /// sits blocked until the bytes land.
     case peerPaste
     /// This side's clipboard window is filling in a preview of the peer's offer.
     case preview
@@ -25,6 +24,23 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
     /// gesture. Everything but `peerPaste`, which refuses the *peer* user's
     /// paste and is theirs to be told about.
     public var isMadeHere: Bool { self != .peerPaste }
+
+    /// Whether someone is waiting in front of a screen for this gesture to end,
+    /// which is what earns its readout the surfaces that interrupt
+    /// (docs/CLIPBOARD.md §13).
+    ///
+    /// A peer's paste holds the app it is pasting into; a drop leaves the files
+    /// out of the guest until it lands. The rest run behind whatever the user is
+    /// doing.
+    public var isAwaited: Bool { self == .peerPaste || self == .drop }
+
+    /// Which of several concurrent readouts a single-value surface shows —
+    /// higher wins, ties settled by publish recency.
+    ///
+    /// A paste that blocks an app outranks work the user can walk away from, so
+    /// a drop started mid-paste never takes the bar off the transfer someone is
+    /// sitting in front of.
+    public var readoutRank: Int { self == .peerPaste ? 1 : 0 }
 }
 
 /// Why a clipboard or drop transfer did not deliver what the gesture asked for.
@@ -162,7 +178,8 @@ public enum ClipboardTransferReport: Equatable, Sendable {
     /// Nothing to show.
     case idle
     /// An operation is on screen, past its reveal gate. `since` is when it
-    /// started, so an app-level surface can pick the newest of several.
+    /// started, so an app-level surface can rank one peer's readout against
+    /// another's.
     case running(ClipboardProgressSnapshot, since: Date)
     /// The last operation to end still stands.
     case finished(ClipboardTransferFinish)

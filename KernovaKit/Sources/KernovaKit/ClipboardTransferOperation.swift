@@ -1,5 +1,42 @@
 import Foundation
 
+/// Identity of one ``ClipboardTransferOperation``.
+///
+/// Carried on every readout, so a surface's Cancel reaches the operation that
+/// readout was rendered for and no other — the readout is the only handle the
+/// user has on a transfer, and several run at once (docs/CLIPBOARD.md §13).
+///
+/// A minted counter rather than the object's address: an address is reused once
+/// the operation it named is gone, and a surface holding the readout it last
+/// rendered would then cancel a stranger.
+public struct ClipboardTransferOperationID: Hashable, Sendable {
+    private final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: UInt64 = 0
+        func next() -> UInt64 {
+            lock.withLock {
+                value &+= 1
+                return value
+            }
+        }
+    }
+
+    private static let counter = Counter()
+
+    private let value: UInt64
+
+    private init(value: UInt64) { self.value = value }
+
+    /// Mints an identity nothing else holds. The counter starts above
+    /// ``unattached``, so a minted identity never collides with it.
+    public init() { value = Self.counter.next() }
+
+    /// The identity of a readout no operation produced — a snapshot a test or a
+    /// preview built by hand. Cancelling it reaches nothing, which is the point:
+    /// there is nothing behind it to stop.
+    public static let unattached = ClipboardTransferOperationID(value: 0)
+}
+
 /// One user-visible clipboard operation, aggregating every transfer it makes
 /// into the single readout each progress surface renders.
 ///
@@ -58,6 +95,7 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     /// One publication to the reporter, resolved under `lock`.
     private enum ReporterCall: Sendable {
         case running(ClipboardProgressSnapshot, since: Date)
+        case queued
         case finished(ClipboardTransferFinish)
         case retire
     }
@@ -75,6 +113,8 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
 
     // MARK: - Identity
 
+    /// What a surface cancels this operation by.
+    public let id = ClipboardTransferOperationID()
     private let gesture: ClipboardTransferGesture
     private let direction: ClipboardProgressSnapshot.Direction
     private let peerName: String
@@ -184,6 +224,26 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
     }
 
     // MARK: - Transfer events
+
+    /// Announces the operation as accepted but not yet moving bytes, so the
+    /// reporter counts it behind whatever readout is on screen.
+    ///
+    /// The gesture is already done from the user's side — the files are dropped,
+    /// the peer has the offer — and only the peer decides when to pull, which it
+    /// does one job at a time. Without this the operation is invisible until its
+    /// first byte, and a batch waiting its turn looks like a batch that never
+    /// happened. It never becomes the readout itself: nothing has begun, so a bar
+    /// for it would be the frozen one §13 rules out.
+    public func markQueued() {
+        deliver(
+            lock.withLock { () -> Outcome in
+                guard !isFinished, !published else { return Outcome() }
+                // Counts as a publication, so a terminal that never reveals
+                // still retires the entry this leaves behind.
+                published = true
+                return Outcome(call: .queued)
+            })
+    }
 
     /// Records that one of this operation's transfers started, declaring it if
     /// this is the first the operation has heard of it.
@@ -425,6 +485,8 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
                 switch call {
                 case .running(let snapshot, let since):
                     reporter.publish(from: self, .running(snapshot, since: since))
+                case .queued:
+                    reporter.queued(self)
                 case .finished(let finish):
                     reporter.publish(from: self, .finished(finish))
                 case .retire:
@@ -457,7 +519,8 @@ public final class ClipboardTransferOperation: @unchecked Sendable {
             secondsRemaining: rate.secondsRemaining(bytes: transferredBytes, total: total),
             gesture: gesture,
             elapsedSeconds: max(0, now() - startedAt),
-            isCancellable: onCancelRequested != nil)
+            isCancellable: onCancelRequested != nil,
+            operationID: id)
     }
 
     // MARK: - Records

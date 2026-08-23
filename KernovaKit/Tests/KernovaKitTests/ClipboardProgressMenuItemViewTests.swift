@@ -7,12 +7,14 @@ import Testing
 @Suite("ClipboardProgressMenuItemView", .admissionGated)
 @MainActor
 struct ClipboardProgressMenuItemViewTests {
-    private func makeSnapshot(isCancellable: Bool) -> ClipboardProgressSnapshot {
+    private func makeSnapshot(isCancellable: Bool, pendingBehind: Int = 0)
+        -> ClipboardProgressSnapshot
+    {
         ClipboardProgressSnapshot(
             direction: .outbound, peerName: "VM", currentItemName: "a.bin", filesCompleted: 0,
             fileCount: 1, bytesTransferred: 10, totalBytes: 100, bytesPerSecond: nil,
             secondsRemaining: nil, gesture: .paste, elapsedSeconds: 1,
-            isCancellable: isCancellable)
+            isCancellable: isCancellable, pendingBehind: pendingBehind)
     }
 
     @Test("the button is hidden until a cancel handler is installed")
@@ -65,5 +67,21 @@ struct ClipboardProgressMenuItemViewTests {
 
         #expect(!view.cancelButtonForTesting.isHidden)
         #expect(view.accessibilityLabel()?.isEmpty == false)
+    }
+
+    @Test("the readout says what is queued behind it, and costs no height to say so")
+    func rendersWhatIsPendingBehindTheReadout() {
+        let view = ClipboardProgressMenuItemView()
+        let height = view.frame.height
+
+        view.apply(makeSnapshot(isCancellable: true))
+        #expect(view.accessibilityLabel()?.contains("pending") == false)
+
+        view.apply(makeSnapshot(isCancellable: true, pendingBehind: 2))
+        view.layoutSubtreeIfNeeded()
+
+        #expect(view.accessibilityLabel()?.contains("2 more transfers pending") == true)
+        // The menu takes this height once, so the line has to share a row.
+        #expect(view.frame.height == height)
     }
 }
