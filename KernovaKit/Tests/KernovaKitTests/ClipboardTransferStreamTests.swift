@@ -479,6 +479,48 @@ struct ClipboardTransferStreamTests {
         #expect(harness.collector.outboundMetrics.isEmpty)
     }
 
+    @Test("cancelling a generation reaches the receiver already streaming under it")
+    func generationCancelStopsALiveReceiver() async throws {
+        let fm = FileManager.default
+        let scratch = try makeScratch()
+        defer { try? fm.removeItem(at: scratch) }
+        let harness = TransferHarness()
+        defer { harness.tearDown() }
+
+        // The supersession path `ClipboardInboundOffers` takes when the peer
+        // offers again mid-paste: the awaiter is resolved either way, so the
+        // *send* stopping is what says the generation reached the live
+        // receiver rather than only the awaiter beside it. Sized and cancelled
+        // exactly as `receiverCancelStopsTheSend` is, and for the same reasons.
+        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        try fm.createDirectory(at: source, withIntermediateDirectories: true)
+        try randomBytes(count: 4 * ClipboardStreamTuning.dataSendBufferBytes)
+            .write(to: source.appendingPathComponent("big.bin"))
+        let estimate = ClipboardArchive.estimatedByteCount(at: source)
+        let transferID = ClipboardTransferID.make(generation: 12, repIndex: 0, hostMinted: true)
+        let inbox = harness.inbox
+        let cancelled = Box(false)
+        harness.pull(
+            transferID: transferID, generation: 12,
+            plan: .init(
+                uti: ClipboardArchive.directoryUTI, filename: "source",
+                extractsDirectoryNamed: "source", advertisedByteCount: estimate),
+            representation: .init(
+                directorySourceURL: source, estimatedByteCount: estimate, filename: "source"),
+            isCurrent: { _ in
+                guard !cancelled.value else { return true }
+                cancelled.value = true
+                inbox.cancel(generation: 12)
+                return true
+            })
+        try await settle(harness, transferID)
+        try await harness.collector.gate.wait { harness.collector.sendCount == 1 }
+
+        #expect(try abort(harness).code == .cancelled)
+        #expect(harness.collector.representation(transferID) == nil)
+        #expect(harness.collector.sendOutcome(transferID) == false)
+    }
+
     @Test("a send onto a connection the peer has closed fails and reports no timing")
     func sendToAClosedConnectionReportsNoMetrics() async throws {
         let harness = TransferHarness()

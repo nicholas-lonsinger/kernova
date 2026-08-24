@@ -6,7 +6,7 @@ import AppKit
 /// promises are written by the *dragging* side, and nothing on the receiving
 /// side can put one on a pasteboard.
 @MainActor
-protocol DisplayDropPromiseReceiving {
+protocol DisplayDropPromiseReceiving: AnyObject {
     /// The names of the files this receiver will write.
     var fileNames: [String] { get }
 

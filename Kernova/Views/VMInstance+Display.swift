@@ -46,11 +46,14 @@ extension VMInstance {
     /// Re-checks availability itself: a drag can outlive the channel it was
     /// started over, and a drop the service can no longer serve must spring back
     /// rather than silently vanish.
-    func sendDroppedFilesToGuest(_ urls: [URL]) -> Bool {
+    ///
+    /// `stagedIn` is where a promise drag wrote its files; the service holds it
+    /// until that drop settles, and a refused drop leaves it to the caller.
+    func sendDroppedFilesToGuest(_ urls: [URL], stagedIn stagingDirectory: URL? = nil) -> Bool {
         guard displayDropAvailability == .available, let service = vsockDropService else {
             return false
         }
-        return service.startDrop(urls: urls)
+        return service.startDrop(urls: urls, stagedIn: stagingDirectory)
     }
 
     /// Reports a drag the display took that produced no file to send — a file

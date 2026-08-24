@@ -66,8 +66,8 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         backing.dropAvailability = { [weak instance] in
             instance?.displayDropAvailability ?? .none
         }
-        backing.onDropFiles = { [weak instance] urls in
-            instance?.sendDroppedFilesToGuest(urls) ?? false
+        backing.onDropFiles = { [weak instance] urls, stagedIn in
+            instance?.sendDroppedFilesToGuest(urls, stagedIn: stagedIn) ?? false
         }
         backing.onDropUnreadable = { [weak instance] in
             instance?.reportUnreadableDropToGuest()

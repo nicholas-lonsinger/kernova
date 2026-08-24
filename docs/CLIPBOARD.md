@@ -268,9 +268,10 @@ sequentially or concurrently.
 
 - **One value per peer**, running or finished, that every surface renders. Both
   directions and every producer for that peer publish into it. It shows the
-  gesture someone is waiting on ahead of one they can walk away from, ties by
-  recency; an app-level readout spanning several peers ranks them the same way
-  rather than keeping a registry of its own.
+  gesture someone is waiting on ahead of one they can walk away from — a peer's
+  paste, which holds an app, ahead of a drop — and ties by recency; an app-level
+  readout spanning several peers ranks them the same way rather than keeping a
+  registry of its own.
 - **What the one value leaves out is still counted on it.** An operation the peer
   has accepted but not started, and a second one running where only one bar fits,
   are both work the user asked for: carry their number on the readout, so a queue

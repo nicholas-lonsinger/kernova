@@ -131,73 +131,25 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     // MARK: - Transfer readout
 
-    /// The running readout the status item's single bar shows, across every VM.
-    ///
-    /// Ranked the way each VM's own reporter ranks its operations — the gesture
-    /// someone is waiting on first, then recency — so one VM's drop cannot take
-    /// the bar off another's blocked paste.
-    ///
-    /// Computed from the instances rather than kept in a registry: the report is
-    /// a per-VM value, so nothing has to be registered or unregistered as
-    /// services come and go.
-    private func topRunning() -> (snapshot: ClipboardProgressSnapshot, since: Date)? {
-        viewModel.instances
-            .compactMap { instance -> (snapshot: ClipboardProgressSnapshot, since: Date)? in
-                guard case .running(let snapshot, let since) = instance.clipboardTransferReport
-                else { return nil }
-                return (snapshot, since)
-            }
-            .max {
-                ($0.snapshot.gesture.readoutRank, $0.since)
-                    < ($1.snapshot.gesture.readoutRank, $1.since)
-            }
-    }
-
     /// Stops the operation the readout on screen was rendered for.
-    ///
-    /// The identity comes off that readout, so the click reaches it through
-    /// whichever VM owns it — never whatever happens to be newest by the time it
-    /// lands.
     private func cancelTransfer(_ id: ClipboardTransferOperationID) {
-        for instance in viewModel.instances where instance.clipboardTransfers.cancel(id) { return }
+        guard !AppClipboardReadout.cancel(id, in: viewModel.instances) else { return }
         Self.logger.notice("Cancel found no live transfer for the readout it was shown on")
     }
 
-    /// Applies the readout across every VM: the top-ranked running transfer, else
-    /// the most recent VM report that still has a bar to dwell on.
+    /// Applies the readout across every VM.
     ///
     /// The tooltip is rebuilt every pass — it also carries the running-VM count —
     /// while the readout itself is applied only when it changed, so a start or a
     /// status transition doesn't re-run the automatic-open decision.
     private func transferReportsChanged() {
-        let readout: ClipboardTransferReport
-        if let top = topRunning() {
-            readout = .running(top.snapshot, since: top.since)
-        } else {
-            readout = dwellingReport() ?? .idle
-        }
+        let readout = AppClipboardReadout.report(for: viewModel.instances)
         if readout != lastAppliedReadout {
             lastAppliedReadout = readout
             transferProgressPresenter.apply(readout)
             setIcon()
         }
         updateTooltip()
-    }
-
-    /// The finished report still worth leaving a bar up for, or `nil`.
-    ///
-    /// A refusal has no bar — its surfaces are the notice popover and the
-    /// dropdown's per-VM line.
-    private func dwellingReport() -> ClipboardTransferReport? {
-        viewModel.instances
-            .compactMap { instance -> ClipboardTransferFinish? in
-                guard case .finished(let finish) = instance.clipboardTransferReport,
-                    finish.finalSnapshot != nil
-                else { return nil }
-                return finish
-            }
-            .max { $0.date < $1.date }
-            .map { .finished($0) }
     }
 
     // MARK: - Clipboard notice

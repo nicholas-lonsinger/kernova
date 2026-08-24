@@ -152,6 +152,13 @@ struct ClipboardTransferWording: Equatable {
                 menuLine: "Clipboard: paste from the guest failed",
                 mentionsMacClipboardKept: false)
 
+        case (.timedOut, .drop):
+            return ClipboardTransferWording(
+                headline: "Files not copied to \(vm).",
+                message: "The VM stopped taking the files, so the drop was called off.",
+                menuLine: "Drop: the VM stopped taking the files",
+                mentionsMacClipboardKept: false)
+
         case (.timedOut, .preview):
             return ClipboardTransferWording(
                 headline: "Clipboard preview from \(vm) failed.",

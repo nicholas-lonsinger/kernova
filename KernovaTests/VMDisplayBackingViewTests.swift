@@ -92,6 +92,22 @@ struct VMDisplayBackingViewTests {
         return StubDraggingInfo(pasteboard: pasteboard)
     }
 
+    /// A drag shaped the way one out of Photos is: an item advertising both a
+    /// file promise and a URL of its own, beside plain file items.
+    private func makePromisedURLDrag(promising promised: URL, alongside urls: [URL]) throws
+        -> StubDraggingInfo
+    {
+        let pasteboard = NSPasteboard(name: .init("VMDisplayBackingViewTests-\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        let item = NSPasteboardItem()
+        item.setString(promised.absoluteString, forType: .fileURL)
+        item.setString(
+            "promise", forType: .init(try #require(NSFilePromiseReceiver.readableDraggedTypes.first))
+        )
+        pasteboard.writeObjects(([item] as [any NSPasteboardWriting]) + (urls as [NSURL]))
+        return StubDraggingInfo(pasteboard: pasteboard)
+    }
+
     private func makeTextDrag(_ text: String) -> StubDraggingInfo {
         let pasteboard = NSPasteboard(name: .init("VMDisplayBackingViewTests-\(UUID().uuidString)"))
         pasteboard.clearContents()
@@ -166,7 +182,7 @@ struct VMDisplayBackingViewTests {
         let backing = VMDisplayBackingView(frame: .zero)
         backing.dropAvailability = { .available }
         var received: [URL] = []
-        backing.onDropFiles = { urls in
+        backing.onDropFiles = { urls, _ in
             received = urls
             return true
         }
@@ -182,7 +198,7 @@ struct VMDisplayBackingViewTests {
         var availability = DisplayDropAvailability.available
         backing.dropAvailability = { availability }
         var forwarded = false
-        backing.onDropFiles = { _ in
+        backing.onDropFiles = { _, _ in
             forwarded = true
             return true
         }
@@ -199,7 +215,7 @@ struct VMDisplayBackingViewTests {
     func reportsARefusedSend() {
         let backing = VMDisplayBackingView(frame: .zero)
         backing.dropAvailability = { .available }
-        backing.onDropFiles = { _ in false }
+        backing.onDropFiles = { _, _ in false }
 
         #expect(!backing.performDragOperation(makeFileDrag([URL(fileURLWithPath: "/tmp/a.txt")])))
     }
@@ -280,11 +296,34 @@ struct VMDisplayBackingViewTests {
     private final class StubPromiseReceiver: DisplayDropPromiseReceiving {
         struct Failure: Error {}
 
-        let fileNames: [String]
+        /// When a source fills `fileNames` in — `NSFilePromiseReceiver`
+        /// populates them as its files are received, so a Photos asset names
+        /// nothing when the drag is taken.
+        enum Naming {
+            /// Named when the drag is taken, a Finder-style promise's shape.
+            case upFront
+            /// Named as the first file lands.
+            case asFilesLand
+            /// Never named at all, so the receiver's own count never accounts
+            /// for what it writes.
+            case never
+        }
+
+        private(set) var fileNames: [String]
+        /// Where the view asked for the promised files, which nothing else
+        /// tells a drag whose promises never reach an offer.
+        private(set) var destination: URL?
+        /// How many times this receiver has answered, which is what a test
+        /// waiting past the drop's own offer has to wait on.
+        private(set) var reportCount = 0
+        private let promised: [String]
+        private let naming: Naming
         private let fails: Bool
 
-        init(fileNames: [String], fails: Bool = false) {
-            self.fileNames = fileNames
+        init(fileNames: [String], naming: Naming = .upFront, fails: Bool = false) {
+            self.promised = fileNames
+            self.fileNames = naming == .upFront ? fileNames : []
+            self.naming = naming
             self.fails = fails
         }
 
@@ -292,13 +331,18 @@ struct VMDisplayBackingViewTests {
             atDestination destination: URL, options: [AnyHashable: Any],
             operationQueue: OperationQueue, reader: @escaping (URL, (any Error)?) -> Void
         ) {
+            self.destination = destination
             let failure: Failure? = fails ? Failure() : nil
-            for name in fileNames {
+            for name in promised {
                 let url = destination.appendingPathComponent(name)
                 if failure == nil { try? Data("promised".utf8).write(to: url) }
                 // The real receiver answers asynchronously; so does this, so the
                 // test exercises the wait rather than a synchronous shortcut.
-                MainActorBridge.async { reader(url, failure) }
+                MainActorBridge.async {
+                    if self.naming == .asFilesLand { self.fileNames = self.promised }
+                    self.reportCount += 1
+                    reader(url, failure)
+                }
             }
         }
     }
@@ -335,7 +379,7 @@ struct VMDisplayBackingViewTests {
         ])
         let gate = AsyncGate()
         var offered: [[URL]] = []
-        backing.onDropFiles = { urls in
+        backing.onDropFiles = { urls, _ in
             offered.append(urls)
             gate.notify()
             return true
@@ -363,7 +407,7 @@ struct VMDisplayBackingViewTests {
         let gate = AsyncGate()
         var offered = false
         var reported = false
-        backing.onDropFiles = { _ in
+        backing.onDropFiles = { _, _ in
             offered = true
             return true
         }
@@ -378,5 +422,185 @@ struct VMDisplayBackingViewTests {
         try await gate.wait { reported }
 
         #expect(!offered)
+    }
+
+    @Test(
+        "a promise that names nothing until its files land is still offered",
+        arguments: [1, 2])
+    func unnamedPromiseIsOffered(promiseCount: Int) async throws {
+        let backing = VMDisplayBackingView(frame: .zero)
+        backing.dropAvailability = { .available }
+        let names = (0..<promiseCount).map { "a\($0).png" }
+        backing.promiseSource = makePromiseSource([
+            StubPromiseReceiver(fileNames: names, naming: .asFilesLand)
+        ])
+        let gate = AsyncGate()
+        var offered: [[URL]] = []
+        var staged: URL?
+        var reported = false
+        backing.onDropFiles = { urls, stagedIn in
+            offered.append(urls)
+            staged = stagedIn
+            gate.notify()
+            return true
+        }
+        backing.onDropUnreadable = {
+            reported = true
+            gate.notify()
+        }
+
+        #expect(backing.performDragOperation(makeTextDrag("promise")))
+        try await gate.wait { !offered.isEmpty || reported }
+
+        // A drag whose files have no names yet still has files coming: a
+        // Photos asset names its picture only as it hands it over.
+        #expect(!reported)
+        #expect(offered.count == 1)
+        #expect(offered.first?.map(\.lastPathComponent) == names)
+        DropPromiseStaging.release(try #require(staged))
+    }
+
+    @Test("a dragged item its promise speaks for is not sent as its URL as well")
+    func promisedItemIsNotAlsoSentAsItsURL() async throws {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VMDisplayBackingViewTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let concrete = scratch.appendingPathComponent("dropped.txt")
+        try Data("a".utf8).write(to: concrete)
+        let derivative = scratch.appendingPathComponent("derivative.jpeg")
+        try Data("b".utf8).write(to: derivative)
+
+        let backing = VMDisplayBackingView(frame: .zero)
+        backing.dropAvailability = { .available }
+        backing.promiseSource = makePromiseSource([
+            StubPromiseReceiver(fileNames: ["a.png"], naming: .asFilesLand)
+        ])
+        let gate = AsyncGate()
+        var offered: [URL] = []
+        var staged: URL?
+        backing.onDropFiles = { urls, stagedIn in
+            offered = urls
+            staged = stagedIn
+            gate.notify()
+            return true
+        }
+
+        #expect(
+            backing.performDragOperation(
+                try makePromisedURLDrag(promising: derivative, alongside: [concrete])))
+        try await gate.wait { !offered.isEmpty }
+
+        // The promise is what the source means to hand over; its item's own URL
+        // is the same picture again, and sending both lands one dragged item in
+        // the guest twice.
+        #expect(offered.map(\.lastPathComponent) == ["dropped.txt", "a.png"])
+        DropPromiseStaging.release(try #require(staged))
+    }
+
+    @Test("a promise drag hands the drop the directory its files were staged in")
+    func promiseDragHandsOverItsStagingDirectory() async throws {
+        let backing = VMDisplayBackingView(frame: .zero)
+        backing.dropAvailability = { .available }
+        backing.promiseSource = makePromiseSource([StubPromiseReceiver(fileNames: ["a.png"])])
+        let gate = AsyncGate()
+        var staged: URL?
+        var files: [URL] = []
+        backing.onDropFiles = { urls, stagedIn in
+            files = urls
+            staged = stagedIn
+            gate.notify()
+            return true
+        }
+
+        #expect(backing.performDragOperation(makeTextDrag("promise")))
+        try await gate.wait { staged != nil }
+
+        // The guest pulls these long after the drag, so whoever takes the drop
+        // is handed what to free once it settles.
+        let directory = try #require(staged)
+        defer { DropPromiseStaging.release(directory) }
+        #expect(
+            files.allSatisfy {
+                $0.deletingLastPathComponent().standardizedFileURL.path
+                    == directory.standardizedFileURL.path
+            })
+        #expect(FileManager.default.fileExists(atPath: directory.path))
+    }
+
+    @Test("a promise reporting after the drop was taken leaves its staging alone")
+    func lateReportLeavesATakenStagingDirectoryAlone() async throws {
+        let backing = VMDisplayBackingView(frame: .zero)
+        backing.dropAvailability = { .available }
+        // A receiver whose names never account for what it writes settles the
+        // drop on its first file, so the second reports after the drop was
+        // taken — as does any source that answers more often than it names.
+        let receiver = StubPromiseReceiver(fileNames: ["a0.png", "a1.png"], naming: .never)
+        backing.promiseSource = makePromiseSource([receiver])
+        let gate = AsyncGate()
+        var offered: [URL] = []
+        var staged: URL?
+        backing.onDropFiles = { urls, stagedIn in
+            offered = urls
+            staged = stagedIn
+            return true
+        }
+
+        #expect(backing.performDragOperation(makeTextDrag("promise")))
+        // Queued behind every one of the receiver's answers on the main queue.
+        MainActorBridge.async { gate.notify() }
+        try await gate.wait { receiver.reportCount == 2 }
+
+        // The guest pulls from here long after the drag ended, so a promise
+        // still writing when the drop was taken must not free it.
+        let directory = try #require(staged)
+        defer { DropPromiseStaging.release(directory) }
+        #expect(FileManager.default.fileExists(atPath: directory.path))
+        #expect(!offered.isEmpty)
+        #expect(offered.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+    }
+
+    @Test("a promise drag the VM refuses frees what it staged")
+    func refusedPromiseDragReleasesItsStagingDirectory() async throws {
+        let backing = VMDisplayBackingView(frame: .zero)
+        backing.dropAvailability = { .available }
+        backing.promiseSource = makePromiseSource([StubPromiseReceiver(fileNames: ["a.png"])])
+        let gate = AsyncGate()
+        var staged: URL?
+        backing.onDropFiles = { _, stagedIn in
+            staged = stagedIn
+            gate.notify()
+            return false
+        }
+
+        #expect(backing.performDragOperation(makeTextDrag("promise")))
+        try await gate.wait { staged != nil }
+
+        // Nothing took the drop on, so nothing will settle it.
+        #expect(!FileManager.default.fileExists(atPath: try #require(staged).path))
+    }
+
+    @Test(
+        "a promise its source never writes frees the directory it staged",
+        arguments: [1, 2])
+    func failedPromiseReleasesItsStagingDirectory(promiseCount: Int) async throws {
+        let backing = VMDisplayBackingView(frame: .zero)
+        backing.dropAvailability = { .available }
+        let receiver = StubPromiseReceiver(
+            fileNames: (0..<promiseCount).map { "a\($0).png" }, fails: true)
+        backing.promiseSource = makePromiseSource([receiver])
+        let gate = AsyncGate()
+        var reported = false
+        backing.onDropFiles = { _, _ in true }
+        backing.onDropUnreadable = { reported = true }
+
+        #expect(backing.performDragOperation(makeTextDrag("promise")))
+        let directory = try #require(receiver.destination)
+        // A failure settles the drag while its other promises are still
+        // writing, so this lands behind the last of them on the main queue.
+        MainActorBridge.async { gate.notify() }
+
+        try await gate.wait { !FileManager.default.fileExists(atPath: directory.path) }
+        #expect(reported)
     }
 }

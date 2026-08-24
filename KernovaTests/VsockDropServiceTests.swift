@@ -251,7 +251,9 @@ struct VsockDropServiceTests {
         // The readable item still goes, so the drop is not all-or-nothing…
         let offer = try #require(harness.recorder.dropOffers.first)
         #expect(offer.repInfo.map(\.filename) == ["notes.txt"])
-        // …and the one that didn't is said out loud rather than logged.
+        // …and the one that didn't is said out loud rather than logged, in the
+        // verdict that closes the gesture.
+        try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
         try await harness.reports.waitForFailure()
         let wording = try #require(harness.wording)
         #expect(wording.headline == "Some files not copied to \u{201C}Drop VM\u{201D}.")
@@ -279,6 +281,7 @@ struct VsockDropServiceTests {
 
         let offer = try #require(harness.recorder.dropOffers.first)
         #expect(offer.repInfo.map(\.filename) == ["notes.txt"])
+        try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
         try await harness.reports.waitForFailure()
         #expect(harness.failure == .itemsSkipped(note: harness.skippedNote()))
     }
@@ -300,6 +303,7 @@ struct VsockDropServiceTests {
 
         let offer = try #require(harness.recorder.dropOffers.first)
         #expect(offer.repInfo.map(\.filename) == ["notes.txt"])
+        try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
         try await harness.reports.waitForFailure()
         #expect(harness.failure == .itemsSkipped(note: harness.skippedNote()))
     }
@@ -331,11 +335,12 @@ struct VsockDropServiceTests {
         #expect(harness.failure == nil)
     }
 
-    /// The skipped items are not disproved by the rest of the batch arriving, so
-    /// the drop running to its end must not clear their notice — which is what
-    /// dates the refusal after the readout it stands beside.
-    @Test("the skipped-items notice survives the rest of the drop completing")
-    func skippedNoticeSurvivesCompletion() async throws {
+    /// One gesture is owed one sentence with one number (docs/CLIPBOARD.md §13):
+    /// a skip announced when the offer goes out, ahead of the guest's own
+    /// losses, is a second notice carrying a smaller count than the verdict
+    /// behind it.
+    @Test("a gather-time skip is announced once, in the drop's own verdict")
+    func gatherTimeSkipIsAnnouncedInTheVerdict() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
         let scratch = try makeScratchDirectory()
@@ -344,15 +349,15 @@ struct VsockDropServiceTests {
         let missing = scratch.appendingPathComponent("gone-\(UUID().uuidString).bin")
 
         #expect(harness.service.startDrop(urls: [readable, missing]))
-        try await harness.reports.waitForFailure()
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
+        // The guest can still lose an item of its own, so nothing is said yet.
+        #expect(harness.failure == nil)
 
         try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
-        // RATIONALE: a negative assertion — "the notice is not cleared" — so it
-        // takes a fixed observation window rather than a wait timeout
-        // (docs/TESTING.md).
-        try await Task.sleep(for: .milliseconds(100))
+        try await harness.reports.waitForFailure()
 
         #expect(harness.failure == .itemsSkipped(note: harness.skippedNote()))
+        #expect(harness.reports.refusals.count == 1)
     }
 
     // MARK: - Reading the dropped items
@@ -535,9 +540,6 @@ struct VsockDropServiceTests {
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
         let reps = try #require(harness.recorder.dropOffers.first?.repInfo)
         #expect(reps.map(\.filename) == ["locked.bin", "notes.txt"])
-        // The item the offer left out is already reported, on its own.
-        try await harness.reports.waitForFailure()
-        #expect(harness.failure == .itemsSkipped(note: harness.skippedNote()))
 
         try makeUnopenable(locked)
         let first = try await harness.pull(
@@ -549,10 +551,11 @@ struct VsockDropServiceTests {
 
         try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
         // The verdict counts both stages, rather than restating whichever one
-        // spoke last.
+        // spoke last — and it is the only thing the user is interrupted with.
         try await harness.reports.wait {
             harness.failure == .itemsSkipped(note: harness.skippedNote(count: 2))
         }
+        #expect(harness.reports.refusals.count == 1)
     }
 
     @Test("a drag loses every item across both stages and says nothing was sent")
@@ -570,7 +573,6 @@ struct VsockDropServiceTests {
         #expect(harness.service.startDrop(urls: [broken, locked]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
         let reps = try #require(harness.recorder.dropOffers.first?.repInfo)
-        try await harness.reports.waitForFailure()
 
         try makeUnopenable(locked)
         let received = try await harness.pull(
@@ -824,10 +826,19 @@ struct VsockDropServiceTests {
         /// How many armings are waiting to be fired.
         var count: Int { lock.withLock { pending.count } }
 
+        /// Armings made over the whole run, which a wait can count on where the
+        /// pending tally rises and falls as deadlines re-arm.
+        var total: Int { lock.withLock { armedCount } }
+
+        private var armedCount = 0
+
         /// The seam the service is built with.
         var schedule: @Sendable (TimeInterval, @escaping @MainActor @Sendable () -> Void) -> Void {
             { [self] _, work in
-                lock.withLock { pending.append(work) }
+                lock.withLock {
+                    pending.append(work)
+                    armedCount += 1
+                }
                 armed.notify()
             }
         }
@@ -893,19 +904,191 @@ struct VsockDropServiceTests {
         // with nothing of its own in flight — and no deadline of its own.
         #expect(harness.service.startDrop(urls: [second]))
         try await harness.recorder.waitForFrames { harness.recorder.dropOffers.count == 2 }
-        #expect(deadlines.count == 1)
-        // The deadline armed before the guest started work has been stood down,
-        // so firing it now must call nothing off.
+        // Every deadline armed by now belongs to the batch the guest is
+        // serving, whose bytes moved during the window — so firing them calls
+        // nothing off, and the queued batch is not among them.
         deadlines.fireAll()
         #expect(harness.failure == nil)
 
         // Once the first batch is over, the one behind it is owed an answer
         // again — and gets a deadline of its own.
+        let armedSoFar = deadlines.total
         try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
-        try await deadlines.armed.wait { deadlines.count == 1 }
+        try await deadlines.armed.wait { deadlines.total > armedSoFar }
         deadlines.fireAll()
         try await harness.reports.waitForFailure()
         #expect(harness.failure == .unclaimed)
+    }
+
+    @Test("a drop the guest began and then stopped moving is called off")
+    func wedgedClaimedDropIsCalledOff() async throws {
+        let deadlines = ManualDeadlines()
+        let harness = try Harness(scheduleDropDeadline: deadlines.schedule)
+        defer { harness.tearDown() }
+        let scratch = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
+
+        #expect(harness.service.startDrop(urls: [file]))
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
+        let uti = try #require(harness.recorder.dropOffers.first?.repInfo.first?.uti)
+        let served = try await harness.pull(
+            generation: 1, transferID: transferID(generation: 1, repIndex: 0), uti: uti)
+        #expect(served.isComplete)
+
+        // The clock on a claimed drop is an inactivity window: the bytes that
+        // moved during this one start it again rather than ending the job.
+        deadlines.fireAll()
+        #expect(harness.failure == nil)
+
+        // Nothing moves in the next one, and no `DropComplete` ever arrives —
+        // the gesture would otherwise have no end at all.
+        deadlines.fireAll()
+        try await harness.reports.waitForFailure()
+        #expect(harness.failure == .timedOut)
+        #expect(try #require(harness.wording).menuLine == "Drop: the VM stopped taking the files")
+        try await harness.recorder.waitForFrames { !harness.recorder.dropReleases.isEmpty }
+    }
+
+    @Test("a batch queued behind a wedged drop still gets its own answer")
+    func queuedDropOutlivesAWedgedOne() async throws {
+        let deadlines = ManualDeadlines()
+        let harness = try Harness(scheduleDropDeadline: deadlines.schedule)
+        defer { harness.tearDown() }
+        let scratch = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let first = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
+        let second = try makeFile(in: scratch, named: "b.txt", bytes: Data("b".utf8))
+
+        #expect(harness.service.startDrop(urls: [first]))
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
+        let uti = try #require(harness.recorder.dropOffers.first?.repInfo.first?.uti)
+        let served = try await harness.pull(
+            generation: 1, transferID: transferID(generation: 1, repIndex: 0), uti: uti)
+        #expect(served.isComplete)
+        #expect(harness.service.startDrop(urls: [second]))
+        try await harness.recorder.waitForFrames { harness.recorder.dropOffers.count == 2 }
+
+        // The guest holds the first batch open and never sends a verdict for
+        // it. The batch behind it is owed an answer of its own, which nothing
+        // would ever give it while the wedged one suppressed every deadline.
+        deadlines.fireAll()
+        deadlines.fireAll()
+        try await harness.reports.waitForFailure()
+        #expect(harness.failure == .timedOut)
+
+        // Calling the wedged one off is what puts the batch behind it back on
+        // a clock of its own.
+        deadlines.fireAll()
+        try await harness.reports.wait { harness.failure == .unclaimed }
+    }
+
+    // MARK: - Staged promise files
+
+    /// A directory standing in for the one a promise drag writes into, holding
+    /// the single file the drop then offers.
+    private func makeStagedDrop() throws -> (directory: URL, file: URL) {
+        let directory = try makeScratchDirectory()
+        return (directory, try makeFile(in: directory, named: "promised.png", bytes: Data("p".utf8)))
+    }
+
+    private func isStaged(_ directory: URL) -> Bool {
+        FileManager.default.fileExists(atPath: directory.path)
+    }
+
+    @Test("the guest's verdict frees the directory a promise drag staged")
+    func completedDropReleasesItsStagedFiles() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let staged = try makeStagedDrop()
+        defer { DropPromiseStaging.release(staged.directory) }
+
+        #expect(harness.service.startDrop(urls: [staged.file], stagedIn: staged.directory))
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
+        let uti = try #require(harness.recorder.dropOffers.first?.repInfo.first?.uti)
+        let served = try await harness.pull(
+            generation: 1, transferID: transferID(generation: 1, repIndex: 0), uti: uti)
+        #expect(served.isComplete)
+        try await harness.reports.wait { harness.reports.runningSnapshot != nil }
+        // The guest pulls long after the drag is over, so the files stand until
+        // it says what became of them.
+        #expect(isStaged(staged.directory))
+
+        try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
+        try await harness.reports.wait { harness.reports.runningSnapshot == nil }
+
+        #expect(!isStaged(staged.directory))
+    }
+
+    @Test("a drop the guest never takes frees what it staged")
+    func unclaimedDropReleasesItsStagedFiles() async throws {
+        let deadlines = ManualDeadlines()
+        let harness = try Harness(scheduleDropDeadline: deadlines.schedule)
+        defer { harness.tearDown() }
+        let staged = try makeStagedDrop()
+        defer { DropPromiseStaging.release(staged.directory) }
+
+        #expect(harness.service.startDrop(urls: [staged.file], stagedIn: staged.directory))
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
+        try await deadlines.armed.wait { deadlines.count == 1 }
+        deadlines.fireAll()
+
+        try await harness.reports.waitForFailure()
+        #expect(harness.failure == .unclaimed)
+        #expect(!isStaged(staged.directory))
+    }
+
+    @Test("a cancelled drop frees what it staged")
+    func cancelledDropReleasesItsStagedFiles() async throws {
+        let harness = try Harness()
+        defer { harness.tearDown() }
+        let staged = try makeStagedDrop()
+        defer { DropPromiseStaging.release(staged.directory) }
+
+        #expect(harness.service.startDrop(urls: [staged.file], stagedIn: staged.directory))
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
+        let uti = try #require(harness.recorder.dropOffers.first?.repInfo.first?.uti)
+        let served = try await harness.pull(
+            generation: 1, transferID: transferID(generation: 1, repIndex: 0), uti: uti)
+        #expect(served.isComplete)
+        try await harness.reports.wait { harness.reports.runningSnapshot != nil }
+        #expect(harness.reports.cancelShownTransfer())
+
+        try await harness.recorder.waitForFrames { !harness.recorder.dropReleases.isEmpty }
+        #expect(!isStaged(staged.directory))
+    }
+
+    @Test("the channel going frees what a drop still in flight staged")
+    func interruptedDropReleasesItsStagedFiles() async throws {
+        let harness = try Harness()
+        let staged = try makeStagedDrop()
+        defer { DropPromiseStaging.release(staged.directory) }
+
+        #expect(harness.service.startDrop(urls: [staged.file], stagedIn: staged.directory))
+        try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
+
+        harness.recorder.cancel()
+        harness.service.stop()
+        harness.guest.close()
+
+        try await harness.reports.waitForFailure()
+        #expect(!isStaged(staged.directory))
+    }
+
+    @Test("a drop the service refuses leaves its staged files to the caller")
+    func refusedDropLeavesStagedFilesAlone() throws {
+        let harness = try Harness()
+        let staged = try makeStagedDrop()
+        defer { DropPromiseStaging.release(staged.directory) }
+
+        harness.recorder.cancel()
+        harness.service.stop()
+        harness.guest.close()
+
+        // The drop was never taken on, so the caller still holds the only
+        // reference to what it staged.
+        #expect(!harness.service.startDrop(urls: [staged.file], stagedIn: staged.directory))
+        #expect(isStaged(staged.directory))
     }
 
     // MARK: - Teardown

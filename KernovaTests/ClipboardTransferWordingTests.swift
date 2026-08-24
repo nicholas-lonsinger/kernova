@@ -44,6 +44,7 @@ struct ClipboardTransferWordingTests {
             (.interrupted(fileCount: 3), .drop),
             (.timedOut, .paste),
             (.timedOut, .preview),
+            (.timedOut, .drop),
             (.transferFailed, .paste),
             (.transferFailed, .preview),
             (.unpackFailed, .paste),
@@ -259,6 +260,7 @@ struct ClipboardTransferWordingTests {
             (.sendFailed, .drop, "Drop: the files didn't reach the VM"),
             (.itemsSkipped(note: "n"), .drop, "Drop: some files weren't sent"),
             (.unclaimed, .drop, "Drop: the VM never took the files"),
+            (.timedOut, .drop, "Drop: the VM stopped taking the files"),
         ]
         for (failure, gesture, line) in expected {
             #expect(

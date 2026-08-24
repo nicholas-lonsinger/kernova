@@ -435,6 +435,23 @@ struct ClipboardTransferReporterTests {
         #expect(runningSnapshot(reporter)?.gesture == .peerPaste)
     }
 
+    @Test("a preview fetch started during a drop leaves the drop on the readout")
+    func aDropOutranksAPreviewStartedUnderIt() {
+        let scheduler = DwellScheduler()
+        let reporter = makeReporter(scheduler: scheduler)
+        let drop = makeOperation(reporter, gesture: .drop)
+        let preview = makeOperation(reporter, gesture: .preview)
+
+        reporter.publish(from: drop, .running(snapshot(bytes: 1, gesture: .drop), since: Date()))
+        reporter.publish(
+            from: preview, .running(snapshot(bytes: 2, gesture: .preview), since: Date()))
+
+        #expect(runningSnapshot(reporter)?.gesture == .drop)
+        // The fetch the ranking hides is still counted, so the queue reads as a
+        // queue (docs/CLIPBOARD.md §13).
+        #expect(runningSnapshot(reporter)?.pendingBehind == 1)
+    }
+
     @Test("equal-ranked operations keep the newest readout")
     func equalRanksFallBackToRecency() {
         let scheduler = DwellScheduler()

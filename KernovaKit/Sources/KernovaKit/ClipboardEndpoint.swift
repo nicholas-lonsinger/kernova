@@ -306,6 +306,17 @@ public final class ClipboardEndpoint {
         outbound.offer(content, skippedBeforeOffer: skippedBeforeOffer)
     }
 
+    /// Called once per drop generation when that drop is over, whatever ended
+    /// it, so an owner can free what it staged for the peer to pull.
+    ///
+    /// Set after construction rather than taken in the configuration: the owner
+    /// holds this endpoint as a stored property and has no `self` to hand over
+    /// while building it.
+    public var onDropSettled: @MainActor (UInt64) -> Void {
+        get { outbound.onDropSettled }
+        set { outbound.onDropSettled = newValue }
+    }
+
     /// Forgets what was last offered, so re-announcing the same content counts
     /// as a fresh offer.
     public func resetOfferDedup() {

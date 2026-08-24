@@ -25,7 +25,11 @@ final class VMDisplayBackingView: NSView {
     var dropAvailability: () -> DisplayDropAvailability = { .none }
 
     /// Sends dropped file URLs to the guest, reporting whether they were taken.
-    var onDropFiles: ([URL]) -> Bool = { _ in false }
+    ///
+    /// `stagedIn` is the directory a promise drag's files were written into,
+    /// which the receiver owns once it takes the drop — the guest pulls from it
+    /// long after the drag is over.
+    var onDropFiles: (_ urls: [URL], _ stagedIn: URL?) -> Bool = { _, _ in false }
 
     /// Reports a drag this display took that produced no file to send — a file
     /// promise whose source failed to write it.
@@ -71,8 +75,12 @@ final class VMDisplayBackingView: NSView {
     /// types a source that writes its files on demand advertises — Photos, a
     /// Mail attachment, an image dragged out of a browser.
     private static var draggedTypes: [NSPasteboard.PasteboardType] {
-        [.fileURL] + NSFilePromiseReceiver.readableDraggedTypes.map { .init($0) }
+        [.fileURL] + Self.promisedItemTypes
     }
+
+    /// The types that mark a dragged item as one a file promise speaks for.
+    private static let promisedItemTypes: [NSPasteboard.PasteboardType] =
+        NSFilePromiseReceiver.readableDraggedTypes.map { .init($0) }
 
     /// Mirrors `machineView.automaticallyReconfiguresDisplay`, so ``apply(automaticallyReconfiguresDisplay:)``
     /// writes the framework property only when it actually changes.
@@ -256,18 +264,34 @@ final class VMDisplayBackingView: NSView {
         // agent can go away between the last pointer move and the release.
         guard dropAvailability() == .available else { return false }
         let pasteboard = sender.draggingPasteboard
-        let urls =
-            pasteboard.readObjects(forClasses: [NSURL.self], options: Self.fileURLReadingOptions)
-            as? [URL] ?? []
+        let urls = Self.fileURLs(on: pasteboard)
         let receivers = promiseSource.receivers(pasteboard)
         guard !receivers.isEmpty else {
             guard !urls.isEmpty else { return false }
-            return onDropFiles(urls)
+            return onDropFiles(urls, nil)
         }
         receivePromises(receivers, alongside: urls)
         // The promised files are written asynchronously, so the drag ends taken
         // and the offer follows once they land.
         return true
+    }
+
+    /// The concrete file URLs a drag carries, leaving out every item a file
+    /// promise already speaks for.
+    ///
+    /// Read item by item rather than off the pasteboard as a whole because one
+    /// dragged item can advertise both: a Photos asset offers a promise of the
+    /// original beside a URL into the library's own derivatives — the same
+    /// picture, smaller — and reading both sends one dragged item to the guest
+    /// as two files. The promise wins: it is what the source means to hand over.
+    private static func fileURLs(on pasteboard: NSPasteboard) -> [URL] {
+        (pasteboard.pasteboardItems ?? []).compactMap { item in
+            guard Set(item.types).isDisjoint(with: promisedItemTypes),
+                let string = item.string(forType: .fileURL),
+                let url = URL(string: string), url.isFileURL
+            else { return nil }
+            return url
+        }
     }
 
     /// Materializes `receivers` into a directory of this drop's own, then offers
@@ -278,51 +302,78 @@ final class VMDisplayBackingView: NSView {
     private func receivePromises(
         _ receivers: [any DisplayDropPromiseReceiving], alongside urls: [URL]
     ) {
-        let expected = receivers.reduce(0) { $0 + $1.fileNames.count }
-        guard expected > 0, let directory = DropPromiseStaging.makeDropDirectory() else {
+        guard let directory = DropPromiseStaging.makeDropDirectory() else {
             // Nothing will ever be written, so the drag the display just took has
             // to answer for itself here.
             onDropUnreadable()
             return
         }
-        let collection = PromiseCollection(expected: expected, alongside: urls)
-        for receiver in receivers {
+        let collection = PromiseCollection(receiverCount: receivers.count, alongside: urls)
+        for (index, receiver) in receivers.enumerated() {
             // `OperationQueue.main`: the reader only tallies what landed, and the
             // promise's own writing already happens off it.
             receiver.receivePromisedFiles(
                 atDestination: directory, options: [:], operationQueue: .main
-            ) { [weak self] url, error in
-                guard let self, let outcome = collection.received(url, error: error) else { return }
-                self.finishPromiseDrop(outcome, stagedIn: directory)
+            ) { [weak self, weak receiver] url, error in
+                // Tallied before `self` is consulted, so a display torn down
+                // mid-write still reaches quiescence: the count is what says
+                // nothing more will be written into this directory.
+                //
+                // `weak receiver`: this closure is the receiver's to hold, so
+                // holding it back would keep the pair alive on each other. One
+                // already gone owes whatever it last named.
+                let outcome = collection.received(
+                    url, error: error, from: index, naming: receiver?.fileNames.count)
+                guard let self, let outcome else {
+                    // A failure settles the drag while its other promises are
+                    // still writing into this directory; the last of them to
+                    // report is what says nothing more will be.
+                    if collection.canReleaseStaging { DropPromiseStaging.release(directory) }
+                    return
+                }
+                self.finishPromiseDrop(outcome, stagedIn: directory, in: collection)
             }
         }
     }
 
     /// Offers a promise drag's whole set, or answers for one that never
     /// completed.
-    private func finishPromiseDrop(_ outcome: PromiseCollection.Outcome, stagedIn directory: URL) {
+    ///
+    /// The staging directory goes with the drop the service takes on, which
+    /// frees it when that drop settles; every other path frees it here, once
+    /// ``PromiseCollection/canReleaseStaging`` says no promise is still writing
+    /// into it and no drop has taken it over.
+    private func finishPromiseDrop(
+        _ outcome: PromiseCollection.Outcome, stagedIn directory: URL,
+        in collection: PromiseCollection
+    ) {
         switch outcome {
         case .ready(let files):
-            guard onDropFiles(files) else {
+            guard onDropFiles(files, directory) else {
                 // The VM stopped taking drops while the source was still
                 // writing; the service that would report it is already gone.
                 Self.logger.warning("A promise drag's files landed after the VM stopped taking them")
-                try? FileManager.default.removeItem(at: directory)
+                DropPromiseStaging.release(directory)
                 return
             }
+            collection.stagingWasTakenOver()
         case .failed(let error):
             Self.logger.warning(
                 "A dropped file promise was never written: \(error?.localizedDescription ?? "no file", privacy: .public)"
             )
-            // Left for the launch reclaim rather than removed here: the drag's
-            // other promises settle on the first failure and may still be
-            // writing into this directory.
+            if collection.canReleaseStaging { DropPromiseStaging.release(directory) }
             onDropUnreadable()
         }
     }
 
     /// Tallies what one drag's promises write, so the drop is offered exactly
     /// once — with the concrete files the same drag carried alongside them.
+    ///
+    /// How many files a receiver owes is asked of it again at every callback
+    /// rather than totalled when the drag is taken: `NSFilePromiseReceiver`
+    /// populates `fileNames` as its files are received, so a source that names
+    /// nothing up front — a Photos asset does — still owes the one file its
+    /// presence on the pasteboard promises.
     @MainActor
     private final class PromiseCollection {
         /// What the drag became once it stopped waiting.
@@ -334,29 +385,65 @@ final class VMDisplayBackingView: NSView {
             case failed((any Error)?)
         }
 
-        private let expected: Int
+        /// How many files each receiver owes, by its index in the drag's
+        /// receivers.
+        ///
+        /// The most it has ever named, so a count that reads short mid-write
+        /// cannot shrink what is still owed — and never fewer than one: a
+        /// receiver that names nothing is on the pasteboard because it promises
+        /// something, and its names appear only as that something lands.
+        private var owed: [Int]
+        /// How many files each receiver has reported, by the same index.
+        private var reported: [Int]
         private var files: [URL]
-        private var received = 0
         private var isSettled = false
+        private var isStagingTakenOver = false
 
-        init(expected: Int, alongside files: [URL]) {
-            self.expected = expected
+        /// Whether every promise has reported, so nothing more will be written
+        /// into the drag's staging directory.
+        ///
+        /// A latch, so a source that reports more often than its names account
+        /// for cannot un-latch it and strand the directory.
+        private(set) var isQuiesced = false
+
+        init(receiverCount: Int, alongside files: [URL]) {
+            self.owed = Array(repeating: 1, count: receiverCount)
+            self.reported = Array(repeating: 0, count: receiverCount)
             self.files = files
         }
 
-        /// Records one promise's result, returning the outcome when this is what
-        /// settled the drag and `nil` while it is still waiting.
-        func received(_ url: URL, error: (any Error)?) -> Outcome? {
+        /// Whether the drag's staging directory is still the display's to free:
+        /// nothing more will be written into it, and no drop has taken it on.
+        var canReleaseStaging: Bool { isQuiesced && !isStagingTakenOver }
+
+        /// Records that a drop took the staging directory on, so a promise that
+        /// reports after the drop was offered cannot free what the guest is
+        /// still pulling from.
+        func stagingWasTakenOver() { isStagingTakenOver = true }
+
+        /// Records one promise's result — `naming` is how many files its
+        /// receiver names as of this callback — returning the outcome when this
+        /// is what settled the drag and `nil` while it is still waiting.
+        func received(
+            _ url: URL, error: (any Error)?, from index: Int, naming names: Int?
+        ) -> Outcome? {
+            reported[index] += 1
+            owed[index] = max(owed[index], names ?? 0)
+            isQuiesced = isQuiesced || isComplete
             guard !isSettled else { return nil }
             guard error == nil else {
                 isSettled = true
                 return .failed(error)
             }
             files.append(url)
-            received += 1
-            guard received == expected else { return nil }
+            guard isComplete else { return nil }
             isSettled = true
             return .ready(files)
+        }
+
+        /// Whether every receiver has reported every file it owes.
+        private var isComplete: Bool {
+            zip(reported, owed).allSatisfy { $0 >= $1 }
         }
     }
 
