@@ -124,6 +124,11 @@ public final class FrameRecorder: @unchecked Sendable {
     /// errored.
     public var isFinished: Bool { lock.withLock { ended } }
 
+    /// The first recorded frame whose payload matches `predicate`, if any.
+    public func first(where predicate: (Frame) -> Bool) -> Frame? {
+        frames.first(where: predicate)
+    }
+
     /// Every recorded `ClipboardRequest`, in arrival order.
     public var requests: [Kernova_V1_ClipboardRequest] {
         frames.compactMap {
