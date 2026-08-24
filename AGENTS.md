@@ -269,7 +269,7 @@ Confirm `gh pr view <N> --json state -q .state` reports `"MERGED"` first. Then l
 
 ## Architecture Change Protocol
 
-Before calling a task done, propose these follow-ups if it changed how components communicate, added or removed a dependency, changed build config/entitlements/tooling, added or reshaped a public type, or changed actor isolation:
+Before calling a task done, work these three follow-ups. Each is owed only when the change tripped a trigger — changed how components communicate, added or removed a dependency, changed build config/entitlements/tooling, added or reshaped a public type, changed actor isolation — and most tasks trip none of them.
 
 1. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — update only when a **component boundary** changed: a new service or protocol, a changed data flow, a changed actor isolation. A file appearing, moving or being renamed is not one. Surgical edits only.
 
@@ -277,4 +277,11 @@ Before calling a task done, propose these follow-ups if it changed how component
 
 3. **AGENTS.md** — update only if a rule stated here changed.
 
-4. **Maintenance Notes** — end the response with a `### Maintenance Notes` list: one ✅/⚠️ line per follow-up above, updated or skipped-and-why.
+### Reporting
+
+End the response with a `### Maintenance Notes` list carrying a line for each of the three, every time. The list is a coverage report: what is owed is only legible against what is settled, so a follow-up left off it reads as unexamined rather than fine.
+
+- ✅ — settled, nothing to act on: carried out in this change (name what you updated), or not something this change needed.
+- ⚠️ — owed and unpaid; name the gap and its issue number, or what closing it takes.
+
+Both ✅ readings share one symbol because the reader's next move is the same for each: none. ⚠️ is the only mark that asks for anything, so it never means "no action needed".
