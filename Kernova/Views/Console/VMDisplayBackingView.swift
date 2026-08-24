@@ -308,26 +308,30 @@ final class VMDisplayBackingView: NSView {
             onDropUnreadable()
             return
         }
-        let collection = PromiseCollection(receivers: receivers, alongside: urls)
+        let collection = PromiseCollection(receiverCount: receivers.count, alongside: urls)
         for (index, receiver) in receivers.enumerated() {
             // `OperationQueue.main`: the reader only tallies what landed, and the
             // promise's own writing already happens off it.
             receiver.receivePromisedFiles(
                 atDestination: directory, options: [:], operationQueue: .main
-            ) { [weak self] url, error in
+            ) { [weak self, weak receiver] url, error in
                 // Tallied before `self` is consulted, so a display torn down
                 // mid-write still reaches quiescence: the count is what says
                 // nothing more will be written into this directory.
-                let outcome = collection.received(url, error: error, from: index)
+                //
+                // `weak receiver`: this closure is the receiver's to hold, so
+                // holding it back would keep the pair alive on each other. One
+                // already gone owes whatever it last named.
+                let outcome = collection.received(
+                    url, error: error, from: index, naming: receiver?.fileNames.count)
                 guard let self, let outcome else {
                     // A failure settles the drag while its other promises are
                     // still writing into this directory; the last of them to
                     // report is what says nothing more will be.
-                    if collection.isQuiesced { DropPromiseStaging.release(directory) }
+                    if collection.canReleaseStaging { DropPromiseStaging.release(directory) }
                     return
                 }
-                self.finishPromiseDrop(
-                    outcome, stagedIn: directory, isQuiesced: collection.isQuiesced)
+                self.finishPromiseDrop(outcome, stagedIn: directory, in: collection)
             }
         }
     }
@@ -337,9 +341,11 @@ final class VMDisplayBackingView: NSView {
     ///
     /// The staging directory goes with the drop the service takes on, which
     /// frees it when that drop settles; every other path frees it here, once
-    /// `isQuiesced` says no promise is still writing into it.
+    /// ``PromiseCollection/canReleaseStaging`` says no promise is still writing
+    /// into it and no drop has taken it over.
     private func finishPromiseDrop(
-        _ outcome: PromiseCollection.Outcome, stagedIn directory: URL, isQuiesced: Bool
+        _ outcome: PromiseCollection.Outcome, stagedIn directory: URL,
+        in collection: PromiseCollection
     ) {
         switch outcome {
         case .ready(let files):
@@ -350,11 +356,12 @@ final class VMDisplayBackingView: NSView {
                 DropPromiseStaging.release(directory)
                 return
             }
+            collection.stagingWasTakenOver()
         case .failed(let error):
             Self.logger.warning(
                 "A dropped file promise was never written: \(error?.localizedDescription ?? "no file", privacy: .public)"
             )
-            if isQuiesced { DropPromiseStaging.release(directory) }
+            if collection.canReleaseStaging { DropPromiseStaging.release(directory) }
             onDropUnreadable()
         }
     }
@@ -378,12 +385,19 @@ final class VMDisplayBackingView: NSView {
             case failed((any Error)?)
         }
 
-        private let receivers: [any DisplayDropPromiseReceiving]
-        /// How many files each receiver has reported, by its index in
-        /// ``receivers``.
+        /// How many files each receiver owes, by its index in the drag's
+        /// receivers.
+        ///
+        /// The most it has ever named, so a count that reads short mid-write
+        /// cannot shrink what is still owed — and never fewer than one: a
+        /// receiver that names nothing is on the pasteboard because it promises
+        /// something, and its names appear only as that something lands.
+        private var owed: [Int]
+        /// How many files each receiver has reported, by the same index.
         private var reported: [Int]
         private var files: [URL]
         private var isSettled = false
+        private var isStagingTakenOver = false
 
         /// Whether every promise has reported, so nothing more will be written
         /// into the drag's staging directory.
@@ -392,16 +406,29 @@ final class VMDisplayBackingView: NSView {
         /// for cannot un-latch it and strand the directory.
         private(set) var isQuiesced = false
 
-        init(receivers: [any DisplayDropPromiseReceiving], alongside files: [URL]) {
-            self.receivers = receivers
-            self.reported = Array(repeating: 0, count: receivers.count)
+        init(receiverCount: Int, alongside files: [URL]) {
+            self.owed = Array(repeating: 1, count: receiverCount)
+            self.reported = Array(repeating: 0, count: receiverCount)
             self.files = files
         }
 
-        /// Records one promise's result, returning the outcome when this is what
-        /// settled the drag and `nil` while it is still waiting.
-        func received(_ url: URL, error: (any Error)?, from index: Int) -> Outcome? {
+        /// Whether the drag's staging directory is still the display's to free:
+        /// nothing more will be written into it, and no drop has taken it on.
+        var canReleaseStaging: Bool { isQuiesced && !isStagingTakenOver }
+
+        /// Records that a drop took the staging directory on, so a promise that
+        /// reports after the drop was offered cannot free what the guest is
+        /// still pulling from.
+        func stagingWasTakenOver() { isStagingTakenOver = true }
+
+        /// Records one promise's result — `naming` is how many files its
+        /// receiver names as of this callback — returning the outcome when this
+        /// is what settled the drag and `nil` while it is still waiting.
+        func received(
+            _ url: URL, error: (any Error)?, from index: Int, naming names: Int?
+        ) -> Outcome? {
             reported[index] += 1
+            owed[index] = max(owed[index], names ?? 0)
             isQuiesced = isQuiesced || isComplete
             guard !isSettled else { return nil }
             guard error == nil else {
@@ -415,14 +442,8 @@ final class VMDisplayBackingView: NSView {
         }
 
         /// Whether every receiver has reported every file it owes.
-        ///
-        /// A receiver that names none owes one: it is on the pasteboard because
-        /// it promises something, and its names appear only as that something
-        /// lands.
         private var isComplete: Bool {
-            zip(receivers, reported).allSatisfy { receiver, count in
-                count >= max(receiver.fileNames.count, 1)
-            }
+            zip(reported, owed).allSatisfy { $0 >= $1 }
         }
     }
 
