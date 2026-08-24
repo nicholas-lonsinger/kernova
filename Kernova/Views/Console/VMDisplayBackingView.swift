@@ -75,8 +75,12 @@ final class VMDisplayBackingView: NSView {
     /// types a source that writes its files on demand advertises — Photos, a
     /// Mail attachment, an image dragged out of a browser.
     private static var draggedTypes: [NSPasteboard.PasteboardType] {
-        [.fileURL] + NSFilePromiseReceiver.readableDraggedTypes.map { .init($0) }
+        [.fileURL] + Self.promisedItemTypes
     }
+
+    /// The types that mark a dragged item as one a file promise speaks for.
+    private static let promisedItemTypes: [NSPasteboard.PasteboardType] =
+        NSFilePromiseReceiver.readableDraggedTypes.map { .init($0) }
 
     /// Mirrors `machineView.automaticallyReconfiguresDisplay`, so ``apply(automaticallyReconfiguresDisplay:)``
     /// writes the framework property only when it actually changes.
@@ -260,9 +264,7 @@ final class VMDisplayBackingView: NSView {
         // agent can go away between the last pointer move and the release.
         guard dropAvailability() == .available else { return false }
         let pasteboard = sender.draggingPasteboard
-        let urls =
-            pasteboard.readObjects(forClasses: [NSURL.self], options: Self.fileURLReadingOptions)
-            as? [URL] ?? []
+        let urls = Self.fileURLs(on: pasteboard)
         let receivers = promiseSource.receivers(pasteboard)
         guard !receivers.isEmpty else {
             guard !urls.isEmpty else { return false }
@@ -274,6 +276,24 @@ final class VMDisplayBackingView: NSView {
         return true
     }
 
+    /// The concrete file URLs a drag carries, leaving out every item a file
+    /// promise already speaks for.
+    ///
+    /// Read item by item rather than off the pasteboard as a whole because one
+    /// dragged item can advertise both: a Photos asset offers a promise of the
+    /// original beside a URL into the library's own derivatives — the same
+    /// picture, smaller — and reading both sends one dragged item to the guest
+    /// as two files. The promise wins: it is what the source means to hand over.
+    private static func fileURLs(on pasteboard: NSPasteboard) -> [URL] {
+        (pasteboard.pasteboardItems ?? []).compactMap { item in
+            guard Set(item.types).isDisjoint(with: promisedItemTypes),
+                let string = item.string(forType: .fileURL),
+                let url = URL(string: string), url.isFileURL
+            else { return nil }
+            return url
+        }
+    }
+
     /// Materializes `receivers` into a directory of this drop's own, then offers
     /// them together with the concrete `urls` the same drag carried.
     ///
@@ -282,15 +302,14 @@ final class VMDisplayBackingView: NSView {
     private func receivePromises(
         _ receivers: [any DisplayDropPromiseReceiving], alongside urls: [URL]
     ) {
-        let expected = receivers.reduce(0) { $0 + $1.fileNames.count }
-        guard expected > 0, let directory = DropPromiseStaging.makeDropDirectory() else {
+        guard let directory = DropPromiseStaging.makeDropDirectory() else {
             // Nothing will ever be written, so the drag the display just took has
             // to answer for itself here.
             onDropUnreadable()
             return
         }
-        let collection = PromiseCollection(expected: expected, alongside: urls)
-        for receiver in receivers {
+        let collection = PromiseCollection(receivers: receivers, alongside: urls)
+        for (index, receiver) in receivers.enumerated() {
             // `OperationQueue.main`: the reader only tallies what landed, and the
             // promise's own writing already happens off it.
             receiver.receivePromisedFiles(
@@ -299,7 +318,7 @@ final class VMDisplayBackingView: NSView {
                 // Tallied before `self` is consulted, so a display torn down
                 // mid-write still reaches quiescence: the count is what says
                 // nothing more will be written into this directory.
-                let outcome = collection.received(url, error: error)
+                let outcome = collection.received(url, error: error, from: index)
                 guard let self, let outcome else {
                     // A failure settles the drag while its other promises are
                     // still writing into this directory; the last of them to
@@ -342,6 +361,12 @@ final class VMDisplayBackingView: NSView {
 
     /// Tallies what one drag's promises write, so the drop is offered exactly
     /// once — with the concrete files the same drag carried alongside them.
+    ///
+    /// How many files a receiver owes is asked of it again at every callback
+    /// rather than totalled when the drag is taken: `NSFilePromiseReceiver`
+    /// populates `fileNames` as its files are received, so a source that names
+    /// nothing up front — a Photos asset does — still owes the one file its
+    /// presence on the pasteboard promises.
     @MainActor
     private final class PromiseCollection {
         /// What the drag became once it stopped waiting.
@@ -353,38 +378,51 @@ final class VMDisplayBackingView: NSView {
             case failed((any Error)?)
         }
 
-        private let expected: Int
+        private let receivers: [any DisplayDropPromiseReceiving]
+        /// How many files each receiver has reported, by its index in
+        /// ``receivers``.
+        private var reported: [Int]
         private var files: [URL]
-        private var received = 0
-        private var reported = 0
         private var isSettled = false
 
         /// Whether every promise has reported, so nothing more will be written
         /// into the drag's staging directory.
+        ///
+        /// A latch, so a source that reports more often than its names account
+        /// for cannot un-latch it and strand the directory.
         private(set) var isQuiesced = false
 
-        init(expected: Int, alongside files: [URL]) {
-            self.expected = expected
+        init(receivers: [any DisplayDropPromiseReceiving], alongside files: [URL]) {
+            self.receivers = receivers
+            self.reported = Array(repeating: 0, count: receivers.count)
             self.files = files
         }
 
         /// Records one promise's result, returning the outcome when this is what
         /// settled the drag and `nil` while it is still waiting.
-        func received(_ url: URL, error: (any Error)?) -> Outcome? {
-            reported += 1
-            // A latch, so a source that reports more often than its `fileNames`
-            // promised cannot un-latch it and strand the directory.
-            isQuiesced = reported >= expected
+        func received(_ url: URL, error: (any Error)?, from index: Int) -> Outcome? {
+            reported[index] += 1
+            isQuiesced = isQuiesced || isComplete
             guard !isSettled else { return nil }
             guard error == nil else {
                 isSettled = true
                 return .failed(error)
             }
             files.append(url)
-            received += 1
-            guard received == expected else { return nil }
+            guard isComplete else { return nil }
             isSettled = true
             return .ready(files)
+        }
+
+        /// Whether every receiver has reported every file it owes.
+        ///
+        /// A receiver that names none owes one: it is on the pasteboard because
+        /// it promises something, and its names appear only as that something
+        /// lands.
+        private var isComplete: Bool {
+            zip(receivers, reported).allSatisfy { receiver, count in
+                count >= max(receiver.fileNames.count, 1)
+            }
         }
     }
 
