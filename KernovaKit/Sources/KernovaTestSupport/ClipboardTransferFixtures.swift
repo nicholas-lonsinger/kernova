@@ -60,7 +60,6 @@ public final class DialledDataConnections: @unchecked Sendable {
     /// How many connections have been dialled so far.
     public var count: Int { lock.withLock { opened.count } }
 
-    // periphery:ignore:parameters isolation
     /// The next connection nothing has taken, awaiting one that has not been
     /// dialled yet.
     public func next(isolation: isolated (any Actor)? = #isolation) async throws -> Int32 {

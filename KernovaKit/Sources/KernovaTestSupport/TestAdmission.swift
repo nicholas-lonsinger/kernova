@@ -16,18 +16,18 @@ import os
 /// bumped to compensate, inflate the pool. Leaving a cancelled waiter in the
 /// queue costs it one turn's wait and keeps the invariant exact; cancellation is
 /// then observed by the work it wraps.
-public final class TestAdmissionGate: @unchecked Sendable {
+final class TestAdmissionGate: @unchecked Sendable {
     private let lock = NSLock()
     private var available: Int
     private var waiters: [() -> Void] = []
 
     /// Creates a gate holding `width` permits; a width below 1 admits nobody.
-    public init(width: Int) {
+    init(width: Int) {
         available = max(0, width)
     }
 
     /// Suspends until a permit is free, then takes it.
-    public func acquire() async {
+    func acquire() async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             lock.lock()
             guard available > 0 else {
@@ -42,7 +42,7 @@ public final class TestAdmissionGate: @unchecked Sendable {
     }
 
     /// Returns a permit, resuming the oldest waiter if one is queued.
-    public func release() {
+    func release() {
         lock.lock()
         guard !waiters.isEmpty else {
             available += 1

@@ -27,7 +27,6 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, @unchecked Sen
     private var storedWriteAttempts = 0
     private var storedLastPrepareOptions: NSPasteboard.ContentsOptions?
     private var items: [PromisedItem] = []
-    private var resolved: [(type: NSPasteboard.PasteboardType, data: Data)] = []
     private var writeFailuresRemaining = 0
     private var storedProviderInvocations = 0
 
@@ -73,18 +72,6 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, @unchecked Sen
 
     /// How many promised items the last successful write registered.
     public var promisedItemCount: Int { lock.withLock { items.count } }
-
-    /// The bytes a provider resolved for `type`, as a real `NSPasteboardItem`
-    /// would retain them.
-    public func data(forType type: NSPasteboard.PasteboardType) -> Data? {
-        lock.withLock { resolved.first { $0.type == type }?.data }
-    }
-
-    /// The provider of the promised item at `index`, for a test firing it after
-    /// something has replaced the write it belonged to.
-    public func provider(at index: Int) -> NSPasteboardItemDataProvider? {
-        lock.withLock { items.indices.contains(index) ? items[index].provider : nil }
-    }
 
     /// Makes the next `times` `writeItems(_:)` calls fail, modelling an
     /// OS-level pasteboard write failure.
@@ -147,7 +134,6 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, @unchecked Sen
     private func takeItemsLocked() -> [NSPasteboardItemDataProvider] {
         let displaced = items.map(\.provider)
         items.removeAll()
-        resolved.removeAll()
         return displaced
     }
 
@@ -170,11 +156,6 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, @unchecked Sen
 
     // MARK: - Firing a promise
 
-    /// Fires the promise for `type` on the first item offering it.
-    public func invokeProvider(forType type: NSPasteboard.PasteboardType) -> Data? {
-        invokeProvider(forType: type, itemIndex: nil)
-    }
-
     /// Fires a promised item's provider the way the OS does, synchronously.
     ///
     /// Builds a fresh `NSPasteboardItem`, runs the recorded provider's
@@ -183,10 +164,6 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, @unchecked Sen
     /// promise the same type (`.fileURL` across a multi-file offer); `nil` takes
     /// the first offering it. **This blocks until the pull behind the promise
     /// resolves**, so call it off the test's main actor.
-    ///
-    /// The bytes are cached back as a real `NSPasteboardItem` retains provided
-    /// data, so a later ``data(forType:)`` reads what a paste would see without
-    /// re-firing.
     public func invokeProvider(
         forType type: NSPasteboard.PasteboardType, itemIndex: Int?
     ) -> Data? {
@@ -203,10 +180,6 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, @unchecked Sen
         let item = NSPasteboardItem()
         provider.pasteboard(nil, item: item, provideDataForType: type)
         guard let bytes = item.data(forType: type) else { return nil }
-        lock.withLock {
-            resolved.removeAll { $0.type == type }
-            resolved.append((type: type, data: bytes))
-        }
         changed.notify()
         return bytes
     }

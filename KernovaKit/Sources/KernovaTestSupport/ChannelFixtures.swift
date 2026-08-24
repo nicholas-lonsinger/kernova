@@ -163,9 +163,6 @@ public final class FrameRecorder: @unchecked Sendable {
 
     // MARK: - Waiting
 
-    // `isolation` uses the Swift `isolated` keyword to pin these helpers to the
-    // caller's actor, so it is intentionally never referenced by name.
-    // periphery:ignore:parameters isolation
     /// Suspends until at least `expected` frames have been recorded.
     ///
     /// `>=` rather than `==`: a burst could carry the count past an equality
@@ -178,7 +175,6 @@ public final class FrameRecorder: @unchecked Sendable {
         try await recorded.wait(timeout: timeout, isolation: isolation) { self.count >= expected }
     }
 
-    // periphery:ignore:parameters isolation
     /// Suspends until `predicate` holds over the frames recorded so far.
     public func waitForFrames(
         timeout: TimeInterval = testWaitBackstop,
@@ -188,25 +184,6 @@ public final class FrameRecorder: @unchecked Sendable {
         try await recorded.wait(timeout: timeout, isolation: isolation, until: predicate)
     }
 
-    // periphery:ignore:parameters isolation
-    /// Suspends until a frame matching `predicate` has been recorded, and
-    /// returns the first one that does.
-    @discardableResult
-    public func waitForFrame(
-        timeout: TimeInterval = testWaitBackstop,
-        isolation: isolated (any Actor)? = #isolation,
-        matching predicate: (Frame) -> Bool
-    ) async throws -> Frame {
-        try await recorded.wait(timeout: timeout, isolation: isolation) {
-            self.frames.contains(where: predicate)
-        }
-        guard let frame = first(where: predicate) else {
-            throw TestFailure("Matching frame vanished from the recorder")
-        }
-        return frame
-    }
-
-    // periphery:ignore:parameters isolation
     /// Suspends until the channel ends.
     public func waitUntilFinished(
         timeout: TimeInterval = testWaitBackstop, isolation: isolated (any Actor)? = #isolation

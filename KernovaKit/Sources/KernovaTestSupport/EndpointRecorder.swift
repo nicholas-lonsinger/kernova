@@ -42,9 +42,6 @@ public final class EndpointRecorder: ClipboardEndpointDelegate {
     /// Creates a recorder holding nothing.
     public init() {}
 
-    /// The most recent offer, or `nil`.
-    public var lastOffer: ClipboardEndpoint.InboundOffer? { offers.last }
-
     /// How many times `activity` was recorded.
     public func activityCount(_ activity: ClipboardEndpoint.Activity) -> Int {
         activities.filter { $0 == activity }.count

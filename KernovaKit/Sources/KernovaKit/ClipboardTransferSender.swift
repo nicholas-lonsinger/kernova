@@ -37,7 +37,7 @@ public enum ClipboardTransferLink: Sendable {
 /// socket writes are one call stack, and `write(2)` parking on a full send
 /// buffer *is* the flow control. Nothing above it counts credit
 /// (docs/research/2026-08-17-vsock-stalled-receiver-and-accept-latency.md).
-public final class ClipboardTransferSender: @unchecked Sendable {
+final class ClipboardTransferSender: @unchecked Sendable {
     /// Why this side stopped streaming, carried out through AppleArchive, which
     /// rewraps whatever a stream callback throws.
     private enum SenderStop: Error {
@@ -45,9 +45,9 @@ public final class ClipboardTransferSender: @unchecked Sendable {
     }
 
     /// Identifies the transfer this connection carries.
-    public let transferID: UInt64
+    let transferID: UInt64
     /// The offer generation the representation belongs to.
-    public let generation: UInt64
+    let generation: UInt64
 
     private let link: ClipboardTransferLink
     private let socketTimeout: TimeInterval
@@ -79,7 +79,7 @@ public final class ClipboardTransferSender: @unchecked Sendable {
     ///   - onTransferTimed: fired off the caller's actor once per *successful*
     ///     transfer, carrying its stage timings. A transfer that aborts reports
     ///     nothing, since a partial figure would read as a rate.
-    public init(
+    init(
         transferID: UInt64,
         generation: UInt64,
         link: ClipboardTransferLink,
@@ -127,7 +127,7 @@ public final class ClipboardTransferSender: @unchecked Sendable {
     ///   - onComplete: fired off the caller's actor exactly once when the
     ///     transfer ends, with `success` true only when every byte was streamed
     ///     and the completion trailer written.
-    public func start(
+    func start(
         representation: ClipboardContent.Representation,
         maxAcceptByteCount: UInt64,
         isInline: Bool,
@@ -150,7 +150,7 @@ public final class ClipboardTransferSender: @unchecked Sendable {
     /// is honored before the next socket write, so a peer that is reading sees
     /// it immediately; one that has stopped reading sees it when the send
     /// timeout releases the parked write, having not been waiting for it.
-    public func cancel(_ code: ClipboardStreamAbortCode) {
+    func cancel(_ code: ClipboardStreamAbortCode) {
         lock.withLock { if retiredAs == nil { retiredAs = code } }
     }
 

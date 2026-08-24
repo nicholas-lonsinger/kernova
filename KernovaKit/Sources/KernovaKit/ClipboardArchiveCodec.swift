@@ -20,9 +20,6 @@ enum ClipboardArchiveStreamError: Error, Equatable {
     case unsupportedOperation
     /// Bytes were offered after the stream had already ended.
     case streamClosed
-    /// The transfer was torn down — superseded, aborted, or the connection
-    /// closed.
-    case cancelled
     /// The consumer stopped the extract: what it was about to write is more than
     /// it agreed to take.
     case outputRefused(ClipboardArchiveOutputRefusal)

@@ -7,7 +7,7 @@ import Foundation
 /// (``open(transferID:generation:maxAcceptByteCount:dial:)``, when this side
 /// dials) or adopts one its listener accepted (``adopt(fd:reply:)``). Callbacks
 /// fire off the owning actor, on the transfer's own queue, exactly once.
-public final class ClipboardTransferInbox: @unchecked Sendable {
+final class ClipboardTransferInbox: @unchecked Sendable {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardTransferInbox")
 
@@ -42,7 +42,7 @@ public final class ClipboardTransferInbox: @unchecked Sendable {
     ///     extract.
     ///   - extractPacingBytes: output granularity of the extract's guard.
     ///   - onTransferTimed: fired once per successful transfer.
-    public init(
+    init(
         staging: ClipboardFileStaging,
         clock: any EngineClock = makePlatformEngineClock(),
         socketTimeout: TimeInterval = ClipboardStreamTuning.dataSocketTimeout,
@@ -65,7 +65,7 @@ public final class ClipboardTransferInbox: @unchecked Sendable {
     /// One live registration per id: callers sharing a `transfer_id` share the
     /// pull that owns it (`LazyPullCoordinator`), so an overwrite here would be
     /// a second pull nobody asked for.
-    public func awaitTransfer(
+    func awaitTransfer(
         _ transferID: UInt64,
         plan: ClipboardTransferReceiver.Plan,
         onComplete: @escaping @Sendable (ClipboardContent.Representation) -> Void,
@@ -87,7 +87,7 @@ public final class ClipboardTransferInbox: @unchecked Sendable {
     }
 
     /// Deregisters a pull's expectation without firing it.
-    public func cancelAwait(_ transferID: UInt64) {
+    func cancelAwait(_ transferID: UInt64) {
         let (removed, receiver) = lock.withLock {
             (awaiters.removeValue(forKey: transferID) != nil, live[transferID])
         }
@@ -100,7 +100,7 @@ public final class ClipboardTransferInbox: @unchecked Sendable {
     ///
     /// A no-op when nothing is awaiting `transferID` — there would be nowhere
     /// to deliver what arrived.
-    public func open(
+    func open(
         transferID: UInt64, generation: UInt64, maxAcceptByteCount: UInt64,
         dial: @escaping @Sendable () throws -> Int32
     ) {
@@ -122,7 +122,7 @@ public final class ClipboardTransferInbox: @unchecked Sendable {
     /// A connection naming a transfer nothing is awaiting — or one this side
     /// cancelled — is closed rather than served, which is the refusal a peer
     /// sees for both.
-    public func adopt(fd: Int32, reply: Kernova_V1_ClipboardTransferReply) {
+    func adopt(fd: Int32, reply: Kernova_V1_ClipboardTransferReply) {
         guard let awaiter = lock.withLock({ awaiters[reply.transferID] }) else {
             Self.logger.debug(
                 "Closing a data connection for clipboard transfer \(reply.transferID, privacy: .public) — nothing is awaiting it"
@@ -138,7 +138,7 @@ public final class ClipboardTransferInbox: @unchecked Sendable {
 
     /// Abandons every transfer of a superseded generation, and wakes any pull
     /// awaiting one that never opened.
-    public func cancel(generation: UInt64) {
+    func cancel(generation: UInt64) {
         let affected = lock.withLock {
             live.values.filter { ClipboardTransferID.generation(of: $0.transferID) == generation }
         }
@@ -149,13 +149,13 @@ public final class ClipboardTransferInbox: @unchecked Sendable {
     /// Abandons one transfer, and wakes a pull awaiting it — the teardown for a
     /// single abandoned pull, leaving every sibling of the same generation
     /// streaming.
-    public func cancel(transferID: UInt64) {
+    func cancel(transferID: UInt64) {
         lock.withLock { live[transferID] }?.cancel()
         failAwaiters { $0 == transferID }
     }
 
     /// Abandons every transfer and wakes every pull awaiting this peer.
-    public func cancelAll() {
+    func cancelAll() {
         let all = lock.withLock { Array(live.values) }
         for receiver in all { receiver.cancel() }
         failAwaiters { _ in true }
