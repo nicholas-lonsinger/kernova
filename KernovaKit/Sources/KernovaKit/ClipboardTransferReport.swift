@@ -75,7 +75,8 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// The session ended mid-transfer. `fileCount` is how many files a drop was
     /// still carrying; `nil` for a paste, which speaks of the clipboard.
     case interrupted(fileCount: Int?)
-    /// The receiver gave up waiting for bytes that stopped arriving.
+    /// One side gave up waiting on the other — bytes that stopped arriving, or a
+    /// peer that stopped taking the ones it had begun.
     case timedOut
     /// The transfer aborted for a reason with no more specific case.
     case transferFailed

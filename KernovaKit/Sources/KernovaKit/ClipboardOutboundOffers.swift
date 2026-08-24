@@ -70,6 +70,23 @@ private final class UnreadableReps: @unchecked Sendable {
     var count: Int { lock.withLock { skippedBeforeOffer + indices.count } }
 }
 
+/// How many times one offer's bytes have moved, counted from whichever queue is
+/// serving it.
+///
+/// A number rather than a timestamp: the deadline that reads it samples the
+/// count when it arms and again when it fires, so "moved since" needs no clock
+/// of its own and no second time source to keep in step with the injected one.
+///
+/// `@unchecked Sendable`: `value` is read and written under `lock`.
+private final class ActivityCount: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: UInt64 = 0
+
+    func bump() { lock.withLock { value &+= 1 } }
+
+    var count: UInt64 { lock.withLock { value } }
+}
+
 /// What this side has offered the peer, and the transfers it serves in answer.
 ///
 /// The peer decides what it pulls and when — a paste can take two waves minutes
@@ -99,6 +116,9 @@ public final class ClipboardOutboundOffers {
         /// Whether a deadline is scheduled for this offer, which is true in every
         /// state but "something else is streaming".
         var isClaimDeadlineArmed = false
+        /// How far this offer's bytes have got, in events, so its deadline can
+        /// tell a peer that has gone quiet from one still moving them.
+        let activity = ActivityCount()
         /// Which arming of that deadline is live: a stand-down or a re-arm bumps
         /// it, so one already scheduled can tell it was superseded.
         var claimArming: UInt64 = 0
@@ -137,6 +157,15 @@ public final class ClipboardOutboundOffers {
     /// Set after construction rather than taken at init: an owner that holds this
     /// as a stored property has no `self` to hand over while building it.
     public var onActivity: @MainActor (ClipboardEndpoint.Activity) -> Void = { _ in }
+
+    /// Called once per drop generation when that drop is over — its verdict in,
+    /// its readout finished, and nothing left for the peer to ask for.
+    ///
+    /// A drop's bytes can be staged somewhere only its owner knows about, and the
+    /// peer pulls them long after the drag is over, so this is the moment they
+    /// stop being needed. Never raised for a clipboard offer, which the peer may
+    /// paste from again.
+    public var onDropSettled: @MainActor (UInt64) -> Void = { _ in }
 
     private var entries: [UInt64: Entry] = [:]
 
@@ -393,12 +422,15 @@ public final class ClipboardOutboundOffers {
             entry.isClaimed = true
             // Something is streaming now, so every batch behind it is waiting its
             // turn rather than going unclaimed — the guest serves one job at a
-            // time. Their deadlines resume when this one ends.
+            // time. Their deadlines resume when this one ends; this one takes a
+            // liveness deadline of its own in their place.
             standDownClaimDeadlines()
+            armClaimDeadlines()
         }
 
         let xid = request.transferID
         let live = entry.live
+        let activity = entry.activity
         let unreadable = entry.unreadable
         let isClipboard = kind == .clipboard
         let expectedBytes = UInt64(max(0, representation.byteCount))
@@ -418,9 +450,11 @@ public final class ClipboardOutboundOffers {
             isCurrent: { live.isCurrent($0) },
             link: link,
             onBegin: {
+                activity.bump()
                 operation.unitBegan(id: xid, expectedBytes: expectedBytes, name: unitName)
             },
             onProgress: { sent, total in
+                activity.bump()
                 operation.unitProgressed(
                     id: xid, bytesTransferred: UInt64(max(0, sent)),
                     totalBytes: UInt64(max(0, total)))
@@ -429,6 +463,10 @@ public final class ClipboardOutboundOffers {
             // skips it and keeps pulling, and this is what lets the verdict name
             // how many were left behind.
             onSourceUnreadable: { unreadable.record(repIndex: repIndex) },
+            // Deliberately no `activity.bump()` here: activity is bytes moving,
+            // and a transfer's end is the start of the wait for the peer's next
+            // move — its next pull, or its `DropComplete` — which is exactly
+            // what the liveness window is there to bound.
             onComplete: { success in
                 operation.unitEnded(id: xid, succeeded: success)
                 // Nothing on this side knows the peer has stopped asking, so the
@@ -473,10 +511,11 @@ public final class ClipboardOutboundOffers {
             entry.live.set(0)
             session.outbox?.cancel(generation: generation)
             try? session.sendRelease(generation: generation)
+            entries[generation] = nil
+            onDropSettled(generation)
             // The readout dwells at the fraction it stopped on, so the cancel is
             // visibly what happened.
             entry.operation?.finish(.cancelled)
-            entries[generation] = nil
             armClaimDeadlines()
         }
         Self.logger.notice(
@@ -488,6 +527,9 @@ public final class ClipboardOutboundOffers {
     public func handleDropComplete(_ complete: Kernova_V1_DropComplete) {
         guard let entry = entries.removeValue(forKey: complete.generation) else { return }
         entry.live.set(0)
+        // Ahead of the readout's terminal: the peer has said what became of the
+        // drop, so nothing will be pulled from what this side staged for it.
+        onDropSettled(complete.generation)
         defer { armClaimDeadlines() }
         switch complete.outcome {
         case .completed:
@@ -546,7 +588,9 @@ public final class ClipboardOutboundOffers {
     /// peer's paste, not this side, is what it was measuring.
     public func endSession() {
         if kind == .drop {
-            for entry in entries.values where !entry.isCancelled {
+            for entry in entries.values {
+                onDropSettled(entry.generation)
+                guard !entry.isCancelled else { continue }
                 entry.operation?.finish(
                     .failed(.interrupted(fileCount: entry.content.representations.count)))
             }
@@ -562,22 +606,36 @@ public final class ClipboardOutboundOffers {
 
     // MARK: - The unclaimed-drop deadline
 
-    /// Starts the deadline on every drop the peer has not begun, unless one it
-    /// *has* begun is still open.
+    /// Puts every drop on the deadline its state calls for: the one the peer is
+    /// serving on a liveness window of its own, and one the peer has not begun
+    /// on the unclaimed clock — the latter only while nothing is streaming,
+    /// since the peer serves drops one job at a time.
     ///
     /// A drop's readout is closed by the peer's `DropComplete`, so a peer that
-    /// never pulls leaves the gesture with no progress, no failure and no end
-    /// until the channel itself dies. This is what answers for it.
+    /// never pulls, or that stops pulling with a job open, leaves the gesture
+    /// with no progress, no failure and no end until the channel itself dies.
+    /// This is what answers for it — and giving the served job a clock is what
+    /// keeps one wedged there from suppressing the deadline of every batch
+    /// behind it.
     private func armClaimDeadlines() {
-        guard kind == .drop, !entries.values.contains(where: \.isClaimed) else { return }
-        for entry in entries.values where !entry.isClaimed && !entry.isClaimDeadlineArmed {
-            entry.isClaimDeadlineArmed = true
-            entry.claimArming &+= 1
-            let generation = entry.generation
-            let arming = entry.claimArming
-            dropClaimSchedule(dropClaimTimeout) { [weak self] in
-                self?.claimDeadlineExpired(generation: generation, arming: arming)
-            }
+        guard kind == .drop else { return }
+        let isServing = entries.values.contains(where: \.isClaimed)
+        for entry in entries.values where entry.isClaimed || !isServing {
+            armClaimDeadline(for: entry)
+        }
+    }
+
+    /// Schedules one entry's deadline, sampling the activity it must beat.
+    private func armClaimDeadline(for entry: Entry) {
+        guard !entry.isClaimDeadlineArmed else { return }
+        entry.isClaimDeadlineArmed = true
+        entry.claimArming &+= 1
+        let generation = entry.generation
+        let arming = entry.claimArming
+        let activity = entry.activity.count
+        dropClaimSchedule(dropClaimTimeout) { [weak self] in
+            self?.claimDeadlineExpired(
+                generation: generation, arming: arming, activityWhenArmed: activity)
         }
     }
 
@@ -590,20 +648,30 @@ public final class ClipboardOutboundOffers {
         }
     }
 
-    /// Calls off a drop the peer never began.
-    private func claimDeadlineExpired(generation: UInt64, arming: UInt64) {
-        guard let entry = entries[generation], entry.claimArming == arming, !entry.isClaimed,
-            !entry.isCancelled
+    /// Calls off a drop the peer never began, or one it began and went quiet on.
+    private func claimDeadlineExpired(
+        generation: UInt64, arming: UInt64, activityWhenArmed: UInt64
+    ) {
+        guard let entry = entries[generation], entry.claimArming == arming, !entry.isCancelled
         else { return }
         entry.isClaimDeadlineArmed = false
+        // An inactivity window, never an absolute deadline: a job that has moved
+        // since this was armed starts the clock again rather than being called
+        // off for needing more than one window to stream.
+        guard entry.activity.count == activityWhenArmed else {
+            armClaimDeadlines()
+            return
+        }
+        let wasClaimed = entry.isClaimed
         entry.live.set(0)
         entries[generation] = nil
         // The peer may be wedged rather than gone, so the release is what stops
         // it pulling an offer this side has already answered for.
         try? session.sendRelease(generation: generation)
-        entry.operation?.finish(.failed(.unclaimed))
+        onDropSettled(generation)
+        entry.operation?.finish(.failed(wasClaimed ? .timedOut : .unclaimed))
         Self.logger.warning(
-            "Drop to '\(self.peerName, privacy: .public)' went unclaimed for \(self.dropClaimTimeout, privacy: .public)s (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
+            "Drop to '\(self.peerName, privacy: .public)' \(wasClaimed ? "stopped moving" : "went unclaimed", privacy: .public) for \(self.dropClaimTimeout, privacy: .public)s (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
         )
         armClaimDeadlines()
     }

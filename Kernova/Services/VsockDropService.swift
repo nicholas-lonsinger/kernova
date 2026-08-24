@@ -49,6 +49,14 @@ final class VsockDropService: VsockDataConnectionAccepting {
     /// the walk can be driven synchronously.
     private let directoryByteCount: @Sendable (URL) -> Int
 
+    /// Where each live drop's promised files were staged, by offer generation.
+    ///
+    /// A drag of file promises writes its bytes into a directory of its own
+    /// before the offer goes out, and the guest can pull them minutes later, so
+    /// the directory is held until that drop settles rather than freed when the
+    /// drag ends.
+    private var stagedDirectories: [UInt64: URL] = [:]
+
     /// Runs a payload-scaled folder walk off the main actor and calls back on it.
     ///
     /// A tree of any size would otherwise freeze the app for the length of the
@@ -100,6 +108,9 @@ final class VsockDropService: VsockDataConnectionAccepting {
                 progressRevealDelay: progressRevealDelay, progressIdleGap: progressIdleGap),
             reporter: reporter)
         endpoint.delegate = self
+        endpoint.onDropSettled = { [weak self] generation in
+            self?.releaseStagedFiles(for: generation)
+        }
     }
 
     // MARK: - Lifecycle
@@ -172,8 +183,12 @@ final class VsockDropService: VsockDataConnectionAccepting {
     /// channel is gone, or the drag carried nothing. A drag whose items all turn
     /// out to be unreadable is answered by the report instead, since only the
     /// off-main pass can know.
+    ///
+    /// `stagedIn` is the directory a promise drag wrote `urls` into. A drop taken
+    /// on owns it from here and frees it when that drop settles; a drop refused
+    /// (`false`) leaves it to the caller, who still holds the only reference.
     @discardableResult
-    func startDrop(urls: [URL]) -> Bool {
+    func startDrop(urls: [URL], stagedIn stagingDirectory: URL? = nil) -> Bool {
         guard isConnected, !urls.isEmpty else { return false }
         // Announced the moment the drag is taken, so this one's verdict is its
         // own however it ends: a drag that turns out to carry nothing sendable,
@@ -186,24 +201,32 @@ final class VsockDropService: VsockDataConnectionAccepting {
         runOffMainActor { [weak self] in
             let gathered = Self.gather(dropped, sizeOf: sizeOf)
             MainActorBridge.async {
-                guard let self else { return }
+                // Every path from here either registers the staged files against
+                // an offer generation or frees them: nothing else holds a
+                // reference to them once the drag is over.
+                guard let self else {
+                    stagingDirectory.map(DropPromiseStaging.release)
+                    return
+                }
                 guard self.isConnected else {
                     // The channel went away while the items were being read. The
                     // drop was accepted, so its disappearance is owed the same
                     // answer an interrupted transfer gets — there is no job yet
                     // for `settle()` to have reported.
+                    stagingDirectory.map(DropPromiseStaging.release)
                     self.reportRefusal(.interrupted(fileCount: dropped.count))
                     return
                 }
                 guard !gathered.candidates.isEmpty else {
                     // The gesture happened on this Mac and produced nothing, so
                     // the silence has to be explained here.
+                    stagingDirectory.map(DropPromiseStaging.release)
                     self.reportRefusal(.itemsUnreadable)
                     return
                 }
                 self.offer(
                     Self.representations(for: gathered.candidates, sizes: gathered.sizes),
-                    skipped: gathered.unreadable)
+                    skipped: gathered.unreadable, stagedIn: stagingDirectory)
             }
         }
         return true
@@ -305,27 +328,36 @@ final class VsockDropService: VsockDataConnectionAccepting {
     ///
     /// The readout carries the Cancel the user reaches a drop through; it runs
     /// on the endpoint, so nothing here handles one.
-    private func offer(_ reps: [ClipboardContent.Representation], skipped: Int) {
-        // Handed to the offer as well as reported here: the drop's own verdict
-        // counts these alongside whatever fails once the guest asks, so the two
-        // stages an item can be lost at reach the user as one number.
+    ///
+    /// `skipped` is handed to the offer rather than announced here: one gesture
+    /// ends once (docs/CLIPBOARD.md §13), and the drop's terminal counts these
+    /// alongside whatever fails once the guest asks — so an interim refusal
+    /// naming only this stage would reach the user as a second notice carrying
+    /// a smaller number than the verdict that follows it.
+    private func offer(
+        _ reps: [ClipboardContent.Representation], skipped: Int, stagedIn stagingDirectory: URL?
+    ) {
         let outcome = endpoint.offer(
             ClipboardContent(representations: reps), skippedBeforeOffer: skipped)
-        // "The rest were" sent is the whole point of the notice, and a failed
-        // offer sent none of them — the readout the offer already failed carries
-        // that news instead.
-        guard skipped > 0, case .sent = outcome else { return }
+        if let stagingDirectory {
+            if case .sent(let generation) = outcome {
+                stagedDirectories[generation] = stagingDirectory
+            } else {
+                // Nothing was registered for the guest to pull from, so no
+                // settle is coming for these files.
+                DropPromiseStaging.release(stagingDirectory)
+            }
+        }
+        guard skipped > 0 else { return }
         Self.logger.warning(
             "Skipped \(skipped, privacy: .public) unreadable dropped item(s) for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"
         )
-        // Queued behind the offer's own `markQueued`, so this drop has joined
-        // the reporter's live set before the refusal lands: a fresh operation is
-        // what makes it news rather than an echo of whatever the last drag left
-        // standing (`ClipboardTransferReporter.record`).
-        MainActorBridge.async { [weak self] in
-            guard let self else { return }
-            self.reportRefusal(.itemsSkipped(count: skipped))
-        }
+    }
+
+    /// Frees the files one settled drop's promises were staged into.
+    private func releaseStagedFiles(for generation: UInt64) {
+        guard let directory = stagedDirectories.removeValue(forKey: generation) else { return }
+        DropPromiseStaging.release(directory)
     }
 }
 

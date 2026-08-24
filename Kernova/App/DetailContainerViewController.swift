@@ -160,10 +160,10 @@ final class DetailContainerViewController: NSViewController {
             viewModel?.instances.first(where: { $0.id == instanceID })?.displayDropAvailability
                 ?? .none
         }
-        backing.onDropFiles = { [weak viewModel] urls in
+        backing.onDropFiles = { [weak viewModel] urls, stagedIn in
             guard let target = viewModel?.instances.first(where: { $0.id == instanceID })
             else { return false }
-            return target.sendDroppedFilesToGuest(urls)
+            return target.sendDroppedFilesToGuest(urls, stagedIn: stagedIn)
         }
         backing.onDropUnreadable = { [weak viewModel] in
             viewModel?.instances.first(where: { $0.id == instanceID })?

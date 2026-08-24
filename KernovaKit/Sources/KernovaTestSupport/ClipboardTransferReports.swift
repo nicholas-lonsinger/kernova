@@ -99,6 +99,21 @@ public final class ClipboardTransferReports {
         }
     }
 
+    /// Every distinct refusal that stood, in order.
+    ///
+    /// A surface that interrupts presents one notice per refusal *date*, so the
+    /// count is how many times the reports announced a failure to the user.
+    public var refusals: [ClipboardTransferFinish] {
+        var distinct: [ClipboardTransferFinish] = []
+        for report in reports {
+            guard case .finished(let finish) = report, finish.failure != nil,
+                !distinct.contains(where: { $0.date == finish.date })
+            else { continue }
+            distinct.append(finish)
+        }
+        return distinct
+    }
+
     /// Suspends until a refusal stands.
     public func waitForFailure() async throws {
         try await wait { self.failure != nil }

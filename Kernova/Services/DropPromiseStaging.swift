@@ -8,10 +8,10 @@ import os
 /// A promise's bytes have to exist somewhere the guest's pull can read them, and
 /// that pull comes after the drag is over, often long after: the guest serves one
 /// drop at a time, so a batch queued behind a large one is not read until its
-/// turn comes. Each drop gets a directory of its own, and nothing this process
-/// staged is reclaimed while it runs — a drop still queued is indistinguishable
-/// from a stale one by anything a later drop can see. ``reclaimAll`` at launch is
-/// what bounds the space, the way `ClipboardFileStaging` bounds a paste's.
+/// turn comes. Each drop gets a directory of its own, released by ``release(_:)``
+/// once that drop settles — the drop's own end is the only thing that can tell a
+/// queued drop from a stale one. ``reclaimAll`` at launch is the crash backstop,
+/// the way `ClipboardFileStaging` bounds a paste's.
 enum DropPromiseStaging {
     private static let logger = Logger(subsystem: "app.kernova", category: "DropPromiseStaging")
 
@@ -36,6 +36,23 @@ enum DropPromiseStaging {
         } catch {
             logger.warning(
                 "Could not reclaim staged drop files: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    /// Removes one drop's directory, once nothing can read from it again.
+    ///
+    /// Idempotent, and silent about a directory that is already gone: the drag
+    /// that never reached an offer and the drop the guest finished both end
+    /// here, and either can have removed it first.
+    static func release(_ directory: URL) {
+        do {
+            try FileManager.default.removeItem(at: directory)
+        } catch CocoaError.fileNoSuchFile {
+            // Already released.
+        } catch {
+            logger.warning(
+                "Could not release a settled drop's staged files: \(error.localizedDescription, privacy: .public)"
             )
         }
     }

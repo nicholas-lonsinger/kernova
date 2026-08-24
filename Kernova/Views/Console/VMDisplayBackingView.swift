@@ -25,7 +25,11 @@ final class VMDisplayBackingView: NSView {
     var dropAvailability: () -> DisplayDropAvailability = { .none }
 
     /// Sends dropped file URLs to the guest, reporting whether they were taken.
-    var onDropFiles: ([URL]) -> Bool = { _ in false }
+    ///
+    /// `stagedIn` is the directory a promise drag's files were written into,
+    /// which the receiver owns once it takes the drop — the guest pulls from it
+    /// long after the drag is over.
+    var onDropFiles: (_ urls: [URL], _ stagedIn: URL?) -> Bool = { _, _ in false }
 
     /// Reports a drag this display took that produced no file to send — a file
     /// promise whose source failed to write it.
@@ -262,7 +266,7 @@ final class VMDisplayBackingView: NSView {
         let receivers = promiseSource.receivers(pasteboard)
         guard !receivers.isEmpty else {
             guard !urls.isEmpty else { return false }
-            return onDropFiles(urls)
+            return onDropFiles(urls, nil)
         }
         receivePromises(receivers, alongside: urls)
         // The promised files are written asynchronously, so the drag ends taken
@@ -292,31 +296,43 @@ final class VMDisplayBackingView: NSView {
             receiver.receivePromisedFiles(
                 atDestination: directory, options: [:], operationQueue: .main
             ) { [weak self] url, error in
-                guard let self, let outcome = collection.received(url, error: error) else { return }
-                self.finishPromiseDrop(outcome, stagedIn: directory)
+                guard let self else { return }
+                guard let outcome = collection.received(url, error: error) else {
+                    // A failure settles the drag while its other promises are
+                    // still writing into this directory; the last of them to
+                    // report is what says nothing more will be.
+                    if collection.isQuiesced { DropPromiseStaging.release(directory) }
+                    return
+                }
+                self.finishPromiseDrop(
+                    outcome, stagedIn: directory, isQuiesced: collection.isQuiesced)
             }
         }
     }
 
     /// Offers a promise drag's whole set, or answers for one that never
     /// completed.
-    private func finishPromiseDrop(_ outcome: PromiseCollection.Outcome, stagedIn directory: URL) {
+    ///
+    /// The staging directory goes with the drop the service takes on, which
+    /// frees it when that drop settles; every other path frees it here, once
+    /// `isQuiesced` says no promise is still writing into it.
+    private func finishPromiseDrop(
+        _ outcome: PromiseCollection.Outcome, stagedIn directory: URL, isQuiesced: Bool
+    ) {
         switch outcome {
         case .ready(let files):
-            guard onDropFiles(files) else {
+            guard onDropFiles(files, directory) else {
                 // The VM stopped taking drops while the source was still
                 // writing; the service that would report it is already gone.
                 Self.logger.warning("A promise drag's files landed after the VM stopped taking them")
-                try? FileManager.default.removeItem(at: directory)
+                DropPromiseStaging.release(directory)
                 return
             }
         case .failed(let error):
             Self.logger.warning(
                 "A dropped file promise was never written: \(error?.localizedDescription ?? "no file", privacy: .public)"
             )
-            // Left for the launch reclaim rather than removed here: the drag's
-            // other promises settle on the first failure and may still be
-            // writing into this directory.
+            if isQuiesced { DropPromiseStaging.release(directory) }
             onDropUnreadable()
         }
     }
@@ -337,7 +353,12 @@ final class VMDisplayBackingView: NSView {
         private let expected: Int
         private var files: [URL]
         private var received = 0
+        private var reported = 0
         private var isSettled = false
+
+        /// Whether every promise has reported, so nothing more will be written
+        /// into the drag's staging directory.
+        private(set) var isQuiesced = false
 
         init(expected: Int, alongside files: [URL]) {
             self.expected = expected
@@ -347,6 +368,8 @@ final class VMDisplayBackingView: NSView {
         /// Records one promise's result, returning the outcome when this is what
         /// settled the drag and `nil` while it is still waiting.
         func received(_ url: URL, error: (any Error)?) -> Outcome? {
+            reported += 1
+            isQuiesced = reported == expected
             guard !isSettled else { return nil }
             guard error == nil else {
                 isSettled = true
