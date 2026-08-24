@@ -277,9 +277,10 @@ public final class ClipboardTransferReporter {
 
     /// The one running readout every surface shows.
     ///
-    /// Ranked by gesture rather than by which published last, so a drop started
-    /// during a paste never takes the bar off the transfer an app is blocked on
-    /// (docs/CLIPBOARD.md §13); equal ranks fall back to the last to open a bar.
+    /// Ranked by ``ClipboardTransferGesture/readoutRank`` rather than by which
+    /// published last, so work started under a gesture someone is waiting on
+    /// never takes the bar off it (docs/CLIPBOARD.md §13); equal ranks fall back
+    /// to the last to open a bar.
     private func shownReadout() -> (snapshot: ClipboardProgressSnapshot, since: Date)? {
         typealias Candidate = (
             rank: Int, revealOrder: UInt64, snapshot: ClipboardProgressSnapshot, since: Date

@@ -296,8 +296,11 @@ final class VMDisplayBackingView: NSView {
             receiver.receivePromisedFiles(
                 atDestination: directory, options: [:], operationQueue: .main
             ) { [weak self] url, error in
-                guard let self else { return }
-                guard let outcome = collection.received(url, error: error) else {
+                // Tallied before `self` is consulted, so a display torn down
+                // mid-write still reaches quiescence: the count is what says
+                // nothing more will be written into this directory.
+                let outcome = collection.received(url, error: error)
+                guard let self, let outcome else {
                     // A failure settles the drag while its other promises are
                     // still writing into this directory; the last of them to
                     // report is what says nothing more will be.
@@ -369,7 +372,9 @@ final class VMDisplayBackingView: NSView {
         /// settled the drag and `nil` while it is still waiting.
         func received(_ url: URL, error: (any Error)?) -> Outcome? {
             reported += 1
-            isQuiesced = reported == expected
+            // A latch, so a source that reports more often than its `fileNames`
+            // promised cannot un-latch it and strand the directory.
+            isQuiesced = reported >= expected
             guard !isSettled else { return nil }
             guard error == nil else {
                 isSettled = true

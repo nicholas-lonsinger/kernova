@@ -339,15 +339,14 @@ final class VsockDropService: VsockDataConnectionAccepting {
     ) {
         let outcome = endpoint.offer(
             ClipboardContent(representations: reps), skippedBeforeOffer: skipped)
-        if let stagingDirectory {
-            if case .sent(let generation) = outcome {
-                stagedDirectories[generation] = stagingDirectory
-            } else {
-                // Nothing was registered for the guest to pull from, so no
-                // settle is coming for these files.
-                DropPromiseStaging.release(stagingDirectory)
-            }
+        guard case .sent(let generation) = outcome else {
+            // Nothing was registered for the guest to pull from, so no settle is
+            // coming for these files — and with the offer itself lost there is
+            // no rest of the batch for the skipped items to be missing from.
+            stagingDirectory.map(DropPromiseStaging.release)
+            return
         }
+        if let stagingDirectory { stagedDirectories[generation] = stagingDirectory }
         guard skipped > 0 else { return }
         Self.logger.warning(
             "Skipped \(skipped, privacy: .public) unreadable dropped item(s) for '\(self.label, privacy: .public)' (conn=\(self.connectionTag, privacy: .public))"

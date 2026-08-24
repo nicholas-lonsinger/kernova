@@ -592,7 +592,7 @@ public final class ClipboardOutboundOffers {
                 onDropSettled(entry.generation)
                 guard !entry.isCancelled else { continue }
                 entry.operation?.finish(
-                    .failed(.interrupted(fileCount: entry.content.representations.count)))
+                    .failed(.interrupted(fileCount: entry.gesturedCount)))
             }
         }
         pasteOperation?.operation.abandon()

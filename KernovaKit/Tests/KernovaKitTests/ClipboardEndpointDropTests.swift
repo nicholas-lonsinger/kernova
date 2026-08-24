@@ -293,6 +293,26 @@ struct ClipboardEndpointDropTests {
                 && failures.contains(.interrupted(fileCount: 1))
         }
     }
+
+    @Test("an interrupted drop counts the items its offer left out")
+    func interruptedDropCountsWhatTheOfferLeftOut() async throws {
+        let harness = try RawPeerHarness(kind: .drop, receives: false)
+        defer { harness.tearDown() }
+
+        // Two of the three dragged items were unreadable before the offer, and
+        // nothing else announces them: the drop's own terminal is where the
+        // gesture's whole count is said (docs/CLIPBOARD.md §13).
+        harness.endpoint.offer(
+            ClipboardContent(representations: [try dropRep("one.bin", Data("one".utf8))]),
+            skippedBeforeOffer: 2)
+
+        harness.endpoint.stop()
+
+        try await harness.side.reports.wait {
+            dropFinishes(harness.side.reports).compactMap(\.failure)
+                .contains(.interrupted(fileCount: 3))
+        }
+    }
 }
 
 // MARK: - Report readers

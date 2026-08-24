@@ -25,9 +25,9 @@ enum DropPromiseStaging {
 
     /// Removes every drop's staged files, crash orphans included.
     ///
-    /// Call once at process launch, before anything stages a drop: no earlier
-    /// run's guest can still be pulling, and no later moment can tell a queued
-    /// drop from an abandoned one.
+    /// Call once at process launch, before anything stages a drop: an earlier
+    /// run's drops ended with it, so nothing left under the root is still being
+    /// pulled from. A drop this run stages is freed by ``release(_:)`` instead.
     static func reclaimAll(tempRoot: URL = FileManager.default.temporaryDirectory) {
         do {
             try FileManager.default.removeItem(at: root(tempRoot: tempRoot))

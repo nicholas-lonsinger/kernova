@@ -60,11 +60,12 @@ public enum ClipboardStreamTuning {
     /// off: 120 s.
     ///
     /// The whole wait for a drop the peer has not begun, and an **inactivity**
-    /// window on the one it is serving — each transfer event re-arms that one,
-    /// so a healthy drop of any size never trips it, and a peer that goes quiet
-    /// mid-job answers for it inside one window. A batch queued behind the job
-    /// being served has no clock of its own: the guest serves drops one at a
-    /// time, so waiting its turn is not going unclaimed.
+    /// window on the one it is serving: an expiry that finds bytes moved starts
+    /// a fresh window instead of calling the job off, so a healthy drop of any
+    /// size never trips it and a peer that goes quiet mid-job answers for it
+    /// within two windows. A batch queued behind the job being served has no
+    /// clock of its own: the guest serves drops one at a time, so waiting its
+    /// turn is not going unclaimed.
     public static let dropClaimTimeout: TimeInterval = 120
 
     /// `SO_RCVTIMEO`/`SO_SNDTIMEO` on a transfer's data connection: 30 s.
