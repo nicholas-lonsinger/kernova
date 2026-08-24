@@ -215,39 +215,69 @@ struct ClipboardDirectoryTransferTests {
         #expect(try probe.stagedFiles().isEmpty)
     }
 
-    @Test("cancelling the generation mid-extract deletes the partial tree")
+    @Test("cancelling mid-extract deletes the partial tree before the pull is told")
     func cancelDeletesPartialTree() async throws {
         let fm = FileManager.default
         let probe = StagingProbe()
         let harness = TransferHarness(freeSpaceProvider: probe.provider)
         defer { harness.tearDown() }
-        let (scratch, source) = try makeBulkyTree(named: "Project", byteCount: 8 * 1024 * 1024)
+        let advertised = 8 * 1024 * 1024
+        let (scratch, source) = try makeBulkyTree(named: "Project", byteCount: advertised)
         defer { try? fm.removeItem(at: scratch) }
 
-        // The generation the cancel names is read back out of the id, so the two
-        // have to agree.
-        let transferID = ClipboardTransferID.make(generation: 1, repIndex: 0, hostMinted: true)
+        // Driven receiver-first rather than through the inbox: the inbox resolves
+        // a cancelled pull out of `failAwaiters` the moment it is asked, which
+        // discards the receive lane's own terminal — the one event production
+        // fires *after* it has removed the partial tree. Held against that
+        // terminal, "the tree is gone" is an ordering the receiver guarantees
+        // rather than a filesystem state to wait on.
+        let transferID: UInt64 = 0x43
+        let collector = harness.collector
+        let outbox = harness.outbox
+        let representation = folderRepresentation(source, named: "Project")
+        let receiver = harness.makeReceiver(
+            transferID: transferID, generation: 1,
+            plan: folderPlan(named: "Project", advertised: advertised),
+            source: .dial(
+                {
+                    try dialToPeer { far in
+                        guard let request = readTransferRequest(fd: far) else {
+                            ClipboardDataConnection.end(fd: far)
+                            return
+                        }
+                        outbox.serve(
+                            transferID: request.transferID, generation: request.generation,
+                            representation: representation,
+                            maxAcceptByteCount: request.maxAcceptByteCount, isInline: false,
+                            isCurrent: { _ in true }, link: .accepted(far),
+                            onComplete: { collector.sendFinished(transferID, success: $0) })
+                    }
+                },
+                request: Kernova_V1_ClipboardTransferRequest.with {
+                    $0.generation = 1
+                    $0.transferID = transferID
+                    $0.uti = ClipboardArchive.directoryUTI
+                    $0.maxAcceptByteCount = ClipboardStreamTuning.unlimitedAcceptByteCount
+                }))
+
         // Cancel from inside the stream, on the first report the *extract* made,
         // so a whole pacing quantum of tree is on disk when the pull gives up —
         // rather than wherever the runner happened to schedule the test next.
         let cancelled = Box(false)
-        harness.onReceiveProgress.value = { [weak harness] extracted, _ in
-            guard extracted > 0, !cancelled.value else { return }
-            cancelled.value = true
-            harness?.inbox.cancel(generation: 1)
-        }
-        harness.pull(
-            transferID: transferID, generation: 1,
-            plan: folderPlan(named: "Project", advertised: 8 * 1024 * 1024),
-            representation: folderRepresentation(source, named: "Project"))
+        receiver.start(
+            onComplete: { collector.complete(transferID, $0) },
+            onAbort: { collector.abort($0) },
+            onProgress: { [weak receiver] extracted, _ in
+                guard extracted > 0, !cancelled.value else { return }
+                cancelled.value = true
+                receiver?.cancel()
+            })
         try await settle(harness, transferID)
 
         #expect(try abort(harness).code == .cancelled)
-        #expect(harness.collector.representation(transferID) == nil)
-        // RATIONALE: filesystem-appearance poll (docs/TESTING.md) — a cancelled
-        // pull is resolved by the inbox the moment it is asked, so the partial
-        // tree is still being torn down on the receive lane when the abort lands.
-        try await waitUntil { ((try? probe.stagedFiles()) ?? []).isEmpty }
+        #expect(collector.representation(transferID) == nil)
+        #expect(try probe.stagedFiles().isEmpty)
+        withExtendedLifetime(receiver) {}
     }
 
     @Test("a peer that aborts mid-extract deletes the partial tree")

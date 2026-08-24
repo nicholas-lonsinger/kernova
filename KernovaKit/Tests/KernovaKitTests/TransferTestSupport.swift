@@ -198,14 +198,6 @@ final class TransferHarness: @unchecked Sendable {
     let outbox: ClipboardTransferOutbox
     let collector = TransferCollector()
 
-    /// An extra hook on each receive-progress report.
-    ///
-    /// Fires on the receiving transfer's own queue, so a test that must act at
-    /// a point *inside* the stream — cancelling once bytes are moving — does it
-    /// there rather than from its own thread, where a loaded runner decides how
-    /// far the transfer got first.
-    let onReceiveProgress = Box<(@Sendable (Int, Int) -> Void)?>(nil)
-
     /// An extra hook on each send-progress report, for a test that must act at a
     /// point inside the *stream* rather than inside the extract behind it.
     ///
@@ -264,10 +256,7 @@ final class TransferHarness: @unchecked Sendable {
             transferID, plan: plan,
             onComplete: { collector.complete(transferID, $0) },
             onAbort: { collector.abort($0) },
-            onProgress: { [onReceiveProgress] bytes, total in
-                collector.receiveProgress(bytes, total)
-                onReceiveProgress.value?(bytes, total)
-            })
+            onProgress: { bytes, total in collector.receiveProgress(bytes, total) })
     }
 
     /// Guest-receives order: the inbox dials and writes the request, and the
