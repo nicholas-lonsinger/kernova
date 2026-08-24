@@ -72,4 +72,24 @@ struct ClipboardTransferFailureTests {
         // over there (docs/CLIPBOARD.md §13).
         #expect(!ClipboardTransferGesture.peerPaste.isMadeHere)
     }
+
+    @Test("every gesture someone waits on outranks every gesture they can leave")
+    func awaitedGesturesOutrankTheRest() {
+        for gesture in [
+            ClipboardTransferGesture.paste, .peerPaste, .preview, .copy, .forward, .drop,
+        ] where gesture.isAwaited {
+            for other in [
+                ClipboardTransferGesture.paste, .peerPaste, .preview, .copy, .forward, .drop,
+            ] where !other.isAwaited {
+                #expect(
+                    gesture.readoutRank > other.readoutRank,
+                    "\(gesture) is waited on, so it outranks \(other)")
+            }
+        }
+        // The paste holds the app it is pasting into; the drop's files are only
+        // missing from the guest until it lands.
+        #expect(
+            ClipboardTransferGesture.peerPaste.readoutRank
+                > ClipboardTransferGesture.drop.readoutRank)
+    }
 }

@@ -37,10 +37,17 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
     /// Which of several concurrent readouts a single-value surface shows —
     /// higher wins, ties settled by which opened its bar last.
     ///
-    /// A paste that blocks an app outranks work the user can walk away from, so
-    /// a drop started mid-paste never takes the bar off the transfer someone is
-    /// sitting in front of.
-    public var readoutRank: Int { self == .peerPaste ? 1 : 0 }
+    /// The order ``isAwaited`` implies, with the paste that holds an app ahead
+    /// of the drop whose files are not in the guest yet: a drop started
+    /// mid-paste never takes the bar off the transfer someone is sitting in
+    /// front of, and a preview fetch never takes it off either.
+    public var readoutRank: Int {
+        switch self {
+        case .peerPaste: 2
+        case .drop: 1
+        case .paste, .preview, .copy, .forward: 0
+        }
+    }
 }
 
 /// Why a clipboard or drop transfer did not deliver what the gesture asked for.
