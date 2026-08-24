@@ -53,12 +53,12 @@ public enum LazyPullOutcome: Sendable {
 /// not a joiner, and not any waiter once it has its outcome, since by then the
 /// slot has released the id and the next `pull` or `join` for it starts a fresh
 /// pull.
-public final class LazyPullCoordinator: @unchecked Sendable {
+final class LazyPullCoordinator: @unchecked Sendable {
     /// One caller waiting on a pull; ``leave(_:)`` takes the handle back.
     ///
     /// `@unchecked Sendable`: `resolvedOutcome` is read and written under the
     /// waiter's own `lock`, and everything else is immutable.
-    public final class Waiter: @unchecked Sendable {
+    final class Waiter: @unchecked Sendable {
         /// How this waiter is told its outcome.
         fileprivate enum Wakeup {
             /// A held thread: its semaphore, plus the event loop the wait is
@@ -143,7 +143,7 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     private let backstopQueue = DispatchQueue(label: "app.kernova.lazy-pull-backstop")
 
     /// Creates an idle coordinator.
-    public init() {}
+    init() {}
 
     /// Starts or joins the pull for `transferID`, holding the calling thread
     /// until it resolves.
@@ -171,7 +171,7 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     ///     on the calling thread, after the slot is registered, and only when this
     ///     call created it.
     /// - Returns: the outcome the pull resolved with.
-    public func pull(
+    func pull(
         transferID: UInt64,
         timeout: TimeInterval = ClipboardStreamTuning.lazyPullTimeout,
         onProgress: (@Sendable (_ bytesReceived: Int, _ totalBytes: Int) -> Void)? = nil,
@@ -215,7 +215,7 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     ///
     /// - Returns: the waiter, for ``leave(_:)``.
     @discardableResult
-    public func join(
+    func join(
         transferID: UInt64,
         timeout: TimeInterval = ClipboardStreamTuning.lazyPullTimeout,
         onProgress: (@Sendable (_ bytesReceived: Int, _ totalBytes: Int) -> Void)? = nil,
@@ -236,7 +236,7 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     ///   and the caller owns tearing the transfer down. A waiter that already has
     ///   an outcome leaves nothing behind and reports `true`.
     @discardableResult
-    public func leave(_ waiter: Waiter) -> Bool {
+    func leave(_ waiter: Waiter) -> Bool {
         var abandoned: Slot?
         let survives: Bool = lock.withLock {
             guard let slot = slots[waiter.transferID] else { return true }
@@ -267,7 +267,7 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     /// no-op. The fanout runs under the slot's lock together with that check, so
     /// a chunk landing after the pull's terminal cannot reopen a readout the
     /// terminal closed.
-    public func progress(_ transferID: UInt64, bytesReceived: Int, totalBytes: Int) {
+    func progress(_ transferID: UInt64, bytesReceived: Int, totalBytes: Int) {
         guard let slot = lock.withLock({ slots[transferID] }) else { return }
         slot.lock.withLock {
             guard !slot.resolved else { return }
@@ -280,14 +280,14 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     ///
     /// Off-actor and idempotent: a duplicate or post-timeout delivery is a
     /// no-op.
-    public func deliver(_ transferID: UInt64, _ representation: ClipboardContent.Representation) {
+    func deliver(_ transferID: UInt64, _ representation: ClipboardContent.Representation) {
         resolve(transferID, .delivered(representation), retiring: false)
     }
 
     /// Resolves the pull for `transferID` with a failure.
     ///
     /// Off-actor, idempotent.
-    public func abort(_ transferID: UInt64, _ info: ClipboardStreamAbortInfo) {
+    func abort(_ transferID: UInt64, _ info: ClipboardStreamAbortInfo) {
         resolve(transferID, .aborted(info), retiring: false)
     }
 
@@ -295,7 +295,7 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     ///
     /// Called on channel teardown, a superseding offer, or a `ClipboardRelease`
     /// so an in-flight paste returns empty instead of blocking to the timeout.
-    public func failAll() {
+    func failAll() {
         let pending = lock.withLock { Array(slots.values) }
         for slot in pending { resolveSlot(slot, .cancelled, retiring: true) }
     }
@@ -438,11 +438,8 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     /// Test-only.
     var pendingSlotCountForTesting: Int { lock.withLock { slots.count } }
 
-    /// Waiters sharing the pull for `transferID`.
-    ///
-    /// Test-only; `public` because the pull's clients live in other modules,
-    /// whose tests assert on a preview and a paste having joined one transfer.
-    public func waiterCountForTesting(_ transferID: UInt64) -> Int {
+    /// Waiters sharing the pull for `transferID`. Test-only.
+    func waiterCountForTesting(_ transferID: UInt64) -> Int {
         guard let slot = lock.withLock({ slots[transferID] }) else { return 0 }
         return slot.lock.withLock { slot.waiters.count }
     }

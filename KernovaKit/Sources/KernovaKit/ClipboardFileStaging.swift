@@ -1,42 +1,5 @@
 import Foundation
 
-/// An append-only sink for one streamed file representation: bytes are fed with
-/// `write(_:)` and finalized with `commit()` (keep) or `abort()` (delete the
-/// partial).
-public protocol StagingSink: Sendable {
-    /// Appends a chunk to the file.
-    func write(_ data: Data) throws
-
-    /// Closes the file and keeps it; returns the final URL. Idempotent.
-    @discardableResult
-    func commit() throws -> URL
-
-    /// Closes the file and deletes the partial. Idempotent.
-    func abort()
-
-    /// Wakes a writer parked inside `write(_:)`, without waiting for the sink to
-    /// finish tearing itself down.
-    ///
-    /// A sink that consumes bytes asynchronously applies backpressure by parking
-    /// its writer, which would otherwise put an abort in line *behind* the very
-    /// write it is aborting. Idempotent; `abort()` still does the teardown.
-    func cancel()
-
-    /// The abort code a caller reports when `write(_:)` or `commit()` fails.
-    ///
-    /// The sink names its own failure, so a caller need not know which kind it
-    /// holds to describe what went wrong.
-    var writeErrorCode: ClipboardStreamAbortCode { get }
-}
-
-extension StagingSink {
-    /// A sink whose `write(_:)` never parks has no writer to wake.
-    public func cancel() {}
-
-    /// A sink that writes bytes to a file fails as a write.
-    public var writeErrorCode: ClipboardStreamAbortCode { .writeError }
-}
-
 /// Materializes streamed file representations to real local temp files so a
 /// receiver can put a concrete `public.file-url` on the pasteboard — the only
 /// mechanism by which a Finder **Paste** creates a file. Verified 2026-08-15
@@ -66,7 +29,7 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     ///
     /// `@unchecked Sendable`: an internal lock makes concurrent
     /// `write`/`commit`/`abort` safe.
-    public final class Sink: StagingSink, @unchecked Sendable {
+    public final class Sink: @unchecked Sendable {
         /// The local file the bytes are being written to.
         let url: URL
 

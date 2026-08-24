@@ -5,7 +5,7 @@ import Foundation
 /// Owner logic — which requests are answered and which are refused — lives
 /// above this; the outbox turns a verdict into a connection, keeps the live
 /// transfers reachable for supersession, and forgets each one as it ends.
-public final class ClipboardTransferOutbox: @unchecked Sendable {
+final class ClipboardTransferOutbox: @unchecked Sendable {
     private let clock: any EngineClock
     private let socketTimeout: TimeInterval
     private let maxResidentInlineBytes: Int
@@ -27,7 +27,7 @@ public final class ClipboardTransferOutbox: @unchecked Sendable {
     ///   - socketTimeout: each connection's `SO_RCVTIMEO`/`SO_SNDTIMEO`.
     ///   - maxResidentInlineBytes: the largest inline payload streamed raw.
     ///   - onTransferTimed: fired once per successful transfer.
-    public init(
+    init(
         clock: any EngineClock = makePlatformEngineClock(),
         socketTimeout: TimeInterval = ClipboardStreamTuning.dataSocketTimeout,
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
@@ -66,7 +66,7 @@ public final class ClipboardTransferOutbox: @unchecked Sendable {
     ///   - onComplete: fired exactly once when the transfer ends.
     /// - Returns: whether this call is the one serving `transferID`.
     @discardableResult
-    public func serve(
+    func serve(
         transferID: UInt64,
         generation: UInt64,
         representation: ClipboardContent.Representation,
@@ -110,7 +110,7 @@ public final class ClipboardTransferOutbox: @unchecked Sendable {
     /// The dial and the write both block, so they run off the caller's actor.
     /// No transfer is ever registered — the request is refused before one
     /// exists.
-    public func refuse(
+    func refuse(
         link: ClipboardTransferLink, transferID: UInt64, code: ClipboardStreamAbortCode,
         message: String
     ) {
@@ -134,19 +134,14 @@ public final class ClipboardTransferOutbox: @unchecked Sendable {
 
     /// Retires every in-flight transfer of a superseded offer generation, so
     /// each one's trailer tells the peer why its bytes stopped.
-    public func cancel(generation: UInt64) {
+    func cancel(generation: UInt64) {
         let affected = lock.withLock { live.values.filter { $0.generation == generation } }
         for sender in affected { sender.cancel(.superseded) }
     }
 
-    /// Retires one in-flight transfer, naming `code` in its trailer.
-    public func cancel(transferID: UInt64, code: ClipboardStreamAbortCode) {
-        lock.withLock { live[transferID] }?.cancel(code)
-    }
-
     /// Retires every in-flight transfer — a channel teardown or a capability
     /// going away.
-    public func cancelAll() {
+    func cancelAll() {
         let all = lock.withLock { Array(live.values) }
         for sender in all { sender.cancel(.cancelled) }
     }

@@ -138,7 +138,7 @@ public func makeTransferReplyFrame(
 /// `code` is the bare wire string rather than a `ClipboardStreamAbortCode` so a
 /// test can inject one this build does not define; pass
 /// `ClipboardStreamAbortCode.<case>.rawValue` when the code is meant to be read.
-public func makeTransferRefusalFrame(
+func makeTransferRefusalFrame(
     transferID: UInt64, code: String, message: String
 ) -> Frame {
     var frame = versionedFrame()

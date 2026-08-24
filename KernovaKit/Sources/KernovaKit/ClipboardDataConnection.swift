@@ -3,7 +3,7 @@ import Darwin
 import Foundation
 
 /// Why a transfer's data connection stopped.
-public enum ClipboardDataConnectionError: Error, Equatable {
+enum ClipboardDataConnectionError: Error, Equatable {
     /// The peer closed or reset the connection in the middle of a message.
     case closed
     /// A `read(2)` or `write(2)` reached the socket's own timeout with no bytes
@@ -294,7 +294,7 @@ extension Frame {
 /// `beforeWrite` runs on the writing thread ahead of each socket write, so a
 /// supersession or a cancellation is honored between writes rather than only
 /// between payloads; throwing from it stops the payload where it stands.
-public final class ClipboardPayloadWriter: @unchecked Sendable {
+final class ClipboardPayloadWriter: @unchecked Sendable {
     private let fd: Int32
     private let clock: any EngineClock
     private let beforeWrite: (@Sendable () throws -> Void)?
@@ -307,7 +307,7 @@ public final class ClipboardPayloadWriter: @unchecked Sendable {
     private var firstFailure: Error?
 
     /// Creates a writer for `fd`.
-    public init(
+    init(
         fd: Int32, clock: any EngineClock = makePlatformEngineClock(),
         beforeWrite: (@Sendable () throws -> Void)? = nil
     ) {
@@ -317,14 +317,14 @@ public final class ClipboardPayloadWriter: @unchecked Sendable {
     }
 
     /// Payload bytes written so far.
-    public var byteCount: Int { lock.withLock { written } }
+    var byteCount: Int { lock.withLock { written } }
 
     /// Seconds summed over every socket write — the time the peer's receive
     /// buffer held this side up.
-    public var socketWait: TimeInterval { lock.withLock { socketSeconds } }
+    var socketWait: TimeInterval { lock.withLock { socketSeconds } }
 
     /// When the first payload byte was handed to the socket.
-    public var firstByteInstant: EngineInstant? { lock.withLock { firstByte } }
+    var firstByteInstant: EngineInstant? { lock.withLock { firstByte } }
 
     /// The first failure a write reported, if any.
     ///
@@ -332,18 +332,18 @@ public final class ClipboardPayloadWriter: @unchecked Sendable {
     /// trust the codec's own result: AppleArchive can return normally over a
     /// stream callback whose write failed, which would hand out a silently
     /// truncated payload as a complete one.
-    public var failure: Error? { lock.withLock { firstFailure } }
+    var failure: Error? { lock.withLock { firstFailure } }
 
     /// The SHA-256 over every payload byte written so far.
-    public func digest() -> Data { lock.withLock { Data(hasher.finalize()) } }
+    func digest() -> Data { lock.withLock { Data(hasher.finalize()) } }
 
     /// Writes `data` whole.
-    public func write(_ data: Data) throws {
+    func write(_ data: Data) throws {
         try data.withUnsafeBytes { try write($0) }
     }
 
     /// Writes `buffer` whole.
-    public func write(_ buffer: UnsafeRawBufferPointer) throws {
+    func write(_ buffer: UnsafeRawBufferPointer) throws {
         guard !buffer.isEmpty else { return }
         try beforeWrite?()
         let startedAt = clock.now
@@ -377,7 +377,7 @@ public final class ClipboardPayloadWriter: @unchecked Sendable {
 /// `@unchecked Sendable`: the buffered bytes belong to whichever thread is
 /// reading — one, by construction — while the running count and digest carry a
 /// lock, since a transfer reports them from wherever it finishes.
-public final class ClipboardPayloadReader: @unchecked Sendable {
+final class ClipboardPayloadReader: @unchecked Sendable {
     private let fd: Int32
     private let bufferBytes: Int
     private let onRelease: (@Sendable (Int) -> Void)?
@@ -396,7 +396,7 @@ public final class ClipboardPayloadReader: @unchecked Sendable {
     ///     also the cadence `onRelease` fires at.
     ///   - onRelease: called with the cumulative payload byte count each time
     ///     bytes are released to the consumer.
-    public init(
+    init(
         fd: Int32, bufferBytes: Int = ClipboardStreamTuning.dataReadBufferBytes,
         onRelease: (@Sendable (Int) -> Void)? = nil
     ) {
@@ -406,14 +406,14 @@ public final class ClipboardPayloadReader: @unchecked Sendable {
     }
 
     /// Payload bytes released so far.
-    public var byteCount: Int { lock.withLock { released } }
+    var byteCount: Int { lock.withLock { released } }
 
     /// The SHA-256 over every payload byte released so far.
-    public func digest() -> Data { lock.withLock { Data(hasher.finalize()) } }
+    func digest() -> Data { lock.withLock { Data(hasher.finalize()) } }
 
     /// Releases up to `buffer.count` payload bytes, returning 0 once the stream
     /// has ended and only the trailer is left.
-    public func read(into buffer: UnsafeMutableRawBufferPointer) throws -> Int {
+    func read(into buffer: UnsafeMutableRawBufferPointer) throws -> Int {
         guard let destination = buffer.baseAddress, !buffer.isEmpty else { return 0 }
         while true {
             if let run = try take(upTo: buffer.count) {
@@ -432,7 +432,7 @@ public final class ClipboardPayloadReader: @unchecked Sendable {
     ///
     /// - Throws: ``ClipboardDataConnectionError/truncated`` when the stream ends
     ///   with fewer than `count` payload bytes left.
-    public func readExactly(_ count: Int) throws -> Data {
+    func readExactly(_ count: Int) throws -> Data {
         var result = Data()
         // Reserve toward the count so the buffer grows in one allocation rather
         // than geometric reallocations, but cap it: the count comes from a
@@ -452,7 +452,7 @@ public final class ClipboardPayloadReader: @unchecked Sendable {
 
     /// Releases and discards whatever payload is left, refusing a peer that
     /// streams more than `allowance` past the point the consumer stopped.
-    public func drain(allowance: Int) throws {
+    func drain(allowance: Int) throws {
         var discarded = 0
         while true {
             guard let run = try take(upTo: bufferBytes) else {
@@ -473,7 +473,7 @@ public final class ClipboardPayloadReader: @unchecked Sendable {
     /// - Throws: ``ClipboardDataConnectionError/truncated`` when the stream
     ///   ended without a well-formed trailer — the peer died, or its connection
     ///   was reset.
-    public func trailer() throws -> ClipboardTransferTrailer {
+    func trailer() throws -> ClipboardTransferTrailer {
         while !atEnd { try fill() }
         guard let trailer = ClipboardTransferTrailer.parse(pending) else {
             throw ClipboardDataConnectionError.truncated
