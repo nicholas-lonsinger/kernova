@@ -113,9 +113,11 @@ final class EphemeralSessionChipView: NSView {
 /// sidebar: `NSTitlebarAccessoryViewController` offers no "beside the title"
 /// attribute, and `.leading` resolves to the leading edge of the *window* — the
 /// sidebar region, where it takes a toolbar item's slot and pushes that item
-/// into the overflow menu. A toolbar item placed at the head of the content
-/// region lands beside the title instead, because that is where a unified
-/// toolbar draws it.
+/// into the overflow menu. The host is a toolbar item at the tail of the
+/// sidebar section instead: the section packs against the tracking separator,
+/// which is the point the title begins at, and its items take the flat
+/// sidebar-section glass rather than a capsule platter — so the chip's own
+/// capsule is the only one drawn (`docs/TOOLBAR.md`).
 ///
 /// The item is never added or removed — `docs/TOOLBAR.md` documents what that
 /// costs — so the chip collapses to zero width instead, leaving no slot behind.

@@ -33,8 +33,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     private static let logger = Logger(subsystem: "app.kernova", category: "MainWindowController")
     private static let toolbarNewVM = NSToolbarItem.Identifier("newVM")
-    /// The Ephemeral marker, first in the content region so it sits beside the
-    /// window title.
+    /// The Ephemeral marker, last in the sidebar section so it sits against the
+    /// tracking separator — the point the window title begins at.
     private static let toolbarEphemeral = NSToolbarItem.Identifier("ephemeralMarker")
 
     // Palette-only items (offered in the customize sheet, not in the default
@@ -127,6 +127,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         updateWindowTitle()
         updateEphemeralChip()
         observeWindowState()
+        adoptEphemeralMarkerIntoSavedLayout()
         adoptPersistedNewVMRemoval()
         observeSidebarCollapse()
         Self.logger.notice("Main window controller initialized")
@@ -231,6 +232,26 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         )
     }
 
+    /// Puts the Ephemeral marker back when a saved toolbar layout predates it.
+    ///
+    /// An autosaved configuration carries its item list only once the user has
+    /// customized the toolbar, and that list is authoritative on the next
+    /// launch — so a layout saved before this item existed restores without it,
+    /// and the marker would never appear for that user. The item is immovable,
+    /// so the palette cannot remove it and an absence is always a stale layout
+    /// rather than a choice; reinstating it needs none of the mirrored-index
+    /// care that ``adoptPersistedNewVMRemoval()`` takes for New VM.
+    private func adoptEphemeralMarkerIntoSavedLayout() {
+        guard let toolbar = window?.toolbar,
+            !toolbar.items.contains(where: { $0.itemIdentifier == Self.toolbarEphemeral }),
+            let separatorIndex = toolbar.items.firstIndex(where: {
+                $0.itemIdentifier == .sidebarTrackingSeparator
+            })
+        else { return }
+        Self.logger.notice("Reinstating the Ephemeral marker into a saved toolbar layout")
+        toolbar.insertItem(withItemIdentifier: Self.toolbarEphemeral, at: separatorIndex)
+    }
+
     /// Re-adopts a collapse removal that outlived the process, so New VM is
     /// never stranded out of the toolbar for good.
     ///
@@ -286,11 +307,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             .flexibleSpace,
             Self.toolbarNewVM,
             .toggleSidebar,
-            .sidebarTrackingSeparator,
-            // First in the content region, which is where the unified toolbar
-            // draws the window title — so the marker reads as qualifying the
-            // name beside it. It holds no width unless it is showing.
+            // Last in the sidebar section, which the leading flexible space
+            // packs against the tracking separator — so the marker lands right
+            // where the title begins, and takes the section's flat glass
+            // treatment rather than a capsule platter of its own
+            // (docs/TOOLBAR.md). It holds no width unless it is showing.
             Self.toolbarEphemeral,
+            .sidebarTrackingSeparator,
         ] + toolbarManager.defaultItemIdentifiers
     }
 
@@ -298,8 +321,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         [
             Self.toolbarNewVM,
             .toggleSidebar,
-            .sidebarTrackingSeparator,
             Self.toolbarEphemeral,
+            .sidebarTrackingSeparator,
             .space,
             .flexibleSpace,
         ] + toolbarManager.sharedItemIdentifiers + [
