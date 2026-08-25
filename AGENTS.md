@@ -281,7 +281,8 @@ Before calling a task done, work these three follow-ups. Each is owed only when 
 
 End the response with a `### Maintenance Notes` list carrying a line for each of the three, every time. The list is a coverage report: what is owed is only legible against what is settled, so a follow-up left off it reads as unexamined rather than fine.
 
-- ✅ — settled, nothing to act on: carried out in this change (name what you updated), or not something this change needed.
-- ⚠️ — owed and unpaid; name the gap and its issue number, or what closing it takes.
+- ✅ — nothing needed. Say `no changes`, nothing more.
+- 📝 — changed here; name what you changed, in a phrase.
+- ⚠️ — owed and unpaid; name the gap and its issue number, or what closing it takes. It outranks 📝 on a follow-up that was partly done and still owes something.
 
-Both ✅ readings share one symbol because the reader's next move is the same for each: none. ⚠️ is the only mark that asks for anything, so it never means "no action needed".
+Only 📝 and ⚠️ carry information — a change to read, or a gap to close. ✅ lines are uniform boilerplate by design: they prove the follow-up was examined and are meant to be skimmed past, so never explain one.
