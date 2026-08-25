@@ -104,4 +104,18 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         instance.tearDownSession()
         instance.status = .paused
     }
+
+    func takeSnapshot(
+        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+    ) async throws {
+        let wasRunning = instance.status == .running
+        instance.status = wasRunning ? .running : .paused
+    }
+
+    func revertToSnapshot(
+        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+    ) async throws {
+        instance.tearDownSession()
+        instance.status = .paused
+    }
 }

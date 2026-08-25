@@ -182,6 +182,14 @@ actor VMSession {
         try await pause()
     }
 
+    /// Resumes only when the VM is paused — the counterpart of
+    /// ``pauseIfRunning()``, answered and acted on in one hop so no state can
+    /// move in between.
+    func resumeIfPaused() async throws {
+        guard vm.state == .paused else { return }
+        try await resume()
+    }
+
     func resume() async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             vm.resume { result in

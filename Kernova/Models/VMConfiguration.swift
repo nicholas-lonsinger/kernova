@@ -454,6 +454,27 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         return try makeJSONDecoder().decode(VMConfiguration.self, from: data)
     }
 
+    // MARK: - Snapshot revert
+
+    /// The configuration a revert to `captured` installs: everything the
+    /// snapshot recorded, carrying this VM's identity across.
+    ///
+    /// `VZVirtualMachine.restoreMachineStateFrom` restores only into the
+    /// configuration the state was saved from, so a settings edit made after the
+    /// capture has to give way for the saved state to load at all. Subtracting
+    /// identity rather than listing the hardware to take back is what keeps a
+    /// device added here from being silently dropped from a revert.
+    func adoptingSnapshotState(_ captured: VMConfiguration) -> VMConfiguration {
+        var restored = captured
+        restored.id = id
+        restored.name = name
+        restored.createdAt = createdAt
+        restored.hardwareModelData = hardwareModelData
+        restored.machineIdentifierData = machineIdentifierData
+        restored.genericMachineIdentifierData = genericMachineIdentifierData
+        return restored
+    }
+
     // MARK: - Cloning
 
     /// Returns a new configuration suitable for a cloned VM instance.

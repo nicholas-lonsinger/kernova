@@ -742,9 +742,24 @@ extension SidebarViewController {
         }
 
         // State
-        if instance.canSave {
+        if instance.canSave || instance.canRevertToSnapshot {
             menu.addItem(.separator())
+        }
+        if instance.canSave {
             menu.addItem(item("Suspend", #selector(menuSuspend(_:)), instance))
+            let takeSnapshot = item(
+                "Take Snapshot\u{2026}", #selector(menuTakeSnapshot(_:)), instance)
+            takeSnapshot.isEnabled = viewModel.canTakeSnapshot(instance)
+            menu.addItem(takeSnapshot)
+        }
+        if instance.canRevertToSnapshot {
+            let revert = NSMenuItem(title: SnapshotRevertMenu.title, action: nil, keyEquivalent: "")
+            let submenu = NSMenu(title: SnapshotRevertMenu.title)
+            SnapshotRevertMenu.rebuild(
+                submenu, for: instance, isEnabled: viewModel.canRevertToSnapshot(instance),
+                target: self, action: #selector(menuRevertToSnapshot(_:)))
+            revert.submenu = submenu
+            menu.addItem(revert)
         }
 
         // Display
@@ -860,6 +875,16 @@ extension SidebarViewController {
     @objc private func menuSuspend(_ sender: NSMenuItem) {
         guard let instance = sender.representedObject as? VMInstance else { return }
         Task { await viewModel.save(instance) }
+    }
+
+    @objc private func menuTakeSnapshot(_ sender: NSMenuItem) {
+        guard let instance = sender.representedObject as? VMInstance else { return }
+        viewModel.requestTakeSnapshot(instance)
+    }
+
+    @objc private func menuRevertToSnapshot(_ sender: NSMenuItem) {
+        guard let ref = sender.representedObject as? SnapshotMenuRef else { return }
+        viewModel.confirmRevert(ref.instance, to: ref.snapshot)
     }
 
     @objc private func menuRename(_ sender: NSMenuItem) {

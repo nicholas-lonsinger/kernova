@@ -19,6 +19,48 @@ struct VMInstanceTests {
         return VMInstance(configuration: config, bundleURL: bundleURL, status: status)
     }
 
+    // MARK: - Snapshot eligibility
+
+    @Test("canTakeSnapshot matches canSave, so Take Snapshot enables exactly with Suspend")
+    func canTakeSnapshotMatchesCanSave() {
+        for status in [VMStatus.running, .paused, .stopped, .starting, .error, .initialBoot] {
+            let instance = makeInstance(status: status)
+            #expect(instance.canTakeSnapshot == instance.canSave, "status \(status.displayName)")
+        }
+    }
+
+    @Test("A cold-paused VM has nothing live to capture")
+    func coldPausedCannotTakeASnapshot() {
+        let instance = makeInstance(status: .paused)
+        instance.hasLiveVirtualMachineOverrideForTesting = false
+        #expect(instance.canTakeSnapshot == false)
+    }
+
+    @Test("canRevertToSnapshot needs a snapshot to go back to")
+    func revertNeedsASnapshot() {
+        let instance = makeInstance(status: .stopped)
+        #expect(instance.canRevertToSnapshot == false)
+
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "One")])
+        #expect(instance.canRevertToSnapshot == true)
+    }
+
+    @Test("A running VM can be reverted — the revert discards the live session")
+    func runningVMCanBeReverted() {
+        let instance = makeInstance(status: .running)
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "One")])
+        #expect(instance.canRevertToSnapshot == true)
+    }
+
+    @Test("A VM mid-transition cannot be reverted")
+    func transitioningVMCannotBeReverted() {
+        for status in [VMStatus.starting, .saving, .snapshotting, .restoring, .installing] {
+            let instance = makeInstance(status: status)
+            instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "One")])
+            #expect(instance.canRevertToSnapshot == false, "status \(status.displayName)")
+        }
+    }
+
     // MARK: - detailPaneMode
 
     @Test("detailPaneMode defaults to .display on a new instance")

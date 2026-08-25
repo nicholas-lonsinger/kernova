@@ -7,6 +7,9 @@ enum VMStatus: Sendable {
     case running
     case paused
     case saving
+    /// Capturing a named snapshot: the guest is paused while its state is
+    /// written, then put back the way it was found.
+    case snapshotting
     case restoring
     case installing
     /// VM exists in the library but has never completed its initial boot.
@@ -21,6 +24,7 @@ enum VMStatus: Sendable {
         case .running: "Running"
         case .paused: "Paused"
         case .saving: "Suspending"
+        case .snapshotting: "Taking Snapshot"
         case .restoring: "Restoring"
         case .installing: "Installing"
         case .initialBoot: "Initial Boot"
@@ -36,7 +40,7 @@ enum VMStatus: Sendable {
     /// rather than `default`, so a new state has to choose a side.
     var isTransitioning: Bool {
         switch self {
-        case .starting, .saving, .restoring, .installing:
+        case .starting, .saving, .snapshotting, .restoring, .installing:
             true
         case .running, .paused, .stopped, .error, .initialBoot:
             false
@@ -55,7 +59,7 @@ enum VMStatus: Sendable {
     /// has to choose a side.
     var terminationMustWaitOut: Bool {
         switch self {
-        case .saving:
+        case .saving, .snapshotting:
             true
         case .starting, .restoring, .installing, .running, .paused, .stopped, .error, .initialBoot:
             false
@@ -66,6 +70,7 @@ enum VMStatus: Sendable {
     var transitionLabel: String? {
         switch self {
         case .saving: "Suspending…"
+        case .snapshotting: "Taking Snapshot…"
         case .restoring: "Restoring…"
         default: nil
         }
@@ -88,14 +93,14 @@ enum VMStatus: Sendable {
     /// Whether the VM has a live display session that a backing view should present.
     var hasActiveDisplay: Bool {
         switch self {
-        case .running, .paused, .saving, .restoring: true
+        case .running, .paused, .saving, .snapshotting, .restoring: true
         default: false
         }
     }
 
     var canForceStop: Bool {
         switch self {
-        case .running, .paused, .starting, .saving, .restoring: true
+        case .running, .paused, .starting, .saving, .snapshotting, .restoring: true
         default: false
         }
     }
@@ -106,7 +111,7 @@ enum VMStatus: Sendable {
     /// handled separately by the caller.
     var isActive: Bool {
         switch self {
-        case .running, .starting, .saving, .restoring, .installing:
+        case .running, .starting, .saving, .snapshotting, .restoring, .installing:
             true
         case .paused, .stopped, .error, .initialBoot:
             false

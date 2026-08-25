@@ -15,6 +15,14 @@ final class DetailAlertsPresenter: NSObject {
     private let viewModel: VMLibraryViewModel
     private weak var window: NSWindow?
     private let deleteSheetPresenter = SheetPresenter()
+    /// The Take Snapshot sheet's slot, and the VM the shown one names; `nil`
+    /// when no sheet is on screen.
+    private let snapshotSheetPresenter = SheetPresenter()
+    private var shownSnapshotInstance: VMInstance?
+    /// Whether a Take Snapshot sheet is waiting in ``pending`` — the half of
+    /// the dedupe ``shownSnapshotInstance`` can't answer, since that is only
+    /// set once the queue reaches the request.
+    private var isSnapshotSheetQueued = false
     private var isShowingAlert = false
     /// A requested VM deletion (target + disposition).
     private struct PendingDelete {
@@ -83,11 +91,25 @@ final class DetailAlertsPresenter: NSObject {
         // torn down before that completion fires can't leave `isShown` stuck
         // `true` and silently wedge `runNext`.
         if deleteSheetPresenter.isShown { deleteSheetPresenter.reset() }
+        shownSnapshotInstance = nil
+        isSnapshotSheetQueued = false
+        if snapshotSheetPresenter.isShown { snapshotSheetPresenter.reset() }
     }
 
     #if DEBUG
     /// Number of presentation closures currently queued.
     var pendingCountForTesting: Int { pending.count }
+
+    /// Whether a Take Snapshot sheet request is waiting behind another alert.
+    var isSnapshotSheetQueuedForTesting: Bool { isSnapshotSheetQueued }
+
+    /// The revert confirmation's rendered copy, so a test can assert on what it
+    /// tells the user is lost.
+    func revertSnapshotAlertForTesting(
+        _ snapshot: VMSnapshot, for instance: VMInstance
+    ) -> AlertConfiguration {
+        revertSnapshotConfig(snapshot, instance)
+    }
 
     /// The VM whose delete is in flight, or `nil` if none.
     var pendingDeleteInstanceIDForTesting: UUID? { pendingDelete?.instance.id }
@@ -171,6 +193,46 @@ final class DetailAlertsPresenter: NSObject {
         }
     }
 
+    func presentTakeSnapshotSheet(for instance: VMInstance) {
+        // A window-modal sheet is authoritative while it is up: a second
+        // gesture (the menu key equivalent stays live under it) is dropped
+        // rather than queued behind it. The queued request counts too — it is
+        // only unset once the queue drains, so two gestures made while another
+        // alert holds the presenter would otherwise both enqueue.
+        guard shownSnapshotInstance == nil, !isSnapshotSheetQueued else {
+            Self.logger.debug(
+                "Take Snapshot sheet already requested; ignoring request for '\(instance.name, privacy: .public)'"
+            )
+            return
+        }
+        isSnapshotSheetQueued = true
+        enqueue { $0.showTakeSnapshotSheet(for: instance) }
+    }
+
+    private func showTakeSnapshotSheet(for instance: VMInstance) {
+        isSnapshotSheetQueued = false
+        // The request may have queued behind another alert, so re-check the VM
+        // is still snapshottable rather than showing a sheet that can't confirm.
+        guard let window, viewModel.canTakeSnapshot(instance) else { return }
+        let content = TakeSnapshotSheetContentViewController(
+            vmName: instance.name, suggestedName: instance.snapshotManifest.defaultNewName)
+        content.delegate = self
+        shownSnapshotInstance = instance
+        snapshotSheetPresenter.onClose = { [weak self] in
+            self?.shownSnapshotInstance = nil
+            self?.runNext()
+        }
+        snapshotSheetPresenter.show(content: content, in: window)
+    }
+
+    func presentRevertSnapshot(_ snapshot: VMSnapshot, for instance: VMInstance) {
+        enqueue { $0.present($0.revertSnapshotConfig(snapshot, instance)) }
+    }
+
+    func presentDeleteSnapshot(_ snapshot: VMSnapshot, for instance: VMInstance) {
+        enqueue { $0.present($0.deleteSnapshotConfig(snapshot, instance)) }
+    }
+
     func presentForceStop(for instance: VMInstance) {
         enqueue { $0.present($0.forceStopConfig(instance)) }
     }
@@ -201,7 +263,9 @@ final class DetailAlertsPresenter: NSObject {
     }
 
     private func runNext() {
-        guard window != nil, !isShowingAlert, !deleteSheetPresenter.isShown, !pending.isEmpty else {
+        guard window != nil, !isShowingAlert, !deleteSheetPresenter.isShown,
+            !snapshotSheetPresenter.isShown, !pending.isEmpty
+        else {
             return
         }
         let next = pending.removeFirst()
@@ -236,6 +300,7 @@ final class DetailAlertsPresenter: NSObject {
             bundledDisks: viewModel.bundledDisks(for: request.instance),
             externals: resolved.externals,
             hasSavedState: request.instance.hasSaveFile,
+            snapshotCount: request.instance.snapshotManifest.snapshots.count,
             mode: request.permanently ? .immediate : .trash
         )
         content.delegate = self
@@ -270,6 +335,67 @@ final class DetailAlertsPresenter: NSObject {
                     [weak self] in self?.viewModel.cancelPreparingConfirmed(instance)
                 },
                 AlertButton("Continue", role: .cancel),
+            ])
+    }
+
+    /// The revert confirmation.
+    ///
+    /// The safe path — check-point the current state, then revert — is the
+    /// default button, so Return never fires the destructive one. A VM with no
+    /// live state to capture is offered the revert alone.
+    private func revertSnapshotConfig(
+        _ snapshot: VMSnapshot, _ vm: VMInstance
+    ) -> AlertConfiguration {
+        var buttons: [AlertButton] = []
+        if vm.canTakeSnapshot {
+            buttons.append(
+                AlertButton("Take Snapshot, Then Revert", role: .default) { [weak self] in
+                    guard let self else { return }
+                    Task { await self.viewModel.snapshotThenRevertConfirmed(vm, to: snapshot) }
+                })
+        }
+        buttons.append(
+            AlertButton("Revert", role: .destructive) { [weak self] in
+                guard let self else { return }
+                Task { await self.viewModel.revertConfirmed(vm, to: snapshot) }
+            })
+        buttons.append(AlertButton("Cancel", role: .cancel))
+
+        let loss: String
+        if vm.canTakeSnapshot {
+            loss =
+                "Everything changed inside the guest since then will be lost unless you take a snapshot first."
+        } else if vm.isColdPaused {
+            // The revert writes the snapshot's saved state into the suspend
+            // slot, which is the state this VM would otherwise resume into.
+            loss =
+                "The suspended session this VM would resume into is replaced by the snapshot\u{2019}s, "
+                + "and everything changed inside the guest since then will be lost."
+        } else {
+            loss = "Everything changed inside the guest since then will be lost."
+        }
+        return AlertConfiguration(
+            title:
+                "Revert \u{201C}\(vm.name)\u{201D} to \u{201C}\(snapshot.name)\u{201D}?",
+            message:
+                "The VM will return to the state and settings captured \(SnapshotDateFormat.string(from: snapshot.createdAt)). "
+                + "\(loss) The snapshot itself is kept.",
+            buttons: buttons)
+    }
+
+    private func deleteSnapshotConfig(
+        _ snapshot: VMSnapshot, _ vm: VMInstance
+    ) -> AlertConfiguration {
+        AlertConfiguration(
+            title: "Delete \u{201C}\(snapshot.name)\u{201D}?",
+            message:
+                "Moves this snapshot\u{2019}s saved state and disk copies to the Trash. "
+                + "\u{201C}\(vm.name)\u{201D} keeps the state it has now.",
+            buttons: [
+                AlertButton("Delete", role: .destructive) { [weak self] in
+                    self?.viewModel.deleteSnapshotConfirmed(vm, snapshot: snapshot)
+                },
+                AlertButton("Cancel", role: .cancel),
             ])
     }
 
@@ -391,6 +517,23 @@ final class DetailAlertsPresenter: NSObject {
             message:
                 "\(lead) Inside the VM, open the “\(KernovaMacOSAgentInfo.diskLabel)” disk in Finder and \(nextStep)",
             buttons: [AlertButton("OK", role: .cancel)])
+    }
+}
+
+// MARK: - TakeSnapshotSheetContentViewControllerDelegate
+
+extension DetailAlertsPresenter: TakeSnapshotSheetContentViewControllerDelegate {
+    func takeSnapshotSheetDidCancel(_ vc: TakeSnapshotSheetContentViewController) {
+        snapshotSheetPresenter.close()
+    }
+
+    func takeSnapshotSheet(
+        _ vc: TakeSnapshotSheetContentViewController, didConfirmName name: String, notes: String
+    ) {
+        if let instance = shownSnapshotInstance {
+            viewModel.takeSnapshot(instance, name: name, notes: notes)
+        }
+        snapshotSheetPresenter.close()
     }
 }
 

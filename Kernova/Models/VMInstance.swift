@@ -99,6 +99,13 @@ final class VMInstance {
 
     var errorMessage: String?
 
+    /// The named restore points this VM's bundle holds, mirrored from
+    /// `Snapshots/manifest.json`.
+    ///
+    /// `VMLibraryViewModel` is the only writer — it keeps this and the on-disk
+    /// manifest in step; every surface reads it.
+    var snapshotManifest = VMSnapshotManifest()
+
     var displayMode: VMDisplayMode = .inline
 
     var detailPaneMode: DetailPaneMode = .display
@@ -459,6 +466,21 @@ final class VMInstance {
 
     var canSave: Bool {
         status.canSave && !isColdPaused
+    }
+
+    /// `true` when a snapshot can be captured — exactly when Suspend is
+    /// offered, since both write the guest's live memory out through VZ.
+    var canTakeSnapshot: Bool {
+        canSave
+    }
+
+    /// `true` when this VM has a snapshot to go back to and is settled enough
+    /// to be taken there.
+    ///
+    /// A live VM qualifies: the revert discards the running session, which is
+    /// what the confirmation asks the user to accept.
+    var canRevertToSnapshot: Bool {
+        !isPreparing && !status.isTransitioning && !snapshotManifest.isEmpty
     }
 
     /// `true` when the VM is eligible for forceful termination.

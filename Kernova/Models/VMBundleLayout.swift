@@ -57,6 +57,27 @@ struct VMBundleLayout: Sendable {
         FileManager.default.fileExists(atPath: saveFileURL.path(percentEncoded: false))
     }
 
+    // MARK: - Snapshot store
+
+    var snapshotsDirectoryURL: URL {
+        bundleURL.appendingPathComponent("Snapshots", isDirectory: true)
+    }
+
+    var snapshotManifestURL: URL {
+        snapshotsDirectoryURL.appendingPathComponent("manifest.json")
+    }
+
+    /// The directory holding one snapshot's saved state and disk copies.
+    func snapshotDirectoryURL(id: UUID) -> URL {
+        snapshotsDirectoryURL.appendingPathComponent(id.uuidString, isDirectory: true)
+    }
+
+    /// A layout rooted at one snapshot's directory, so the captured copies
+    /// resolve through the same names as the bundle's own files.
+    func snapshotLayout(id: UUID) -> VMBundleLayout {
+        VMBundleLayout(bundleURL: snapshotDirectoryURL(id: id))
+    }
+
     /// Absolute URL backing a disk: bundle-relative `path`s resolve against
     /// `bundleURL`, absolute paths are used as-is.
     func diskURL(forRelativePath path: String, isInternal: Bool) -> URL {

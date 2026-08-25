@@ -14,6 +14,9 @@ final class VMToolbarManager: NSObject {
         /// Toolbar item identifiers (different strings per controller to avoid AppKit conflicts).
         let lifecycleID: NSToolbarItem.Identifier
         let saveStateID: NSToolbarItem.Identifier
+        /// Sits immediately after ``saveStateID`` with no space between, so the
+        /// two capture-state actions share one glass capsule (docs/TOOLBAR.md).
+        let takeSnapshotID: NSToolbarItem.Identifier
         let clipboardID: NSToolbarItem.Identifier?
         let popOutID: NSToolbarItem.Identifier
         let fullscreenID: NSToolbarItem.Identifier
@@ -33,6 +36,7 @@ final class VMToolbarManager: NSObject {
         [
             configuration.lifecycleID,
             configuration.saveStateID,
+            configuration.takeSnapshotID,
             configuration.clipboardID,
             configuration.popOutID,
             configuration.fullscreenID,
@@ -88,6 +92,7 @@ final class VMToolbarManager: NSObject {
     private static let stopToolTip = "Stop the virtual machine"
     private static let discardSavedStateToolTip = "Discard the virtual machine's saved state"
     private static let saveStateToolTip = "Suspend the virtual machine"
+    private static let takeSnapshotToolTip = "Take a snapshot of the virtual machine"
     private static let clipboardToolTip = "Open the clipboard sharing window"
     private static let popOutToolTip = "Open display in a separate window"
     private static let popInToolTip = "Return display to the main window"
@@ -145,6 +150,15 @@ final class VMToolbarManager: NSObject {
                 symbol: "moon.zzz.fill",
                 action: #selector(AppDelegate.saveVM(_:)),
                 toolTip: Self.saveStateToolTip
+            )
+
+        case configuration.takeSnapshotID:
+            return makeBorderedItem(
+                identifier: identifier,
+                label: "Take Snapshot",
+                symbol: "clock.arrow.circlepath",
+                action: #selector(AppDelegate.takeSnapshot(_:)),
+                toolTip: Self.takeSnapshotToolTip
             )
 
         case configuration.clipboardID:
@@ -214,6 +228,9 @@ final class VMToolbarManager: NSObject {
         let instance = resolveActiveInstance()
         updateLifecycleGroup(in: toolbar, instance: instance)
         updateItem(in: toolbar, configuration.saveStateID, isEnabled: instance?.canSave ?? false)
+        updateItem(
+            in: toolbar, configuration.takeSnapshotID,
+            isEnabled: instance?.canTakeSnapshot ?? false)
         updateClipboardItem(in: toolbar, instance: instance)
         updateDisplayItems(in: toolbar, instance: instance)
         updateSettingsToggleItem(in: toolbar, instance: instance)

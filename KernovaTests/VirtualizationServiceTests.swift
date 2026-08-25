@@ -19,6 +19,163 @@ struct VirtualizationServiceTests {
         return VMInstance(configuration: config, bundleURL: bundleURL, status: status)
     }
 
+    // MARK: - Snapshot capture
+
+    @Test("A capture puts a running guest back to running")
+    func captureResumesAGuestItPaused() async throws {
+        let session = MockSnapshotSession(guestState: .running)
+        var stateWhileCapturing: MockSnapshotSession.GuestState?
+
+        try await VirtualizationService.captureLiveState(
+            session: session, wasRunning: true,
+            saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
+        ) {
+            stateWhileCapturing = await session.guestState
+        }
+
+        #expect(stateWhileCapturing == .paused)
+        let finalState = await session.guestState
+        #expect(finalState == .running)
+    }
+
+    @Test("A capture of a guest the user already paused leaves it paused")
+    func captureLeavesAnAlreadyPausedGuestPaused() async throws {
+        // `resumeIfPaused` resumes whatever is paused, so an unconditional call
+        // here restarts the guest while the VM is reported as paused.
+        let session = MockSnapshotSession(guestState: .paused)
+
+        try await VirtualizationService.captureLiveState(
+            session: session, wasRunning: false,
+            saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
+        ) {}
+
+        let finalState = await session.guestState
+        let calls = await session.calls
+        #expect(finalState == .paused)
+        #expect(!calls.contains("resumeIfPaused"))
+    }
+
+    @Test("A capture that fails to save never copies the disks")
+    func captureStopsAtAFailedSave() async {
+        let session = MockSnapshotSession(guestState: .running)
+        await session.setSaveError(VMSnapshotError.snapshotMissingSavedState)
+        var captured = false
+
+        await #expect(throws: VMSnapshotError.self) {
+            try await VirtualizationService.captureLiveState(
+                session: session, wasRunning: true,
+                saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
+            ) { captured = true }
+        }
+
+        #expect(!captured)
+    }
+
+    // MARK: - Snapshot revert
+
+    /// A bundle holding one snapshot's captured disk, saved state and
+    /// configuration, plus the VM's own files.
+    private struct RevertFixture {
+        let instance: VMInstance
+        let snapshot: VMSnapshot
+        let store: VMSnapshotStore
+        /// What the snapshot recorded, which the revert has to install.
+        let capturedConfiguration: VMConfiguration
+    }
+
+    private func makeRevertFixture(status: VMStatus = .stopped) throws -> RevertFixture {
+        var config = VMConfiguration(name: "Revert VM", guestOS: .linux, bootMode: .efi)
+        config.memorySizeInGB = 16
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RevertTests-\(UUID().uuidString)", isDirectory: true)
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        try Data("live-disk".utf8).write(to: layout.diskImageURL)
+
+        // The capture: taken while the VM had 8 GB and a second disk.
+        var capturedConfiguration = config
+        capturedConfiguration.memorySizeInGB = 8
+        let extraID = UUID()
+        capturedConfiguration.storageDisks = [
+            StorageDisk(path: "Disk.asif", isInternal: true),
+            StorageDisk(
+                id: extraID, path: "AdditionalDisks/\(extraID.uuidString).asif", isInternal: true),
+        ]
+        let snapshot = VMSnapshot(name: "Before the update")
+        let snapshotLayout = layout.snapshotLayout(id: snapshot.id)
+        try FileManager.default.createDirectory(
+            at: snapshotLayout.additionalDisksDirectoryURL, withIntermediateDirectories: true)
+        try Data("captured-disk".utf8).write(to: snapshotLayout.diskImageURL)
+        try Data("captured-extra".utf8).write(to: snapshotLayout.additionalDiskURL(id: extraID))
+        try Data("captured-state".utf8).write(to: snapshotLayout.saveFileURL)
+        try VMConfiguration.makeJSONEncoder().encode(capturedConfiguration)
+            .write(to: snapshotLayout.configURL)
+
+        // The VM as it stands now: more memory, and the second disk removed.
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: status)
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+        return RevertFixture(
+            instance: instance, snapshot: snapshot, store: VMSnapshotStore(),
+            capturedConfiguration: capturedConfiguration)
+    }
+
+    @Test("A revert installs the configuration the snapshot captured, keeping identity")
+    func revertInstallsTheCapturedConfiguration() async throws {
+        let fixture = try makeRevertFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
+        let originalID = fixture.instance.configuration.id
+
+        try await service.revertToSnapshot(
+            fixture.instance, snapshot: fixture.snapshot, store: fixture.store)
+
+        #expect(fixture.instance.configuration.memorySizeInGB == 8)
+        #expect(fixture.instance.configuration.id == originalID)
+        #expect(fixture.instance.configuration.name == "Revert VM")
+        // On disk too, so a later load reads the same settings the saved state
+        // was written under.
+        let written = try VMConfiguration.load(fromBundle: fixture.instance.bundleURL)
+        #expect(written.memorySizeInGB == 8)
+        #expect(written.name == "Revert VM")
+    }
+
+    @Test("A revert restores a disk the VM no longer configures")
+    func revertRestoresADiskDroppedSinceTheCapture() async throws {
+        let fixture = try makeRevertFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
+        let layout = fixture.instance.bundleLayout
+        let extraPath = fixture.capturedConfiguration.storageDisks?.last?.path ?? ""
+
+        try await service.revertToSnapshot(
+            fixture.instance, snapshot: fixture.snapshot, store: fixture.store)
+
+        let restoredExtra = layout.bundleURL.appendingPathComponent(extraPath)
+        #expect(FileManager.default.fileExists(atPath: restoredExtra.path(percentEncoded: false)))
+        let mainDisk = try Data(contentsOf: layout.diskImageURL)
+        #expect(String(decoding: mainDisk, as: UTF8.self) == "captured-disk")
+    }
+
+    @Test("An incomplete snapshot is refused before the live VM is torn down")
+    func revertRefusesBeforeTearingTheVMDown() async throws {
+        let fixture = try makeRevertFixture(status: .running)
+        defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
+        fixture.instance.hasLiveVirtualMachineOverrideForTesting = true
+        // The snapshot loses the file its own configuration names, so the
+        // pre-flight refuses.
+        let snapshotLayout = fixture.instance.bundleLayout.snapshotLayout(id: fixture.snapshot.id)
+        try FileManager.default.removeItem(at: snapshotLayout.diskImageURL)
+
+        await #expect(throws: VMSnapshotError.self) {
+            try await service.revertToSnapshot(
+                fixture.instance, snapshot: fixture.snapshot, store: fixture.store)
+        }
+
+        // Untouched: no `.restoring`, no resting status applied, and the VM's
+        // own disk still holds what the live guest wrote.
+        #expect(fixture.instance.status == .running)
+        let liveDisk = try Data(contentsOf: fixture.instance.bundleLayout.diskImageURL)
+        #expect(String(decoding: liveDisk, as: UTF8.self) == "live-disk")
+    }
+
     // MARK: - Start Guards
 
     @Test("start throws when VM is already running")

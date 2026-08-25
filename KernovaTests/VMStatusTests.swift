@@ -209,5 +209,33 @@ struct VMStatusTests {
         #expect(VMStatus.installing.displayName == "Installing")
         #expect(VMStatus.initialBoot.displayName == "Initial Boot")
         #expect(VMStatus.error.displayName == "Error")
+        #expect(VMStatus.snapshotting.displayName == "Taking Snapshot")
+    }
+
+    // MARK: - Snapshotting
+
+    @Test("snapshotting is a transitional state a quit has to wait out")
+    func snapshottingIsTransitional() {
+        // The saved state is written in place, so exiting mid-write leaves a
+        // truncated file where a restore point belongs.
+        #expect(VMStatus.snapshotting.isTransitioning == true)
+        #expect(VMStatus.snapshotting.terminationMustWaitOut == true)
+        #expect(VMStatus.snapshotting.isActive == true)
+    }
+
+    @Test("snapshotting refuses every lifecycle command and keeps the display up")
+    func snapshottingRefusesCommands() {
+        #expect(VMStatus.snapshotting.canStart == false)
+        #expect(VMStatus.snapshotting.canStop == false)
+        #expect(VMStatus.snapshotting.canPause == false)
+        #expect(VMStatus.snapshotting.canResume == false)
+        #expect(VMStatus.snapshotting.canSave == false)
+        #expect(VMStatus.snapshotting.canEditSettings == false)
+        #expect(VMStatus.snapshotting.canRename == false)
+        // The guest is still live, so its display keeps rendering, and a wedged
+        // capture is still force-stoppable.
+        #expect(VMStatus.snapshotting.hasActiveDisplay == true)
+        #expect(VMStatus.snapshotting.canForceStop == true)
+        #expect(VMStatus.snapshotting.transitionLabel == "Taking Snapshot\u{2026}")
     }
 }

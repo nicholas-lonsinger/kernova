@@ -12,6 +12,7 @@ final class VMLibraryViewModel {
 
     let storageService: any VMStorageProviding
     let diskImageService: any DiskImageProviding
+    let snapshotStore: any VMSnapshotStoring
     let lifecycle: VMLifecycleCoordinator
 
     private let vmnetNetworks: any VmnetNetworkProviding
@@ -177,6 +178,7 @@ final class VMLibraryViewModel {
     init(
         storageService: any VMStorageProviding = VMStorageService(),
         diskImageService: any DiskImageProviding = DiskImageService(),
+        snapshotStore: any VMSnapshotStoring = VMSnapshotStore(),
         virtualizationService: any VirtualizationProviding = VirtualizationService(),
         installService: any MacOSInstallProviding = MacOSInstallService(),
         ipswService: any IPSWProviding = IPSWService(),
@@ -193,6 +195,7 @@ final class VMLibraryViewModel {
     ) {
         self.storageService = storageService
         self.diskImageService = diskImageService
+        self.snapshotStore = snapshotStore
         self.vmnetNetworks = vmnetNetworks
         self.isVMNetworkingEntitled = isVMNetworkingEntitled
         self.fileSystem = fileSystem
@@ -952,6 +955,233 @@ final class VMLibraryViewModel {
         try await lifecycle.forceStop(instance)
     }
 
+    // MARK: - Snapshots
+
+    /// Re-reads a bundle's snapshot manifest into its instance.
+    ///
+    /// Every instance is seeded at construction; this is for the paths that put
+    /// files in the bundle afterwards (an import copying a bundle that already
+    /// carries snapshots).
+    func reloadSnapshots(for instance: VMInstance) {
+        instance.snapshotManifest = snapshotStore.loadManifest(bundleURL: instance.bundleURL)
+    }
+
+    /// Whether Take Snapshot is offered right now — the single gate every
+    /// surface enables its command from.
+    ///
+    /// ``VMInstance/canTakeSnapshot`` alone answers the VM's state; an
+    /// operation still settling would reject the capture, so it has to be part
+    /// of the same read or the command reads as available and errors instead.
+    func canTakeSnapshot(_ instance: VMInstance) -> Bool {
+        instance.canTakeSnapshot && !isBusy(instance)
+    }
+
+    /// Whether a revert is offered right now — the counterpart gate to
+    /// ``canTakeSnapshot(_:)``.
+    func canRevertToSnapshot(_ instance: VMInstance) -> Bool {
+        instance.canRevertToSnapshot && !isBusy(instance)
+    }
+
+    /// Whether the snapshot list may be edited — renaming and deleting, which
+    /// go through the same per-VM serialization a revert holds.
+    func canModifySnapshots(_ instance: VMInstance) -> Bool {
+        !isBusy(instance)
+    }
+
+    /// Opens the Take Snapshot sheet.
+    func requestTakeSnapshot(_ instance: VMInstance) {
+        guard canTakeSnapshot(instance) else { return }
+        presenter?.presentTakeSnapshotSheet(for: instance)
+    }
+
+    /// Captures a snapshot and lists it in the manifest.
+    ///
+    /// Re-checks the gate: the sheet gathers a name and notes, so the VM can
+    /// move between opening it and confirming.
+    ///
+    /// The returned Task lets tests await the capture.
+    @discardableResult
+    func takeSnapshot(_ instance: VMInstance, name: String, notes: String = "") -> Task<Void, Never> {
+        guard canTakeSnapshot(instance) else {
+            Self.logger.notice(
+                "Refusing to snapshot '\(instance.name, privacy: .public)': the VM is no longer in a state to capture"
+            )
+            return Task {}
+        }
+        return Task { _ = await captureSnapshot(instance, name: name, notes: notes) }
+    }
+
+    /// The capture itself, answering the snapshot that landed — `nil` when
+    /// anything failed, so a caller chaining off it (the revert alert's
+    /// snapshot-first path) stops rather than proceeding on a lost checkpoint.
+    private func captureSnapshot(
+        _ instance: VMInstance, name: String, notes: String
+    ) async -> VMSnapshot? {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let snapshot = VMSnapshot(
+            name: trimmedName.isEmpty ? instance.snapshotManifest.defaultNewName : trimmedName,
+            notes: notes.trimmingCharacters(in: .whitespacesAndNewlines))
+        do {
+            try await lifecycle.takeSnapshot(
+                instance, snapshot: snapshot, store: snapshotStore)
+        } catch {
+            Self.logger.error(
+                "Failed to take a snapshot of '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            presentError(error)
+            return nil
+        }
+        var manifest = instance.snapshotManifest
+        manifest.insert(snapshot)
+        guard writeSnapshotManifest(manifest, for: instance) else {
+            // Unlisted files are files no surface can reach or remove, so the
+            // capture is undone rather than left orphaned in the bundle.
+            let store = snapshotStore
+            let bundleURL = instance.bundleURL
+            let id = snapshot.id
+            await Task.detached {
+                store.removeSnapshotDirectory(bundleURL: bundleURL, snapshotID: id)
+            }.value
+            return nil
+        }
+        return snapshot
+    }
+
+    /// Shows the revert confirmation.
+    func confirmRevert(_ instance: VMInstance, to snapshot: VMSnapshot) {
+        guard canRevertToSnapshot(instance) else { return }
+        presenter?.presentRevertSnapshot(snapshot, for: instance)
+    }
+
+    /// Takes a fresh snapshot of the current state, then reverts — the revert
+    /// alert's default, non-destructive path.
+    func snapshotThenRevertConfirmed(_ instance: VMInstance, to snapshot: VMSnapshot) async {
+        // A stopped VM has no live state to check-point, so there is nothing to
+        // take first and the revert stands on its own.
+        if instance.canTakeSnapshot {
+            guard
+                await captureSnapshot(
+                    instance, name: instance.snapshotManifest.defaultNewName, notes: "") != nil
+            else { return }
+        }
+        await revertConfirmed(instance, to: snapshot)
+    }
+
+    func revertConfirmed(_ instance: VMInstance, to snapshot: VMSnapshot) async {
+        guard instance.snapshotManifest.snapshot(id: snapshot.id) != nil else {
+            Self.logger.notice(
+                "Refusing to revert '\(instance.name, privacy: .public)': the snapshot is no longer listed"
+            )
+            return
+        }
+        // A VM that is live goes back to being live once the files are in
+        // place, so the window it comes up in is chosen before the teardown.
+        if instance.hasLiveVirtualMachine {
+            surfaceDisplay(for: instance)
+        }
+        do {
+            try await lifecycle.revertToSnapshot(
+                instance, snapshot: snapshot, store: snapshotStore)
+        } catch {
+            Self.logger.error(
+                "Failed to revert '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            presentError(error)
+            // A resume that failed left the reverted files in place, so the VM's
+            // state does descend from this snapshot and the marker says so.
+            guard case VirtualizationError.revertResumeFailed = error else { return }
+        }
+        var manifest = instance.snapshotManifest
+        manifest.currentID = snapshot.id
+        writeSnapshotManifest(manifest, for: instance)
+    }
+
+    /// Shows the delete-snapshot confirmation.
+    func confirmDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) {
+        presenter?.presentDeleteSnapshot(snapshot, for: instance)
+    }
+
+    /// Trashes a snapshot's captured files and drops it from the manifest.
+    ///
+    /// Serialized against the VM's other operations: a revert reads the very
+    /// directory this trashes, and half of it landing in the Trash mid-copy is
+    /// what that ordering rules out.
+    ///
+    /// The returned Task lets tests await the trash.
+    @discardableResult
+    func deleteSnapshotConfirmed(_ instance: VMInstance, snapshot: VMSnapshot) -> Task<Void, Never> {
+        let store = snapshotStore
+        let id = snapshot.id
+        return Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.lifecycle.discardSnapshot(instance, snapshotID: id, store: store)
+            } catch {
+                Self.logger.error(
+                    "Failed to trash snapshot '\(snapshot.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
+                self.presentError(error)
+                return
+            }
+            var manifest = instance.snapshotManifest
+            manifest.remove(id: id)
+            self.writeSnapshotManifest(manifest, for: instance)
+            Self.logger.notice(
+                "Deleted snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
+            )
+        }
+    }
+
+    /// Renames a snapshot; an empty or unchanged name is a no-op, as is one
+    /// arriving while another operation on the VM is unsettled.
+    func renameSnapshot(_ snapshot: VMSnapshot, newName: String, on instance: VMInstance) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != snapshot.name else { return }
+        guard canModifySnapshots(instance) else {
+            Self.logger.notice(
+                "Refusing to rename a snapshot of '\(instance.name, privacy: .public)': another operation is in flight"
+            )
+            return
+        }
+        var manifest = instance.snapshotManifest
+        manifest.rename(id: snapshot.id, to: trimmed)
+        guard manifest != instance.snapshotManifest else { return }
+        writeSnapshotManifest(manifest, for: instance)
+    }
+
+    /// Bytes each of this VM's snapshots occupies on disk, read off the main
+    /// actor — the copies live on the same volume and can be many gigabytes.
+    func snapshotOnDiskBytes(for instance: VMInstance) async -> [UUID: UInt64] {
+        let store = snapshotStore
+        let bundleURL = instance.bundleURL
+        let ids = instance.snapshotManifest.snapshots.map(\.id)
+        guard !ids.isEmpty else { return [:] }
+        return await Task.detached {
+            store.onDiskBytes(bundleURL: bundleURL, snapshotIDs: ids)
+        }.value
+    }
+
+    /// Writes `manifest` to the bundle and mirrors it onto the instance.
+    ///
+    /// - Returns: Whether it reached disk. On failure the in-memory manifest is
+    ///   left alone, so what the UI shows still matches what is stored.
+    @discardableResult
+    private func writeSnapshotManifest(
+        _ manifest: VMSnapshotManifest, for instance: VMInstance
+    ) -> Bool {
+        do {
+            try snapshotStore.saveManifest(manifest, bundleURL: instance.bundleURL)
+            instance.snapshotManifest = manifest
+            return true
+        } catch {
+            Self.logger.error(
+                "Failed to write the snapshot manifest for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            presentError(error)
+            return false
+        }
+    }
+
     // MARK: - Delete
 
     /// Begins the delete-VM flow.
@@ -1430,7 +1660,10 @@ final class VMLibraryViewModel {
                         try storage.saveConfiguration(sanitizedConfig, to: destinationURL)
                     }
                 },
-                onSuccess: {
+                onSuccess: { [weak self] in
+                    // The phantom was wired before its bundle existed, so any
+                    // snapshots that arrived with the copy are read now.
+                    self?.reloadSnapshots(for: phantom)
                     Self.logger.notice(
                         "Imported VM '\(config.name, privacy: .public)' from \(sourceURL.lastPathComponent, privacy: .public)"
                     )
@@ -1577,6 +1810,9 @@ final class VMLibraryViewModel {
         instance.onSessionTornDown = { [weak self, weak instance] in
             self?.rebuildNetworksIfIdle(ignoring: instance)
         }
+        // The one construction-site hook every path runs through — load, create,
+        // clone, import, and disk reconciliation alike.
+        instance.snapshotManifest = snapshotStore.loadManifest(bundleURL: instance.bundleURL)
         syncAddressReservation(for: instance.configuration)
         syncPortForwardingRules(for: instance.configuration)
         // The create/clone/import/load entry point: a VM arriving with a slot
