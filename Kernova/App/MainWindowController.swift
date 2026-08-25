@@ -173,8 +173,25 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         )
     }
 
-    /// Shows the Ephemeral marker while the selected VM is running a session
-    /// its baseline will discard.
+    /// Whether the selected VM is running a session its baseline will discard.
+    private var showsEphemeralMarker: Bool {
+        viewModel.selectedInstance?.hasLiveEphemeralSession ?? false
+    }
+
+    /// Applies the marker for an ordinary state change.
+    ///
+    /// Skipped while the customize palette is up, so an observation firing
+    /// mid-customization cannot mutate the layout the user is arranging. The
+    /// palette's own close path calls ``setEphemeralMarker(visible:in:)``
+    /// directly instead — see ``windowDidEndSheet(_:)``.
+    private func updateEphemeralChip() {
+        guard let toolbar = window?.toolbar, !toolbar.customizationPaletteIsRunning else { return }
+        setEphemeralMarker(visible: showsEphemeralMarker, in: toolbar)
+    }
+
+    /// Puts the marker into the toolbar, or takes it back out. Idempotent, and
+    /// unguarded by the palette check so the customize sheet's open and close
+    /// paths can both drive it.
     ///
     /// Inserted and removed rather than hidden in place: on the glass toolbar a
     /// zero-width item still holds a slot in the overflow accounting, which
@@ -182,18 +199,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// (docs/TOOLBAR.md says the same of `isHidden`). Removal is what leaves the
     /// layout the feature never existed in.
     ///
-    /// The pair goes in together: the flexible space is what pins the marker
-    /// beside the title while the rest of the items keep packing trailing, so
-    /// neither belongs in the toolbar without the other.
-    private func updateEphemeralChip() {
-        guard let toolbar = window?.toolbar, !toolbar.customizationPaletteIsRunning else { return }
-        setEphemeralMarker(
-            visible: viewModel.selectedInstance?.hasLiveEphemeralSession ?? false, in: toolbar)
-    }
-
-    /// Puts the marker and its flexible space into the toolbar, or takes them
-    /// back out. Idempotent, and unguarded by the palette check so the
-    /// customize sheet can strip the pair before it opens.
+    /// It goes in at the head of the content region, which puts it at the
+    /// leading edge of the trailing control cluster — the items there pack
+    /// against the trailing edge as a run, so the marker leads that run rather
+    /// than anchoring to the window title.
     private func setEphemeralMarker(visible: Bool, in toolbar: NSToolbar) {
         let existing = toolbar.items.firstIndex { $0.itemIdentifier == Self.toolbarEphemeral }
 
@@ -208,23 +217,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             // layout — the same reasoning the New VM collapse removal takes.
             withAutosaveSuspended(toolbar) {
                 toolbar.insertItem(withItemIdentifier: Self.toolbarEphemeral, at: separator + 1)
-                toolbar.insertItem(withItemIdentifier: .flexibleSpace, at: separator + 2)
             }
             return
         }
 
         guard let index = existing else { return }
         ephemeralChipHost.reset()
-        withAutosaveSuspended(toolbar) {
-            toolbar.removeItem(at: index)
-            // The flexible space the insert paired with it; guarded in case an
-            // autosaved layout ever restored the marker without one.
-            if index < toolbar.items.count,
-                toolbar.items[index].itemIdentifier == .flexibleSpace
-            {
-                toolbar.removeItem(at: index)
-            }
-        }
+        withAutosaveSuspended(toolbar) { toolbar.removeItem(at: index) }
     }
 
     // MARK: - Sidebar-Collapse New VM Visibility
@@ -426,7 +425,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         // Re-apply the collapse-driven New VM removal that `windowWillBeginSheet`
         // undid for the palette, and the marker it stripped.
         syncNewVMVisibilityToSidebarState()
-        updateEphemeralChip()
+        // Deliberately not `updateEphemeralChip()`: AppKit still reports
+        // `customizationPaletteIsRunning` here, so that path's guard would skip
+        // the restore and leave the marker gone until an unrelated rebuild.
+        // Driving it directly settles it now rather than betting on when the
+        // flag clears.
+        setEphemeralMarker(visible: showsEphemeralMarker, in: toolbar)
     }
 
     func toolbar(
