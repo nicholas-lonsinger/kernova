@@ -356,6 +356,36 @@ struct DetailAlertsPresenterTests {
         #expect(alert.message.contains("suspended session"))
     }
 
+    @Test("Discarding a suspended ephemeral session is presented as a revert to the baseline")
+    func discardAlertOnAnEphemeralVMNamesTheBaseline() {
+        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let vm = makeInstance()
+        vm.status = .paused
+        vm.hasLiveVirtualMachineOverrideForTesting = false
+        let baseline = VMSnapshot(name: "Clean install")
+        vm.snapshotManifest = VMSnapshotManifest(snapshots: [baseline], currentID: baseline.id)
+        vm.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+
+        let alert = presenter.forceStopAlertForTesting(vm)
+
+        #expect(alert.buttons.contains { $0.title == "Revert to Baseline" })
+        #expect(alert.message.contains("Clean install"))
+        #expect(!alert.message.contains("permanently delete"))
+    }
+
+    @Test("Discarding a suspended VM that isn't ephemeral still names the deletion")
+    func discardAlertOnAPlainVMIsUnchanged() {
+        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let vm = makeInstance()
+        vm.status = .paused
+        vm.hasLiveVirtualMachineOverrideForTesting = false
+
+        let alert = presenter.forceStopAlertForTesting(vm)
+
+        #expect(alert.buttons.contains { $0.title == "Discard" })
+        #expect(alert.message.contains("permanently delete the saved state"))
+    }
+
     @Test("The revert alert on a live VM offers the snapshot-first path instead")
     func revertAlertOnALiveVMOffersSnapshotFirst() {
         let presenter = DetailAlertsPresenter(viewModel: makeViewModel())

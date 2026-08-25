@@ -129,6 +129,24 @@ final class VMSettingsViewController: NSViewController {
     /// Holds the banner naming how many macOS guests are marked to start at
     /// launch, when that exceeds what macOS runs at once.
     private var autoStartWarningContainer = NSStackView()
+    private var ephemeralSwitch = NSSwitch()
+    /// The Ephemeral Mode row's title label, retained so `refreshStartup` can
+    /// gray it in step with a switch a VM without snapshots can't use.
+    private var ephemeralLabel = NSTextField()
+    private var ephemeralBaselinePopUp = NSPopUpButton()
+    /// The Ephemeral Mode row and its Baseline Snapshot sub-option, retained so
+    /// the sub-option shows only while the mode is on.
+    private var ephemeralGroup: GroupedFormSubOptionGroup?
+    /// Explains that a baseline needs a snapshot first; hidden once the VM has one.
+    private var ephemeralNoSnapshotsCaption = NSView()
+    /// One entry of the Baseline Snapshot menu, as rendered.
+    private struct BaselineMenuItem: Equatable {
+        let id: UUID
+        let name: String
+    }
+    /// What the baseline menu was last built from, so it rebuilds exactly when
+    /// the list or a listed name changed rather than on every `apply()` pass.
+    private var renderedEphemeralBaselines: [BaselineMenuItem]?
 
     // Resources
     private var cpuField = NSTextField()
@@ -793,14 +811,27 @@ extension VMSettingsViewController {
             + "so the ones after the first two won't start."
     }
 
-    /// The Startup card's one toggle, its ordering caption, and the capacity
-    /// banner's container.
+    /// The Startup card's two toggles, their captions, and the capacity banner's
+    /// container.
     ///
-    /// Not `lockable`, and `autoStartSwitch` stays out of
-    /// `persistentLockableControls`: the flag is read once at app launch and
-    /// reaches no `VZVirtualMachineConfiguration`, so it edits while the VM runs.
+    /// Not `lockable`, and neither switch is in `persistentLockableControls`:
+    /// the auto-start flag is read once at app launch, the ephemeral one at
+    /// power-off, and neither reaches a `VZVirtualMachineConfiguration` — so
+    /// both edit while the VM runs.
     private func buildStartupSection() -> NSView {
         autoStartSwitch = makeSwitch(action: #selector(autoStartToggled))
+        ephemeralSwitch = makeSwitch(action: #selector(ephemeralModeToggled))
+        ephemeralBaselinePopUp = makeEphemeralBaselinePopUp()
+        renderedEphemeralBaselines = nil
+        let ephemeralGroup = makeGroupedFormSubOptionGroup(
+            primary: makeToggleRowWithInfo(
+                "Ephemeral Mode", control: ephemeralSwitch,
+                paragraphs: EphemeralModeCopy.popoverParagraphs,
+                titleLabel: { [weak self] in self?.ephemeralLabel = $0 }),
+            subOption: makeGroupedFormCardRow(
+                "Baseline Snapshot", control: ephemeralBaselinePopUp))
+        self.ephemeralGroup = ephemeralGroup
+
         let card = makeGroupedFormCard(rows: [
             makeToggleRowWithInfo(
                 "Start When Kernova Opens", control: autoStartSwitch,
@@ -811,7 +842,8 @@ extension VMSettingsViewController {
                     .body(
                         "Turn on Open at Login in Settings → General to have it running after you log in."
                     ),
-                ])
+                ]),
+            ephemeralGroup,
         ])
 
         autoStartWarningContainer = NSStackView()
@@ -820,11 +852,25 @@ extension VMSettingsViewController {
         autoStartWarningContainer.spacing = Spacing.small
         autoStartWarningContainer.translatesAutoresizingMaskIntoConstraints = false
 
+        let noSnapshots = makeGroupedFormCaption(EphemeralModeCopy.noSnapshotsCaption)
+        noSnapshots.isHidden = true
+        ephemeralNoSnapshotsCaption = noSnapshots
+
         return makeSection([
             makeHeader("Startup"), card,
             makeGroupedFormCaption(Self.autoStartOrderCaption),
+            makeGroupedFormCaption(EphemeralModeCopy.settingsCaption),
+            noSnapshots,
             autoStartWarningContainer,
         ])
+    }
+
+    private func makeEphemeralBaselinePopUp() -> NSPopUpButton {
+        let popUp = NSPopUpButton()
+        popUp.controlSize = .small
+        popUp.target = self
+        popUp.action = #selector(ephemeralBaselineChanged)
+        return popUp
     }
 
     // MARK: Resources
@@ -2065,6 +2111,7 @@ extension VMSettingsViewController {
 
     private func refreshStartup() {
         autoStartSwitch.state = instance.configuration.startsAutomaticallyOnLaunch ? .on : .off
+        refreshEphemeralMode()
 
         let message = Self.autoStartCapacityWarning(
             isMacOSGuest: instance.configuration.guestOS == .macOS,
@@ -2076,6 +2123,43 @@ extension VMSettingsViewController {
         let banner = makeGroupedFormBanner(
             symbolName: "exclamationmark.triangle.fill", tint: .systemYellow, message: message)
         addFullWidth(banner, to: autoStartWarningContainer)
+    }
+
+    /// Renders the Ephemeral Mode toggle, its baseline menu, and the captions
+    /// that stand in for a VM with nothing to use as a baseline.
+    ///
+    /// Both controls stay live while the pane is read-only: the flag is read at
+    /// power-off, and a running ephemeral VM is exactly where a user reaches for
+    /// the switch.
+    private func refreshEphemeralMode() {
+        let manifest = instance.snapshotManifest
+        let enabled = instance.configuration.ephemeralModeEnabled
+        ephemeralSwitch.state = enabled ? .on : .off
+        // A VM with nothing to fall back to can't take the mode — but one that
+        // is already in it can always be taken back out.
+        let offerable = !manifest.isEmpty || enabled
+        ephemeralSwitch.isEnabled = offerable
+        // AppKit fades the disabled switch but not its label, which leaves the
+        // row half-lit; gray the text in step so the row reads as inert.
+        ephemeralLabel.textColor = offerable ? .labelColor : .disabledControlTextColor
+        ephemeralNoSnapshotsCaption.isHidden = !manifest.isEmpty
+        ephemeralGroup?.isSubOptionHidden = !enabled
+
+        let listed = manifest.ordered.map { BaselineMenuItem(id: $0.id, name: $0.name) }
+        if listed != renderedEphemeralBaselines {
+            renderedEphemeralBaselines = listed
+            ephemeralBaselinePopUp.menu?.removeAllItems()
+            for item in listed {
+                ephemeralBaselinePopUp.addItem(withTitle: item.name)
+                ephemeralBaselinePopUp.lastItem?.representedObject = item.id
+            }
+        }
+        guard
+            let index = ephemeralBaselinePopUp.itemArray.firstIndex(where: {
+                ($0.representedObject as? UUID) == instance.configuration.ephemeralBaselineSnapshotID
+            })
+        else { return }
+        ephemeralBaselinePopUp.selectItem(at: index)
     }
 
     private func refreshResources() {
@@ -2568,7 +2652,8 @@ extension VMSettingsViewController {
             manifest: instance.snapshotManifest,
             canTakeSnapshot: viewModel.canTakeSnapshot(instance),
             canRevert: viewModel.canRevertToSnapshot(instance),
-            canModify: viewModel.canModifySnapshots(instance))
+            canModify: viewModel.canModifySnapshots(instance),
+            baselineID: instance.ephemeralBaselineSnapshot?.id)
 
         // The sizes are a directory walk over gigabyte-scale copies, so they are
         // read off the main actor and only when the set of snapshots changed.
@@ -2855,6 +2940,35 @@ extension VMSettingsViewController: NSMenuItemValidation {
 
     @objc private func autoStartToggled() {
         writeConfig { $0.startsAutomaticallyOnLaunch = autoStartSwitch.state == .on }
+    }
+
+    @objc private func ephemeralModeToggled() {
+        let enabled = ephemeralSwitch.state == .on
+        writeConfig { $0.applyEphemeralMode(enabled: enabled, baseline: defaultEphemeralBaseline()) }
+    }
+
+    @objc private func ephemeralBaselineChanged() {
+        guard let id = ephemeralBaselinePopUp.selectedItem?.representedObject as? UUID else {
+            Self.logger.fault("Ephemeral baseline popup selection carries no snapshot")
+            assertionFailure("Ephemeral baseline popup selection carries no snapshot")
+            return
+        }
+        writeConfig { $0.applyEphemeralMode(enabled: true, baseline: id) }
+    }
+
+    /// The baseline a freshly-enabled mode takes: the VM's own choice while it
+    /// still names a listed snapshot, then the Current one, then the newest.
+    private func defaultEphemeralBaseline() -> UUID? {
+        let manifest = instance.snapshotManifest
+        if let chosen = instance.configuration.ephemeralBaselineSnapshotID,
+            manifest.snapshot(id: chosen) != nil
+        {
+            return chosen
+        }
+        if let current = manifest.currentID, manifest.snapshot(id: current) != nil {
+            return current
+        }
+        return manifest.ordered.first?.id
     }
 
     @objc private func serialRelayToggled() {

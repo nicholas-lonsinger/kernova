@@ -15,6 +15,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// display can be measured.
     let detailContainer: DetailContainerViewController
     private var windowStateObservation: ObservationLoop?
+    /// The titlebar's Ephemeral marker for whichever VM is selected.
+    private var ephemeralChip: EphemeralChipTitlebarController?
     private var sidebarCollapseObservation: NSKeyValueObservation?
     /// The toolbar index New VM was programmatically removed from for a
     /// collapsed sidebar, or `nil` when it is in the toolbar (or the user
@@ -113,8 +115,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             )
         }
 
+        ephemeralChip = EphemeralChipTitlebarController(window: window)
+
         updateToolbarItems()
         updateWindowTitle()
+        updateEphemeralChip()
         observeWindowState()
         adoptPersistedNewVMRemoval()
         observeSidebarCollapse()
@@ -150,12 +155,21 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 _ = self.viewModel.selectedInstance?.hasLiveVirtualMachine
                 _ = self.viewModel.selectedInstance?.configuration.clipboardSharingEnabled
                 _ = self.viewModel.selectedInstance?.detailPaneMode
+                _ = self.viewModel.selectedInstance?.hasLiveEphemeralSession
             },
             apply: { [weak self] in
                 self?.updateToolbarItems()
                 self?.updateWindowTitle()
+                self?.updateEphemeralChip()
             }
         )
+    }
+
+    /// Shows the Ephemeral marker while the selected VM is running a session
+    /// its baseline will discard.
+    private func updateEphemeralChip() {
+        ephemeralChip?.update(
+            isVisible: viewModel.selectedInstance?.hasLiveEphemeralSession ?? false)
     }
 
     // MARK: - Sidebar-Collapse New VM Visibility

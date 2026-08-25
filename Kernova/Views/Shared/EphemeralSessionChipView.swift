@@ -1,0 +1,152 @@
+import AppKit
+
+/// The titlebar marker a VM carries while it is running a session its baseline
+/// will discard: a tinted capsule holding a small revert glyph and the word
+/// "Ephemeral". Click opens the mode's info popover.
+///
+/// A titlebar accessory rather than an `NSToolbarItem`: the marker comes and
+/// goes with the session, and a toolbar item that appears and disappears has to
+/// be removed and re-inserted around the autosaved configuration
+/// (docs/TOOLBAR.md) — where an accessory is neither customizable nor
+/// autosaved, so it can simply be added and removed.
+@MainActor
+final class EphemeralSessionChipView: NSView {
+    private static let tint = NSColor.systemOrange
+    private static let horizontalPadding: CGFloat = 8
+    private static let height: CGFloat = 20
+
+    private let button = NSButton()
+    private let popoverPresenter = PopoverPresenter()
+
+    init() {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+
+        let capsule = NSView()
+        capsule.translatesAutoresizingMaskIntoConstraints = false
+        capsule.wantsLayer = true
+        capsule.layer?.cornerRadius = Self.height / 2
+        capsule.layer?.backgroundColor = Self.tint.withAlphaComponent(0.18).cgColor
+        // Decorative: the button above it takes every click.
+        addSubview(capsule)
+
+        let icon = NSImageView(
+            image: .systemSymbol(
+                EphemeralModeCopy.chipSymbolName,
+                accessibilityDescription: EphemeralModeCopy.badgeHelpText))
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(scale: .small)
+        icon.contentTintColor = Self.tint
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+
+        let label = NSTextField(labelWithString: EphemeralModeCopy.name)
+        label.font = .preferredFont(forTextStyle: .caption1)
+        label.textColor = Self.tint
+        label.isSelectable = false
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.setContentHuggingPriority(.required, for: .horizontal)
+
+        let content = NSStackView(views: [icon, label])
+        content.orientation = .horizontal
+        content.alignment = .centerY
+        content.spacing = Spacing.hairline * 2
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+
+        // A transparent button over the whole chip, so the click target is the
+        // capsule rather than only the glyph.
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.title = ""
+        button.isBordered = false
+        button.isTransparent = true
+        button.toolTip = EphemeralModeCopy.badgeHelpText
+        button.setAccessibilityLabel(EphemeralModeCopy.badgeHelpText)
+        button.target = self
+        button.action = #selector(chipTapped(_:))
+        addSubview(button)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: Self.height),
+            capsule.leadingAnchor.constraint(equalTo: leadingAnchor),
+            capsule.trailingAnchor.constraint(equalTo: trailingAnchor),
+            capsule.topAnchor.constraint(equalTo: topAnchor),
+            capsule.bottomAnchor.constraint(equalTo: bottomAnchor),
+            content.leadingAnchor.constraint(
+                equalTo: leadingAnchor, constant: Self.horizontalPadding),
+            content.trailingAnchor.constraint(
+                equalTo: trailingAnchor, constant: -Self.horizontalPadding),
+            content.centerYAnchor.constraint(equalTo: centerYAnchor),
+            button.leadingAnchor.constraint(equalTo: leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: trailingAnchor),
+            button.topAnchor.constraint(equalTo: topAnchor),
+            button.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("EphemeralSessionChipView does not support NSCoder")
+    }
+
+    /// Dismisses the popover — for a window losing the chip while it is open.
+    func reset() {
+        popoverPresenter.close()
+    }
+
+    @objc private func chipTapped(_: NSButton) {
+        if popoverPresenter.isShown {
+            popoverPresenter.close()
+        } else {
+            popoverPresenter.show(
+                content: InfoPopoverContentViewController(
+                    paragraphs: EphemeralModeCopy.popoverParagraphs),
+                from: self, preferredEdge: .minY)
+        }
+    }
+}
+
+/// Adds and removes the running Ephemeral chip in one window's titlebar.
+///
+/// Owned by a window controller, which calls ``update(isVisible:)`` from the
+/// same observation pass that refreshes its toolbar.
+@MainActor
+final class EphemeralChipTitlebarController {
+    private weak var window: NSWindow?
+    private let chip = EphemeralSessionChipView()
+    private var accessory: NSTitlebarAccessoryViewController?
+
+    init(window: NSWindow?) {
+        self.window = window
+    }
+
+    /// Shows or hides the chip, doing nothing when it is already in that state.
+    func update(isVisible: Bool) {
+        guard isVisible != (accessory != nil) else { return }
+        if isVisible {
+            let controller = NSTitlebarAccessoryViewController()
+            controller.layoutAttribute = .right
+            let container = NSView()
+            container.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(chip)
+            NSLayoutConstraint.activate([
+                chip.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                chip.trailingAnchor.constraint(
+                    equalTo: container.trailingAnchor, constant: -Spacing.small),
+                chip.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+                container.heightAnchor.constraint(equalToConstant: 28),
+            ])
+            controller.view = container
+            window?.addTitlebarAccessoryViewController(controller)
+            accessory = controller
+            return
+        }
+        chip.reset()
+        if let accessory, let window,
+            let index = window.titlebarAccessoryViewControllers.firstIndex(of: accessory)
+        {
+            window.removeTitlebarAccessoryViewController(at: index)
+        }
+        accessory = nil
+    }
+}

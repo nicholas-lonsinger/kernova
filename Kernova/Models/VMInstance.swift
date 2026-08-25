@@ -233,6 +233,14 @@ final class VMInstance {
     /// for work that can only run while no VM holds the resource it touches.
     @ObservationIgnored var onSessionTornDown: (@MainActor () -> Void)?
 
+    /// Fired from ``resetToStopped()`` — the guest powering off, however it got
+    /// there: a graceful shutdown from inside, Stop, or Force Stop.
+    ///
+    /// Wired by `VMLibraryViewModel.wirePersistence(for:)`, which reverts an
+    /// Ephemeral Mode VM to its baseline here. A suspend does not reach it:
+    /// `save` tears the session down and rests at `.paused`.
+    @ObservationIgnored var onPoweredOff: (@MainActor () -> Void)?
+
     /// Applies a configuration mutation, routing it through the persistence
     /// pipeline when `onUpdateConfiguration` is wired.
     func performConfigurationMutation(_ mutate: (inout VMConfiguration) -> Void) {
@@ -483,6 +491,32 @@ final class VMInstance {
         !isPreparing && !status.isTransitioning && !snapshotManifest.isEmpty
     }
 
+    // MARK: - Ephemeral Mode
+
+    /// The snapshot a power-off returns this VM to, or `nil` when Ephemeral
+    /// Mode is off or names a snapshot the manifest no longer lists.
+    ///
+    /// The one read every ephemeral path gates on, so a mode left on with a
+    /// baseline that has gone reverts nothing rather than failing at power-off.
+    var ephemeralBaselineSnapshot: VMSnapshot? {
+        guard configuration.ephemeralModeEnabled,
+            let id = configuration.ephemeralBaselineSnapshotID
+        else { return nil }
+        return snapshotManifest.snapshot(id: id)
+    }
+
+    /// `true` while a session this VM's baseline will discard is in memory —
+    /// what the running Ephemeral marker reports.
+    var hasLiveEphemeralSession: Bool {
+        ephemeralBaselineSnapshot != nil && hasLiveVirtualMachine
+    }
+
+    /// `true` when `snapshot` is pinned as this VM's Ephemeral baseline, which
+    /// bars deleting it.
+    func isEphemeralBaseline(_ snapshot: VMSnapshot) -> Bool {
+        ephemeralBaselineSnapshot?.id == snapshot.id
+    }
+
     /// `true` when the VM is eligible for forceful termination.
     ///
     /// Cold-paused VMs are excluded — there is nothing in memory to terminate.
@@ -606,6 +640,7 @@ final class VMInstance {
         // Reset so the next start lands on the display rather than inheriting
         // a stuck settings mode from the previous session.
         detailPaneMode = .display
+        onPoweredOff?()
     }
 
     /// Creates the VM on its own queue, stores the session, and builds the

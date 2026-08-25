@@ -840,6 +840,7 @@ final class VMLibraryViewModel {
             presenter?.presentStopPaused(for: instance)
             return
         }
+        if await discardedSavedStateAsEphemeralRevert(instance) { return }
         do {
             try await lifecycle.stop(instance)
         } catch {
@@ -868,6 +869,7 @@ final class VMLibraryViewModel {
     }
 
     func forceStop(_ instance: VMInstance) async {
+        if await discardedSavedStateAsEphemeralRevert(instance) { return }
         do {
             try await lifecycle.forceStop(instance)
             Self.logger.notice("Force-stopped VM '\(instance.name, privacy: .public)'")
@@ -1096,8 +1098,65 @@ final class VMLibraryViewModel {
         writeSnapshotManifest(manifest, for: instance)
     }
 
+    // MARK: - Ephemeral Mode
+
+    /// Returns an Ephemeral Mode VM to its baseline after a power-off; a no-op
+    /// for every other VM.
+    ///
+    /// Reached from ``VMInstance/onPoweredOff``, which fires inside the stop
+    /// that caused it — so the revert runs in its own task, after that stop has
+    /// released the VM.
+    private func revertToEphemeralBaselineIfNeeded(_ instance: VMInstance) {
+        guard let baseline = instance.ephemeralBaselineSnapshot else { return }
+        ephemeralRevertTask = Task { await revertToEphemeralBaseline(instance, baseline) }
+    }
+
+    /// The most recent power-off revert, tracked so a test can await it.
+    private var ephemeralRevertTask: Task<Void, Never>?
+
+    #if DEBUG
+    var ephemeralRevertTaskForTesting: Task<Void, Never>? { ephemeralRevertTask }
+    #endif
+
+    /// The revert an ephemeral power-off performs, on the same path a
+    /// user-confirmed revert takes — including its error presentation, so a
+    /// baseline that cannot be restored is never silently skipped.
+    ///
+    /// The returned value lets a caller (and a test) await the revert.
+    func revertToEphemeralBaseline(_ instance: VMInstance, _ baseline: VMSnapshot) async {
+        Self.logger.notice(
+            "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
+        )
+        await revertConfirmed(instance, to: baseline)
+    }
+
+    /// Routes a cold-paused ephemeral VM's Discard Saved State through the
+    /// baseline revert instead, and reports whether it took the request.
+    ///
+    /// Discarding alone would drop the suspended session and leave the guest's
+    /// disks as the session left them — the opposite of what the mode promises.
+    private func discardedSavedStateAsEphemeralRevert(_ instance: VMInstance) async -> Bool {
+        guard instance.isColdPaused, let baseline = instance.ephemeralBaselineSnapshot else {
+            return false
+        }
+        await revertToEphemeralBaseline(instance, baseline)
+        return true
+    }
+
+    /// Whether `snapshot` may be deleted: the manifest has to be editable, and
+    /// a VM's Ephemeral baseline is the restore point its every power-off needs.
+    func canDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) -> Bool {
+        canModifySnapshots(instance) && !instance.isEphemeralBaseline(snapshot)
+    }
+
     /// Shows the delete-snapshot confirmation.
     func confirmDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) {
+        guard canDeleteSnapshot(instance, snapshot: snapshot) else {
+            Self.logger.notice(
+                "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': it is the Ephemeral baseline of '\(instance.name, privacy: .public)'"
+            )
+            return
+        }
         presenter?.presentDeleteSnapshot(snapshot, for: instance)
     }
 
@@ -1114,6 +1173,14 @@ final class VMLibraryViewModel {
         let id = snapshot.id
         return Task { [weak self] in
             guard let self else { return }
+            // Re-checked at the write, not just at the confirmation: the
+            // baseline is what every power-off of this VM needs back.
+            guard !instance.isEphemeralBaseline(snapshot) else {
+                Self.logger.notice(
+                    "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': it is the Ephemeral baseline of '\(instance.name, privacy: .public)'"
+                )
+                return
+            }
             do {
                 try await self.lifecycle.discardSnapshot(instance, snapshotID: id, store: store)
             } catch {
@@ -1809,6 +1876,11 @@ final class VMLibraryViewModel {
         // to release it.
         instance.onSessionTornDown = { [weak self, weak instance] in
             self?.rebuildNetworksIfIdle(ignoring: instance)
+        }
+        // An Ephemeral Mode VM goes back to its baseline on every power-off.
+        instance.onPoweredOff = { [weak self, weak instance] in
+            guard let self, let instance else { return }
+            self.revertToEphemeralBaselineIfNeeded(instance)
         }
         // The one construction-site hook every path runs through — load, create,
         // clone, import, and disk reconciliation alike.

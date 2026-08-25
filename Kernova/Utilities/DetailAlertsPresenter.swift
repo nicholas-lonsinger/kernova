@@ -111,6 +111,12 @@ final class DetailAlertsPresenter: NSObject {
         revertSnapshotConfig(snapshot, instance)
     }
 
+    /// The Force Stop / Discard Saved State confirmation's rendered copy, so a
+    /// test can assert on what it tells the user will happen.
+    func forceStopAlertForTesting(_ instance: VMInstance) -> AlertConfiguration {
+        forceStopConfig(instance)
+    }
+
     /// The VM whose delete is in flight, or `nil` if none.
     var pendingDeleteInstanceIDForTesting: UUID? { pendingDelete?.instance.id }
 
@@ -400,8 +406,13 @@ final class DetailAlertsPresenter: NSObject {
     }
 
     private func forceStopConfig(_ vm: VMInstance) -> AlertConfiguration {
+        // A cold-paused ephemeral VM's discard is a revert to its baseline, so
+        // the button names that outcome rather than the deletion it isn't.
+        let ephemeralBaseline = vm.isColdPaused ? vm.ephemeralBaselineSnapshot : nil
+        let discardLabel = ephemeralBaseline == nil ? "Discard" : "Revert to Baseline"
         var buttons: [AlertButton] = [
-            AlertButton(vm.isColdPaused ? "Discard" : "Force Stop", role: .destructive) { [weak self] in
+            AlertButton(vm.isColdPaused ? discardLabel : "Force Stop", role: .destructive) {
+                [weak self] in
                 guard let self else { return }
                 Task { await self.viewModel.forceStopConfirmed(vm) }
             }
@@ -416,11 +427,22 @@ final class DetailAlertsPresenter: NSObject {
                 })
         }
         buttons.append(AlertButton("Cancel", role: .cancel))
+        let message: String
+        if let ephemeralBaseline {
+            message =
+                "\"\(vm.name)\" is ephemeral, so discarding its suspended session returns it to "
+                + "\u{201C}\(ephemeralBaseline.name)\u{201D}. Everything changed inside the guest "
+                + "during the session is discarded."
+        } else if vm.isColdPaused {
+            message =
+                "\"\(vm.name)\" has its state saved to disk. Discarding will permanently delete the saved state."
+        } else {
+            message =
+                "\"\(vm.name)\" will be immediately terminated. Any unsaved data inside the guest will be lost."
+        }
         return AlertConfiguration(
             title: vm.isColdPaused ? "Discard Saved State" : "Force Stop Virtual Machine",
-            message: vm.isColdPaused
-                ? "\"\(vm.name)\" has its state saved to disk. Discarding will permanently delete the saved state."
-                : "\"\(vm.name)\" will be immediately terminated. Any unsaved data inside the guest will be lost.",
+            message: message,
             buttons: buttons)
     }
 
