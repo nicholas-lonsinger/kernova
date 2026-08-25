@@ -1,7 +1,32 @@
+import AppKit
 import Foundation
 import Testing
 
 @testable import Kernova
+
+/// The toolbar host that carries the running marker beside the main window's
+/// title.
+@Suite("Ephemeral Chip Toolbar Host Tests", .admissionGated)
+@MainActor
+struct EphemeralChipToolbarHostTests {
+    /// The item stays in the toolbar for the window's lifetime, so an empty
+    /// host has to hold no width — a slot left behind pushes a real item into
+    /// the overflow menu.
+    @Test("The host holds no width until the chip is shown")
+    func collapsedHostHasNoWidth() {
+        let host = EphemeralChipToolbarHost()
+        host.layoutSubtreeIfNeeded()
+        #expect(host.fittingSize.width == 0)
+
+        host.setChipVisible(true)
+        host.layoutSubtreeIfNeeded()
+        #expect(host.fittingSize.width > 0)
+
+        host.setChipVisible(false)
+        host.layoutSubtreeIfNeeded()
+        #expect(host.fittingSize.width == 0)
+    }
+}
 
 /// Ephemeral Mode's model rules: the flag/baseline pairing, what survives a
 /// revert, and what a clone inherits.

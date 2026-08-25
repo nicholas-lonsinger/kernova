@@ -15,8 +15,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// display can be measured.
     let detailContainer: DetailContainerViewController
     private var windowStateObservation: ObservationLoop?
-    /// The titlebar's Ephemeral marker for whichever VM is selected.
-    private var ephemeralChip: EphemeralChipTitlebarController?
+    /// The Ephemeral marker for whichever VM is selected, hosted by a toolbar
+    /// item so it lands beside the window title.
+    ///
+    /// Retained rather than looked up: the item is recreated whenever the
+    /// customize palette closes, and handing the same host back each time keeps
+    /// the marker's state across that.
+    private let ephemeralChipHost = EphemeralChipToolbarHost()
     private var sidebarCollapseObservation: NSKeyValueObservation?
     /// The toolbar index New VM was programmatically removed from for a
     /// collapsed sidebar, or `nil` when it is in the toolbar (or the user
@@ -28,6 +33,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     private static let logger = Logger(subsystem: "app.kernova", category: "MainWindowController")
     private static let toolbarNewVM = NSToolbarItem.Identifier("newVM")
+    /// The Ephemeral marker, first in the content region so it sits beside the
+    /// window title.
+    private static let toolbarEphemeral = NSToolbarItem.Identifier("ephemeralMarker")
 
     // Palette-only items (offered in the customize sheet, not in the default
     // set). VM-scoped verbs only — app-global commands like "Open VMs Folder"
@@ -115,8 +123,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             )
         }
 
-        ephemeralChip = EphemeralChipTitlebarController(window: window)
-
         updateToolbarItems()
         updateWindowTitle()
         updateEphemeralChip()
@@ -168,8 +174,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// Shows the Ephemeral marker while the selected VM is running a session
     /// its baseline will discard.
     private func updateEphemeralChip() {
-        ephemeralChip?.update(
-            isVisible: viewModel.selectedInstance?.hasLiveEphemeralSession ?? false)
+        ephemeralChipHost.setChipVisible(
+            viewModel.selectedInstance?.hasLiveEphemeralSession ?? false)
     }
 
     // MARK: - Sidebar-Collapse New VM Visibility
@@ -281,6 +287,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             Self.toolbarNewVM,
             .toggleSidebar,
             .sidebarTrackingSeparator,
+            // First in the content region, which is where the unified toolbar
+            // draws the window title — so the marker reads as qualifying the
+            // name beside it. It holds no width unless it is showing.
+            Self.toolbarEphemeral,
         ] + toolbarManager.defaultItemIdentifiers
     }
 
@@ -289,6 +299,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             Self.toolbarNewVM,
             .toggleSidebar,
             .sidebarTrackingSeparator,
+            Self.toolbarEphemeral,
             .space,
             .flexibleSpace,
         ] + toolbarManager.sharedItemIdentifiers + [
@@ -298,8 +309,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         ]
     }
 
+    /// The marker joins the sidebar controls here: it states what the VM in the
+    /// title *is*, so it is chrome the layout owns rather than a command the
+    /// user arranges.
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
-        [.toggleSidebar, .sidebarTrackingSeparator]
+        [.toggleSidebar, .sidebarTrackingSeparator, Self.toolbarEphemeral]
     }
 
     func toolbarWillAddItem(_ notification: Notification) {
@@ -377,6 +391,15 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         }
 
         switch itemIdentifier {
+        case Self.toolbarEphemeral:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.label = EphemeralModeCopy.name
+            item.paletteLabel = EphemeralModeCopy.name
+            // The one host instance, so a recreate after the customize palette
+            // hands back the marker already showing the right state.
+            item.view = ephemeralChipHost
+            item.autovalidates = false
+            return item
         case Self.toolbarNewVM:
             return makeToolbarItem(
                 identifier: itemIdentifier,

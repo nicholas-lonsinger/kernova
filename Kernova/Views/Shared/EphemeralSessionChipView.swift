@@ -106,7 +106,59 @@ final class EphemeralSessionChipView: NSView {
     }
 }
 
+/// Hosts the running Ephemeral chip inside a toolbar item, for a window whose
+/// titlebar has no slot beside the title.
+///
+/// A titlebar accessory cannot land next to the title on a window with a
+/// sidebar: `NSTitlebarAccessoryViewController` offers no "beside the title"
+/// attribute, and `.leading` resolves to the leading edge of the *window* — the
+/// sidebar region, where it takes a toolbar item's slot and pushes that item
+/// into the overflow menu. A toolbar item placed at the head of the content
+/// region lands beside the title instead, because that is where a unified
+/// toolbar draws it.
+///
+/// The item is never added or removed — `docs/TOOLBAR.md` documents what that
+/// costs — so the chip collapses to zero width instead, leaving no slot behind.
+@MainActor
+final class EphemeralChipToolbarHost: NSView {
+    private let chip = EphemeralSessionChipView()
+    private lazy var widthConstraint = widthAnchor.constraint(equalToConstant: 0)
+
+    init() {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        addSubview(chip)
+        NSLayoutConstraint.activate([
+            chip.leadingAnchor.constraint(equalTo: leadingAnchor),
+            chip.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heightAnchor.constraint(equalToConstant: 28),
+            widthConstraint,
+        ])
+        setChipVisible(false)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("EphemeralChipToolbarHost does not support NSCoder")
+    }
+
+    /// Shows or collapses the chip.
+    ///
+    /// The chip is pinned by its leading edge alone, so its own intrinsic width
+    /// governs it and this container's width is free to go to zero without
+    /// fighting it.
+    func setChipVisible(_ isVisible: Bool) {
+        if !isVisible { chip.reset() }
+        chip.isHidden = !isVisible
+        widthConstraint.constant = isVisible ? chip.fittingSize.width : 0
+    }
+}
+
 /// Adds and removes the running Ephemeral chip in one window's titlebar.
+///
+/// For a window with no sidebar, where `.leading` puts the accessory between
+/// the traffic lights and the title — the placement the design asks for. A
+/// window with a sidebar uses ``EphemeralChipToolbarHost`` instead.
 ///
 /// Owned by a window controller, which calls ``update(isVisible:)`` from the
 /// same observation pass that refreshes its toolbar.
