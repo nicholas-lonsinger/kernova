@@ -132,7 +132,7 @@ jobs:
           {
             echo "Last scan: $(date -u +%Y-%m-%dT%H:%MZ) — **$FINDINGS finding(s)**"
             echo
-            echo "Auto-managed by [\`.github/workflows/dead-code.yml\`](.github/workflows/dead-code.yml). Runs weekly (Mondays 14:00 UTC) and on \`workflow_dispatch\` against \`main\`. Each scan fully replaces the list below — findings are never combined across runs. Closes automatically on the next clean run; a brand-new issue is opened if findings reappear later."
+            echo "Auto-managed by [\`.github/workflows/dead-code.yml\`](.github/workflows/dead-code.yml). Runs weekly (Mondays 14:00 UTC) and on \`workflow_dispatch\` against \`main\`. Each scan fully replaces the list below — findings are never combined across runs. The next clean scan closes this issue if a PR hasn't already; a brand-new issue is opened if findings reappear later."
             echo
             echo "<details><summary>Periphery output</summary>"
             echo
