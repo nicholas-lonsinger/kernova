@@ -280,22 +280,22 @@ EOF
 
 Confirm `gh pr view <N> --json state -q .state` reports `"MERGED"` first. Then leave the branch (`git switch main`, or `git checkout --detach` in a manual worktree), `git branch -D <merged-branch>` (force `-D`; the squash commit makes `-d` refuse), `git branch -d -r origin/<merged-branch>` for the stale remote-tracking ref, and `git pull --ff-only`.
 
-## Architecture Change Protocol
+## Change Protocol
 
-Before calling a task done, work these three follow-ups. Each is owed only when the change tripped a trigger — changed how components communicate, added or removed a dependency, changed build config/entitlements/tooling, added or reshaped a public type, changed actor isolation — and most tasks trip none of them.
+Before calling a task done, work these three follow-ups. Each is owed only when the change tripped a trigger — changed how components communicate, added or removed a dependency, changed build config/entitlements/tooling, added or reshaped a public type, changed actor isolation, invalidated what a doc describes — and most tasks trip none of them.
 
-1. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — update only when a **component boundary** changed: a new service or protocol, a changed data flow, a changed actor isolation. A file appearing, moving or being renamed is not one. Surgical edits only.
+1. **Docs** — update any documentation file whose description the change invalidated, routed by the layer table above: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) only when a **component boundary** changed (a new service or protocol, a changed data flow, a changed actor isolation — a file appearing, moving or being renamed is not one), a principles doc when a rule constraining future decisions changed, a runbook when its procedure did. Surgical edits only.
 
 2. **Tests** — cover every new public function, type, or component per the patterns in `KernovaTests/`. If deferred, state what's needed and why.
 
-3. **AGENTS.md** — update only if a rule stated here changed.
+3. **Agent instructions** — AGENTS.md and the entry points importing it — update only if a rule stated there changed.
 
 ### Reporting
 
 End the response with a `### Maintenance Notes` list carrying a line for each of the three, every time. The list is a coverage report: what is owed is only legible against what is settled, so a follow-up left off it reads as unexamined rather than fine.
 
 - ✅ — nothing needed. Say `no changes`, nothing more.
-- 📝 — changed here; name what you changed, in a phrase.
+- 📝 — changed here; name what you changed, in a phrase. On the Docs line, name each file updated.
 - ⚠️ — owed and unpaid; name the gap and its issue number, or what closing it takes. It outranks 📝 on a follow-up that was partly done and still owes something.
 
 Only 📝 and ⚠️ carry information — a change to read, or a gap to close. ✅ lines are uniform boilerplate by design: they prove the follow-up was examined and are meant to be skimmed past, so never explain one.
