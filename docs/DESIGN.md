@@ -1,14 +1,8 @@
-# SPEC.md
+# Design
 
 Read this before writing UI or making a product decision: the design philosophy
-and GUI guidelines that constrain both.
-
-## Code Approach
-
-- Do not settle for workarounds or hacks. Fix root causes with proper refactors, even when the change is larger than a quick patch, and prefer fixing a shortcut in the current scope over deferring it.
-- Prefer the simpler path first. Always attempt or plan the straightforward solution before introducing complexity through flags, intercepts, overrides, special cases, shims, or conditional branching.
-
-Whether a review finding is worth acting on, and what a deferred issue may say, are governed by the severity bar and issue hygiene in [REVIEW.md](REVIEW.md).
+and GUI guidelines that constrain both. The general engineering and product
+principles are in [AGENTS.md](../AGENTS.md#principles).
 
 ## GUI Design
 

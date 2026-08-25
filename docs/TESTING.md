@@ -29,6 +29,8 @@ Gate on the state the next line acts on, never on a proxy for it.
 
 Polling (`waitUntil` / `pollUntil`) is acceptable **only** for a genuine no-signal predicate: a negative assertion ("prove nothing arrived"), a filesystem-appearance poll, or an exception-catch predicate. There, use a generous cadence, assert end-state not per-iteration, and add a one-line `RATIONALE:` naming **which** of those three categories applies. That is the local fact a reader cannot derive; the general rule is this document, so cite it rather than restating it at the call site.
 
+### Synchronous pull bridges
+
 **Blocking bridge calls run on GCD via `offCooperativePool`, never `Task.detached`.** The synchronous pull bridges (`ClipboardPromiseServing`'s `serveFileURL`/`serveData`, fired from a pasteboard promise's provider) park their calling thread until the transfer resolves. `Task.detached` parks one of the cooperative pool's few threads (CI runners have 3-4); enough parked pulls exhaust the pool, the `@MainActor` responders they wait on starve, and the whole bundle freezes — the 2026-07-19 mass CI failures. `offCooperativePool` (in `KernovaTestSupport`) dispatches to an overcommitting GCD global queue instead.
 
 **A main-thread bridge call runs a nested event loop; drive it at the coordinator level, and never let its resolution depend on main-queue work.**
@@ -37,6 +39,8 @@ So test the serviced wait against `LazyPullCoordinator`, where a pre-scheduled `
 
 **Never let a synchronous pull *wait* from a `@MainActor` test function.** That body is a GCD main-queue job, where the nested loop cannot drain the main queue at all, so whatever the pull needs from the main actor — under a parallel gate, every concurrent test's doubles — never runs and the pull dies at its backstop.
 Reach a waiting bridge from the run loop's base with `performOnMainRunLoop`, the way pboard fires it, or off-main with `offCooperativePool`. A fire that provably refuses *before* it waits — a failed pre-flight, a stale generation — waits for nothing and belongs on the main thread, where the ordering it has to survive is real.
+
+### Injected production timeouts
 
 **A timeout that bounds a hostage window stays small — the one exception to the ≥60 s rule below.** When a test *synchronously blocks the main thread* for up to an injected timeout, that timeout caps how long every concurrent test's MainActor-bound waits freeze; it must sit far *below* `testWaitBackstop` so a lost fast path fails that one test instead of mass-failing the bundle. The ≥60 s sizing applies only to timers that hold no thread or actor hostage.
 

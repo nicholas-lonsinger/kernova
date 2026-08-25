@@ -2,7 +2,7 @@
 
 The tool-neutral operating guide for this repository. Deep-dive docs are indexed in [docs/README.md](docs/README.md); read them on demand.
 
-> Design philosophy and UI guidelines: [docs/SPEC.md](docs/SPEC.md).
+> Design philosophy and UI guidelines: [docs/DESIGN.md](docs/DESIGN.md).
 >
 > Clipboard subsystem principles — authoritative for host↔guest copy/paste work: [docs/CLIPBOARD.md](docs/CLIPBOARD.md).
 
@@ -21,6 +21,19 @@ Propose, then let the maintainer sequence it. The usual outcomes:
 Only the third needs the shortcoming written down, and an issue is where it goes.
 
 **When a rule here turns out to be wrong, change the rule.** Say plainly that it was wrong rather than preserving it out of deference; a rule is a summary of past reasoning, not a standard the code has to keep meeting.
+
+## Principles
+
+These bind every change in every subsystem — engineering and product decisions alike. A subsystem doc ([CLIPBOARD.md](docs/CLIPBOARD.md), [NETWORKING.md](docs/NETWORKING.md)) states only its own worked consequences of these rules, and cites the rule rather than restating it.
+
+- **Fix root causes.** No workarounds, shims, or environment-conditional branches. Prefer the proper refactor even when it is larger than the quick patch, and fix a shortcut in the current scope over deferring it.
+- **Simplest path first; complexity only for a measurable win.** Attempt the straightforward solution before flags, intercepts, overrides, or special cases. When a simpler and a more sophisticated implementation genuinely differ on a real metric — disk, memory, I/O, CPU, or UX — take the sophisticated one; complexity that moves no real metric is rejected.
+- **Judge cost by Kernova's marginal overhead.** Weigh the CPU, RAM, disk, and I/O Kernova *adds*, never the system-wide cost of the operation the user chose to run. Prefer the option whose peak cost stays bounded as input size grows.
+- **A uniform gap beats a path-dependent capability.** An improvement that can only be wired on one path, one direction, or behind an opt-in is worse than not shipping it: a gap uniform by construction closes, when it closes, for every path at once. Worked case: [CLIPBOARD.md](docs/CLIPBOARD.md) §6.
+- **Capability degrades by absence.** A build or configuration that cannot deliver a feature does not offer it, and what it can deliver keeps working unchanged — never a visible-but-broken control. Worked case: [NETWORKING.md](docs/NETWORKING.md) §8.
+- **UI copy states only what is known.** Vendor claims at the vendor's strength, observations as observed, no invented consequence clauses — and an environment interaction is disclosed at the surface where the user meets it. Worked case: [NETWORKING.md](docs/NETWORKING.md) §7.
+- **Outcome names in the UI; vendor terms at the platform boundary.** Where Apple's own UI names the thing — a permission, an entitlement, a System Settings pane — keep Apple's term at that boundary and the outcome-describing domain term everywhere else. Worked case: [NETWORKING.md](docs/NETWORKING.md) §5.
+- **One model per capability.** A capability exists once — one schema, one enforcement path, one source of truth; a second parallel model for the same capability is a defect to dissolve. Worked cases: [CLIPBOARD.md](docs/CLIPBOARD.md) §4, [NETWORKING.md](docs/NETWORKING.md) §4.
 
 ## Build & Test
 
@@ -148,7 +161,7 @@ Write to that baseline — no onboarding prose, no introducing a term, no explai
 | A test | Any constraint an assertion can state |
 | `RATIONALE:` | Why the obvious-looking fix is wrong here |
 | AGENTS.md | Rules that must fire without a lookup |
-| A principles doc (SPEC, CLIPBOARD) | Rules constraining *future* decisions — never a description of what was built |
+| A principles doc (DESIGN, CLIPBOARD, NETWORKING) | Rules constraining *future* decisions — never a description of what was built |
 | ARCHITECTURE.md | What exists and how pieces connect — never what a component does internally |
 | A runbook (BUILD, RELEASING, TESTING, REVIEW) | The procedure you follow while doing it |
 | `docs/research/YYYY-MM-DD-*.md` | A finding plus its method. Immutable — superseded by a new note, never edited |

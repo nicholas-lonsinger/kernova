@@ -2,7 +2,7 @@ import AppKit
 
 /// Centralized design tokens for the AppKit UI.
 ///
-/// The AppKit realization of the design rhythm described in `SPEC.md`; prefer
+/// The AppKit realization of the design rhythm described in `DESIGN.md`; prefer
 /// these over inline literals when building view hierarchies.
 
 /// Standard inter-element spacing for `NSStackView`s and manual layout.

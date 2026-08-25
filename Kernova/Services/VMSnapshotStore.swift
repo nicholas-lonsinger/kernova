@@ -111,6 +111,12 @@ struct VMSnapshotStore: VMSnapshotStoring {
 
     // MARK: - Restore
 
+    /// The files a revert writes back, taken from the configuration the capture
+    /// was made under — so they are the disks the snapshot holds rather than the
+    /// ones the VM configures now.
+    ///
+    /// Read-only, and throws on an incomplete snapshot, so a caller can run it
+    /// while the VM is still live.
     func planRestore(bundleURL: URL, snapshotID: UUID) throws -> VMSnapshotRestorePlan {
         let sourceLayout = VMBundleLayout(bundleURL: bundleURL).snapshotLayout(id: snapshotID)
         let manager = FileManager.default
