@@ -4,7 +4,8 @@ Read this before designing, extending, or refactoring any clipboard code, and be
 any clipboard issue. Where this conflicts with an existing implementation, the implementation is
 the thing to change; if a principle here turns out to be wrong, fix it here first, then the code.
 Structural facts live in [ARCHITECTURE.md](ARCHITECTURE.md); UI philosophy in
-[SPEC.md](SPEC.md).
+[DESIGN.md](DESIGN.md); the general principles this doc applies are in
+[AGENTS.md](../AGENTS.md#principles).
 
 ## Scope
 
@@ -153,9 +154,9 @@ defect; round-trip equality with a native copy/paste is the bar.
   trip is exactly what `ClipboardArchive`'s key set carries. Changing that fidelity means
   changing the key set, never bolting metadata on through a side channel.
 - **Accepted gap: extended attributes cross on *no* paste path** — Finder tags,
-  `com.apple.quarantine`, `kMDItemWhereFroms`: the key set omits `XAT`, so the gap is uniform by
-  construction and closes, if it closes, for every path at once. One path carrying them alone
-  would be a worse inconsistency than dropping them everywhere.
+  `com.apple.quarantine`, `kMDItemWhereFroms`: the key set omits `XAT`, keeping the gap uniform
+  by construction ([AGENTS.md](../AGENTS.md#principles): a uniform gap beats a path-dependent
+  capability).
 - **Do not chase destination-added metadata as a Kernova fidelity bug.** Finder stamps
   `com.apple.FinderInfo` on bundle-named directories it creates during a copy, which
   `codesign --verify --strict` reports as detritus on an otherwise byte-identical bundle (verified
@@ -180,18 +181,19 @@ detector. **It stays.**
 The host main actor and the guest run loop are latency-sensitive. **They must never block on work
 that scales with payload size** — hashing, copying, archiving, or disk I/O. Serving the OS's
 synchronous promise callback (§2) occupies whichever thread the OS delivers it on until the pull
-resolves, and **on the main thread that wait runs the application's event loop** rather than
-parking: the app keeps drawing, dispatching input and running main-queue work — the readout §13
-owes included — while the pull's payload-scaled stages run elsewhere, and a failed or superseded
-transfer wakes it immediately (§9). That wait is reentrant by design: a supersession, a stop, or
-a second promise callback can land inside it, so a pull a callback owns must be visible to every
-other requester of its transfer id, and state captured before the wait is checked against the
-live offer after it. It nests only at the base of the main run loop — inside a tracking or modal
-loop, which owns the events, the fire is refused and reported (§13) rather than served, because
-the main thread is never parked; only an off-main caller parks, and nothing that resolves such a
-wait may be routed through the parked thread — and whatever on this side reads
-a promised flavor of Kernova's own write does so from that base, as an event or a run-loop timer,
-never from a main-queue callout, whose drain the nested loop cannot re-enter.
+resolves, while the pull's payload-scaled stages run elsewhere. What that wait must satisfy:
+
+- **On the main thread the wait runs the application's event loop**, never parking: the app keeps
+  drawing, dispatching input and running main-queue work — the readout §13 owes included — and a
+  failed or superseded transfer wakes it immediately (§9). Only an off-main caller parks.
+- **The wait is reentrant by design.** A supersession, a stop, or a second promise callback can
+  land inside it, so a pull a callback owns must be visible to every other requester of its
+  transfer id, and state captured before the wait is checked against the live offer after it.
+- **It nests only at the base of the main run loop.** Inside a tracking or modal loop, which owns
+  the events, the fire is refused and reported (§13) rather than served — the main thread is
+  never parked, and nothing that resolves such a wait may be routed through a parked thread.
+- **Kernova reads its own promised flavors from the run-loop base** — as an event or a run-loop
+  timer, never from a main-queue callout, whose drain the nested loop cannot re-enter.
 
 - **A flow-control size and a safety bound are never the same constant.** The quantum an extract
   re-checks its free-space and payload ceilings on (`extractPacingBytes`) decides how far a
@@ -241,9 +243,9 @@ it later. Beyond AGENTS.md's sandbox rules: archive with AppleArchive, never `di
 
 ### 12. Complexity is an acceptable price for a measurable win
 
-When a simpler implementation and a more sophisticated one differ on a **real metric** — disk,
-memory, I/O, CPU, or UX — **take the sophisticated one.** The guard is **"measurable"**:
-complexity that does not move a real metric is just complexity, and is rejected.
+The general rule ([AGENTS.md](../AGENTS.md#principles)) applies here with full force: when the
+simpler and the sophisticated implementation differ on a real metric — disk, memory, I/O, CPU, or
+UX — take the sophisticated one, and reject complexity that moves no real metric.
 
 ### 13. Making slow work legible
 
@@ -307,9 +309,9 @@ When speed, RAM, disk, I/O, and CPU pull against each other, decide in this orde
 
 1. **Capability first.** The paste must succeed at any size a native paste would (§1). A choice
    that can fail on a large payload loses to one that cannot.
-2. **Match-or-beat native on Kernova's *own* marginal overhead.** Judge by the CPU/RAM/disk/I/O
-   Kernova *adds*, balancing all of them — not by the system-wide cost of the operation the user
-   chose. Prefer the option whose **peak cost stays bounded as payload size grows**.
+2. **Match-or-beat native on Kernova's *own* marginal overhead**
+   ([AGENTS.md](../AGENTS.md#principles)), balancing the CPU, RAM, disk and I/O Kernova adds
+   against each other.
 3. **Then UX.** Non-instant transfers must be legible and non-blocking (§13), and abortable
    immediately (§9).
 4. **Reach for complexity when it wins on 1–3** (§12).

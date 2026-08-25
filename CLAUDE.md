@@ -19,35 +19,21 @@ once it's ready to push.
 
 When the work is ready to push, give the **remote** branch a clean
 `<type>/<short-description>` name (the convention in AGENTS.md's Branch Naming
-section) with an explicit refspec while the local branch keeps its `worktree-`
-name:
+section) while the local branch keeps its `worktree-` name — and because the
+names differ, a bare `git push` pushes nothing, so **every push spells the
+refspec**:
 
 ```bash
-git push -u origin HEAD:<type>/<short-description>   # remote/PR gets the clean name; local stays worktree-…
+git push -u origin HEAD:<type>/<short-description>   # first push; -u so `git status -sb` tracks the remote
 git push origin HEAD:<type>/<short-description>      # every later push: same refspec (add -f after a rebase)
 ```
 
-The local↔remote name mismatch is deliberate: the local `worktree-` branch is a
-throwaway that `ExitWorktree` deletes on exit, so only the remote name — the one
-humans and GitHub see — has to be clean. The cost of the mismatch is that
-**every push must spell the refspec**: with `push.default` unset (git's default
-is `simple`) and the local/remote names differing, a bare `git push` refuses to
-push — depending on git version/config it fails loudly (`fatal: The upstream
-branch of your current branch does not match…`) or prints only an easy-to-miss
-hint, but either way nothing is pushed. The `-u`
-on the first push doesn't change that; it exists so `git status -sb` tracks the
-remote branch. So push with `git push origin HEAD:<type>/<short-description>`
-every time (add `-f` after a rebase), pass `--head <type>/<short-description>`
-to `gh pr create`, and verify after each push with `git status -sb` — no
-`[ahead N]` means the push landed.
-**Always push before exiting the worktree** so the work is safe on origin:
-`ExitWorktree(remove)` discards the local commit, and it drops *unpushed* commits
-silently.
-
-**Never push the `worktree-`-prefixed scratch name to origin** — that means no
-bare `git push -u origin HEAD` on the first push; always name the clean remote
-ref in the refspec. A PR's head branch must always be the clean
-`<type>/<short-description>` name.
+Pass `--head <type>/<short-description>` to `gh pr create`, and verify after
+each push with `git status -sb` — no `[ahead N]` means the push landed.
+**Never push the `worktree-` scratch name to origin** (no bare
+`git push -u origin HEAD`); a PR's head branch is always the clean name.
+**Always push before exiting the worktree**: `ExitWorktree(remove)` drops
+*unpushed* commits silently.
 
 ## Post-merge cleanup in an `EnterWorktree` session
 
@@ -56,7 +42,8 @@ AGENTS.md's post-merge steps assume the checkout that holds `main`. An
 checkout, so nothing run from here advances it, and the worktree isolation
 guard refuses ad-hoc `git -C <primary-checkout>` commands. After confirming
 the merge landed (`gh pr view <N> --json state -q .state` → `"MERGED"`),
-fast-forward `main` in that checkout rather than from this worktree.
+fast-forward `main` in that checkout rather than from this worktree — the
+`gittools:freshen-main` skill does exactly this; prefer it over hand-rolling.
 
 Then, still inside this worktree, drop the branch's now-redundant commits:
 
@@ -80,8 +67,8 @@ Left-behind worktrees are removable the same way: verify `gh pr list --head
 `/code-review low` for trivial/mechanical diffs; `medium` (precision-biased —
 "findings a maintainer would act on") as the default for bug fixes; `high`/`xhigh`
 (recall-biased — "err on the side of surfacing", uncertain findings expected by
-design) for features, redesigns, and the clipboard and vsock subsystems
-where theoretical races are often real. Findings from recall-biased runs
+design) for features, redesigns, and the clipboard, vsock, and networking
+subsystems where theoretical races are often real. Findings from recall-biased runs
 especially must clear the severity bar in [docs/REVIEW.md](docs/REVIEW.md) before
 being filed.
 

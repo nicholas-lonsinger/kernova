@@ -96,7 +96,7 @@ Runs every test target via the test plan. Tests use [Swift Testing](https://deve
 
 ## Architecture
 
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the component map, data flow, and design decisions; [docs/README.md](docs/README.md) indexes the rest, including [docs/SPEC.md](docs/SPEC.md) for design philosophy and UI guidelines, [docs/CLIPBOARD.md](docs/CLIPBOARD.md) for the clipboard subsystem, and [docs/NETWORKING.md](docs/NETWORKING.md) for networking principles.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the component map, data flow, and design decisions; [docs/README.md](docs/README.md) indexes the rest, including [docs/DESIGN.md](docs/DESIGN.md) for design philosophy and UI guidelines, [docs/CLIPBOARD.md](docs/CLIPBOARD.md) for the clipboard subsystem, and [docs/NETWORKING.md](docs/NETWORKING.md) for networking principles.
 
 ## License
 

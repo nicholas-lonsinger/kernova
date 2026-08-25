@@ -114,16 +114,19 @@ disabled**.
    It writes nothing unless every entry resolves, so a failure names a mirror
    that moved: repair that entry by hand and re-run. Read the diff before
    committing it — every value in it came off a mirror.
-4. **Archive.** First check `KERNOVA_APP_ENTITLEMENTS` in
+4. **README.** Skim the README's Features section against what this release
+   ships — it is a hand-maintained inventory for readers without the repo, and
+   this is the one moment anything re-checks it.
+5. **Archive.** First check `KERNOVA_APP_ENTITLEMENTS` in
    `Config/Local.xcconfig`: the full set — with the restricted
    `com.apple.vm.networking` key — belongs in an archive only when this
    distribution lane's provisioning profile authorizes the key; amfid kills a
    launched build whose embedded profile does not. Then, in Xcode, select the
    **Kernova** scheme and **Product → Archive** (archiving builds Release).
-5. **Confirm the archive type.** In the Organizer, verify the new archive
+6. **Confirm the archive type.** In the Organizer, verify the new archive
    appears as a **macOS app** archive, not *Other Items*. If it's *Other
    Items*, a `SKIP_INSTALL` regressed on the agent or `KernovaRelaunchHelper`.
-6. **Distribute.** **Distribute App → Direct Distribution → Automatically
+7. **Distribute.** **Distribute App → Direct Distribution → Automatically
    manage signing.** Xcode re-signs the app and its nested code with Developer
    ID, submits to the notary service, staples the ticket on success, and
    enables **Export** (usually within minutes).

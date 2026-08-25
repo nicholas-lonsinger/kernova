@@ -12,6 +12,11 @@ import os
 /// switching VMs rebuilds the form. ``apply()`` only updates
 /// mutable state: control values, lock/enabled state, the dynamic attachment
 /// lists, and the microphone permission warning.
+///
+/// Both attachment lists — storage disks and removable media — are served by one
+/// set of row, menu and popover builders parameterized by `AttachmentKind` and
+/// dispatching on an `AttachmentRef(kind:id:)`, never a second implementation
+/// per list.
 @MainActor
 final class VMSettingsViewController: NSViewController {
     private static let logger = Logger(
