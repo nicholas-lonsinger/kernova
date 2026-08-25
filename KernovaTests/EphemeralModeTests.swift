@@ -9,22 +9,25 @@ import Testing
 @Suite("Ephemeral Chip Toolbar Host Tests", .admissionGated)
 @MainActor
 struct EphemeralChipToolbarHostTests {
-    /// The item stays in the toolbar for the window's lifetime, so an empty
-    /// host has to hold no width — a slot left behind pushes a real item into
-    /// the overflow menu.
-    @Test("The host holds no width until the chip is shown")
-    func collapsedHostHasNoWidth() {
+    @Test("The host sizes itself to the chip it carries")
+    func hostSizesToItsChip() {
         let host = EphemeralChipToolbarHost()
         host.layoutSubtreeIfNeeded()
-        #expect(host.fittingSize.width == 0)
-
-        host.setChipVisible(true)
-        host.layoutSubtreeIfNeeded()
         #expect(host.fittingSize.width > 0)
+        #expect(host.fittingSize.height > 0)
+    }
 
-        host.setChipVisible(false)
-        host.layoutSubtreeIfNeeded()
-        #expect(host.fittingSize.width == 0)
+    /// The toolbar item is already drawn on a glass platter capsule, so the
+    /// chip drops its own — two capsules read as a platter holding a pill. The
+    /// narrower fitting width is that second capsule's padding going away.
+    @Test("The toolbar chip is flatter than the one a titlebar accessory carries")
+    func toolbarChipDropsItsOwnCapsule() {
+        let flat = EphemeralSessionChipView(drawsCapsule: false)
+        let capsuled = EphemeralSessionChipView()
+        flat.layoutSubtreeIfNeeded()
+        capsuled.layoutSubtreeIfNeeded()
+
+        #expect(flat.fittingSize.width < capsuled.fittingSize.width)
     }
 }
 

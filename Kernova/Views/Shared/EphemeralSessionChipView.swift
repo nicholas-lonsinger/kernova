@@ -1,14 +1,15 @@
 import AppKit
 
-/// The titlebar marker a VM carries while it is running a session its baseline
-/// will discard: a tinted capsule holding a small revert glyph and the word
-/// "Ephemeral". Click opens the mode's info popover.
+/// The marker a VM carries while it is running a session its baseline will
+/// discard: a small revert glyph and the word "Ephemeral", in the warning tint.
+/// Click opens the mode's info popover.
 ///
-/// A titlebar accessory rather than an `NSToolbarItem`: the marker comes and
-/// goes with the session, and a toolbar item that appears and disappears has to
-/// be removed and re-inserted around the autosaved configuration
-/// (docs/TOOLBAR.md) — where an accessory is neither customizable nor
-/// autosaved, so it can simply be added and removed.
+/// `drawsCapsule` decides whether the chip supplies its own tinted capsule. A
+/// titlebar accessory sits on bare titlebar and needs one; a toolbar item is
+/// already drawn on a glass platter capsule (docs/TOOLBAR.md), and a second
+/// capsule inside that one reads as a platter containing a pill — so the
+/// toolbar host turns it off and lets the platter be the capsule, the way every
+/// other toolbar item presents.
 @MainActor
 final class EphemeralSessionChipView: NSView {
     private static let tint = NSColor.systemOrange
@@ -18,16 +19,18 @@ final class EphemeralSessionChipView: NSView {
     private let button = NSButton()
     private let popoverPresenter = PopoverPresenter()
 
-    init() {
+    init(drawsCapsule: Bool = true) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
 
         let capsule = NSView()
         capsule.translatesAutoresizingMaskIntoConstraints = false
-        capsule.wantsLayer = true
-        capsule.layer?.cornerRadius = Self.height / 2
-        capsule.layer?.backgroundColor = Self.tint.withAlphaComponent(0.18).cgColor
+        if drawsCapsule {
+            capsule.wantsLayer = true
+            capsule.layer?.cornerRadius = Self.height / 2
+            capsule.layer?.backgroundColor = Self.tint.withAlphaComponent(0.18).cgColor
+        }
         // Decorative: the button above it takes every click.
         addSubview(capsule)
 
@@ -66,16 +69,17 @@ final class EphemeralSessionChipView: NSView {
         button.action = #selector(chipTapped(_:))
         addSubview(button)
 
+        // Without a capsule of its own the chip is content, not a pill: the
+        // platter behind it already supplies the margin.
+        let padding = drawsCapsule ? Self.horizontalPadding : 0
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: Self.height),
             capsule.leadingAnchor.constraint(equalTo: leadingAnchor),
             capsule.trailingAnchor.constraint(equalTo: trailingAnchor),
             capsule.topAnchor.constraint(equalTo: topAnchor),
             capsule.bottomAnchor.constraint(equalTo: bottomAnchor),
-            content.leadingAnchor.constraint(
-                equalTo: leadingAnchor, constant: Self.horizontalPadding),
-            content.trailingAnchor.constraint(
-                equalTo: trailingAnchor, constant: -Self.horizontalPadding),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
             content.centerYAnchor.constraint(equalTo: centerYAnchor),
             button.leadingAnchor.constraint(equalTo: leadingAnchor),
             button.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -112,19 +116,17 @@ final class EphemeralSessionChipView: NSView {
 /// A titlebar accessory cannot land next to the title on a window with a
 /// sidebar: `NSTitlebarAccessoryViewController` offers no "beside the title"
 /// attribute, and `.leading` resolves to the leading edge of the *window* — the
-/// sidebar region, where it takes a toolbar item's slot and pushes that item
-/// into the overflow menu. The host is a toolbar item at the tail of the
-/// sidebar section instead: the section packs against the tracking separator,
-/// which is the point the title begins at, and its items take the flat
-/// sidebar-section glass rather than a capsule platter — so the chip's own
-/// capsule is the only one drawn (`docs/TOOLBAR.md`).
+/// sidebar region. The sidebar section cannot hold it either: that section is
+/// sized by the sidebar, so a chip wider than the current sidebar width is sent
+/// to the overflow menu. The host is a toolbar item at the head of the *content*
+/// region instead, which is where a unified toolbar draws the window title, with
+/// a flexible space after it so the rest of the items keep packing trailing.
 ///
-/// The item is never added or removed — `docs/TOOLBAR.md` documents what that
-/// costs — so the chip collapses to zero width instead, leaving no slot behind.
+/// The chip draws no capsule of its own here — the item's glass platter is the
+/// capsule (`docs/TOOLBAR.md`).
 @MainActor
 final class EphemeralChipToolbarHost: NSView {
-    private let chip = EphemeralSessionChipView()
-    private lazy var widthConstraint = widthAnchor.constraint(equalToConstant: 0)
+    private let chip = EphemeralSessionChipView(drawsCapsule: false)
 
     init() {
         super.init(frame: .zero)
@@ -132,11 +134,10 @@ final class EphemeralChipToolbarHost: NSView {
         addSubview(chip)
         NSLayoutConstraint.activate([
             chip.leadingAnchor.constraint(equalTo: leadingAnchor),
+            chip.trailingAnchor.constraint(equalTo: trailingAnchor),
             chip.centerYAnchor.constraint(equalTo: centerYAnchor),
             heightAnchor.constraint(equalToConstant: 28),
-            widthConstraint,
         ])
-        setChipVisible(false)
     }
 
     @available(*, unavailable)
@@ -144,15 +145,9 @@ final class EphemeralChipToolbarHost: NSView {
         fatalError("EphemeralChipToolbarHost does not support NSCoder")
     }
 
-    /// Shows or collapses the chip.
-    ///
-    /// The chip is pinned by its leading edge alone, so its own intrinsic width
-    /// governs it and this container's width is free to go to zero without
-    /// fighting it.
-    func setChipVisible(_ isVisible: Bool) {
-        if !isVisible { chip.reset() }
-        chip.isHidden = !isVisible
-        widthConstraint.constant = isVisible ? chip.fittingSize.width : 0
+    /// Dismisses the popover, for the item being taken out of the toolbar.
+    func reset() {
+        chip.reset()
     }
 }
 
