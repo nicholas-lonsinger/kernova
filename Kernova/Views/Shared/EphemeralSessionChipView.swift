@@ -120,23 +120,19 @@ final class EphemeralChipTitlebarController {
         self.window = window
     }
 
+    /// Vertical room around the chip inside the titlebar row.
+    private static let verticalInset: CGFloat = 4
+
     /// Shows or hides the chip, doing nothing when it is already in that state.
     func update(isVisible: Bool) {
         guard isVisible != (accessory != nil) else { return }
         if isVisible {
             let controller = NSTitlebarAccessoryViewController()
-            controller.layoutAttribute = .right
-            let container = NSView()
-            container.translatesAutoresizingMaskIntoConstraints = false
-            container.addSubview(chip)
-            NSLayoutConstraint.activate([
-                chip.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-                chip.trailingAnchor.constraint(
-                    equalTo: container.trailingAnchor, constant: -Spacing.small),
-                chip.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-                container.heightAnchor.constraint(equalToConstant: 28),
-            ])
-            controller.view = container
+            // `.leading` puts the accessory at the head of the titlebar row,
+            // beside the window title; `.right` lands it past the toolbar's
+            // trailing items, away from the name it qualifies.
+            controller.layoutAttribute = .leading
+            controller.view = makeAccessoryView()
             window?.addTitlebarAccessoryViewController(controller)
             accessory = controller
             return
@@ -148,5 +144,34 @@ final class EphemeralChipTitlebarController {
             window.removeTitlebarAccessoryViewController(at: index)
         }
         accessory = nil
+    }
+
+    /// The accessory's root view, sized to the chip it holds.
+    ///
+    /// The titlebar positions an accessory's root view itself rather than
+    /// constraining it, so that view has to carry a real `frame` — one left on
+    /// Auto Layout with no external constraints to satisfy resolves to zero and
+    /// the chip never appears. The chip inside is still laid out by its own
+    /// constraints against this container.
+    private func makeAccessoryView() -> NSView {
+        let container = NSView()
+        // Measured on Auto Layout, then handed back to its frame: leaving the
+        // generated size constraints in place while the frame is still zero
+        // would fight the chip's own pins during the measurement.
+        container.translatesAutoresizingMaskIntoConstraints = false
+        chip.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(chip)
+        let inset = Self.verticalInset
+        NSLayoutConstraint.activate([
+            chip.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Spacing.small),
+            chip.trailingAnchor.constraint(
+                equalTo: container.trailingAnchor, constant: -Spacing.small),
+            chip.topAnchor.constraint(equalTo: container.topAnchor, constant: inset),
+            chip.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -inset),
+        ])
+        let size = container.fittingSize
+        container.translatesAutoresizingMaskIntoConstraints = true
+        container.frame = NSRect(origin: .zero, size: size)
+        return container
     }
 }

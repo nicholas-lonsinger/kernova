@@ -2138,10 +2138,7 @@ extension VMSettingsViewController {
         // A VM with nothing to fall back to can't take the mode — but one that
         // is already in it can always be taken back out.
         let offerable = !manifest.isEmpty || enabled
-        ephemeralSwitch.isEnabled = offerable
-        // AppKit fades the disabled switch but not its label, which leaves the
-        // row half-lit; gray the text in step so the row reads as inert.
-        ephemeralLabel.textColor = offerable ? .labelColor : .disabledControlTextColor
+        applyGroupedFormRowEnabled(offerable, control: ephemeralSwitch, label: ephemeralLabel)
         ephemeralNoSnapshotsCaption.isHidden = !manifest.isEmpty
         ephemeralGroup?.isSubOptionHidden = !enabled
 
@@ -2369,10 +2366,8 @@ extension VMSettingsViewController {
         // preference is turned back on — it just can't be changed from here.
         installReminderSwitch.state = instance.configuration.agentInstallNudgeDismissed ? .off : .on
         let overridden = viewModel.agentInstallPromptDisabled
-        installReminderSwitch.isEnabled = !overridden
-        // AppKit fades the disabled switch but not its label, which leaves the
-        // row half-lit; gray the text in step so the row reads as inert.
-        installReminderLabel.textColor = overridden ? .disabledControlTextColor : .labelColor
+        applyGroupedFormRowEnabled(
+            !overridden, control: installReminderSwitch, label: installReminderLabel)
         installReminderOverrideCaption.isHidden = !overridden
     }
 
@@ -2381,11 +2376,9 @@ extension VMSettingsViewController {
         // Passthrough is hot-toggleable, so it isn't in
         // `persistentLockableControls`; its enablement is gated here instead.
         clipboardPassthroughSwitch.state = instance.configuration.clipboardPassthroughEnabled ? .on : .off
-        clipboardPassthroughSwitch.isEnabled = instance.configuration.clipboardSharingEnabled
-        // AppKit fades the disabled switch but not its label, which leaves the
-        // row half-lit; gray the text in step so the sub-option reads as inert.
-        clipboardPassthroughLabel.textColor =
-            instance.configuration.clipboardSharingEnabled ? .labelColor : .disabledControlTextColor
+        applyGroupedFormRowEnabled(
+            instance.configuration.clipboardSharingEnabled,
+            control: clipboardPassthroughSwitch, label: clipboardPassthroughLabel)
         // The "takes effect on next start" caption is built only by the Linux
         // standalone section, so gate it here.
         guard instance.configuration.guestOS == .linux else { return }

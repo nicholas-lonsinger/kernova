@@ -265,6 +265,26 @@ func makeGroupedFormSubOptionGroup(
     GroupedFormSubOptionGroup(primary: primary, subOption: subOption)
 }
 
+// MARK: - Row enablement
+
+/// Applies an enabled/disabled appearance to a form row's control and the label
+/// beside it, for a row whose enablement is decided per-refresh rather than by
+/// the pane's read-only lock.
+///
+/// `isEnabled` alone is not enough: AppKit draws a disabled `NSSwitch` that is
+/// **on** at its full accent fill (measured on macOS 27 developer beta 4), so
+/// the row reads as live while it is inert. Dimming the control is what makes
+/// it read as disabled, and graying the label keeps the pair consistent —
+/// AppKit never fades a plain `NSTextField` for a neighboring control.
+@MainActor
+func applyGroupedFormRowEnabled(
+    _ isEnabled: Bool, control: NSControl, label: NSTextField?
+) {
+    control.isEnabled = isEnabled
+    control.alphaValue = isEnabled ? 1 : 0.5
+    label?.textColor = isEnabled ? .labelColor : .disabledControlTextColor
+}
+
 // MARK: - Labels
 
 @MainActor

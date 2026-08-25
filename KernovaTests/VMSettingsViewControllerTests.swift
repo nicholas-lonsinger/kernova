@@ -420,8 +420,31 @@ struct VMSettingsViewControllerTests {
     func ephemeralToggleEnabledWithASnapshot() {
         let (vc, _) = makeEphemeralController(snapshotCount: 1, ephemeral: false)
 
-        #expect(firstSwitch(action: "ephemeralModeToggled", in: vc.view)?.isEnabled == true)
+        let toggle = firstSwitch(action: "ephemeralModeToggled", in: vc.view)
+        #expect(toggle?.isEnabled == true)
+        #expect(toggle?.alphaValue == 1)
         #expect(!visibleLabel(EphemeralModeCopy.noSnapshotsCaption, in: vc.view))
+    }
+
+    @Test("The unofferable Ephemeral toggle is dimmed, not just inert")
+    func ephemeralToggleDimsWhenUnofferable() {
+        let (vc, _) = makeEphemeralController(snapshotCount: 0, ephemeral: false)
+        let toggle = firstSwitch(action: "ephemeralModeToggled", in: vc.view)
+        #expect(toggle?.alphaValue ?? 1 < 1)
+    }
+
+    /// A VM already in the mode can always be taken back out, so the switch
+    /// stays live even once its manifest can no longer offer a baseline.
+    @Test("A VM already in the mode keeps a live toggle with no snapshots")
+    func ephemeralToggleStaysLiveWhenAlreadyOn() {
+        let (vc, instance) = makeEphemeralController(snapshotCount: 1, ephemeral: true)
+        instance.snapshotManifest = VMSnapshotManifest()
+        // Re-runs `apply()` over the mutated manifest.
+        vc.viewDidAppear()
+
+        let toggle = firstSwitch(action: "ephemeralModeToggled", in: vc.view)
+        #expect(toggle?.isEnabled == true)
+        #expect(toggle?.alphaValue == 1)
     }
 
     @Test("Turning the mode on defaults the baseline to the current snapshot")
@@ -652,6 +675,18 @@ struct VMSettingsViewControllerTests {
 
         let (onVC, _) = makeController(guestOS: .macOS, sharingEnabled: true)
         #expect(firstSwitch(action: "clipboardPassthroughToggled", in: onVC.view)?.isEnabled == true)
+    }
+
+    /// AppKit draws a disabled `NSSwitch` that is *on* at full accent fill, so
+    /// the row reads as live while it is inert; the dim is what says otherwise.
+    @Test("A disabled passthrough toggle is dimmed, not just inert")
+    func passthroughDimsWhenDisabled() {
+        let (offVC, _) = makeController(guestOS: .macOS, sharingEnabled: false)
+        let off = firstSwitch(action: "clipboardPassthroughToggled", in: offVC.view)
+        #expect(off?.alphaValue ?? 1 < 1)
+
+        let (onVC, _) = makeController(guestOS: .macOS, sharingEnabled: true)
+        #expect(firstSwitch(action: "clipboardPassthroughToggled", in: onVC.view)?.alphaValue == 1)
     }
 
     @Test("Enabling passthrough without a window reverts and does not write")
