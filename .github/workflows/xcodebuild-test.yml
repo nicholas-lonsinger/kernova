@@ -62,9 +62,12 @@ jobs:
       # which needs no identity or team, so it embeds the app's sandbox
       # entitlements and the TEST_HOST-hosted unit tests run sandboxed here
       # exactly as they do locally.
+      # Raw xcodebuild output throughout this workflow, not xcbeautify: its
+      # github-actions renderer condenses errors — on test failures it prints
+      # the failing test names alone, dropping the `#expect` text and the
+      # source line that say what actually failed.
       - name: Build for testing
         run: |
-          set -o pipefail
           xcodebuild build-for-testing \
             -project Kernova.xcodeproj \
             -scheme Kernova \
@@ -74,7 +77,7 @@ jobs:
             -skipPackagePluginValidation \
             COMPILER_INDEX_STORE_ENABLE=NO \
             COMPILATION_CACHE_ENABLE_CACHING=YES \
-            2>&1 | if command -v xcbeautify &>/dev/null; then xcbeautify --renderer github-actions; else cat; fi
+            2>&1
 
       # The store's size after a build is the signal that caching engaged:
       # empty or missing means COMPILATION_CACHE_ENABLE_CACHING no-opped, and
@@ -92,10 +95,6 @@ jobs:
       # test runner with the prefix stripped and passes nothing else through,
       # so the plain name set here silently no-ops and the run measures
       # pass-through (observed 2026-08-20).
-      #
-      # Raw xcodebuild output rather than xcbeautify: the github-actions renderer
-      # prints failing test names alone, dropping the `#expect` text and the
-      # source line that say what actually failed.
       - name: Test without building
         env:
           TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH: "32"
