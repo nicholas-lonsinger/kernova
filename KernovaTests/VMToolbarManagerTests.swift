@@ -33,6 +33,7 @@ struct VMToolbarManagerTests {
             configuration: .init(
                 lifecycleID: NSToolbarItem.Identifier("testLifecycle"),
                 saveStateID: NSToolbarItem.Identifier("testSaveState"),
+                takeSnapshotID: NSToolbarItem.Identifier("testTakeSnapshot"),
                 clipboardID: NSToolbarItem.Identifier("testClipboard"),
                 popOutID: NSToolbarItem.Identifier("testPopOut"),
                 fullscreenID: NSToolbarItem.Identifier("testFullscreen"),
@@ -92,6 +93,32 @@ struct VMToolbarManagerTests {
         #expect(item?.autovalidates == false)
     }
 
+    @Test("makeToolbarItem returns take snapshot as a plain bordered item")
+    func takeSnapshotItemStructure() {
+        let manager = makeManager()
+        let item = manager.makeToolbarItem(for: NSToolbarItem.Identifier("testTakeSnapshot"))
+        #expect(item != nil)
+        #expect(!(item is NSToolbarItemGroup))
+        #expect(item?.isBordered == true)
+        #expect(item?.label == "Take Snapshot")
+        #expect(item?.autovalidates == false)
+    }
+
+    @Test("Take Snapshot is enabled exactly when Suspend is")
+    func takeSnapshotTracksSuspend() {
+        for status in [VMStatus.running, .paused, .stopped, .starting] {
+            let instance = makeInstance(status: status)
+            let manager = makeManager(instance: instance)
+            let (toolbar, _, _) = makeToolbar(manager: manager)
+
+            manager.updateToolbarItems(in: toolbar)
+
+            let suspend = item("testSaveState", in: toolbar)?.isEnabled
+            let snapshot = item("testTakeSnapshot", in: toolbar)?.isEnabled
+            #expect(snapshot == suspend, "status \(status.displayName)")
+        }
+    }
+
     @Test("makeToolbarItem returns separate bordered pop-out and fullscreen items")
     func displayItemsStructure() {
         let manager = makeManager()
@@ -117,9 +144,10 @@ struct VMToolbarManagerTests {
     @Test("sharedItemIdentifiers contains all configured identifiers")
     func sharedIdentifiers() {
         let manager = makeManager()
-        #expect(manager.sharedItemIdentifiers.count == 6)
+        #expect(manager.sharedItemIdentifiers.count == 7)
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testLifecycle")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSaveState")))
+        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testTakeSnapshot")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testClipboard")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testPopOut")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testFullscreen")))
@@ -129,7 +157,7 @@ struct VMToolbarManagerTests {
     @Test("sharedItemIdentifiers omits settings toggle when not configured")
     func sharedIdentifiersWithoutSettingsToggle() {
         let manager = makeManager(includeSettingsToggle: false)
-        #expect(manager.sharedItemIdentifiers.count == 5)
+        #expect(manager.sharedItemIdentifiers.count == 6)
         #expect(!manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSettingsToggle")))
     }
 
@@ -140,6 +168,7 @@ struct VMToolbarManagerTests {
             manager.defaultItemIdentifiers == [
                 NSToolbarItem.Identifier("testLifecycle"),
                 NSToolbarItem.Identifier("testSaveState"),
+                NSToolbarItem.Identifier("testTakeSnapshot"),
                 .space,
                 NSToolbarItem.Identifier("testClipboard"),
                 .space,
@@ -157,6 +186,7 @@ struct VMToolbarManagerTests {
             manager.defaultItemIdentifiers == [
                 NSToolbarItem.Identifier("testLifecycle"),
                 NSToolbarItem.Identifier("testSaveState"),
+                NSToolbarItem.Identifier("testTakeSnapshot"),
                 .space,
                 NSToolbarItem.Identifier("testClipboard"),
                 .space,
@@ -177,6 +207,7 @@ struct VMToolbarManagerTests {
         let lifecycle = item("testLifecycle", in: toolbar) as? NSToolbarItemGroup
         #expect(lifecycle?.subitems.allSatisfy { !$0.isEnabled } == true)
         #expect(item("testSaveState", in: toolbar)?.isEnabled == false)
+        #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == false)
         #expect(item("testPopOut", in: toolbar)?.isEnabled == false)
         #expect(item("testFullscreen", in: toolbar)?.isEnabled == false)
     }

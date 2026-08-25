@@ -36,6 +36,15 @@ final class MockVirtualizationService: VirtualizationProviding {
     var pauseError: (any Error)?
     var resumeError: (any Error)?
     var saveError: (any Error)?
+    var takeSnapshotError: (any Error)?
+    var revertToSnapshotError: (any Error)?
+
+    // MARK: - Snapshot call tracking
+
+    /// Snapshots passed to `takeSnapshot`, in call order.
+    private(set) var takenSnapshots: [VMSnapshot] = []
+    /// Snapshots passed to `revertToSnapshot`, in call order.
+    private(set) var revertedSnapshots: [VMSnapshot] = []
 
     // MARK: - VirtualizationProviding
 
@@ -99,6 +108,55 @@ final class MockVirtualizationService: VirtualizationProviding {
             throw error
         }
         instance.tearDownSession()
+        instance.status = .paused
+    }
+
+    /// Mirrors the real service's state machine without VZ: the VM passes
+    /// through `.snapshotting` and comes back where it started.
+    func takeSnapshot(
+        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+    ) async throws {
+        let wasRunning = instance.status == .running
+        instance.status = .snapshotting
+        if let error = takeSnapshotError {
+            instance.status = wasRunning ? .running : .paused
+            throw error
+        }
+        // The store is exercised for real so a test can assert on the files the
+        // capture writes; the VZ saved state has no stand-in, so only the disk
+        // copies land.
+        if let prepared = try? store.prepareSnapshot(
+            bundleURL: instance.bundleURL, snapshotID: snapshot.id,
+            configuration: instance.configuration)
+        {
+            try? store.captureDisks(
+                bundleURL: instance.bundleURL, snapshotID: snapshot.id,
+                relativePaths: prepared.relativePaths)
+        }
+        takenSnapshots.append(snapshot)
+        instance.status = wasRunning ? .running : .paused
+    }
+
+    /// Mirrors the real service: the pre-flight runs before anything is torn
+    /// down, the live session is then discarded, and the VM lands cold-paused on
+    /// the snapshot's saved state and settings.
+    func revertToSnapshot(
+        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+    ) async throws {
+        let plan = try store.planRestore(bundleURL: instance.bundleURL, snapshotID: snapshot.id)
+        var restore = plan
+        restore.configuration = instance.configuration.adoptingSnapshotState(plan.configuration)
+
+        instance.tearDownSession()
+        instance.status = .restoring
+        if let error = revertToSnapshotError {
+            VirtualizationService.applyRestoreFailure(to: instance)
+            throw error
+        }
+        try store.restore(
+            bundleURL: instance.bundleURL, snapshotID: snapshot.id, plan: restore)
+        instance.configuration = restore.configuration
+        revertedSnapshots.append(snapshot)
         instance.status = .paused
     }
 }

@@ -45,6 +45,12 @@ protocol VMLibraryPresenting: AnyObject {
     /// files, each individually selectable for deletion. `permanently` selects
     /// the immediate (bypass-Trash) variant.
     func presentDeleteSheet(for instance: VMInstance, permanently: Bool)
+    /// Show the sheet that names and annotates a new snapshot.
+    func presentTakeSnapshotSheet(for instance: VMInstance)
+    /// Show the revert confirmation for one snapshot.
+    func presentRevertSnapshot(_ snapshot: VMSnapshot, for instance: VMInstance)
+    /// Show the delete confirmation for one snapshot.
+    func presentDeleteSnapshot(_ snapshot: VMSnapshot, for instance: VMInstance)
     /// Show the force-stop / discard-saved-state confirmation.
     func presentForceStop(for instance: VMInstance)
     /// Show the confirmation for booting a macOS guest into macOS Recovery.

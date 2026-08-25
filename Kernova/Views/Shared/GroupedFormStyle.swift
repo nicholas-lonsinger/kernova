@@ -266,9 +266,25 @@ func makeGroupedFormCaption(_ text: String) -> NSTextField {
     return label
 }
 
+/// A borderless button that reads as a link.
+///
+/// `.linkColor` barely desaturates when AppKit disables a borderless button, so
+/// the tint is driven from `isEnabled` — otherwise a disabled link reads as
+/// clickable and clicking it does nothing.
+@MainActor
+final class LinkButton: NSButton {
+    override var isEnabled: Bool {
+        didSet { contentTintColor = isEnabled ? .linkColor : .disabledControlTextColor }
+    }
+}
+
 @MainActor
 func makeLinkButton(_ title: String, target: AnyObject, action: Selector) -> NSButton {
-    let button = NSButton(title: title, target: target, action: action)
+    let button = LinkButton(frame: .zero)
+    button.setButtonType(.momentaryPushIn)
+    button.title = title
+    button.target = target
+    button.action = action
     button.isBordered = false
     button.bezelStyle = .badge
     button.font = .preferredFont(forTextStyle: .caption1)

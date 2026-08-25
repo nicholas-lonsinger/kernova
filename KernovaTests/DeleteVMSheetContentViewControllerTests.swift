@@ -402,6 +402,46 @@ struct DeleteVMSheetContentViewControllerTests {
         #expect(!labels.contains { $0.contains("saved state") })
     }
 
+    @Test("the snapshot store is listed alongside the in-bundle disks")
+    func snapshotRowRendered() {
+        let vc = make(
+            vmName: "MyVM",
+            bundledDisks: [makeDisk(label: "Main Disk", path: "Disk.asif")],
+            snapshotCount: 3)
+        vc.loadViewIfNeeded()
+        let labels = collectLabels(in: vc.view).map(\.stringValue)
+        #expect(labels.contains("Snapshots"))
+        #expect(labels.contains("3 in-bundle restore points"))
+    }
+
+    @Test("a single snapshot reads in the singular")
+    func snapshotRowSingular() {
+        let vc = make(vmName: "MyVM", snapshotCount: 1)
+        vc.loadViewIfNeeded()
+        #expect(collectLabels(in: vc.view).map(\.stringValue).contains("1 in-bundle restore point"))
+    }
+
+    @Test("no snapshot row for a VM that has taken none")
+    func snapshotRowAbsentWithoutSnapshots() {
+        let vc = make(vmName: "MyVM")
+        vc.loadViewIfNeeded()
+        #expect(!collectLabels(in: vc.view).map(\.stringValue).contains("Snapshots"))
+    }
+
+    @Test("immediate mode body names the snapshots alongside the disks")
+    func immediateModeBodyNamesSnapshots() {
+        let vc = make(vmName: "MyVM", hasSavedState: true, snapshotCount: 2, mode: .immediate)
+        vc.loadViewIfNeeded()
+        let labels = collectLabels(in: vc.view).map(\.stringValue)
+        // The sentence enumerates what is destroyed, so omitting the snapshots
+        // would understate what deleting the VM costs.
+        #expect(
+            labels.contains {
+                $0.contains("its saved state") && $0.contains("its snapshots")
+                    && $0.contains("can't undo")
+            })
+    }
+
     @Test("immediate mode confirm button reads Delete Immediately and is not the Return default")
     func immediateModeConfirmButton() {
         let vc = make(vmName: "MyVM", mode: .immediate)
@@ -523,11 +563,12 @@ struct DeleteVMSheetContentViewControllerTests {
         bundledDisks: [StorageDisk] = [],
         externals: [ExternalAttachment] = [],
         hasSavedState: Bool = false,
+        snapshotCount: Int = 0,
         mode: DeleteVMSheetContentViewController.Mode = .trash
     ) -> DeleteVMSheetContentViewController {
         DeleteVMSheetContentViewController(
             vmName: vmName, bundledDisks: bundledDisks, externals: externals,
-            hasSavedState: hasSavedState, mode: mode
+            hasSavedState: hasSavedState, snapshotCount: snapshotCount, mode: mode
         )
     }
 

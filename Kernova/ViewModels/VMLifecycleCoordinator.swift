@@ -191,6 +191,40 @@ final class VMLifecycleCoordinator {
         }
     }
 
+    // MARK: - Snapshots
+
+    func takeSnapshot(
+        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+    ) async throws {
+        try await serialized(instance, action: "takeSnapshot") {
+            try await virtualizationService.takeSnapshot(instance, snapshot: snapshot, store: store)
+        }
+    }
+
+    func revertToSnapshot(
+        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+    ) async throws {
+        try await serialized(instance, action: "revertToSnapshot") {
+            try await virtualizationService.revertToSnapshot(
+                instance, snapshot: snapshot, store: store)
+        }
+    }
+
+    /// Moves one snapshot's captured files to the Trash.
+    ///
+    /// Serialized like the operations that read those files, so a delete cannot
+    /// run while a revert is copying out of the same directory.
+    func discardSnapshot(
+        _ instance: VMInstance, snapshotID: UUID, store: any VMSnapshotStoring
+    ) async throws {
+        let bundleURL = instance.bundleURL
+        try await serialized(instance, action: "discardSnapshot") {
+            try await Task.detached {
+                try store.discardSnapshot(bundleURL: bundleURL, snapshotID: snapshotID)
+            }.value
+        }
+    }
+
     // MARK: - macOS Installation
 
     /// The effective IPSW download destination for a persisted path: the path

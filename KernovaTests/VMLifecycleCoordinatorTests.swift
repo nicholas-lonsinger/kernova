@@ -281,6 +281,27 @@ struct VMLifecycleCoordinatorTests {
         try await task.value
     }
 
+    @Test("a snapshot delete during another operation is rejected, not run")
+    func rejectsSnapshotDeleteDuringAnotherOperation() async throws {
+        let (coordinator, suspendingService) = makeSuspendingCoordinator()
+        let instance = makeInstance()
+        let store = MockVMSnapshotStore()
+
+        let task = Task { @MainActor in
+            try await coordinator.start(instance)
+        }
+        await suspendingService.waitUntilSuspended()
+
+        // A revert reads the very directory this would move to the Trash.
+        await #expect(throws: VMLifecycleCoordinator.LifecycleError.self) {
+            try await coordinator.discardSnapshot(instance, snapshotID: UUID(), store: store)
+        }
+        #expect(store.discardedIDs.isEmpty)
+
+        suspendingService.resumeSuspended()
+        try await task.value
+    }
+
     @Test("operations on different VMs are allowed concurrently")
     func allowsConcurrentOperationsOnDifferentVMs() async throws {
         let (coordinator, suspendingService) = makeSuspendingCoordinator()

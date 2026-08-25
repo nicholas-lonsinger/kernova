@@ -330,6 +330,184 @@ final class VirtualizationService {
         }
     }
 
+    // MARK: - Snapshots
+
+    /// Captures `snapshot`: the guest's memory into the snapshot's own saved
+    /// state, and the bundle's disks into copy-on-write copies beside it.
+    ///
+    /// The guest is paused for the write and put back the way it was found, so
+    /// the VM keeps running across a snapshot — and the suspend slot is
+    /// untouched. A failure discards the half-written snapshot directory and
+    /// leaves the VM live, paused at worst.
+    func takeSnapshot(
+        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+    ) async throws {
+        Self.logger.debug("takeSnapshot: status=\(instance.status.displayName, privacy: .public)")
+        guard instance.canTakeSnapshot, let session = instance.session else {
+            throw VirtualizationError.invalidStateTransition(
+                from: instance.status, action: "take a snapshot of")
+        }
+
+        let wasRunning = instance.status == .running
+        let bundleURL = instance.bundleURL
+        let configuration = instance.configuration
+        let snapshotID = snapshot.id
+        instance.status = .snapshotting
+
+        do {
+            let prepared = try await Task.detached {
+                try store.prepareSnapshot(
+                    bundleURL: bundleURL, snapshotID: snapshotID, configuration: configuration)
+            }.value
+
+            try await Self.captureLiveState(
+                session: session, wasRunning: wasRunning, saveFileURL: prepared.saveFileURL
+            ) {
+                try await Task.detached {
+                    try store.captureDisks(
+                        bundleURL: bundleURL, snapshotID: snapshotID,
+                        relativePaths: prepared.relativePaths)
+                }.value
+            }
+
+            instance.status = wasRunning ? .running : .paused
+            Self.logger.notice(
+                "Took snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
+            )
+        } catch {
+            await Task.detached {
+                store.removeSnapshotDirectory(bundleURL: bundleURL, snapshotID: snapshotID)
+            }.value
+            Self.logger.error(
+                "Failed to snapshot VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            instance.status = await Self.restingStatusAfterFailedSnapshot(
+                instance, session: session, wasRunning: wasRunning)
+            throw error
+        }
+    }
+
+    /// Writes the guest's live state into `saveFileURL`, copies the disks
+    /// beside it, and leaves the guest executing only if it was found
+    /// executing.
+    ///
+    /// The resume is conditional because `resumeIfPaused` reads VZ's `state`,
+    /// which does not record who paused the guest: an unconditional call
+    /// restarts a guest the user paused before asking for the snapshot, while
+    /// the VM is reported as paused.
+    static func captureLiveState(
+        session: any VMSnapshotSessionOperating,
+        wasRunning: Bool,
+        saveFileURL: URL,
+        captureDisks: () async throws -> Void
+    ) async throws {
+        try await session.pauseIfRunning()
+        try await session.saveMachineState(to: saveFileURL)
+        try await captureDisks()
+        if wasRunning {
+            try await session.resumeIfPaused()
+        }
+    }
+
+    /// Where a VM rests after a snapshot attempt failed.
+    ///
+    /// The guest may be paused anywhere between the pause and the resume, so
+    /// the recovery is to put it back — and a VM that cannot be resumed is left
+    /// live-paused, which Resume retries.
+    private static func restingStatusAfterFailedSnapshot(
+        _ instance: VMInstance, session: VMSession, wasRunning: Bool
+    ) async -> VMStatus {
+        guard wasRunning, instance.session === session else { return .paused }
+        do {
+            try await session.resumeIfPaused()
+            return .running
+        } catch {
+            logger.warning(
+                "Could not resume '\(instance.name, privacy: .public)' after a failed snapshot: \(error.localizedDescription, privacy: .public)"
+            )
+            return .paused
+        }
+    }
+
+    /// Returns the VM to a snapshot: its live session is discarded, the
+    /// snapshot's disks, configuration and saved state are written back over
+    /// the bundle's, and a VM that was live is resumed into the captured state.
+    ///
+    /// The snapshot keeps its own copies, so it stays revertible. A failure
+    /// bringing the VM back up afterwards arrives as
+    /// ``VirtualizationError/revertResumeFailed(underlying:)`` — the files are
+    /// in place by then, so the caller records the revert as having landed.
+    func revertToSnapshot(
+        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+    ) async throws {
+        Self.logger.debug(
+            "revertToSnapshot: status=\(instance.status.displayName, privacy: .public), hasVM=\(instance.hasLiveVirtualMachine, privacy: .public)"
+        )
+        guard instance.canRevertToSnapshot else {
+            throw VirtualizationError.invalidStateTransition(from: instance.status, action: "revert")
+        }
+
+        let bundleURL = instance.bundleURL
+        let snapshotID = snapshot.id
+
+        // Read-only, and ahead of the teardown: a snapshot that turns out to be
+        // incomplete refuses without having cost the user the live guest.
+        let plan = try await Task.detached {
+            try store.planRestore(bundleURL: bundleURL, snapshotID: snapshotID)
+        }.value
+        var restore = plan
+        restore.configuration = instance.configuration.adoptingSnapshotState(plan.configuration)
+
+        // A live guest's memory and disks are exactly what the revert replaces,
+        // and the user confirmed losing them — so terminate rather than save.
+        let wasLive = instance.hasLiveVirtualMachine
+        if let session = instance.session {
+            do {
+                try await session.stop()
+            } catch {
+                Self.logger.warning(
+                    "Terminating '\(instance.name, privacy: .public)' before a revert failed: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+        instance.tearDownSession()
+        instance.status = .restoring
+
+        do {
+            let written = restore
+            try await Task.detached {
+                try store.restore(bundleURL: bundleURL, snapshotID: snapshotID, plan: written)
+            }.value
+        } catch {
+            Self.logger.error(
+                "Failed to revert VM '\(instance.name, privacy: .public)' to '\(snapshot.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            Self.applyRestoreFailure(to: instance)
+            throw error
+        }
+
+        // The saved state only loads back into the configuration it was written
+        // under, so the VM takes the captured settings along with the disks.
+        instance.configuration = restore.configuration
+
+        // The bundle now holds the snapshot's saved state, so the VM is
+        // cold-paused: Start and Resume both restore from it.
+        instance.status = .paused
+        Self.logger.notice(
+            "Reverted VM '\(instance.name, privacy: .public)' to snapshot '\(snapshot.name, privacy: .public)'"
+        )
+
+        // A VM that was live goes back to being live at the captured state;
+        // one that was stopped stays suspended for the user to start.
+        if wasLive {
+            do {
+                try await resume(instance)
+            } catch {
+                throw VirtualizationError.revertResumeFailed(underlying: error)
+            }
+        }
+    }
+
     // MARK: - Error Classification
 
     /// How far an `NSUnderlyingErrorKey` walk follows the chain — framework
@@ -548,6 +726,8 @@ enum VirtualizationError: LocalizedError {
     case noVirtualMachine
     case noSaveFile
     case restoreFailed(underlying: any Error)
+    /// The revert wrote the snapshot back, and bringing the VM up on it failed.
+    case revertResumeFailed(underlying: any Error)
 
     var errorDescription: String? {
         switch self {
@@ -561,16 +741,24 @@ enum VirtualizationError: LocalizedError {
             "Could not restore the saved state: \(underlying.localizedDescription)\n\n"
                 + "The saved state was kept — choose Resume to try again, "
                 + "or Discard Saved State to remove it and start fresh."
+        case .revertResumeFailed(let underlying):
+            "The virtual machine was reverted to the snapshot, but it could not be "
+                + "resumed: \(underlying.localizedDescription)\n\n"
+                + "The reverted state was kept — choose Resume to try again."
         }
     }
 }
 
-/// Bridges `restoreFailed`'s underlying error into `NSUnderlyingErrorKey` so
-/// the chain-walking classifiers (`isVirtualMachineLimitExceeded`,
+/// Bridges a wrapped underlying error into `NSUnderlyingErrorKey` so the
+/// chain-walking classifiers (`isVirtualMachineLimitExceeded`,
 /// `underlyingChainDescription`) see through the wrapper.
 extension VirtualizationError: CustomNSError {
     var errorUserInfo: [String: Any] {
-        guard case .restoreFailed(let underlying) = self else { return [:] }
-        return [NSUnderlyingErrorKey: underlying as NSError]
+        switch self {
+        case .restoreFailed(let underlying), .revertResumeFailed(let underlying):
+            [NSUnderlyingErrorKey: underlying as NSError]
+        default:
+            [:]
+        }
     }
 }

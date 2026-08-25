@@ -172,6 +172,14 @@ final class VMSettingsViewController: NSViewController {
     // Shared Directories
     private var sharedListStack = NSStackView()
 
+    // Snapshots
+    /// The Snapshots section, rebuilt per instance by `buildForm`.
+    private var snapshotSection: SnapshotSectionView?
+    /// The snapshot ids the size read was last issued for, so it re-runs when
+    /// the set changes rather than on every `apply()` pass.
+    private var snapshotSizeIDs: [UUID]?
+    private var snapshotSizeTask: Task<Void, Never>?
+
     // Network
     private var networkModePopUp = NSPopUpButton()
     /// The Network header's lock icon, hidden — unlike its `lockIcons` peers —
@@ -402,6 +410,7 @@ final class VMSettingsViewController: NSViewController {
                 guard let self else { return }
                 _ = self.instance.configuration
                 _ = self.instance.status
+                _ = self.instance.snapshotManifest
                 _ = self.viewModel.activeRename
                 _ = self.viewModel.agentInstallPromptDisabled
                 // Registers every instance's configuration, so the
@@ -440,6 +449,11 @@ final class VMSettingsViewController: NSViewController {
         // suppressed (never-rebuilds) state across an appear/disappear cycle.
         activeStorageRename = nil
         activeRemovableRename = nil
+        snapshotSection?.clearActiveRename()
+        snapshotSizeTask?.cancel()
+        snapshotSizeTask = nil
+        // Re-read on the next appear: the sizes may have moved while away.
+        snapshotSizeIDs = nil
     }
 
     override func viewDidDisappear() {
@@ -555,6 +569,7 @@ extension VMSettingsViewController {
         addSection(buildStorageSection())
         addSection(buildRemovableMediaSection())
         addSection(buildSharedDirectoriesSection())
+        addSection(buildSnapshotsSection())
         addSection(buildNetworkSection())
         addSection(buildAudioSection())
         if instance.configuration.guestOS == .macOS {
@@ -1046,6 +1061,17 @@ extension VMSettingsViewController {
                 ),
             ]
         return makeSection([makeHeader("Shared Directories", lockable: true, paragraphs: paragraphs), card])
+    }
+
+    // MARK: Snapshots
+
+    private func buildSnapshotsSection() -> NSView {
+        let section = SnapshotSectionView()
+        section.delegate = self
+        snapshotSection = section
+        // A fresh section has no sizes yet, so the read must be re-issued.
+        snapshotSizeIDs = nil
+        return section
     }
 
     // MARK: Network
@@ -1935,6 +1961,7 @@ extension VMSettingsViewController {
         refreshStorageList()
         refreshRemovableList()
         refreshSharedList()
+        refreshSnapshots()
 
         let refs = externalAttachmentRefs(for: instance.configuration)
         Task { await fileMonitor.setPaths(refs) }
@@ -2527,6 +2554,54 @@ extension VMSettingsViewController {
                 readOnlySelector: #selector(sharedReadOnlyToggled),
                 deleteSelector: #selector(sharedDeleteTapped))
             addFullWidth(row, to: sharedListStack)
+        }
+    }
+
+    private func refreshSnapshots() {
+        guard let snapshotSection else { return }
+        snapshotSection.update(
+            manifest: instance.snapshotManifest,
+            canTakeSnapshot: viewModel.canTakeSnapshot(instance),
+            canRevert: viewModel.canRevertToSnapshot(instance),
+            canModify: viewModel.canModifySnapshots(instance))
+
+        // The sizes are a directory walk over gigabyte-scale copies, so they are
+        // read off the main actor and only when the set of snapshots changed.
+        let ids = instance.snapshotManifest.ordered.map(\.id)
+        guard ids != snapshotSizeIDs else { return }
+        snapshotSizeIDs = ids
+        snapshotSizeTask?.cancel()
+        guard !ids.isEmpty else {
+            snapshotSection.applySizes([:])
+            return
+        }
+        let instanceID = instance.id
+        snapshotSizeTask = Task { [weak self] in
+            guard let self else { return }
+            let sizes = await self.viewModel.snapshotOnDiskBytes(for: self.instance)
+            // The pane is reused across route and VM changes, so a read that
+            // lands after the user moved on must not paint the new VM's rows.
+            guard !Task.isCancelled, !self.hasDisappeared, self.instance.id == instanceID else {
+                return
+            }
+            self.snapshotSection?.applySizes(sizes)
+        }
+    }
+
+    /// Get Info popover for one snapshot, with its on-disk footprint read off
+    /// the main actor first.
+    private func presentSnapshotInfoPopover(_ snapshot: VMSnapshot, from anchor: NSView) {
+        let instanceID = instance.id
+        Task { [weak self] in
+            guard let self else { return }
+            let sizes = await self.viewModel.snapshotOnDiskBytes(for: self.instance)
+            // The pane is reused across route and VM changes, so a read that
+            // lands after the user moved on must not name the new VM's sizes.
+            guard !self.hasDisappeared, self.instance.id == instanceID else { return }
+            let content = SnapshotInfoPopoverContentViewController(
+                snapshot: snapshot,
+                onDiskText: sizes[snapshot.id].map { DataFormatters.formatBytes($0) } ?? "\u{2014}")
+            self.attachmentInfoPresenter.show(content: content, from: anchor, preferredEdge: .minY)
         }
     }
 
@@ -3437,6 +3512,43 @@ struct AttachmentDeletePrompt: Equatable {
     let message: String
     /// Offered actions in display order; the first is the default button.
     let actions: [Action]
+}
+
+// MARK: - SnapshotSectionViewDelegate
+
+extension VMSettingsViewController: SnapshotSectionViewDelegate {
+    func snapshotSectionRequestedTakeSnapshot(_ view: SnapshotSectionView) {
+        viewModel.requestTakeSnapshot(instance)
+    }
+
+    func snapshotSection(_ view: SnapshotSectionView, requestedRevertTo snapshot: VMSnapshot) {
+        viewModel.confirmRevert(instance, to: snapshot)
+    }
+
+    func snapshotSection(_ view: SnapshotSectionView, requestedDeleteOf snapshot: VMSnapshot) {
+        viewModel.confirmDeleteSnapshot(instance, snapshot: snapshot)
+    }
+
+    /// Commits an inline rename, deferred to the next runloop turn so the field
+    /// editor's end-editing callback fully unwinds before the rebuild tears down
+    /// and recreates the editing row.
+    func snapshotSection(
+        _ view: SnapshotSectionView, renamed snapshot: VMSnapshot, to newName: String
+    ) {
+        Task { [weak self] in
+            guard let self else { return }
+            self.viewModel.renameSnapshot(snapshot, newName: newName, on: self.instance)
+            // A no-op rename (empty / unchanged) fires no observation, so force a
+            // refresh to pick up anything suppressed during the edit.
+            self.refreshSnapshots()
+        }
+    }
+
+    func snapshotSection(
+        _ view: SnapshotSectionView, requestedInfoFor snapshot: VMSnapshot, from anchor: NSView
+    ) {
+        presentSnapshotInfoPopover(snapshot, from: anchor)
+    }
 }
 
 // MARK: - StorageDiskReorderSheetContentViewControllerDelegate

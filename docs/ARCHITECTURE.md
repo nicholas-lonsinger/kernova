@@ -59,7 +59,11 @@ bar and Option-revealed in the sidebar, gated by `AppPreferences.alwaysShowAdvan
   stamped with the session's id, which `VMInstance` hops to main and drops once the id no longer
   names the live session.
 - `VMBundleLayout` — a `Sendable` struct deriving every in-bundle path (disk image, aux storage,
-  save file, serial log) from the bundle root; the one place path logic lives.
+  save file, serial log, snapshot store) from the bundle root; the one place path logic lives. Its
+  `snapshotLayout(id:)` re-roots it at one snapshot's directory, so a captured copy resolves through
+  the same names as the bundle's own file.
+- `VMSnapshot` / `VMSnapshotManifest` — a named restore point and the `Snapshots/manifest.json`
+  payload listing them, with the marker naming the snapshot the VM's state descends from.
 - `VMStatus`, `VMBootMode`, `VMGuestOS` — enums.
 - `GuestSetupState` — the runtime step model behind the one setup-progress view both guests share,
   with per-flow copy supplied by a `GuestSetupDescriptor`.
@@ -85,7 +89,12 @@ stateless ones are `Sendable` structs.
 
 `@MainActor`:
 
-- `VirtualizationService` — start, stop, pause, resume, save and restore VM state.
+- `VirtualizationService` — start, stop, pause, resume, save and restore VM state, plus the two
+  snapshot operations: a capture pauses the guest, writes its state into the snapshot's own save
+  file, copies the bundle's disks beside it, and puts the guest back the way it was found; a revert
+  runs the store's read-only pre-flight while the VM is still live, then discards the live session
+  and writes the captured copies and configuration back over the bundle's, leaving the VM
+  cold-paused on the snapshot's saved state (which the snapshot keeps, so it stays revertible).
 - `MacOSInstallService` — restore-image load, platform-file creation, and the `VZMacOSInstaller`
   run with KVO progress.
 - `USBDeviceService` — runtime USB mass-storage attach/detach against the live XHCI controller.
@@ -98,6 +107,12 @@ stateless ones are `Sendable` structs.
 - `VMStorageService` — creates, lists, clones and deletes VM bundles under
   `~/Library/Application Support/Kernova/VMs/`. Deletion has two dispositions, `deleteVMBundle`
   (Trash) and `permanentlyDeleteVMBundle` (the user-confirmed bypass).
+- `VMSnapshotStore` — owns the `Snapshots/` directory inside a VM bundle: the manifest, one
+  directory per snapshot, the same-volume (so copy-on-write) disk copies, the configuration the
+  capture was taken under, and their on-disk footprints. It captures the files the guest writes
+  through — the in-bundle disks and the firmware state — never the VM's identity files or
+  user-picked external disks. A revert's file list comes from the captured configuration, so the
+  disks it writes back are the ones the snapshot holds rather than the ones the VM configures now.
 - `DiskImageService` — creates ASIF disk images by decompressing bundled templates in-process.
 - `DownloadService` (a `final class`, for `URLSession` lifetime) — streams a remote file into a
   resumable `.kernovadownload` bundle beside its destination, serialized per destination path by a
@@ -357,6 +372,7 @@ serial input. There is no in-app terminal emulator — emulation is delegated to
 AppDelegate
     ├── creates → VMLibraryViewModel (owns [VMInstance])
     │                 ├── VMStorageService
+    │                 ├── VMSnapshotStore
     │                 ├── DiskImageService
     │                 ├── VMDirectoryWatcher, SystemSleepWatcher
     │                 └── FileSystemOperating (trash/remove seam; also held by DownloadService)

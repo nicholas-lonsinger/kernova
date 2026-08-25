@@ -320,4 +320,53 @@ struct DetailAlertsPresenterTests {
         #expect(presenter.pendingDeleteInstanceIDForTesting == vm.id)
         #expect(presenter.pendingDeletePermanentlyForTesting == true)
     }
+
+    // MARK: - Snapshots
+
+    @Test("A second Take Snapshot gesture queued behind another alert is dropped")
+    func takeSnapshotSheetDedupesWhileQueued() {
+        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let vm = makeInstance()
+        vm.status = .running
+        vm.hasLiveVirtualMachineOverrideForTesting = true
+
+        // No window, so nothing drains: both requests would otherwise sit in
+        // `pending` and show two sheets back to back.
+        presenter.presentTakeSnapshotSheet(for: vm)
+        presenter.presentTakeSnapshotSheet(for: vm)
+
+        #expect(presenter.pendingCountForTesting == 1)
+        #expect(presenter.isSnapshotSheetQueuedForTesting)
+    }
+
+    @Test("The revert alert on a suspended VM names the suspended session it replaces")
+    func revertAlertNamesTheSuspendedSession() {
+        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let vm = makeInstance()
+        vm.status = .paused
+        vm.hasLiveVirtualMachineOverrideForTesting = false
+        #expect(vm.isColdPaused)
+        let snapshot = VMSnapshot(name: "Before the update")
+
+        let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
+
+        // The snapshot-first button is hidden for a cold-paused VM, so the copy
+        // is the only place the lost suspended session can be named.
+        #expect(!alert.buttons.contains { $0.title == "Take Snapshot, Then Revert" })
+        #expect(alert.message.contains("suspended session"))
+    }
+
+    @Test("The revert alert on a live VM offers the snapshot-first path instead")
+    func revertAlertOnALiveVMOffersSnapshotFirst() {
+        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let vm = makeInstance()
+        vm.status = .running
+        vm.hasLiveVirtualMachineOverrideForTesting = true
+        let snapshot = VMSnapshot(name: "Before the update")
+
+        let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
+
+        #expect(alert.buttons.contains { $0.title == "Take Snapshot, Then Revert" })
+        #expect(!alert.message.contains("suspended session"))
+    }
 }

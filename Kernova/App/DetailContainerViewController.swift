@@ -377,6 +377,18 @@ extension DetailContainerViewController: VMLibraryPresenting {
         alertsPresenter.presentDeleteSheet(for: instance, permanently: permanently)
     }
 
+    func presentTakeSnapshotSheet(for instance: VMInstance) {
+        alertsPresenter.presentTakeSnapshotSheet(for: instance)
+    }
+
+    func presentRevertSnapshot(_ snapshot: VMSnapshot, for instance: VMInstance) {
+        alertsPresenter.presentRevertSnapshot(snapshot, for: instance)
+    }
+
+    func presentDeleteSnapshot(_ snapshot: VMSnapshot, for instance: VMInstance) {
+        alertsPresenter.presentDeleteSnapshot(snapshot, for: instance)
+    }
+
     func presentForceStop(for instance: VMInstance) {
         alertsPresenter.presentForceStop(for: instance)
     }

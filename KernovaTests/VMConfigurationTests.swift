@@ -1539,4 +1539,43 @@ struct VMConfigurationTests {
             try VMConfiguration.load(fromBundle: bundleURL)
         }
     }
+
+    // MARK: - Snapshot revert
+
+    @Test("Adopting a snapshot's state takes its hardware and keeps this VM's identity")
+    func adoptingSnapshotStateKeepsIdentity() {
+        var current = VMConfiguration(name: "Renamed since", guestOS: .macOS, bootMode: .macOS)
+        current.memorySizeInGB = 16
+        current.cpuCount = 8
+        current.audioInputEnabled = true
+        current.hardwareModelData = Data("current-hardware".utf8)
+        current.machineIdentifierData = Data("current-machine".utf8)
+        current.genericMachineIdentifierData = Data("current-generic".utf8)
+        current.createdAt = Date(timeIntervalSince1970: 1_700_000_000)
+
+        var captured = current
+        captured.id = UUID()
+        captured.name = "Name at capture time"
+        captured.memorySizeInGB = 8
+        captured.cpuCount = 4
+        captured.audioInputEnabled = false
+        captured.hardwareModelData = Data("captured-hardware".utf8)
+        captured.machineIdentifierData = Data("captured-machine".utf8)
+        captured.genericMachineIdentifierData = Data("captured-generic".utf8)
+        captured.createdAt = Date(timeIntervalSince1970: 1_600_000_000)
+
+        let restored = current.adoptingSnapshotState(captured)
+
+        // Device state the saved state was written under comes back.
+        #expect(restored.memorySizeInGB == 8)
+        #expect(restored.cpuCount == 4)
+        #expect(restored.audioInputEnabled == false)
+        // Identity does not — a revert must not hand the guest a different machine.
+        #expect(restored.id == current.id)
+        #expect(restored.name == "Renamed since")
+        #expect(restored.createdAt == current.createdAt)
+        #expect(restored.hardwareModelData == current.hardwareModelData)
+        #expect(restored.machineIdentifierData == current.machineIdentifierData)
+        #expect(restored.genericMachineIdentifierData == current.genericMachineIdentifierData)
+    }
 }

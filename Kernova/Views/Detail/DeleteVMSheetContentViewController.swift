@@ -39,6 +39,9 @@ final class DeleteVMSheetContentViewController: NSViewController {
     /// Whether the bundle holds a suspended VM's saved state, listed alongside
     /// the disks so the user sees it going with the bundle.
     private let hasSavedState: Bool
+    /// How many named snapshots the bundle's snapshot store holds, listed for
+    /// the same reason.
+    private let snapshotCount: Int
     private let mode: Mode
 
     /// Per-row checkboxes for the *selectable* (non-shared) externals, keyed
@@ -84,12 +87,14 @@ final class DeleteVMSheetContentViewController: NSViewController {
         bundledDisks: [StorageDisk],
         externals: [ExternalAttachment],
         hasSavedState: Bool,
+        snapshotCount: Int = 0,
         mode: Mode = .trash
     ) {
         self.vmName = vmName
         self.bundledDisks = bundledDisks
         self.externals = externals
         self.hasSavedState = hasSavedState
+        self.snapshotCount = snapshotCount
         self.mode = mode
         super.init(nibName: nil, bundle: nil)
     }
@@ -171,12 +176,13 @@ final class DeleteVMSheetContentViewController: NSViewController {
         case .immediate:
             titleText = "Delete \u{201C}\(vmName)\u{201D} Immediately?"
             // This sentence enumerates what is destroyed, so it names the saved
-            // state too. External files are named only when at least one is
-            // selectable — a list of only locked-off rows offers no choice, so
-            // the plain wording stays accurate.
-            let removed =
-                hasSavedState
-                ? "This VM, its disks, and its saved state" : "This VM and its disks"
+            // state and the snapshots too. External files are named only when at
+            // least one is selectable — a list of only locked-off rows offers no
+            // choice, so the plain wording stays accurate.
+            var removedItems = ["This VM", "its disks"]
+            if hasSavedState { removedItems.append("its saved state") }
+            if snapshotCount > 0 { removedItems.append("its snapshots") }
+            let removed = ListFormatter.localizedString(byJoining: removedItems)
             let externalsClause =
                 externals.contains(where: \.isSelectable)
                 ? ", plus any external files you select below," : ""
@@ -269,6 +275,14 @@ final class DeleteVMSheetContentViewController: NSViewController {
                     symbolName: "pause.circle",
                     label: "Saved State",
                     detail: "In-bundle machine state"))
+        }
+        if snapshotCount > 0 {
+            listStack.addArrangedSubview(
+                makeBundledRow(
+                    symbolName: "clock.arrow.circlepath",
+                    label: "Snapshots",
+                    detail: snapshotCount == 1
+                        ? "1 in-bundle restore point" : "\(snapshotCount) in-bundle restore points"))
         }
 
         // Section 2 — external files the user can individually trash.

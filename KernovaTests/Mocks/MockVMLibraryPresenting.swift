@@ -19,6 +19,12 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     /// Parallel to `deleteSheetInstances`: whether each request asked for the
     /// immediate (bypass-Trash) variant.
     private(set) var deleteSheetPermanentlyFlags: [Bool] = []
+    private(set) var takeSnapshotSheetInstances: [VMInstance] = []
+    private(set) var revertSnapshots: [VMSnapshot] = []
+    /// Parallel to `revertSnapshots`: the VM each request named.
+    private(set) var revertSnapshotInstances: [VMInstance] = []
+    private(set) var deleteSnapshots: [VMSnapshot] = []
+    private(set) var deleteSnapshotInstances: [VMInstance] = []
     private(set) var forceStopInstances: [VMInstance] = []
     private(set) var recoveryBootInstances: [VMInstance] = []
     private(set) var stopPausedInstances: [VMInstance] = []
@@ -42,6 +48,17 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     func presentDeleteSheet(for instance: VMInstance, permanently: Bool) {
         deleteSheetInstances.append(instance)
         deleteSheetPermanentlyFlags.append(permanently)
+    }
+    func presentTakeSnapshotSheet(for instance: VMInstance) {
+        takeSnapshotSheetInstances.append(instance)
+    }
+    func presentRevertSnapshot(_ snapshot: VMSnapshot, for instance: VMInstance) {
+        revertSnapshots.append(snapshot)
+        revertSnapshotInstances.append(instance)
+    }
+    func presentDeleteSnapshot(_ snapshot: VMSnapshot, for instance: VMInstance) {
+        deleteSnapshots.append(snapshot)
+        deleteSnapshotInstances.append(instance)
     }
     func presentForceStop(for instance: VMInstance) { forceStopInstances.append(instance) }
     func presentRecoveryBoot(for instance: VMInstance) { recoveryBootInstances.append(instance) }
@@ -90,6 +107,11 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
         startFailedAttachmentInstances.removeAll()
         deleteSheetInstances.removeAll()
         deleteSheetPermanentlyFlags.removeAll()
+        takeSnapshotSheetInstances.removeAll()
+        revertSnapshots.removeAll()
+        revertSnapshotInstances.removeAll()
+        deleteSnapshots.removeAll()
+        deleteSnapshotInstances.removeAll()
         forceStopInstances.removeAll()
         recoveryBootInstances.removeAll()
         stopPausedInstances.removeAll()

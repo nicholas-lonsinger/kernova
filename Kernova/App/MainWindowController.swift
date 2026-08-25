@@ -43,6 +43,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             configuration: .init(
                 lifecycleID: NSToolbarItem.Identifier("lifecycle"),
                 saveStateID: NSToolbarItem.Identifier("saveState"),
+                takeSnapshotID: NSToolbarItem.Identifier("takeSnapshot"),
                 clipboardID: NSToolbarItem.Identifier("clipboard"),
                 popOutID: NSToolbarItem.Identifier("popOut"),
                 fullscreenID: NSToolbarItem.Identifier("fullscreen"),

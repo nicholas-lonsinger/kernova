@@ -60,6 +60,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// would produce identical items is skipped.
     private var appMenuQuitModel: [AppMenuQuitItem] = []
 
+    /// The Virtual Machine menu, retained so its opening can refresh the revert
+    /// submenu that decides one of its items' enablement.
+    private var virtualMachineMenu: NSMenu?
+    /// That menu's "Revert to Snapshot" submenu, retained so it can be rebuilt
+    /// from the selected VM's manifest when it opens.
+    private var revertSnapshotMenu: NSMenu?
+    /// What that submenu currently lists, so an open that would produce
+    /// identical items skips the rebuild — `menuNeedsUpdate(_:)` also fires
+    /// while AppKit matches key equivalents.
+    private var revertSnapshotMenuModel: RevertSnapshotMenuModel?
+
+    /// Value snapshot of the revert submenu's rendered contents.
+    private struct RevertSnapshotMenuModel: Equatable {
+        let instanceID: UUID?
+        let snapshots: [VMSnapshot]
+        let isEnabled: Bool
+    }
+
     /// Single close-side trigger for the activation-policy reconcile.
     ///
     /// Fires `scheduleAgentActivationPolicySync()` when a titled window closes,
@@ -1346,6 +1364,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         Task { await viewModel.save(instance) }
     }
 
+    @objc func takeSnapshot(_ sender: Any?) {
+        guard let instance = activeInstance else { return }
+        viewModel.requestTakeSnapshot(instance)
+    }
+
+    /// Reverts to the snapshot the sending "Revert to Snapshot" item names.
+    @objc func revertToSnapshot(_ sender: Any?) {
+        guard let ref = (sender as? NSMenuItem)?.representedObject as? SnapshotMenuRef else {
+            return
+        }
+        viewModel.confirmRevert(ref.instance, to: ref.snapshot)
+    }
+
     @objc func toggleSettingsPane(_ sender: Any?) {
         guard let instance = activeInstance,
             instance.status.hasActiveDisplay
@@ -1731,6 +1762,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return activeInstance?.canForceStop ?? false
         case #selector(saveVM(_:)):
             return activeInstance?.canSave ?? false
+        case #selector(takeSnapshot(_:)):
+            return activeInstance.map { viewModel.canTakeSnapshot($0) } ?? false
         case #selector(renameVM(_:)):
             return activeInstance?.status.canRename ?? false
         case #selector(cloneVM(_:)), #selector(cloneVMAlternate(_:)):
@@ -1789,7 +1822,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             // Re-derive the quit section so a Settings toggle flip is reflected on
             // the next open.
             rebuildAppMenuQuitItems()
+        } else if menu === revertSnapshotMenu {
+            rebuildRevertSnapshotMenu(menu)
+        } else if menu === virtualMachineMenu, let revertSnapshotMenu {
+            rebuildRevertSnapshotMenu(revertSnapshotMenu)
         }
+    }
+
+    /// Rebuilds the revert submenu from the selected VM's snapshots.
+    ///
+    /// The unchanged-model guard is load-bearing for the same reason it is in
+    /// ``rebuildAppMenuQuitItems()``: this also runs while AppKit matches key
+    /// equivalents, and tearing items down mid-match is what must not happen.
+    private func rebuildRevertSnapshotMenu(_ menu: NSMenu) {
+        let instance = activeInstance
+        let model = RevertSnapshotMenuModel(
+            instanceID: instance?.id,
+            snapshots: instance?.snapshotManifest.ordered ?? [],
+            isEnabled: instance.map { viewModel.canRevertToSnapshot($0) } ?? false)
+        guard model != revertSnapshotMenuModel else { return }
+        revertSnapshotMenuModel = model
+        SnapshotRevertMenu.rebuild(
+            menu, for: instance, isEnabled: model.isEnabled, target: self,
+            action: #selector(revertToSnapshot(_:)))
     }
 
     /// Rebuilds the app menu's quit section from `appMenuQuitItems` for the
@@ -1930,6 +1985,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         vmMenu.addItem(.separator())
         let saveItem = vmMenu.addItem(withTitle: "Suspend", action: #selector(saveVM(_:)), keyEquivalent: "s")
         saveItem.keyEquivalentModifierMask = [.command, .option]
+        // "Take Snapshot…" gathers input (the sheet's name and notes), so the
+        // ellipsis is HIG-correct here.
+        let takeSnapshotItem = vmMenu.addItem(
+            withTitle: "Take Snapshot\u{2026}", action: #selector(takeSnapshot(_:)),
+            keyEquivalent: "s")
+        takeSnapshotItem.keyEquivalentModifierMask = [.command, .shift]
+        let revertItem = NSMenuItem(title: SnapshotRevertMenu.title, action: nil, keyEquivalent: "")
+        let revertMenu = NSMenu(title: SnapshotRevertMenu.title)
+        // Rebuilt from the selected VM's manifest whenever this submenu or the
+        // menu holding it opens — the latter because AppKit decides the parent
+        // item's enablement from the submenu's contents, before the submenu
+        // itself is ever asked to update.
+        revertMenu.delegate = self
+        revertItem.submenu = revertMenu
+        revertSnapshotMenu = revertMenu
+        // Seeded so the parent item is never a live entry onto an empty submenu.
+        rebuildRevertSnapshotMenu(revertMenu)
+        vmMenu.addItem(revertItem)
+        vmMenu.delegate = self
+        virtualMachineMenu = vmMenu
         vmMenu.addItem(.separator())
         let popOutItem = vmMenu.addItem(
             withTitle: "Pop Out Display",

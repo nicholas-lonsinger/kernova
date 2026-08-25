@@ -15,6 +15,32 @@ struct VMBundleLayoutTests {
         #expect(layout.diskImageURL.deletingLastPathComponent() == bundleURL)
     }
 
+    @Test("the snapshot store hangs off a Snapshots directory in the bundle")
+    func snapshotStorePaths() {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        #expect(layout.snapshotsDirectoryURL.lastPathComponent == "Snapshots")
+        #expect(layout.snapshotsDirectoryURL.deletingLastPathComponent() == bundleURL)
+        #expect(layout.snapshotManifestURL.lastPathComponent == "manifest.json")
+        #expect(
+            layout.snapshotManifestURL.deletingLastPathComponent()
+                == layout.snapshotsDirectoryURL)
+    }
+
+    @Test("a snapshot's layout names its captured copies the way the bundle names its own")
+    func snapshotLayoutMirrorsTheBundle() {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        let id = UUID()
+        let snapshot = layout.snapshotLayout(id: id)
+
+        #expect(snapshot.bundleURL == layout.snapshotDirectoryURL(id: id))
+        #expect(snapshot.bundleURL.lastPathComponent == id.uuidString)
+        #expect(snapshot.diskImageURL.lastPathComponent == "Disk.asif")
+        #expect(snapshot.saveFileURL.lastPathComponent == "SaveFile.vzvmsave")
+        // Distinct from the bundle's own suspend slot, which a revert overwrites
+        // but never consumes.
+        #expect(snapshot.saveFileURL != layout.saveFileURL)
+    }
+
     @Test("auxiliaryStorageURL appends AuxiliaryStorage to bundle path")
     func auxiliaryStorageURL() {
         let layout = VMBundleLayout(bundleURL: bundleURL)
