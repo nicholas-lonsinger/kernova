@@ -19,26 +19,23 @@ struct VMLibraryViewModelEphemeralTests {
         let instance: VMInstance
         let baseline: VMSnapshot
         let later: VMSnapshot
+        /// The second ephemeral VM, present only when `secondVM` was asked for.
+        let other: VMInstance?
+        let otherBaseline: VMSnapshot?
     }
 
-    /// Loads one VM through the view model — the path that wires the power-off
-    /// hook — carrying two snapshots, the older of which is the baseline.
-    ///
-    /// `ephemeral` decides whether the mode is on; `status` is where the VM
-    /// rests once loaded.
-    private func makeHarness(
-        ephemeral: Bool = true, status: VMStatus = .running
-    ) async throws -> Harness {
-        let storage = MockVMStorageService()
-        let virtualization = MockVirtualizationService()
-        let snapshots = MockVMSnapshotStore()
-
+    /// Registers one VM's bundle, its two snapshots, and what each of them
+    /// captured, and answers the pair.
+    private func seedVM(
+        named name: String, ephemeral: Bool, storage: MockVMStorageService,
+        snapshots: MockVMSnapshotStore
+    ) throws -> (config: VMConfiguration, baseline: VMSnapshot, later: VMSnapshot) {
         let baseline = VMSnapshot(
-            name: "Clean install", createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+            name: "\(name) clean install", createdAt: Date(timeIntervalSince1970: 1_700_000_000))
         let later = VMSnapshot(
-            name: "Mid-session", createdAt: Date(timeIntervalSince1970: 1_700_001_000))
+            name: "\(name) mid-session", createdAt: Date(timeIntervalSince1970: 1_700_001_000))
 
-        var config = VMConfiguration(name: "Throwaway", guestOS: .linux, bootMode: .efi)
+        var config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
         if ephemeral {
             config.applyEphemeralMode(enabled: true, baseline: baseline.id)
         }
@@ -51,6 +48,28 @@ struct VMLibraryViewModelEphemeralTests {
         for snapshot in [baseline, later] {
             snapshots.setCapturedConfiguration(config, for: snapshot.id)
         }
+        return (config, baseline, later)
+    }
+
+    /// Loads the VMs through the view model — the path that wires the power-off
+    /// hook — each carrying two snapshots, the older of which is its baseline.
+    ///
+    /// `ephemeral` decides whether the first VM's mode is on; `status` is where
+    /// it rests once loaded. `secondVM` adds a second, always-ephemeral VM, for
+    /// the cases that turn on the two being tracked apart.
+    private func makeHarness(
+        ephemeral: Bool = true, status: VMStatus = .running, secondVM: Bool = false
+    ) async throws -> Harness {
+        let storage = MockVMStorageService()
+        let virtualization = MockVirtualizationService()
+        let snapshots = MockVMSnapshotStore()
+
+        let first = try seedVM(
+            named: "Throwaway", ephemeral: ephemeral, storage: storage, snapshots: snapshots)
+        let second =
+            secondVM
+            ? try seedVM(named: "Sandbox", ephemeral: true, storage: storage, snapshots: snapshots)
+            : nil
 
         let viewModel = VMLibraryViewModel(
             storageService: storage,
@@ -66,17 +85,23 @@ struct VMLibraryViewModelEphemeralTests {
         )
         viewModel.presenter = presenter
         await viewModel.loadVMs()
-        let instance = viewModel.instances[0]
+        let instance = try #require(
+            viewModel.instances.first { $0.configuration.id == first.config.id })
         instance.status = status
+        let other = second.flatMap { seeded in
+            viewModel.instances.first { $0.configuration.id == seeded.config.id }
+        }
 
         return Harness(
             viewModel: viewModel, storage: storage, virtualization: virtualization,
-            snapshots: snapshots, instance: instance, baseline: baseline, later: later)
+            snapshots: snapshots, instance: instance, baseline: first.baseline,
+            later: first.later, other: other, otherBaseline: second?.baseline)
     }
 
-    /// Awaits the revert a power-off started, if it started one.
+    /// Awaits the revert a power-off started on this harness's VM, if it
+    /// started one.
     private func settleEphemeralRevert(_ harness: Harness) async {
-        await harness.viewModel.ephemeralRevertTaskForTesting?.value
+        await harness.viewModel.ephemeralRevertTaskForTesting(harness.instance)?.value
     }
 
     // MARK: - Power-off
@@ -110,6 +135,25 @@ struct VMLibraryViewModelEphemeralTests {
         await settleEphemeralRevert(harness)
 
         #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
+    }
+
+    @Test("Two ephemeral VMs powering off together each return to their own baseline")
+    func twoVMsRevertToTheirOwnBaselines() async throws {
+        let harness = try await makeHarness(secondVM: true)
+        let other = try #require(harness.other)
+        let otherBaseline = try #require(harness.otherBaseline)
+        other.status = .running
+
+        await harness.viewModel.stop(harness.instance)
+        await harness.viewModel.stop(other)
+        await settleEphemeralRevert(harness)
+        await harness.viewModel.ephemeralRevertTaskForTesting(other)?.value
+
+        #expect(
+            Set(harness.virtualization.revertedSnapshots.map(\.id))
+                == [harness.baseline.id, otherBaseline.id])
+        #expect(harness.instance.snapshotManifest.currentID == harness.baseline.id)
+        #expect(other.snapshotManifest.currentID == otherBaseline.id)
     }
 
     @Test("A VM that is not ephemeral reverts nothing when it stops")

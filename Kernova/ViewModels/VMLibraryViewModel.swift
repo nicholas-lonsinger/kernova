@@ -1108,22 +1108,27 @@ final class VMLibraryViewModel {
     /// released the VM.
     private func revertToEphemeralBaselineIfNeeded(_ instance: VMInstance) {
         guard let baseline = instance.ephemeralBaselineSnapshot else { return }
-        ephemeralRevertTask = Task { await revertToEphemeralBaseline(instance, baseline) }
+        let id = instance.id
+        ephemeralRevertTasks[id] = Task { [weak self] in
+            await self?.revertToEphemeralBaseline(instance, baseline)
+            self?.ephemeralRevertTasks[id] = nil
+        }
     }
 
-    /// The most recent power-off revert, tracked so a test can await it.
-    private var ephemeralRevertTask: Task<Void, Never>?
+    /// The power-off revert in flight for each VM, keyed by id — two ephemeral
+    /// VMs can power off together, so one shared slot would lose one of them.
+    private var ephemeralRevertTasks: [UUID: Task<Void, Never>] = [:]
 
     #if DEBUG
-    var ephemeralRevertTaskForTesting: Task<Void, Never>? { ephemeralRevertTask }
+    func ephemeralRevertTaskForTesting(_ instance: VMInstance) -> Task<Void, Never>? {
+        ephemeralRevertTasks[instance.id]
+    }
     #endif
 
     /// The revert an ephemeral power-off performs, on the same path a
     /// user-confirmed revert takes — including its error presentation, so a
     /// baseline that cannot be restored is never silently skipped.
-    ///
-    /// The returned value lets a caller (and a test) await the revert.
-    func revertToEphemeralBaseline(_ instance: VMInstance, _ baseline: VMSnapshot) async {
+    private func revertToEphemeralBaseline(_ instance: VMInstance, _ baseline: VMSnapshot) async {
         Self.logger.notice(
             "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
         )

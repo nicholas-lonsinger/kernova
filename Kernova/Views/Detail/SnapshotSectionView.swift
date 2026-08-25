@@ -80,10 +80,6 @@ final class SnapshotSectionView: NSView {
             case (false, false): ""
             }
         }
-
-        /// Deleting the baseline would strand the mode that needs it back at
-        /// every power-off.
-        var canDelete: Bool { canModify && !isBaseline }
     }
     private var renderedRows: [RenderedRow]?
 
