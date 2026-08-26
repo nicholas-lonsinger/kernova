@@ -153,7 +153,9 @@ final class SnapshotSectionView: NSView {
             label: "Snapshots",
             paragraphs: [
                 .body(
-                    "A snapshot pairs the guest's memory with a copy of the disks inside the VM's bundle."
+                    "A snapshot copies the disks inside the VM's bundle, and pairs them with the "
+                        + "guest's memory when the VM is running. Taken while it is stopped, a "
+                        + "snapshot holds the disks alone and reverting returns the VM powered off."
                 ),
                 .body(
                     "Disks attached from outside the bundle are not captured — reverting leaves them as they are."
@@ -471,11 +473,15 @@ final class SnapshotSectionView: NSView {
         }
     }
 
-    /// "date · size on disk", or the date alone until the size read lands.
-    private func subtitleText(for snapshot: VMSnapshot) -> String {
-        let date = SnapshotDateFormat.string(from: snapshot.createdAt)
-        guard let bytes = sizesByID[snapshot.id] else { return date }
-        return "\(date) \u{00B7} \(DataFormatters.formatBytes(bytes)) on disk"
+    /// "date · Disks only · size on disk" — the middle part only for a snapshot
+    /// that captured no memory, the last only once the size read lands.
+    func subtitleText(for snapshot: VMSnapshot) -> String {
+        var parts = [SnapshotDateFormat.string(from: snapshot.createdAt)]
+        if snapshot.kind == .cold { parts.append("Disks only") }
+        if let bytes = sizesByID[snapshot.id] {
+            parts.append("\(DataFormatters.formatBytes(bytes)) on disk")
+        }
+        return parts.joined(separator: " \u{00B7} ")
     }
 
     private func refreshReadout() {

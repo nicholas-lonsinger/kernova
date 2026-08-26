@@ -293,6 +293,9 @@ struct SidebarViewControllerTests {
         #expect(menuItem("Rename", in: menu)?.isEnabled == true)
         #expect(menuItem("Clone", in: menu)?.isEnabled == true)
         #expect(menuItem("Move to Trash…", in: menu)?.isEnabled == true)
+        // A disks-only capture is offered while stopped; Suspend is not.
+        #expect(menuItem("Take Snapshot…", in: menu)?.isEnabled == true)
+        #expect(!menuTitles.contains("Suspend"))
     }
 
     @Test("Context menu for a running VM offers Pause/Stop/Suspend and disables editing")
@@ -329,6 +332,8 @@ struct SidebarViewControllerTests {
         #expect(!menuTitles.contains("Force Stop…"))
         #expect(!menuTitles.contains("Stop"))
         #expect(!menuTitles.contains("Suspend"))
+        // Its disks belong to the suspended session, so there is nothing to capture.
+        #expect(!menuTitles.contains("Take Snapshot…"))
     }
 
     @Test("Context menu enables delete for a cold-paused VM but keeps Clone disabled")

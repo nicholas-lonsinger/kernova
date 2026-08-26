@@ -108,14 +108,37 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(presenter.takeSnapshotSheetInstances.count == 1)
     }
 
-    @Test("A stopped VM has no snapshot to take, so no sheet opens")
-    func requestRefusedWhenStopped() {
+    @Test("A VM with nothing settled to capture opens no sheet")
+    func requestRefusedWhileTransitioning() {
         let harness = makeHarness()
-        let instance = makeInstance(status: .stopped)
+        let instance = makeInstance(status: .starting)
 
         harness.viewModel.requestTakeSnapshot(instance)
 
         #expect(presenter.takeSnapshotSheetInstances.isEmpty)
+    }
+
+    @Test("A capture of a stopped VM is stamped as disks-only")
+    func stoppedCaptureIsCold() async {
+        let harness = makeHarness()
+        let instance = makeInstance(status: .stopped)
+
+        await harness.viewModel.takeSnapshot(instance, name: "Before first boot").value
+
+        #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.cold])
+        #expect(instance.snapshotManifest.snapshots.map(\.kind) == [.cold])
+        #expect(harness.snapshots.manifest(for: instance.bundleURL) == instance.snapshotManifest)
+    }
+
+    @Test("A capture of a running VM is stamped as memory-and-disks")
+    func runningCaptureIsWarm() async {
+        let harness = makeHarness()
+        let instance = makeInstance(status: .running)
+
+        await harness.viewModel.takeSnapshot(instance, name: "Mid-session").value
+
+        #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.warm])
+        #expect(instance.snapshotManifest.snapshots.map(\.kind) == [.warm])
     }
 
     @Test("Taking a snapshot captures it and lists it as current")
@@ -247,6 +270,21 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(instance.snapshotManifest.snapshots.count == 2)
     }
 
+    @Test("Snapshot-then-revert check-points a stopped VM disks-only before reverting")
+    func snapshotThenRevertCheckPointsAStoppedVM() async {
+        let harness = makeHarness()
+        let instance = makeInstance(status: .stopped)
+        var target = makeSnapshot()
+        target.kind = .cold
+        seed(harness, instance, [target])
+
+        await harness.viewModel.snapshotThenRevertConfirmed(instance, to: target)
+
+        #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.cold])
+        #expect(harness.virtualization.revertedSnapshots == [target])
+        #expect(instance.status == .stopped)
+    }
+
     @Test("Snapshot-then-revert stops when the capture fails")
     func snapshotThenRevertStopsOnCaptureFailure() async {
         let harness = makeHarness()
@@ -317,12 +355,24 @@ struct VMLibraryViewModelSnapshotTests {
         harness.viewModel.requestTakeSnapshot(instance)
         #expect(presenter.takeSnapshotSheetInstances.count == 1)
 
-        // The sheet gathers a name, and the VM stops while it is up.
-        instance.status = .stopped
+        // The sheet gathers a name, and the VM starts restoring while it is up.
+        instance.status = .restoring
         await harness.viewModel.takeSnapshot(instance, name: "Too late").value
 
         #expect(harness.virtualization.takenSnapshots.isEmpty)
         #expect(instance.snapshotManifest.isEmpty)
+    }
+
+    @Test("A VM that stopped while the sheet was up is captured disks-only, not refused")
+    func kindIsStampedAtConfirmTime() async {
+        let harness = makeHarness()
+        let instance = makeInstance(status: .running)
+        harness.viewModel.requestTakeSnapshot(instance)
+
+        instance.status = .stopped
+        await harness.viewModel.takeSnapshot(instance, name: "Powered off first").value
+
+        #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.cold])
     }
 
     @Test("A rename arriving while an operation is unsettled is refused")

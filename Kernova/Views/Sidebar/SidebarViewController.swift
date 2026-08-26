@@ -743,11 +743,13 @@ extension SidebarViewController {
         }
 
         // State
-        if instance.canSave || instance.canRevertToSnapshot {
+        if instance.canSave || instance.canTakeSnapshot || instance.canRevertToSnapshot {
             menu.addItem(.separator())
         }
         if instance.canSave {
             menu.addItem(item("Suspend", #selector(menuSuspend(_:)), instance))
+        }
+        if instance.canTakeSnapshot {
             let takeSnapshot = item(
                 "Take Snapshot\u{2026}", #selector(menuTakeSnapshot(_:)), instance)
             takeSnapshot.isEnabled = viewModel.canTakeSnapshot(instance)

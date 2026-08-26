@@ -192,7 +192,7 @@ struct VMSnapshotStoreTests {
         try Data("diverged".utf8).write(to: fixture.layout.diskImageURL)
         try Data("stale-suspend".utf8).write(to: fixture.layout.saveFileURL)
 
-        let plan = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID)
+        let plan = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .warm)
         try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
 
         #expect(contents(of: fixture.layout.diskImageURL) == "main-disk")
@@ -229,7 +229,7 @@ struct VMSnapshotStoreTests {
         // filesystem error mid-revert produces, made deterministic.
         let plan = VMSnapshotRestorePlan(
             configuration: fixture.configuration,
-            relativePaths: ["Disk.asif", "AuxiliaryStorage", "Nowhere.asif"])
+            relativePaths: ["Disk.asif", "AuxiliaryStorage", "Nowhere.asif"], kind: .warm)
         #expect(throws: (any Error).self) {
             try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
         }
@@ -270,7 +270,7 @@ struct VMSnapshotStoreTests {
 
         let plan = VMSnapshotRestorePlan(
             configuration: fixture.configuration,
-            relativePaths: ["AdditionalDisks/\(extraID.uuidString).asif"])
+            relativePaths: ["AdditionalDisks/\(extraID.uuidString).asif"], kind: .warm)
         #expect(throws: (any Error).self) {
             try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
         }
@@ -297,10 +297,81 @@ struct VMSnapshotStoreTests {
             relativePaths: prepared.relativePaths)
 
         #expect(throws: VMSnapshotError.self) {
-            _ = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID)
+            _ = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .warm)
         }
         // Nothing was written over.
         #expect(contents(of: fixture.layout.diskImageURL) == "main-disk")
+    }
+
+    // MARK: - Disks-only snapshots
+
+    @Test("A disks-only snapshot plans a restore without a saved state")
+    func coldPlanNeedsNoSavedState() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        let store = VMSnapshotStore()
+        let snapshotID = UUID()
+        let prepared = try store.prepareSnapshot(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            configuration: fixture.configuration)
+        try store.captureDisks(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            relativePaths: prepared.relativePaths)
+
+        let plan = try store.planRestore(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .cold)
+        #expect(plan.kind == .cold)
+        #expect(plan.relativePaths.contains("Disk.asif"))
+    }
+
+    @Test("A disks-only revert writes the disks back and clears the bundle's suspend slot")
+    func coldRestoreDropsTheSuspendSlot() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        let store = VMSnapshotStore()
+        let snapshotID = UUID()
+        let prepared = try store.prepareSnapshot(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            configuration: fixture.configuration)
+        try store.captureDisks(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            relativePaths: prepared.relativePaths)
+
+        // The VM ran and suspended since the capture.
+        try Data("diverged".utf8).write(to: fixture.layout.diskImageURL)
+        try Data("stale-suspend".utf8).write(to: fixture.layout.saveFileURL)
+
+        let plan = try store.planRestore(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .cold)
+        try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
+
+        #expect(contents(of: fixture.layout.diskImageURL) == "main-disk")
+        #expect(!fixture.layout.hasSaveFile)
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: fixture.layout.restoreStagingURL.path(percentEncoded: false)))
+    }
+
+    @Test("A disks-only revert of a bundle holding no suspend slot succeeds")
+    func coldRestoreToleratesAnAbsentSaveFile() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        let store = VMSnapshotStore()
+        let snapshotID = UUID()
+        let prepared = try store.prepareSnapshot(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            configuration: fixture.configuration)
+        try store.captureDisks(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            relativePaths: prepared.relativePaths)
+        try Data("diverged".utf8).write(to: fixture.layout.diskImageURL)
+
+        let plan = try store.planRestore(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .cold)
+        try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
+
+        #expect(contents(of: fixture.layout.diskImageURL) == "main-disk")
+        #expect(!fixture.layout.hasSaveFile)
     }
 
     @Test("A capture records the configuration it was taken under")
@@ -319,7 +390,7 @@ struct VMSnapshotStoreTests {
             relativePaths: prepared.relativePaths)
         try Data("saved-state".utf8).write(to: prepared.saveFileURL)
 
-        let plan = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID)
+        let plan = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .warm)
         #expect(plan.configuration.memorySizeInGB == 8)
     }
 
@@ -339,7 +410,7 @@ struct VMSnapshotStoreTests {
             relativePaths: prepared.relativePaths)
         try Data("saved-state".utf8).write(to: prepared.saveFileURL)
 
-        let plan = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID)
+        let plan = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .warm)
         #expect(plan.relativePaths.contains("AdditionalDisks/\(extraID.uuidString).asif"))
         #expect(plan.relativePaths.contains("AuxiliaryStorage"))
     }
@@ -356,7 +427,7 @@ struct VMSnapshotStoreTests {
         try Data("saved-state".utf8).write(to: snapshotLayout.saveFileURL)
 
         #expect(throws: VMSnapshotError.self) {
-            _ = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID)
+            _ = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .warm)
         }
     }
 
@@ -375,7 +446,7 @@ struct VMSnapshotStoreTests {
             relativePaths: prepared.relativePaths)
         try Data("saved-state".utf8).write(to: prepared.saveFileURL)
 
-        var plan = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID)
+        var plan = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .warm)
         plan.configuration.memorySizeInGB = 12
         try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
 

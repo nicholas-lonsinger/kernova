@@ -110,4 +110,28 @@ struct VMSnapshotTests {
             VMSnapshotManifest.self, from: data)
         #expect(decoded == manifest)
     }
+
+    @Test("A cold snapshot round-trips through the config JSON coders")
+    func coldSnapshotRoundTrips() throws {
+        var snapshot = makeSnapshot(name: "Before first boot")
+        snapshot.kind = .cold
+        let manifest = VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
+        let data = try VMConfiguration.makeJSONEncoder().encode(manifest)
+        let decoded = try VMConfiguration.makeJSONDecoder().decode(
+            VMSnapshotManifest.self, from: data)
+        #expect(decoded.snapshots.first?.kind == .cold)
+        #expect(decoded == manifest)
+    }
+
+    @Test("A manifest entry carrying no kind decodes as a memory-and-disks snapshot")
+    func snapshotWithoutKindDecodesWarm() throws {
+        let id = UUID()
+        let json = """
+            {"snapshots":[{"id":"\(id.uuidString)","name":"One",\
+            "createdAt":"2026-01-02T03:04:05Z","notes":""}]}
+            """
+        let decoded = try VMConfiguration.makeJSONDecoder().decode(
+            VMSnapshotManifest.self, from: Data(json.utf8))
+        #expect(decoded.snapshot(id: id)?.kind == .warm)
+    }
 }

@@ -399,4 +399,46 @@ struct DetailAlertsPresenterTests {
         #expect(alert.buttons.contains { $0.title == "Take Snapshot, Then Revert" })
         #expect(!alert.message.contains("suspended session"))
     }
+
+    @Test("A stopped VM is offered the check-point path, now that it can be captured")
+    func revertAlertOnAStoppedVMOffersSnapshotFirst() {
+        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let vm = makeInstance()
+        vm.status = .stopped
+        let snapshot = VMSnapshot(name: "Before the update", kind: .cold)
+
+        let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
+
+        #expect(alert.buttons.contains { $0.title == "Take Snapshot, Then Revert" })
+    }
+
+    @Test("Reverting a live VM to a disks-only snapshot says the session ends, powered off")
+    func revertAlertOnAColdTargetNamesThePowerOff() {
+        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let vm = makeInstance()
+        vm.status = .running
+        vm.hasLiveVirtualMachineOverrideForTesting = true
+        let snapshot = VMSnapshot(name: "Before first boot", kind: .cold)
+
+        let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
+
+        #expect(alert.message.contains("powered off"))
+        #expect(alert.message.contains("session it is running now ends"))
+    }
+
+    @Test("Reverting a suspended VM to a disks-only snapshot says its saved session is discarded")
+    func revertAlertOnAColdTargetFromColdPaused() {
+        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let vm = makeInstance()
+        vm.status = .paused
+        vm.hasLiveVirtualMachineOverrideForTesting = false
+        let snapshot = VMSnapshot(name: "Before first boot", kind: .cold)
+
+        let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
+
+        #expect(alert.message.contains("powered off"))
+        #expect(alert.message.contains("discarded"))
+        // The warm wording, which promises a replacement session, must not leak.
+        #expect(!alert.message.contains("replaced by"))
+    }
 }

@@ -1024,7 +1024,10 @@ final class VMLibraryViewModel {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let snapshot = VMSnapshot(
             name: trimmedName.isEmpty ? instance.snapshotManifest.defaultNewName : trimmedName,
-            notes: notes.trimmingCharacters(in: .whitespacesAndNewlines))
+            notes: notes.trimmingCharacters(in: .whitespacesAndNewlines),
+            // Stamped at confirm time, not when the sheet opened: the VM can
+            // start or stop while it is up.
+            kind: instance.snapshotKindForCapture)
         do {
             try await lifecycle.takeSnapshot(
                 instance, snapshot: snapshot, store: snapshotStore)
@@ -1060,8 +1063,8 @@ final class VMLibraryViewModel {
     /// Takes a fresh snapshot of the current state, then reverts — the revert
     /// alert's default, non-destructive path.
     func snapshotThenRevertConfirmed(_ instance: VMInstance, to snapshot: VMSnapshot) async {
-        // A stopped VM has no live state to check-point, so there is nothing to
-        // take first and the revert stands on its own.
+        // A VM settled enough to capture gets a check-point first — warm from a
+        // live one, cold from a stopped one; anything else reverts on its own.
         if instance.canTakeSnapshot {
             guard
                 await captureSnapshot(
@@ -1129,8 +1132,9 @@ final class VMLibraryViewModel {
             return
         }
         // A VM that is live goes back to being live once the files are in
-        // place, so the window it comes up in is chosen before the teardown.
-        if instance.hasLiveVirtualMachine {
+        // place, so the window it comes up in is chosen before the teardown. A
+        // cold snapshot ends the session for good, so there is none to choose.
+        if instance.hasLiveVirtualMachine, snapshot.kind == .warm {
             surfaceDisplay(for: instance)
         }
         do {

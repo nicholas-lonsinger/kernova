@@ -14,6 +14,7 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
         var capturedConfigurations: [UUID: VMConfiguration] = [:]
         var restoredIDs: [UUID] = []
         var restoredConfigurations: [UUID: VMConfiguration] = [:]
+        var restoredKinds: [UUID: VMSnapshotKind] = [:]
         var discardedIDs: [UUID] = []
         var removedDirectoryIDs: [UUID] = []
         var sweptStagingBundleURLs: [URL] = []
@@ -63,6 +64,8 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
     var restoredConfigurations: [UUID: VMConfiguration] {
         lock.withLock { state.restoredConfigurations }
     }
+    /// The plan kind each revert ran under, keyed by snapshot id.
+    var restoredKinds: [UUID: VMSnapshotKind] { lock.withLock { state.restoredKinds } }
     var restoredIDs: [UUID] { lock.withLock { state.restoredIDs } }
     var discardedIDs: [UUID] { lock.withLock { state.discardedIDs } }
     var removedDirectoryIDs: [UUID] { lock.withLock { state.removedDirectoryIDs } }
@@ -131,8 +134,12 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
 
     /// Answers the plan for a snapshot this store captured or was seeded with;
     /// a snapshot with no recorded configuration refuses, exactly as a snapshot
-    /// directory missing its `config.json` does.
-    func planRestore(bundleURL: URL, snapshotID: UUID) throws -> VMSnapshotRestorePlan {
+    /// directory missing its `config.json` does. The saved state a warm snapshot
+    /// also needs has no stand-in here — `VMSnapshotStoreTests` covers that
+    /// check against real files.
+    func planRestore(
+        bundleURL: URL, snapshotID: UUID, kind: VMSnapshotKind
+    ) throws -> VMSnapshotRestorePlan {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         return try lock.withLock {
             if let error = state.planRestoreError { throw error }
@@ -142,7 +149,8 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
             return VMSnapshotRestorePlan(
                 configuration: configuration,
                 relativePaths: VMSnapshotStore.capturedRelativePaths(
-                    for: configuration, layout: layout))
+                    for: configuration, layout: layout),
+                kind: kind)
         }
     }
 
@@ -151,6 +159,7 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
             if let error = state.restoreError { throw error }
             state.restoredIDs.append(snapshotID)
             state.restoredConfigurations[snapshotID] = plan.configuration
+            state.restoredKinds[snapshotID] = plan.kind
         }
     }
 

@@ -117,11 +117,19 @@ struct VMSnapshotStore: VMSnapshotStoring {
     ///
     /// Read-only, and throws on an incomplete snapshot, so a caller can run it
     /// while the VM is still live.
-    func planRestore(bundleURL: URL, snapshotID: UUID) throws -> VMSnapshotRestorePlan {
+    ///
+    /// `kind` comes from the manifest rather than from whether a saved state is
+    /// on disk: a warm snapshot whose saved state was lost has to keep refusing,
+    /// not quietly restore as a cold one.
+    func planRestore(
+        bundleURL: URL, snapshotID: UUID, kind: VMSnapshotKind
+    ) throws -> VMSnapshotRestorePlan {
         let sourceLayout = VMBundleLayout(bundleURL: bundleURL).snapshotLayout(id: snapshotID)
         let manager = FileManager.default
 
-        guard manager.fileExists(atPath: sourceLayout.saveFileURL.path(percentEncoded: false)) else {
+        if kind == .warm,
+            !manager.fileExists(atPath: sourceLayout.saveFileURL.path(percentEncoded: false))
+        {
             throw VMSnapshotError.snapshotMissingSavedState
         }
         guard let configuration = try? VMConfiguration.load(fromBundle: sourceLayout.bundleURL) else {
@@ -135,7 +143,8 @@ struct VMSnapshotStore: VMSnapshotStoring {
                 throw VMSnapshotError.snapshotMissingFile(relativePath)
             }
         }
-        return VMSnapshotRestorePlan(configuration: configuration, relativePaths: relativePaths)
+        return VMSnapshotRestorePlan(
+            configuration: configuration, relativePaths: relativePaths, kind: kind)
     }
 
     /// Clones the snapshot's files into a staging directory, then swaps each one
@@ -145,6 +154,9 @@ struct VMSnapshotStore: VMSnapshotStoring {
     /// the configuration included — is staged, so a failure during the copies
     /// leaves the bundle exactly as it was, and each swap is a rename: a file
     /// the bundle holds is never absent, whatever interrupts the revert.
+    ///
+    /// A cold plan stages no saved state and drops the bundle's own, so the VM
+    /// comes back stopped on the captured disks.
     func restore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         let sourceLayout = layout.snapshotLayout(id: snapshotID)
@@ -167,7 +179,9 @@ struct VMSnapshotStore: VMSnapshotStoring {
                 at: staged.deletingLastPathComponent(), withIntermediateDirectories: true)
             try manager.copyItem(at: source, to: staged)
         }
-        try manager.copyItem(at: sourceLayout.saveFileURL, to: stagingLayout.saveFileURL)
+        if plan.kind == .warm {
+            try manager.copyItem(at: sourceLayout.saveFileURL, to: stagingLayout.saveFileURL)
+        }
         // Staged rather than written straight into the bundle: it is the one
         // file of the set that needs fresh blocks, so a volume with none left
         // sails through the clones above and fails here — where the failure
@@ -176,15 +190,25 @@ struct VMSnapshotStore: VMSnapshotStoring {
         try data.write(to: stagingLayout.configURL, options: .atomic)
 
         do {
+            if plan.kind == .cold {
+                // First, and only once staging succeeded: a save file describing
+                // pre-revert RAM sitting over post-revert disks is the corruption
+                // the catch below exists to undo, so a cold revert never lets that
+                // pairing exist. An interruption after this point leaves a stopped
+                // VM on its pre-revert disks, which costs nothing.
+                try removeSaveFile(at: layout.saveFileURL)
+            }
             for relativePath in plan.relativePaths {
                 try swapIntoPlace(
                     staged: staging.appendingPathComponent(relativePath),
                     destination: layout.bundleURL.appendingPathComponent(relativePath))
             }
             try swapIntoPlace(staged: stagingLayout.configURL, destination: layout.configURL)
-            // Last, so the VM only reads as suspended-on-the-snapshot once the
-            // disks and configuration that state belongs to are already in place.
-            try swapIntoPlace(staged: stagingLayout.saveFileURL, destination: layout.saveFileURL)
+            if plan.kind == .warm {
+                // Last, so the VM only reads as suspended-on-the-snapshot once the
+                // disks and configuration that state belongs to are already in place.
+                try swapIntoPlace(staged: stagingLayout.saveFileURL, destination: layout.saveFileURL)
+            }
         } catch {
             // The bundle's own saved state describes the guest RAM that belongs
             // to the disks the swaps above already replaced, and a bundle
@@ -193,6 +217,17 @@ struct VMSnapshotStore: VMSnapshotStoring {
             // the VM at `.stopped` instead.
             try? manager.removeItem(at: layout.saveFileURL)
             throw error
+        }
+    }
+
+    /// Drops the bundle's suspend slot, tolerating a bundle that holds none.
+    private func removeSaveFile(at url: URL) throws {
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch let error as NSError
+            where error.domain == NSCocoaErrorDomain && error.code == NSFileNoSuchFileError
+        {
+            // A stopped VM holds no suspend slot, which is the common case.
         }
     }
 

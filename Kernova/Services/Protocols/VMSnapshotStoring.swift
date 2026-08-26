@@ -2,6 +2,8 @@ import Foundation
 
 /// Where a prepared snapshot's saved state belongs, and the bundle-relative
 /// files copied beside it.
+///
+/// `saveFileURL` goes unused by a cold capture, which writes no saved state.
 struct VMSnapshotCapturePlan: Sendable {
     let saveFileURL: URL
     let relativePaths: [String]
@@ -21,6 +23,10 @@ struct VMSnapshotRestorePlan: Sendable {
     /// VM's current one — a disk the VM gained or lost since the capture is
     /// neither restored nor able to block the revert.
     let relativePaths: [String]
+
+    /// What the snapshot captured, which decides whether the revert installs a
+    /// saved state or drops the bundle's.
+    let kind: VMSnapshotKind
 }
 
 /// The `Snapshots/` store inside a VM bundle: its manifest, the captured disk
@@ -46,14 +52,18 @@ protocol VMSnapshotStoring: Sendable {
     /// Same-volume copies, which APFS makes copy-on-write.
     func captureDisks(bundleURL: URL, snapshotID: UUID, relativePaths: [String]) throws
 
-    /// Reads what the snapshot holds and checks every captured file is present.
+    /// Reads what the snapshot holds and checks every captured file is present;
+    /// only a `.warm` snapshot is required to hold a saved state.
     ///
     /// Touches nothing in the bundle, so a revert runs it while the VM is still
     /// live and refuses without having cost the user anything.
-    func planRestore(bundleURL: URL, snapshotID: UUID) throws -> VMSnapshotRestorePlan
+    func planRestore(
+        bundleURL: URL, snapshotID: UUID, kind: VMSnapshotKind
+    ) throws -> VMSnapshotRestorePlan
 
-    /// Writes the snapshot's captured disks, configuration and saved state back
-    /// over the bundle's own, replacing whatever is there.
+    /// Writes the snapshot's captured disks and configuration back over the
+    /// bundle's own, replacing whatever is there — installing the snapshot's
+    /// saved state for a warm plan, dropping the bundle's for a cold one.
     ///
     /// The files are cloned aside first and swapped in only once every clone
     /// exists, so a failure before the swap leaves the bundle untouched. A

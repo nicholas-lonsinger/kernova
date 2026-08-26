@@ -34,7 +34,8 @@ enum DetailRoute: Equatable {
         status: VMStatus,
         errorMessage: String?,
         hasSetupState: Bool,
-        detailPaneMode: DetailPaneMode
+        detailPaneMode: DetailPaneMode,
+        hasLiveVirtualMachine: Bool
     ) -> DetailRoute {
         if let preparingLabel {
             return .preparing(label: preparingLabel)
@@ -48,6 +49,10 @@ enum DetailRoute: Equatable {
             return .initialBoot
         case .installing:
             return hasSetupState ? .setup : .transition(label: status.displayName)
+        case .snapshotting where !hasLiveVirtualMachine:
+            // A disks-only capture of a stopped VM: `.snapshotting` claims an
+            // active display it has no session for, so route on the spinner.
+            return .transition(label: status.displayName)
         default:
             if status.hasActiveDisplay {
                 return detailPaneMode == .settings ? .settings(isReadOnly: true) : .display

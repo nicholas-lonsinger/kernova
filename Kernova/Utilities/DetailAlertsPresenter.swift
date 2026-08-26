@@ -221,7 +221,8 @@ final class DetailAlertsPresenter: NSObject {
         // is still snapshottable rather than showing a sheet that can't confirm.
         guard let window, viewModel.canTakeSnapshot(instance) else { return }
         let content = TakeSnapshotSheetContentViewController(
-            vmName: instance.name, suggestedName: instance.snapshotManifest.defaultNewName)
+            vmName: instance.name, suggestedName: instance.snapshotManifest.defaultNewName,
+            kind: instance.snapshotKindForCapture)
         content.delegate = self
         shownSnapshotInstance = instance
         snapshotSheetPresenter.onClose = { [weak self] in
@@ -367,26 +368,47 @@ final class DetailAlertsPresenter: NSObject {
             })
         buttons.append(AlertButton("Cancel", role: .cancel))
 
-        let loss: String
-        if vm.canTakeSnapshot {
-            loss =
-                "Everything changed inside the guest since then will be lost unless you take a snapshot first."
-        } else if vm.isColdPaused {
-            // The revert writes the snapshot's saved state into the suspend
-            // slot, which is the state this VM would otherwise resume into.
-            loss =
-                "The suspended session this VM would resume into is replaced by the snapshot\u{2019}s, "
-                + "and everything changed inside the guest since then will be lost."
-        } else {
-            loss = "Everything changed inside the guest since then will be lost."
-        }
         return AlertConfiguration(
             title:
                 "Revert \u{201C}\(vm.name)\u{201D} to \u{201C}\(snapshot.name)\u{201D}?",
-            message:
-                "The VM will return to the state and settings captured \(SnapshotDateFormat.string(from: snapshot.createdAt)). "
-                + "\(loss) The snapshot itself is kept.",
+            message: Self.revertMessage(snapshot, vm),
             buttons: buttons)
+    }
+
+    /// What the revert alert says the user is trading away, by what the target
+    /// snapshot holds and what the VM holds now.
+    static func revertMessage(_ snapshot: VMSnapshot, _ vm: VMInstance) -> String {
+        let taken = SnapshotDateFormat.string(from: snapshot.createdAt)
+        let guestLoss =
+            vm.canTakeSnapshot
+            ? "Everything changed inside the guest since then will be lost unless you take a snapshot first."
+            : "Everything changed inside the guest since then will be lost."
+
+        switch snapshot.kind {
+        case .warm:
+            // A cold-paused VM's own suspend slot is the state it would
+            // otherwise resume into, and the revert writes over it.
+            let loss =
+                vm.isColdPaused
+                ? "The suspended session this VM would resume into is replaced by the snapshot\u{2019}s, "
+                    + "and everything changed inside the guest since then will be lost."
+                : guestLoss
+            return "The VM will return to the state and settings captured \(taken). "
+                + "\(loss) The snapshot itself is kept."
+        case .cold:
+            // No memory image to come back on, so whatever session the VM holds
+            // now — running or suspended — is gone rather than replaced.
+            let session: String
+            if vm.hasLiveVirtualMachine {
+                session = "The session it is running now ends. "
+            } else if vm.isColdPaused {
+                session = "The suspended session it would resume into is discarded. "
+            } else {
+                session = ""
+            }
+            return "The VM will return to the disks and settings captured \(taken), powered off. "
+                + "\(session)\(guestLoss) The snapshot itself is kept."
+        }
     }
 
     private func deleteSnapshotConfig(

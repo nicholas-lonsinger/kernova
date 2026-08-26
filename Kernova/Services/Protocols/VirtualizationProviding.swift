@@ -17,14 +17,18 @@ protocol VirtualizationProviding: Sendable {
     func resume(_ instance: VMInstance) async throws
     func save(_ instance: VMInstance) async throws
 
-    /// Captures `snapshot` — the guest's memory plus copies of the bundle's
-    /// disks — leaving the VM where it was found.
+    /// Captures `snapshot` — copies of the bundle's disks, plus the guest's
+    /// memory when `snapshot.kind` is `.warm` — leaving the VM where it was
+    /// found.
     func takeSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
     ) async throws
 
     /// Returns the VM to `snapshot`, discarding whatever session is live and
     /// keeping the snapshot itself.
+    ///
+    /// The VM lands in the state the snapshot captured: paused on a warm
+    /// snapshot's memory image, stopped on a cold snapshot's disks.
     func revertToSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
     ) async throws

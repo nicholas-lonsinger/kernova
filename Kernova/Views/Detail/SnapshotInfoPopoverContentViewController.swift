@@ -64,10 +64,19 @@ final class SnapshotInfoPopoverContentViewController: NSViewController {
         grid.addRow(with: [
             keyLabel("Taken"), valueLabel(SnapshotDateFormat.string(from: snapshot.createdAt)),
         ])
+        grid.addRow(with: [keyLabel("Captured"), valueLabel(Self.capturedText(snapshot.kind))])
         grid.addRow(with: [keyLabel("On disk"), valueLabel(onDiskText)])
         grid.column(at: 0).xPlacement = .leading
         grid.column(at: 1).xPlacement = .leading
         return grid
+    }
+
+    /// What the snapshot holds, in outcome terms.
+    static func capturedText(_ kind: VMSnapshotKind) -> String {
+        switch kind {
+        case .warm: "Memory and disks"
+        case .cold: "Disks only"
+        }
     }
 
     private func keyLabel(_ text: String) -> NSTextField {

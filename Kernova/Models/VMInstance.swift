@@ -476,10 +476,23 @@ final class VMInstance {
         status.canSave && !isColdPaused
     }
 
-    /// `true` when a snapshot can be captured — exactly when Suspend is
-    /// offered, since both write the guest's live memory out through VZ.
+    /// `true` when a snapshot can be captured: a live VM writes its memory out
+    /// through VZ (warm), a stopped one copies its disks alone (cold).
+    ///
+    /// The other at-rest states are excluded. `.initialBoot` holds disks with no
+    /// installed guest, so a revert would land the VM stopped over an unbootable
+    /// disk. `.error` may still hold a suspend slot the VM would resume from
+    /// (see ``VirtualizationService/applyRestoreFailure(to:)``). Cold-paused
+    /// disks belong to a suspended session, so copying them alone would capture
+    /// a power-cut image of a guest that is mid-flight.
     var canTakeSnapshot: Bool {
-        canSave
+        canSave || status == .stopped
+    }
+
+    /// The kind a capture started right now would produce — the one place the
+    /// choice is made.
+    var snapshotKindForCapture: VMSnapshotKind {
+        canSave ? .warm : .cold
     }
 
     /// `true` when this VM has a snapshot to go back to and is settled enough

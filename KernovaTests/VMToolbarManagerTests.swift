@@ -104,19 +104,28 @@ struct VMToolbarManagerTests {
         #expect(item?.autovalidates == false)
     }
 
-    @Test("Take Snapshot is enabled exactly when Suspend is")
-    func takeSnapshotTracksSuspend() {
-        for status in [VMStatus.running, .paused, .stopped, .starting] {
+    @Test("Take Snapshot is enabled wherever Suspend is, and on a stopped VM too")
+    func takeSnapshotCoversStoppedAsWell() {
+        for (status, expected) in [
+            (VMStatus.running, true), (.paused, true), (.stopped, true), (.starting, false),
+        ] {
             let instance = makeInstance(status: status)
+            instance.hasLiveVirtualMachineOverrideForTesting = true
             let manager = makeManager(instance: instance)
             let (toolbar, _, _) = makeToolbar(manager: manager)
 
             manager.updateToolbarItems(in: toolbar)
 
-            let suspend = item("testSaveState", in: toolbar)?.isEnabled
-            let snapshot = item("testTakeSnapshot", in: toolbar)?.isEnabled
-            #expect(snapshot == suspend, "status \(status.displayName)")
+            #expect(
+                item("testTakeSnapshot", in: toolbar)?.isEnabled == expected,
+                "status \(status.displayName)")
         }
+        // Suspend keeps its own, narrower gate.
+        let stopped = makeInstance(status: .stopped)
+        let manager = makeManager(instance: stopped)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+        manager.updateToolbarItems(in: toolbar)
+        #expect(item("testSaveState", in: toolbar)?.isEnabled == false)
     }
 
     @Test("makeToolbarItem returns separate bordered pop-out and fullscreen items")

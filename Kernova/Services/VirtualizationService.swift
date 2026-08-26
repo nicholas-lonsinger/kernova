@@ -332,18 +332,38 @@ final class VirtualizationService {
 
     // MARK: - Snapshots
 
-    /// Captures `snapshot`: the guest's memory into the snapshot's own saved
-    /// state, and the bundle's disks into copy-on-write copies beside it.
+    /// Captures `snapshot`, in the kind it was stamped with: a warm capture
+    /// writes the guest's memory into the snapshot's own saved state and copies
+    /// the bundle's disks beside it, a cold capture copies the disks alone from
+    /// a stopped VM.
     ///
-    /// The guest is paused for the write and put back the way it was found, so
-    /// the VM keeps running across a snapshot — and the suspend slot is
-    /// untouched. A failure discards the half-written snapshot directory and
-    /// leaves the VM live, paused at worst.
+    /// A warm capture pauses the guest for the write and puts it back the way it
+    /// was found, so the VM keeps running across a snapshot — and the suspend
+    /// slot is untouched. A failure discards the half-written snapshot directory
+    /// and leaves the VM where it was: live, paused at worst, or stopped.
     func takeSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
     ) async throws {
-        Self.logger.debug("takeSnapshot: status=\(instance.status.displayName, privacy: .public)")
-        guard instance.canTakeSnapshot, let session = instance.session else {
+        Self.logger.debug(
+            "takeSnapshot: kind=\(snapshot.kind.rawValue, privacy: .public), status=\(instance.status.displayName, privacy: .public)"
+        )
+        switch snapshot.kind {
+        case .warm:
+            try await takeWarmSnapshot(instance, snapshot: snapshot, store: store)
+        case .cold:
+            try await takeColdSnapshot(instance, snapshot: snapshot, store: store)
+        }
+    }
+
+    /// The guest's memory plus the bundle's disks, from a live VM.
+    ///
+    /// Re-validates rather than trusting the kind the caller stamped: the guest
+    /// can power off between the sheet being confirmed and the capture running,
+    /// which would leave a warm capture with no session to write.
+    private func takeWarmSnapshot(
+        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+    ) async throws {
+        guard instance.canSave, let session = instance.session else {
             throw VirtualizationError.invalidStateTransition(
                 from: instance.status, action: "take a snapshot of")
         }
@@ -383,6 +403,50 @@ final class VirtualizationService {
             )
             instance.status = await Self.restingStatusAfterFailedSnapshot(
                 instance, session: session, wasRunning: wasRunning)
+            throw error
+        }
+    }
+
+    /// The bundle's disks alone, from a stopped VM — no VZ work, so nothing is
+    /// paused and no saved state is written.
+    ///
+    /// `.snapshotting` is load-bearing while the copy runs: it bars a start that
+    /// would write the disks being read, and makes an explicit quit wait the
+    /// copy out (``VMStatus/terminationMustWaitOut``).
+    private func takeColdSnapshot(
+        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
+    ) async throws {
+        guard instance.status == .stopped else {
+            throw VirtualizationError.invalidStateTransition(
+                from: instance.status, action: "take a snapshot of")
+        }
+
+        let bundleURL = instance.bundleURL
+        let configuration = instance.configuration
+        let snapshotID = snapshot.id
+        instance.status = .snapshotting
+
+        do {
+            try await Task.detached {
+                let prepared = try store.prepareSnapshot(
+                    bundleURL: bundleURL, snapshotID: snapshotID, configuration: configuration)
+                try store.captureDisks(
+                    bundleURL: bundleURL, snapshotID: snapshotID,
+                    relativePaths: prepared.relativePaths)
+            }.value
+
+            instance.status = .stopped
+            Self.logger.notice(
+                "Took a disks-only snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
+            )
+        } catch {
+            await Task.detached {
+                store.removeSnapshotDirectory(bundleURL: bundleURL, snapshotID: snapshotID)
+            }.value
+            Self.logger.error(
+                "Failed to snapshot VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            instance.status = .stopped
             throw error
         }
     }
@@ -429,9 +493,13 @@ final class VirtualizationService {
         }
     }
 
-    /// Returns the VM to a snapshot: its live session is discarded, the
-    /// snapshot's disks, configuration and saved state are written back over
-    /// the bundle's, and a VM that was live is resumed into the captured state.
+    /// Returns the VM to a snapshot: its live session is discarded and the
+    /// snapshot's disks and configuration are written back over the bundle's.
+    ///
+    /// The VM lands in the state the snapshot captured. A warm snapshot installs
+    /// its saved state and a VM that was live is resumed into it; a cold
+    /// snapshot drops the bundle's saved state and the VM rests stopped,
+    /// whatever it was doing before.
     ///
     /// The snapshot keeps its own copies, so it stays revertible. A failure
     /// bringing the VM back up afterwards arrives as
@@ -452,8 +520,9 @@ final class VirtualizationService {
 
         // Read-only, and ahead of the teardown: a snapshot that turns out to be
         // incomplete refuses without having cost the user the live guest.
+        let kind = snapshot.kind
         let plan = try await Task.detached {
-            try store.planRestore(bundleURL: bundleURL, snapshotID: snapshotID)
+            try store.planRestore(bundleURL: bundleURL, snapshotID: snapshotID, kind: kind)
         }.value
         var restore = plan
         restore.configuration = instance.configuration.adoptingSnapshotState(plan.configuration)
@@ -490,16 +559,22 @@ final class VirtualizationService {
         // under, so the VM takes the captured settings along with the disks.
         instance.configuration = restore.configuration
 
-        // The bundle now holds the snapshot's saved state, so the VM is
-        // cold-paused: Start and Resume both restore from it.
-        instance.status = .paused
+        // A warm revert leaves the snapshot's saved state in the bundle, so the
+        // VM is cold-paused: Start and Resume both restore from it. A cold
+        // revert left the bundle with none, so the VM is stopped.
+        //
+        // Set directly rather than through `resetToStopped()`, whose
+        // `onPoweredOff` hook would re-enter the ephemeral revert this may
+        // itself be.
+        instance.status = plan.kind == .warm ? .paused : .stopped
         Self.logger.notice(
             "Reverted VM '\(instance.name, privacy: .public)' to snapshot '\(snapshot.name, privacy: .public)'"
         )
 
-        // A VM that was live goes back to being live at the captured state;
-        // one that was stopped stays suspended for the user to start.
-        if wasLive {
+        // A VM that was live goes back to being live at the captured state; one
+        // that was stopped stays suspended for the user to start. A cold
+        // snapshot captured no live state to go back to, so the session ends.
+        if wasLive, plan.kind == .warm {
             do {
                 try await resume(instance)
             } catch {

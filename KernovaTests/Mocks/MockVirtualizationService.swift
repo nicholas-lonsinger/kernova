@@ -112,14 +112,20 @@ final class MockVirtualizationService: VirtualizationProviding {
     }
 
     /// Mirrors the real service's state machine without VZ: the VM passes
-    /// through `.snapshotting` and comes back where it started.
+    /// through `.snapshotting` and comes back where it started — running or
+    /// paused for a warm capture, stopped for a cold one.
     func takeSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
     ) async throws {
-        let wasRunning = instance.status == .running
+        let resting: VMStatus =
+            switch (snapshot.kind, instance.status) {
+            case (.cold, _): .stopped
+            case (.warm, .running): .running
+            case (.warm, _): .paused
+            }
         instance.status = .snapshotting
         if let error = takeSnapshotError {
-            instance.status = wasRunning ? .running : .paused
+            instance.status = resting
             throw error
         }
         // The store is exercised for real so a test can assert on the files the
@@ -134,16 +140,18 @@ final class MockVirtualizationService: VirtualizationProviding {
                 relativePaths: prepared.relativePaths)
         }
         takenSnapshots.append(snapshot)
-        instance.status = wasRunning ? .running : .paused
+        instance.status = resting
     }
 
     /// Mirrors the real service: the pre-flight runs before anything is torn
-    /// down, the live session is then discarded, and the VM lands cold-paused on
-    /// the snapshot's saved state and settings.
+    /// down, the live session is then discarded, and the VM lands in the state
+    /// the snapshot captured — cold-paused on a warm snapshot's saved state and
+    /// settings, stopped on a cold snapshot's disks.
     func revertToSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
     ) async throws {
-        let plan = try store.planRestore(bundleURL: instance.bundleURL, snapshotID: snapshot.id)
+        let plan = try store.planRestore(
+            bundleURL: instance.bundleURL, snapshotID: snapshot.id, kind: snapshot.kind)
         var restore = plan
         restore.configuration = instance.configuration.adoptingSnapshotState(plan.configuration)
 
@@ -157,6 +165,6 @@ final class MockVirtualizationService: VirtualizationProviding {
             bundleURL: instance.bundleURL, snapshotID: snapshot.id, plan: restore)
         instance.configuration = restore.configuration
         revertedSnapshots.append(snapshot)
-        instance.status = .paused
+        instance.status = plan.kind == .warm ? .paused : .stopped
     }
 }
