@@ -3,8 +3,8 @@ import AppKit
 /// Popover content shown by a snapshot row's "Get Info" menu item.
 ///
 /// It is where a snapshot's full note is read and written: the Notes box is
-/// always offered while the list can be edited, so a snapshot with no note yet
-/// still has somewhere to gain one.
+/// always offered, so a snapshot with no note yet still has somewhere to
+/// gain one.
 @MainActor
 final class SnapshotInfoPopoverContentViewController: NSViewController {
     /// Fires with the edited note when the box commits.
@@ -15,17 +15,14 @@ final class SnapshotInfoPopoverContentViewController: NSViewController {
     private let snapshot: VMSnapshot
     /// Bytes the captured copies occupy, already formatted.
     private let onDiskText: String
-    /// Whether the snapshot's note can be written right now.
-    private let canEdit: Bool
     private var notesEditor: NotesEditorView?
 
     init(
-        snapshot: VMSnapshot, onDiskText: String, canEdit: Bool,
+        snapshot: VMSnapshot, onDiskText: String,
         onCommitNotes: @escaping (String) -> Void
     ) {
         self.snapshot = snapshot
         self.onDiskText = onDiskText
-        self.canEdit = canEdit
         self.onCommitNotes = onCommitNotes
         super.init(nibName: nil, bundle: nil)
     }
@@ -77,14 +74,7 @@ final class SnapshotInfoPopoverContentViewController: NSViewController {
         }
     }
 
-    /// The Notes section: an editable box while the list can be written, and
-    /// otherwise the note as static text — omitted entirely when there is no
-    /// note to read and no way to add one.
     private func makeNotesRows() -> [NSView] {
-        guard canEdit else {
-            guard !snapshot.notes.isEmpty else { return [] }
-            return [keyLabel("Notes"), makeCalloutBody(snapshot.notes, color: .labelColor)]
-        }
         let editor = NotesEditorView(text: snapshot.notes)
         editor.onCommit = { [weak self] notes in self?.onCommitNotes(notes) }
         editor.onCancel = { [weak self] in self?.onRequestClose?() }

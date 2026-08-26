@@ -25,7 +25,7 @@ final class SnapshotSectionView: NSView {
 
     /// The snapshot whose name or note is being edited inline, or `nil`.
     ///
-    /// While set, ``update(manifest:canTakeSnapshot:canRevert:canModify:baselineID:)``
+    /// While set, ``update(manifest:canTakeSnapshot:canRevert:canDelete:baselineID:)``
     /// skips its rebuild so a refresh landing mid-edit can't destroy the
     /// editing field.
     private(set) var activeEdit: UUID?
@@ -37,13 +37,13 @@ final class SnapshotSectionView: NSView {
     /// What the rows were last rendered under, so a cancelled edit can
     /// re-render without the settings pane feeding the state in again.
     private var gate = Gate(
-        canTakeSnapshot: false, canRevert: false, canModify: false, baselineID: nil)
+        canTakeSnapshot: false, canRevert: false, canDelete: false, baselineID: nil)
 
     private struct Gate {
         let canTakeSnapshot: Bool
         let canRevert: Bool
-        /// Whether the list may be edited — the ••• menu's Rename and Delete.
-        let canModify: Bool
+        /// Whether the ••• menu's Delete is offered.
+        let canDelete: Bool
         /// The VM's Ephemeral baseline, which the mode bars deleting.
         let baselineID: UUID?
     }
@@ -70,7 +70,7 @@ final class SnapshotSectionView: NSView {
         /// `true` for the snapshot Ephemeral Mode returns this VM to.
         let isBaseline: Bool
         let canRevert: Bool
-        let canModify: Bool
+        let canDelete: Bool
 
         /// The row's trailing marker — the two roles read as one caption when a
         /// snapshot holds both, which is where an ephemeral VM rests.
@@ -202,12 +202,12 @@ final class SnapshotSectionView: NSView {
     /// `baselineID` names the VM's Ephemeral baseline, or is `nil` when the mode
     /// is off.
     func update(
-        manifest: VMSnapshotManifest, canTakeSnapshot: Bool, canRevert: Bool, canModify: Bool,
+        manifest: VMSnapshotManifest, canTakeSnapshot: Bool, canRevert: Bool, canDelete: Bool,
         baselineID: UUID?
     ) {
         self.manifest = manifest
         gate = Gate(
-            canTakeSnapshot: canTakeSnapshot, canRevert: canRevert, canModify: canModify,
+            canTakeSnapshot: canTakeSnapshot, canRevert: canRevert, canDelete: canDelete,
             baselineID: baselineID)
         takeSnapshotButton.isEnabled = canTakeSnapshot
 
@@ -215,7 +215,7 @@ final class SnapshotSectionView: NSView {
             RenderedRow(
                 snapshot: snapshot, isCurrent: snapshot.id == manifest.currentID,
                 isBaseline: snapshot.id == baselineID,
-                canRevert: canRevert, canModify: canModify)
+                canRevert: canRevert, canDelete: canDelete)
         }
         let structural = renderedRows?.map(\.snapshot.id) != models.map(\.snapshot.id)
         if structural {
@@ -278,7 +278,7 @@ final class SnapshotSectionView: NSView {
             guard let self else { return }
             self.update(
                 manifest: self.manifest, canTakeSnapshot: self.gate.canTakeSnapshot,
-                canRevert: self.gate.canRevert, canModify: self.gate.canModify,
+                canRevert: self.gate.canRevert, canDelete: self.gate.canDelete,
                 baselineID: self.gate.baselineID)
         }
     }
@@ -290,32 +290,30 @@ final class SnapshotSectionView: NSView {
             let model = renderedRows?.first(where: { $0.snapshot.id == id })
         else { return nil }
         return makeRowMenu(
-            for: snapshot, canRevert: model.canRevert, canModify: model.canModify,
+            for: snapshot, canRevert: model.canRevert, canDelete: model.canDelete,
             isBaseline: model.isBaseline)
     }
 
     /// The context menu for one snapshot row — the same menu the ••• button
     /// pops and a right-click surfaces.
     ///
-    /// Rename, Edit Notes and Delete follow `canModify`: all write the manifest
-    /// a revert is reading, and the serialization behind them rejects rather
-    /// than queues, so an enabled item during an unsettled operation would only
-    /// produce an error alert. Delete is additionally barred on an Ephemeral
+    /// Rename and Edit Notes only wait on `activeEdit`: their writes are
+    /// metadata-only and land regardless of what the VM is doing. Delete
+    /// follows `canDelete`, which is additionally barred on an Ephemeral
     /// baseline, which the VM needs back at every power-off.
     func makeRowMenu(
-        for snapshot: VMSnapshot, canRevert: Bool, canModify: Bool, isBaseline: Bool
+        for snapshot: VMSnapshot, canRevert: Bool, canDelete: Bool, isBaseline: Bool
     ) -> NSMenu {
-        let canDelete = canModify && !isBaseline
         let menu = NSMenu()
         menu.autoenablesItems = false
 
         let rename = menuItem("Rename", #selector(menuRename(_:)), snapshot)
-        rename.isEnabled = canModify && activeEdit == nil
+        rename.isEnabled = activeEdit == nil
         menu.addItem(rename)
         // The only route to a note on a row that has none: with nothing on
         // screen to click, the row alone offers no way in.
         let editNotes = menuItem("Edit Notes", #selector(menuEditNotes(_:)), snapshot)
-        editNotes.isEnabled = canModify && activeEdit == nil
+        editNotes.isEnabled = activeEdit == nil
         menu.addItem(editNotes)
         menu.addItem(menuItem("Get Info", #selector(menuGetInfo(_:)), snapshot))
         menu.addItem(.separator())
@@ -325,8 +323,8 @@ final class SnapshotSectionView: NSView {
         menu.addItem(.separator())
         // Always confirms, and destructively — so it carries the ellipsis.
         let delete = menuItem("Delete\u{2026}", #selector(menuDelete(_:)), snapshot)
-        delete.isEnabled = canDelete
-        if canModify && !canDelete {
+        delete.isEnabled = canDelete && !isBaseline
+        if canDelete && isBaseline {
             delete.toolTip =
                 "This snapshot is the Ephemeral baseline. Turn off Ephemeral Mode to delete it."
         }
@@ -384,7 +382,7 @@ final class SnapshotSectionView: NSView {
 
         let title = EditableRowTitleView(
             itemID: snapshotID, name: model.snapshot.name, notes: model.snapshot.notes,
-            controlsEnabled: model.canModify)
+            controlsEnabled: true)
         title.onEditBegan = { [weak self] id in self?.activeEdit = id }
         title.onRenameCommitted = { [weak self] id, newName in
             guard let self else { return }
@@ -484,7 +482,7 @@ final class SnapshotSectionView: NSView {
     private func apply(_ model: RenderedRow, to row: Row) {
         row.title.update(
             name: model.snapshot.name, notes: model.snapshot.notes,
-            controlsEnabled: model.canModify)
+            controlsEnabled: true)
         row.subtitle.stringValue = subtitleText(for: model.snapshot)
         row.markerLabel.stringValue = model.markerText
         row.markerLabel.toolTip = Self.markerToolTip(for: model)

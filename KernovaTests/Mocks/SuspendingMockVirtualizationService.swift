@@ -28,6 +28,12 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     /// Defaults to `false` so existing callers keep the immediate behavior.
     var shouldSuspendOnResume = false
 
+    /// When `true`, `revertToSnapshot` will suspend before tearing the session
+    /// down, standing in for the window a real revert spends copying files.
+    ///
+    /// Defaults to `false` so existing callers keep the immediate behavior.
+    var shouldSuspendOnRevert = false
+
     // MARK: - Suspension Mechanism
 
     /// Continuation that, when resumed, unblocks the suspended operation.
@@ -115,6 +121,9 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     func revertToSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
     ) async throws {
+        if shouldSuspendOnRevert {
+            await suspendIfNeeded()
+        }
         instance.tearDownSession()
         instance.status = .paused
     }

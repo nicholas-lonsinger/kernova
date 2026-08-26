@@ -986,9 +986,9 @@ final class VMLibraryViewModel {
         instance.canRevertToSnapshot && !isBusy(instance)
     }
 
-    /// Whether the snapshot list may be edited — renaming and deleting, which
-    /// go through the same per-VM serialization a revert holds.
-    func canModifySnapshots(_ instance: VMInstance) -> Bool {
+    /// Whether a snapshot may be deleted — the one snapshot-list edit that
+    /// goes through the same per-VM serialization a revert holds.
+    func canDeleteSnapshots(_ instance: VMInstance) -> Bool {
         !isBusy(instance)
     }
 
@@ -1203,7 +1203,7 @@ final class VMLibraryViewModel {
     /// Whether `snapshot` may be deleted: the manifest has to be editable, and
     /// a VM's Ephemeral baseline is the restore point its every power-off needs.
     func canDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) -> Bool {
-        canModifySnapshots(instance) && !instance.isEphemeralBaseline(snapshot)
+        canDeleteSnapshots(instance) && !instance.isEphemeralBaseline(snapshot)
     }
 
     /// Shows the delete-snapshot confirmation.
@@ -1256,37 +1256,27 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Renames a snapshot; an empty or unchanged name is a no-op, as is one
-    /// arriving while another operation on the VM is unsettled.
+    /// Renames a snapshot; an empty or unchanged name is a no-op. A
+    /// metadata-only manifest write: no VM operation reads it mid-flight, so
+    /// it lands whether or not the VM is busy.
     func renameSnapshot(_ snapshot: VMSnapshot, newName: String, on instance: VMInstance) {
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != snapshot.name else { return }
-        guard canModifySnapshots(instance) else {
-            Self.logger.notice(
-                "Refusing to rename a snapshot of '\(instance.name, privacy: .public)': another operation is in flight"
-            )
-            return
-        }
         var manifest = instance.snapshotManifest
         manifest.rename(id: snapshot.id, to: trimmed)
         guard manifest != instance.snapshotManifest else { return }
         writeSnapshotManifest(manifest, for: instance)
     }
 
-    /// Replaces a snapshot's note; an unchanged value is a no-op, as is one
-    /// arriving while another operation on the VM is unsettled.
+    /// Replaces a snapshot's note; an unchanged value is a no-op. A
+    /// metadata-only manifest write: no VM operation reads it mid-flight, so
+    /// it lands whether or not the VM is busy.
     ///
     /// Unlike a name, an empty note is a legitimate value — it clears the note.
     /// Leading and trailing whitespace is trimmed; interior newlines are kept.
     func setSnapshotNotes(_ snapshot: VMSnapshot, notes: String, on instance: VMInstance) {
         let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed != snapshot.notes else { return }
-        guard canModifySnapshots(instance) else {
-            Self.logger.notice(
-                "Refusing to edit a snapshot's notes on '\(instance.name, privacy: .public)': another operation is in flight"
-            )
-            return
-        }
         var manifest = instance.snapshotManifest
         manifest.setNotes(id: snapshot.id, to: trimmed)
         guard manifest != instance.snapshotManifest else { return }
