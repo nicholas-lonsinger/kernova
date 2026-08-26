@@ -31,6 +31,17 @@ final class ClipboardTransferInbox: @unchecked Sendable {
     private var awaiters: [UInt64: Awaiter] = [:]
     private var live: [UInt64: ClipboardTransferReceiver] = [:]
 
+    #if DEBUG
+    /// Fired after a live receiver's terminal has been processed — its
+    /// connection already closed — for a test sequencing a peer against the
+    /// teardown rather than against the awaiter's own resolution.
+    var onReceiverFinishedForTesting: (@Sendable (UInt64) -> Void)? {
+        get { lock.withLock { receiverFinishedHook } }
+        set { lock.withLock { receiverFinishedHook = newValue } }
+    }
+    private var receiverFinishedHook: (@Sendable (UInt64) -> Void)?
+    #endif
+
     /// Creates an inbox for one peer.
     ///
     /// - Parameters:
@@ -139,26 +150,19 @@ final class ClipboardTransferInbox: @unchecked Sendable {
     /// Abandons every transfer of a superseded generation, and wakes any pull
     /// awaiting one that never opened.
     func cancel(generation: UInt64) {
-        let affected = lock.withLock {
-            live.values.filter { ClipboardTransferID.generation(of: $0.transferID) == generation }
-        }
-        for receiver in affected { receiver.cancel() }
-        failAwaiters { ClipboardTransferID.generation(of: $0) == generation }
+        cancelMatching { ClipboardTransferID.generation(of: $0) == generation }
     }
 
     /// Abandons one transfer, and wakes a pull awaiting it — the teardown for a
     /// single abandoned pull, leaving every sibling of the same generation
     /// streaming.
     func cancel(transferID: UInt64) {
-        lock.withLock { live[transferID] }?.cancel()
-        failAwaiters { $0 == transferID }
+        cancelMatching { $0 == transferID }
     }
 
     /// Abandons every transfer and wakes every pull awaiting this peer.
     func cancelAll() {
-        let all = lock.withLock { Array(live.values) }
-        for receiver in all { receiver.cancel() }
-        failAwaiters { _ in true }
+        cancelMatching { _ in true }
     }
 
     // MARK: - Private
@@ -202,8 +206,10 @@ final class ClipboardTransferInbox: @unchecked Sendable {
             live[transferID] = nil
             return awaiters.removeValue(forKey: transferID)
         }
-        guard let awaiter else { return }
-        deliver(awaiter)
+        if let awaiter { deliver(awaiter) }
+        #if DEBUG
+        onReceiverFinishedForTesting?(transferID)
+        #endif
     }
 
     private func progress(_ transferID: UInt64, received: Int, total: Int) {
@@ -211,19 +217,28 @@ final class ClipboardTransferInbox: @unchecked Sendable {
         awaiter?.onProgress?(received, total)
     }
 
-    /// Fires (and removes) every registered awaiter whose id matches
-    /// `predicate`, resolving a blocked pull with a cancellation.
+    /// Interrupts every live receiver whose id matches `predicate`, and fires
+    /// (and removes) every matching awaiter, resolving a blocked pull with a
+    /// cancellation.
     ///
-    /// Covers awaiters whose transfer never opened a connection, so they have no
-    /// receiver to interrupt. Idempotent with a receiver's own abort —
-    /// whichever removes the awaiter first wins.
-    private func failAwaiters(_ predicate: (UInt64) -> Bool) {
-        let matched = lock.withLock { () -> [UInt64: Awaiter] in
-            let ids = awaiters.keys.filter(predicate)
+    /// The awaiter fails here, synchronously — a blocked pull's wake must not
+    /// wait on the receiver's teardown, whose cost scales with what the
+    /// transfer already staged. Removing the awaiter under the lock also
+    /// guarantees the pull resolves `cancelled`: a receiver completing
+    /// concurrently finds no awaiter left to deliver to. The receiver's own
+    /// later terminal is idempotent with this — whichever removes the awaiter
+    /// first wins.
+    private func cancelMatching(_ predicate: (UInt64) -> Bool) {
+        let (receivers, matched) = lock.withLock {
+            () -> ([ClipboardTransferReceiver], [UInt64: Awaiter]) in
+            let receivers = live.filter { predicate($0.key) }.map(\.value)
             var taken: [UInt64: Awaiter] = [:]
-            for id in ids { taken[id] = awaiters.removeValue(forKey: id) }
-            return taken
+            for id in awaiters.keys.filter(predicate) {
+                taken[id] = awaiters.removeValue(forKey: id)
+            }
+            return (receivers, taken)
         }
+        for receiver in receivers { receiver.cancel() }
         for (id, awaiter) in matched {
             awaiter.onAbort(
                 ClipboardStreamAbortInfo(

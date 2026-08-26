@@ -159,7 +159,7 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
     /// Opens the connection and receives the transfer on its own queue.
     ///
     /// Exactly one of `onComplete` and `onAbort` fires, off the caller's actor,
-    /// on the transfer's queue.
+    /// on the transfer's queue, after the connection is closed.
     public func start(
         onComplete: @escaping @Sendable (ClipboardContent.Representation) -> Void,
         onAbort: @escaping @Sendable (ClipboardStreamAbortInfo) -> Void,
@@ -208,13 +208,16 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
             onAbort(abortInfo(stop(for: error)))
             return
         }
-        defer { closeConnection(fd) }
-
-        do {
-            let outcome = try receive(fd: fd, beganAt: beganAt)
-            onComplete(outcome)
-        } catch {
-            onAbort(abortInfo(stop(for: error)))
+        // The close precedes the terminal, matching the sender's ordering: the
+        // terminal is the one event an owner can sequence against, and between
+        // a cancellation's `shutdown(2)` and this `close(2)` macOS accepts and
+        // discards the peer's writes, so only "terminal fired" proves the peer
+        // can no longer stream into the void.
+        let outcome = Result { try receive(fd: fd, beganAt: beganAt) }
+        closeConnection(fd)
+        switch outcome {
+        case .success(let representation): onComplete(representation)
+        case .failure(let error): onAbort(abortInfo(stop(for: error)))
         }
     }
 
@@ -224,7 +227,7 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
     /// - Throws: the stop the transfer ends with when the connection cannot be
     ///   opened — a cancellation that landed first, or the transport failure
     ///   that kept it from opening. No descriptor outlives the throw: `run`
-    ///   installs its own close only for one this returns.
+    ///   closes only one this returns.
     private func openConnection() throws -> Int32 {
         let fd: Int32
         switch source {

@@ -430,28 +430,15 @@ struct ClipboardTransferStreamTests {
         let harness = TransferHarness()
         defer { harness.tearDown() }
 
-        // Incompressible and several times the connection's send buffer, so the
-        // sender cannot hand the whole payload to the socket and walk away: past
-        // the buffer every write blocks until the receiver drains, and a
-        // receiver that has given up never drains, so a write is guaranteed to
-        // fail. Sized off the buffer rather than picked — at 64 KiB the archive
-        // fit inside it and the send completed in ~1 ms whatever the receiver
-        // did, reporting success and its metrics.
         let source = scratch.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
-        try randomBytes(count: 4 * ClipboardStreamTuning.dataSendBufferBytes)
-            .write(to: source.appendingPathComponent("big.bin"))
+        try randomBytes(count: 64 * 1024).write(to: source.appendingPathComponent("big.bin"))
         let estimate = ClipboardArchive.estimatedByteCount(at: source)
         let transferID: UInt64 = 0xB1
-        // Cancelled from the sender's own pre-write check, which runs on its
-        // thread before each socket write: the sender has written nothing while
-        // the cancel is applied, so the receiver cannot have taken a payload
-        // that was never sent. Cancelling from a progress callback instead
-        // raced the stream against the cancel — the faster and less contended
-        // the machine, the more of the tree crossed first, and a pull that had
-        // already delivered has no awaiter left for the cancel to abort.
+        // Cancelled from the sender's own pre-write check, before any byte has
+        // left, then held per `cancelOnceThenHold` so the send provably stops
+        // rather than racing the receiver's teardown.
         let inbox = harness.inbox
-        let cancelled = Box(false)
         harness.pull(
             transferID: transferID, generation: 11,
             plan: .init(
@@ -459,12 +446,7 @@ struct ClipboardTransferStreamTests {
                 extractsDirectoryNamed: "source", advertisedByteCount: estimate),
             representation: .init(
                 directorySourceURL: source, estimatedByteCount: estimate, filename: "source"),
-            isCurrent: { _ in
-                guard !cancelled.value else { return true }
-                cancelled.value = true
-                inbox.cancel(transferID: transferID)
-                return true
-            })
+            isCurrent: harness.cancelOnceThenHold { inbox.cancel(transferID: transferID) })
         try await settle(harness, transferID)
         try await harness.collector.gate.wait { harness.collector.sendCount == 1 }
 
@@ -490,16 +472,15 @@ struct ClipboardTransferStreamTests {
         // The supersession path `ClipboardInboundOffers` takes when the peer
         // offers again mid-paste: the awaiter is resolved either way, so the
         // *send* stopping is what says the generation reached the live
-        // receiver rather than only the awaiter beside it. Sized and cancelled
-        // exactly as `receiverCancelStopsTheSend` is, and for the same reasons.
+        // receiver rather than only the awaiter beside it. Cancelled and held
+        // exactly as `receiverCancelStopsTheSend` is, and for the same
+        // reasons.
         let source = scratch.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
-        try randomBytes(count: 4 * ClipboardStreamTuning.dataSendBufferBytes)
-            .write(to: source.appendingPathComponent("big.bin"))
+        try randomBytes(count: 64 * 1024).write(to: source.appendingPathComponent("big.bin"))
         let estimate = ClipboardArchive.estimatedByteCount(at: source)
         let transferID = ClipboardTransferID.make(generation: 12, repIndex: 0, hostMinted: true)
         let inbox = harness.inbox
-        let cancelled = Box(false)
         harness.pull(
             transferID: transferID, generation: 12,
             plan: .init(
@@ -507,12 +488,7 @@ struct ClipboardTransferStreamTests {
                 extractsDirectoryNamed: "source", advertisedByteCount: estimate),
             representation: .init(
                 directorySourceURL: source, estimatedByteCount: estimate, filename: "source"),
-            isCurrent: { _ in
-                guard !cancelled.value else { return true }
-                cancelled.value = true
-                inbox.cancel(generation: 12)
-                return true
-            })
+            isCurrent: harness.cancelOnceThenHold { inbox.cancel(generation: 12) })
         try await settle(harness, transferID)
         try await harness.collector.gate.wait { harness.collector.sendCount == 1 }
 
