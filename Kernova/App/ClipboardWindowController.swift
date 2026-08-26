@@ -36,11 +36,11 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             contentViewController: viewController
         )
-        window.title = "\(instance.name) — Clipboard"
         window.minSize = NSSize(width: 360, height: 280)
         super.init(window: window)
         window.delegate = self
         window.setFrameAutosaveName("Clipboard-\(instance.instanceID.uuidString)")
+        updateWindowTitle()
     }
 
     required init?(coder: NSCoder) {
@@ -80,9 +80,12 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
             track: { [weak self] in
                 _ = self?.instance.status
                 _ = self?.instance.configuration.clipboardSharingEnabled
+                _ = self?.instance.name
+                _ = self?.instance.hasLiveEphemeralSession
             },
             apply: { [weak self] in
                 guard let self else { return }
+                self.updateWindowTitle()
                 let status = self.instance.status
                 if status == .stopped || status == .error {
                     Self.logger.notice(
@@ -99,5 +102,11 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
                 }
             }
         )
+    }
+
+    private func updateWindowTitle() {
+        let name = EphemeralModeCopy.titleName(
+            instance.name, ephemeralSessionRunning: instance.hasLiveEphemeralSession)
+        window?.title = "\(name) — Clipboard"
     }
 }
