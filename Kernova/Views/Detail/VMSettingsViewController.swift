@@ -177,20 +177,20 @@ final class VMSettingsViewController: NSViewController {
     /// Live storage row views keyed by disk id, so the context-menu "Rename"
     /// item can start inline editing on the right row.
     private var storageRowsByID: [UUID: AttachmentRowView] = [:]
-    /// The disk being renamed inline, or `nil`.
+    /// The disk being renamed or noted inline, or `nil`.
     ///
     /// While set, `refreshStorageList` skips its rebuild so an async refresh
     /// landing mid-edit can't destroy the editing field.
-    private var activeStorageRename: UUID?
+    private var activeStorageEdit: UUID?
 
     // Removable Media
     private var removableListStack = NSStackView()
     private var createRemovableButton: NSButton?
     /// Live removable-media row views keyed by item id.
     private var removableRowsByID: [UUID: AttachmentRowView] = [:]
-    /// The removable medium being renamed inline, or `nil`; suppresses
-    /// `refreshRemovableList` mid-edit.
-    private var activeRemovableRename: UUID?
+    /// The removable medium being renamed or noted inline, or `nil`;
+    /// suppresses `refreshRemovableList` mid-edit.
+    private var activeRemovableEdit: UUID?
 
     // Shared Directories
     private var sharedListStack = NSStackView()
@@ -270,6 +270,7 @@ final class VMSettingsViewController: NSViewController {
         let id: UUID
         let iconSystemName: String
         let title: String
+        let notes: String
         let subtitle: String
         let isMissing: Bool
         let missingPath: String?
@@ -468,10 +469,10 @@ final class VMSettingsViewController: NSViewController {
         if portForwardingSheetPresenter.isShown { portForwardingSheetPresenter.close() }
         if micPermissionPresenter.isShown { micPermissionPresenter.close() }
         if attachmentInfoPresenter.isShown { attachmentInfoPresenter.close() }
-        // Drop any in-flight inline rename so the flag can't pin a list in a
+        // Drop any in-flight inline edit so the flag can't pin a list in a
         // suppressed (never-rebuilds) state across an appear/disappear cycle.
-        activeStorageRename = nil
-        activeRemovableRename = nil
+        activeStorageEdit = nil
+        activeRemovableEdit = nil
         snapshotSection?.clearActiveEdit()
         snapshotSizeTask?.cancel()
         snapshotSizeTask = nil
@@ -568,8 +569,8 @@ extension VMSettingsViewController {
         lockIcons.removeAll()
         persistentLockableControls.removeAll()
         nameRowIsEditing = false
-        activeStorageRename = nil
-        activeRemovableRename = nil
+        activeStorageEdit = nil
+        activeRemovableEdit = nil
         storageRowsByID.removeAll()
         removableRowsByID.removeAll()
         // The list stacks, audio-warning container, and Mode popup are recreated
@@ -2402,6 +2403,7 @@ extension VMSettingsViewController {
                 id: disk.id,
                 iconSystemName: diskIconSystemName(for: disk),
                 title: disk.label,
+                notes: disk.notes,
                 // Structural subtitle only — the live size is read off-main and
                 // filled in by `populate`, so it isn't part of the rebuild diff.
                 subtitle: disk.isInternal ? "In-bundle disk image" : disk.path,
@@ -2413,7 +2415,7 @@ extension VMSettingsViewController {
         refreshAttachmentList(
             models: models, listStack: storageListStack, kind: .storage,
             rowsByID: \.storageRowsByID, rendered: \.renderedStorageRows,
-            activeRename: \.activeStorageRename,
+            activeEdit: \.activeStorageEdit,
             readOnlySelector: #selector(storageReadOnlyToggled), emptyMessage: nil
         ) { [weak self] field, model in
             guard let self,
@@ -2433,6 +2435,7 @@ extension VMSettingsViewController {
                 id: item.id,
                 iconSystemName: "opticaldisc",
                 title: item.label,
+                notes: item.notes,
                 // Removable media is always external and hot-pluggable, so
                 // controls stay enabled even while the VM runs.
                 subtitle: item.path,
@@ -2444,7 +2447,7 @@ extension VMSettingsViewController {
         refreshAttachmentList(
             models: models, listStack: removableListStack, kind: .removable,
             rowsByID: \.removableRowsByID, rendered: \.renderedRemovableRows,
-            activeRename: \.activeRemovableRename,
+            activeEdit: \.activeRemovableEdit,
             readOnlySelector: #selector(removableReadOnlyToggled),
             emptyMessage: "No removable media attached"
         ) { [weak self] field, model in
@@ -2477,7 +2480,7 @@ extension VMSettingsViewController {
         kind: AttachmentKind,
         rowsByID rowsKP: ReferenceWritableKeyPath<VMSettingsViewController, [UUID: AttachmentRowView]>,
         rendered renderedKP: ReferenceWritableKeyPath<VMSettingsViewController, [RenderedRow]?>,
-        activeRename activeKP: ReferenceWritableKeyPath<VMSettingsViewController, UUID?>,
+        activeEdit activeKP: ReferenceWritableKeyPath<VMSettingsViewController, UUID?>,
         readOnlySelector: Selector,
         emptyMessage: String?,
         populate: @escaping (NSTextField, RenderedRow) -> Void
@@ -2501,7 +2504,7 @@ extension VMSettingsViewController {
             for model in models {
                 let row = makeAttachmentRow(
                     model: model, kind: kind, readOnlySelector: readOnlySelector,
-                    activeRename: activeKP)
+                    activeEdit: activeKP)
                 self[keyPath: rowsKP][model.id] = row
                 addFullWidth(row, to: listStack)
                 // Freshly built rows start with an empty subtitle — read once.
@@ -2517,7 +2520,7 @@ extension VMSettingsViewController {
             guard let row = self[keyPath: rowsKP][model.id] else { continue }
             if previousByID[model.id] != model {
                 row.update(
-                    title: model.title, iconSystemName: model.iconSystemName,
+                    title: model.title, notes: model.notes, iconSystemName: model.iconSystemName,
                     missingPath: model.missingPath, readOnly: model.readOnly,
                     controlsEnabled: model.controlsEnabled)
             }
@@ -2525,21 +2528,21 @@ extension VMSettingsViewController {
         }
     }
 
-    /// Builds one attachment row, wiring its icon Get Info, rename closures, and
-    /// context menu; the per-list differences arrive via `kind`,
-    /// `readOnlySelector`, and the active-rename key path.
+    /// Builds one attachment row, wiring its icon Get Info, rename/notes
+    /// closures, and context menu; the per-list differences arrive via `kind`,
+    /// `readOnlySelector`, and the active-edit key path.
     private func makeAttachmentRow(
         model: RenderedRow,
         kind: AttachmentKind,
         readOnlySelector: Selector,
-        activeRename activeKP: ReferenceWritableKeyPath<VMSettingsViewController, UUID?>
+        activeEdit activeKP: ReferenceWritableKeyPath<VMSettingsViewController, UUID?>
     ) -> AttachmentRowView {
         let ref = AttachmentRef(kind: kind, id: model.id)
         let icon = AttachmentIconButton()
         icon.configure(systemName: model.iconSystemName, missingPath: model.missingPath)
         icon.onActivate = { [weak self] anchor in
             guard let self, let info = self.attachmentInfo(ref) else { return }
-            self.presentAttachmentInfoPopover(info, from: anchor)
+            self.presentAttachmentInfoPopover(info, for: ref, from: anchor)
         }
         // Removable media is hot-pluggable and swapped often, so it carries an
         // inline one-click Eject button (detach only, no confirmation); storage
@@ -2553,6 +2556,7 @@ extension VMSettingsViewController {
         let row = AttachmentRowView(
             itemID: model.id,
             title: model.title,
+            notes: model.notes,
             controlsEnabled: model.controlsEnabled,
             icon: icon,
             subtitle: makeAttachmentSubtitleLabel(path: "", isMissing: false),
@@ -2561,13 +2565,27 @@ extension VMSettingsViewController {
                 action: readOnlySelector),
             readOnlyCaption: makeReadOnlyCaption(),
             ejectButton: ejectButton)
-        row.onRenameBegan = { [weak self] id in self?[keyPath: activeKP] = id }
+        row.onEditBegan = { [weak self] id in self?[keyPath: activeKP] = id }
         row.onRenameCommitted = { [weak self] _, newLabel in
             self?.commitAttachmentRename(ref, newLabel: newLabel)
         }
         row.onRenameCancelled = { [weak self] _ in
             self?[keyPath: activeKP] = nil
             self?.refresh(kind)
+        }
+        row.onNotesCommitted = { [weak self] _, notes in
+            self?.commitAttachmentNotes(ref, notes: notes)
+        }
+        row.onNotesCancelled = { [weak self] _ in
+            self?[keyPath: activeKP] = nil
+            self?.refresh(kind)
+        }
+        // A note the row can't hold on one line is edited where it fits. Looked
+        // up fresh (not captured) so the closure doesn't hold the row it lives on.
+        row.onNotesOverflowActivated = { [weak self] _ in
+            guard let self, let info = self.attachmentInfo(ref), let anchor = self.attachmentRow(ref)
+            else { return }
+            self.presentAttachmentInfoPopover(info, for: ref, from: anchor.infoAnchor)
         }
         row.contextMenu = { [weak self] in self?.buildAttachmentContextMenu(ref) }
         return row
@@ -2577,7 +2595,7 @@ extension VMSettingsViewController {
     /// turn so the field editor's end-editing callback fully unwinds before the
     /// config-change rebuild tears down and recreates the editing row.
     private func commitAttachmentRename(_ ref: AttachmentRef, newLabel: String) {
-        clearActiveRename(ref.kind)
+        clearActiveEdit(ref.kind)
         Task { [weak self] in
             guard let self else { return }
             switch ref.kind {
@@ -2596,10 +2614,41 @@ extension VMSettingsViewController {
         }
     }
 
-    private func clearActiveRename(_ kind: AttachmentKind) {
+    /// Commits an inline note edit for either list, on the same deferred-Task
+    /// shape as ``commitAttachmentRename(_:newLabel:)``.
+    private func commitAttachmentNotes(_ ref: AttachmentRef, notes: String) {
+        clearActiveEdit(ref.kind)
+        Task { [weak self] in
+            guard let self else { return }
+            switch ref.kind {
+            case .storage:
+                if let disk = self.currentStorageDisks.first(where: { $0.id == ref.id }) {
+                    self.viewModel.setStorageDiskNotes(disk, notes: notes, on: self.instance)
+                }
+            case .removable:
+                if let item = self.currentRemovableMedia.first(where: { $0.id == ref.id }) {
+                    self.viewModel.setRemovableMediaNotes(item, notes: notes, on: self.instance)
+                }
+            }
+            self.refresh(ref.kind)
+        }
+    }
+
+    private func clearActiveEdit(_ kind: AttachmentKind) {
         switch kind {
-        case .storage: activeStorageRename = nil
-        case .removable: activeRemovableRename = nil
+        case .storage: activeStorageEdit = nil
+        case .removable: activeRemovableEdit = nil
+        }
+    }
+
+    /// Whether either attachment list has an inline edit open — Rename and Edit
+    /// Notes on a row have to wait for it, same hazard
+    /// ``SnapshotSectionView/makeRowMenu(for:canRevert:canModify:isBaseline:)``
+    /// guards against.
+    private func hasActiveEdit(_ kind: AttachmentKind) -> Bool {
+        switch kind {
+        case .storage: return activeStorageEdit != nil
+        case .removable: return activeRemovableEdit != nil
         }
     }
 
@@ -2609,6 +2658,7 @@ extension VMSettingsViewController {
                 id: directory.id,
                 iconSystemName: "folder",
                 title: directory.displayName,
+                notes: "",
                 subtitle: directory.path,
                 isMissing: false,
                 missingPath: nil,
@@ -3145,6 +3195,7 @@ extension VMSettingsViewController: NSMenuItemValidation {
         let isInternal: Bool
         let readOnly: Bool
         let busText: String
+        let notes: String
         /// Rename / Read Only / Remove gating: storage follows the running-VM
         /// read-only lock; removable media is hot-pluggable, so always editable.
         let editable: Bool
@@ -3158,12 +3209,13 @@ extension VMSettingsViewController: NSMenuItemValidation {
                 id: disk.id, label: disk.label, path: disk.path, isInternal: disk.isInternal,
                 readOnly: disk.readOnly,
                 busText: disk.kind == .usbMassStorage ? "USB mass storage" : "Virtio block",
-                editable: !isReadOnly)
+                notes: disk.notes, editable: !isReadOnly)
         case .removable:
             guard let item = currentRemovableMedia.first(where: { $0.id == ref.id }) else { return nil }
             return AttachmentInfo(
                 id: item.id, label: item.label, path: item.path, isInternal: false,
-                readOnly: item.readOnly, busText: "USB mass storage", editable: true)
+                readOnly: item.readOnly, busText: "USB mass storage", notes: item.notes,
+                editable: true)
         }
     }
 
@@ -3189,9 +3241,15 @@ extension VMSettingsViewController: NSMenuItemValidation {
         // Show in Finder by file presence), so opt out of auto-validation.
         menu.autoenablesItems = false
 
+        let noEditInFlight = !hasActiveEdit(ref.kind)
         let rename = attachmentMenuItem("Rename", #selector(menuAttachmentRename(_:)), ref)
-        rename.isEnabled = info.editable
+        rename.isEnabled = info.editable && noEditInFlight
         menu.addItem(rename)
+        // The only route to a note on a row that has none: with nothing on
+        // screen to click, the row alone offers no way in.
+        let editNotes = attachmentMenuItem("Edit Notes", #selector(menuAttachmentEditNotes(_:)), ref)
+        editNotes.isEnabled = info.editable && noEditInFlight
+        menu.addItem(editNotes)
         menu.addItem(attachmentMenuItem("Get Info", #selector(menuAttachmentGetInfo(_:)), ref))
 
         menu.addItem(.separator())
@@ -3250,6 +3308,11 @@ extension VMSettingsViewController: NSMenuItemValidation {
         attachmentRow(ref)?.beginRename()
     }
 
+    @objc private func menuAttachmentEditNotes(_ sender: NSMenuItem) {
+        guard let ref = attachmentRef(from: sender) else { return }
+        attachmentRow(ref)?.beginNotesEditing()
+    }
+
     @objc private func menuAttachmentShowInFinder(_ sender: NSMenuItem) {
         guard let ref = attachmentRef(from: sender), let info = attachmentInfo(ref) else { return }
         NSWorkspace.shared.activateFileViewerSelecting([attachmentURL(info)])
@@ -3290,7 +3353,7 @@ extension VMSettingsViewController: NSMenuItemValidation {
         guard let ref = attachmentRef(from: sender), let info = attachmentInfo(ref),
             let row = attachmentRow(ref)
         else { return }
-        presentAttachmentInfoPopover(info, from: row.infoAnchor)
+        presentAttachmentInfoPopover(info, for: ref, from: row.infoAnchor)
     }
 
     /// Get Info popover for either list.
@@ -3298,7 +3361,9 @@ extension VMSettingsViewController: NSMenuItemValidation {
     /// Reads the on-disk/allocated figures and creation date **off the main
     /// thread** — the file may live on a slow or sleeping external volume — then
     /// presents when they land.
-    private func presentAttachmentInfoPopover(_ info: AttachmentInfo, from anchor: NSView) {
+    private func presentAttachmentInfoPopover(
+        _ info: AttachmentInfo, for ref: AttachmentRef, from anchor: NSView
+    ) {
         let url = attachmentURL(info)
         let layout = instance.bundleLayout
         let path = info.path
@@ -3323,7 +3388,16 @@ extension VMSettingsViewController: NSMenuItemValidation {
                 allocatedText: sizes.capacityBytes.map { DataFormatters.formatBytes($0) } ?? "Unknown",
                 readOnly: info.readOnly,
                 busText: info.busText,
-                createdText: created.map { Self.diskInfoDateFormatter.string(from: $0) } ?? "Unknown")
+                createdText: created.map { Self.diskInfoDateFormatter.string(from: $0) } ?? "Unknown",
+                notes: info.notes,
+                canEdit: info.editable,
+                onCommitNotes: { [weak self] notes in
+                    guard let self else { return }
+                    // Looked up fresh: the popover outlives edits landing from
+                    // elsewhere, and the copy it was built with can be stale.
+                    self.commitAttachmentNotes(ref, notes: notes)
+                })
+            content.onRequestClose = { [weak self] in self?.attachmentInfoPresenter.close() }
             self.attachmentInfoPresenter.show(content: content, from: anchor, preferredEdge: .minY)
         }
     }

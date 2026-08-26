@@ -256,6 +256,36 @@ struct VMConfigurationTests {
         #expect(config.removableMedia == nil)
     }
 
+    @Test("RemovableMediaItem notes round-trip through JSON")
+    func removableMediaNotesRoundTrip() throws {
+        let config = VMConfiguration(
+            name: "Linux VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            removableMedia: [
+                RemovableMediaItem(
+                    path: "/Users/test/Downloads/ubuntu.iso", readOnly: true, notes: "install media")
+            ]
+        )
+
+        let data = try VMConfiguration.makeJSONEncoder().encode(config)
+        let decoded = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.removableMedia?[0].notes == "install media")
+    }
+
+    @Test("A removableMedia entry missing notes decodes it as empty, without failing the config decode")
+    func missingRemovableMediaNotesDecodesEmpty() throws {
+        let json = Self.makeBaseJSON(
+            extraFields: """
+                "removableMedia": [{"id": "32345678-1234-1234-1234-123456789012", "path": "/ext/i.iso", "readOnly": true, "label": "I"}]
+                """
+        )
+        let decoded = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: Data(json.utf8))
+
+        #expect(decoded.removableMedia?[0].notes == "")
+    }
+
     @Test("Security bookmark fields round-trip through JSON")
     func bookmarkFieldsRoundTrip() throws {
         var original = VMConfiguration(
@@ -521,6 +551,37 @@ struct VMConfigurationTests {
         let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
 
         #expect(config.storageDisks == nil)
+    }
+
+    @Test("StorageDisk notes round-trip through JSON")
+    func storageDiskNotesRoundTrip() throws {
+        let config = VMConfiguration(
+            name: "Multi-Disk VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            storageDisks: [
+                StorageDisk(
+                    path: "/tmp/data.asif", readOnly: false, label: "Data", isInternal: false,
+                    kind: .virtio, notes: "holds the build cache")
+            ]
+        )
+
+        let data = try VMConfiguration.makeJSONEncoder().encode(config)
+        let decoded = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.storageDisks?[0].notes == "holds the build cache")
+    }
+
+    @Test("A storageDisks entry missing notes decodes it as empty, without failing the config decode")
+    func missingStorageDiskNotesDecodesEmpty() throws {
+        let json = Self.makeBaseJSON(
+            extraFields: """
+                "storageDisks": [{"id": "22345678-1234-1234-1234-123456789012", "path": "/ext/d.img", "readOnly": false, "label": "D", "isInternal": false, "kind": "virtio"}]
+                """
+        )
+        let decoded = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: Data(json.utf8))
+
+        #expect(decoded.storageDisks?[0].notes == "")
     }
 
     @Test("Clone regenerates storageDisk IDs")
