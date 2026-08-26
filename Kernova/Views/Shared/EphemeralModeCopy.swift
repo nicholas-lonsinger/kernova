@@ -1,19 +1,22 @@
 import AppKit
 
 /// The user-facing copy for Ephemeral Mode, shared by the Startup setting's
-/// info popover, the sidebar badge, and the running chip — all three answer the
-/// same question, so they read from one place.
+/// info popover, the sidebar badge, and the window title marker — all three
+/// answer the same question, so they read from one place.
 @MainActor
 enum EphemeralModeCopy {
-    /// The word the running marker and the sidebar badge carry.
+    /// The word the title marker and the sidebar badge carry.
     static let name = "Ephemeral"
 
     /// SF Symbol for the sidebar badge — the filled circle the row's other
     /// trailing accessories use.
     static let badgeSymbolName = "arrow.counterclockwise.circle.fill"
 
-    /// SF Symbol for the running chip, which supplies its own capsule.
-    static let chipSymbolName = "arrow.counterclockwise"
+    /// The VM name as a title bar carries it — suffixed while a session the
+    /// baseline will discard is live, plain otherwise.
+    static func titleName(_ name: String, ephemeralSessionRunning: Bool) -> String {
+        ephemeralSessionRunning ? "\(name) (\(self.name))" : name
+    }
 
     static let popoverParagraphs: [InfoPopoverParagraph] = [
         .body(
