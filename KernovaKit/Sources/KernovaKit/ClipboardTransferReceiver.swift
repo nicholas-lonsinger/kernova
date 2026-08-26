@@ -213,13 +213,11 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
         // a cancellation's `shutdown(2)` and this `close(2)` macOS accepts and
         // discards the peer's writes, so only "terminal fired" proves the peer
         // can no longer stream into the void.
-        do {
-            let outcome = try receive(fd: fd, beganAt: beganAt)
-            closeConnection(fd)
-            onComplete(outcome)
-        } catch {
-            closeConnection(fd)
-            onAbort(abortInfo(stop(for: error)))
+        let outcome = Result { try receive(fd: fd, beganAt: beganAt) }
+        closeConnection(fd)
+        switch outcome {
+        case .success(let representation): onComplete(representation)
+        case .failure(let error): onAbort(abortInfo(stop(for: error)))
         }
     }
 
@@ -229,7 +227,7 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
     /// - Throws: the stop the transfer ends with when the connection cannot be
     ///   opened — a cancellation that landed first, or the transport failure
     ///   that kept it from opening. No descriptor outlives the throw: `run`
-    ///   installs its own close only for one this returns.
+    ///   closes only one this returns.
     private func openConnection() throws -> Int32 {
         let fd: Int32
         switch source {

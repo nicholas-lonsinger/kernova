@@ -31,6 +31,17 @@ final class ClipboardTransferInbox: @unchecked Sendable {
     private var awaiters: [UInt64: Awaiter] = [:]
     private var live: [UInt64: ClipboardTransferReceiver] = [:]
 
+    #if DEBUG
+    /// Fired after a live receiver's terminal has been processed — its
+    /// connection already closed — for a test sequencing a peer against the
+    /// teardown rather than against the awaiter's own resolution.
+    var onReceiverFinishedForTesting: (@Sendable (UInt64) -> Void)? {
+        get { lock.withLock { receiverFinishedHook } }
+        set { lock.withLock { receiverFinishedHook = newValue } }
+    }
+    private var receiverFinishedHook: (@Sendable (UInt64) -> Void)?
+    #endif
+
     /// Creates an inbox for one peer.
     ///
     /// - Parameters:
@@ -195,8 +206,10 @@ final class ClipboardTransferInbox: @unchecked Sendable {
             live[transferID] = nil
             return awaiters.removeValue(forKey: transferID)
         }
-        guard let awaiter else { return }
-        deliver(awaiter)
+        if let awaiter { deliver(awaiter) }
+        #if DEBUG
+        onReceiverFinishedForTesting?(transferID)
+        #endif
     }
 
     private func progress(_ transferID: UInt64, received: Int, total: Int) {
@@ -204,25 +217,29 @@ final class ClipboardTransferInbox: @unchecked Sendable {
         awaiter?.onProgress?(received, total)
     }
 
-    /// Interrupts every live receiver whose id matches `predicate`, and fails
-    /// every matching awaiter that has no receiver to interrupt.
+    /// Interrupts every live receiver whose id matches `predicate`, and fires
+    /// (and removes) every matching awaiter, resolving a blocked pull with a
+    /// cancellation.
     ///
-    /// One abort path per transfer: an awaiter whose receiver is live is left
-    /// for that receiver's own terminal, which fires only once its connection
-    /// is closed — so the abort a cancelled pull reports proves the teardown
-    /// finished, not merely that it was asked for.
+    /// The awaiter fails here, synchronously — a blocked pull's wake must not
+    /// wait on the receiver's teardown, whose cost scales with what the
+    /// transfer already staged. Removing the awaiter under the lock also
+    /// guarantees the pull resolves `cancelled`: a receiver completing
+    /// concurrently finds no awaiter left to deliver to. The receiver's own
+    /// later terminal is idempotent with this — whichever removes the awaiter
+    /// first wins.
     private func cancelMatching(_ predicate: (UInt64) -> Bool) {
-        let (receivers, orphaned) = lock.withLock {
+        let (receivers, matched) = lock.withLock {
             () -> ([ClipboardTransferReceiver], [UInt64: Awaiter]) in
             let receivers = live.filter { predicate($0.key) }.map(\.value)
             var taken: [UInt64: Awaiter] = [:]
-            for id in awaiters.keys.filter({ predicate($0) && live[$0] == nil }) {
+            for id in awaiters.keys.filter(predicate) {
                 taken[id] = awaiters.removeValue(forKey: id)
             }
             return (receivers, taken)
         }
         for receiver in receivers { receiver.cancel() }
-        for (id, awaiter) in orphaned {
+        for (id, awaiter) in matched {
             awaiter.onAbort(
                 ClipboardStreamAbortInfo(
                     transferID: id, code: .cancelled,

@@ -206,13 +206,39 @@ final class TransferHarness: @unchecked Sendable {
     /// to the transfer rather than to how fast the two ends happen to run.
     let onSendProgress = Box<(@Sendable (Int, Int) -> Void)?>(nil)
 
-    /// An extra hook on each inbound abort, for a test that must hold a peer
-    /// until a cancelled receiver's teardown has finished.
+    /// An `isCurrent` for ``pull`` that fires `cancel` on the sender's first
+    /// pre-write check and holds every later one until a live receiver has
+    /// been torn down.
     ///
-    /// A live receiver delivers its abort only after closing its connection, so
-    /// a peer this releases acts on a connection that is already gone — its
-    /// next write fails rather than being discarded.
-    let onAbort = Box<(@Sendable () -> Void)?>(nil)
+    /// The hold is what makes "the send stops" deterministic: a cancellation
+    /// can only `shutdown(2)` the receiver's descriptor from another thread,
+    /// and macOS accepts — and discards — the peer's writes on a shut-down
+    /// socketpair end until the receiver's own queue wakes to `close(2)` it
+    /// (observed 2026-08-25: 13 MB of writes "succeeded" against a shut-down
+    /// end), so an unheld sender can stream to completion inside that window.
+    /// The release keys to the inbox's receiver-finished seam, which fires
+    /// after the close, so the write the hold admits must fail. The hold is
+    /// bounded by `testWaitBackstop`; a timeout falls through to the write,
+    /// whose spurious success the caller's `sendOutcome == false` assertion
+    /// then surfaces.
+    func cancelOnceThenHold(_ cancel: @escaping @Sendable () -> Void)
+        -> @Sendable (UInt64) -> Bool
+    {
+        let tornDown = DispatchSemaphore(value: 0)
+        inbox.onReceiverFinishedForTesting = { _ in tornDown.signal() }
+        let cancelled = Box(false)
+        return { _ in
+            guard cancelled.value else {
+                cancelled.value = true
+                cancel()
+                return true
+            }
+            if tornDown.wait(timeout: .now() + testWaitBackstop) == .success {
+                tornDown.signal()
+            }
+            return true
+        }
+    }
 
     init(
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
@@ -260,14 +286,10 @@ final class TransferHarness: @unchecked Sendable {
     /// Registers the pull for `transferID` with the inbox.
     func expect(transferID: UInt64, plan: ClipboardTransferReceiver.Plan) {
         let collector = self.collector
-        let onAbort = self.onAbort
         inbox.awaitTransfer(
             transferID, plan: plan,
             onComplete: { collector.complete(transferID, $0) },
-            onAbort: {
-                collector.abort($0)
-                onAbort.value?()
-            },
+            onAbort: { collector.abort($0) },
             onProgress: { bytes, total in collector.receiveProgress(bytes, total) })
     }
 

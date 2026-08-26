@@ -435,19 +435,10 @@ struct ClipboardTransferStreamTests {
         try randomBytes(count: 64 * 1024).write(to: source.appendingPathComponent("big.bin"))
         let estimate = ClipboardArchive.estimatedByteCount(at: source)
         let transferID: UInt64 = 0xB1
-        // The cancel is issued from the sender's own pre-write check, and every
-        // later check *holds* the stream until the receiver's abort has been
-        // delivered. The hold is what makes the outcome deterministic: the
-        // cancel's `shutdown(2)` alone leaves macOS accepting — and discarding —
-        // the peer's writes until the receiver's own queue wakes to close the
-        // descriptor (observed 2026-08-25: 13 MB of writes "succeeded" against
-        // a shut-down socketpair end), so an unheld sender can stream to
-        // completion inside that window. The abort fires only after the close,
-        // so the write the hold admits must fail.
+        // Cancelled from the sender's own pre-write check, before any byte has
+        // left, then held per `cancelOnceThenHold` so the send provably stops
+        // rather than racing the receiver's teardown.
         let inbox = harness.inbox
-        let receiverTornDown = DispatchSemaphore(value: 0)
-        harness.onAbort.value = { receiverTornDown.signal() }
-        let cancelled = Box(false)
         harness.pull(
             transferID: transferID, generation: 11,
             plan: .init(
@@ -455,16 +446,7 @@ struct ClipboardTransferStreamTests {
                 extractsDirectoryNamed: "source", advertisedByteCount: estimate),
             representation: .init(
                 directorySourceURL: source, estimatedByteCount: estimate, filename: "source"),
-            isCurrent: { _ in
-                guard cancelled.value else {
-                    cancelled.value = true
-                    inbox.cancel(transferID: transferID)
-                    return true
-                }
-                receiverTornDown.wait()
-                receiverTornDown.signal()
-                return true
-            })
+            isCurrent: harness.cancelOnceThenHold { inbox.cancel(transferID: transferID) })
         try await settle(harness, transferID)
         try await harness.collector.gate.wait { harness.collector.sendCount == 1 }
 
@@ -488,20 +470,17 @@ struct ClipboardTransferStreamTests {
         defer { harness.tearDown() }
 
         // The supersession path `ClipboardInboundOffers` takes when the peer
-        // offers again mid-paste: a generation cancel leaves the awaiter to the
-        // live receiver's own terminal, so the abort arriving at all says the
-        // cancel reached that receiver rather than only the awaiter beside it.
-        // Cancelled and held exactly as `receiverCancelStopsTheSend` is, and
-        // for the same reasons.
+        // offers again mid-paste: the awaiter is resolved either way, so the
+        // *send* stopping is what says the generation reached the live
+        // receiver rather than only the awaiter beside it. Cancelled and held
+        // exactly as `receiverCancelStopsTheSend` is, and for the same
+        // reasons.
         let source = scratch.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
         try randomBytes(count: 64 * 1024).write(to: source.appendingPathComponent("big.bin"))
         let estimate = ClipboardArchive.estimatedByteCount(at: source)
         let transferID = ClipboardTransferID.make(generation: 12, repIndex: 0, hostMinted: true)
         let inbox = harness.inbox
-        let receiverTornDown = DispatchSemaphore(value: 0)
-        harness.onAbort.value = { receiverTornDown.signal() }
-        let cancelled = Box(false)
         harness.pull(
             transferID: transferID, generation: 12,
             plan: .init(
@@ -509,16 +488,7 @@ struct ClipboardTransferStreamTests {
                 extractsDirectoryNamed: "source", advertisedByteCount: estimate),
             representation: .init(
                 directorySourceURL: source, estimatedByteCount: estimate, filename: "source"),
-            isCurrent: { _ in
-                guard cancelled.value else {
-                    cancelled.value = true
-                    inbox.cancel(generation: 12)
-                    return true
-                }
-                receiverTornDown.wait()
-                receiverTornDown.signal()
-                return true
-            })
+            isCurrent: harness.cancelOnceThenHold { inbox.cancel(generation: 12) })
         try await settle(harness, transferID)
         try await harness.collector.gate.wait { harness.collector.sendCount == 1 }
 
