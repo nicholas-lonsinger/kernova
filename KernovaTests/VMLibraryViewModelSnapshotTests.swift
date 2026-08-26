@@ -478,6 +478,62 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(harness.snapshots.manifest(for: instance.bundleURL) == nil)
     }
 
+    // MARK: - Notes
+
+    @Test("A note writes through to the manifest, trimmed at its edges")
+    func notesWriteThrough() {
+        let harness = makeHarness()
+        let instance = makeInstance()
+        let snapshot = makeSnapshot()
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+
+        harness.viewModel.setSnapshotNotes(
+            snapshot, notes: "  tools\nconfigured  ", on: instance)
+
+        #expect(instance.snapshotManifest.snapshot(id: snapshot.id)?.notes == "tools\nconfigured")
+        #expect(harness.snapshots.manifest(for: instance.bundleURL) == instance.snapshotManifest)
+    }
+
+    @Test("An unchanged note writes nothing")
+    func notesNoOpWritesNothing() {
+        let harness = makeHarness()
+        let instance = makeInstance()
+        var snapshot = makeSnapshot()
+        snapshot.notes = "before the update"
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+
+        harness.viewModel.setSnapshotNotes(snapshot, notes: "before the update", on: instance)
+
+        #expect(harness.snapshots.manifest(for: instance.bundleURL) == nil)
+    }
+
+    @Test("Clearing a note to empty is written, unlike an empty name")
+    func notesClearToEmptyWritesThrough() {
+        let harness = makeHarness()
+        let instance = makeInstance()
+        var snapshot = makeSnapshot()
+        snapshot.notes = "before the update"
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+
+        harness.viewModel.setSnapshotNotes(snapshot, notes: "   ", on: instance)
+
+        #expect(instance.snapshotManifest.snapshot(id: snapshot.id)?.notes == "")
+        #expect(harness.snapshots.manifest(for: instance.bundleURL) == instance.snapshotManifest)
+    }
+
+    @Test("A note arriving while an operation is unsettled is refused")
+    func notesRefusedWhileBusy() {
+        let harness = makeHarness()
+        let instance = makeInstance(status: .restoring)
+        let snapshot = makeSnapshot()
+        seed(harness, instance, [snapshot])
+
+        harness.viewModel.setSnapshotNotes(snapshot, notes: "late", on: instance)
+
+        #expect(instance.snapshotManifest.snapshot(id: snapshot.id)?.notes == snapshot.notes)
+        #expect(harness.snapshots.manifest(for: instance.bundleURL) == nil)
+    }
+
     // MARK: - Sizes
 
     @Test("On-disk sizes come back keyed by snapshot")

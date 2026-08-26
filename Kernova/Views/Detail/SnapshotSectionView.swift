@@ -9,6 +9,8 @@ protocol SnapshotSectionViewDelegate: AnyObject {
     func snapshotSection(
         _ view: SnapshotSectionView, renamed snapshot: VMSnapshot, to newName: String)
     func snapshotSection(
+        _ view: SnapshotSectionView, setNotes notes: String, on snapshot: VMSnapshot)
+    func snapshotSection(
         _ view: SnapshotSectionView, requestedInfoFor snapshot: VMSnapshot, from anchor: NSView)
 }
 
@@ -21,18 +23,18 @@ protocol SnapshotSectionViewDelegate: AnyObject {
 final class SnapshotSectionView: NSView {
     weak var delegate: SnapshotSectionViewDelegate?
 
-    /// The snapshot being renamed inline, or `nil`.
+    /// The snapshot whose name or note is being edited inline, or `nil`.
     ///
     /// While set, ``update(manifest:canTakeSnapshot:canRevert:canModify:baselineID:)``
     /// skips its rebuild so a refresh landing mid-edit can't destroy the
     /// editing field.
-    private(set) var activeRename: UUID?
+    private(set) var activeEdit: UUID?
 
     private let readoutLabel = NSTextField(labelWithString: "")
     private let listStack = NSStackView()
     private var takeSnapshotButton = NSButton()
 
-    /// What the rows were last rendered under, so a cancelled rename can
+    /// What the rows were last rendered under, so a cancelled edit can
     /// re-render without the settings pane feeding the state in again.
     private var gate = Gate(
         canTakeSnapshot: false, canRevert: false, canModify: false, baselineID: nil)
@@ -54,7 +56,7 @@ final class SnapshotSectionView: NSView {
     private struct Row {
         let container: NSView
         let icon: AttachmentIconButton
-        let title: InlineRenameTitleView
+        let title: EditableRowTitleView
         let subtitle: NSTextField
         let markerLabel: NSTextField
         let revertButton: NSButton
@@ -219,7 +221,7 @@ final class SnapshotSectionView: NSView {
         if structural {
             // A rebuild would destroy an in-progress editing field, so defer it
             // until the edit ends (the cancel/commit handler re-runs this).
-            if activeRename != nil { return }
+            if activeEdit != nil { return }
             renderedRows = models
             rebuildRows(models)
             refreshReadout()
@@ -253,20 +255,25 @@ final class SnapshotSectionView: NSView {
         rowsByID[id]?.title.beginRename()
     }
 
-    /// Drops any in-flight rename marker, so it can't pin the list in its
-    /// suppressed (never-rebuilds) state across an appear/disappear cycle.
-    func clearActiveRename() {
-        activeRename = nil
+    /// Begins inline editing of one snapshot's note.
+    func beginNotesEditing(_ id: UUID) {
+        rowsByID[id]?.title.beginNotesEditing()
     }
 
-    /// Ends a rename and renders whatever arrived while it was open.
+    /// Drops any in-flight edit marker, so it can't pin the list in its
+    /// suppressed (never-rebuilds) state across an appear/disappear cycle.
+    func clearActiveEdit() {
+        activeEdit = nil
+    }
+
+    /// Ends an inline edit and renders whatever arrived while it was open.
     ///
     /// A refresh landing mid-edit stores its manifest but skips the rebuild, so
     /// the list is stale by exactly what changed during the edit. The render is
     /// deferred because it can rebuild the rows, and it is reached from inside
     /// the editing field's own callback — that field comes off the stack first.
-    private func endRename() {
-        activeRename = nil
+    private func endEdit() {
+        activeEdit = nil
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.update(
@@ -290,9 +297,9 @@ final class SnapshotSectionView: NSView {
     /// The context menu for one snapshot row — the same menu the ••• button
     /// pops and a right-click surfaces.
     ///
-    /// Rename and Delete follow `canModify`: both write the manifest a revert
-    /// is reading, and the serialization behind them rejects rather than
-    /// queues, so an enabled item during an unsettled operation would only
+    /// Rename, Edit Notes and Delete follow `canModify`: all write the manifest
+    /// a revert is reading, and the serialization behind them rejects rather
+    /// than queues, so an enabled item during an unsettled operation would only
     /// produce an error alert. Delete is additionally barred on an Ephemeral
     /// baseline, which the VM needs back at every power-off.
     func makeRowMenu(
@@ -303,8 +310,13 @@ final class SnapshotSectionView: NSView {
         menu.autoenablesItems = false
 
         let rename = menuItem("Rename", #selector(menuRename(_:)), snapshot)
-        rename.isEnabled = canModify && activeRename == nil
+        rename.isEnabled = canModify && activeEdit == nil
         menu.addItem(rename)
+        // The only route to a note on a row that has none: with nothing on
+        // screen to click, the row alone offers no way in.
+        let editNotes = menuItem("Edit Notes", #selector(menuEditNotes(_:)), snapshot)
+        editNotes.isEnabled = canModify && activeEdit == nil
+        menu.addItem(editNotes)
         menu.addItem(menuItem("Get Info", #selector(menuGetInfo(_:)), snapshot))
         menu.addItem(.separator())
         let revert = menuItem("Revert", #selector(menuRevert(_:)), snapshot)
@@ -370,17 +382,33 @@ final class SnapshotSectionView: NSView {
             self.delegate?.snapshotSection(self, requestedInfoFor: snapshot, from: anchor)
         }
 
-        let title = InlineRenameTitleView(
-            itemID: snapshotID, title: model.snapshot.name, controlsEnabled: model.canModify)
-        title.onRenameBegan = { [weak self] id in self?.activeRename = id }
+        let title = EditableRowTitleView(
+            itemID: snapshotID, name: model.snapshot.name, notes: model.snapshot.notes,
+            controlsEnabled: model.canModify)
+        title.onEditBegan = { [weak self] id in self?.activeEdit = id }
         title.onRenameCommitted = { [weak self] id, newName in
             guard let self else { return }
             let snapshot = self.manifest.snapshot(id: id)
-            self.endRename()
+            self.endEdit()
             guard let snapshot else { return }
             self.delegate?.snapshotSection(self, renamed: snapshot, to: newName)
         }
-        title.onRenameCancelled = { [weak self] _ in self?.endRename() }
+        title.onRenameCancelled = { [weak self] _ in self?.endEdit() }
+        title.onNotesCommitted = { [weak self] id, notes in
+            guard let self else { return }
+            let snapshot = self.manifest.snapshot(id: id)
+            self.endEdit()
+            guard let snapshot else { return }
+            self.delegate?.snapshotSection(self, setNotes: notes, on: snapshot)
+        }
+        title.onNotesCancelled = { [weak self] _ in self?.endEdit() }
+        // A note the row can't hold on one line is edited where it fits.
+        title.onNotesOverflowActivated = { [weak self] id in
+            guard let self, let snapshot = self.manifest.snapshot(id: id),
+                let row = self.rowsByID[id]
+            else { return }
+            self.delegate?.snapshotSection(self, requestedInfoFor: snapshot, from: row.icon)
+        }
         // Built at click time from the current model, not the one this row was
         // created with, so an enablement change that took the in-place path is
         // reflected.
@@ -454,7 +482,9 @@ final class SnapshotSectionView: NSView {
     }
 
     private func apply(_ model: RenderedRow, to row: Row) {
-        row.title.update(title: model.snapshot.name, controlsEnabled: model.canModify)
+        row.title.update(
+            name: model.snapshot.name, notes: model.snapshot.notes,
+            controlsEnabled: model.canModify)
         row.subtitle.stringValue = subtitleText(for: model.snapshot)
         row.markerLabel.stringValue = model.markerText
         row.markerLabel.toolTip = Self.markerToolTip(for: model)
@@ -525,6 +555,11 @@ final class SnapshotSectionView: NSView {
     @objc private func menuRename(_ sender: NSMenuItem) {
         guard let snapshot = snapshot(from: sender.representedObject as? String) else { return }
         beginRename(snapshot.id)
+    }
+
+    @objc private func menuEditNotes(_ sender: NSMenuItem) {
+        guard let snapshot = snapshot(from: sender.representedObject as? String) else { return }
+        beginNotesEditing(snapshot.id)
     }
 
     @objc private func menuGetInfo(_ sender: NSMenuItem) {

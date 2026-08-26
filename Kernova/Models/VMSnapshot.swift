@@ -113,4 +113,11 @@ struct VMSnapshotManifest: Codable, Sendable, Equatable {
         guard let index = snapshots.firstIndex(where: { $0.id == id }) else { return }
         snapshots[index].name = name
     }
+
+    /// Replaces the notes on the snapshot carrying `id`; a no-op when it isn't
+    /// listed.
+    mutating func setNotes(id: UUID, to notes: String) {
+        guard let index = snapshots.firstIndex(where: { $0.id == id }) else { return }
+        snapshots[index].notes = notes
+    }
 }
