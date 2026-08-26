@@ -33,6 +33,8 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     private let onUpdateConfiguration: ((inout VMConfiguration) -> Void) -> Void
     private let backingView: VMDisplayBackingView
     private var instanceObservation: ObservationLoop?
+    /// The titlebar's Ephemeral marker for this window's VM.
+    private var ephemeralChip: EphemeralChipTitlebarController?
 
     private static let logger = Logger(subsystem: "app.kernova", category: "VMDisplayWindowController")
 
@@ -110,6 +112,9 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         toolbar.autosavesConfiguration = true
         window.toolbar = toolbar
         window.toolbarStyle = .unified
+
+        ephemeralChip = EphemeralChipTitlebarController(window: window)
+        updateEphemeralChip()
     }
 
     required init?(coder: NSCoder) {
@@ -207,6 +212,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 _ = self.instance.configuration.lastSeenAgentVersion
                 _ = self.instance.vsockDropService?.isConnected
                 _ = self.instance.vsockControlService?.guestSupportsDropFiles
+                _ = self.instance.hasLiveEphemeralSession
             },
             apply: { [weak self] in
                 guard let self else { return }
@@ -223,6 +229,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                     )
                     self.backingView.applyDropRegistration()
                     self.updateToolbarItems()
+                    self.updateEphemeralChip()
                 }
             }
         )
@@ -236,6 +243,12 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
             return
         }
         toolbarManager.updateToolbarItems(in: toolbar)
+    }
+
+    /// Shows the Ephemeral marker while this VM is running a session its
+    /// baseline will discard.
+    private func updateEphemeralChip() {
+        ephemeralChip?.update(isVisible: instance.hasLiveEphemeralSession)
     }
 }
 

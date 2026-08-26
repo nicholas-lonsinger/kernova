@@ -216,6 +216,10 @@ rename, and guest-driven `VMInstance.onUpdateConfiguration` callbacks — routes
 `VMLibraryViewModel.updateConfiguration(of:mutate:)`, which persists and then calls
 `applyLivePolicy`. No control writes `instance.configuration` directly.
 
+**Ephemeral Mode reverts through one seam.** `VMInstance.resetToStopped()` fires `onPoweredOff`,
+which `VMLibraryViewModel` wires to the same revert a user confirms. A save-suspend tears the
+session down without that hook, so a suspended session survives to revert at its next shutdown.
+
 ### ViewModels
 
 - `VMLibraryViewModel` — the central `@Observable` view model. Owns `[VMInstance]` and every

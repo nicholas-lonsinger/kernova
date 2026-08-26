@@ -48,6 +48,20 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// install or an image download, which never begins unattended.
     var startsAutomaticallyOnLaunch: Bool
 
+    /// When `true`, every power-off returns this VM to the snapshot named by
+    /// ``ephemeralBaselineSnapshotID``, discarding the session's guest changes.
+    ///
+    /// Suspend is not a power-off: a suspended session survives, reverting at
+    /// its next shutdown. Read at power-off, so it is editable while the VM runs.
+    var ephemeralModeEnabled: Bool
+
+    /// The snapshot a power-off reverts to while ``ephemeralModeEnabled``;
+    /// `nil` once the mode is turned off, which clears the choice.
+    ///
+    /// Set through ``applyEphemeralMode(enabled:baseline:)``, which holds that
+    /// pairing.
+    var ephemeralBaselineSnapshotID: UUID?
+
     // MARK: - Resources
 
     var cpuCount: Int
@@ -273,6 +287,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         guestOS: VMGuestOS,
         bootMode: VMBootMode,
         startsAutomaticallyOnLaunch: Bool = false,
+        ephemeralModeEnabled: Bool = false,
+        ephemeralBaselineSnapshotID: UUID? = nil,
         cpuCount: Int? = nil,
         memorySizeInGB: Int? = nil,
         diskSizeInGB: Int? = nil,
@@ -321,6 +337,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.guestOS = guestOS
         self.bootMode = bootMode
         self.startsAutomaticallyOnLaunch = startsAutomaticallyOnLaunch
+        self.ephemeralModeEnabled = ephemeralModeEnabled
+        self.ephemeralBaselineSnapshotID = ephemeralBaselineSnapshotID
         self.cpuCount = cpuCount ?? guestOS.defaultCPUCount
         self.memorySizeInGB = memorySizeInGB ?? guestOS.defaultMemoryInGB
         self.diskSizeInGB = diskSizeInGB ?? VMGuestOS.defaultDiskSizeInGB
@@ -380,6 +398,10 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.bootMode = try c.decode(VMBootMode.self, forKey: .bootMode)
         self.startsAutomaticallyOnLaunch =
             try c.decodeIfPresent(Bool.self, forKey: .startsAutomaticallyOnLaunch) ?? false
+        self.ephemeralModeEnabled =
+            try c.decodeIfPresent(Bool.self, forKey: .ephemeralModeEnabled) ?? false
+        self.ephemeralBaselineSnapshotID =
+            try c.decodeIfPresent(UUID.self, forKey: .ephemeralBaselineSnapshotID)
         self.cpuCount = try c.decode(Int.self, forKey: .cpuCount)
         self.memorySizeInGB = try c.decode(Int.self, forKey: .memorySizeInGB)
         self.diskSizeInGB = try c.decode(Int.self, forKey: .diskSizeInGB)
@@ -454,16 +476,33 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         return try makeJSONDecoder().decode(VMConfiguration.self, from: data)
     }
 
+    // MARK: - Ephemeral mode
+
+    /// Turns Ephemeral Mode on with `baseline`, or off — which clears the
+    /// baseline choice.
+    ///
+    /// The pairing lives here so no caller can leave a baseline recorded
+    /// against a mode that is off.
+    mutating func applyEphemeralMode(enabled: Bool, baseline: UUID?) {
+        ephemeralModeEnabled = enabled
+        ephemeralBaselineSnapshotID = enabled ? baseline : nil
+    }
+
     // MARK: - Snapshot revert
 
     /// The configuration a revert to `captured` installs: everything the
-    /// snapshot recorded, carrying this VM's identity across.
+    /// snapshot recorded, carrying this VM's identity and its Ephemeral Mode
+    /// policy across.
     ///
     /// `VZVirtualMachine.restoreMachineStateFrom` restores only into the
     /// configuration the state was saved from, so a settings edit made after the
     /// capture has to give way for the saved state to load at all. Subtracting
     /// identity rather than listing the hardware to take back is what keeps a
     /// device added here from being silently dropped from a revert.
+    ///
+    /// Ephemeral Mode is subtracted for a different reason: it is the policy
+    /// that *drives* the power-off revert, so taking a snapshot's copy back
+    /// would let the first automatic revert turn the mode off.
     func adoptingSnapshotState(_ captured: VMConfiguration) -> VMConfiguration {
         var restored = captured
         restored.id = id
@@ -472,6 +511,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         restored.hardwareModelData = hardwareModelData
         restored.machineIdentifierData = machineIdentifierData
         restored.genericMachineIdentifierData = genericMachineIdentifierData
+        restored.ephemeralModeEnabled = ephemeralModeEnabled
+        restored.ephemeralBaselineSnapshotID = ephemeralBaselineSnapshotID
         return restored
     }
 
@@ -541,6 +582,10 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         // every launch — and a clone keeping the source's machine ID would be
         // refused by the duplicate-identity guard every time.
         clone.startsAutomaticallyOnLaunch = false
+
+        // A clone's bundle carries no `Snapshots/`, so the baseline this VM
+        // names is not a restore point the clone holds.
+        clone.applyEphemeralMode(enabled: false, baseline: nil)
 
         return clone
     }

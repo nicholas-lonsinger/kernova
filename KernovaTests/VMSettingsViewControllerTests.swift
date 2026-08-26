@@ -380,6 +380,153 @@ struct VMSettingsViewControllerTests {
         #expect(visibleLabel(VMSettingsViewController.autoStartOrderCaption, in: vc.view))
     }
 
+    // MARK: - Ephemeral Mode
+
+    /// Builds a settings pane over a VM carrying `snapshotCount` snapshots, the
+    /// oldest of which is the Current one.
+    private func makeEphemeralController(
+        snapshotCount: Int, ephemeral: Bool, isReadOnly: Bool = false
+    ) -> (VMSettingsViewController, VMInstance) {
+        let viewModel = makeViewModel()
+        let instance = makeInstance(guestOS: .linux)
+        let snapshots = (0..<snapshotCount).map {
+            VMSnapshot(
+                name: "Snapshot \($0)",
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000 + Double($0) * 60))
+        }
+        instance.snapshotManifest = VMSnapshotManifest(
+            snapshots: snapshots, currentID: snapshots.first?.id)
+        if ephemeral, let baseline = snapshots.first {
+            instance.configuration.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        }
+        let vc = VMSettingsViewController(
+            instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        return (vc, instance)
+    }
+
+    @Test("The Ephemeral toggle is off and disabled for a VM with no snapshots")
+    func ephemeralToggleDisabledWithoutSnapshots() {
+        let (vc, _) = makeEphemeralController(snapshotCount: 0, ephemeral: false)
+        let toggle = firstSwitch(action: "ephemeralModeToggled", in: vc.view)
+
+        #expect(toggle?.state == .off)
+        #expect(toggle?.isEnabled == false)
+        #expect(visibleLabel(EphemeralModeCopy.noSnapshotsCaption, in: vc.view))
+    }
+
+    @Test("One snapshot is enough to offer the mode")
+    func ephemeralToggleEnabledWithASnapshot() {
+        let (vc, _) = makeEphemeralController(snapshotCount: 1, ephemeral: false)
+
+        let toggle = firstSwitch(action: "ephemeralModeToggled", in: vc.view)
+        #expect(toggle?.isEnabled == true)
+        #expect(toggle?.alphaValue == 1)
+        #expect(!visibleLabel(EphemeralModeCopy.noSnapshotsCaption, in: vc.view))
+    }
+
+    @Test("The unofferable Ephemeral toggle is dimmed, not just inert")
+    func ephemeralToggleDimsWhenUnofferable() {
+        let (vc, _) = makeEphemeralController(snapshotCount: 0, ephemeral: false)
+        let toggle = firstSwitch(action: "ephemeralModeToggled", in: vc.view)
+        #expect(toggle?.alphaValue ?? 1 < 1)
+    }
+
+    /// A VM already in the mode can always be taken back out, so the switch
+    /// stays live even once its manifest can no longer offer a baseline.
+    @Test("A VM already in the mode keeps a live toggle with no snapshots")
+    func ephemeralToggleStaysLiveWhenAlreadyOn() {
+        let (vc, instance) = makeEphemeralController(snapshotCount: 1, ephemeral: true)
+        instance.snapshotManifest = VMSnapshotManifest()
+        // Re-runs `apply()` over the mutated manifest.
+        vc.viewDidAppear()
+
+        let toggle = firstSwitch(action: "ephemeralModeToggled", in: vc.view)
+        #expect(toggle?.isEnabled == true)
+        #expect(toggle?.alphaValue == 1)
+    }
+
+    @Test("Turning the mode on defaults the baseline to the current snapshot")
+    func ephemeralToggleDefaultsToCurrent() {
+        let (vc, instance) = makeEphemeralController(snapshotCount: 2, ephemeral: false)
+        guard let toggle = firstSwitch(action: "ephemeralModeToggled", in: vc.view) else {
+            Issue.record("Expected an Ephemeral Mode switch")
+            return
+        }
+
+        toggle.state = .on
+        toggle.sendAction(toggle.action, to: toggle.target)
+
+        #expect(instance.configuration.ephemeralModeEnabled)
+        #expect(
+            instance.configuration.ephemeralBaselineSnapshotID
+                == instance.snapshotManifest.currentID)
+    }
+
+    @Test("Turning the mode off clears the baseline")
+    func ephemeralToggleOffClearsTheBaseline() {
+        let (vc, instance) = makeEphemeralController(snapshotCount: 2, ephemeral: true)
+        guard let toggle = firstSwitch(action: "ephemeralModeToggled", in: vc.view) else {
+            Issue.record("Expected an Ephemeral Mode switch")
+            return
+        }
+
+        toggle.state = .off
+        toggle.sendAction(toggle.action, to: toggle.target)
+
+        #expect(!instance.configuration.ephemeralModeEnabled)
+        #expect(instance.configuration.ephemeralBaselineSnapshotID == nil)
+    }
+
+    @Test("The baseline menu lists the VM's snapshots and selects the chosen one")
+    func ephemeralBaselineMenuListsSnapshots() {
+        let (vc, instance) = makeEphemeralController(snapshotCount: 3, ephemeral: true)
+        guard let popUp = firstPopUp(action: "ephemeralBaselineChanged", in: vc.view) else {
+            Issue.record("Expected a Baseline Snapshot popup")
+            return
+        }
+
+        #expect(popUp.itemArray.count == 3)
+        #expect(
+            (popUp.selectedItem?.representedObject as? UUID)
+                == instance.configuration.ephemeralBaselineSnapshotID)
+    }
+
+    @Test("Choosing another snapshot moves the baseline")
+    func ephemeralBaselineSelectionWritesConfig() {
+        let (vc, instance) = makeEphemeralController(snapshotCount: 3, ephemeral: true)
+        guard let popUp = firstPopUp(action: "ephemeralBaselineChanged", in: vc.view) else {
+            Issue.record("Expected a Baseline Snapshot popup")
+            return
+        }
+        // Rows render newest first, so the first item is not the Current one.
+        let newest = popUp.itemArray[0].representedObject as? UUID
+
+        popUp.select(popUp.itemArray[0])
+        popUp.sendAction(popUp.action, to: popUp.target)
+
+        #expect(instance.configuration.ephemeralBaselineSnapshotID == newest)
+        #expect(instance.configuration.ephemeralModeEnabled)
+    }
+
+    /// The flag is read at power-off and reaches no `VZVirtualMachineConfiguration`,
+    /// so it stays editable while the VM runs — and a running ephemeral VM is
+    /// exactly where a user reaches for the switch.
+    @Test("The Ephemeral toggle stays editable while the VM is running")
+    func ephemeralToggleStaysEnabledWhenReadOnly() {
+        let (vc, _) = makeEphemeralController(
+            snapshotCount: 1, ephemeral: false, isReadOnly: true)
+
+        #expect(firstSwitch(action: "ephemeralModeToggled", in: vc.view)?.isEnabled == true)
+    }
+
+    @Test("The Startup card explains what an ephemeral VM does")
+    func ephemeralCaptionIsShown() {
+        let (vc, _) = makeEphemeralController(snapshotCount: 1, ephemeral: true)
+        #expect(visibleLabel(EphemeralModeCopy.settingsCaption, in: vc.view))
+    }
+
     // MARK: - Startup capacity warning
 
     /// Builds a controller over a library holding `markedMacOSVMs` macOS VMs
@@ -528,6 +675,18 @@ struct VMSettingsViewControllerTests {
 
         let (onVC, _) = makeController(guestOS: .macOS, sharingEnabled: true)
         #expect(firstSwitch(action: "clipboardPassthroughToggled", in: onVC.view)?.isEnabled == true)
+    }
+
+    /// AppKit draws a disabled `NSSwitch` that is *on* at full accent fill, so
+    /// the row reads as live while it is inert; the dim is what says otherwise.
+    @Test("A disabled passthrough toggle is dimmed, not just inert")
+    func passthroughDimsWhenDisabled() {
+        let (offVC, _) = makeController(guestOS: .macOS, sharingEnabled: false)
+        let off = firstSwitch(action: "clipboardPassthroughToggled", in: offVC.view)
+        #expect(off?.alphaValue ?? 1 < 1)
+
+        let (onVC, _) = makeController(guestOS: .macOS, sharingEnabled: true)
+        #expect(firstSwitch(action: "clipboardPassthroughToggled", in: onVC.view)?.alphaValue == 1)
     }
 
     @Test("Enabling passthrough without a window reverts and does not write")
@@ -686,7 +845,7 @@ struct VMSettingsViewControllerTests {
             #expect(containsLabel("Display", in: vc.view))
             #expect(containsLabel("Size display to fit window at startup", in: vc.view))
             #expect(containsLabel("Resolution", in: vc.view))
-            #expect(firstPopUp(in: vc.view) != nil)
+            #expect(firstPopUp(action: "displayResolutionChanged", in: vc.view) != nil)
         }
     }
 
@@ -706,7 +865,7 @@ struct VMSettingsViewControllerTests {
     func matchWindowToggleWritesAndDisables() {
         let (vc, instance) = makeDisplayController()
         guard let match = firstSwitch(action: "displayMatchWindowToggled", in: vc.view),
-            let popUp = firstPopUp(in: vc.view)
+            let popUp = firstPopUp(action: "displayResolutionChanged", in: vc.view)
         else {
             Issue.record("Expected the match-window switch and the resolution popup")
             return
@@ -729,7 +888,7 @@ struct VMSettingsViewControllerTests {
     func matchWindowOnDisablesFromBuild() {
         let (vc, _) = makeDisplayController(sizesToWindow: true)
 
-        #expect(firstPopUp(in: vc.view)?.isEnabled == false)
+        #expect(firstPopUp(action: "displayResolutionChanged", in: vc.view)?.isEnabled == false)
         #expect(editableField("Width", in: vc.view)?.isEnabled == false)
         #expect(editableField("Height", in: vc.view)?.isEnabled == false)
         // HiDPI picks the scale the computed size is measured at, so it stays
@@ -741,7 +900,7 @@ struct VMSettingsViewControllerTests {
     @Test("Choosing a preset writes it and fills the size fields")
     func presetWritesResolution() {
         let (vc, instance) = makeDisplayController()
-        guard let popUp = firstPopUp(in: vc.view) else {
+        guard let popUp = firstPopUp(action: "displayResolutionChanged", in: vc.view) else {
             Issue.record("Expected the resolution popup")
             return
         }
@@ -759,7 +918,7 @@ struct VMSettingsViewControllerTests {
         let (vc, instance) = makeDisplayController()
         guard let width = editableField("Width", in: vc.view),
             let height = editableField("Height", in: vc.view),
-            let popUp = firstPopUp(in: vc.view)
+            let popUp = firstPopUp(action: "displayResolutionChanged", in: vc.view)
         else {
             Issue.record("Expected the width, height, and resolution controls")
             return
@@ -902,7 +1061,7 @@ struct VMSettingsViewControllerTests {
 
             #expect(
                 firstSwitch(action: "displayMatchWindowToggled", in: vc.view)?.isEnabled == false)
-            #expect(firstPopUp(in: vc.view)?.isEnabled == false)
+            #expect(firstPopUp(action: "displayResolutionChanged", in: vc.view)?.isEnabled == false)
             #expect(editableField("Width", in: vc.view)?.isEnabled == false)
             #expect(firstSwitch(action: "displayAutoResizeToggled", in: vc.view)?.isEnabled == true)
             if guestOS == .macOS {
@@ -1866,8 +2025,10 @@ struct VMSettingsViewControllerTests {
         } != nil
     }
 
-    private func firstPopUp(in view: NSView) -> NSPopUpButton? {
-        firstSubview(NSPopUpButton.self, in: view)
+    /// The form holds several popups, so each is found by the action it sends
+    /// rather than by position in the view tree.
+    private func firstPopUp(action name: String, in view: NSView) -> NSPopUpButton? {
+        firstSubview(NSPopUpButton.self, in: view) { $0.action.map(NSStringFromSelector) == name }
     }
 
     /// The editable field in the grouped-form card row titled `label`, however

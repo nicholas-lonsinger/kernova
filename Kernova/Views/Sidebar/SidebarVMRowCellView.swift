@@ -49,6 +49,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
 
     private let iconView = NSImageView()
     private let nameField = NSTextField()
+    private let ephemeralBadge = SidebarEphemeralBadgeView()
     private let agentButton = SidebarAgentStatusButtonView()
     private let spinner = NSProgressIndicator()
     /// A flexible filler trailing the name so the name field can hug its text
@@ -109,15 +110,21 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         spinner.setContentHuggingPriority(.required, for: .horizontal)
         spinner.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        // Keep the trailing accessory rigid so the name field is the sole flexible
-        // element, truncating only when genuinely out of room.
-        agentButton.setContentHuggingPriority(.required, for: .horizontal)
-        agentButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // Keep the trailing accessories rigid so the name field is the sole
+        // flexible element, truncating only when genuinely out of room.
+        for accessory in [ephemeralBadge, agentButton] as [NSView] {
+            accessory.setContentHuggingPriority(.required, for: .horizontal)
+            accessory.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        ephemeralBadge.isHidden = true
 
         // The icon and spinner share the leading slot: exactly one is visible at a
         // time, and both are pinned to the same width so the name field doesn't
-        // shift when they swap.
-        let row = NSStackView(views: [iconView, spinner, nameField, nameSpacer, agentButton])
+        // shift when they swap. The agent badge stays outermost — it is the one
+        // that asks for action, where the ephemeral badge only states a policy.
+        let row = NSStackView(views: [
+            iconView, spinner, nameField, nameSpacer, ephemeralBadge, agentButton,
+        ])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.distribution = .fill
@@ -168,9 +175,12 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         self.onCommitRename = onCommitRename
         self.onCancelRename = onCancelRename
 
-        // A recycled cell may still show the previous VM's open agent popover;
-        // close it on rebind so its action can't fire against the new VM.
-        if isRebindToDifferentVM { agentButton.reset() }
+        // A recycled cell may still show the previous VM's open popovers; close
+        // them on rebind so an action can't fire against the new VM.
+        if isRebindToDifferentVM {
+            agentButton.reset()
+            ephemeralBadge.reset()
+        }
         agentButton.onMount = onMountAgent
         agentButton.onDismiss = onDismissAgentNudge
 
@@ -196,6 +206,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
                 _ = instance.setupState
                 _ = instance.configuration.agentInstallNudgeDismissed
                 _ = instance.configuration.lastSeenAgentVersion
+                _ = instance.configuration.ephemeralModeEnabled
             },
             apply: { [weak self] in
                 self?.applyLiveState()
@@ -223,6 +234,10 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
             applyIconStateColor()
             iconView.toolTip = instance.statusToolTip
         }
+
+        let showsEphemeral = instance.configuration.ephemeralModeEnabled
+        if !showsEphemeral { ephemeralBadge.reset() }
+        ephemeralBadge.isHidden = !showsEphemeral
 
         if let agentStatus = Self.visibleAgentStatus(
             for: instance, installPromptDisabled: installPromptDisabled)
@@ -395,17 +410,24 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         agentButton.onMount = nil
         agentButton.onDismiss = nil
         agentButton.isHidden = true
+        ephemeralBadge.reset()
+        ephemeralBadge.isHidden = true
     }
 
     // MARK: - Intrinsic width
 
     /// The cell content width — excluding the outline view's per-row indentation,
     /// which the caller adds — at which `name` stops truncating.
-    static func contentWidth(forName name: String, showsAgentAccessory: Bool) -> CGFloat {
+    static func contentWidth(
+        forName name: String, showsAgentAccessory: Bool, showsEphemeralAccessory: Bool
+    ) -> CGFloat {
         let nameWidth = ceil(measuredNameWidth(for: name))
         var width =
             Self.rowLeadingInset + Self.iconSlotWidth + Spacing.small + nameWidth
             + Self.rowTrailingInset
+        if showsEphemeralAccessory {
+            width += Spacing.small + SidebarEphemeralBadgeView.width
+        }
         if showsAgentAccessory {
             width += Spacing.small + SidebarAgentStatusButtonView.width
         }

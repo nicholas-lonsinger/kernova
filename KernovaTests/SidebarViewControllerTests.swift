@@ -479,20 +479,43 @@ struct SidebarViewControllerTests {
 
     @Test("contentWidth grows with name length")
     func contentWidthGrowsWithName() {
-        let short = SidebarVMRowCellView.contentWidth(forName: "A", showsAgentAccessory: false)
+        let short = SidebarVMRowCellView.contentWidth(
+            forName: "A", showsAgentAccessory: false, showsEphemeralAccessory: false)
         let long = SidebarVMRowCellView.contentWidth(
-            forName: "A much longer virtual machine name", showsAgentAccessory: false)
+            forName: "A much longer virtual machine name", showsAgentAccessory: false,
+            showsEphemeralAccessory: false)
         #expect(long > short)
     }
 
     @Test("contentWidth adds the agent accessory width and gap")
     func contentWidthAccessoryDelta() {
         let withoutBadge = SidebarVMRowCellView.contentWidth(
-            forName: "Test VM", showsAgentAccessory: false)
+            forName: "Test VM", showsAgentAccessory: false, showsEphemeralAccessory: false)
         let withBadge = SidebarVMRowCellView.contentWidth(
-            forName: "Test VM", showsAgentAccessory: true)
+            forName: "Test VM", showsAgentAccessory: true, showsEphemeralAccessory: false)
         // The accessory adds its 16pt width plus the small inter-element gap.
         #expect(withBadge - withoutBadge == Spacing.small + 16)
+    }
+
+    @Test("contentWidth adds the ephemeral accessory width and gap")
+    func contentWidthEphemeralAccessoryDelta() {
+        let plain = SidebarVMRowCellView.contentWidth(
+            forName: "Test VM", showsAgentAccessory: false, showsEphemeralAccessory: false)
+        let withEphemeral = SidebarVMRowCellView.contentWidth(
+            forName: "Test VM", showsAgentAccessory: false, showsEphemeralAccessory: true)
+        #expect(withEphemeral - plain == Spacing.small + SidebarEphemeralBadgeView.width)
+    }
+
+    @Test("contentWidth reserves a slot for each accessory when both show")
+    func contentWidthBothAccessories() {
+        let plain = SidebarVMRowCellView.contentWidth(
+            forName: "Test VM", showsAgentAccessory: false, showsEphemeralAccessory: false)
+        let both = SidebarVMRowCellView.contentWidth(
+            forName: "Test VM", showsAgentAccessory: true, showsEphemeralAccessory: true)
+        #expect(
+            both - plain
+                == (Spacing.small + SidebarEphemeralBadgeView.width)
+                + (Spacing.small + SidebarAgentStatusButtonView.width))
     }
 
     @Test("widthToFitLongestRow is nil with no VMs")

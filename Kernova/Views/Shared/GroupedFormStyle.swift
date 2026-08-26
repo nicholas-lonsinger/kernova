@@ -198,36 +198,91 @@ func makeGroupedFormCard(rows: [NSView]) -> NSView {
 /// Leading indent applied to a sub-option nested beneath its parent row.
 let groupedFormSubOptionIndent: CGFloat = 20
 
-/// Composes a primary row and a dependent sub-option into a single grouped-form
-/// "row": the sub-option (and the hairline separating it) are indented beneath
-/// the primary so the pair reads as a parent → child unit.
+/// A primary row and a dependent sub-option as a single grouped-form "row": the
+/// sub-option (and the hairline separating it) are indented beneath the primary
+/// so the pair reads as a parent → child unit.
 ///
-/// Pass the result to ``makeGroupedFormCard(rows:)`` in place of two sibling
-/// rows, so the card's full-width separators land only *around* the pair.
+/// Pass one to ``makeGroupedFormCard(rows:)`` in place of two sibling rows, so
+/// the card's full-width separators land only *around* the pair.
+/// ``isSubOptionHidden`` collapses the sub-option and its hairline together,
+/// for a child that is meaningless until the parent is on.
 @MainActor
-func makeGroupedFormSubOptionGroup(primary: NSView, subOption: NSView) -> NSView {
-    let hairline = makeGroupedFormHairline()
-    let container = NSView()
-    for view in [primary, hairline, subOption] {
+final class GroupedFormSubOptionGroup: NSStackView {
+    private let hairlineRow: NSView
+    private let subOptionRow: NSView
+
+    init(primary: NSView, subOption: NSView) {
+        hairlineRow = Self.indented(makeGroupedFormHairline())
+        subOptionRow = Self.indented(subOption)
+        super.init(frame: .zero)
+        orientation = .vertical
+        alignment = .leading
+        spacing = Spacing.relaxed
+        translatesAutoresizingMaskIntoConstraints = false
+        for view in [primary, hairlineRow, subOptionRow] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("GroupedFormSubOptionGroup does not support NSCoder")
+    }
+
+    /// Hides the sub-option along with the hairline above it, leaving the
+    /// primary row as the card's whole row.
+    var isSubOptionHidden: Bool {
+        get { subOptionRow.isHidden }
+        set {
+            hairlineRow.isHidden = newValue
+            subOptionRow.isHidden = newValue
+        }
+    }
+
+    /// Wraps `view` so it sits at the sub-option indent while its container
+    /// still spans the card, which is what lets the stack hide it as a row.
+    private static func indented(_ view: NSView) -> NSView {
+        let container = NSView()
         view.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+            view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            view.leadingAnchor.constraint(
+                equalTo: container.leadingAnchor, constant: groupedFormSubOptionIndent),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+        ])
+        return container
     }
-    let indent = groupedFormSubOptionIndent
-    NSLayoutConstraint.activate([
-        primary.topAnchor.constraint(equalTo: container.topAnchor),
-        primary.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-        primary.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+}
 
-        hairline.topAnchor.constraint(equalTo: primary.bottomAnchor, constant: Spacing.relaxed),
-        hairline.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: indent),
-        hairline.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+@MainActor
+func makeGroupedFormSubOptionGroup(
+    primary: NSView, subOption: NSView
+) -> GroupedFormSubOptionGroup {
+    GroupedFormSubOptionGroup(primary: primary, subOption: subOption)
+}
 
-        subOption.topAnchor.constraint(equalTo: hairline.bottomAnchor, constant: Spacing.relaxed),
-        subOption.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: indent),
-        subOption.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-        subOption.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-    ])
-    return container
+// MARK: - Row enablement
+
+/// Applies an enabled/disabled appearance to a form row's control and the label
+/// beside it, for a row whose enablement is decided per-refresh rather than by
+/// the pane's read-only lock.
+///
+/// `isEnabled` alone is not enough: AppKit draws a disabled `NSSwitch` that is
+/// **on** at its full accent fill (measured on macOS 27 developer beta 4), so
+/// the row reads as live while it is inert. Dimming the control is what makes
+/// it read as disabled, and graying the label keeps the pair consistent —
+/// AppKit never fades a plain `NSTextField` for a neighboring control.
+@MainActor
+func applyGroupedFormRowEnabled(
+    _ isEnabled: Bool, control: NSControl, label: NSTextField?
+) {
+    control.isEnabled = isEnabled
+    control.alphaValue = isEnabled ? 1 : 0.5
+    label?.textColor = isEnabled ? .labelColor : .disabledControlTextColor
 }
 
 // MARK: - Labels

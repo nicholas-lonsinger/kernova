@@ -23,7 +23,7 @@ final class SnapshotSectionView: NSView {
 
     /// The snapshot being renamed inline, or `nil`.
     ///
-    /// While set, ``update(manifest:canTakeSnapshot:canRevert:canModify:)``
+    /// While set, ``update(manifest:canTakeSnapshot:canRevert:canModify:baselineID:)``
     /// skips its rebuild so a refresh landing mid-edit can't destroy the
     /// editing field.
     private(set) var activeRename: UUID?
@@ -34,13 +34,16 @@ final class SnapshotSectionView: NSView {
 
     /// What the rows were last rendered under, so a cancelled rename can
     /// re-render without the settings pane feeding the state in again.
-    private var gate = Gate(canTakeSnapshot: false, canRevert: false, canModify: false)
+    private var gate = Gate(
+        canTakeSnapshot: false, canRevert: false, canModify: false, baselineID: nil)
 
     private struct Gate {
         let canTakeSnapshot: Bool
         let canRevert: Bool
         /// Whether the list may be edited — the ••• menu's Rename and Delete.
         let canModify: Bool
+        /// The VM's Ephemeral baseline, which the mode bars deleting.
+        let baselineID: UUID?
     }
 
     /// Live row views keyed by snapshot id, so the ••• menu's "Rename" starts
@@ -53,7 +56,7 @@ final class SnapshotSectionView: NSView {
         let icon: AttachmentIconButton
         let title: InlineRenameTitleView
         let subtitle: NSTextField
-        let currentLabel: NSTextField
+        let markerLabel: NSTextField
         let revertButton: NSButton
     }
 
@@ -62,8 +65,21 @@ final class SnapshotSectionView: NSView {
     private struct RenderedRow: Equatable {
         let snapshot: VMSnapshot
         let isCurrent: Bool
+        /// `true` for the snapshot Ephemeral Mode returns this VM to.
+        let isBaseline: Bool
         let canRevert: Bool
         let canModify: Bool
+
+        /// The row's trailing marker — the two roles read as one caption when a
+        /// snapshot holds both, which is where an ephemeral VM rests.
+        var markerText: String {
+            switch (isBaseline, isCurrent) {
+            case (true, true): "Baseline \u{00B7} Current"
+            case (true, false): "Baseline"
+            case (false, true): "Current"
+            case (false, false): ""
+            }
+        }
     }
     private var renderedRows: [RenderedRow]?
 
@@ -177,16 +193,23 @@ final class SnapshotSectionView: NSView {
     // MARK: - State
 
     /// Renders `manifest`, rebuilding the rows only when what they show changed.
+    ///
+    /// `baselineID` names the VM's Ephemeral baseline, or is `nil` when the mode
+    /// is off.
     func update(
-        manifest: VMSnapshotManifest, canTakeSnapshot: Bool, canRevert: Bool, canModify: Bool
+        manifest: VMSnapshotManifest, canTakeSnapshot: Bool, canRevert: Bool, canModify: Bool,
+        baselineID: UUID?
     ) {
         self.manifest = manifest
-        gate = Gate(canTakeSnapshot: canTakeSnapshot, canRevert: canRevert, canModify: canModify)
+        gate = Gate(
+            canTakeSnapshot: canTakeSnapshot, canRevert: canRevert, canModify: canModify,
+            baselineID: baselineID)
         takeSnapshotButton.isEnabled = canTakeSnapshot
 
         let models = manifest.ordered.map { snapshot in
             RenderedRow(
                 snapshot: snapshot, isCurrent: snapshot.id == manifest.currentID,
+                isBaseline: snapshot.id == baselineID,
                 canRevert: canRevert, canModify: canModify)
         }
         let structural = renderedRows?.map(\.snapshot.id) != models.map(\.snapshot.id)
@@ -245,7 +268,8 @@ final class SnapshotSectionView: NSView {
             guard let self else { return }
             self.update(
                 manifest: self.manifest, canTakeSnapshot: self.gate.canTakeSnapshot,
-                canRevert: self.gate.canRevert, canModify: self.gate.canModify)
+                canRevert: self.gate.canRevert, canModify: self.gate.canModify,
+                baselineID: self.gate.baselineID)
         }
     }
 
@@ -255,7 +279,9 @@ final class SnapshotSectionView: NSView {
         guard let snapshot = manifest.snapshot(id: id),
             let model = renderedRows?.first(where: { $0.snapshot.id == id })
         else { return nil }
-        return makeRowMenu(for: snapshot, canRevert: model.canRevert, canModify: model.canModify)
+        return makeRowMenu(
+            for: snapshot, canRevert: model.canRevert, canModify: model.canModify,
+            isBaseline: model.isBaseline)
     }
 
     /// The context menu for one snapshot row — the same menu the ••• button
@@ -264,8 +290,12 @@ final class SnapshotSectionView: NSView {
     /// Rename and Delete follow `canModify`: both write the manifest a revert
     /// is reading, and the serialization behind them rejects rather than
     /// queues, so an enabled item during an unsettled operation would only
-    /// produce an error alert.
-    func makeRowMenu(for snapshot: VMSnapshot, canRevert: Bool, canModify: Bool) -> NSMenu {
+    /// produce an error alert. Delete is additionally barred on an Ephemeral
+    /// baseline, which the VM needs back at every power-off.
+    func makeRowMenu(
+        for snapshot: VMSnapshot, canRevert: Bool, canModify: Bool, isBaseline: Bool
+    ) -> NSMenu {
+        let canDelete = canModify && !isBaseline
         let menu = NSMenu()
         menu.autoenablesItems = false
 
@@ -280,7 +310,11 @@ final class SnapshotSectionView: NSView {
         menu.addItem(.separator())
         // Always confirms, and destructively — so it carries the ellipsis.
         let delete = menuItem("Delete\u{2026}", #selector(menuDelete(_:)), snapshot)
-        delete.isEnabled = canModify
+        delete.isEnabled = canDelete
+        if canModify && !canDelete {
+            delete.toolTip =
+                "This snapshot is the Ephemeral baseline. Turn off Ephemeral Mode to delete it."
+        }
         menu.addItem(delete)
         return menu
     }
@@ -372,11 +406,10 @@ final class SnapshotSectionView: NSView {
             subtitle.trailingAnchor.constraint(equalTo: textStack.trailingAnchor),
         ])
 
-        let currentLabel = NSTextField(labelWithString: "Current")
-        currentLabel.font = .preferredFont(forTextStyle: .caption1)
-        currentLabel.textColor = .secondaryLabelColor
-        currentLabel.isSelectable = false
-        currentLabel.toolTip = "The state this VM was last taken from or reverted to"
+        let markerLabel = NSTextField(labelWithString: model.markerText)
+        markerLabel.font = .preferredFont(forTextStyle: .caption1)
+        markerLabel.textColor = .secondaryLabelColor
+        markerLabel.isSelectable = false
 
         let revert = makeLinkButton("Revert", target: self, action: #selector(revertTapped(_:)))
         revert.font = Typography.body
@@ -396,13 +429,13 @@ final class SnapshotSectionView: NSView {
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        for accessory in [icon, currentLabel, revert, menuButton] as [NSView] {
+        for accessory in [icon, markerLabel, revert, menuButton] as [NSView] {
             accessory.setContentHuggingPriority(.required, for: .horizontal)
             accessory.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
 
         let container = NSStackView(views: [
-            icon, textStack, spacer, currentLabel, revert, menuButton,
+            icon, textStack, spacer, markerLabel, revert, menuButton,
         ])
         container.orientation = .horizontal
         container.alignment = .centerY
@@ -412,7 +445,7 @@ final class SnapshotSectionView: NSView {
 
         let row = Row(
             container: container, icon: icon, title: title, subtitle: subtitle,
-            currentLabel: currentLabel, revertButton: revert)
+            markerLabel: markerLabel, revertButton: revert)
         apply(model, to: row)
         return row
     }
@@ -420,8 +453,22 @@ final class SnapshotSectionView: NSView {
     private func apply(_ model: RenderedRow, to row: Row) {
         row.title.update(title: model.snapshot.name, controlsEnabled: model.canModify)
         row.subtitle.stringValue = subtitleText(for: model.snapshot)
-        row.currentLabel.isHidden = !model.isCurrent
+        row.markerLabel.stringValue = model.markerText
+        row.markerLabel.toolTip = Self.markerToolTip(for: model)
+        row.markerLabel.isHidden = model.markerText.isEmpty
         row.revertButton.isEnabled = model.canRevert
+    }
+
+    /// What each marker role means, so the caption doesn't have to spell it out.
+    private static func markerToolTip(for model: RenderedRow) -> String? {
+        let current = "The state this VM was last taken from or reverted to"
+        let baseline = "The snapshot this VM returns to at every shutdown"
+        switch (model.isBaseline, model.isCurrent) {
+        case (true, true): return "\(baseline). \(current)."
+        case (true, false): return baseline
+        case (false, true): return current
+        case (false, false): return nil
+        }
     }
 
     /// "date · size on disk", or the date alone until the size read lands.
