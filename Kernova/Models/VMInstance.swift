@@ -532,9 +532,14 @@ final class VMInstance {
 
     /// `true` when the VM is eligible for forceful termination.
     ///
-    /// Cold-paused VMs are excluded — there is nothing in memory to terminate.
+    /// A live `VZVirtualMachine` is what a force stop acts on, so its absence
+    /// decides: cold-paused VMs have nothing in memory to terminate, a
+    /// disks-only capture is a file copy with no VM behind it, and a start
+    /// still assembling its configuration has yet to create one. Each would
+    /// otherwise drop the running operation's claim and then fail with
+    /// ``VirtualizationError/noVirtualMachine``.
     var canForceStop: Bool {
-        status.canForceStop && !isColdPaused
+        status.canForceStop && hasLiveVirtualMachine
     }
 
     /// `true` when the VM can be deleted — nothing live in memory, no

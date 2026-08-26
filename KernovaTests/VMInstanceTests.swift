@@ -387,11 +387,23 @@ struct VMInstanceTests {
 
     // MARK: - canForceStop
 
-    @Test("canForceStop is true when running or transitioning (without live VM, tests model logic)")
+    @Test("canForceStop is true when running or transitioning with a live VM to terminate")
     func canForceStopRunningAndTransitions() {
-        for status in [VMStatus.running, .starting, .saving, .restoring] {
+        for status in [VMStatus.running, .starting, .saving, .snapshotting, .restoring] {
             let instance = makeInstance(status: status)
-            #expect(instance.canForceStop == true)
+            instance.hasLiveVirtualMachineOverrideForTesting = true
+            #expect(instance.canForceStop == true, "status \(status.displayName)")
+        }
+    }
+
+    @Test("canForceStop needs a live VM, so a session-less transition doesn't offer it")
+    func canForceStopNeedsALiveVirtualMachine() {
+        // A disks-only capture is a file copy with no VM behind it, and a start
+        // still assembling its configuration has yet to create one.
+        for status in [VMStatus.snapshotting, .starting, .restoring] {
+            let instance = makeInstance(status: status)
+            instance.hasLiveVirtualMachineOverrideForTesting = false
+            #expect(instance.canForceStop == false, "status \(status.displayName)")
         }
     }
 

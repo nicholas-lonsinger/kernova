@@ -15,11 +15,20 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
 
     private let vmName: String
     private let suggestedName: String
-    /// What the capture would produce, which the header and caption describe.
-    private let kind: VMSnapshotKind
+
+    /// What a capture confirmed right now would produce, which the header and
+    /// caption describe.
+    ///
+    /// Not fixed at presentation: the guest can finish powering off while this
+    /// window-modal sheet is up, and the kind is stamped at confirm time
+    /// (``VMLibraryViewModel/takeSnapshot(_:name:notes:)``) — so the copy has to
+    /// follow it or it describes a capture that won't happen.
+    private(set) var kind: VMSnapshotKind
 
     private let nameField = NSTextField()
     private let notesField = NSTextField()
+    private let headerBodyLabel = NSTextField(wrappingLabelWithString: "")
+    private var captionLabel = NSTextField()
 
     /// The name the sheet would confirm with right now.
     var enteredName: String { nameField.stringValue }
@@ -42,9 +51,20 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         fatalError("TakeSnapshotSheetContentViewController does not support NSCoder")
     }
 
+    /// Re-renders the copy for the kind a capture would now produce; a no-op
+    /// when it hasn't moved.
+    func update(kind: VMSnapshotKind) {
+        guard kind != self.kind else { return }
+        self.kind = kind
+        guard isViewLoaded else { return }
+        headerBodyLabel.stringValue = headerBodyText
+        captionLabel.stringValue = captionText
+    }
+
     override func loadView() {
+        captionLabel = makeGroupedFormCaption(captionText)
         let stack = NSStackView(views: [
-            makeHeader(), makeFormCard(), makeGroupedFormCaption(captionText), makeFooter(),
+            makeHeader(), makeFormCard(), captionLabel, makeFooter(),
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -121,7 +141,8 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         title.lineBreakMode = .byTruncatingMiddle
         title.isSelectable = false
 
-        let body = NSTextField(wrappingLabelWithString: headerBodyText)
+        let body = headerBodyLabel
+        body.stringValue = headerBodyText
         body.font = .preferredFont(forTextStyle: .callout)
         body.alignment = .center
         body.maximumNumberOfLines = 0

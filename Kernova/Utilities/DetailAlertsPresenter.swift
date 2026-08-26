@@ -23,6 +23,10 @@ final class DetailAlertsPresenter: NSObject {
     /// the dedupe ``shownSnapshotInstance`` can't answer, since that is only
     /// set once the queue reaches the request.
     private var isSnapshotSheetQueued = false
+    /// Keeps the shown Take Snapshot sheet's copy on the kind its VM would
+    /// capture *now*, which a guest finishing its shutdown moves while the
+    /// sheet is up; cancelled when the sheet closes.
+    private var snapshotSheetKindObservation: ObservationLoop?
     private var isShowingAlert = false
     /// A requested VM deletion (target + disposition).
     private struct PendingDelete {
@@ -93,6 +97,8 @@ final class DetailAlertsPresenter: NSObject {
         if deleteSheetPresenter.isShown { deleteSheetPresenter.reset() }
         shownSnapshotInstance = nil
         isSnapshotSheetQueued = false
+        snapshotSheetKindObservation?.cancel()
+        snapshotSheetKindObservation = nil
         if snapshotSheetPresenter.isShown { snapshotSheetPresenter.reset() }
     }
 
@@ -225,8 +231,23 @@ final class DetailAlertsPresenter: NSObject {
             kind: instance.snapshotKindForCapture)
         content.delegate = self
         shownSnapshotInstance = instance
+        // The capture's kind is decided at confirm time, so the sheet's copy
+        // tracks the VM rather than freezing at what it was when it opened.
+        snapshotSheetKindObservation?.cancel()
+        snapshotSheetKindObservation = observeRecurring(
+            track: { [weak instance] in
+                _ = instance?.status
+                _ = instance?.hasLiveVirtualMachine
+            },
+            apply: { [weak content, weak instance] in
+                guard let content, let instance else { return }
+                content.update(kind: instance.snapshotKindForCapture)
+            }
+        )
         snapshotSheetPresenter.onClose = { [weak self] in
             self?.shownSnapshotInstance = nil
+            self?.snapshotSheetKindObservation?.cancel()
+            self?.snapshotSheetKindObservation = nil
             self?.runNext()
         }
         snapshotSheetPresenter.show(content: content, in: window)
@@ -348,8 +369,10 @@ final class DetailAlertsPresenter: NSObject {
     /// The revert confirmation.
     ///
     /// The safe path — check-point the current state, then revert — is the
-    /// default button, so Return never fires the destructive one. A VM with no
-    /// live state to capture is offered the revert alone.
+    /// default button, so Return never fires the destructive one. It is offered
+    /// wherever a capture can be taken, which covers a stopped VM (a disks-only
+    /// check-point); a VM that cannot be captured at all — cold-paused, or
+    /// mid-operation — is offered the revert alone.
     private func revertSnapshotConfig(
         _ snapshot: VMSnapshot, _ vm: VMInstance
     ) -> AlertConfiguration {

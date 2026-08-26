@@ -412,6 +412,9 @@ struct SidebarViewControllerTests {
         preferences.alwaysShowAdvancedOptions = false
         let viewModel = makeViewModel()
         let instance = makeInstance(status: .starting)
+        // Force Stop acts on the live VZ VM, which a start has by the time it is
+        // running the guest.
+        instance.hasLiveVirtualMachineOverrideForTesting = true
         viewModel.instances.append(instance)
         let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
 
@@ -422,6 +425,19 @@ struct SidebarViewControllerTests {
         // visible without holding Option.
         #expect(!menuTitles.contains("Stop"))
         #expect(menuItem("Force Stop…", in: menu)?.isAlternate == false)
+    }
+
+    @Test("A disks-only capture offers no Force Stop — there is no VM to terminate")
+    func contextMenuNoForceStopDuringAColdCapture() {
+        let viewModel = makeViewModel()
+        let instance = makeInstance(status: .snapshotting)
+        instance.hasLiveVirtualMachineOverrideForTesting = false
+        viewModel.instances.append(instance)
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+
+        let menuTitles = titles(of: controller.buildContextMenu(for: instance))
+
+        #expect(!menuTitles.contains("Force Stop…"))
     }
 
     @Test("Delete Immediately is the Option-alternate of Move to Trash (advanced options off)")

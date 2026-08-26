@@ -135,18 +135,48 @@ struct DetailRouteTests {
         }
     }
 
-    @Test("A disks-only capture of a stopped VM routes to a transition, not the display pane")
-    func snapshottingWithoutALiveVMRoutesToTransition() {
-        for paneMode in [DetailPaneMode.display, .settings] {
-            let route = DetailRoute.resolve(
-                preparingLabel: nil,
-                status: .snapshotting,
-                errorMessage: nil,
-                hasSetupState: false,
-                detailPaneMode: paneMode,
-                hasLiveVirtualMachine: false
-            )
-            #expect(route == .transition(label: VMStatus.snapshotting.displayName))
+    @Test("A session-less transition routes to its spinner, not the display pane")
+    func sessionLessTransitionsRouteToTransition() {
+        // A revert always tears the session down before `.restoring`, and a
+        // disks-only capture never had one — both would otherwise replace the
+        // Settings form with the display backing view for the whole copy.
+        for status in [VMStatus.snapshotting, .restoring, .saving] {
+            for paneMode in [DetailPaneMode.display, .settings] {
+                let route = DetailRoute.resolve(
+                    preparingLabel: nil,
+                    status: status,
+                    errorMessage: nil,
+                    hasSetupState: false,
+                    detailPaneMode: paneMode,
+                    hasLiveVirtualMachine: false
+                )
+                #expect(
+                    route == .transition(label: status.displayName),
+                    "status \(status.displayName), pane \(paneMode)")
+            }
         }
+    }
+
+    @Test("A cold-paused VM keeps the display pane — it is settled, not transitioning")
+    func coldPausedKeepsTheDisplayPane() {
+        let display = DetailRoute.resolve(
+            preparingLabel: nil,
+            status: .paused,
+            errorMessage: nil,
+            hasSetupState: false,
+            detailPaneMode: .display,
+            hasLiveVirtualMachine: false
+        )
+        #expect(display == .display)
+
+        let settings = DetailRoute.resolve(
+            preparingLabel: nil,
+            status: .paused,
+            errorMessage: nil,
+            hasSetupState: false,
+            detailPaneMode: .settings,
+            hasLiveVirtualMachine: false
+        )
+        #expect(settings == .settings(isReadOnly: true))
     }
 }

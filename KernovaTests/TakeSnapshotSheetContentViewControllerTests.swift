@@ -103,4 +103,19 @@ struct TakeSnapshotSheetContentViewControllerTests {
         // The shared-blocks note stands either way.
         #expect(sheet.captionText.contains("share their blocks"))
     }
+
+    @Test("A guest powering off while the sheet is up moves its copy to disks-only")
+    func updatingTheKindRewritesTheRenderedCopy() {
+        let (sheet, _) = makeSheet(kind: .warm)
+        let body = findLabel(containing: "memory and disks", in: sheet.view)
+        #expect(body != nil)
+
+        sheet.update(kind: .cold)
+
+        #expect(sheet.kind == .cold)
+        // The same labels, rewritten — not a stale copy left on screen.
+        #expect(body?.stringValue.contains("powered off") == true)
+        #expect(findLabel(containing: "memory and disks", in: sheet.view) == nil)
+        #expect(findLabel(containing: "pauses briefly", in: sheet.view) == nil)
+    }
 }
