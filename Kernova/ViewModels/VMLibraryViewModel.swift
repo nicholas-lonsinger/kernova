@@ -116,12 +116,14 @@ final class VMLibraryViewModel {
     var hasPreparing: Bool { instances.contains(where: \.isPreparing) }
 
     /// Whether any VM is doing work that terminating would destroy rather than
-    /// suspend — an import mid-copy, or a VM mid-save/restore/start/install.
+    /// suspend — an import mid-copy, a VM mid-save/restore/start/install, or a
+    /// revert writing a snapshot's files back over the bundle.
     ///
     /// Excludes settled `.running` and `.paused` VMs, which termination
     /// save-suspends.
     var hasUninterruptibleWork: Bool {
         instances.contains { $0.isPreparing || $0.status.isTransitioning }
+            || hasRevertInFlight
     }
 
     /// Whether any VM is mid-save — the one operation an explicit quit has to
@@ -1070,6 +1072,49 @@ final class VMLibraryViewModel {
     }
 
     func revertConfirmed(_ instance: VMInstance, to snapshot: VMSnapshot) async {
+        await startRevert(instance, to: snapshot).value
+    }
+
+    /// Every revert in flight, keyed by a per-request id.
+    ///
+    /// Keyed by the request rather than the VM: two reverts of one VM would
+    /// share a slot and lose one of them, as would two ephemeral VMs powering
+    /// off together under a VM-keyed map.
+    private var revertTasks: [UUID: Task<Void, Never>] = [:]
+
+    /// Whether any revert is in flight — requested, whether or not it has
+    /// reached the copy.
+    var hasRevertInFlight: Bool { !revertTasks.isEmpty }
+
+    /// Waits until no revert is in flight, including any a running revert
+    /// starts.
+    ///
+    /// Unbounded, matching the termination pass's other waits: a revert
+    /// interrupted mid-write is what the wait exists to prevent.
+    func waitForRevertsToSettle() async {
+        while let task = revertTasks.values.first { await task.value }
+    }
+
+    /// Registers a revert and runs it.
+    ///
+    /// Registration happens *before this returns*, not when the copy starts:
+    /// the task body runs no earlier than the caller's next suspension, so a
+    /// termination gate that reads ``hasRevertInFlight`` immediately after a
+    /// power-off sees the revert the power-off requested. Registering from
+    /// inside the task instead would leave a window where the revert is pending
+    /// and invisible.
+    @discardableResult
+    private func startRevert(_ instance: VMInstance, to snapshot: VMSnapshot) -> Task<Void, Never> {
+        let requestID = UUID()
+        let task = Task { [weak self] in
+            await self?.performRevert(instance, to: snapshot)
+            self?.revertTasks[requestID] = nil
+        }
+        revertTasks[requestID] = task
+        return task
+    }
+
+    private func performRevert(_ instance: VMInstance, to snapshot: VMSnapshot) async {
         guard instance.snapshotManifest.snapshot(id: snapshot.id) != nil else {
             Self.logger.notice(
                 "Refusing to revert '\(instance.name, privacy: .public)': the snapshot is no longer listed"
@@ -1108,31 +1153,20 @@ final class VMLibraryViewModel {
     /// released the VM.
     private func revertToEphemeralBaselineIfNeeded(_ instance: VMInstance) {
         guard let baseline = instance.ephemeralBaselineSnapshot else { return }
-        let id = instance.id
-        ephemeralRevertTasks[id] = Task { [weak self] in
-            await self?.revertToEphemeralBaseline(instance, baseline)
-            self?.ephemeralRevertTasks[id] = nil
-        }
+        revertToEphemeralBaseline(instance, baseline)
     }
-
-    /// The power-off revert in flight for each VM, keyed by id — two ephemeral
-    /// VMs can power off together, so one shared slot would lose one of them.
-    private var ephemeralRevertTasks: [UUID: Task<Void, Never>] = [:]
-
-    #if DEBUG
-    func ephemeralRevertTaskForTesting(_ instance: VMInstance) -> Task<Void, Never>? {
-        ephemeralRevertTasks[instance.id]
-    }
-    #endif
 
     /// The revert an ephemeral power-off performs, on the same path a
     /// user-confirmed revert takes — including its error presentation, so a
     /// baseline that cannot be restored is never silently skipped.
-    private func revertToEphemeralBaseline(_ instance: VMInstance, _ baseline: VMSnapshot) async {
+    @discardableResult
+    private func revertToEphemeralBaseline(
+        _ instance: VMInstance, _ baseline: VMSnapshot
+    ) -> Task<Void, Never> {
         Self.logger.notice(
             "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
         )
-        await revertConfirmed(instance, to: baseline)
+        return startRevert(instance, to: baseline)
     }
 
     /// Routes a cold-paused ephemeral VM's Discard Saved State through the
@@ -1144,7 +1178,7 @@ final class VMLibraryViewModel {
         guard instance.isColdPaused, let baseline = instance.ephemeralBaselineSnapshot else {
             return false
         }
-        await revertToEphemeralBaseline(instance, baseline)
+        await revertToEphemeralBaseline(instance, baseline).value
         return true
     }
 

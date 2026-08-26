@@ -723,8 +723,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         case deferToSavePass
         /// Nothing to save and nothing to wait out.
         case terminateNow
-        /// Reply later: wait out every in-flight save, then save-suspend whatever
-        /// is still live.
+        /// Reply later: wait out every in-flight save and revert, then
+        /// save-suspend whatever is still live.
         case saveThenTerminate
     }
 
@@ -738,6 +738,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// indefinitely, where an explicit quit may only wait out what termination
     /// would corrupt.
     ///
+    /// A revert in flight forces the deferred reply for the same reason: it
+    /// writes the bundle's disks, and can bring the VM back live once they are
+    /// in place — with no live session to save, the gate would otherwise reply
+    /// `.terminateNow` and exit straight through the write.
+    ///
     /// A running save pass outranks the soft-quit downgrade: the app is already
     /// on its way out, so closing the GUI and telling the user it stays resident
     /// would be false.
@@ -745,11 +750,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         shouldTerminateAgent: Bool,
         isSavePassRunning: Bool,
         hasSaveInFlight: Bool,
+        hasRevertInFlight: Bool,
         hasInstancesToSave: Bool
     ) -> TerminationOutcome {
         if isSavePassRunning { return .deferToSavePass }
         guard shouldTerminateAgent else { return .closeGUI }
-        if hasSaveInFlight || hasInstancesToSave { return .saveThenTerminate }
+        if hasSaveInFlight || hasRevertInFlight || hasInstancesToSave { return .saveThenTerminate }
         return .terminateNow
     }
 
@@ -923,6 +929,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             shouldTerminateAgent: isTestHost || quitShouldTerminateAgent,
             isSavePassRunning: isRunningTerminationSavePass,
             hasSaveInFlight: viewModel.hasSaveInFlight,
+            hasRevertInFlight: viewModel.hasRevertInFlight,
             hasInstancesToSave: viewModel.instances.contains(where: \.hasLiveSession)
         ) {
         case .closeGUI:
@@ -982,7 +989,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// Waits out every in-flight save, then save-suspends whatever is still live.
+    /// Waits out every in-flight save and revert, then save-suspends whatever is
+    /// still live.
     ///
     /// One instance per iteration, tracked by id: a failed force-stop leaves the
     /// VM live, so re-selecting on state alone would loop forever, and marking a
@@ -995,6 +1003,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// from breaking out and letting the process exit mid-write. The per-VM wait
     /// below covers the selected VM's own settling operation, per
     /// ``terminationSaveStep(hasLiveSession:hasActiveOperation:)``.
+    ///
+    /// The revert wait sits at the top of the loop for two reasons: this pass's
+    /// own force-stop fallback powers an Ephemeral VM off and registers a revert
+    /// mid-pass, and a revert that brings its VM back live re-enters selection,
+    /// so that VM is save-suspended rather than killed running.
     private func runTerminationSavePass() async {
         var handled: Set<UUID> = []
         var savedCount = 0
@@ -1004,6 +1017,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             if viewModel.hasSaveInFlight {
                 Self.logger.notice("Termination waiting on an in-flight save to settle")
                 await waitForObservedChange { [viewModel] in !viewModel.hasSaveInFlight }
+            }
+            if viewModel.hasRevertInFlight {
+                Self.logger.notice("Termination waiting on an in-flight snapshot revert to settle")
+                await viewModel.waitForRevertsToSettle()
             }
             guard
                 let instance = viewModel.instances.first(where: {

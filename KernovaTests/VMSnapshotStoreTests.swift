@@ -199,6 +199,47 @@ struct VMSnapshotStoreTests {
         #expect(contents(of: fixture.layout.saveFileURL) == "saved-state")
         // Still revertible a second time.
         #expect(contents(of: fixture.layout.snapshotLayout(id: snapshotID).saveFileURL) == "saved-state")
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: fixture.layout.restoreStagingURL.path(percentEncoded: false)))
+    }
+
+    @Test("A restore that fails partway leaves the bundle exactly as it was")
+    func failedRestoreLeavesTheBundleUntouched() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        let store = VMSnapshotStore()
+        let snapshotID = UUID()
+
+        let prepared = try store.prepareSnapshot(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            configuration: fixture.configuration)
+        try store.captureDisks(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            relativePaths: prepared.relativePaths)
+        try Data("saved-state".utf8).write(to: prepared.saveFileURL)
+
+        // The guest moved on since the capture, so every bundle file the revert
+        // would write differs from the snapshot's copy.
+        try Data("diverged".utf8).write(to: fixture.layout.diskImageURL)
+        try Data("diverged-aux".utf8).write(to: fixture.layout.auxiliaryStorageURL)
+        try Data("stale-suspend".utf8).write(to: fixture.layout.saveFileURL)
+
+        // A plan naming a file the snapshot does not hold — the failure a
+        // filesystem error mid-revert produces, made deterministic.
+        let plan = VMSnapshotRestorePlan(
+            configuration: fixture.configuration,
+            relativePaths: ["Disk.asif", "AuxiliaryStorage", "Nowhere.asif"])
+        #expect(throws: (any Error).self) {
+            try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
+        }
+
+        #expect(contents(of: fixture.layout.diskImageURL) == "diverged")
+        #expect(contents(of: fixture.layout.auxiliaryStorageURL) == "diverged-aux")
+        #expect(contents(of: fixture.layout.saveFileURL) == "stale-suspend")
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: fixture.layout.restoreStagingURL.path(percentEncoded: false)))
     }
 
     @Test("Restore refuses a snapshot missing its saved state")

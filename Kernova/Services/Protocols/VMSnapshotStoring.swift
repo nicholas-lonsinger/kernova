@@ -54,6 +54,9 @@ protocol VMSnapshotStoring: Sendable {
 
     /// Writes the snapshot's captured disks, configuration and saved state back
     /// over the bundle's own, replacing whatever is there.
+    ///
+    /// The files are cloned aside first and swapped in only once every clone
+    /// exists, so a failure before the swap leaves the bundle untouched.
     func restore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws
 
     /// Moves one snapshot's directory to the Trash.

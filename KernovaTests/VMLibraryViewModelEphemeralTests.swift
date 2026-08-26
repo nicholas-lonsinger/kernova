@@ -98,10 +98,9 @@ struct VMLibraryViewModelEphemeralTests {
             later: first.later, other: other, otherBaseline: second?.baseline)
     }
 
-    /// Awaits the revert a power-off started on this harness's VM, if it
-    /// started one.
+    /// Awaits every revert a power-off started, if it started any.
     private func settleEphemeralRevert(_ harness: Harness) async {
-        await harness.viewModel.ephemeralRevertTaskForTesting(harness.instance)?.value
+        await harness.viewModel.waitForRevertsToSettle()
     }
 
     // MARK: - Power-off
@@ -137,6 +136,24 @@ struct VMLibraryViewModelEphemeralTests {
         #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
     }
 
+    @Test("A power-off registers its revert before it returns")
+    func powerOffRegistersTheRevertSynchronously() async throws {
+        let harness = try await makeHarness()
+
+        harness.instance.handleSessionEvent(.guestDidStop)
+
+        // No await in between: the termination gate reads this on the very next
+        // main-actor turn, so a revert registered only once its task body ran
+        // would let a quit exit through the copy.
+        #expect(harness.viewModel.hasRevertInFlight)
+        #expect(harness.viewModel.hasUninterruptibleWork)
+
+        await settleEphemeralRevert(harness)
+
+        #expect(!harness.viewModel.hasRevertInFlight)
+        #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
+    }
+
     @Test("Two ephemeral VMs powering off together each return to their own baseline")
     func twoVMsRevertToTheirOwnBaselines() async throws {
         let harness = try await makeHarness(secondVM: true)
@@ -147,7 +164,6 @@ struct VMLibraryViewModelEphemeralTests {
         await harness.viewModel.stop(harness.instance)
         await harness.viewModel.stop(other)
         await settleEphemeralRevert(harness)
-        await harness.viewModel.ephemeralRevertTaskForTesting(other)?.value
 
         #expect(
             Set(harness.virtualization.revertedSnapshots.map(\.id))
