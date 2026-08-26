@@ -395,8 +395,8 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.cold])
     }
 
-    @Test("A rename arriving while an operation is unsettled is refused")
-    func renameRefusedWhileBusy() {
+    @Test("A rename arriving while an operation is unsettled still lands")
+    func renameLandsWhileAnOperationIsUnsettled() {
         let harness = makeHarness()
         let instance = makeInstance(status: .restoring)
         let snapshot = makeSnapshot()
@@ -404,8 +404,8 @@ struct VMLibraryViewModelSnapshotTests {
 
         harness.viewModel.renameSnapshot(snapshot, newName: "Renamed", on: instance)
 
-        #expect(instance.snapshotManifest.snapshot(id: snapshot.id)?.name == snapshot.name)
-        #expect(harness.snapshots.manifest(for: instance.bundleURL) == nil)
+        #expect(instance.snapshotManifest.snapshot(id: snapshot.id)?.name == "Renamed")
+        #expect(harness.snapshots.manifest(for: instance.bundleURL)?.snapshot(id: snapshot.id)?.name == "Renamed")
     }
 
     // MARK: - Delete
@@ -521,8 +521,8 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(harness.snapshots.manifest(for: instance.bundleURL) == instance.snapshotManifest)
     }
 
-    @Test("A note arriving while an operation is unsettled is refused")
-    func notesRefusedWhileBusy() {
+    @Test("A note arriving while an operation is unsettled still lands")
+    func notesLandWhileAnOperationIsUnsettled() {
         let harness = makeHarness()
         let instance = makeInstance(status: .restoring)
         let snapshot = makeSnapshot()
@@ -530,8 +530,25 @@ struct VMLibraryViewModelSnapshotTests {
 
         harness.viewModel.setSnapshotNotes(snapshot, notes: "late", on: instance)
 
-        #expect(instance.snapshotManifest.snapshot(id: snapshot.id)?.notes == snapshot.notes)
-        #expect(harness.snapshots.manifest(for: instance.bundleURL) == nil)
+        #expect(instance.snapshotManifest.snapshot(id: snapshot.id)?.notes == "late")
+        #expect(harness.snapshots.manifest(for: instance.bundleURL)?.snapshot(id: snapshot.id)?.notes == "late")
+    }
+
+    @Test("A rename made mid-revert survives the revert's own manifest write")
+    func renameSurvivesAConcurrentRevert() async {
+        let harness = makeHarness()
+        let instance = makeInstance(status: .restoring)
+        let snapshot = makeSnapshot()
+        seed(harness, instance, [snapshot])
+
+        harness.viewModel.renameSnapshot(snapshot, newName: "Renamed mid-revert", on: instance)
+        await harness.viewModel.revertConfirmed(instance, to: snapshot)
+
+        #expect(instance.snapshotManifest.snapshot(id: snapshot.id)?.name == "Renamed mid-revert")
+        #expect(instance.snapshotManifest.currentID == snapshot.id)
+        #expect(
+            harness.snapshots.manifest(for: instance.bundleURL)?.snapshot(id: snapshot.id)?.name
+                == "Renamed mid-revert")
     }
 
     // MARK: - Sizes

@@ -2665,7 +2665,7 @@ extension VMSettingsViewController {
 
     /// Whether either attachment list has an inline edit open — Rename and Edit
     /// Notes on a row have to wait for it, same hazard
-    /// ``SnapshotSectionView/makeRowMenu(for:canRevert:canModify:isBaseline:)``
+    /// ``SnapshotSectionView/makeRowMenu(for:canRevert:canDelete:isBaseline:)``
     /// guards against.
     private func hasActiveEdit(_ kind: AttachmentKind) -> Bool {
         switch kind {
@@ -2717,7 +2717,7 @@ extension VMSettingsViewController {
             manifest: instance.snapshotManifest,
             canTakeSnapshot: viewModel.canTakeSnapshot(instance),
             canRevert: viewModel.canRevertToSnapshot(instance),
-            canModify: viewModel.canModifySnapshots(instance),
+            canDelete: viewModel.canDeleteSnapshots(instance),
             baselineID: instance.ephemeralBaselineSnapshot?.id)
 
         // The sizes are a directory walk over gigabyte-scale copies, so they are
@@ -2756,7 +2756,6 @@ extension VMSettingsViewController {
             let content = SnapshotInfoPopoverContentViewController(
                 snapshot: snapshot,
                 onDiskText: sizes[snapshot.id].map { DataFormatters.formatBytes($0) } ?? "\u{2014}",
-                canEdit: self.viewModel.canModifySnapshots(self.instance),
                 onCommitNotes: { [weak self] notes in
                     guard let self else { return }
                     // Looked up fresh: the popover outlives edits landing from

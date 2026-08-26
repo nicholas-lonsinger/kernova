@@ -13,14 +13,14 @@ struct SnapshotInfoPopoverContentViewControllerTests {
     }
 
     private func makeController(
-        kind: VMSnapshotKind, notes: String = "", canEdit: Bool = true,
+        kind: VMSnapshotKind, notes: String = "",
         recorder: NoteRecorder = NoteRecorder()
     ) -> SnapshotInfoPopoverContentViewController {
         let snapshot = VMSnapshot(
             name: "Before the update", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
             notes: notes, kind: kind)
         let controller = SnapshotInfoPopoverContentViewController(
-            snapshot: snapshot, onDiskText: "2 GB", canEdit: canEdit,
+            snapshot: snapshot, onDiskText: "2 GB",
             onCommitNotes: { recorder.committed.append($0) })
         controller.loadViewIfNeeded()
         return controller
@@ -53,17 +53,6 @@ struct SnapshotInfoPopoverContentViewControllerTests {
 
         let annotated = makeController(kind: .warm, notes: "tools configured")
         #expect(notesEditor(in: annotated)?.text == "tools configured")
-    }
-
-    @Test("A popover that can't be edited shows the note as text, and omits it when empty")
-    func readOnlyKeepsStaticNotes() {
-        let bare = makeController(kind: .warm, canEdit: false)
-        #expect(findLabel(withText: "Notes", in: bare.view) == nil)
-        #expect(notesEditor(in: bare) == nil)
-
-        let annotated = makeController(kind: .warm, notes: "tools configured", canEdit: false)
-        #expect(findLabel(withText: "tools configured", in: annotated.view) != nil)
-        #expect(notesEditor(in: annotated) == nil)
     }
 
     @Test("Dismissing the popover commits what the box holds")

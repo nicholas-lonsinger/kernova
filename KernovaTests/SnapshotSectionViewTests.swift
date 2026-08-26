@@ -69,7 +69,7 @@ struct SnapshotSectionViewTests {
         let (view, _) = makeSection()
 
         view.update(
-            manifest: VMSnapshotManifest(), canTakeSnapshot: true, canRevert: false, canModify: true, baselineID: nil)
+            manifest: VMSnapshotManifest(), canTakeSnapshot: true, canRevert: false, canDelete: true, baselineID: nil)
 
         #expect(findLabel(withText: "No snapshots", in: view) != nil)
         let readout = firstSubview(NSTextField.self, in: view) {
@@ -88,7 +88,7 @@ struct SnapshotSectionViewTests {
 
         view.update(
             manifest: VMSnapshotManifest(snapshots: [older, newer]),
-            canTakeSnapshot: true, canRevert: true, canModify: true, baselineID: nil)
+            canTakeSnapshot: true, canRevert: true, canDelete: true, baselineID: nil)
 
         let titles = collectLabels(in: view).map(\.stringValue)
         let newerIndex = titles.firstIndex(of: "Newer")
@@ -106,7 +106,7 @@ struct SnapshotSectionViewTests {
             manifest: VMSnapshotManifest(snapshots: [
                 makeSnapshot("One"), makeSnapshot("Two", offsetSeconds: 60),
             ]),
-            canTakeSnapshot: true, canRevert: true, canModify: true, baselineID: nil)
+            canTakeSnapshot: true, canRevert: true, canDelete: true, baselineID: nil)
 
         #expect(findLabel(withText: "2 snapshots", in: view) != nil)
     }
@@ -118,7 +118,7 @@ struct SnapshotSectionViewTests {
         let second = makeSnapshot("Two", offsetSeconds: 60)
         view.update(
             manifest: VMSnapshotManifest(snapshots: [first, second]),
-            canTakeSnapshot: true, canRevert: true, canModify: true, baselineID: nil)
+            canTakeSnapshot: true, canRevert: true, canDelete: true, baselineID: nil)
 
         view.applySizes([first.id: 1_000_000_000, second.id: 3_000_000_000])
 
@@ -135,7 +135,7 @@ struct SnapshotSectionViewTests {
 
         view.update(
             manifest: VMSnapshotManifest(snapshots: [cold, warm]),
-            canTakeSnapshot: true, canRevert: true, canModify: true, baselineID: nil)
+            canTakeSnapshot: true, canRevert: true, canDelete: true, baselineID: nil)
         view.applySizes([cold.id: 2_000_000_000, warm.id: 2_000_000_000])
 
         #expect(view.subtitleText(for: cold).contains("Disks only \u{00B7} 2 GB on disk"))
@@ -149,7 +149,7 @@ struct SnapshotSectionViewTests {
 
         view.update(
             manifest: VMSnapshotManifest(snapshots: [only]), canTakeSnapshot: true,
-            canRevert: true, canModify: true, baselineID: nil)
+            canRevert: true, canDelete: true, baselineID: nil)
         view.applySizes([only.id: 2_000_000_000])
 
         #expect(findLabel(containing: "1 snapshot \u{00B7}", in: view) != nil)
@@ -163,7 +163,7 @@ struct SnapshotSectionViewTests {
 
         view.update(
             manifest: VMSnapshotManifest(snapshots: [first, second], currentID: second.id),
-            canTakeSnapshot: true, canRevert: true, canModify: true, baselineID: nil)
+            canTakeSnapshot: true, canRevert: true, canDelete: true, baselineID: nil)
 
         let visible = allSubviews(NSTextField.self, in: view) {
             $0.stringValue == "Current" && isVisible($0, within: view)
@@ -177,11 +177,11 @@ struct SnapshotSectionViewTests {
         let first = makeSnapshot("One")
         let second = makeSnapshot("Two", offsetSeconds: 60)
         let manifest = VMSnapshotManifest(snapshots: [first, second], currentID: second.id)
-        view.update(manifest: manifest, canTakeSnapshot: true, canRevert: true, canModify: true, baselineID: nil)
+        view.update(manifest: manifest, canTakeSnapshot: true, canRevert: true, canDelete: true, baselineID: nil)
 
         var moved = manifest
         moved.currentID = first.id
-        view.update(manifest: moved, canTakeSnapshot: true, canRevert: true, canModify: true, baselineID: nil)
+        view.update(manifest: moved, canTakeSnapshot: true, canRevert: true, canDelete: true, baselineID: nil)
 
         let markers = allSubviews(NSTextField.self, in: view) {
             $0.stringValue == "Current" && isVisible($0, within: view)
@@ -199,7 +199,7 @@ struct SnapshotSectionViewTests {
 
         view.update(
             manifest: VMSnapshotManifest(snapshots: [baseline, later], currentID: baseline.id),
-            canTakeSnapshot: true, canRevert: true, canModify: true, baselineID: baseline.id)
+            canTakeSnapshot: true, canRevert: true, canDelete: true, baselineID: baseline.id)
 
         let markers = allSubviews(NSTextField.self, in: view) {
             $0.stringValue == "Baseline \u{00B7} Current" && isVisible($0, within: view)
@@ -219,7 +219,7 @@ struct SnapshotSectionViewTests {
 
         view.update(
             manifest: VMSnapshotManifest(snapshots: [baseline, later], currentID: later.id),
-            canTakeSnapshot: true, canRevert: true, canModify: true, baselineID: baseline.id)
+            canTakeSnapshot: true, canRevert: true, canDelete: true, baselineID: baseline.id)
 
         #expect(
             allSubviews(NSTextField.self, in: view) {
@@ -237,7 +237,7 @@ struct SnapshotSectionViewTests {
         let baseline = makeSnapshot("Clean install")
         view.update(
             manifest: VMSnapshotManifest(snapshots: [baseline]), canTakeSnapshot: true,
-            canRevert: true, canModify: true, baselineID: baseline.id)
+            canRevert: true, canDelete: true, baselineID: baseline.id)
 
         let menu = view.makeRowMenu(forRowWith: baseline.id)
 
@@ -254,7 +254,7 @@ struct SnapshotSectionViewTests {
         let later = makeSnapshot("Mid-session", offsetSeconds: 60)
         view.update(
             manifest: VMSnapshotManifest(snapshots: [baseline, later]), canTakeSnapshot: true,
-            canRevert: true, canModify: true, baselineID: baseline.id)
+            canRevert: true, canDelete: true, baselineID: baseline.id)
 
         let menu = view.makeRowMenu(forRowWith: later.id)
 
@@ -269,7 +269,7 @@ struct SnapshotSectionViewTests {
 
         view.update(
             manifest: VMSnapshotManifest(snapshots: [makeSnapshot("One")]),
-            canTakeSnapshot: false, canRevert: false, canModify: true, baselineID: nil)
+            canTakeSnapshot: false, canRevert: false, canDelete: true, baselineID: nil)
 
         #expect(revertButtons(in: view).allSatisfy { !$0.isEnabled })
     }
@@ -279,11 +279,11 @@ struct SnapshotSectionViewTests {
         let (view, _) = makeSection()
 
         view.update(
-            manifest: VMSnapshotManifest(), canTakeSnapshot: false, canRevert: false, canModify: true, baselineID: nil)
+            manifest: VMSnapshotManifest(), canTakeSnapshot: false, canRevert: false, canDelete: true, baselineID: nil)
         #expect(findButton(titled: "Take Snapshot\u{2026}", in: view)?.isEnabled == false)
 
         view.update(
-            manifest: VMSnapshotManifest(), canTakeSnapshot: true, canRevert: false, canModify: true, baselineID: nil)
+            manifest: VMSnapshotManifest(), canTakeSnapshot: true, canRevert: false, canDelete: true, baselineID: nil)
         #expect(findButton(titled: "Take Snapshot\u{2026}", in: view)?.isEnabled == true)
     }
 
@@ -293,7 +293,7 @@ struct SnapshotSectionViewTests {
     func takeLinkAsksForASnapshot() {
         let (view, recorder) = makeSection()
         view.update(
-            manifest: VMSnapshotManifest(), canTakeSnapshot: true, canRevert: false, canModify: true, baselineID: nil)
+            manifest: VMSnapshotManifest(), canTakeSnapshot: true, canRevert: false, canDelete: true, baselineID: nil)
 
         let button = findButton(titled: "Take Snapshot\u{2026}", in: view)
         button.map { _ = $0.target?.perform($0.action, with: $0) }
@@ -308,7 +308,7 @@ struct SnapshotSectionViewTests {
         let newer = makeSnapshot("Newer", offsetSeconds: 60)
         view.update(
             manifest: VMSnapshotManifest(snapshots: [older, newer]),
-            canTakeSnapshot: true, canRevert: true, canModify: true, baselineID: nil)
+            canTakeSnapshot: true, canRevert: true, canDelete: true, baselineID: nil)
 
         // Rows render newest first, so the second button belongs to "Older".
         let buttons = revertButtons(in: view)
@@ -326,9 +326,9 @@ struct SnapshotSectionViewTests {
         let snapshot = makeSnapshot("One")
         view.update(
             manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
-            canRevert: true, canModify: true, baselineID: nil)
+            canRevert: true, canDelete: true, baselineID: nil)
 
-        let menu = view.makeRowMenu(for: snapshot, canRevert: true, canModify: true, isBaseline: false)
+        let menu = view.makeRowMenu(for: snapshot, canRevert: true, canDelete: true, isBaseline: false)
 
         #expect(
             menu.items.filter { !$0.isSeparatorItem }.map(\.title) == [
@@ -342,9 +342,9 @@ struct SnapshotSectionViewTests {
         let snapshot = makeSnapshot("One")
         view.update(
             manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: false,
-            canRevert: false, canModify: true, baselineID: nil)
+            canRevert: false, canDelete: true, baselineID: nil)
 
-        let menu = view.makeRowMenu(for: snapshot, canRevert: false, canModify: true, isBaseline: false)
+        let menu = view.makeRowMenu(for: snapshot, canRevert: false, canDelete: true, isBaseline: false)
 
         #expect(menu.items.first { $0.title == "Revert" }?.isEnabled == false)
     }
@@ -355,9 +355,9 @@ struct SnapshotSectionViewTests {
         let snapshot = makeSnapshot("One")
         view.update(
             manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
-            canRevert: true, canModify: true, baselineID: nil)
+            canRevert: true, canDelete: true, baselineID: nil)
 
-        let menu = view.makeRowMenu(for: snapshot, canRevert: true, canModify: true, isBaseline: false)
+        let menu = view.makeRowMenu(for: snapshot, canRevert: true, canDelete: true, isBaseline: false)
         let delete = menu.items.first { $0.title == "Delete\u{2026}" }
         delete.map { _ = $0.target?.perform($0.action, with: $0) }
 
@@ -370,9 +370,9 @@ struct SnapshotSectionViewTests {
         let snapshot = makeSnapshot("One")
         view.update(
             manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
-            canRevert: true, canModify: true, baselineID: nil)
+            canRevert: true, canDelete: true, baselineID: nil)
 
-        let menu = view.makeRowMenu(for: snapshot, canRevert: true, canModify: true, isBaseline: false)
+        let menu = view.makeRowMenu(for: snapshot, canRevert: true, canDelete: true, isBaseline: false)
         let info = menu.items.first { $0.title == "Get Info" }
         info.map { _ = $0.target?.perform($0.action, with: $0) }
 
@@ -387,7 +387,7 @@ struct SnapshotSectionViewTests {
         let first = makeSnapshot("One")
         view.update(
             manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
-            canRevert: true, canModify: true, baselineID: nil)
+            canRevert: true, canDelete: true, baselineID: nil)
         let window = showInTestWindow(view, size: NSSize(width: 480, height: 200))
         defer { window.close() }
 
@@ -399,7 +399,7 @@ struct SnapshotSectionViewTests {
             manifest: VMSnapshotManifest(snapshots: [
                 first, makeSnapshot("Two", offsetSeconds: 60),
             ]),
-            canTakeSnapshot: true, canRevert: true, canModify: true, baselineID: nil)
+            canTakeSnapshot: true, canRevert: true, canDelete: true, baselineID: nil)
         #expect(findLabel(withText: "Two", in: view) == nil)
 
         view.clearActiveEdit()
@@ -407,7 +407,7 @@ struct SnapshotSectionViewTests {
             manifest: VMSnapshotManifest(snapshots: [
                 first, makeSnapshot("Two", offsetSeconds: 60),
             ]),
-            canTakeSnapshot: true, canRevert: true, canModify: true, baselineID: nil)
+            canTakeSnapshot: true, canRevert: true, canDelete: true, baselineID: nil)
         #expect(findLabel(withText: "Two", in: view) != nil)
     }
 
@@ -417,7 +417,7 @@ struct SnapshotSectionViewTests {
         let first = makeSnapshot("One")
         view.update(
             manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
-            canRevert: true, canModify: true, baselineID: nil)
+            canRevert: true, canDelete: true, baselineID: nil)
         let window = showInTestWindow(view, size: NSSize(width: 480, height: 200))
         defer { window.close() }
 
@@ -426,7 +426,7 @@ struct SnapshotSectionViewTests {
             manifest: VMSnapshotManifest(snapshots: [
                 first, makeSnapshot("Two", offsetSeconds: 60),
             ]),
-            canTakeSnapshot: true, canRevert: true, canModify: true, baselineID: nil)
+            canTakeSnapshot: true, canRevert: true, canDelete: true, baselineID: nil)
         #expect(findLabel(withText: "Two", in: view) == nil)
 
         // Escape: the field editor's cancel command, which the label turns into
@@ -448,7 +448,7 @@ struct SnapshotSectionViewTests {
 
         view.update(
             manifest: VMSnapshotManifest(snapshots: [annotated, bare]), canTakeSnapshot: true,
-            canRevert: true, canModify: true, baselineID: nil)
+            canRevert: true, canDelete: true, baselineID: nil)
 
         let note = findLabel(withText: "tools configured", in: view)
         #expect(note != nil)
@@ -466,7 +466,7 @@ struct SnapshotSectionViewTests {
         let first = makeSnapshot("One", notes: "before")
         view.update(
             manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
-            canRevert: true, canModify: true, baselineID: nil)
+            canRevert: true, canDelete: true, baselineID: nil)
         let window = showInTestWindow(view, size: NSSize(width: 480, height: 200))
         defer { window.close() }
 
@@ -477,7 +477,7 @@ struct SnapshotSectionViewTests {
             manifest: VMSnapshotManifest(snapshots: [
                 first, makeSnapshot("Two", offsetSeconds: 60),
             ]),
-            canTakeSnapshot: true, canRevert: true, canModify: true, baselineID: nil)
+            canTakeSnapshot: true, canRevert: true, canDelete: true, baselineID: nil)
         #expect(findLabel(withText: "Two", in: view) == nil)
     }
 
@@ -487,7 +487,7 @@ struct SnapshotSectionViewTests {
         let first = makeSnapshot("One", notes: "before")
         view.update(
             manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
-            canRevert: true, canModify: true, baselineID: nil)
+            canRevert: true, canDelete: true, baselineID: nil)
         let window = showInTestWindow(view, size: NSSize(width: 480, height: 200))
         defer { window.close() }
 
@@ -504,7 +504,7 @@ struct SnapshotSectionViewTests {
         let first = makeSnapshot("One", notes: "line one\nline two")
         view.update(
             manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
-            canRevert: true, canModify: true, baselineID: nil)
+            canRevert: true, canDelete: true, baselineID: nil)
         let window = showInTestWindow(view, size: NSSize(width: 480, height: 200))
         defer { window.close() }
 
@@ -516,20 +516,20 @@ struct SnapshotSectionViewTests {
         #expect(findLabel(withText: "line one line two", in: view) != nil)
     }
 
-    @Test("The row menu offers Edit Notes, and withholds it when the list can't be edited")
+    @Test("The row menu offers Edit Notes regardless of whether the list can be deleted from")
     func rowMenuOffersEditNotes() {
         let (view, _) = makeSection()
         let snapshot = makeSnapshot("One")
         view.update(
             manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
-            canRevert: true, canModify: true, baselineID: nil)
+            canRevert: true, canDelete: false, baselineID: nil)
 
         #expect(
-            view.makeRowMenu(for: snapshot, canRevert: true, canModify: true, isBaseline: false)
+            view.makeRowMenu(for: snapshot, canRevert: true, canDelete: false, isBaseline: false)
                 .items.first { $0.title == "Edit Notes" }?.isEnabled == true)
         #expect(
-            view.makeRowMenu(for: snapshot, canRevert: false, canModify: false, isBaseline: false)
-                .items.first { $0.title == "Edit Notes" }?.isEnabled == false)
+            view.makeRowMenu(for: snapshot, canRevert: false, canDelete: false, isBaseline: false)
+                .items.first { $0.title == "Edit Notes" }?.isEnabled == true)
     }
 
     @Test("Edit Notes on a row with no note starts an edit that commits what is typed")
@@ -538,7 +538,7 @@ struct SnapshotSectionViewTests {
         let first = makeSnapshot("One")
         view.update(
             manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
-            canRevert: true, canModify: true, baselineID: nil)
+            canRevert: true, canDelete: true, baselineID: nil)
         let window = showInTestWindow(view, size: NSSize(width: 480, height: 200))
         defer { window.close() }
 
@@ -568,17 +568,17 @@ struct SnapshotSectionViewTests {
 
     // MARK: - Editing gate
 
-    @Test("The row menu's Rename and Delete follow whether the list can be edited")
+    @Test("The row menu's Rename stays enabled with the gate closed; only Delete follows it")
     func rowMenuEditingFollowsTheGate() {
         let (view, _) = makeSection()
         let snapshot = makeSnapshot("One")
         view.update(
             manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: false,
-            canRevert: false, canModify: false, baselineID: nil)
+            canRevert: false, canDelete: false, baselineID: nil)
 
-        let menu = view.makeRowMenu(for: snapshot, canRevert: false, canModify: false, isBaseline: false)
+        let menu = view.makeRowMenu(for: snapshot, canRevert: false, canDelete: false, isBaseline: false)
 
-        #expect(menu.items.first { $0.title == "Rename" }?.isEnabled == false)
+        #expect(menu.items.first { $0.title == "Rename" }?.isEnabled == true)
         #expect(menu.items.first { $0.title == "Delete\u{2026}" }?.isEnabled == false)
         // Reading a snapshot's details changes nothing, so it stays available.
         #expect(menu.items.first { $0.title == "Get Info" }?.isEnabled == true)
@@ -592,13 +592,13 @@ struct SnapshotSectionViewTests {
 
         view.update(
             manifest: VMSnapshotManifest(), canTakeSnapshot: true, canRevert: false,
-            canModify: true, baselineID: nil)
+            canDelete: true, baselineID: nil)
         #expect(
             findButton(titled: "Take Snapshot\u{2026}", in: view)?.contentTintColor == .linkColor)
 
         view.update(
             manifest: VMSnapshotManifest(), canTakeSnapshot: false, canRevert: false,
-            canModify: true, baselineID: nil)
+            canDelete: true, baselineID: nil)
         #expect(
             findButton(titled: "Take Snapshot\u{2026}", in: view)?.contentTintColor
                 == .disabledControlTextColor)
@@ -610,7 +610,7 @@ struct SnapshotSectionViewTests {
 
         view.update(
             manifest: VMSnapshotManifest(snapshots: [makeSnapshot("One")]), canTakeSnapshot: false,
-            canRevert: false, canModify: true, baselineID: nil)
+            canRevert: false, canDelete: true, baselineID: nil)
 
         #expect(revertButtons(in: view).allSatisfy { $0.contentTintColor == .disabledControlTextColor })
     }
