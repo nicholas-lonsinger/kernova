@@ -159,7 +159,7 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
     /// Opens the connection and receives the transfer on its own queue.
     ///
     /// Exactly one of `onComplete` and `onAbort` fires, off the caller's actor,
-    /// on the transfer's queue.
+    /// on the transfer's queue, after the connection is closed.
     public func start(
         onComplete: @escaping @Sendable (ClipboardContent.Representation) -> Void,
         onAbort: @escaping @Sendable (ClipboardStreamAbortInfo) -> Void,
@@ -208,12 +208,17 @@ public final class ClipboardTransferReceiver: @unchecked Sendable {
             onAbort(abortInfo(stop(for: error)))
             return
         }
-        defer { closeConnection(fd) }
-
+        // The close precedes the terminal, matching the sender's ordering: the
+        // terminal is the one event an owner can sequence against, and between
+        // a cancellation's `shutdown(2)` and this `close(2)` macOS accepts and
+        // discards the peer's writes, so only "terminal fired" proves the peer
+        // can no longer stream into the void.
         do {
             let outcome = try receive(fd: fd, beganAt: beganAt)
+            closeConnection(fd)
             onComplete(outcome)
         } catch {
+            closeConnection(fd)
             onAbort(abortInfo(stop(for: error)))
         }
     }

@@ -430,27 +430,23 @@ struct ClipboardTransferStreamTests {
         let harness = TransferHarness()
         defer { harness.tearDown() }
 
-        // Incompressible and several times the connection's send buffer, so the
-        // sender cannot hand the whole payload to the socket and walk away: past
-        // the buffer every write blocks until the receiver drains, and a
-        // receiver that has given up never drains, so a write is guaranteed to
-        // fail. Sized off the buffer rather than picked — at 64 KiB the archive
-        // fit inside it and the send completed in ~1 ms whatever the receiver
-        // did, reporting success and its metrics.
         let source = scratch.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
-        try randomBytes(count: 4 * ClipboardStreamTuning.dataSendBufferBytes)
-            .write(to: source.appendingPathComponent("big.bin"))
+        try randomBytes(count: 64 * 1024).write(to: source.appendingPathComponent("big.bin"))
         let estimate = ClipboardArchive.estimatedByteCount(at: source)
         let transferID: UInt64 = 0xB1
-        // Cancelled from the sender's own pre-write check, which runs on its
-        // thread before each socket write: the sender has written nothing while
-        // the cancel is applied, so the receiver cannot have taken a payload
-        // that was never sent. Cancelling from a progress callback instead
-        // raced the stream against the cancel — the faster and less contended
-        // the machine, the more of the tree crossed first, and a pull that had
-        // already delivered has no awaiter left for the cancel to abort.
+        // The cancel is issued from the sender's own pre-write check, and every
+        // later check *holds* the stream until the receiver's abort has been
+        // delivered. The hold is what makes the outcome deterministic: the
+        // cancel's `shutdown(2)` alone leaves macOS accepting — and discarding —
+        // the peer's writes until the receiver's own queue wakes to close the
+        // descriptor (observed 2026-08-25: 13 MB of writes "succeeded" against
+        // a shut-down socketpair end), so an unheld sender can stream to
+        // completion inside that window. The abort fires only after the close,
+        // so the write the hold admits must fail.
         let inbox = harness.inbox
+        let receiverTornDown = DispatchSemaphore(value: 0)
+        harness.onAbort.value = { receiverTornDown.signal() }
         let cancelled = Box(false)
         harness.pull(
             transferID: transferID, generation: 11,
@@ -460,9 +456,13 @@ struct ClipboardTransferStreamTests {
             representation: .init(
                 directorySourceURL: source, estimatedByteCount: estimate, filename: "source"),
             isCurrent: { _ in
-                guard !cancelled.value else { return true }
-                cancelled.value = true
-                inbox.cancel(transferID: transferID)
+                guard cancelled.value else {
+                    cancelled.value = true
+                    inbox.cancel(transferID: transferID)
+                    return true
+                }
+                receiverTornDown.wait()
+                receiverTornDown.signal()
                 return true
             })
         try await settle(harness, transferID)
@@ -488,17 +488,19 @@ struct ClipboardTransferStreamTests {
         defer { harness.tearDown() }
 
         // The supersession path `ClipboardInboundOffers` takes when the peer
-        // offers again mid-paste: the awaiter is resolved either way, so the
-        // *send* stopping is what says the generation reached the live
-        // receiver rather than only the awaiter beside it. Sized and cancelled
-        // exactly as `receiverCancelStopsTheSend` is, and for the same reasons.
+        // offers again mid-paste: a generation cancel leaves the awaiter to the
+        // live receiver's own terminal, so the abort arriving at all says the
+        // cancel reached that receiver rather than only the awaiter beside it.
+        // Cancelled and held exactly as `receiverCancelStopsTheSend` is, and
+        // for the same reasons.
         let source = scratch.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
-        try randomBytes(count: 4 * ClipboardStreamTuning.dataSendBufferBytes)
-            .write(to: source.appendingPathComponent("big.bin"))
+        try randomBytes(count: 64 * 1024).write(to: source.appendingPathComponent("big.bin"))
         let estimate = ClipboardArchive.estimatedByteCount(at: source)
         let transferID = ClipboardTransferID.make(generation: 12, repIndex: 0, hostMinted: true)
         let inbox = harness.inbox
+        let receiverTornDown = DispatchSemaphore(value: 0)
+        harness.onAbort.value = { receiverTornDown.signal() }
         let cancelled = Box(false)
         harness.pull(
             transferID: transferID, generation: 12,
@@ -508,9 +510,13 @@ struct ClipboardTransferStreamTests {
             representation: .init(
                 directorySourceURL: source, estimatedByteCount: estimate, filename: "source"),
             isCurrent: { _ in
-                guard !cancelled.value else { return true }
-                cancelled.value = true
-                inbox.cancel(generation: 12)
+                guard cancelled.value else {
+                    cancelled.value = true
+                    inbox.cancel(generation: 12)
+                    return true
+                }
+                receiverTornDown.wait()
+                receiverTornDown.signal()
                 return true
             })
         try await settle(harness, transferID)

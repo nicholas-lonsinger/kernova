@@ -206,6 +206,14 @@ final class TransferHarness: @unchecked Sendable {
     /// to the transfer rather than to how fast the two ends happen to run.
     let onSendProgress = Box<(@Sendable (Int, Int) -> Void)?>(nil)
 
+    /// An extra hook on each inbound abort, for a test that must hold a peer
+    /// until a cancelled receiver's teardown has finished.
+    ///
+    /// A live receiver delivers its abort only after closing its connection, so
+    /// a peer this releases acts on a connection that is already gone — its
+    /// next write fails rather than being discarded.
+    let onAbort = Box<(@Sendable () -> Void)?>(nil)
+
     init(
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         socketTimeout: TimeInterval = ClipboardStreamTuning.dataSocketTimeout,
@@ -252,10 +260,14 @@ final class TransferHarness: @unchecked Sendable {
     /// Registers the pull for `transferID` with the inbox.
     func expect(transferID: UInt64, plan: ClipboardTransferReceiver.Plan) {
         let collector = self.collector
+        let onAbort = self.onAbort
         inbox.awaitTransfer(
             transferID, plan: plan,
             onComplete: { collector.complete(transferID, $0) },
-            onAbort: { collector.abort($0) },
+            onAbort: {
+                collector.abort($0)
+                onAbort.value?()
+            },
             onProgress: { bytes, total in collector.receiveProgress(bytes, total) })
     }
 
