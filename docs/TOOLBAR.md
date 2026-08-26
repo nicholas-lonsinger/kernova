@@ -54,7 +54,7 @@ treatment, not capsule platters — the platform's sectioning (Mail and Notes
 behave the same).
 
 To take an item out of that section while the sidebar is collapsed
-(`MainWindowController.syncNewVMVisibilityToSidebarState`), **remove and
+(`MainWindowController.applyNewVMVisibility(in:)`), **remove and
 re-insert it — never `NSToolbarItem.isHidden`**: on the glass toolbar a hidden
 item's slot keeps its width (measured on macOS 27 beta 4), leaving a dead gap
 between the window controls and the toggle, while removal reclaims the space.
