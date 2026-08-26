@@ -22,9 +22,12 @@ Requires macOS 26 (Tahoe) or later on Apple Silicon to run the app. macOS guests
 
 - **macOS and Linux guests** — a step-by-step creation wizard: macOS installs from the latest IPSW, a version catalog, a pasted URL, or a local file; Linux installs from a downloadable distribution catalog (checksum-verified against the distribution's own manifest), an image URL, or a local ISO, booting EFI/UEFI or a direct kernel
 - **Full lifecycle** — start, stop, pause, resume, suspend, and restore, plus Force Stop for a hung VM and a one-shot Start in Recovery Mode for macOS guests
+- **Snapshots** — named restore points, taken while a VM is running, suspended, or stopped: the first two keep the guest's memory alongside its disks and settings, the last keeps the disks and settings alone. Reverting is repeatable, where restoring a suspended VM consumes its saved state, and it leaves disks attached from outside the bundle as they are.
+  The copies share blocks with the VM's own disks, so taking one is near-instant and adds little to what's on disk
+- **Ephemeral mode** — a per-VM switch that returns the guest to a chosen baseline snapshot at every shutdown, discarding whatever the session changed inside it. Suspending keeps the session — including the save-suspend when Kernova quits — and it reverts at the next shutdown instead; a sidebar badge and a marker on the running VM keep a throwaway session visible as one
 - **Cloning and import** — clone a VM with a fresh machine identity, or keep it via a setting or the ⌥-alternate menu command; import `.kernova` bundles by double-click or drag-and-drop, which is also how you bring existing VMs into the sandboxed library (on the same volume it's an APFS clone: near-instant, no double disk usage)
-- **Keeps running in the background** — a resident menu-bar app, on by default and toggleable in Settings, with opt-in Open at Login, so closing the window can leave VMs running headless. Quitting save-suspends them; system sleep auto-pauses and wake resumes
-- **Starts chosen VMs on its own** — a per-VM opt-in that boots (or resumes from saved state) that guest whenever Kernova opens; paired with Open at Login, the machine comes up with those VMs already running
+- **Background operation** — a resident menu-bar app, on by default and toggleable in Settings, with opt-in Open at Login, so closing the window can leave VMs running headless. Quitting save-suspends them; system sleep auto-pauses and wake resumes
+- **Automatic startup** — a per-VM opt-in that boots (or resumes from saved state) that guest whenever Kernova opens; paired with Open at Login, the machine comes up with those VMs already running
 
 <p align="center">
   <picture>
@@ -54,7 +57,8 @@ Requires macOS 26 (Tahoe) or later on Apple Silicon to run the app. macOS guests
 
 - **Guest agent (macOS guests)** — a lightweight in-guest menu-bar helper, installed from an attachable installer disk, reporting status and version to the host over vsock
 - **Clipboard sync** — bidirectional host↔guest text, rich text, images, and multiple files or entire folders. Copying is instant in either direction: only a paste moves bytes — up to an adjustable ceiling (2 GB by default) — with integrity verification and live transfer progress in a dedicated clipboard window.
-  Per-VM opt-in Automatic Clipboard Passthrough syncs continuously with no paste step. Concealed and password content shows a locked placeholder; transient snapshots aren't synced. macOS guests sync over the vsock agent, Linux guests sync text only via spice-vdagent
+  Per-VM opt-in Automatic Clipboard Passthrough syncs continuously with no paste step. Concealed and password content shows a locked placeholder; transient pasteboard content isn't synced. macOS guests sync over the vsock agent, Linux guests sync text only via spice-vdagent
+- **Drag and drop (macOS guests)** — files dragged from the Finder onto a running guest's display land in its Downloads folder and are revealed there, keeping both copies rather than overwriting a name already taken, with live transfer progress on the way. On per VM by default; a display whose agent isn't connected refuses the drag rather than taking files it can't deliver
 - **Log forwarding (macOS guests)** — opt-in per VM and live-toggleable; the guest's `os.Logger` records surface on the host in Console.app under the `app.kernova.guest` subsystem
 
 <p align="center">
