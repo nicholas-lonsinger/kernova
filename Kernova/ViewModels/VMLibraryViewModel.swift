@@ -2290,9 +2290,16 @@ final class VMLibraryViewModel {
         var rollbackLookup: [UUID: RemovableMediaItem] = [:]
         for info in tracked {
             let configured = configuredByID[info.id]
-            rollbackLookup[info.id] = RemovableMediaItem(
-                id: info.id, path: info.path, readOnly: info.readOnly,
-                bookmark: configured?.path == info.path ? configured?.bookmark : nil)
+            // Start from the persisted entry so its label and note survive the
+            // rollback; only the fields the live state actually answers for
+            // (path, readOnly, and the bookmark's validity) are overridden.
+            var copy =
+                configured
+                ?? RemovableMediaItem(id: info.id, path: info.path, readOnly: info.readOnly, bookmark: nil)
+            copy.path = info.path
+            copy.readOnly = info.readOnly
+            copy.bookmark = configured?.path == info.path ? configured?.bookmark : nil
+            rollbackLookup[info.id] = copy
         }
         for item in target where rollbackLookup[item.id] == nil {
             rollbackLookup[item.id] = item

@@ -533,30 +533,20 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         clone.lastFullscreenDisplayID = nil
 
         // Regenerate IDs so virtio block device identifiers and USB UUIDs don't
-        // collide with the source bundle. Bookmarks carry through — the clone
-        // references the same external files.
+        // collide with the source bundle. Everything else, including the note,
+        // carries through — the clone references the same external files.
         clone.storageDisks = storageDisks?.map { disk in
-            StorageDisk(
-                id: UUID(),
-                path: disk.path,
-                readOnly: disk.readOnly,
-                label: disk.label,
-                isInternal: disk.isInternal,
-                kind: disk.kind,
-                bookmark: disk.bookmark
-            )
+            var copy = disk
+            copy.id = UUID()
+            return copy
         }
 
         // Regenerate removable media UUIDs for the same reason — VZ save-state
         // matches by device UUID, and two bundles must not claim the same one.
         clone.removableMedia = removableMedia?.map { item in
-            RemovableMediaItem(
-                id: UUID(),
-                path: item.path,
-                readOnly: item.readOnly,
-                label: item.label,
-                bookmark: item.bookmark
-            )
+            var copy = item
+            copy.id = UUID()
+            return copy
         }
 
         // Regenerate shared directory IDs to avoid VirtioFS collisions

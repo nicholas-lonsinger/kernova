@@ -516,6 +516,17 @@ final class VMSettingsViewController: NSViewController {
     // MARK: - Read accessors (materialize defaults)
 
     private var currentStorageDisks: [StorageDisk] {
+        attachmentStorageDisks(for: instance)
+    }
+
+    /// The storage disks list to render for `instance`, materializing the
+    /// default main disk when its configuration carries none.
+    ///
+    /// Takes the instance explicitly (rather than reading `self.instance`) so a
+    /// caller holding a pinned instance — a rename/notes commit deferred across
+    /// a runloop turn, which can land after `reconfigure` rebinds `self.instance`
+    /// to a different VM — resolves against the VM it actually started with.
+    private func attachmentStorageDisks(for instance: VMInstance) -> [StorageDisk] {
         if let disks = instance.configuration.storageDisks, !disks.isEmpty {
             return disks
         }
@@ -2594,18 +2605,26 @@ extension VMSettingsViewController {
     /// Commits an inline rename for either list, deferred to the next runloop
     /// turn so the field editor's end-editing callback fully unwinds before the
     /// config-change rebuild tears down and recreates the editing row.
+    ///
+    /// The instance is pinned before the `Task`: the commit can be triggered by
+    /// the same outside-click that selects another VM, and `reconfigure` rebinds
+    /// `self.instance` synchronously, so reading `self.instance` once the Task
+    /// runs would commit into whichever VM is showing by then.
     private func commitAttachmentRename(_ ref: AttachmentRef, newLabel: String) {
         clearActiveEdit(ref.kind)
+        let instance = instance
         Task { [weak self] in
             guard let self else { return }
             switch ref.kind {
             case .storage:
-                if let disk = self.currentStorageDisks.first(where: { $0.id == ref.id }) {
-                    self.viewModel.renameStorageDisk(disk, newLabel: newLabel, on: self.instance)
+                if let disk = self.attachmentStorageDisks(for: instance).first(where: { $0.id == ref.id }) {
+                    self.viewModel.renameStorageDisk(disk, newLabel: newLabel, on: instance)
                 }
             case .removable:
-                if let item = self.currentRemovableMedia.first(where: { $0.id == ref.id }) {
-                    self.viewModel.renameRemovableMedia(item, newLabel: newLabel, on: self.instance)
+                if let item = (instance.configuration.removableMedia ?? [])
+                    .first(where: { $0.id == ref.id })
+                {
+                    self.viewModel.renameRemovableMedia(item, newLabel: newLabel, on: instance)
                 }
             }
             // A no-op rename (empty / unchanged) fires no observation, so force a
@@ -2615,19 +2634,22 @@ extension VMSettingsViewController {
     }
 
     /// Commits an inline note edit for either list, on the same deferred-Task
-    /// shape as ``commitAttachmentRename(_:newLabel:)``.
+    /// shape (and instance-pinning) as ``commitAttachmentRename(_:newLabel:)``.
     private func commitAttachmentNotes(_ ref: AttachmentRef, notes: String) {
         clearActiveEdit(ref.kind)
+        let instance = instance
         Task { [weak self] in
             guard let self else { return }
             switch ref.kind {
             case .storage:
-                if let disk = self.currentStorageDisks.first(where: { $0.id == ref.id }) {
-                    self.viewModel.setStorageDiskNotes(disk, notes: notes, on: self.instance)
+                if let disk = self.attachmentStorageDisks(for: instance).first(where: { $0.id == ref.id }) {
+                    self.viewModel.setStorageDiskNotes(disk, notes: notes, on: instance)
                 }
             case .removable:
-                if let item = self.currentRemovableMedia.first(where: { $0.id == ref.id }) {
-                    self.viewModel.setRemovableMediaNotes(item, notes: notes, on: self.instance)
+                if let item = (instance.configuration.removableMedia ?? [])
+                    .first(where: { $0.id == ref.id })
+                {
+                    self.viewModel.setRemovableMediaNotes(item, notes: notes, on: instance)
                 }
             }
             self.refresh(ref.kind)

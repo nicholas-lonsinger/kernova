@@ -6960,6 +6960,45 @@ struct VMLibraryViewModelTests {
         #expect(instance.configuration.removableMedia == nil)
     }
 
+    @Test("Failed swap rollback preserves the entry's label and note")
+    func liveRemovableRollbackOnSwapFailurePreservesLabelAndNotes() async throws {
+        struct TransientError: Error {}
+        let mock = MockUSBDeviceService()
+        mock.detachError = TransientError()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.status = .running
+        let id = UUID()
+        instance.liveRemovableMedia = [
+            USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true)
+        ]
+        var oldItem = RemovableMediaItem(id: id, path: "/tmp/old.iso", readOnly: true, label: "Installer")
+        oldItem.notes = "from the Ubuntu mirror"
+        var old = instance.configuration
+        old.removableMedia = [oldItem]
+        instance.configuration = old
+        viewModel.instances.append(instance)
+
+        // Same id, different path (path swap) — and `updateConfiguration` has
+        // already persisted the target, carrying the label and note forward
+        // since only the path/readOnly changed.
+        var newItem = oldItem
+        newItem.path = "/tmp/new.iso"
+        var new = old
+        new.removableMedia = [newItem]
+        instance.configuration = new
+
+        viewModel.applyLivePolicy(for: instance, old: old, new: new)
+        while !presenter.showError { await Task.yield() }
+        for _ in 0..<5 { await Task.yield() }
+
+        // Swap failed → the rolled-back entry must still carry the persisted
+        // label and note, not a bare reconstruction from path/readOnly alone.
+        let rolled = try #require(instance.configuration.removableMedia)
+        #expect(rolled.first?.label == "Installer")
+        #expect(rolled.first?.notes == "from the Ubuntu mirror")
+    }
+
     @Test("Failed swap rollback restores the original entry, not the target")
     func liveRemovableRollbackOnSwapFailureRestoresOriginal() async throws {
         struct TransientError: Error {}
