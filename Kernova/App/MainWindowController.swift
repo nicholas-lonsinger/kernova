@@ -176,8 +176,19 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         }
     }
 
+    /// Skipped while the customization palette is up, so an observation firing
+    /// mid-customization cannot mutate the layout the user is arranging — the
+    /// palette-close path re-applies via `applyNewVMVisibility(in:)` instead.
     private func syncNewVMVisibilityToSidebarState() {
         guard let toolbar = window?.toolbar, !toolbar.customizationPaletteIsRunning else { return }
+        applyNewVMVisibility(in: toolbar)
+    }
+
+    /// Unguarded so the palette-close path can drive it directly: AppKit
+    /// clears `customizationPaletteIsRunning` one runloop turn *after*
+    /// `windowDidEndSheet` runs (measured on macOS 27 beta 4), so a guarded
+    /// call from there would see the palette as still running and no-op.
+    private func applyNewVMVisibility(in toolbar: NSToolbar) {
         if sidebarItem.isCollapsed {
             guard newVMCollapseRemovalIndex == nil,
                 let index = toolbar.items.firstIndex(where: { $0.itemIdentifier == Self.toolbarNewVM }),
@@ -355,7 +366,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         updateToolbarItems()
         // Re-apply the collapse-driven New VM removal that `windowWillBeginSheet`
         // undid for the palette.
-        syncNewVMVisibilityToSidebarState()
+        applyNewVMVisibility(in: toolbar)
     }
 
     func toolbar(
