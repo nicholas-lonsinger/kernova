@@ -1021,13 +1021,19 @@ final class VMLibraryViewModel {
     private func captureSnapshot(
         _ instance: VMInstance, name: String, notes: String
     ) async -> VMSnapshot? {
+        // Stamped at confirm time, not when the sheet opened: the VM can
+        // start, stop, or suspend while it is up.
+        guard let mode = instance.snapshotCaptureMode else {
+            Self.logger.notice(
+                "Refusing to snapshot '\(instance.name, privacy: .public)': the VM is no longer in a state to capture"
+            )
+            return nil
+        }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let snapshot = VMSnapshot(
             name: trimmedName.isEmpty ? instance.snapshotManifest.defaultNewName : trimmedName,
             notes: notes.trimmingCharacters(in: .whitespacesAndNewlines),
-            // Stamped at confirm time, not when the sheet opened: the VM can
-            // start or stop while it is up.
-            kind: instance.snapshotKindForCapture)
+            kind: mode.kind)
         do {
             try await lifecycle.takeSnapshot(
                 instance, snapshot: snapshot, store: snapshotStore)
@@ -1064,7 +1070,8 @@ final class VMLibraryViewModel {
     /// alert's default, non-destructive path.
     func snapshotThenRevertConfirmed(_ instance: VMInstance, to snapshot: VMSnapshot) async {
         // A VM settled enough to capture gets a check-point first — warm from a
-        // live one, cold from a stopped one; anything else reverts on its own.
+        // live or suspended one, cold from a stopped one; anything else reverts
+        // on its own.
         if instance.canTakeSnapshot {
             guard
                 await captureSnapshot(

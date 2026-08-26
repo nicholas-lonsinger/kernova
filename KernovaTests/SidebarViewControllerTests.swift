@@ -332,8 +332,8 @@ struct SidebarViewControllerTests {
         #expect(!menuTitles.contains("Force Stop…"))
         #expect(!menuTitles.contains("Stop"))
         #expect(!menuTitles.contains("Suspend"))
-        // Its disks belong to the suspended session, so there is nothing to capture.
-        #expect(!menuTitles.contains("Take Snapshot…"))
+        // The suspend slot itself can be captured, with no VZ work.
+        #expect(menuTitles.contains("Take Snapshot…"))
     }
 
     @Test("Context menu enables delete for a cold-paused VM but keeps Clone disabled")

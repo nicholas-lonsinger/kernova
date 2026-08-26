@@ -225,14 +225,17 @@ final class DetailAlertsPresenter: NSObject {
         isSnapshotSheetQueued = false
         // The request may have queued behind another alert, so re-check the VM
         // is still snapshottable rather than showing a sheet that can't confirm.
-        guard let window, viewModel.canTakeSnapshot(instance) else { return }
+        guard let window, viewModel.canTakeSnapshot(instance), let mode = instance.snapshotCaptureMode
+        else { return }
         let content = TakeSnapshotSheetContentViewController(
             vmName: instance.name, suggestedName: instance.snapshotManifest.defaultNewName,
-            kind: instance.snapshotKindForCapture)
+            mode: mode)
         content.delegate = self
         shownSnapshotInstance = instance
-        // The capture's kind is decided at confirm time, so the sheet's copy
-        // tracks the VM rather than freezing at what it was when it opened.
+        // The capture's mode is decided at confirm time, so the sheet's copy
+        // tracks the VM rather than freezing at what it was when it opened. A
+        // VM that leaves every capturable state while the sheet is up keeps its
+        // last-rendered copy — the confirm gate refuses either way.
         snapshotSheetKindObservation?.cancel()
         snapshotSheetKindObservation = observeRecurring(
             track: { [weak instance] in
@@ -240,8 +243,10 @@ final class DetailAlertsPresenter: NSObject {
                 _ = instance?.hasLiveVirtualMachine
             },
             apply: { [weak content, weak instance] in
-                guard let content, let instance else { return }
-                content.update(kind: instance.snapshotKindForCapture)
+                guard let content, let instance, let mode = instance.snapshotCaptureMode else {
+                    return
+                }
+                content.update(mode: mode)
             }
         )
         snapshotSheetPresenter.onClose = { [weak self] in
@@ -370,9 +375,9 @@ final class DetailAlertsPresenter: NSObject {
     ///
     /// The safe path — check-point the current state, then revert — is the
     /// default button, so Return never fires the destructive one. It is offered
-    /// wherever a capture can be taken, which covers a stopped VM (a disks-only
-    /// check-point); a VM that cannot be captured at all — cold-paused, or
-    /// mid-operation — is offered the revert alone.
+    /// wherever a capture can be taken, which now covers every at-rest state —
+    /// running, live-paused, cold-paused, and stopped; only a VM mid-operation
+    /// is offered the revert alone.
     private func revertSnapshotConfig(
         _ snapshot: VMSnapshot, _ vm: VMInstance
     ) -> AlertConfiguration {
@@ -414,7 +419,8 @@ final class DetailAlertsPresenter: NSObject {
             let loss =
                 vm.isColdPaused
                 ? "The suspended session this VM would resume into is replaced by the snapshot\u{2019}s, "
-                    + "and everything changed inside the guest since then will be lost."
+                    + "and everything changed inside the guest since then will be lost unless you "
+                    + "take a snapshot first."
                 : guestLoss
             return "The VM will return to the state and settings captured \(taken). "
                 + "\(loss) The snapshot itself is kept."

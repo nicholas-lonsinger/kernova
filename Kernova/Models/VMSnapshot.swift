@@ -10,9 +10,22 @@ enum VMSnapshotKind: String, Codable, Sendable {
     case cold
 }
 
+/// How a capture started right now would be taken, which decides both the
+/// work it does and the ``VMSnapshotKind`` it produces.
+enum VMSnapshotCaptureMode: Sendable, Equatable {
+    /// A live `VZVirtualMachine` writes a fresh saved state (running or live-paused).
+    case live
+    /// The bundle's suspend slot is cloned — no VZ work, and the slot stays in place.
+    case suspended
+    /// The disks alone, from a stopped VM.
+    case stopped
+
+    var kind: VMSnapshotKind { self == .stopped ? .cold : .warm }
+}
+
 /// One named restore point: a point-in-time copy of the VM's bundle-owned
-/// disks, paired with the guest's memory when the VM was live at capture
-/// (``VMSnapshotKind``), kept until the user deletes it.
+/// disks, paired with the guest's memory when the VM was live or suspended at
+/// capture (``VMSnapshotKind``), kept until the user deletes it.
 ///
 /// Distinct from the suspend slot (`VMBundleLayout.saveFileURL`), whose saved
 /// state is consumed the moment a restore succeeds.

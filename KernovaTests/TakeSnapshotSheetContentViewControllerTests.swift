@@ -23,11 +23,11 @@ struct TakeSnapshotSheetContentViewControllerTests {
 
     private func makeSheet(
         vmName: String = "Dev Mac", suggestedName: String = "Snapshot",
-        kind: VMSnapshotKind = .warm
+        mode: VMSnapshotCaptureMode = .live
     ) -> (TakeSnapshotSheetContentViewController, Recorder) {
         let recorder = Recorder()
         let sheet = TakeSnapshotSheetContentViewController(
-            vmName: vmName, suggestedName: suggestedName, kind: kind)
+            vmName: vmName, suggestedName: suggestedName, mode: mode)
         sheet.delegate = recorder
         sheet.loadViewIfNeeded()
         return (sheet, recorder)
@@ -84,18 +84,28 @@ struct TakeSnapshotSheetContentViewControllerTests {
         #expect(findButton(titled: "Take Snapshot", in: sheet.view)?.keyEquivalent == "\r")
     }
 
-    // MARK: - Per-kind copy
+    // MARK: - Per-mode copy
 
     @Test("A memory-and-disks capture says so, and warns about the pause")
     func warmCopyNamesMemoryAndThePause() {
-        let (sheet, _) = makeSheet(kind: .warm)
+        let (sheet, _) = makeSheet(mode: .live)
         #expect(sheet.headerBodyText.contains("memory and disks"))
         #expect(sheet.captionText.contains("pauses briefly"))
     }
 
+    @Test("A suspended-state capture names the suspended session, and says nothing about pausing")
+    func suspendedCopyNamesTheSuspendedSession() {
+        let (sheet, _) = makeSheet(mode: .suspended)
+        #expect(sheet.headerBodyText.contains("suspended"))
+        #expect(sheet.captionText.contains("suspended session"))
+        #expect(!sheet.captionText.contains("pauses briefly"))
+        // The shared-blocks note stands either way.
+        #expect(sheet.captionText.contains("share their blocks"))
+    }
+
     @Test("A disks-only capture says the VM comes back powered off, with no pause")
     func coldCopyNamesTheOutcome() {
-        let (sheet, _) = makeSheet(kind: .cold)
+        let (sheet, _) = makeSheet(mode: .stopped)
         #expect(sheet.headerBodyText.contains("disks and settings"))
         #expect(sheet.headerBodyText.contains("powered off"))
         #expect(!sheet.headerBodyText.contains("memory and disks"))
@@ -105,14 +115,14 @@ struct TakeSnapshotSheetContentViewControllerTests {
     }
 
     @Test("A guest powering off while the sheet is up moves its copy to disks-only")
-    func updatingTheKindRewritesTheRenderedCopy() {
-        let (sheet, _) = makeSheet(kind: .warm)
+    func updatingTheModeRewritesTheRenderedCopy() {
+        let (sheet, _) = makeSheet(mode: .live)
         let body = findLabel(containing: "memory and disks", in: sheet.view)
         #expect(body != nil)
 
-        sheet.update(kind: .cold)
+        sheet.update(mode: .stopped)
 
-        #expect(sheet.kind == .cold)
+        #expect(sheet.mode == .stopped)
         // The same labels, rewritten — not a stale copy left on screen.
         #expect(body?.stringValue.contains("powered off") == true)
         #expect(findLabel(containing: "memory and disks", in: sheet.view) == nil)

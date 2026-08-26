@@ -38,21 +38,25 @@ struct VMInstanceTests {
         }
     }
 
-    @Test("A cold-paused VM's disks belong to a suspended session, so it cannot be captured")
-    func coldPausedCannotTakeASnapshot() {
+    @Test("A cold-paused VM's suspend slot is captured as a suspended-mode snapshot")
+    func coldPausedTakesASuspendedSnapshot() {
         let instance = makeInstance(status: .paused)
         instance.hasLiveVirtualMachineOverrideForTesting = false
-        #expect(instance.canTakeSnapshot == false)
+        #expect(instance.canTakeSnapshot)
+        #expect(instance.snapshotCaptureMode == .suspended)
     }
 
-    @Test("The capture kind follows what the VM has to capture")
-    func snapshotKindFollowsLiveness() {
+    @Test("The capture mode follows what the VM has to capture, and decides the stamped kind")
+    func snapshotModeFollowsLiveness() {
         for status in [VMStatus.running, .paused] {
             let instance = makeInstance(status: status)
             instance.hasLiveVirtualMachineOverrideForTesting = true
-            #expect(instance.snapshotKindForCapture == .warm, "status \(status.displayName)")
+            #expect(instance.snapshotCaptureMode == .live, "status \(status.displayName)")
         }
-        #expect(makeInstance(status: .stopped).snapshotKindForCapture == .cold)
+        #expect(makeInstance(status: .stopped).snapshotCaptureMode == .stopped)
+        #expect(VMSnapshotCaptureMode.live.kind == .warm)
+        #expect(VMSnapshotCaptureMode.suspended.kind == .warm)
+        #expect(VMSnapshotCaptureMode.stopped.kind == .cold)
     }
 
     @Test("canRevertToSnapshot needs a snapshot to go back to")

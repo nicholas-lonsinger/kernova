@@ -130,6 +130,18 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(harness.snapshots.manifest(for: instance.bundleURL) == instance.snapshotManifest)
     }
 
+    @Test("A capture of a cold-paused VM is stamped as memory-and-disks and lands in the manifest")
+    func coldPausedCaptureIsWarm() async {
+        let harness = makeHarness()
+        let instance = makeInstance(status: .paused)
+
+        await harness.viewModel.takeSnapshot(instance, name: "Suspended").value
+
+        #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.warm])
+        #expect(instance.snapshotManifest.snapshots.map(\.kind) == [.warm])
+        #expect(harness.snapshots.manifest(for: instance.bundleURL) == instance.snapshotManifest)
+    }
+
     @Test("A capture of a running VM is stamped as memory-and-disks")
     func runningCaptureIsWarm() async {
         let harness = makeHarness()

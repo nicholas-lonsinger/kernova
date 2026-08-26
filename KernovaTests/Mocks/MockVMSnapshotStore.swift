@@ -11,6 +11,7 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
     private struct State {
         var manifests: [URL: VMSnapshotManifest] = [:]
         var capturedPaths: [UUID: [String]] = [:]
+        var capturedSuspendSlotIDs: [UUID] = []
         var capturedConfigurations: [UUID: VMConfiguration] = [:]
         var restoredIDs: [UUID] = []
         var restoredConfigurations: [UUID: VMConfiguration] = [:]
@@ -55,6 +56,8 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
     }
     /// Bundle-relative paths passed to `captureDisks`, keyed by snapshot id.
     var capturedPaths: [UUID: [String]] { lock.withLock { state.capturedPaths } }
+    /// Snapshot ids `captureSuspendSlot` was called for, in call order.
+    var capturedSuspendSlotIDs: [UUID] { lock.withLock { state.capturedSuspendSlotIDs } }
     /// Configurations passed to `prepareSnapshot`, keyed by snapshot id — what
     /// the snapshot's own `config.json` would hold.
     var capturedConfigurations: [UUID: VMConfiguration] {
@@ -129,6 +132,13 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
         try lock.withLock {
             if let error = state.captureError { throw error }
             state.capturedPaths[snapshotID] = relativePaths
+        }
+    }
+
+    func captureSuspendSlot(bundleURL: URL, snapshotID: UUID) throws {
+        try lock.withLock {
+            if let error = state.captureError { throw error }
+            state.capturedSuspendSlotIDs.append(snapshotID)
         }
     }
 
