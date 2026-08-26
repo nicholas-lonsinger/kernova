@@ -33,8 +33,6 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     private let onUpdateConfiguration: ((inout VMConfiguration) -> Void) -> Void
     private let backingView: VMDisplayBackingView
     private var instanceObservation: ObservationLoop?
-    /// The titlebar's Ephemeral marker for this window's VM.
-    private var ephemeralChip: EphemeralChipTitlebarController?
 
     private static let logger = Logger(subsystem: "app.kernova", category: "VMDisplayWindowController")
 
@@ -91,7 +89,6 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
             defer: false
         )
         window.contentView = backing
-        window.title = "\(instance.name) — Display"
         window.minSize = NSSize(width: 640, height: 400)
         window.collectionBehavior = [.fullScreenPrimary]
 
@@ -113,8 +110,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         window.toolbar = toolbar
         window.toolbarStyle = .unified
 
-        ephemeralChip = EphemeralChipTitlebarController(window: window)
-        updateEphemeralChip()
+        updateWindowTitle()
     }
 
     required init?(coder: NSCoder) {
@@ -213,6 +209,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 _ = self.instance.vsockDropService?.isConnected
                 _ = self.instance.vsockControlService?.guestSupportsDropFiles
                 _ = self.instance.hasLiveEphemeralSession
+                _ = self.instance.name
             },
             apply: { [weak self] in
                 guard let self else { return }
@@ -229,7 +226,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                     )
                     self.backingView.applyDropRegistration()
                     self.updateToolbarItems()
-                    self.updateEphemeralChip()
+                    self.updateWindowTitle()
                 }
             }
         )
@@ -245,10 +242,10 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         toolbarManager.updateToolbarItems(in: toolbar)
     }
 
-    /// Shows the Ephemeral marker while this VM is running a session its
-    /// baseline will discard.
-    private func updateEphemeralChip() {
-        ephemeralChip?.update(isVisible: instance.hasLiveEphemeralSession)
+    private func updateWindowTitle() {
+        let name = EphemeralModeCopy.titleName(
+            instance.name, ephemeralSessionRunning: instance.hasLiveEphemeralSession)
+        window?.title = "\(name) — Display"
     }
 }
 

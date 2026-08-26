@@ -4,30 +4,26 @@ import Testing
 
 @testable import Kernova
 
-/// The toolbar host that carries the running marker beside the main window's
-/// title.
-@Suite("Ephemeral Chip Toolbar Host Tests", .admissionGated)
+/// The window-title marker composed from `EphemeralModeCopy.titleName`.
+@Suite("Ephemeral Mode Title Tests", .admissionGated)
 @MainActor
-struct EphemeralChipToolbarHostTests {
-    @Test("The host sizes itself to the chip it carries")
-    func hostSizesToItsChip() {
-        let host = EphemeralChipToolbarHost()
-        host.layoutSubtreeIfNeeded()
-        #expect(host.fittingSize.width > 0)
-        #expect(host.fittingSize.height > 0)
+struct EphemeralModeTitleTests {
+    @Test("A live session appends the marker")
+    func liveSessionAppendsMarker() {
+        let title = EphemeralModeCopy.titleName("Debian", ephemeralSessionRunning: true)
+        #expect(title == "Debian (Ephemeral)")
     }
 
-    /// The toolbar item is already drawn on a glass platter capsule, so the
-    /// chip drops its own — two capsules read as a platter holding a pill. The
-    /// narrower fitting width is that second capsule's padding going away.
-    @Test("The toolbar chip is flatter than the one a titlebar accessory carries")
-    func toolbarChipDropsItsOwnCapsule() {
-        let flat = EphemeralSessionChipView(drawsCapsule: false)
-        let capsuled = EphemeralSessionChipView()
-        flat.layoutSubtreeIfNeeded()
-        capsuled.layoutSubtreeIfNeeded()
+    @Test("No live session leaves the name unchanged")
+    func noLiveSessionLeavesNameUnchanged() {
+        let title = EphemeralModeCopy.titleName("Debian", ephemeralSessionRunning: false)
+        #expect(title == "Debian")
+    }
 
-        #expect(flat.fittingSize.width < capsuled.fittingSize.width)
+    @Test("A name already containing the word is not special-cased")
+    func nameContainingTheWordIsNotSpecialCased() {
+        let title = EphemeralModeCopy.titleName("Ephemeral Test Box", ephemeralSessionRunning: true)
+        #expect(title == "Ephemeral Test Box (Ephemeral)")
     }
 }
 
