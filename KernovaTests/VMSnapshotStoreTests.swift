@@ -173,6 +173,40 @@ struct VMSnapshotStoreTests {
         }
     }
 
+    @Test("Capturing the suspend slot clones the bundle's own save file")
+    func captureSuspendSlotClonesTheBundleSaveFile() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        try Data("suspend-slot".utf8).write(to: fixture.layout.saveFileURL)
+        let store = VMSnapshotStore()
+        let snapshotID = UUID()
+        _ = try store.prepareSnapshot(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            configuration: fixture.configuration)
+
+        try store.captureSuspendSlot(bundleURL: fixture.bundleURL, snapshotID: snapshotID)
+
+        let snapshotLayout = fixture.layout.snapshotLayout(id: snapshotID)
+        #expect(contents(of: snapshotLayout.saveFileURL) == "suspend-slot")
+        // The bundle's own slot is untouched.
+        #expect(contents(of: fixture.layout.saveFileURL) == "suspend-slot")
+    }
+
+    @Test("Capturing the suspend slot with no bundle save file reports it missing")
+    func captureSuspendSlotReportsMissingSource() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        let store = VMSnapshotStore()
+        let snapshotID = UUID()
+        _ = try store.prepareSnapshot(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            configuration: fixture.configuration)
+
+        #expect(throws: VMSnapshotError.self) {
+            try store.captureSuspendSlot(bundleURL: fixture.bundleURL, snapshotID: snapshotID)
+        }
+    }
+
     @Test("Restore writes the captured state back and keeps the snapshot's copies")
     func restoreWritesBackAndKeepsTheSnapshot() throws {
         let fixture = try makeFixture()

@@ -1021,13 +1021,19 @@ final class VMLibraryViewModel {
     private func captureSnapshot(
         _ instance: VMInstance, name: String, notes: String
     ) async -> VMSnapshot? {
+        // Stamped at confirm time, not when the sheet opened: the VM can
+        // start, stop, or suspend while it is up.
+        guard let mode = instance.snapshotCaptureMode else {
+            Self.logger.notice(
+                "Refusing to snapshot '\(instance.name, privacy: .public)': the VM is no longer in a state to capture"
+            )
+            return nil
+        }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let snapshot = VMSnapshot(
             name: trimmedName.isEmpty ? instance.snapshotManifest.defaultNewName : trimmedName,
             notes: notes.trimmingCharacters(in: .whitespacesAndNewlines),
-            // Stamped at confirm time, not when the sheet opened: the VM can
-            // start or stop while it is up.
-            kind: instance.snapshotKindForCapture)
+            kind: mode.kind)
         do {
             try await lifecycle.takeSnapshot(
                 instance, snapshot: snapshot, store: snapshotStore)
@@ -1062,15 +1068,16 @@ final class VMLibraryViewModel {
 
     /// Takes a fresh snapshot of the current state, then reverts — the revert
     /// alert's default, non-destructive path.
+    ///
+    /// The button this backs only exists when the alert was built with a
+    /// capturable VM, so the capture here is required, not conditional: a VM
+    /// that stopped being capturable before the click landed aborts rather
+    /// than falling through to the destructive revert with no check-point.
     func snapshotThenRevertConfirmed(_ instance: VMInstance, to snapshot: VMSnapshot) async {
-        // A VM settled enough to capture gets a check-point first — warm from a
-        // live one, cold from a stopped one; anything else reverts on its own.
-        if instance.canTakeSnapshot {
-            guard
-                await captureSnapshot(
-                    instance, name: instance.snapshotManifest.defaultNewName, notes: "") != nil
-            else { return }
-        }
+        guard
+            await captureSnapshot(
+                instance, name: instance.snapshotManifest.defaultNewName, notes: "") != nil
+        else { return }
         await revertConfirmed(instance, to: snapshot)
     }
 

@@ -16,14 +16,14 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     private let vmName: String
     private let suggestedName: String
 
-    /// What a capture confirmed right now would produce, which the header and
+    /// How a capture confirmed right now would be taken, which the header and
     /// caption describe.
     ///
-    /// Not fixed at presentation: the guest can finish powering off while this
-    /// window-modal sheet is up, and the kind is stamped at confirm time
+    /// Not fixed at presentation: the VM can change state while this
+    /// window-modal sheet is up, and the mode is stamped at confirm time
     /// (``VMLibraryViewModel/takeSnapshot(_:name:notes:)``) — so the copy has to
     /// follow it or it describes a capture that won't happen.
-    private(set) var kind: VMSnapshotKind
+    private(set) var mode: VMSnapshotCaptureMode
 
     private let nameField = NSTextField()
     private let notesField = NSTextField()
@@ -39,10 +39,10 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     private static let padding: CGFloat = 20
     private static let heroPointSize: CGFloat = 48
 
-    init(vmName: String, suggestedName: String, kind: VMSnapshotKind) {
+    init(vmName: String, suggestedName: String, mode: VMSnapshotCaptureMode) {
         self.vmName = vmName
         self.suggestedName = suggestedName
-        self.kind = kind
+        self.mode = mode
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -51,11 +51,11 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         fatalError("TakeSnapshotSheetContentViewController does not support NSCoder")
     }
 
-    /// Re-renders the copy for the kind a capture would now produce; a no-op
-    /// when it hasn't moved.
-    func update(kind: VMSnapshotKind) {
-        guard kind != self.kind else { return }
-        self.kind = kind
+    /// Re-renders the copy for the mode a capture would now be taken in; a
+    /// no-op when it hasn't moved.
+    func update(mode: VMSnapshotCaptureMode) {
+        guard mode != self.mode else { return }
+        self.mode = mode
         guard isViewLoaded else { return }
         headerBodyLabel.stringValue = headerBodyText
         captionLabel.stringValue = captionText
@@ -99,11 +99,14 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
 
     /// What the capture takes, in outcome terms.
     var headerBodyText: String {
-        switch kind {
-        case .warm:
+        switch mode {
+        case .live:
             "The VM\u{2019}s current memory and disks are captured as a restore point you can "
                 + "revert to later."
-        case .cold:
+        case .suspended:
+            "The memory the VM is suspended on, and its disks, are captured as a restore point "
+                + "you can revert to later."
+        case .stopped:
             "The VM\u{2019}s disks and settings are captured as a restore point you can revert "
                 + "to later. There is no memory image, so reverting returns the VM powered off."
         }
@@ -113,11 +116,14 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     /// guest — nothing at all, when there isn't one.
     var captionText: String {
         let lead =
-            switch kind {
-            case .warm:
+            switch mode {
+            case .live:
                 "The VM pauses briefly while its state is written, and its current settings are "
                     + "captured with it. "
-            case .cold: "The VM\u{2019}s current settings are captured with its disks. "
+            case .suspended:
+                "The suspended session is copied as it stands, so the VM stays suspended and can "
+                    + "still be resumed, and its current settings are captured with it. "
+            case .stopped: "The VM\u{2019}s current settings are captured with its disks. "
             }
         return lead
             + "Disks are copied on the same volume, so the copies share their blocks with the "

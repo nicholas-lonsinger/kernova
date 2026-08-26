@@ -52,6 +52,12 @@ protocol VMSnapshotStoring: Sendable {
     /// Same-volume copies, which APFS makes copy-on-write.
     func captureDisks(bundleURL: URL, snapshotID: UUID, relativePaths: [String]) throws
 
+    /// Clones the bundle's suspend slot into the snapshot's own saved state.
+    ///
+    /// Same-volume copy, which APFS makes copy-on-write — the slot the VM
+    /// would resume from is left in place.
+    func captureSuspendSlot(bundleURL: URL, snapshotID: UUID) throws
+
     /// Reads what the snapshot holds and checks every captured file is present;
     /// only a `.warm` snapshot is required to hold a saved state.
     ///

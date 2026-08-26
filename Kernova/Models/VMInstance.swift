@@ -476,24 +476,35 @@ final class VMInstance {
         status.canSave && !isColdPaused
     }
 
-    /// `true` when a snapshot can be captured: a live VM writes its memory out
-    /// through VZ (warm), a stopped one copies its disks alone (cold).
+    /// How a capture started right now would be taken — the one place that
+    /// choice is made — or `nil` when the VM is in no state to capture.
     ///
     /// The other at-rest states are excluded. `.initialBoot` holds disks with no
     /// installed guest, so a revert would land the VM stopped over an unbootable
     /// disk. `.error` may still hold a suspend slot the VM would resume from
-    /// (see ``VirtualizationService/applyRestoreFailure(to:)``). Cold-paused
-    /// disks belong to a suspended session, so copying them alone would capture
-    /// a power-cut image of a guest that is mid-flight.
-    var canTakeSnapshot: Bool {
-        canSave || status == .stopped
+    /// (see ``VirtualizationService/applyRestoreFailure(to:)``). Every
+    /// transitional status (`.starting`, `.saving`, `.snapshotting`, …) is
+    /// excluded too — a capture mid-operation would race the operation itself.
+    ///
+    /// Cold-paused additionally needs ``hasSaveFile``, unlike the other
+    /// branches: a failed snapshot attempt can rest a VM cold-paused with no
+    /// suspend slot at all (``VirtualizationService/restingStatusAfterFailedSnapshot(_:session:wasRunning:)``),
+    /// the same dead end ``VirtualizationService/applyRestoreFailure(to:)``
+    /// documents for `.paused` generally.
+    var snapshotCaptureMode: VMSnapshotCaptureMode? {
+        if canSave {
+            .live
+        } else if isColdPaused && hasSaveFile {
+            .suspended
+        } else if status == .stopped {
+            .stopped
+        } else {
+            nil
+        }
     }
 
-    /// The kind a capture started right now would produce — the one place the
-    /// choice is made.
-    var snapshotKindForCapture: VMSnapshotKind {
-        canSave ? .warm : .cold
-    }
+    /// `true` when a snapshot can be captured in some form.
+    var canTakeSnapshot: Bool { snapshotCaptureMode != nil }
 
     /// `true` when this VM has a snapshot to go back to and is settled enough
     /// to be taken there.

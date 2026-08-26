@@ -154,8 +154,9 @@ final class SnapshotSectionView: NSView {
             paragraphs: [
                 .body(
                     "A snapshot copies the disks inside the VM's bundle, and pairs them with the "
-                        + "guest's memory when the VM is running. Taken while it is stopped, a "
-                        + "snapshot holds the disks alone and reverting returns the VM powered off."
+                        + "guest's memory when the VM is running or suspended. Taken while it is "
+                        + "stopped, a snapshot holds the disks alone and reverting returns the VM "
+                        + "powered off."
                 ),
                 .body(
                     "Disks attached from outside the bundle are not captured — reverting leaves them as they are."

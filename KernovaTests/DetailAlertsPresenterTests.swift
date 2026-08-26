@@ -340,19 +340,27 @@ struct DetailAlertsPresenterTests {
     }
 
     @Test("The revert alert on a suspended VM names the suspended session it replaces")
-    func revertAlertNamesTheSuspendedSession() {
+    func revertAlertNamesTheSuspendedSession() throws {
         let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
         let vm = makeInstance()
         vm.status = .paused
         vm.hasLiveVirtualMachineOverrideForTesting = false
+        // A capturable suspend slot: `canTakeSnapshot` for a cold-paused VM
+        // needs one on disk, not just the status.
+        try FileManager.default.createDirectory(
+            at: vm.bundleURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: vm.bundleURL) }
+        FileManager.default.createFile(
+            atPath: vm.saveFileURL.path(percentEncoded: false), contents: Data("fake save".utf8))
         #expect(vm.isColdPaused)
         let snapshot = VMSnapshot(name: "Before the update")
 
         let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
 
-        // The snapshot-first button is hidden for a cold-paused VM, so the copy
-        // is the only place the lost suspended session can be named.
-        #expect(!alert.buttons.contains { $0.title == "Take Snapshot, Then Revert" })
+        // A cold-paused VM can now check-point before reverting, so the
+        // snapshot-first button is offered — but the copy still names the
+        // suspended session that revert alone would replace.
+        #expect(alert.buttons.contains { $0.title == "Take Snapshot, Then Revert" })
         #expect(alert.message.contains("suspended session"))
     }
 

@@ -225,6 +225,83 @@ struct VirtualizationServiceTests {
         #expect(fixture.instance.status == .running)
     }
 
+    // MARK: - Suspended-state snapshots
+
+    @Test(
+        "A suspended-state capture clones the suspend slot and the disks, leaves the bundle's slot in place, and rests paused"
+    )
+    func suspendedCaptureClonesTheSlotAndRestsPaused() async throws {
+        let fixture = try makeRevertFixture(status: .paused)
+        defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
+        #expect(fixture.instance.isColdPaused)
+        try Data("bundle-suspend-slot".utf8).write(to: fixture.instance.bundleLayout.saveFileURL)
+        let snapshot = VMSnapshot(name: "Suspended", kind: .warm)
+
+        try await service.takeSnapshot(
+            fixture.instance, snapshot: snapshot, store: fixture.store)
+
+        let snapshotLayout = fixture.instance.bundleLayout.snapshotLayout(id: snapshot.id)
+        let capturedSlot = try Data(contentsOf: snapshotLayout.saveFileURL)
+        #expect(String(decoding: capturedSlot, as: UTF8.self) == "bundle-suspend-slot")
+        let capturedDisk = try Data(contentsOf: snapshotLayout.diskImageURL)
+        #expect(String(decoding: capturedDisk, as: UTF8.self) == "live-disk")
+        // The bundle's own slot is untouched — a suspended capture consumes nothing.
+        let bundleSlot = try Data(contentsOf: fixture.instance.bundleLayout.saveFileURL)
+        #expect(String(decoding: bundleSlot, as: UTF8.self) == "bundle-suspend-slot")
+        #expect(fixture.instance.status == .paused)
+    }
+
+    @Test("A cold-paused VM with no save file is refused")
+    func suspendedCaptureNeedsASaveFile() async throws {
+        let fixture = try makeRevertFixture(status: .paused)
+        defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
+        #expect(fixture.instance.isColdPaused)
+        #expect(!fixture.instance.hasSaveFile)
+
+        await #expect(throws: VirtualizationError.self) {
+            try await service.takeSnapshot(
+                fixture.instance, snapshot: VMSnapshot(name: "No slot", kind: .warm),
+                store: fixture.store)
+        }
+        #expect(fixture.instance.status == .paused)
+    }
+
+    @Test("A disks-only-stamped capture of a suspended VM is refused with the status untouched")
+    func coldStampedCaptureOfASuspendedVMIsRefused() async throws {
+        let fixture = try makeRevertFixture(status: .paused)
+        defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
+        try Data("bundle-suspend-slot".utf8).write(to: fixture.instance.bundleLayout.saveFileURL)
+
+        await #expect(throws: VirtualizationError.self) {
+            try await service.takeSnapshot(
+                fixture.instance, snapshot: VMSnapshot(name: "Mis-stamped", kind: .cold),
+                store: fixture.store)
+        }
+        #expect(fixture.instance.status == .paused)
+    }
+
+    @Test("Reverting to a suspended-state capture restores the cloned suspend slot and disks")
+    func revertRoundTripsASuspendedCapture() async throws {
+        let fixture = try makeRevertFixture(status: .paused)
+        defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
+        #expect(fixture.instance.isColdPaused)
+        try Data("own-suspend-slot".utf8).write(to: fixture.instance.bundleLayout.saveFileURL)
+        let checkpoint = VMSnapshot(name: "Suspended checkpoint", kind: .warm)
+        fixture.instance.snapshotManifest.insert(checkpoint)
+
+        try await service.takeSnapshot(fixture.instance, snapshot: checkpoint, store: fixture.store)
+        #expect(fixture.instance.status == .paused)
+
+        try await service.revertToSnapshot(
+            fixture.instance, snapshot: checkpoint, store: fixture.store)
+
+        #expect(fixture.instance.status == .paused)
+        let restoredSlot = try Data(contentsOf: fixture.instance.bundleLayout.saveFileURL)
+        #expect(String(decoding: restoredSlot, as: UTF8.self) == "own-suspend-slot")
+        let restoredDisk = try Data(contentsOf: fixture.instance.bundleLayout.diskImageURL)
+        #expect(String(decoding: restoredDisk, as: UTF8.self) == "live-disk")
+    }
+
     @Test("Reverting a live VM to a disks-only snapshot lands it stopped, with no resume")
     func coldRevertOfALiveVMLandsStopped() async throws {
         let fixture = try makeRevertFixture(status: .running, kind: .cold)

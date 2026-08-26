@@ -109,6 +109,19 @@ struct VMSnapshotStore: VMSnapshotStoring {
         }
     }
 
+    func captureSuspendSlot(bundleURL: URL, snapshotID: UUID) throws {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        let destinationLayout = layout.snapshotLayout(id: snapshotID)
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: layout.saveFileURL.path(percentEncoded: false)) else {
+            throw VMSnapshotError.captureSourceMissing(layout.saveFileURL.lastPathComponent)
+        }
+        // Same volume, so APFS clones the file rather than duplicating its
+        // blocks — the copy shares them with the bundle's suspend slot until
+        // either side writes.
+        try manager.copyItem(at: layout.saveFileURL, to: destinationLayout.saveFileURL)
+    }
+
     // MARK: - Restore
 
     /// The files a revert writes back, taken from the configuration the capture
