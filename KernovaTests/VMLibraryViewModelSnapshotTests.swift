@@ -38,6 +38,35 @@ struct VMLibraryViewModelSnapshotTests {
             snapshots: snapshots)
     }
 
+    private struct SuspendingHarness {
+        let viewModel: VMLibraryViewModel
+        let virtualization: SuspendingMockVirtualizationService
+        let snapshots: MockVMSnapshotStore
+    }
+
+    /// A harness whose virtualization service holds the revert suspended until
+    /// released, so a test can land another mutation while the revert is in
+    /// flight and observe whether it survives.
+    private func makeSuspendingHarness() -> SuspendingHarness {
+        let virtualization = SuspendingMockVirtualizationService()
+        let snapshots = MockVMSnapshotStore()
+        let viewModel = VMLibraryViewModel(
+            storageService: MockVMStorageService(),
+            diskImageService: MockDiskImageService(),
+            snapshotStore: snapshots,
+            virtualizationService: virtualization,
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            usbDeviceService: MockUSBDeviceService(),
+            fileSystem: MockFileSystem(),
+            preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider()
+        )
+        viewModel.presenter = presenter
+        return SuspendingHarness(
+            viewModel: viewModel, virtualization: virtualization, snapshots: snapshots)
+    }
+
     private func makeInstance(status: VMStatus = .running) -> VMInstance {
         let config = VMConfiguration(name: "Snapshot VM", guestOS: .linux, bootMode: .efi)
         let bundleURL = FileManager.default.temporaryDirectory
@@ -536,13 +565,21 @@ struct VMLibraryViewModelSnapshotTests {
 
     @Test("A rename made mid-revert survives the revert's own manifest write")
     func renameSurvivesAConcurrentRevert() async {
-        let harness = makeHarness()
+        let harness = makeSuspendingHarness()
+        harness.virtualization.shouldSuspendOnRevert = true
         let instance = makeInstance(status: .restoring)
         let snapshot = makeSnapshot()
-        seed(harness, instance, [snapshot])
+        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+        harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
 
+        let revertTask = Task { await harness.viewModel.revertConfirmed(instance, to: snapshot) }
+        // The revert is parked mid-copy, and the rename lands here — the
+        // assertion below only holds if `performRevert` re-reads the manifest
+        // after this await rather than writing a copy captured before it.
+        await harness.virtualization.waitUntilSuspended()
         harness.viewModel.renameSnapshot(snapshot, newName: "Renamed mid-revert", on: instance)
-        await harness.viewModel.revertConfirmed(instance, to: snapshot)
+        harness.virtualization.resumeSuspended()
+        await revertTask.value
 
         #expect(instance.snapshotManifest.snapshot(id: snapshot.id)?.name == "Renamed mid-revert")
         #expect(instance.snapshotManifest.currentID == snapshot.id)

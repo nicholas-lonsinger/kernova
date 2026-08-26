@@ -74,7 +74,6 @@ final class SnapshotInfoPopoverContentViewController: NSViewController {
         }
     }
 
-    /// The Notes section: an editable box.
     private func makeNotesRows() -> [NSView] {
         let editor = NotesEditorView(text: snapshot.notes)
         editor.onCommit = { [weak self] notes in self?.onCommitNotes(notes) }
