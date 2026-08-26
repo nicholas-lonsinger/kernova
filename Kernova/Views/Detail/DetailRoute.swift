@@ -34,7 +34,8 @@ enum DetailRoute: Equatable {
         status: VMStatus,
         errorMessage: String?,
         hasSetupState: Bool,
-        detailPaneMode: DetailPaneMode
+        detailPaneMode: DetailPaneMode,
+        hasLiveVirtualMachine: Bool
     ) -> DetailRoute {
         if let preparingLabel {
             return .preparing(label: preparingLabel)
@@ -49,6 +50,18 @@ enum DetailRoute: Equatable {
         case .installing:
             return hasSetupState ? .setup : .transition(label: status.displayName)
         default:
+            // A transitional status claims an active display only while it
+            // still has a session to host: a revert tears one down before
+            // setting `.restoring`, and a disks-only capture never had one.
+            // Without this they route to the display pane, which replaces the
+            // Settings form with the backing view for the length of the copy.
+            //
+            // Settled statuses are excluded deliberately — a cold-paused VM has
+            // no session either, and the display pane's own idle state is what
+            // belongs there rather than a spinner.
+            if status.isTransitioning, !hasLiveVirtualMachine {
+                return .transition(label: status.displayName)
+            }
             if status.hasActiveDisplay {
                 return detailPaneMode == .settings ? .settings(isReadOnly: true) : .display
             }

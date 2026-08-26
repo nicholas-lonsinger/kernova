@@ -293,6 +293,9 @@ struct SidebarViewControllerTests {
         #expect(menuItem("Rename", in: menu)?.isEnabled == true)
         #expect(menuItem("Clone", in: menu)?.isEnabled == true)
         #expect(menuItem("Move to Trash…", in: menu)?.isEnabled == true)
+        // A disks-only capture is offered while stopped; Suspend is not.
+        #expect(menuItem("Take Snapshot…", in: menu)?.isEnabled == true)
+        #expect(!menuTitles.contains("Suspend"))
     }
 
     @Test("Context menu for a running VM offers Pause/Stop/Suspend and disables editing")
@@ -329,6 +332,8 @@ struct SidebarViewControllerTests {
         #expect(!menuTitles.contains("Force Stop…"))
         #expect(!menuTitles.contains("Stop"))
         #expect(!menuTitles.contains("Suspend"))
+        // Its disks belong to the suspended session, so there is nothing to capture.
+        #expect(!menuTitles.contains("Take Snapshot…"))
     }
 
     @Test("Context menu enables delete for a cold-paused VM but keeps Clone disabled")
@@ -407,6 +412,9 @@ struct SidebarViewControllerTests {
         preferences.alwaysShowAdvancedOptions = false
         let viewModel = makeViewModel()
         let instance = makeInstance(status: .starting)
+        // Force Stop acts on the live VZ VM, which a start has by the time it is
+        // running the guest.
+        instance.hasLiveVirtualMachineOverrideForTesting = true
         viewModel.instances.append(instance)
         let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
 
@@ -417,6 +425,19 @@ struct SidebarViewControllerTests {
         // visible without holding Option.
         #expect(!menuTitles.contains("Stop"))
         #expect(menuItem("Force Stop…", in: menu)?.isAlternate == false)
+    }
+
+    @Test("A disks-only capture offers no Force Stop — there is no VM to terminate")
+    func contextMenuNoForceStopDuringAColdCapture() {
+        let viewModel = makeViewModel()
+        let instance = makeInstance(status: .snapshotting)
+        instance.hasLiveVirtualMachineOverrideForTesting = false
+        viewModel.instances.append(instance)
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+
+        let menuTitles = titles(of: controller.buildContextMenu(for: instance))
+
+        #expect(!menuTitles.contains("Force Stop…"))
     }
 
     @Test("Delete Immediately is the Option-alternate of Move to Trash (advanced options off)")

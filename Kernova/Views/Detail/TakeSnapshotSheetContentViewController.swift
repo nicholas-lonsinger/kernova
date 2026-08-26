@@ -16,8 +16,19 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     private let vmName: String
     private let suggestedName: String
 
+    /// What a capture confirmed right now would produce, which the header and
+    /// caption describe.
+    ///
+    /// Not fixed at presentation: the guest can finish powering off while this
+    /// window-modal sheet is up, and the kind is stamped at confirm time
+    /// (``VMLibraryViewModel/takeSnapshot(_:name:notes:)``) — so the copy has to
+    /// follow it or it describes a capture that won't happen.
+    private(set) var kind: VMSnapshotKind
+
     private let nameField = NSTextField()
     private let notesField = NSTextField()
+    private let headerBodyLabel = NSTextField(wrappingLabelWithString: "")
+    private var captionLabel = NSTextField()
 
     /// The name the sheet would confirm with right now.
     var enteredName: String { nameField.stringValue }
@@ -28,9 +39,10 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     private static let padding: CGFloat = 20
     private static let heroPointSize: CGFloat = 48
 
-    init(vmName: String, suggestedName: String) {
+    init(vmName: String, suggestedName: String, kind: VMSnapshotKind) {
         self.vmName = vmName
         self.suggestedName = suggestedName
+        self.kind = kind
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -39,16 +51,20 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         fatalError("TakeSnapshotSheetContentViewController does not support NSCoder")
     }
 
+    /// Re-renders the copy for the kind a capture would now produce; a no-op
+    /// when it hasn't moved.
+    func update(kind: VMSnapshotKind) {
+        guard kind != self.kind else { return }
+        self.kind = kind
+        guard isViewLoaded else { return }
+        headerBodyLabel.stringValue = headerBodyText
+        captionLabel.stringValue = captionText
+    }
+
     override func loadView() {
+        captionLabel = makeGroupedFormCaption(captionText)
         let stack = NSStackView(views: [
-            makeHeader(), makeFormCard(),
-            makeGroupedFormCaption(
-                "The VM pauses briefly while its state is written, and its current settings are "
-                    + "captured with it. Disks are copied on the same volume, so the copies share "
-                    + "their blocks with the VM\u{2019}s disks and take almost no extra space until "
-                    + "one side changes \u{2014} but the snapshot\u{2019}s listed size counts those "
-                    + "shared blocks in full."),
-            makeFooter(),
+            makeHeader(), makeFormCard(), captionLabel, makeFooter(),
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -79,6 +95,36 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         nameField.currentEditor()?.selectAll(nil)
     }
 
+    // MARK: - Copy
+
+    /// What the capture takes, in outcome terms.
+    var headerBodyText: String {
+        switch kind {
+        case .warm:
+            "The VM\u{2019}s current memory and disks are captured as a restore point you can "
+                + "revert to later."
+        case .cold:
+            "The VM\u{2019}s disks and settings are captured as a restore point you can revert "
+                + "to later. There is no memory image, so reverting returns the VM powered off."
+        }
+    }
+
+    /// The shared-blocks note, prefixed with what the capture costs the running
+    /// guest — nothing at all, when there isn't one.
+    var captionText: String {
+        let lead =
+            switch kind {
+            case .warm:
+                "The VM pauses briefly while its state is written, and its current settings are "
+                    + "captured with it. "
+            case .cold: "The VM\u{2019}s current settings are captured with its disks. "
+            }
+        return lead
+            + "Disks are copied on the same volume, so the copies share their blocks with the "
+            + "VM\u{2019}s disks and take almost no extra space until one side changes \u{2014} "
+            + "but the snapshot\u{2019}s listed size counts those shared blocks in full."
+    }
+
     // MARK: - Header
 
     private func makeHeader() -> NSView {
@@ -95,10 +141,8 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         title.lineBreakMode = .byTruncatingMiddle
         title.isSelectable = false
 
-        let body = NSTextField(
-            wrappingLabelWithString:
-                "The VM\u{2019}s current memory and disks are captured as a restore point you can "
-                + "revert to later.")
+        let body = headerBodyLabel
+        body.stringValue = headerBodyText
         body.font = .preferredFont(forTextStyle: .callout)
         body.alignment = .center
         body.maximumNumberOfLines = 0

@@ -117,6 +117,22 @@ struct SnapshotSectionViewTests {
         #expect(findLabel(containing: "3 GB on disk", in: view) != nil)
     }
 
+    @Test("A disks-only row says so between its date and its size")
+    func coldRowNamesWhatItHolds() {
+        let (view, _) = makeSection()
+        var cold = makeSnapshot("Before first boot")
+        cold.kind = .cold
+        let warm = makeSnapshot("Mid-session", offsetSeconds: 60)
+
+        view.update(
+            manifest: VMSnapshotManifest(snapshots: [cold, warm]),
+            canTakeSnapshot: true, canRevert: true, canModify: true, baselineID: nil)
+        view.applySizes([cold.id: 2_000_000_000, warm.id: 2_000_000_000])
+
+        #expect(view.subtitleText(for: cold).contains("Disks only \u{00B7} 2 GB on disk"))
+        #expect(!view.subtitleText(for: warm).contains("Disks only"))
+    }
+
     @Test("A single snapshot reads in the singular")
     func singleSnapshotReadsSingular() {
         let (view, _) = makeSection()

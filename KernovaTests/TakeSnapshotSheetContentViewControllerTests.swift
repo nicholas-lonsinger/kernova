@@ -22,11 +22,12 @@ struct TakeSnapshotSheetContentViewControllerTests {
     }
 
     private func makeSheet(
-        vmName: String = "Dev Mac", suggestedName: String = "Snapshot"
+        vmName: String = "Dev Mac", suggestedName: String = "Snapshot",
+        kind: VMSnapshotKind = .warm
     ) -> (TakeSnapshotSheetContentViewController, Recorder) {
         let recorder = Recorder()
         let sheet = TakeSnapshotSheetContentViewController(
-            vmName: vmName, suggestedName: suggestedName)
+            vmName: vmName, suggestedName: suggestedName, kind: kind)
         sheet.delegate = recorder
         sheet.loadViewIfNeeded()
         return (sheet, recorder)
@@ -81,5 +82,40 @@ struct TakeSnapshotSheetContentViewControllerTests {
     func confirmIsTheDefaultButton() {
         let (sheet, _) = makeSheet()
         #expect(findButton(titled: "Take Snapshot", in: sheet.view)?.keyEquivalent == "\r")
+    }
+
+    // MARK: - Per-kind copy
+
+    @Test("A memory-and-disks capture says so, and warns about the pause")
+    func warmCopyNamesMemoryAndThePause() {
+        let (sheet, _) = makeSheet(kind: .warm)
+        #expect(sheet.headerBodyText.contains("memory and disks"))
+        #expect(sheet.captionText.contains("pauses briefly"))
+    }
+
+    @Test("A disks-only capture says the VM comes back powered off, with no pause")
+    func coldCopyNamesTheOutcome() {
+        let (sheet, _) = makeSheet(kind: .cold)
+        #expect(sheet.headerBodyText.contains("disks and settings"))
+        #expect(sheet.headerBodyText.contains("powered off"))
+        #expect(!sheet.headerBodyText.contains("memory and disks"))
+        #expect(!sheet.captionText.contains("pauses briefly"))
+        // The shared-blocks note stands either way.
+        #expect(sheet.captionText.contains("share their blocks"))
+    }
+
+    @Test("A guest powering off while the sheet is up moves its copy to disks-only")
+    func updatingTheKindRewritesTheRenderedCopy() {
+        let (sheet, _) = makeSheet(kind: .warm)
+        let body = findLabel(containing: "memory and disks", in: sheet.view)
+        #expect(body != nil)
+
+        sheet.update(kind: .cold)
+
+        #expect(sheet.kind == .cold)
+        // The same labels, rewritten — not a stale copy left on screen.
+        #expect(body?.stringValue.contains("powered off") == true)
+        #expect(findLabel(containing: "memory and disks", in: sheet.view) == nil)
+        #expect(findLabel(containing: "pauses briefly", in: sheet.view) == nil)
     }
 }

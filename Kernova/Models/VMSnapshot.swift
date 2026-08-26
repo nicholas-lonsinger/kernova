@@ -1,7 +1,18 @@
 import Foundation
 
-/// One named restore point: a VZ saved machine state plus a point-in-time copy
-/// of the VM's bundle-owned disks, kept until the user deletes it.
+/// What a snapshot captured, which decides what reverting to it produces.
+enum VMSnapshotKind: String, Codable, Sendable {
+    /// The guest's memory as a VZ saved state, plus a copy of the bundle's
+    /// disks. Reverting lands the VM paused on that memory image.
+    case warm
+    /// The bundle's disks alone, taken while the VM was stopped. Reverting
+    /// lands the VM stopped.
+    case cold
+}
+
+/// One named restore point: a point-in-time copy of the VM's bundle-owned
+/// disks, paired with the guest's memory when the VM was live at capture
+/// (``VMSnapshotKind``), kept until the user deletes it.
 ///
 /// Distinct from the suspend slot (`VMBundleLayout.saveFileURL`), whose saved
 /// state is consumed the moment a restore succeeds.
@@ -11,12 +22,29 @@ struct VMSnapshot: Codable, Sendable, Equatable, Identifiable {
     var createdAt: Date
     /// Free-form user note, empty when none was entered.
     var notes: String
+    var kind: VMSnapshotKind
 
-    init(id: UUID = UUID(), name: String, createdAt: Date = Date(), notes: String = "") {
+    init(
+        id: UUID = UUID(), name: String, createdAt: Date = Date(), notes: String = "",
+        kind: VMSnapshotKind = .warm
+    ) {
         self.id = id
         self.name = name
         self.createdAt = createdAt
         self.notes = notes
+        self.kind = kind
+    }
+
+    // Custom `init(from:)` for `kind`, whose default differs from what
+    // synthesized `Codable` would do: a `decode` of a non-optional field fails
+    // the whole manifest when the key is absent.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.createdAt = try c.decode(Date.self, forKey: .createdAt)
+        self.notes = try c.decode(String.self, forKey: .notes)
+        self.kind = try c.decodeIfPresent(VMSnapshotKind.self, forKey: .kind) ?? .warm
     }
 }
 

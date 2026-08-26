@@ -21,19 +21,38 @@ struct VMInstanceTests {
 
     // MARK: - Snapshot eligibility
 
-    @Test("canTakeSnapshot matches canSave, so Take Snapshot enables exactly with Suspend")
-    func canTakeSnapshotMatchesCanSave() {
-        for status in [VMStatus.running, .paused, .stopped, .starting, .error, .initialBoot] {
+    @Test("A live or stopped VM can be snapshotted; every other at-rest state cannot")
+    func canTakeSnapshotCoversLiveAndStopped() {
+        for status in [VMStatus.running, .paused] {
             let instance = makeInstance(status: status)
-            #expect(instance.canTakeSnapshot == instance.canSave, "status \(status.displayName)")
+            instance.hasLiveVirtualMachineOverrideForTesting = true
+            #expect(instance.canTakeSnapshot, "status \(status.displayName)")
+        }
+        #expect(makeInstance(status: .stopped).canTakeSnapshot)
+        for status in [
+            VMStatus.starting, .saving, .snapshotting, .restoring, .installing, .error, .initialBoot,
+        ] {
+            let instance = makeInstance(status: status)
+            instance.hasLiveVirtualMachineOverrideForTesting = true
+            #expect(instance.canTakeSnapshot == false, "status \(status.displayName)")
         }
     }
 
-    @Test("A cold-paused VM has nothing live to capture")
+    @Test("A cold-paused VM's disks belong to a suspended session, so it cannot be captured")
     func coldPausedCannotTakeASnapshot() {
         let instance = makeInstance(status: .paused)
         instance.hasLiveVirtualMachineOverrideForTesting = false
         #expect(instance.canTakeSnapshot == false)
+    }
+
+    @Test("The capture kind follows what the VM has to capture")
+    func snapshotKindFollowsLiveness() {
+        for status in [VMStatus.running, .paused] {
+            let instance = makeInstance(status: status)
+            instance.hasLiveVirtualMachineOverrideForTesting = true
+            #expect(instance.snapshotKindForCapture == .warm, "status \(status.displayName)")
+        }
+        #expect(makeInstance(status: .stopped).snapshotKindForCapture == .cold)
     }
 
     @Test("canRevertToSnapshot needs a snapshot to go back to")
@@ -368,11 +387,23 @@ struct VMInstanceTests {
 
     // MARK: - canForceStop
 
-    @Test("canForceStop is true when running or transitioning (without live VM, tests model logic)")
+    @Test("canForceStop is true when running or transitioning with a live VM to terminate")
     func canForceStopRunningAndTransitions() {
-        for status in [VMStatus.running, .starting, .saving, .restoring] {
+        for status in [VMStatus.running, .starting, .saving, .snapshotting, .restoring] {
             let instance = makeInstance(status: status)
-            #expect(instance.canForceStop == true)
+            instance.hasLiveVirtualMachineOverrideForTesting = true
+            #expect(instance.canForceStop == true, "status \(status.displayName)")
+        }
+    }
+
+    @Test("canForceStop needs a live VM, so a session-less transition doesn't offer it")
+    func canForceStopNeedsALiveVirtualMachine() {
+        // A disks-only capture is a file copy with no VM behind it, and a start
+        // still assembling its configuration has yet to create one.
+        for status in [VMStatus.snapshotting, .starting, .restoring] {
+            let instance = makeInstance(status: status)
+            instance.hasLiveVirtualMachineOverrideForTesting = false
+            #expect(instance.canForceStop == false, "status \(status.displayName)")
         }
     }
 

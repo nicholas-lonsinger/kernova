@@ -13,7 +13,8 @@ struct DetailRouteTests {
                 status: status,
                 errorMessage: nil,
                 hasSetupState: true,
-                detailPaneMode: .display
+                detailPaneMode: .display,
+                hasLiveVirtualMachine: true
             )
             #expect(route == .preparing(label: "Cloning…"))
         }
@@ -28,7 +29,8 @@ struct DetailRouteTests {
             status: .stopped,
             errorMessage: nil,
             hasSetupState: false,
-            detailPaneMode: .display
+            detailPaneMode: .display,
+            hasLiveVirtualMachine: true
         )
         #expect(route == .settings(isReadOnly: false))
     }
@@ -40,7 +42,8 @@ struct DetailRouteTests {
             status: .error,
             errorMessage: "Boot failed.",
             hasSetupState: false,
-            detailPaneMode: .display
+            detailPaneMode: .display,
+            hasLiveVirtualMachine: true
         )
         #expect(route == .error(message: "Boot failed."))
         // A second failure with different text must not compare equal to the first.
@@ -54,7 +57,8 @@ struct DetailRouteTests {
             status: .initialBoot,
             errorMessage: nil,
             hasSetupState: false,
-            detailPaneMode: .display
+            detailPaneMode: .display,
+            hasLiveVirtualMachine: true
         )
         #expect(route == .initialBoot)
     }
@@ -68,7 +72,8 @@ struct DetailRouteTests {
             status: .installing,
             errorMessage: nil,
             hasSetupState: true,
-            detailPaneMode: .display
+            detailPaneMode: .display,
+            hasLiveVirtualMachine: true
         )
         #expect(route == .setup)
     }
@@ -80,7 +85,8 @@ struct DetailRouteTests {
             status: .installing,
             errorMessage: nil,
             hasSetupState: false,
-            detailPaneMode: .display
+            detailPaneMode: .display,
+            hasLiveVirtualMachine: true
         )
         #expect(route == .transition(label: VMStatus.installing.displayName))
     }
@@ -89,13 +95,14 @@ struct DetailRouteTests {
 
     @Test("Active-display statuses honor the chosen pane")
     func activeDisplayHonorsPane() {
-        for status in [VMStatus.running, .paused, .saving, .restoring] {
+        for status in [VMStatus.running, .paused, .saving, .snapshotting, .restoring] {
             let display = DetailRoute.resolve(
                 preparingLabel: nil,
                 status: status,
                 errorMessage: nil,
                 hasSetupState: false,
-                detailPaneMode: .display
+                detailPaneMode: .display,
+                hasLiveVirtualMachine: true
             )
             #expect(display == .display)
 
@@ -104,7 +111,8 @@ struct DetailRouteTests {
                 status: status,
                 errorMessage: nil,
                 hasSetupState: false,
-                detailPaneMode: .settings
+                detailPaneMode: .settings,
+                hasLiveVirtualMachine: true
             )
             #expect(settings == .settings(isReadOnly: true))
         }
@@ -120,9 +128,55 @@ struct DetailRouteTests {
                 status: .starting,
                 errorMessage: nil,
                 hasSetupState: false,
-                detailPaneMode: paneMode
+                detailPaneMode: paneMode,
+                hasLiveVirtualMachine: true
             )
             #expect(route == .transition(label: VMStatus.starting.displayName))
         }
+    }
+
+    @Test("A session-less transition routes to its spinner, not the display pane")
+    func sessionLessTransitionsRouteToTransition() {
+        // A revert always tears the session down before `.restoring`, and a
+        // disks-only capture never had one — both would otherwise replace the
+        // Settings form with the display backing view for the whole copy.
+        for status in [VMStatus.snapshotting, .restoring, .saving] {
+            for paneMode in [DetailPaneMode.display, .settings] {
+                let route = DetailRoute.resolve(
+                    preparingLabel: nil,
+                    status: status,
+                    errorMessage: nil,
+                    hasSetupState: false,
+                    detailPaneMode: paneMode,
+                    hasLiveVirtualMachine: false
+                )
+                #expect(
+                    route == .transition(label: status.displayName),
+                    "status \(status.displayName), pane \(paneMode)")
+            }
+        }
+    }
+
+    @Test("A cold-paused VM keeps the display pane — it is settled, not transitioning")
+    func coldPausedKeepsTheDisplayPane() {
+        let display = DetailRoute.resolve(
+            preparingLabel: nil,
+            status: .paused,
+            errorMessage: nil,
+            hasSetupState: false,
+            detailPaneMode: .display,
+            hasLiveVirtualMachine: false
+        )
+        #expect(display == .display)
+
+        let settings = DetailRoute.resolve(
+            preparingLabel: nil,
+            status: .paused,
+            errorMessage: nil,
+            hasSetupState: false,
+            detailPaneMode: .settings,
+            hasLiveVirtualMachine: false
+        )
+        #expect(settings == .settings(isReadOnly: true))
     }
 }

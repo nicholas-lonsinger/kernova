@@ -28,10 +28,11 @@ struct VMLibraryViewModelEphemeralTests {
     /// captured, and answers the pair.
     private func seedVM(
         named name: String, ephemeral: Bool, storage: MockVMStorageService,
-        snapshots: MockVMSnapshotStore
+        snapshots: MockVMSnapshotStore, baselineKind: VMSnapshotKind = .warm
     ) throws -> (config: VMConfiguration, baseline: VMSnapshot, later: VMSnapshot) {
         let baseline = VMSnapshot(
-            name: "\(name) clean install", createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+            name: "\(name) clean install", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            kind: baselineKind)
         let later = VMSnapshot(
             name: "\(name) mid-session", createdAt: Date(timeIntervalSince1970: 1_700_001_000))
 
@@ -58,14 +59,16 @@ struct VMLibraryViewModelEphemeralTests {
     /// it rests once loaded. `secondVM` adds a second, always-ephemeral VM, for
     /// the cases that turn on the two being tracked apart.
     private func makeHarness(
-        ephemeral: Bool = true, status: VMStatus = .running, secondVM: Bool = false
+        ephemeral: Bool = true, status: VMStatus = .running, secondVM: Bool = false,
+        baselineKind: VMSnapshotKind = .warm
     ) async throws -> Harness {
         let storage = MockVMStorageService()
         let virtualization = MockVirtualizationService()
         let snapshots = MockVMSnapshotStore()
 
         let first = try seedVM(
-            named: "Throwaway", ephemeral: ephemeral, storage: storage, snapshots: snapshots)
+            named: "Throwaway", ephemeral: ephemeral, storage: storage, snapshots: snapshots,
+            baselineKind: baselineKind)
         let second =
             secondVM
             ? try seedVM(named: "Sandbox", ephemeral: true, storage: storage, snapshots: snapshots)
@@ -134,6 +137,27 @@ struct VMLibraryViewModelEphemeralTests {
         await settleEphemeralRevert(harness)
 
         #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
+    }
+
+    @Test("A VM with a memory-and-disks baseline rests suspended after a power-off")
+    func warmBaselineRestsSuspended() async throws {
+        let harness = try await makeHarness()
+
+        await harness.viewModel.stop(harness.instance)
+        await settleEphemeralRevert(harness)
+
+        #expect(harness.instance.status == .paused)
+    }
+
+    @Test("A VM with a disks-only baseline rests stopped after a power-off")
+    func coldBaselineRestsStopped() async throws {
+        let harness = try await makeHarness(baselineKind: .cold)
+
+        await harness.viewModel.stop(harness.instance)
+        await settleEphemeralRevert(harness)
+
+        #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
+        #expect(harness.instance.status == .stopped)
     }
 
     @Test("A power-off registers its revert before it returns")
@@ -244,6 +268,17 @@ struct VMLibraryViewModelEphemeralTests {
         #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
         #expect(harness.instance.snapshotManifest.currentID == harness.baseline.id)
         // The plain discard path was not taken.
+        #expect(harness.virtualization.stopCallCount == 0)
+    }
+
+    @Test("Discarding a suspended session still routes through a disks-only baseline")
+    func discardSavedStateRevertsToAColdBaseline() async throws {
+        let harness = try await makeHarness(status: .paused, baselineKind: .cold)
+
+        await harness.viewModel.stop(harness.instance)
+
+        #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
+        #expect(harness.instance.status == .stopped)
         #expect(harness.virtualization.stopCallCount == 0)
     }
 
