@@ -16,6 +16,7 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
         var restoredConfigurations: [UUID: VMConfiguration] = [:]
         var discardedIDs: [UUID] = []
         var removedDirectoryIDs: [UUID] = []
+        var sweptStagingBundleURLs: [URL] = []
         var sizes: [UUID: UInt64] = [:]
         var saveManifestError: (any Error)?
         var prepareError: (any Error)?
@@ -65,6 +66,7 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
     var restoredIDs: [UUID] { lock.withLock { state.restoredIDs } }
     var discardedIDs: [UUID] { lock.withLock { state.discardedIDs } }
     var removedDirectoryIDs: [UUID] { lock.withLock { state.removedDirectoryIDs } }
+    var sweptStagingBundleURLs: [URL] { lock.withLock { state.sweptStagingBundleURLs } }
 
     // MARK: - Error injection
 
@@ -161,6 +163,10 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
 
     func removeSnapshotDirectory(bundleURL: URL, snapshotID: UUID) {
         lock.withLock { state.removedDirectoryIDs.append(snapshotID) }
+    }
+
+    func sweepRestoreStaging(bundleURL: URL) {
+        lock.withLock { state.sweptStagingBundleURLs.append(bundleURL) }
     }
 
     func onDiskBytes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: UInt64] {

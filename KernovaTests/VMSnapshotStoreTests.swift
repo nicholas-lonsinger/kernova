@@ -383,6 +383,33 @@ struct VMSnapshotStoreTests {
         #expect(written.memorySizeInGB == 12)
     }
 
+    // MARK: - Staging sweep
+
+    @Test("Sweeping reclaims a staging directory an interrupted revert left behind")
+    func sweepRemovesOrphanedStaging() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        let staging = fixture.layout.restoreStagingURL
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        try Data("half-cloned".utf8).write(to: staging.appendingPathComponent("Disk.asif"))
+
+        VMSnapshotStore().sweepRestoreStaging(bundleURL: fixture.bundleURL)
+
+        #expect(
+            !FileManager.default.fileExists(atPath: staging.path(percentEncoded: false)))
+        #expect(contents(of: fixture.layout.diskImageURL) == "main-disk")
+    }
+
+    @Test("Sweeping a bundle that holds no staging directory leaves it alone")
+    func sweepWithoutStagingIsANoOp() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+
+        VMSnapshotStore().sweepRestoreStaging(bundleURL: fixture.bundleURL)
+
+        #expect(contents(of: fixture.layout.diskImageURL) == "main-disk")
+    }
+
     // MARK: - Removal and sizes
 
     @Test("Discarding a snapshot trashes its directory")

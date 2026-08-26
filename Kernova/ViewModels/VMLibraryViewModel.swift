@@ -1931,6 +1931,11 @@ final class VMLibraryViewModel {
         // The one construction-site hook every path runs through — load, create,
         // clone, import, and disk reconciliation alike.
         instance.snapshotManifest = snapshotStore.loadManifest(bundleURL: instance.bundleURL)
+        // Every one of those paths hands the library a bundle it does not hold
+        // an instance for yet, and a revert needs one — so a staging directory
+        // found here belongs to no running revert, and reclaiming it does not
+        // wait on the next revert of this VM to come along.
+        snapshotStore.sweepRestoreStaging(bundleURL: instance.bundleURL)
         syncAddressReservation(for: instance.configuration)
         syncPortForwardingRules(for: instance.configuration)
         // The create/clone/import/load entry point: a VM arriving with a slot

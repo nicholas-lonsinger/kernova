@@ -214,6 +214,22 @@ struct VMSnapshotStore: VMSnapshotStoring {
         }
     }
 
+    func sweepRestoreStaging(bundleURL: URL) {
+        let staging = VMBundleLayout(bundleURL: bundleURL).restoreStagingURL
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: staging.path(percentEncoded: false)) else { return }
+        do {
+            try manager.removeItem(at: staging)
+            Self.logger.notice(
+                "Reclaimed a revert staging directory left in '\(bundleURL.lastPathComponent, privacy: .public)'"
+            )
+        } catch {
+            Self.logger.warning(
+                "Failed to remove the revert staging directory in '\(bundleURL.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
     // MARK: - Removal
 
     func discardSnapshot(bundleURL: URL, snapshotID: UUID) throws {
