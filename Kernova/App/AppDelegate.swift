@@ -997,12 +997,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// VM handled *before* its wait keeps that guarantee when a user-initiated
     /// operation keeps re-taking the lock.
     ///
-    /// The wait at the top of each iteration covers a save the user starts on
-    /// another VM while the pass runs — a `.saving` VM is never selected here
-    /// (`.saving` fails `hasLiveSession`), so nothing else would stop the loop
-    /// from breaking out and letting the process exit mid-write. The per-VM wait
-    /// below covers the selected VM's own settling operation, per
-    /// ``terminationSaveStep(hasLiveSession:hasActiveOperation:)``.
+    /// The wait at the top of each iteration covers a save or revert the user
+    /// starts on another VM while the pass runs — neither a `.saving` VM nor a
+    /// reverting one is selectable here (both fail `hasLiveSession`), so nothing
+    /// else would stop the loop from breaking out and letting the process exit
+    /// mid-write. The per-VM wait below covers the selected VM's own settling
+    /// operation, per ``terminationSaveStep(hasLiveSession:hasActiveOperation:)``.
     ///
     /// The revert wait sits at the top of the loop for two reasons: this pass's
     /// own force-stop fallback powers an Ephemeral VM off and registers a revert
@@ -1014,13 +1014,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         var failedCount = 0
         var skippedCount = 0
         while true {
-            if viewModel.hasSaveInFlight {
-                Self.logger.notice("Termination waiting on an in-flight save to settle")
-                await waitForObservedChange { [viewModel] in !viewModel.hasSaveInFlight }
-            }
-            if viewModel.hasRevertInFlight {
-                Self.logger.notice("Termination waiting on an in-flight snapshot revert to settle")
-                await viewModel.waitForRevertsToSettle()
+            // Both predicates are re-tested after either wait: each suspends,
+            // and a save the user starts during the revert wait — or a revert a
+            // save's power-off registers — would otherwise reach the guard
+            // below unnoticed, break the pass out, and let the process exit
+            // mid-write.
+            while viewModel.hasSaveInFlight || viewModel.hasRevertInFlight {
+                if viewModel.hasSaveInFlight {
+                    Self.logger.notice("Termination waiting on an in-flight save to settle")
+                    await waitForObservedChange { [viewModel] in !viewModel.hasSaveInFlight }
+                }
+                if viewModel.hasRevertInFlight {
+                    Self.logger.notice(
+                        "Termination waiting on an in-flight snapshot revert to settle")
+                    await viewModel.waitForRevertsToSettle()
+                }
             }
             guard
                 let instance = viewModel.instances.first(where: {

@@ -1091,6 +1091,13 @@ final class VMLibraryViewModel {
     ///
     /// Unbounded, matching the termination pass's other waits: a revert
     /// interrupted mid-write is what the wait exists to prevent.
+    ///
+    /// A revert of a live VM resumes it once the files are in place, and the
+    /// wait spans that resume rather than ending at the copy — so the VM the
+    /// revert hands back live is save-suspended by the pass, which is what
+    /// termination does with any live VM. Ending at the copy would need a
+    /// second signal beside this registry and would leave the guest to die
+    /// inside `restoreMachineStateFrom`.
     func waitForRevertsToSettle() async {
         while let task = revertTasks.values.first { await task.value }
     }

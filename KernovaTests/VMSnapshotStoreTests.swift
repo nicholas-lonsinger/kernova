@@ -242,6 +242,47 @@ struct VMSnapshotStoreTests {
                 atPath: fixture.layout.restoreStagingURL.path(percentEncoded: false)))
     }
 
+    @Test("A restore that fails while swapping drops the bundle's stale saved state")
+    func failedCommitDropsTheStaleSaveFile() throws {
+        let extraID = UUID()
+        let fixture = try makeFixture(additionalDiskID: extraID)
+        defer { cleanUp(fixture) }
+        let store = VMSnapshotStore()
+        let snapshotID = UUID()
+
+        let prepared = try store.prepareSnapshot(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            configuration: fixture.configuration)
+        try store.captureDisks(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            relativePaths: prepared.relativePaths)
+        try Data("saved-state".utf8).write(to: prepared.saveFileURL)
+        try Data("stale-suspend".utf8).write(to: fixture.layout.saveFileURL)
+
+        // A destination directory that refuses the rename: the commit is renames
+        // only, so this is the failure a full volume produces there.
+        let locked = fixture.layout.additionalDisksDirectoryURL.path(percentEncoded: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: locked)
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o700], ofItemAtPath: locked)
+        }
+
+        let plan = VMSnapshotRestorePlan(
+            configuration: fixture.configuration,
+            relativePaths: ["AdditionalDisks/\(extraID.uuidString).asif"])
+        #expect(throws: (any Error).self) {
+            try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
+        }
+
+        // The suspend slot describes the guest RAM belonging to the disks this
+        // revert was replacing, so a resume offered from it could only be wrong.
+        #expect(!fixture.layout.hasSaveFile)
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: fixture.layout.restoreStagingURL.path(percentEncoded: false)))
+    }
+
     @Test("Restore refuses a snapshot missing its saved state")
     func restoreRefusesAnIncompleteSnapshot() throws {
         let fixture = try makeFixture()

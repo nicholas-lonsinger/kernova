@@ -141,15 +141,16 @@ struct VMSnapshotStore: VMSnapshotStoring {
     /// Clones the snapshot's files into a staging directory, then swaps each one
     /// into the bundle.
     ///
-    /// Nothing in the bundle is touched until every clone exists, so a failure
-    /// during the copies leaves the bundle exactly as it was, and each swap is a
-    /// rename — a file the bundle holds is never absent, whatever interrupts the
-    /// revert.
+    /// Nothing in the bundle is touched until every file — the saved state and
+    /// the configuration included — is staged, so a failure during the copies
+    /// leaves the bundle exactly as it was, and each swap is a rename: a file
+    /// the bundle holds is never absent, whatever interrupts the revert.
     func restore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         let sourceLayout = layout.snapshotLayout(id: snapshotID)
+        let stagingLayout = VMBundleLayout(bundleURL: layout.restoreStagingURL)
         let manager = FileManager.default
-        let staging = layout.restoreStagingURL
+        let staging = stagingLayout.bundleURL
 
         // A staging directory left behind by an interrupted revert holds clones
         // that may be truncated, so it is discarded rather than resumed.
@@ -157,7 +158,6 @@ struct VMSnapshotStore: VMSnapshotStoring {
         try manager.createDirectory(at: staging, withIntermediateDirectories: true)
         defer { try? manager.removeItem(at: staging) }
 
-        let stagedSaveFile = VMBundleLayout(bundleURL: staging).saveFileURL
         // Same volume, so APFS clones each file rather than duplicating its
         // blocks — the staged copy shares them with the snapshot's own.
         for relativePath in plan.relativePaths {
@@ -167,18 +167,33 @@ struct VMSnapshotStore: VMSnapshotStoring {
                 at: staged.deletingLastPathComponent(), withIntermediateDirectories: true)
             try manager.copyItem(at: source, to: staged)
         }
-        try manager.copyItem(at: sourceLayout.saveFileURL, to: stagedSaveFile)
-
-        for relativePath in plan.relativePaths {
-            try swapIntoPlace(
-                staged: staging.appendingPathComponent(relativePath),
-                destination: layout.bundleURL.appendingPathComponent(relativePath))
-        }
+        try manager.copyItem(at: sourceLayout.saveFileURL, to: stagingLayout.saveFileURL)
+        // Staged rather than written straight into the bundle: it is the one
+        // file of the set that needs fresh blocks, so a volume with none left
+        // sails through the clones above and fails here — where the failure
+        // still costs the bundle nothing.
         let data = try VMConfiguration.makeJSONEncoder().encode(plan.configuration)
-        try data.write(to: layout.configURL, options: .atomic)
-        // Last, so the VM only reads as suspended-on-the-snapshot once the disks
-        // and configuration that state belongs to are already in place.
-        try swapIntoPlace(staged: stagedSaveFile, destination: layout.saveFileURL)
+        try data.write(to: stagingLayout.configURL, options: .atomic)
+
+        do {
+            for relativePath in plan.relativePaths {
+                try swapIntoPlace(
+                    staged: staging.appendingPathComponent(relativePath),
+                    destination: layout.bundleURL.appendingPathComponent(relativePath))
+            }
+            try swapIntoPlace(staged: stagingLayout.configURL, destination: layout.configURL)
+            // Last, so the VM only reads as suspended-on-the-snapshot once the
+            // disks and configuration that state belongs to are already in place.
+            try swapIntoPlace(staged: stagingLayout.saveFileURL, destination: layout.saveFileURL)
+        } catch {
+            // The bundle's own saved state describes the guest RAM that belongs
+            // to the disks the swaps above already replaced, and a bundle
+            // holding one rests the VM at `.paused` — offering a resume that
+            // would run pre-revert RAM on post-revert disks. Dropping it rests
+            // the VM at `.stopped` instead.
+            try? manager.removeItem(at: layout.saveFileURL)
+            throw error
+        }
     }
 
     /// Moves a staged clone onto `destination`, replacing whatever is there.
