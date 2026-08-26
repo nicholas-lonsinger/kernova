@@ -37,6 +37,9 @@ struct StorageDisk: Codable, Sendable, Equatable {
     /// the raw path, surfacing the missing-file UX if the sandbox denies it.
     var bookmark: Data?
 
+    /// Free-form user note, empty when none was entered.
+    var notes: String
+
     init(
         id: UUID = UUID(),
         path: String,
@@ -44,7 +47,8 @@ struct StorageDisk: Codable, Sendable, Equatable {
         label: String? = nil,
         isInternal: Bool = false,
         kind: StorageDiskKind? = nil,
-        bookmark: Data? = nil
+        bookmark: Data? = nil,
+        notes: String = ""
     ) {
         self.id = id
         self.path = path
@@ -53,6 +57,22 @@ struct StorageDisk: Codable, Sendable, Equatable {
         self.isInternal = isInternal
         self.kind = kind ?? Self.defaultKind(forPath: path)
         self.bookmark = bookmark
+        self.notes = notes
+    }
+
+    // Custom `init(from:)` for `notes`: a `decode` of a non-optional field
+    // fails the whole `VMConfiguration` decode when the key is absent, which a
+    // config written before this field existed always is.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.path = try c.decode(String.self, forKey: .path)
+        self.readOnly = try c.decode(Bool.self, forKey: .readOnly)
+        self.label = try c.decode(String.self, forKey: .label)
+        self.isInternal = try c.decode(Bool.self, forKey: .isInternal)
+        self.kind = try c.decode(StorageDiskKind.self, forKey: .kind)
+        self.bookmark = try c.decodeIfPresent(Data.self, forKey: .bookmark)
+        self.notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
     }
 
     /// Picks the bus class implied by the file extension.
@@ -107,18 +127,36 @@ struct RemovableMediaItem: Codable, Sendable, Equatable {
     /// user-picked file); see ``StorageDisk/bookmark`` for the nil semantics.
     var bookmark: Data?
 
+    /// Free-form user note, empty when none was entered.
+    var notes: String
+
     init(
         id: UUID = UUID(),
         path: String,
         readOnly: Bool = true,
         label: String? = nil,
-        bookmark: Data? = nil
+        bookmark: Data? = nil,
+        notes: String = ""
     ) {
         self.id = id
         self.path = path
         self.readOnly = readOnly
         self.label = label ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
         self.bookmark = bookmark
+        self.notes = notes
+    }
+
+    // Custom `init(from:)` for `notes`: a `decode` of a non-optional field
+    // fails the whole `VMConfiguration` decode when the key is absent, which a
+    // config written before this field existed always is.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.path = try c.decode(String.self, forKey: .path)
+        self.readOnly = try c.decode(Bool.self, forKey: .readOnly)
+        self.label = try c.decode(String.self, forKey: .label)
+        self.bookmark = try c.decodeIfPresent(Data.self, forKey: .bookmark)
+        self.notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
     }
 }
 

@@ -767,6 +767,80 @@ struct VMLibraryViewModelTests {
         #expect(storage.saveConfigurationCallCount == 0)
     }
 
+    @Test("setStorageDiskNotes trims, persists the note, and saves once")
+    func setStorageDiskNotesPersists() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        let disk = StorageDisk(
+            path: "AdditionalDisks/x.asif", label: "Data", isInternal: true, kind: .virtio)
+        instance.configuration.storageDisks = [disk]
+
+        viewModel.setStorageDiskNotes(disk, notes: "  holds the build cache  ", on: instance)
+
+        #expect(instance.configuration.storageDisks?[0].notes == "holds the build cache")
+        #expect(storage.bundles[instance.bundleURL]?.storageDisks?[0].notes == "holds the build cache")
+        #expect(storage.saveConfigurationCallCount == 1)
+    }
+
+    @Test("setStorageDiskNotes clears an existing note to empty, and saves")
+    func setStorageDiskNotesClearsToEmpty() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        var disk = StorageDisk(
+            path: "AdditionalDisks/x.asif", label: "Data", isInternal: true, kind: .virtio)
+        disk.notes = "before"
+        instance.configuration.storageDisks = [disk]
+
+        viewModel.setStorageDiskNotes(disk, notes: "   ", on: instance)
+
+        #expect(instance.configuration.storageDisks?[0].notes == "")
+        #expect(storage.saveConfigurationCallCount == 1)
+    }
+
+    @Test("setStorageDiskNotes is a no-op when the trimmed note is unchanged")
+    func setStorageDiskNotesNoOpUnchanged() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        var disk = StorageDisk(
+            path: "AdditionalDisks/x.asif", label: "Data", isInternal: true, kind: .virtio)
+        disk.notes = "before"
+        instance.configuration.storageDisks = [disk]
+
+        viewModel.setStorageDiskNotes(disk, notes: "before", on: instance)
+
+        #expect(storage.saveConfigurationCallCount == 0)
+    }
+
+    @Test("setStorageDiskNotes is a no-op for an unknown disk id")
+    func setStorageDiskNotesUnknownID() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        instance.configuration.storageDisks = [
+            StorageDisk(path: "AdditionalDisks/x.asif", label: "Data", isInternal: true, kind: .virtio)
+        ]
+        let unknown = StorageDisk(
+            path: "AdditionalDisks/y.asif", label: "Other", isInternal: true, kind: .virtio)
+
+        viewModel.setStorageDiskNotes(unknown, notes: "New", on: instance)
+
+        #expect(instance.configuration.storageDisks?[0].notes == "")
+        #expect(storage.saveConfigurationCallCount == 0)
+    }
+
+    @Test("setStorageDiskNotes on a nil storageDisks list persists the materialized list")
+    func setStorageDiskNotesMaterializesDefaultDisks() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
+        let mainDisk = VMLibraryViewModel.defaultStorageDisks(for: instance)[0]
+
+        viewModel.setStorageDiskNotes(mainDisk, notes: "the startup disk", on: instance)
+
+        #expect(instance.configuration.storageDisks?.count == 1)
+        #expect(instance.configuration.storageDisks?[0].notes == "the startup disk")
+        #expect(storage.bundles[instance.bundleURL]?.storageDisks?[0].notes == "the startup disk")
+    }
+
     @Test("createStorageDisk gives a new disk a collision-free default label")
     func createStorageDiskUniqueLabel() async {
         let (viewModel, _, diskImage, _, _) = makeViewModel()
@@ -844,6 +918,76 @@ struct VMLibraryViewModelTests {
         viewModel.renameRemovableMedia(unknown, newLabel: "New", on: instance)
 
         #expect(instance.configuration.removableMedia?[0].label == "Original")
+        #expect(storage.saveConfigurationCallCount == 0)
+    }
+
+    @Test("setRemovableMediaNotes trims, persists the note, and saves once")
+    func setRemovableMediaNotesPersists() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        let item = RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Installer")
+        instance.configuration.removableMedia = [item]
+
+        viewModel.setRemovableMediaNotes(item, notes: "  from the Ubuntu mirror  ", on: instance)
+
+        #expect(instance.configuration.removableMedia?[0].notes == "from the Ubuntu mirror")
+        #expect(
+            storage.bundles[instance.bundleURL]?.removableMedia?[0].notes == "from the Ubuntu mirror")
+        #expect(storage.saveConfigurationCallCount == 1)
+    }
+
+    @Test("setRemovableMediaNotes leaves path and readOnly untouched (stays mounted live)")
+    func setRemovableMediaNotesKeepsMountIdentity() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        let item = RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Installer")
+        instance.configuration.removableMedia = [item]
+
+        viewModel.setRemovableMediaNotes(item, notes: "note", on: instance)
+
+        #expect(instance.configuration.removableMedia?[0].path == "/tmp/installer.iso")
+        #expect(instance.configuration.removableMedia?[0].readOnly == true)
+    }
+
+    @Test("setRemovableMediaNotes clears an existing note to empty, and saves")
+    func setRemovableMediaNotesClearsToEmpty() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        var item = RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Installer")
+        item.notes = "before"
+        instance.configuration.removableMedia = [item]
+
+        viewModel.setRemovableMediaNotes(item, notes: "   ", on: instance)
+
+        #expect(instance.configuration.removableMedia?[0].notes == "")
+        #expect(storage.saveConfigurationCallCount == 1)
+    }
+
+    @Test("setRemovableMediaNotes is a no-op when the trimmed note is unchanged")
+    func setRemovableMediaNotesNoOpUnchanged() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        var item = RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Installer")
+        item.notes = "before"
+        instance.configuration.removableMedia = [item]
+
+        viewModel.setRemovableMediaNotes(item, notes: "before", on: instance)
+
+        #expect(storage.saveConfigurationCallCount == 0)
+    }
+
+    @Test("setRemovableMediaNotes is a no-op for an unknown item id")
+    func setRemovableMediaNotesUnknownID() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        instance.configuration.removableMedia = [
+            RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Installer")
+        ]
+        let unknown = RemovableMediaItem(path: "/tmp/other.iso", readOnly: true, label: "Other")
+
+        viewModel.setRemovableMediaNotes(unknown, notes: "New", on: instance)
+
+        #expect(instance.configuration.removableMedia?[0].notes == "")
         #expect(storage.saveConfigurationCallCount == 0)
     }
 
@@ -6814,6 +6958,45 @@ struct VMLibraryViewModelTests {
 
         // Attach failed → device never mounted → config rolled back to nil.
         #expect(instance.configuration.removableMedia == nil)
+    }
+
+    @Test("Failed swap rollback preserves the entry's label and note")
+    func liveRemovableRollbackOnSwapFailurePreservesLabelAndNotes() async throws {
+        struct TransientError: Error {}
+        let mock = MockUSBDeviceService()
+        mock.detachError = TransientError()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.status = .running
+        let id = UUID()
+        instance.liveRemovableMedia = [
+            USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true)
+        ]
+        var oldItem = RemovableMediaItem(id: id, path: "/tmp/old.iso", readOnly: true, label: "Installer")
+        oldItem.notes = "from the Ubuntu mirror"
+        var old = instance.configuration
+        old.removableMedia = [oldItem]
+        instance.configuration = old
+        viewModel.instances.append(instance)
+
+        // Same id, different path (path swap) — and `updateConfiguration` has
+        // already persisted the target, carrying the label and note forward
+        // since only the path/readOnly changed.
+        var newItem = oldItem
+        newItem.path = "/tmp/new.iso"
+        var new = old
+        new.removableMedia = [newItem]
+        instance.configuration = new
+
+        viewModel.applyLivePolicy(for: instance, old: old, new: new)
+        while !presenter.showError { await Task.yield() }
+        for _ in 0..<5 { await Task.yield() }
+
+        // Swap failed → the rolled-back entry must still carry the persisted
+        // label and note, not a bare reconstruction from path/readOnly alone.
+        let rolled = try #require(instance.configuration.removableMedia)
+        #expect(rolled.first?.label == "Installer")
+        #expect(rolled.first?.notes == "from the Ubuntu mirror")
     }
 
     @Test("Failed swap rollback restores the original entry, not the target")

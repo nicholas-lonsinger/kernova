@@ -2290,9 +2290,16 @@ final class VMLibraryViewModel {
         var rollbackLookup: [UUID: RemovableMediaItem] = [:]
         for info in tracked {
             let configured = configuredByID[info.id]
-            rollbackLookup[info.id] = RemovableMediaItem(
-                id: info.id, path: info.path, readOnly: info.readOnly,
-                bookmark: configured?.path == info.path ? configured?.bookmark : nil)
+            // Start from the persisted entry so its label and note survive the
+            // rollback; only the fields the live state actually answers for
+            // (path, readOnly, and the bookmark's validity) are overridden.
+            var copy =
+                configured
+                ?? RemovableMediaItem(id: info.id, path: info.path, readOnly: info.readOnly, bookmark: nil)
+            copy.path = info.path
+            copy.readOnly = info.readOnly
+            copy.bookmark = configured?.path == info.path ? configured?.bookmark : nil
+            rollbackLookup[info.id] = copy
         }
         for item in target where rollbackLookup[item.id] == nil {
             rollbackLookup[item.id] = item
@@ -2588,6 +2595,40 @@ final class VMLibraryViewModel {
             var items = config.removableMedia ?? []
             guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
             items[index].label = trimmed
+            config.removableMedia = items.isEmpty ? nil : items
+        }
+    }
+
+    /// Replaces a storage disk's note; an unchanged value is a no-op.
+    ///
+    /// Unlike a label, an empty note is a legitimate value — it clears the
+    /// note. Leading and trailing whitespace is trimmed; interior newlines are
+    /// kept.
+    func setStorageDiskNotes(_ disk: StorageDisk, notes: String, on instance: VMInstance) {
+        let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != disk.notes else { return }
+        updateConfiguration(of: instance) { config in
+            var disks = config.storageDisks ?? Self.defaultStorageDisks(for: instance)
+            guard let index = disks.firstIndex(where: { $0.id == disk.id }) else { return }
+            disks[index].notes = trimmed
+            config.storageDisks = disks
+        }
+    }
+
+    /// Replaces a removable medium's note; an unchanged value is a no-op.
+    ///
+    /// Safe while the VM is running: the live reconciliation only detaches and
+    /// reattaches when `path` or `readOnly` differs, so a note-only edit leaves
+    /// the medium mounted. Unlike a label, an empty note is a legitimate value —
+    /// it clears the note. Leading and trailing whitespace is trimmed; interior
+    /// newlines are kept.
+    func setRemovableMediaNotes(_ item: RemovableMediaItem, notes: String, on instance: VMInstance) {
+        let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != item.notes else { return }
+        updateConfiguration(of: instance) { config in
+            var items = config.removableMedia ?? []
+            guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+            items[index].notes = trimmed
             config.removableMedia = items.isEmpty ? nil : items
         }
     }

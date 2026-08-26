@@ -2,6 +2,10 @@ import AppKit
 
 /// Popover content shown by an attachment row's "Get Info" context-menu item
 /// (storage disks and removable media alike).
+///
+/// It is where an attachment's full note is read and written: the Notes box is
+/// always offered while the row can be edited, so an attachment with no note
+/// yet still has somewhere to gain one.
 @MainActor
 final class AttachmentInfoPopoverContentViewController: NSViewController {
     private let label: String
@@ -12,6 +16,14 @@ final class AttachmentInfoPopoverContentViewController: NSViewController {
     private let readOnly: Bool
     private let busText: String
     private let createdText: String
+    private let notes: String
+    /// Whether the attachment's note can be written right now.
+    private let canEdit: Bool
+    /// Fires with the edited note when the box commits.
+    private let onCommitNotes: (String) -> Void
+    /// Fires when Escape reverted the note, so the host can dismiss the popover.
+    var onRequestClose: (() -> Void)?
+    private var notesEditor: NotesEditorView?
 
     init(
         label: String,
@@ -21,7 +33,10 @@ final class AttachmentInfoPopoverContentViewController: NSViewController {
         allocatedText: String,
         readOnly: Bool,
         busText: String,
-        createdText: String
+        createdText: String,
+        notes: String,
+        canEdit: Bool,
+        onCommitNotes: @escaping (String) -> Void
     ) {
         self.label = label
         self.fileName = fileName
@@ -31,6 +46,9 @@ final class AttachmentInfoPopoverContentViewController: NSViewController {
         self.readOnly = readOnly
         self.busText = busText
         self.createdText = createdText
+        self.notes = notes
+        self.canEdit = canEdit
+        self.onCommitNotes = onCommitNotes
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -52,6 +70,7 @@ final class AttachmentInfoPopoverContentViewController: NSViewController {
         stack.addArrangedSubview(makeFactsGrid())
         stack.addArrangedSubview(keyLabel("Location"))
         stack.addArrangedSubview(makeCalloutCode(fullPath))
+        for row in makeNotesRows() { stack.addArrangedSubview(row) }
 
         container.addSubview(stack)
         let padding = CalloutStyle.padding
@@ -66,6 +85,13 @@ final class AttachmentInfoPopoverContentViewController: NSViewController {
         view = container
     }
 
+    /// Commits whatever the box holds as the popover goes away — the same
+    /// outcome as clicking outside it, which is what dismisses the popover.
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        notesEditor?.commitIfChanged()
+    }
+
     override func viewDidLayout() {
         super.viewDidLayout()
         // Re-pin so `NSPopover` resizes its frame to the measured stack height.
@@ -73,6 +99,22 @@ final class AttachmentInfoPopoverContentViewController: NSViewController {
         if preferredContentSize != fittingSize {
             preferredContentSize = fittingSize
         }
+    }
+
+    /// The Notes section: an editable box while the row can be written, and
+    /// otherwise the note as static text — omitted entirely when there is no
+    /// note to read and no way to add one.
+    private func makeNotesRows() -> [NSView] {
+        guard canEdit else {
+            guard !notes.isEmpty else { return [] }
+            return [keyLabel("Notes"), makeCalloutBody(notes, color: .labelColor)]
+        }
+        let editor = NotesEditorView(text: notes)
+        editor.onCommit = { [weak self] notes in self?.onCommitNotes(notes) }
+        editor.onCancel = { [weak self] in self?.onRequestClose?() }
+        editor.widthAnchor.constraint(equalToConstant: CalloutStyle.bodyWidth).isActive = true
+        notesEditor = editor
+        return [keyLabel("Notes"), editor]
     }
 
     private func makeFactsGrid() -> NSGridView {

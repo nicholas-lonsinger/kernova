@@ -96,6 +96,55 @@ struct VMSettingsViewControllerTests {
         #expect(prompt.message.contains("isn't deleted"))
     }
 
+    // MARK: - Attachment row notes
+
+    private func storageRow(in view: NSView) -> AttachmentRowView? {
+        firstSubview(AttachmentRowView.self, in: view)
+    }
+
+    @Test("The attachment context menu offers Edit Notes between Rename and Get Info")
+    func attachmentMenuOffersEditNotes() {
+        let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: false)
+        let row = storageRow(in: vc.view)
+        let menu = row?.contextMenu?()
+
+        let titles = menu?.items.map(\.title) ?? []
+        let renameIndex = titles.firstIndex(of: "Rename")
+        let notesIndex = titles.firstIndex(of: "Edit Notes")
+        let infoIndex = titles.firstIndex(of: "Get Info")
+        #expect(renameIndex != nil && notesIndex != nil && infoIndex != nil)
+        if let renameIndex, let notesIndex, let infoIndex {
+            #expect(renameIndex < notesIndex)
+            #expect(notesIndex < infoIndex)
+        }
+        #expect(menu?.items.first { $0.title == "Edit Notes" }?.isEnabled == true)
+    }
+
+    @Test("Edit Notes and Rename are disabled on a read-only VM's storage row")
+    func attachmentMenuEditNotesFollowsReadOnly() {
+        let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: true)
+        let row = storageRow(in: vc.view)
+        let menu = row?.contextMenu?()
+
+        #expect(menu?.items.first { $0.title == "Edit Notes" }?.isEnabled == false)
+        #expect(menu?.items.first { $0.title == "Rename" }?.isEnabled == false)
+    }
+
+    @Test("Edit Notes on the context menu begins inline editing on the row")
+    func attachmentMenuEditNotesBeginsEditing() {
+        let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: false)
+        let window = showInTestWindow(vc.view, size: NSSize(width: 600, height: 800))
+        defer { window.close() }
+        let row = storageRow(in: vc.view)
+        let menu = row?.contextMenu?()
+        let editNotes = menu?.items.first { $0.title == "Edit Notes" }
+
+        editNotes.map { _ = $0.target?.perform($0.action, with: $0) }
+
+        let editing = allSubviews(InlineEditableLabel.self, in: vc.view) { $0.isEditable }
+        #expect(!editing.isEmpty)
+    }
+
     // MARK: - Guest Agent visibility
 
     @Test("Guest Agent section is present for macOS guests")

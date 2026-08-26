@@ -282,6 +282,19 @@ struct VMConfigurationCloneTests {
         #expect(clone.storageDisks == nil)
     }
 
+    @Test("Clone preserves a storage disk's note")
+    func clonePreservesStorageDiskNotes() {
+        var disk = StorageDisk(
+            path: "/ext/backup.img", readOnly: true, label: "Backup", isInternal: false, kind: .virtio)
+        disk.notes = "weekly snapshot source"
+        var config = makeConfig()
+        config.storageDisks = [disk]
+
+        let clone = config.clonedForNewInstance(existingNames: [])
+
+        #expect(clone.storageDisks?[0].notes == "weekly snapshot source")
+    }
+
     // MARK: - lastSeenAgentVersion
 
     @Test("Clone preserves lastSeenAgentVersion")
@@ -324,6 +337,18 @@ struct VMConfigurationCloneTests {
     func cloneLeavesRemovableMediaNil() {
         let clone = makeConfig().clonedForNewInstance(existingNames: [])
         #expect(clone.removableMedia == nil)
+    }
+
+    @Test("Clone preserves a removable medium's note")
+    func clonePreservesRemovableMediaNotes() {
+        var item = RemovableMediaItem(path: "/tmp/install.iso", readOnly: true, label: "Installer")
+        item.notes = "from the Ubuntu mirror"
+        var config = makeConfig()
+        config.removableMedia = [item]
+
+        let clone = config.clonedForNewInstance(existingNames: [])
+
+        #expect(clone.removableMedia?[0].notes == "from the Ubuntu mirror")
     }
 
     // MARK: - Setup Intent
