@@ -45,26 +45,22 @@ struct TakeSnapshotSheetContentViewControllerTests {
         let (sheet, _) = makeSheet(suggestedName: "Snapshot 3")
         #expect(sheet.enteredName == "Snapshot 3")
         #expect(sheet.enteredNotes.isEmpty)
-        let notes = firstSubview(NSTextField.self, in: sheet.view) {
-            $0.placeholderString == "Optional"
-        }
-        #expect(notes != nil)
+        #expect(findLabel(withText: "Optional", in: sheet.view) != nil)
     }
 
-    @Test("Confirming hands back what was typed")
+    @Test("Confirming hands back what was typed, newlines and all")
     func confirmSendsTheEnteredValues() {
         let (sheet, recorder) = makeSheet()
         firstSubview(NSTextField.self, in: sheet.view) { $0.placeholderString == "Name" }?
             .stringValue = "Before Xcode"
-        firstSubview(NSTextField.self, in: sheet.view) { $0.placeholderString == "Optional" }?
-            .stringValue = "tools configured"
+        firstSubview(NSTextView.self, in: sheet.view)?.string = "tools configured\nand licensed"
 
         let confirm = findButton(titled: "Take Snapshot", in: sheet.view)
         confirm.map { _ = $0.target?.perform($0.action, with: $0) }
 
         #expect(recorder.confirmations.count == 1)
         #expect(recorder.confirmations.first?.name == "Before Xcode")
-        #expect(recorder.confirmations.first?.notes == "tools configured")
+        #expect(recorder.confirmations.first?.notes == "tools configured\nand licensed")
     }
 
     @Test("Cancel is the Escape button and reports a cancel")

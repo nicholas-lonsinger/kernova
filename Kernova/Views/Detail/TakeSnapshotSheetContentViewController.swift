@@ -26,14 +26,16 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     private(set) var mode: VMSnapshotCaptureMode
 
     private let nameField = NSTextField()
-    private let notesField = NSTextField()
+    /// Multi-line, so a note can be *written* here and not only edited into
+    /// shape afterwards.
+    private let notesEditor = NotesEditorView(text: "", placeholder: "Optional")
     private let headerBodyLabel = NSTextField(wrappingLabelWithString: "")
     private var captionLabel = NSTextField()
 
     /// The name the sheet would confirm with right now.
     var enteredName: String { nameField.stringValue }
     /// The note the sheet would confirm with right now.
-    var enteredNotes: String { notesField.stringValue }
+    var enteredNotes: String { notesEditor.text }
 
     private static let sheetWidth: CGFloat = 520
     private static let padding: CGFloat = 20
@@ -169,11 +171,11 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     private func makeFormCard() -> NSView {
         configureField(nameField, placeholder: "Name")
         nameField.stringValue = suggestedName
-        configureField(notesField, placeholder: "Optional")
 
         return makeGroupedFormCard(rows: [
             makeGroupedFormCardRow("Name", control: nameField, fillsControl: true),
-            makeGroupedFormCardRow("Notes", control: notesField, fillsControl: true),
+            makeGroupedFormCardRow(
+                "Notes", control: notesEditor, alignment: .top, fillsControl: true),
         ])
     }
 
@@ -217,14 +219,15 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
 
     @objc private func confirmTapped() {
         delegate?.takeSnapshotSheet(
-            self, didConfirmName: nameField.stringValue, notes: notesField.stringValue)
+            self, didConfirmName: nameField.stringValue, notes: notesEditor.text)
     }
 }
 
 // MARK: - NSTextFieldDelegate
 
 extension TakeSnapshotSheetContentViewController: NSTextFieldDelegate {
-    /// Return in either field confirms, matching the sheet's default button.
+    /// Return in the Name field confirms, matching the sheet's default button.
+    /// The Notes box takes Return for a newline instead.
     func control(
         _ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector
     ) -> Bool {

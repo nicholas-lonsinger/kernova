@@ -95,6 +95,24 @@ struct VMSnapshotTests {
         #expect(manifest == original)
     }
 
+    @Test("Setting notes rewrites only the named snapshot")
+    func setNotesRewritesOne() {
+        let first = makeSnapshot(name: "First", notes: "before")
+        let second = makeSnapshot(name: "Second", offsetSeconds: 60, notes: "untouched")
+        var manifest = VMSnapshotManifest(snapshots: [first, second])
+        manifest.setNotes(id: first.id, to: "after the update")
+        #expect(manifest.snapshot(id: first.id)?.notes == "after the update")
+        #expect(manifest.snapshot(id: second.id)?.notes == "untouched")
+    }
+
+    @Test("Setting notes on an unlisted id changes nothing")
+    func setNotesUnknownIsNoOp() {
+        let original = VMSnapshotManifest(snapshots: [makeSnapshot(name: "Only")])
+        var manifest = original
+        manifest.setNotes(id: UUID(), to: "orphan")
+        #expect(manifest == original)
+    }
+
     // MARK: - Persistence
 
     @Test("A manifest round-trips through the config JSON coders")

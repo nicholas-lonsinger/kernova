@@ -4,7 +4,7 @@ import AppKit
 ///
 /// The controller builds the icon, subtitle, Read Only switch, and optional eject
 /// button and hands them in; the editable title and its rename state machine
-/// live in ``InlineRenameTitleView``. The context menu is supplied lazily via
+/// live in ``EditableRowTitleView``. The context menu is supplied lazily via
 /// ``contextMenu`` so it reflects current state at click time. `itemID` is the
 /// backing model's id (a `StorageDisk` or `RemovableMediaItem`).
 @MainActor
@@ -20,13 +20,13 @@ final class AttachmentRowView: NSView {
     private let readOnlyToggle: NSSwitch
     /// Trailing inline Eject control, present only on removable-media rows.
     private let ejectButton: NSButton?
-    private let titleView: InlineRenameTitleView
+    private let titleView: EditableRowTitleView
 
     /// Fires when the user begins editing the title, so the controller can
     /// suppress list rebuilds that would otherwise destroy the editing field.
     var onRenameBegan: ((UUID) -> Void)? {
-        get { titleView.onRenameBegan }
-        set { titleView.onRenameBegan = newValue }
+        get { titleView.onEditBegan }
+        set { titleView.onEditBegan = newValue }
     }
     /// Fires with the new (untrimmed) label on Return / focus-loss.
     var onRenameCommitted: ((UUID, String) -> Void)? {
@@ -59,8 +59,8 @@ final class AttachmentRowView: NSView {
         self.subtitleField = subtitle
         self.readOnlyToggle = readOnlyToggle
         self.ejectButton = ejectButton
-        self.titleView = InlineRenameTitleView(
-            itemID: itemID, title: title, controlsEnabled: controlsEnabled)
+        self.titleView = EditableRowTitleView(
+            itemID: itemID, name: title, controlsEnabled: controlsEnabled)
         super.init(frame: .zero)
         buildLayout(
             icon: icon, subtitle: subtitle, readOnlyToggle: readOnlyToggle,
@@ -75,7 +75,7 @@ final class AttachmentRowView: NSView {
         title: String, iconSystemName: String, missingPath: String?, readOnly: Bool,
         controlsEnabled: Bool
     ) {
-        titleView.update(title: title, controlsEnabled: controlsEnabled)
+        titleView.update(name: title, controlsEnabled: controlsEnabled)
         readOnlyToggle.state = readOnly ? .on : .off
         readOnlyToggle.isEnabled = controlsEnabled
         ejectButton?.isEnabled = controlsEnabled

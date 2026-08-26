@@ -1273,6 +1273,26 @@ final class VMLibraryViewModel {
         writeSnapshotManifest(manifest, for: instance)
     }
 
+    /// Replaces a snapshot's note; an unchanged value is a no-op, as is one
+    /// arriving while another operation on the VM is unsettled.
+    ///
+    /// Unlike a name, an empty note is a legitimate value — it clears the note.
+    /// Leading and trailing whitespace is trimmed; interior newlines are kept.
+    func setSnapshotNotes(_ snapshot: VMSnapshot, notes: String, on instance: VMInstance) {
+        let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != snapshot.notes else { return }
+        guard canModifySnapshots(instance) else {
+            Self.logger.notice(
+                "Refusing to edit a snapshot's notes on '\(instance.name, privacy: .public)': another operation is in flight"
+            )
+            return
+        }
+        var manifest = instance.snapshotManifest
+        manifest.setNotes(id: snapshot.id, to: trimmed)
+        guard manifest != instance.snapshotManifest else { return }
+        writeSnapshotManifest(manifest, for: instance)
+    }
+
     /// Bytes each of this VM's snapshots occupies on disk, read off the main
     /// actor — the copies live on the same volume and can be many gigabytes.
     func snapshotOnDiskBytes(for instance: VMInstance) async -> [UUID: UInt64] {

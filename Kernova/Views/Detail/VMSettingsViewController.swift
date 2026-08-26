@@ -472,7 +472,7 @@ final class VMSettingsViewController: NSViewController {
         // suppressed (never-rebuilds) state across an appear/disappear cycle.
         activeStorageRename = nil
         activeRemovableRename = nil
-        snapshotSection?.clearActiveRename()
+        snapshotSection?.clearActiveEdit()
         snapshotSizeTask?.cancel()
         snapshotSizeTask = nil
         // Re-read on the next appear: the sizes may have moved while away.
@@ -2683,7 +2683,18 @@ extension VMSettingsViewController {
             guard !self.hasDisappeared, self.instance.id == instanceID else { return }
             let content = SnapshotInfoPopoverContentViewController(
                 snapshot: snapshot,
-                onDiskText: sizes[snapshot.id].map { DataFormatters.formatBytes($0) } ?? "\u{2014}")
+                onDiskText: sizes[snapshot.id].map { DataFormatters.formatBytes($0) } ?? "\u{2014}",
+                canEdit: self.viewModel.canModifySnapshots(self.instance),
+                onCommitNotes: { [weak self] notes in
+                    guard let self else { return }
+                    // Looked up fresh: the popover outlives edits landing from
+                    // elsewhere, and the copy it was built with can be stale.
+                    guard let current = self.instance.snapshotManifest.snapshot(id: snapshot.id)
+                    else { return }
+                    self.viewModel.setSnapshotNotes(current, notes: notes, on: self.instance)
+                    self.refreshSnapshots()
+                })
+            content.onRequestClose = { [weak self] in self?.attachmentInfoPresenter.close() }
             self.attachmentInfoPresenter.show(content: content, from: anchor, preferredEdge: .minY)
         }
     }
@@ -3652,6 +3663,19 @@ extension VMSettingsViewController: SnapshotSectionViewDelegate {
             self.viewModel.renameSnapshot(snapshot, newName: newName, on: self.instance)
             // A no-op rename (empty / unchanged) fires no observation, so force a
             // refresh to pick up anything suppressed during the edit.
+            self.refreshSnapshots()
+        }
+    }
+
+    /// Commits an inline note edit, deferred for the same reason a rename is.
+    func snapshotSection(
+        _ view: SnapshotSectionView, setNotes notes: String, on snapshot: VMSnapshot
+    ) {
+        Task { [weak self] in
+            guard let self else { return }
+            self.viewModel.setSnapshotNotes(snapshot, notes: notes, on: self.instance)
+            // A no-op edit (unchanged) fires no observation, so force a refresh
+            // to pick up anything suppressed during the edit.
             self.refreshSnapshots()
         }
     }

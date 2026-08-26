@@ -12,6 +12,7 @@ struct SnapshotSectionViewTests {
         var reverted: [VMSnapshot] = []
         var deleted: [VMSnapshot] = []
         var renamed: [(snapshot: VMSnapshot, name: String)] = []
+        var noted: [(snapshot: VMSnapshot, notes: String)] = []
         var infoRequests: [VMSnapshot] = []
 
         func snapshotSectionRequestedTakeSnapshot(_ view: SnapshotSectionView) {
@@ -29,15 +30,23 @@ struct SnapshotSectionViewTests {
             renamed.append((snapshot, newName))
         }
         func snapshotSection(
+            _ view: SnapshotSectionView, setNotes notes: String, on snapshot: VMSnapshot
+        ) {
+            noted.append((snapshot, notes))
+        }
+        func snapshotSection(
             _ view: SnapshotSectionView, requestedInfoFor snapshot: VMSnapshot, from anchor: NSView
         ) {
             infoRequests.append(snapshot)
         }
     }
 
-    private func makeSnapshot(_ name: String, offsetSeconds: TimeInterval = 0) -> VMSnapshot {
+    private func makeSnapshot(
+        _ name: String, offsetSeconds: TimeInterval = 0, notes: String = ""
+    ) -> VMSnapshot {
         VMSnapshot(
-            name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000 + offsetSeconds))
+            name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000 + offsetSeconds),
+            notes: notes)
     }
 
     /// The recorder is held weakly by the view, so the caller must keep the
@@ -323,7 +332,7 @@ struct SnapshotSectionViewTests {
 
         #expect(
             menu.items.filter { !$0.isSeparatorItem }.map(\.title) == [
-                "Rename", "Get Info", "Revert", "Delete\u{2026}",
+                "Rename", "Edit Notes", "Get Info", "Revert", "Delete\u{2026}",
             ])
     }
 
@@ -383,7 +392,7 @@ struct SnapshotSectionViewTests {
         defer { window.close() }
 
         view.beginRename(first.id)
-        #expect(view.activeRename == first.id)
+        #expect(view.activeEdit == first.id)
 
         // A snapshot arriving mid-edit must not tear the editing field down.
         view.update(
@@ -393,7 +402,7 @@ struct SnapshotSectionViewTests {
             canTakeSnapshot: true, canRevert: true, canModify: true, baselineID: nil)
         #expect(findLabel(withText: "Two", in: view) == nil)
 
-        view.clearActiveRename()
+        view.clearActiveEdit()
         view.update(
             manifest: VMSnapshotManifest(snapshots: [
                 first, makeSnapshot("Two", offsetSeconds: 60),
@@ -420,17 +429,141 @@ struct SnapshotSectionViewTests {
             canTakeSnapshot: true, canRevert: true, canModify: true, baselineID: nil)
         #expect(findLabel(withText: "Two", in: view) == nil)
 
-        // Escape: the field editor's cancel command, which the title view turns
-        // into `onRenameCancelled`.
-        let title = allSubviews(InlineRenameTitleView.self, in: view) { $0.itemID == first.id }
-            .first
-        _ = title?.control(
-            NSControl(), textView: NSTextView(),
-            doCommandBy: #selector(NSResponder.cancelOperation(_:)))
+        // Escape: the field editor's cancel command, which the label turns into
+        // `onRenameCancelled`.
+        escape(nameLabel(named: "One", in: view))
         await Task.yield()
 
-        #expect(view.activeRename == nil)
+        #expect(view.activeEdit == nil)
         #expect(findLabel(withText: "Two", in: view) != nil)
+    }
+
+    // MARK: - Notes
+
+    @Test("A snapshot's note trails its name in the row")
+    func notesRenderInTheRow() {
+        let (view, _) = makeSection()
+        let annotated = makeSnapshot("One", notes: "tools configured")
+        let bare = makeSnapshot("Two", offsetSeconds: 60)
+
+        view.update(
+            manifest: VMSnapshotManifest(snapshots: [annotated, bare]), canTakeSnapshot: true,
+            canRevert: true, canModify: true, baselineID: nil)
+
+        let note = findLabel(withText: "tools configured", in: view)
+        #expect(note != nil)
+        #expect(note.map { isVisible($0, within: view) } == true)
+        // The row with no note shows no note field at all.
+        #expect(
+            allSubviews(InlineEditableLabel.self, in: view) {
+                $0.stringValue.isEmpty && isVisible($0, within: view)
+            }.isEmpty)
+    }
+
+    @Test("A note edit in flight suppresses the structural rebuild")
+    func notesEditSuppressesRebuild() {
+        let (view, _) = makeSection()
+        let first = makeSnapshot("One", notes: "before")
+        view.update(
+            manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
+            canRevert: true, canModify: true, baselineID: nil)
+        let window = showInTestWindow(view, size: NSSize(width: 480, height: 200))
+        defer { window.close() }
+
+        view.beginNotesEditing(first.id)
+        #expect(view.activeEdit == first.id)
+
+        view.update(
+            manifest: VMSnapshotManifest(snapshots: [
+                first, makeSnapshot("Two", offsetSeconds: 60),
+            ]),
+            canTakeSnapshot: true, canRevert: true, canModify: true, baselineID: nil)
+        #expect(findLabel(withText: "Two", in: view) == nil)
+    }
+
+    @Test("Cancelling a note edit ends it")
+    func cancelNotesEditEndsIt() async {
+        let (view, _) = makeSection()
+        let first = makeSnapshot("One", notes: "before")
+        view.update(
+            manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
+            canRevert: true, canModify: true, baselineID: nil)
+        let window = showInTestWindow(view, size: NSSize(width: 480, height: 200))
+        defer { window.close() }
+
+        view.beginNotesEditing(first.id)
+        escape(nameLabel(named: "before", in: view))
+        await Task.yield()
+
+        #expect(view.activeEdit == nil)
+    }
+
+    @Test("A note holding a newline opens Get Info instead of editing in the row")
+    func multilineNotesRouteToGetInfo() {
+        let (view, recorder) = makeSection()
+        let first = makeSnapshot("One", notes: "line one\nline two")
+        view.update(
+            manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
+            canRevert: true, canModify: true, baselineID: nil)
+        let window = showInTestWindow(view, size: NSSize(width: 480, height: 200))
+        defer { window.close() }
+
+        view.beginNotesEditing(first.id)
+
+        #expect(recorder.infoRequests == [first])
+        #expect(view.activeEdit == nil)
+        // Flattened for the row; the newline survives in the stored note.
+        #expect(findLabel(withText: "line one line two", in: view) != nil)
+    }
+
+    @Test("The row menu offers Edit Notes, and withholds it when the list can't be edited")
+    func rowMenuOffersEditNotes() {
+        let (view, _) = makeSection()
+        let snapshot = makeSnapshot("One")
+        view.update(
+            manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
+            canRevert: true, canModify: true, baselineID: nil)
+
+        #expect(
+            view.makeRowMenu(for: snapshot, canRevert: true, canModify: true, isBaseline: false)
+                .items.first { $0.title == "Edit Notes" }?.isEnabled == true)
+        #expect(
+            view.makeRowMenu(for: snapshot, canRevert: false, canModify: false, isBaseline: false)
+                .items.first { $0.title == "Edit Notes" }?.isEnabled == false)
+    }
+
+    @Test("Edit Notes on a row with no note starts an edit that commits what is typed")
+    func editNotesCommitsTypedText() async {
+        let (view, recorder) = makeSection()
+        let first = makeSnapshot("One")
+        view.update(
+            manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
+            canRevert: true, canModify: true, baselineID: nil)
+        let window = showInTestWindow(view, size: NSSize(width: 480, height: 200))
+        defer { window.close() }
+
+        view.beginNotesEditing(first.id)
+        let field = allSubviews(InlineEditableLabel.self, in: view) { $0.isEditable }.first
+        field?.stringValue = "tools configured"
+        field.map { $0.controlTextDidEndEditing(Notification(name: .init("test"), object: $0)) }
+        await Task.yield()
+
+        #expect(recorder.noted.count == 1)
+        #expect(recorder.noted.first?.notes == "tools configured")
+        #expect(view.activeEdit == nil)
+    }
+
+    /// The inline label showing `text`, which is how a test reaches one part of
+    /// a row's title line.
+    private func nameLabel(named text: String, in view: NSView) -> InlineEditableLabel? {
+        allSubviews(InlineEditableLabel.self, in: view) { $0.stringValue == text }.first
+    }
+
+    /// Sends the field editor's cancel command, the way Escape reaches a label.
+    private func escape(_ label: InlineEditableLabel?) {
+        _ = label?.control(
+            NSControl(), textView: NSTextView(),
+            doCommandBy: #selector(NSResponder.cancelOperation(_:)))
     }
 
     // MARK: - Editing gate
