@@ -80,6 +80,42 @@ struct TakeSnapshotSheetContentViewControllerTests {
         #expect(findButton(titled: "Take Snapshot", in: sheet.view)?.keyEquivalent == "\r")
     }
 
+    // MARK: - What the Notes box hands back to the sheet
+
+    /// The Notes box answers Return and Escape itself, so the sheet's default
+    /// and Cancel buttons never see them while it has focus. These cover what
+    /// it hands back in their place.
+    private func notesBox(
+        _ sheet: TakeSnapshotSheetContentViewController
+    ) throws -> (NotesEditorView, NSTextView) {
+        let editor = try #require(firstSubview(NotesEditorView.self, in: sheet.view))
+        return (editor, try #require(firstSubview(NSTextView.self, in: editor)))
+    }
+
+    @Test("A commit from the Notes box confirms the sheet")
+    func notesCommitConfirmsTheSheet() throws {
+        let (sheet, recorder) = makeSheet()
+        let (editor, textView) = try notesBox(sheet)
+
+        textView.string = "tools configured"
+        editor.commitIfChanged()
+
+        #expect(recorder.confirmations.count == 1)
+        #expect(recorder.confirmations.first?.notes == "tools configured")
+    }
+
+    @Test("Escape in the Notes box cancels the sheet rather than erasing the note")
+    func escapeInNotesCancelsTheSheet() throws {
+        let (sheet, recorder) = makeSheet()
+        let (_, textView) = try notesBox(sheet)
+        textView.string = "tools configured"
+
+        textView.cancelOperation(nil)
+
+        #expect(recorder.cancels == 1)
+        #expect(recorder.confirmations.isEmpty)
+    }
+
     // MARK: - Per-mode copy
 
     @Test("A memory-and-disks capture says so, and warns about the pause")

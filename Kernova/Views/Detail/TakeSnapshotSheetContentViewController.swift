@@ -172,6 +172,12 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         configureField(nameField, placeholder: "Name")
         nameField.stringValue = suggestedName
 
+        // The Notes box answers Return and Escape itself, so the sheet's default
+        // and Cancel buttons never see them while it has focus — it hands both
+        // back here instead.
+        notesEditor.onCommit = { [weak self] _ in self?.confirmTapped() }
+        notesEditor.onCancel = { [weak self] in self?.cancelTapped() }
+
         return makeGroupedFormCard(rows: [
             makeGroupedFormCardRow("Name", control: nameField, fillsControl: true),
             makeGroupedFormCardRow(

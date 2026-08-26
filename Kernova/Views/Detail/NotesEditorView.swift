@@ -27,6 +27,14 @@ private final class NotesTextView: NSTextView {
             onCommandReturn?()
             return true
         }
+        // A Return that confirms an input method's candidate belongs to the
+        // composition, not to the note — typing a newline over it would destroy
+        // what is being composed. It still can't reach the host's default
+        // button, so the event is handed to the input context instead.
+        guard !hasMarkedText() else {
+            interpretKeyEvents([event])
+            return true
+        }
         insertNewline(nil)
         return true
     }
@@ -59,7 +67,10 @@ private final class NotesPlaceholderLabel: NSTextField {
 /// scrolls rather than stretching its container.
 @MainActor
 final class NotesEditorView: NSView {
-    /// Fires with the note as typed, on ⌘-Return and on ``commitIfChanged()``.
+    /// Fires with the note as typed: on ⌘-Return, and on ``commitIfChanged()``.
+    ///
+    /// ⌘-Return reports whether or not the note moved, so a host that treats it
+    /// as "I am done here" hears it either way.
     var onCommit: ((String) -> Void)?
     /// Fires when Escape reverted the note, so the host can dismiss.
     var onCancel: (() -> Void)?
@@ -98,9 +109,13 @@ final class NotesEditorView: NSView {
     }
 
     /// Hands the note to ``onCommit`` unless Escape already reverted it, or
-    /// nothing changed.
+    /// nothing changed — what a host calls as it tears the box down.
     func commitIfChanged() {
         guard !isCancelled, textView.string != originalText else { return }
+        commit()
+    }
+
+    private func commit() {
         originalText = textView.string
         onCommit?(textView.string)
     }
@@ -127,7 +142,7 @@ final class NotesEditorView: NSView {
             width: 0, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainer?.widthTracksTextView = true
         textView.delegate = self
-        textView.onCommandReturn = { [weak self] in self?.commitIfChanged() }
+        textView.onCommandReturn = { [weak self] in self?.commit() }
         textView.onCancel = { [weak self] in self?.revert() }
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
