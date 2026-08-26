@@ -54,7 +54,20 @@ protocol VMSnapshotStoring: Sendable {
 
     /// Writes the snapshot's captured disks, configuration and saved state back
     /// over the bundle's own, replacing whatever is there.
+    ///
+    /// The files are cloned aside first and swapped in only once every clone
+    /// exists, so a failure before the swap leaves the bundle untouched. A
+    /// failure during the swaps leaves the bundle with no saved state at all,
+    /// since the one it held belongs to the disks already replaced.
     func restore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws
+
+    /// Removes the staging directory an interrupted revert left in the bundle.
+    ///
+    /// A revert discards its own staging directory, so one found here outlived
+    /// the process that made it. Its clones stop sharing blocks the moment the
+    /// snapshot they came from is discarded, and no snapshot the library lists
+    /// accounts for them.
+    func sweepRestoreStaging(bundleURL: URL)
 
     /// Moves one snapshot's directory to the Trash.
     func discardSnapshot(bundleURL: URL, snapshotID: UUID) throws

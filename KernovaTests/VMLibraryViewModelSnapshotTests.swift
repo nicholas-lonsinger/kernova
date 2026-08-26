@@ -81,6 +81,21 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(harness.viewModel.instances.first?.snapshotManifest.currentID == snapshot.id)
     }
 
+    @Test("Loading a VM reclaims the staging directory an interrupted revert left behind")
+    func loadSweepsRevertStaging() async throws {
+        let harness = makeHarness()
+        let config = VMConfiguration(name: "Interrupted", guestOS: .linux, bootMode: .efi)
+        let bundleURL = try harness.storage.bundleURL(for: config)
+        harness.storage.bundles[bundleURL] = config
+
+        await harness.viewModel.loadVMs()
+
+        // Otherwise the reclaim waits on the next revert of this same VM, which
+        // may never come — and its clones own their blocks outright once the
+        // snapshot they were cloned from is discarded.
+        #expect(harness.snapshots.sweptStagingBundleURLs == [bundleURL])
+    }
+
     // MARK: - Take
 
     @Test("Requesting a snapshot opens the sheet")
@@ -190,6 +205,8 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(instance.snapshotManifest.currentID == target.id)
         // The snapshot is kept, unlike the suspend slot.
         #expect(instance.snapshotManifest.snapshots.count == 2)
+        // Nothing is left holding a quit back once the call returns.
+        #expect(!harness.viewModel.hasRevertInFlight)
     }
 
     @Test("Reverting to an unlisted snapshot does nothing")

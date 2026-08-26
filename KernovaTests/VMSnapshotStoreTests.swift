@@ -199,6 +199,88 @@ struct VMSnapshotStoreTests {
         #expect(contents(of: fixture.layout.saveFileURL) == "saved-state")
         // Still revertible a second time.
         #expect(contents(of: fixture.layout.snapshotLayout(id: snapshotID).saveFileURL) == "saved-state")
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: fixture.layout.restoreStagingURL.path(percentEncoded: false)))
+    }
+
+    @Test("A restore that fails partway leaves the bundle exactly as it was")
+    func failedRestoreLeavesTheBundleUntouched() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        let store = VMSnapshotStore()
+        let snapshotID = UUID()
+
+        let prepared = try store.prepareSnapshot(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            configuration: fixture.configuration)
+        try store.captureDisks(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            relativePaths: prepared.relativePaths)
+        try Data("saved-state".utf8).write(to: prepared.saveFileURL)
+
+        // The guest moved on since the capture, so every bundle file the revert
+        // would write differs from the snapshot's copy.
+        try Data("diverged".utf8).write(to: fixture.layout.diskImageURL)
+        try Data("diverged-aux".utf8).write(to: fixture.layout.auxiliaryStorageURL)
+        try Data("stale-suspend".utf8).write(to: fixture.layout.saveFileURL)
+
+        // A plan naming a file the snapshot does not hold — the failure a
+        // filesystem error mid-revert produces, made deterministic.
+        let plan = VMSnapshotRestorePlan(
+            configuration: fixture.configuration,
+            relativePaths: ["Disk.asif", "AuxiliaryStorage", "Nowhere.asif"])
+        #expect(throws: (any Error).self) {
+            try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
+        }
+
+        #expect(contents(of: fixture.layout.diskImageURL) == "diverged")
+        #expect(contents(of: fixture.layout.auxiliaryStorageURL) == "diverged-aux")
+        #expect(contents(of: fixture.layout.saveFileURL) == "stale-suspend")
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: fixture.layout.restoreStagingURL.path(percentEncoded: false)))
+    }
+
+    @Test("A restore that fails while swapping drops the bundle's stale saved state")
+    func failedCommitDropsTheStaleSaveFile() throws {
+        let extraID = UUID()
+        let fixture = try makeFixture(additionalDiskID: extraID)
+        defer { cleanUp(fixture) }
+        let store = VMSnapshotStore()
+        let snapshotID = UUID()
+
+        let prepared = try store.prepareSnapshot(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            configuration: fixture.configuration)
+        try store.captureDisks(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            relativePaths: prepared.relativePaths)
+        try Data("saved-state".utf8).write(to: prepared.saveFileURL)
+        try Data("stale-suspend".utf8).write(to: fixture.layout.saveFileURL)
+
+        // A destination directory that refuses the rename: the commit is renames
+        // only, so this is the failure a full volume produces there.
+        let locked = fixture.layout.additionalDisksDirectoryURL.path(percentEncoded: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: locked)
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o700], ofItemAtPath: locked)
+        }
+
+        let plan = VMSnapshotRestorePlan(
+            configuration: fixture.configuration,
+            relativePaths: ["AdditionalDisks/\(extraID.uuidString).asif"])
+        #expect(throws: (any Error).self) {
+            try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
+        }
+
+        // The suspend slot describes the guest RAM belonging to the disks this
+        // revert was replacing, so a resume offered from it could only be wrong.
+        #expect(!fixture.layout.hasSaveFile)
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: fixture.layout.restoreStagingURL.path(percentEncoded: false)))
     }
 
     @Test("Restore refuses a snapshot missing its saved state")
@@ -299,6 +381,33 @@ struct VMSnapshotStoreTests {
 
         let written = try VMConfiguration.load(fromBundle: fixture.bundleURL)
         #expect(written.memorySizeInGB == 12)
+    }
+
+    // MARK: - Staging sweep
+
+    @Test("Sweeping reclaims a staging directory an interrupted revert left behind")
+    func sweepRemovesOrphanedStaging() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        let staging = fixture.layout.restoreStagingURL
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        try Data("half-cloned".utf8).write(to: staging.appendingPathComponent("Disk.asif"))
+
+        VMSnapshotStore().sweepRestoreStaging(bundleURL: fixture.bundleURL)
+
+        #expect(
+            !FileManager.default.fileExists(atPath: staging.path(percentEncoded: false)))
+        #expect(contents(of: fixture.layout.diskImageURL) == "main-disk")
+    }
+
+    @Test("Sweeping a bundle that holds no staging directory leaves it alone")
+    func sweepWithoutStagingIsANoOp() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+
+        VMSnapshotStore().sweepRestoreStaging(bundleURL: fixture.bundleURL)
+
+        #expect(contents(of: fixture.layout.diskImageURL) == "main-disk")
     }
 
     // MARK: - Removal and sizes

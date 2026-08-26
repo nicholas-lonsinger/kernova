@@ -67,6 +67,16 @@ struct VMBundleLayout: Sendable {
         snapshotsDirectoryURL.appendingPathComponent("manifest.json")
     }
 
+    /// Where a revert clones the snapshot's files before swapping them into the
+    /// bundle.
+    ///
+    /// Inside `Snapshots/` so the clones land on the bundle's own volume and
+    /// APFS keeps them copy-on-write, and dot-prefixed so hidden-skipping
+    /// enumerations pass over it.
+    var restoreStagingURL: URL {
+        snapshotsDirectoryURL.appendingPathComponent(".RestoreStaging", isDirectory: true)
+    }
+
     /// The directory holding one snapshot's saved state and disk copies.
     func snapshotDirectoryURL(id: UUID) -> URL {
         snapshotsDirectoryURL.appendingPathComponent(id.uuidString, isDirectory: true)

@@ -138,37 +138,96 @@ struct VMSnapshotStore: VMSnapshotStoring {
         return VMSnapshotRestorePlan(configuration: configuration, relativePaths: relativePaths)
     }
 
+    /// Clones the snapshot's files into a staging directory, then swaps each one
+    /// into the bundle.
+    ///
+    /// Nothing in the bundle is touched until every file — the saved state and
+    /// the configuration included — is staged, so a failure during the copies
+    /// leaves the bundle exactly as it was, and each swap is a rename: a file
+    /// the bundle holds is never absent, whatever interrupts the revert.
     func restore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         let sourceLayout = layout.snapshotLayout(id: snapshotID)
+        let stagingLayout = VMBundleLayout(bundleURL: layout.restoreStagingURL)
+        let manager = FileManager.default
+        let staging = stagingLayout.bundleURL
 
-        // The captured copies are written into place one by one, so a failure
-        // partway leaves a mix. Every write is a fresh clone of a file the
-        // snapshot still holds, so re-running the revert repairs it.
+        // A staging directory left behind by an interrupted revert holds clones
+        // that may be truncated, so it is discarded rather than resumed.
+        try? manager.removeItem(at: staging)
+        try manager.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? manager.removeItem(at: staging) }
+
+        // Same volume, so APFS clones each file rather than duplicating its
+        // blocks — the staged copy shares them with the snapshot's own.
         for relativePath in plan.relativePaths {
             let source = sourceLayout.bundleURL.appendingPathComponent(relativePath)
-            let destination = layout.bundleURL.appendingPathComponent(relativePath)
-            try FileManager.default.createDirectory(
-                at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try replaceItem(at: destination, withCopyOf: source)
+            let staged = staging.appendingPathComponent(relativePath)
+            try manager.createDirectory(
+                at: staged.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try manager.copyItem(at: source, to: staged)
         }
+        try manager.copyItem(at: sourceLayout.saveFileURL, to: stagingLayout.saveFileURL)
+        // Staged rather than written straight into the bundle: it is the one
+        // file of the set that needs fresh blocks, so a volume with none left
+        // sails through the clones above and fails here — where the failure
+        // still costs the bundle nothing.
         let data = try VMConfiguration.makeJSONEncoder().encode(plan.configuration)
-        try data.write(to: layout.configURL, options: .atomic)
-        // Last, so the VM only reads as suspended-on-the-snapshot once the disks
-        // and configuration that state belongs to are already in place.
-        try replaceItem(at: layout.saveFileURL, withCopyOf: sourceLayout.saveFileURL)
+        try data.write(to: stagingLayout.configURL, options: .atomic)
+
+        do {
+            for relativePath in plan.relativePaths {
+                try swapIntoPlace(
+                    staged: staging.appendingPathComponent(relativePath),
+                    destination: layout.bundleURL.appendingPathComponent(relativePath))
+            }
+            try swapIntoPlace(staged: stagingLayout.configURL, destination: layout.configURL)
+            // Last, so the VM only reads as suspended-on-the-snapshot once the
+            // disks and configuration that state belongs to are already in place.
+            try swapIntoPlace(staged: stagingLayout.saveFileURL, destination: layout.saveFileURL)
+        } catch {
+            // The bundle's own saved state describes the guest RAM that belongs
+            // to the disks the swaps above already replaced, and a bundle
+            // holding one rests the VM at `.paused` — offering a resume that
+            // would run pre-revert RAM on post-revert disks. Dropping it rests
+            // the VM at `.stopped` instead.
+            try? manager.removeItem(at: layout.saveFileURL)
+            throw error
+        }
     }
 
-    /// Clones `source` over `destination`, removing whatever was there.
+    /// Moves a staged clone onto `destination`, replacing whatever is there.
     ///
-    /// Not `replaceItemAt`, which moves the replacement in — the snapshot keeps
-    /// its copy, so a revert must leave the source where it is.
-    private func replaceItem(at destination: URL, withCopyOf source: URL) throws {
+    /// `replaceItemAt` rather than a remove followed by a copy: it renames the
+    /// replacement in, so `destination` resolves to the old file or the new one
+    /// and never to nothing.
+    private func swapIntoPlace(staged: URL, destination: URL) throws {
         let manager = FileManager.default
+        try manager.createDirectory(
+            at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         if manager.fileExists(atPath: destination.path(percentEncoded: false)) {
-            try manager.removeItem(at: destination)
+            _ = try manager.replaceItemAt(destination, withItemAt: staged)
+        } else {
+            // `replaceItemAt` needs an original to replace — a disk the VM lost
+            // since the capture has none.
+            try manager.moveItem(at: staged, to: destination)
         }
-        try manager.copyItem(at: source, to: destination)
+    }
+
+    func sweepRestoreStaging(bundleURL: URL) {
+        let staging = VMBundleLayout(bundleURL: bundleURL).restoreStagingURL
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: staging.path(percentEncoded: false)) else { return }
+        do {
+            try manager.removeItem(at: staging)
+            Self.logger.notice(
+                "Reclaimed a revert staging directory left in '\(bundleURL.lastPathComponent, privacy: .public)'"
+            )
+        } catch {
+            Self.logger.warning(
+                "Failed to remove the revert staging directory in '\(bundleURL.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     // MARK: - Removal

@@ -10,12 +10,14 @@ struct AppDelegateTerminationOutcomeTests {
         shouldTerminateAgent: Bool = true,
         isSavePassRunning: Bool = false,
         hasSaveInFlight: Bool = false,
+        hasRevertInFlight: Bool = false,
         hasInstancesToSave: Bool = false
     ) -> AppDelegate.TerminationOutcome {
         AppDelegate.terminationOutcome(
             shouldTerminateAgent: shouldTerminateAgent,
             isSavePassRunning: isSavePassRunning,
             hasSaveInFlight: hasSaveInFlight,
+            hasRevertInFlight: hasRevertInFlight,
             hasInstancesToSave: hasInstancesToSave)
     }
 
@@ -56,6 +58,22 @@ struct AppDelegateTerminationOutcomeTests {
     @Test("a save in flight alongside a live VM defers the reply")
     func saveInFlightWithOtherLiveVMs() {
         #expect(outcome(hasSaveInFlight: true, hasInstancesToSave: true) == .saveThenTerminate)
+    }
+
+    // MARK: - In-flight revert
+
+    @Test("a revert in flight defers the reply with nothing else to save")
+    func revertInFlightAloneDefersTermination() {
+        // The regression: an Ephemeral VM's power-off revert leaves no live
+        // session behind, so the gate saw an empty save set, replied
+        // `.terminateNow`, and exited through the copy writing the bundle's disks.
+        #expect(outcome(hasRevertInFlight: true) == .saveThenTerminate)
+    }
+
+    @Test("a soft quit during a revert still closes the GUI")
+    func softQuitDuringRevertClosesTheGUI() {
+        // The app stays resident, so the revert finishes on its own.
+        #expect(outcome(shouldTerminateAgent: false, hasRevertInFlight: true) == .closeGUI)
     }
 
     // MARK: - Re-entrancy
