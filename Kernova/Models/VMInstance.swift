@@ -485,10 +485,16 @@ final class VMInstance {
     /// (see ``VirtualizationService/applyRestoreFailure(to:)``). Every
     /// transitional status (`.starting`, `.saving`, `.snapshotting`, …) is
     /// excluded too — a capture mid-operation would race the operation itself.
+    ///
+    /// Cold-paused additionally needs ``hasSaveFile``, unlike the other
+    /// branches: a failed snapshot attempt can rest a VM cold-paused with no
+    /// suspend slot at all (``VirtualizationService/restingStatusAfterFailedSnapshot(_:session:wasRunning:)``),
+    /// the same dead end ``VirtualizationService/applyRestoreFailure(to:)``
+    /// documents for `.paused` generally.
     var snapshotCaptureMode: VMSnapshotCaptureMode? {
         if canSave {
             .live
-        } else if isColdPaused {
+        } else if isColdPaused && hasSaveFile {
             .suspended
         } else if status == .stopped {
             .stopped

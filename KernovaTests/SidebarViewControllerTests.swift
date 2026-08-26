@@ -318,9 +318,17 @@ struct SidebarViewControllerTests {
     }
 
     @Test("Context menu for a cold-paused VM offers Discard Saved State, not Stop/Suspend")
-    func contextMenuColdPaused() {
+    func contextMenuColdPaused() throws {
         let viewModel = makeViewModel()
         let instance = makeInstance(status: .paused)  // no live VM ⇒ cold-paused
+        // A capturable suspend slot: `canTakeSnapshot` for a cold-paused VM
+        // needs one on disk, not just the status.
+        try FileManager.default.createDirectory(
+            at: instance.bundleURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
+        FileManager.default.createFile(
+            atPath: instance.saveFileURL.path(percentEncoded: false),
+            contents: Data("fake save".utf8))
         viewModel.instances.append(instance)
         let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
 

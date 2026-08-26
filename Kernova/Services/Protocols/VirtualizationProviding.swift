@@ -17,9 +17,12 @@ protocol VirtualizationProviding: Sendable {
     func resume(_ instance: VMInstance) async throws
     func save(_ instance: VMInstance) async throws
 
-    /// Captures `snapshot` — copies of the bundle's disks, plus the guest's
-    /// memory when `snapshot.kind` is `.warm` — leaving the VM where it was
-    /// found.
+    /// Captures `snapshot`, in the mode the VM is in right now
+    /// (``VMInstance/snapshotCaptureMode``) — copies of the bundle's disks,
+    /// plus the guest's memory from VZ or cloned from the bundle's suspend
+    /// slot, unless the VM is stopped — leaving the VM where it was found.
+    /// Throws if the VM has since moved to a mode that disagrees with
+    /// `snapshot.kind`.
     func takeSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring
     ) async throws

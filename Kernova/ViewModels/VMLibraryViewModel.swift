@@ -1068,16 +1068,16 @@ final class VMLibraryViewModel {
 
     /// Takes a fresh snapshot of the current state, then reverts — the revert
     /// alert's default, non-destructive path.
+    ///
+    /// The button this backs only exists when the alert was built with a
+    /// capturable VM, so the capture here is required, not conditional: a VM
+    /// that stopped being capturable before the click landed aborts rather
+    /// than falling through to the destructive revert with no check-point.
     func snapshotThenRevertConfirmed(_ instance: VMInstance, to snapshot: VMSnapshot) async {
-        // A VM settled enough to capture gets a check-point first — warm from a
-        // live or suspended one, cold from a stopped one; anything else reverts
-        // on its own.
-        if instance.canTakeSnapshot {
-            guard
-                await captureSnapshot(
-                    instance, name: instance.snapshotManifest.defaultNewName, notes: "") != nil
-            else { return }
-        }
+        guard
+            await captureSnapshot(
+                instance, name: instance.snapshotManifest.defaultNewName, notes: "") != nil
+        else { return }
         await revertConfirmed(instance, to: snapshot)
     }
 
