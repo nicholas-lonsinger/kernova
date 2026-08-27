@@ -510,6 +510,15 @@ final class VMLifecycleCoordinator {
         guard let downloads = downloadsDirectory, let expected = image.sha256?.lowercased() else {
             return false
         }
+        // A file already at the destination belongs to the download: it skips
+        // over it and the verify step below holds it to this same digest. An
+        // adoption is refused there in any case — asked before the hash rather
+        // than after it, so a second VM built from one catalog entry does not
+        // read gigabytes to reach a refusal. Read from the filesystem the rest
+        // of this probe reads, not the trash seam.
+        guard !FileManager.default.fileExists(atPath: destination.path(percentEncoded: false))
+        else { return false }
+
         // Re-admitted at the point it is appended to a directory: this is the
         // one place a name the source chose reaches the filesystem.
         guard let candidateName = SafeFilename.sanitized(image.filename, requiring: "iso") else {

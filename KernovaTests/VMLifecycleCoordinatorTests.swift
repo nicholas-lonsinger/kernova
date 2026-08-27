@@ -1410,6 +1410,34 @@ struct VMLifecycleCoordinatorTests {
         #expect(instance.status == .stopped)
     }
 
+    @Test("A destination already on disk is not probed against the candidate")
+    func downloadLinuxImageSkipsTheProbeWhenTheDestinationExists() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        // The state the first adoption leaves behind: both names in Downloads,
+        // holding the same bytes. A second VM from the same catalog entry must
+        // not read the candidate end to end only to be refused the link.
+        let resolved = fixture.resolveService.resolveResult
+        try fixture.contents.write(
+            to: fixture.downloads.appendingPathComponent(resolved.filename))
+        let destination = fixture.downloads.appendingPathComponent(resolved.destinationFilename)
+        try fixture.contents.write(to: destination)
+        fixture.downloadService.downloadedContents = nil
+        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
+        let instance = makeLinuxInstance(context: context)
+
+        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+
+        #expect(fixture.downloadService.adoptExistingFileCallCount == 0)
+        // The ordinary path owns this: the download skips over the file already
+        // at the destination, and Verify holds it to the same digest.
+        #expect(fixture.downloadService.downloadCallCount == 1)
+        #expect(
+            instance.configuration.storageDisks?.first?.path
+                == destination.path(percentEncoded: false))
+        #expect(instance.status == .stopped)
+    }
+
     @Test("A refused adoption falls through to the download and its verify step")
     func downloadLinuxImageDownloadsWhenAdoptionIsRefused() async throws {
         let fixture = try makeLinuxFixture()

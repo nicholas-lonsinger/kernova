@@ -1360,10 +1360,16 @@ struct DownloadServiceTests {
 
         let payload = Data(repeating: 0xAB, count: 2 * 1024 * 1024)
         // The claim is taken before the request goes out, so a handler that has
-        // run is a destination the transfer already owns.
+        // run is a destination the transfer already owns — and the stub holds
+        // there until the adoption has answered, because it otherwise delivers
+        // the whole body synchronously and the transfer would finalize and drop
+        // its claim first. That run would answer `false` from the
+        // destination-occupied check and pass with the claim honored or not.
         let started = RequestGate()
+        let release = RequestGate()
         StubURLProtocol.handler = { request in
             started.signal()
+            release.waitOnThisThread()
             return .fullResponse(url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
         }
         defer { StubURLProtocol.handler = nil }
@@ -1374,7 +1380,10 @@ struct DownloadServiceTests {
                 from: Self.remoteURL, to: destination, progressHandler: { _ in })
         }
         await started.wait()
+        // Nothing is at the destination yet, so only the claim can refuse this.
+        #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
         let adopted = await service.adoptExistingFile(at: source, as: destination)
+        release.signal()
         try await download.value
 
         #expect(!adopted)
@@ -1418,35 +1427,49 @@ final class RequestCounter: @unchecked Sendable {
     }
 }
 
-/// A one-shot signal fired from URLSession's own queue, where the stub handler
-/// runs, and awaited from the test.
+/// A one-shot signal passed between the test and URLSession's own queue, where
+/// the stub handler runs.
 ///
-/// Event-driven rather than a poll: the awaiting side resumes on the signal,
+/// Event-driven in both directions: the awaiting side resumes on the signal,
 /// and a signal that already fired resumes it immediately.
 final class RequestGate: @unchecked Sendable {
-    private let lock = NSLock()
+    /// How long ``waitOnThisThread()`` holds before giving up.
+    ///
+    /// The handler blocks a URLSession thread, so a case that fails before it
+    /// signals would otherwise hang the run rather than report.
+    private static let synchronousWaitLimit: TimeInterval = 30
+
+    private let condition = NSCondition()
     private var fired = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
     func signal() {
-        var pending: [CheckedContinuation<Void, Never>] = []
-        lock.withLock {
-            fired = true
-            pending = waiters
-            waiters.removeAll()
-        }
+        condition.lock()
+        fired = true
+        let pending = waiters
+        waiters.removeAll()
+        condition.broadcast()
+        condition.unlock()
         for continuation in pending { continuation.resume() }
     }
 
     func wait() async {
         await withCheckedContinuation { continuation in
-            let alreadyFired = lock.withLock { () -> Bool in
-                if fired { return true }
-                waiters.append(continuation)
-                return false
-            }
+            condition.lock()
+            let alreadyFired = fired
+            if !alreadyFired { waiters.append(continuation) }
+            condition.unlock()
             if alreadyFired { continuation.resume() }
         }
+    }
+
+    /// Blocks the calling thread until the signal — for the stub handler, which
+    /// URLSession calls synchronously off the main thread.
+    func waitOnThisThread() {
+        let deadline = Date().addingTimeInterval(Self.synchronousWaitLimit)
+        condition.lock()
+        while !fired, condition.wait(until: deadline) {}
+        condition.unlock()
     }
 }
 
