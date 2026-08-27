@@ -891,10 +891,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let menu = NSMenu()
-        let item = NSMenuItem(title: "Show Library", action: #selector(showLibrary(_:)), keyEquivalent: "")
+        let item = NSMenuItem(
+            title: "Show Library", action: #selector(summonLibraryFromDockMenu), keyEquivalent: "")
         item.target = self
         menu.addItem(item)
         return menu
+    }
+
+    /// The Dock menu's "Show Library", routed through the summon path rather
+    /// than `showLibrary(_:)`: unlike ⌘0 (only reachable while the app is
+    /// already active), a Dock-menu selection can arrive while Kernova is
+    /// inactive and needs the summon path's activation request.
+    @objc private func summonLibraryFromDockMenu(_ sender: Any?) {
+        summonUserInterface()
     }
 
     /// Closes every user-facing window, returning the agent to its headless
