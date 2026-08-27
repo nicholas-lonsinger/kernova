@@ -553,53 +553,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     ///
     /// The sole GUI-summon path, and idempotent.
     private func summonUserInterface(showing target: SummonTarget = .library) {
-        // Morph to a regular app so the Dock icon + menu bar appear. Defer the
-        // activate + show to the next runloop tick so the menu bar has refreshed
-        // (the .accessory→.regular menu-bar quirk, FB7743313).
+        // Morph to a regular app so the Dock icon + menu bar appear, and request
+        // activation synchronously while the status-item click is still on the
+        // call stack: cooperative activation (macOS 14+) stamps the request
+        // with the click's user-event timestamp only when it's sent from the
+        // action itself — a runloop tick later the stamp has gone stale and
+        // WindowServer rejects it outright.
         setAgentActivationPolicy(.regular)
+        Self.logger.debug("Summon: isActive=\(NSApp.isActive, privacy: .public)")
+        NSApp.activate()
+        // Defer the show to the next runloop tick so the menu bar has refreshed
+        // (the .accessory→.regular menu-bar quirk, FB7743313).
         Task { @MainActor in
-            Self.logger.debug("Summon: isActive=\(NSApp.isActive, privacy: .public)")
-            // A summon out of the headless `.accessory` state fronts an
-            // unactivated background process, and `ignoringOtherApps` is what
-            // does that — the argument-less `activate()` is unreliable there. A
-            // no-op when the app is already frontmost.
-            NSApp.activate(ignoringOtherApps: true)
+            let summoned: NSWindow?
             switch target {
             case .library:
                 self.showLibraryWindow(bringToFront: true)
+                summoned = self.mainWindowController?.window
             case .display(let instance):
                 if let existing = self.displayWindows[instance.instanceID] {
                     existing.window?.makeKeyAndOrderFront(nil)
                 } else {
                     self.openDisplayWindow(for: instance)
                 }
+                summoned = self.displayWindows[instance.instanceID]?.window
             case .clipboard(let instance):
                 self.showClipboardWindow(for: instance)
+                summoned = self.clipboardWindows[instance.instanceID]?.window
             }
+            // The activate above may still be refused; the window has to arrive
+            // either way. `orderFrontRegardless` is the only ordering call that
+            // doesn't depend on the app being active.
+            summoned?.orderFrontRegardless()
             // Summoning from the status-item menu leaves the freshly-appeared menu
             // bar with its first menu highlighted: the status menu's dismissal
             // bleeds into the menu bar the morph just installed. Clear it.
             NSApp.mainMenu?.cancelTracking()
-            await self.reassertActivationAfterSummon()
-        }
-    }
-
-    /// Re-requests activation until the summon's activation sticks.
-    ///
-    /// Cooperative activation (macOS 14+) occasionally denies the summon's
-    /// `activate`: the request lands milliseconds after the `.accessory` →
-    /// `.regular` morph, and when it loses that race the previously active app
-    /// keeps focus — the summoned window surfaces behind it and the Dock,
-    /// never seeing an activation, leaves the app at the ⌘-Tab tail. Poll and
-    /// re-assert until activation sticks, bounded to three attempts so a
-    /// denied activation isn't re-requested indefinitely.
-    private func reassertActivationAfterSummon() async {
-        for attempt in 1...3 {
-            try? await Task.sleep(for: .milliseconds(100))
-            guard !NSApp.isActive else { return }
-            Self.logger.debug(
-                "Summon: activation denied, re-asserting (attempt \(attempt, privacy: .public))")
-            NSApp.activate(ignoringOtherApps: true)
         }
     }
 
@@ -1310,7 +1299,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if let existingWindow = mainWindowController?.window {
             if bringToFront {
                 Self.logger.debug("showLibrary: focusing existing window")
-                NSApp.activate()
                 existingWindow.makeKeyAndOrderFront(nil)
             } else {
                 Self.logger.debug("showLibrary: showing existing window in background")
