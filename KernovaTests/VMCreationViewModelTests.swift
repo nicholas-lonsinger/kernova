@@ -78,7 +78,7 @@ struct VMCreationViewModelTests {
 
     @Test("canAdvance at bootConfig depends on OS and mode selections")
     func canAdvanceBootConfig() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel(localImageInspector: MockLocalRestoreImageInspector())
         vm.currentStep = .bootConfig
 
         // macOS with downloadLatest is valid (the destination is always the
@@ -456,7 +456,7 @@ struct VMCreationViewModelTests {
 
     @Test("shouldShowOverwriteWarning is false when source is localFile")
     func overwriteWarningFalseForLocalFile() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel(localImageInspector: MockLocalRestoreImageInspector())
         vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
         vm.ipswDownloadPath = "/usr/bin/true"  // exists on disk
 
@@ -505,10 +505,15 @@ struct VMCreationViewModelTests {
     func useExistingDownloadFileSwitchesSource() {
         let vm = VMCreationViewModel()
         vm.ipswDownloadPath = "/usr/bin/true"
+        let inspected = InspectedRestoreImage(
+            version: "15.6.1", build: "24G90", isSupportedOnThisHost: true, sizeBytes: 1_000)
 
-        vm.useExistingDownloadFile(at: vm.ipswDownloadPath)
+        vm.useExistingDownloadFile(at: vm.ipswDownloadPath, inspected: inspected)
 
-        #expect(vm.ipswSelection == .localFile(path: "/usr/bin/true", bookmark: nil))
+        #expect(
+            vm.ipswSelection
+                == .localFile(
+                    LocalRestoreImage(path: "/usr/bin/true", bookmark: nil, inspected: inspected)))
     }
 
     @Test("canAdvance is false when overwrite warning is unresolved")
@@ -731,7 +736,7 @@ struct VMCreationViewModelTests {
 
     @Test("buildInstallContext snapshots localFile with chosen path")
     func buildInstallContextLocalFile() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel(localImageInspector: MockLocalRestoreImageInspector())
         vm.selectLocalFile(path: "/tmp/macOS-26.ipsw", bookmark: nil)
 
         let context = vm.buildInstallContext()
@@ -743,7 +748,7 @@ struct VMCreationViewModelTests {
 
     @Test("buildInstallContext carries a local pick's bookmark")
     func buildInstallContextCarriesLocalBookmark() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel(localImageInspector: MockLocalRestoreImageInspector())
         let bookmark = Data([0x01, 0x02, 0x03])
         vm.selectLocalFile(path: "/tmp/macOS-26.ipsw", bookmark: bookmark)
 
@@ -755,7 +760,7 @@ struct VMCreationViewModelTests {
 
     @Test("each selection maps to its persisted install-context source")
     func installContextSourceCoversEverySelection() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel(localImageInspector: MockLocalRestoreImageInspector())
         #expect(vm.buildInstallContext().source == .downloadLatest)
 
         vm.selectCatalogEntry(makeCatalogEntry())
@@ -960,9 +965,14 @@ struct VMCreationViewModelTests {
         let vm = VMCreationViewModel()
         vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
         let destination = vm.ipswDownloadPath
-        vm.useExistingDownloadFile(at: destination)
+        let inspected = InspectedRestoreImage(
+            version: "15.6.1", build: "24G90", isSupportedOnThisHost: true, sizeBytes: 1_000)
+        vm.useExistingDownloadFile(at: destination, inspected: inspected)
 
-        #expect(vm.ipswSelection == .localFile(path: destination, bookmark: nil))
+        #expect(
+            vm.ipswSelection
+                == .localFile(LocalRestoreImage(path: destination, bookmark: nil, inspected: inspected))
+        )
     }
 
     @Test("Use Existing File keeps the pick that named the file, for the sheet")
@@ -970,7 +980,10 @@ struct VMCreationViewModelTests {
         let vm = VMCreationViewModel()
         let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
         vm.selectCatalogEntry(entry)
-        vm.useExistingDownloadFile(at: vm.ipswDownloadPath)
+        vm.useExistingDownloadFile(
+            at: vm.ipswDownloadPath,
+            inspected: InspectedRestoreImage(
+                version: "15.6.1", build: "24G90", isSupportedOnThisHost: true))
 
         #expect(vm.ipswSource == .localFile)
         #expect(vm.lastCatalogPick == entry)
@@ -1068,6 +1081,89 @@ struct VMCreationViewModelTests {
         #expect(context.downloadDestinationPath == vm.ipswDownloadPath)
     }
 
+    // MARK: - Local File Selection
+
+    @Test("selectLocalFile commits the path immediately, then the inspection upgrades it")
+    func selectLocalFileCommitsImmediatelyThenUpgrades() async {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "15.6.1", build: "24G90", isSupportedOnThisHost: true,
+            sizeBytes: 5_000_000_000)
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+
+        vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
+        #expect(
+            vm.ipswSelection == .localFile(LocalRestoreImage(path: "/tmp/picked.ipsw", bookmark: nil)))
+
+        await vm.localFileInspectionTask?.value
+
+        #expect(
+            vm.ipswSelection
+                == .localFile(
+                    LocalRestoreImage(
+                        path: "/tmp/picked.ipsw", bookmark: nil, inspected: inspector.inspectResult)))
+    }
+
+    @Test("An inspection error leaves the path with no metadata")
+    func selectLocalFileInspectionErrorLeavesPathOnly() async {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectError = LocalRestoreImageError.unreadable
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+
+        vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
+        await vm.localFileInspectionTask?.value
+
+        #expect(
+            vm.ipswSelection == .localFile(LocalRestoreImage(path: "/tmp/picked.ipsw", bookmark: nil)))
+    }
+
+    @Test("An inspection landing after the source switched away leaves that source current")
+    func selectLocalFileInspectionLandingAfterSourceSwitchIsDropped() async throws {
+        let inspector = SuspendingMockLocalRestoreImageInspector()
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+
+        vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
+        let inspection = try #require(vm.localFileInspectionTask)
+        try await inspector.waitUntilInspecting()
+
+        let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
+        vm.selectCatalogEntry(entry)
+        inspector.release()
+        await inspection.value
+
+        #expect(vm.ipswSelection == .catalogVersion(entry))
+    }
+
+    @Test("A superseded inspection finishing after a newer one leaves the newer task current")
+    func outOfOrderInspectionsLeaveTheNewerTaskCurrent() async throws {
+        let inspector = OrderedSuspendingMockLocalRestoreImageInspector()
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+
+        vm.selectLocalFile(path: "/tmp/first.ipsw", bookmark: nil)
+        let firstTask = try #require(vm.localFileInspectionTask)
+        try await inspector.waitUntilCallCount(1)
+
+        vm.selectLocalFile(path: "/tmp/second.ipsw", bookmark: nil)
+        let secondTask = try #require(vm.localFileInspectionTask)
+        try await inspector.waitUntilCallCount(2)
+
+        // The superseded first pick's read finishes first — `VZMacOSRestoreImage`
+        // ignores cancellation, so an older read racing to completion after a
+        // re-pick is the ordinary ordering, not adversarial timing.
+        inspector.release(callIndex: 0)
+        await firstTask.value
+
+        // The newer pick's task must still be what the model hands out — a
+        // premature clear here is what leaves a re-entered step awaiting
+        // nothing while the second inspection is still running.
+        #expect(vm.localFileInspectionTask != nil)
+
+        inspector.release(callIndex: 1)
+        await secondTask.value
+
+        #expect(vm.localFileInspectionTask == nil)
+    }
+
     // MARK: - Adopting an Existing File
 
     @Test("An existing file matching the pinned build is adopted")
@@ -1082,7 +1178,11 @@ struct VMCreationViewModelTests {
         let verdict = await vm.adoptExistingDownloadFile(at: destination)
 
         #expect(verdict == .adopted(inspector.inspectResult))
-        #expect(vm.ipswSelection == .localFile(path: destination, bookmark: nil))
+        #expect(
+            vm.ipswSelection
+                == .localFile(
+                    LocalRestoreImage(
+                        path: destination, bookmark: nil, inspected: inspector.inspectResult)))
         #expect(inspector.lastInspectedURL?.path(percentEncoded: false) == destination)
     }
 
@@ -1184,7 +1284,11 @@ struct VMCreationViewModelTests {
         let verdict = await vm.adoptExistingDownloadFile(at: destination)
 
         #expect(verdict == .adopted(inspector.inspectResult))
-        #expect(vm.ipswSelection == .localFile(path: destination, bookmark: nil))
+        #expect(
+            vm.ipswSelection
+                == .localFile(
+                    LocalRestoreImage(
+                        path: destination, bookmark: nil, inspected: inspector.inspectResult)))
     }
 
     @Test("A URL pick with no parsed build pins nothing to compare against")
@@ -1231,7 +1335,11 @@ struct VMCreationViewModelTests {
 
         #expect(verdict == .adopted(inspector.inspectResult))
         #expect(inspector.lastInspectedURL?.path(percentEncoded: false) == snapshot)
-        #expect(vm.ipswSelection == .localFile(path: snapshot, bookmark: nil))
+        #expect(
+            vm.ipswSelection
+                == .localFile(
+                    LocalRestoreImage(path: snapshot, bookmark: nil, inspected: inspector.inspectResult))
+        )
     }
 
     @Test("A destination that moves mid-inspection changes neither the file adopted nor the build")
@@ -1257,7 +1365,11 @@ struct VMCreationViewModelTests {
         // it — a mismatch here would name a build the user never saw, about a
         // file at a path nothing inspected.
         #expect(await adopt.value == .adopted(inspector.inspectResult))
-        #expect(vm.ipswSelection == .localFile(path: destination, bookmark: nil))
+        #expect(
+            vm.ipswSelection
+                == .localFile(
+                    LocalRestoreImage(
+                        path: destination, bookmark: nil, inspected: inspector.inspectResult)))
     }
 
     @Test("expectedBuild names the build each source is promising")
@@ -1400,6 +1512,47 @@ final class SuspendingMockLocalRestoreImageInspector: LocalRestoreImageInspectin
     /// Lets the in-flight inspection finish.
     func release() {
         lock.withLock { self.isReleased = true }
+        gate.notify()
+    }
+}
+
+/// Inspector whose calls suspend independently and resolve in whatever order
+/// the test releases them by index — models `VZMacOSRestoreImage` ignoring
+/// cancellation, so a superseded pick's read can finish after a newer one's.
+final class OrderedSuspendingMockLocalRestoreImageInspector: LocalRestoreImageInspecting,
+    @unchecked Sendable
+{
+    private final class CallState {
+        let gate = AsyncGate()
+        var released = false
+    }
+    private let lock = NSLock()
+    private var calls: [CallState] = []
+    /// Notified whenever a new call registers, for ``waitUntilCallCount(_:)``.
+    private let callRegisteredGate = AsyncGate()
+
+    func inspect(_ url: URL) async throws -> InspectedRestoreImage {
+        let (index, gate) = lock.withLock { () -> (Int, AsyncGate) in
+            calls.append(CallState())
+            return (calls.count - 1, calls[calls.count - 1].gate)
+        }
+        callRegisteredGate.notify()
+        try? await gate.wait(until: { self.lock.withLock { self.calls[index].released } })
+        return InspectedRestoreImage(
+            version: "15.6.1", build: "24G90", isSupportedOnThisHost: true)
+    }
+
+    /// Suspends until `inspect` has been called at least `count` times.
+    func waitUntilCallCount(_ count: Int) async throws {
+        try await callRegisteredGate.wait(until: { self.lock.withLock { self.calls.count >= count } })
+    }
+
+    /// Lets the `callIndex`th call (0-based, in call order) finish.
+    func release(callIndex: Int) {
+        let gate = lock.withLock { () -> AsyncGate in
+            calls[callIndex].released = true
+            return calls[callIndex].gate
+        }
         gate.notify()
     }
 }

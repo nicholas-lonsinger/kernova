@@ -38,6 +38,8 @@ final class IPSWSelectionContentViewController: NSViewController {
     private var adoptTask: Task<Void, Never>?
     /// Redraws the badge once the model's latest-image lookup lands.
     private var latestImageTask: Task<Void, Never>?
+    /// Redraws the badge once a panel-picked file's inspection lands.
+    private var localFileInspectionWatchTask: Task<Void, Never>?
 
     #if DEBUG
     /// Awaited by tests instead of polling for the verdict to land.
@@ -45,6 +47,9 @@ final class IPSWSelectionContentViewController: NSViewController {
 
     /// Awaited by tests instead of polling for the badge to be redrawn.
     var latestImageTaskForTesting: Task<Void, Never>? { latestImageTask }
+
+    /// Awaited by tests instead of polling for a picked file's badge to upgrade.
+    var localFileInspectionTaskForTesting: Task<Void, Never>? { localFileInspectionWatchTask }
     #endif
     /// Shows the "more content below" cue while this step's content overflows the
     /// sheet; a hint only.
@@ -122,6 +127,10 @@ final class IPSWSelectionContentViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         startLatestImageLookup()
+        // The shell mounts a fresh VC on every entry to this step, so a pick
+        // made before navigating away — Next, then Back — has to pick its
+        // in-flight inspection back up here too, the same as the lookup above.
+        startLocalFileInspectionWatch()
     }
 
     override func viewWillDisappear() {
@@ -135,6 +144,8 @@ final class IPSWSelectionContentViewController: NSViewController {
         // model, so it still lands for the Review step.
         latestImageTask?.cancel()
         latestImageTask = nil
+        localFileInspectionWatchTask?.cancel()
+        localFileInspectionWatchTask = nil
     }
 
     /// Asks the model what "Download Latest" will fetch, and shows it when the
@@ -150,6 +161,24 @@ final class IPSWSelectionContentViewController: NSViewController {
             await lookup.value
             guard let self, !Task.isCancelled else { return }
             self.latestImageTask = nil
+            self.rebuildConditional()
+        }
+    }
+
+    /// Redraws the badge once a just-picked file's inspection lands.
+    ///
+    /// The inspection itself belongs to the model, so cancelling this watch —
+    /// on navigation, or a re-pick starting a new one — drops only this VC's
+    /// redraw, never the model's task.
+    private func startLocalFileInspectionWatch() {
+        guard creationVM.ipswSource == .localFile,
+            let inspection = creationVM.localFileInspectionTask
+        else { return }
+        localFileInspectionWatchTask?.cancel()
+        localFileInspectionWatchTask = Task { [weak self] in
+            await inspection.value
+            guard let self, !Task.isCancelled else { return }
+            self.localFileInspectionWatchTask = nil
             self.rebuildConditional()
         }
     }
@@ -217,11 +246,12 @@ final class IPSWSelectionContentViewController: NSViewController {
                 // build is what the other sources are for, and the destination
                 // is always Downloads, the one location the sandbox's downloads
                 // entitlement covers without per-pick grants.
-                addPinnedImageBadge(
+                addImageBadge(
                     parts: [
                         "macOS \(latest.version)", "Build \(latest.build)",
                         creationVM.latestImageSizeBytes.map(DataFormatters.formatBytes),
                     ],
+                    path: creationVM.ipswDownloadPath,
                     changeAction: nil
                 )
             } else {
@@ -233,35 +263,50 @@ final class IPSWSelectionContentViewController: NSViewController {
             // once it lands, the destination is per-build like a pinned pick's.
             addDownloadBanners(version: creationVM.latestImage?.version)
         case .catalogVersion(let entry):
-            addPinnedImageBadge(
+            addImageBadge(
                 parts: [
                     "macOS \(entry.version)", "Build \(entry.build)",
                     DataFormatters.formatBytes(entry.sizeBytes),
                 ],
+                path: creationVM.ipswDownloadPath,
                 changeAction: #selector(changeCatalogVersion)
             )
             addDownloadBanners(version: entry.version)
         case .customURL(let image):
-            addPinnedImageBadge(
+            addImageBadge(
                 parts: [image.versionSummary, DataFormatters.formatBytes(image.sizeBytes)],
+                path: creationVM.ipswDownloadPath,
                 changeAction: #selector(changePastedURL)
             )
             addDownloadBanners(version: image.version)
-        case .localFile(let path, _):
-            let change = makeLinkButton(
-                "Change…", target: self, action: #selector(changeLocalFile))
-            conditionalContainer.addArrangedSubview(makeWizardPathBadge(path: path, changeButton: change))
+        case .localFile(let image):
+            if let inspected = image.inspected {
+                addImageBadge(
+                    parts: [
+                        "macOS \(inspected.version)", "Build \(inspected.build)",
+                        inspected.sizeBytes.map(DataFormatters.formatBytes),
+                    ],
+                    path: image.path,
+                    changeAction: #selector(changeLocalFile)
+                )
+            } else {
+                let change = makeLinkButton(
+                    "Change…", target: self, action: #selector(changeLocalFile))
+                conditionalContainer.addArrangedSubview(
+                    makeWizardPathBadge(path: image.path, changeButton: change))
+            }
         }
     }
 
-    /// Adds the one badge a download source shows: which image it will fetch,
-    /// and where that image will land.
+    /// Adds the one badge a source shows: which image it names, and where that
+    /// image lives — the download destination for a download source, or the
+    /// picked file's own path for a local one.
     ///
     /// One two-line badge rather than two badges — with four sources listed,
     /// two badges no longer fit the fixed-size sheet without scrolling. Every
     /// source composes its title line from `parts` here, so they read alike;
     /// a part the source doesn't know drops out.
-    private func addPinnedImageBadge(parts: [String?], changeAction: Selector?) {
+    private func addImageBadge(parts: [String?], path: String, changeAction: Selector?) {
         let change = changeAction.map {
             makeLinkButton("Change…", target: self, action: $0)
         }
@@ -269,7 +314,7 @@ final class IPSWSelectionContentViewController: NSViewController {
             makeWizardBadge(
                 symbolName: "shippingbox.fill",
                 text: parts.compactMap { $0 }.joined(separator: "  ·  "),
-                secondaryText: wizardAbbreviateWithTilde(creationVM.ipswDownloadPath),
+                secondaryText: wizardAbbreviateWithTilde(path),
                 trailingButton: change
             ))
     }
@@ -402,12 +447,13 @@ final class IPSWSelectionContentViewController: NSViewController {
 
     /// Adopts the file the mismatch banner described, on the user's say-so.
     @objc private func useExistingAnywayTapped() {
-        guard let path = existingFileNoticePath else {
-            Self.logger.fault("Use It Anyway tapped with no notice path")
-            assertionFailure("A mismatch banner is showing, so its path must be set")
+        guard case .mismatch(_, let found) = existingFileNotice, let path = existingFileNoticePath
+        else {
+            Self.logger.fault("Use It Anyway tapped with no mismatch notice")
+            assertionFailure("A mismatch banner is showing, so its notice must be set")
             return
         }
-        creationVM.useExistingDownloadFile(at: path)
+        creationVM.useExistingDownloadFile(at: path, inspected: found)
         clearExistingFileNotice()
         refresh()
     }
@@ -442,6 +488,7 @@ final class IPSWSelectionContentViewController: NSViewController {
             let (path, bookmark) = SecurityScopedBookmark.capture(url)
             self.creationVM.selectLocalFile(path: path, bookmark: bookmark)
             self.refresh()
+            self.startLocalFileInspectionWatch()
         }
     }
 

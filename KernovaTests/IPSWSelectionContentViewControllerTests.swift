@@ -90,7 +90,15 @@ struct IPSWSelectionContentViewControllerTests {
         findButton(titled: "Use Existing File", in: vc.view)?.performClick(nil)
         await vc.adoptTaskForTesting?.value
 
-        #expect(vm.ipswSelection == .localFile(path: path, bookmark: nil))
+        #expect(
+            vm.ipswSelection
+                == .localFile(
+                    LocalRestoreImage(path: path, bookmark: nil, inspected: inspector.inspectResult)))
+        // The badge upgrades to the file's own metadata, not just its path.
+        #expect(
+            findLabel(
+                containing: "macOS 15.6.1  ·  Build 24G90  ·  \(DataFormatters.formatBytes(15_500_000_000))",
+                in: vc.view) != nil)
     }
 
     @Test("A file of a different build is named, and not adopted until confirmed")
@@ -100,7 +108,7 @@ struct IPSWSelectionContentViewControllerTests {
 
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
-            version: "14.2", build: "23C64", isSupportedOnThisHost: true)
+            version: "14.2", build: "23C64", isSupportedOnThisHost: true, sizeBytes: 8_500_000_000)
         let vm = VMCreationViewModel(localImageInspector: inspector)
         let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
         vm.selectCatalogEntry(entry)
@@ -116,7 +124,15 @@ struct IPSWSelectionContentViewControllerTests {
 
         // The user can still override, which is what "Use It Anyway" is for.
         findButton(titled: "Use It Anyway", in: vc.view)?.performClick(nil)
-        #expect(vm.ipswSelection == .localFile(path: path, bookmark: nil))
+        #expect(
+            vm.ipswSelection
+                == .localFile(
+                    LocalRestoreImage(path: path, bookmark: nil, inspected: inspector.inspectResult)))
+        // The found image's own metadata replaces the mismatch banner.
+        #expect(
+            findLabel(
+                containing: "macOS 14.2  ·  Build 23C64  ·  \(DataFormatters.formatBytes(8_500_000_000))",
+                in: vc.view) != nil)
     }
 
     @Test("An unreadable file offers only a re-download")
@@ -162,6 +178,31 @@ struct IPSWSelectionContentViewControllerTests {
 
         // Adopting here would leave the radios and the model disagreeing.
         #expect(vm.ipswSelection == .downloadLatest)
+    }
+
+    @Test("Leaving the step and returning while a pick's inspection is still running redraws when it lands")
+    func reenteringMidInspectionPicksTheWatchBackUp() async throws {
+        let inspector = SuspendingMockLocalRestoreImageInspector()
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
+        try await inspector.waitUntilInspecting()
+
+        // The shell mounts a fresh VC on every entry to this step — Next, then
+        // Back, replaces this one with a new instance mid-inspection.
+        let firstVC = IPSWSelectionContentViewController(creationVM: vm)
+        firstVC.loadViewIfNeeded()
+        firstVC.viewDidAppear()
+        firstVC.viewWillDisappear()
+
+        let secondVC = IPSWSelectionContentViewController(creationVM: vm)
+        secondVC.loadViewIfNeeded()
+        secondVC.viewDidAppear()
+        #expect(findLabel(containing: "macOS 15.6.1", in: secondVC.view) == nil)
+
+        inspector.release()
+        await secondVC.localFileInspectionTaskForTesting?.value
+
+        #expect(findLabel(containing: "macOS 15.6.1  ·  Build 24G90", in: secondVC.view) != nil)
     }
 
     @Test("Download & Replace confirms the overwrite and dismisses the banner")

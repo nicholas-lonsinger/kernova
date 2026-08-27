@@ -45,7 +45,7 @@ enum IPSWSelection: Sendable, Equatable {
     case downloadLatest
     case catalogVersion(RestoreImageCatalogEntry)
     case customURL(ProbedRestoreImage)
-    case localFile(path: String, bookmark: Data?)
+    case localFile(LocalRestoreImage)
 
     /// Which radio this selection lights, independent of what it carries.
     var source: IPSWSource {
@@ -152,6 +152,22 @@ final class VMCreationViewModel {
     /// The lookup in flight, so a second trigger joins it instead of starting
     /// another.
     private var latestImageTask: Task<Void, Never>?
+
+    /// The local-file inspection in flight, so the Review step can await it even
+    /// after this step is torn down.
+    private(set) var localFileInspectionTask: Task<Void, Never>?
+
+    /// Bumped on every ``selectLocalFile(path:bookmark:)`` call; only the task
+    /// started at the current generation clears ``localFileInspectionTask``
+    /// when it finishes.
+    ///
+    /// A re-pick cancels the previous task, but `VZMacOSRestoreImage` does not
+    /// honor cancellation, so the superseded read keeps running and can finish
+    /// *after* the newer one has already started — the ordinary ordering, not
+    /// adversarial timing. An unconditional clear there would nil out the
+    /// newer task's still-in-flight handle, leaving a VC that reads it
+    /// afterward with nothing to await.
+    private var localFileInspectionGeneration = 0
 
     /// The last catalog pick, kept after the source moves off it so the version
     /// picker re-opens on it.
@@ -360,9 +376,49 @@ final class VMCreationViewModel {
     }
 
     /// Commits a panel-picked file together with the grant minted for it, which
-    /// is `nil` when the bookmark could not be created.
+    /// is `nil` when the bookmark could not be created — the card shows the path
+    /// immediately, with no gate on Next — then starts inspecting it for the
+    /// version, build and size a downloaded image already shows.
     func selectLocalFile(path: String, bookmark: Data?) {
-        ipswSelection = .localFile(path: path, bookmark: bookmark)
+        localFileInspectionTask?.cancel()
+        ipswSelection = .localFile(LocalRestoreImage(path: path, bookmark: bookmark))
+        localFileInspectionGeneration += 1
+        let generation = localFileInspectionGeneration
+        let inspector = localImageInspector
+        let task = Task { [weak self] in
+            defer {
+                // Only the current generation's finish clears the handle — a
+                // superseded task finishing after it must leave the newer
+                // task's handle in place.
+                if let self, self.localFileInspectionGeneration == generation {
+                    self.localFileInspectionTask = nil
+                }
+            }
+            let scope = bookmark.flatMap(ScopedAccess.init(bookmark:))
+            defer { scope?.release() }
+            let url = scope?.url ?? URL(fileURLWithPath: path)
+            let inspected: InspectedRestoreImage
+            do {
+                inspected = try await inspector.inspect(url)
+            } catch {
+                if !Task.isCancelled {
+                    Self.logger.warning(
+                        "Could not inspect local restore image at '\(url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                    )
+                }
+                return
+            }
+            guard let self, !Task.isCancelled else { return }
+            // A newer pick for the same path, or one for a different path
+            // entirely, must not be overwritten by a slow, stale inspection.
+            guard case .localFile(var image) = self.ipswSelection,
+                image.path == path,
+                image.inspected == nil
+            else { return }
+            image.inspected = inspected
+            self.ipswSelection = .localFile(image)
+        }
+        localFileInspectionTask = task
     }
 
     // MARK: - Linux Image Selection
@@ -480,11 +536,11 @@ final class VMCreationViewModel {
                 version: image.version,
                 build: image.build
             )
-        case .localFile(let path, let bookmark):
+        case .localFile(let image):
             MacOSInstallContext(
                 source: .localFile,
-                localIPSWPath: path,
-                localIPSWBookmark: bookmark
+                localIPSWPath: image.path,
+                localIPSWBookmark: image.bookmark
             )
         }
     }
@@ -549,13 +605,15 @@ final class VMCreationViewModel {
     ///
     /// The caller supplies the path it showed the user rather than this reading
     /// ``ipswDownloadPath``, which the latest-image lookup can move while a
-    /// decision is pending.
+    /// decision is pending. `inspected` is required — both call sites already
+    /// inspected the file, and a default would let a route silently lose the
+    /// metadata the card and the Review step show for it.
     ///
     /// No bookmark: the file was adopted without a panel, so there is no grant
     /// to capture — and none is needed, the Downloads location being
     /// entitlement-covered.
-    func useExistingDownloadFile(at path: String) {
-        ipswSelection = .localFile(path: path, bookmark: nil)
+    func useExistingDownloadFile(at path: String, inspected: InspectedRestoreImage) {
+        ipswSelection = .localFile(LocalRestoreImage(path: path, bookmark: nil, inspected: inspected))
     }
 
     /// The build the wizard is currently promising — a pinned pick's, or the
@@ -624,7 +682,7 @@ final class VMCreationViewModel {
             return .mismatch(expected: expectedBuild, found: inspected)
         }
 
-        useExistingDownloadFile(at: path)
+        useExistingDownloadFile(at: path, inspected: inspected)
         return .adopted(inspected)
     }
 

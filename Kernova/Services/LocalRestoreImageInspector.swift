@@ -27,10 +27,14 @@ struct LocalRestoreImageInspector: LocalRestoreImageInspecting {
         }
 
         let version = image.operatingSystemVersion
+        let sizeBytes = (try? resolved.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+            .flatMap { $0 }
+            .map(UInt64.init)
         let inspected = InspectedRestoreImage(
             version: KernovaOSVersion.displayString(version),
             build: image.buildVersion,
-            isSupportedOnThisHost: image.mostFeaturefulSupportedConfiguration != nil
+            isSupportedOnThisHost: image.mostFeaturefulSupportedConfiguration != nil,
+            sizeBytes: sizeBytes
         )
         Self.logger.info(
             "Inspected local restore image: \(inspected.summary, privacy: .public), supported=\(inspected.isSupportedOnThisHost, privacy: .public)"

@@ -10,7 +10,7 @@ final class MockLocalRestoreImageInspector: LocalRestoreImageInspecting, @unchec
     var inspectError: (any Error)?
     /// Returned on success; defaults to a supported image.
     var inspectResult = InspectedRestoreImage(
-        version: "15.6.1", build: "24G90", isSupportedOnThisHost: true)
+        version: "15.6.1", build: "24G90", isSupportedOnThisHost: true, sizeBytes: 15_500_000_000)
 
     func inspect(_ url: URL) async throws -> InspectedRestoreImage {
         lastInspectedURL = url
