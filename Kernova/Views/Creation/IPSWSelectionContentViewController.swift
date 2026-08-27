@@ -280,7 +280,8 @@ final class IPSWSelectionContentViewController: NSViewController {
             )
             addDownloadBanners(version: image.version)
         case .localFile(let image):
-            if let inspected = image.inspected {
+            switch image.inspection {
+            case .usable(let inspected):
                 addImageBadge(
                     parts: [
                         "macOS \(inspected.version)", "Build \(inspected.build)",
@@ -289,11 +290,27 @@ final class IPSWSelectionContentViewController: NSViewController {
                     path: image.path,
                     changeAction: #selector(changeLocalFile)
                 )
-            } else {
-                let change = makeLinkButton(
-                    "Change…", target: self, action: #selector(changeLocalFile))
-                conditionalContainer.addArrangedSubview(
-                    makeWizardPathBadge(path: image.path, changeButton: change))
+            case .pending:
+                addLocalFilePathBadge(path: image.path)
+                addFullWidthBanner(
+                    makeGroupedFormBanner(
+                        symbolName: "magnifyingglass.circle.fill",
+                        tint: .systemBlue,
+                        message: "Checking this restore image…"
+                    ))
+            case .unusable(let error):
+                addLocalFilePathBadge(path: image.path)
+                guard let message = error.errorDescription else {
+                    Self.logger.fault("LocalRestoreImageError has no errorDescription")
+                    assertionFailure("LocalRestoreImageError must always have an errorDescription")
+                    break
+                }
+                addFullWidthBanner(
+                    makeGroupedFormBanner(
+                        symbolName: "exclamationmark.triangle.fill",
+                        tint: .systemYellow,
+                        message: message
+                    ))
             }
         }
     }
@@ -317,6 +334,15 @@ final class IPSWSelectionContentViewController: NSViewController {
                 secondaryText: wizardAbbreviateWithTilde(path),
                 trailingButton: change
             ))
+    }
+
+    /// Adds the picked file's path badge, with a `Change…` link — the local-file
+    /// badge shape shared by the pending and unusable states, which show no
+    /// metadata.
+    private func addLocalFilePathBadge(path: String) {
+        let change = makeLinkButton("Change…", target: self, action: #selector(changeLocalFile))
+        conditionalContainer.addArrangedSubview(
+            makeWizardPathBadge(path: path, changeButton: change))
     }
 
     /// Adds the overwrite or resume banner for whichever download source is

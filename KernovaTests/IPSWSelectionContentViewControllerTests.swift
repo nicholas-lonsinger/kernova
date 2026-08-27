@@ -93,7 +93,8 @@ struct IPSWSelectionContentViewControllerTests {
         #expect(
             vm.ipswSelection
                 == .localFile(
-                    LocalRestoreImage(path: path, bookmark: nil, inspected: inspector.inspectResult)))
+                    LocalRestoreImage(
+                        path: path, bookmark: nil, inspection: .usable(inspector.inspectResult))))
         // The badge upgrades to the file's own metadata, not just its path.
         #expect(
             findLabel(
@@ -127,7 +128,8 @@ struct IPSWSelectionContentViewControllerTests {
         #expect(
             vm.ipswSelection
                 == .localFile(
-                    LocalRestoreImage(path: path, bookmark: nil, inspected: inspector.inspectResult)))
+                    LocalRestoreImage(
+                        path: path, bookmark: nil, inspection: .usable(inspector.inspectResult))))
         // The found image's own metadata replaces the mismatch banner.
         #expect(
             findLabel(
@@ -203,6 +205,44 @@ struct IPSWSelectionContentViewControllerTests {
         await secondVC.localFileInspectionTaskForTesting?.value
 
         #expect(findLabel(containing: "macOS 15.6.1  ·  Build 24G90", in: secondVC.view) != nil)
+    }
+
+    @Test("A hand-picked unsupported IPSW shows the same message the adopt route uses, with no metadata")
+    func unsupportedPickShowsUnusableBanner() async {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "13.0", build: "22A5286j", isSupportedOnThisHost: false)
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
+
+        let vc = IPSWSelectionContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        await vc.localFileInspectionTaskForTesting?.value
+
+        #expect(
+            findLabel(
+                containing: "That restore image can't install into a virtual machine on this Mac",
+                in: vc.view) != nil)
+        #expect(findLabel(containing: "Build ", in: vc.view) == nil)
+        #expect(findButton(titled: "Change…", in: vc.view) != nil)
+    }
+
+    @Test("A pending pick shows a checking banner")
+    func pendingPickShowsCheckingBanner() async throws {
+        let inspector = SuspendingMockLocalRestoreImageInspector()
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
+        try await inspector.waitUntilInspecting()
+
+        let vc = IPSWSelectionContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+
+        #expect(findLabel(containing: "Checking this restore image", in: vc.view) != nil)
+
+        inspector.release()
+        await vc.localFileInspectionTaskForTesting?.value
     }
 
     @Test("Download & Replace confirms the overwrite and dismisses the banner")

@@ -77,7 +77,7 @@ struct VMCreationViewModelTests {
     }
 
     @Test("canAdvance at bootConfig depends on OS and mode selections")
-    func canAdvanceBootConfig() {
+    func canAdvanceBootConfig() async {
         let vm = VMCreationViewModel(localImageInspector: MockLocalRestoreImageInspector())
         vm.currentStep = .bootConfig
 
@@ -87,8 +87,10 @@ struct VMCreationViewModelTests {
         vm.ipswDownloadPath = "/nonexistent/RestoreImage.ipsw"
         #expect(vm.canAdvance == true)
 
-        // A local file carries its path, so it is valid the moment it is picked
+        // A local file blocks until its inspection lands with a usable verdict.
         vm.selectLocalFile(path: "/path/to/restore.ipsw", bookmark: nil)
+        #expect(vm.canAdvance == false)
+        await vm.localFileInspectionTask?.value
         #expect(vm.canAdvance == true)
     }
 
@@ -513,7 +515,8 @@ struct VMCreationViewModelTests {
         #expect(
             vm.ipswSelection
                 == .localFile(
-                    LocalRestoreImage(path: "/usr/bin/true", bookmark: nil, inspected: inspected)))
+                    LocalRestoreImage(
+                        path: "/usr/bin/true", bookmark: nil, inspection: .usable(inspected))))
     }
 
     @Test("canAdvance is false when overwrite warning is unresolved")
@@ -971,7 +974,8 @@ struct VMCreationViewModelTests {
 
         #expect(
             vm.ipswSelection
-                == .localFile(LocalRestoreImage(path: destination, bookmark: nil, inspected: inspected))
+                == .localFile(
+                    LocalRestoreImage(path: destination, bookmark: nil, inspection: .usable(inspected)))
         )
     }
 
@@ -1101,20 +1105,85 @@ struct VMCreationViewModelTests {
             vm.ipswSelection
                 == .localFile(
                     LocalRestoreImage(
-                        path: "/tmp/picked.ipsw", bookmark: nil, inspected: inspector.inspectResult)))
+                        path: "/tmp/picked.ipsw", bookmark: nil,
+                        inspection: .usable(inspector.inspectResult))))
     }
 
-    @Test("An inspection error leaves the path with no metadata")
-    func selectLocalFileInspectionErrorLeavesPathOnly() async {
+    @Test("An unsupported pick leaves an unusable verdict and blocks advance")
+    func selectLocalFileUnsupportedLeavesUnusable() async {
         let inspector = MockLocalRestoreImageInspector()
-        inspector.inspectError = LocalRestoreImageError.unreadable
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "13.0", build: "22A5286j", isSupportedOnThisHost: false)
         let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.currentStep = .bootConfig
+        vm.selectedOS = .macOS
 
         vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
         await vm.localFileInspectionTask?.value
 
         #expect(
-            vm.ipswSelection == .localFile(LocalRestoreImage(path: "/tmp/picked.ipsw", bookmark: nil)))
+            vm.ipswSelection
+                == .localFile(
+                    LocalRestoreImage(
+                        path: "/tmp/picked.ipsw", bookmark: nil, inspection: .unusable(.unsupported))))
+        #expect(vm.canAdvance == false)
+        #expect(vm.validationMessage == "Choose a restore image this Mac can install.")
+    }
+
+    @Test("An inspection error leaves the path unusable and blocks advance")
+    func selectLocalFileInspectionErrorLeavesUnusable() async {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectError = LocalRestoreImageError.unreadable
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.currentStep = .bootConfig
+        vm.selectedOS = .macOS
+
+        vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
+        await vm.localFileInspectionTask?.value
+
+        #expect(
+            vm.ipswSelection
+                == .localFile(
+                    LocalRestoreImage(
+                        path: "/tmp/picked.ipsw", bookmark: nil, inspection: .unusable(.unreadable))))
+        #expect(vm.canAdvance == false)
+        #expect(vm.validationMessage == "Choose a file this Mac can read as a restore image.")
+    }
+
+    @Test("A supported pick reaches usable and unblocks advance")
+    func selectLocalFileSupportedUnblocksAdvance() async {
+        let inspector = MockLocalRestoreImageInspector()
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.currentStep = .bootConfig
+        vm.selectedOS = .macOS
+
+        vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
+        await vm.localFileInspectionTask?.value
+
+        #expect(vm.canAdvance == true)
+        #expect(vm.validationMessage == nil)
+    }
+
+    @Test("While the inspection is pending, advance is blocked")
+    func selectLocalFilePendingBlocksAdvance() async throws {
+        let inspector = SuspendingMockLocalRestoreImageInspector()
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.currentStep = .bootConfig
+        vm.selectedOS = .macOS
+
+        vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
+        try await inspector.waitUntilInspecting()
+
+        guard case .localFile(let image) = vm.ipswSelection else {
+            Issue.record("Expected a local file selection")
+            return
+        }
+        #expect(image.inspection == .pending)
+        #expect(vm.canAdvance == false)
+        #expect(vm.validationMessage == "Checking the selected restore image…")
+
+        inspector.release()
+        await vm.localFileInspectionTask?.value
     }
 
     @Test("An inspection landing after the source switched away leaves that source current")
@@ -1182,7 +1251,8 @@ struct VMCreationViewModelTests {
             vm.ipswSelection
                 == .localFile(
                     LocalRestoreImage(
-                        path: destination, bookmark: nil, inspected: inspector.inspectResult)))
+                        path: destination, bookmark: nil,
+                        inspection: .usable(inspector.inspectResult))))
         #expect(inspector.lastInspectedURL?.path(percentEncoded: false) == destination)
     }
 
@@ -1288,7 +1358,8 @@ struct VMCreationViewModelTests {
             vm.ipswSelection
                 == .localFile(
                     LocalRestoreImage(
-                        path: destination, bookmark: nil, inspected: inspector.inspectResult)))
+                        path: destination, bookmark: nil,
+                        inspection: .usable(inspector.inspectResult))))
     }
 
     @Test("A URL pick with no parsed build pins nothing to compare against")
@@ -1338,7 +1409,8 @@ struct VMCreationViewModelTests {
         #expect(
             vm.ipswSelection
                 == .localFile(
-                    LocalRestoreImage(path: snapshot, bookmark: nil, inspected: inspector.inspectResult))
+                    LocalRestoreImage(
+                        path: snapshot, bookmark: nil, inspection: .usable(inspector.inspectResult)))
         )
     }
 
@@ -1369,7 +1441,8 @@ struct VMCreationViewModelTests {
             vm.ipswSelection
                 == .localFile(
                     LocalRestoreImage(
-                        path: destination, bookmark: nil, inspected: inspector.inspectResult)))
+                        path: destination, bookmark: nil,
+                        inspection: .usable(inspector.inspectResult))))
     }
 
     @Test("expectedBuild names the build each source is promising")

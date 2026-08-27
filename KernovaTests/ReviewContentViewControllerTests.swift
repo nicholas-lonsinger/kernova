@@ -149,25 +149,6 @@ struct ReviewContentViewControllerTests {
             findLabel(withText: DataFormatters.formatBytes(15_500_000_000), in: vc.view) != nil)
     }
 
-    @Test("A local-file inspection landing after this step appears fills the rows in")
-    func macOSLocalFileFillsInLateInspection() async throws {
-        let inspector = SuspendingMockLocalRestoreImageInspector()
-        let vm = VMCreationViewModel(localImageInspector: inspector)
-        vm.selectLocalFile(path: "/tmp/Restore.ipsw", bookmark: nil)
-        try await inspector.waitUntilInspecting()
-
-        let vc = ReviewContentViewController(creationVM: vm)
-        vc.loadViewIfNeeded()
-        #expect(findLabel(withText: "macOS Version", in: vc.view) == nil)
-
-        vc.viewDidAppear()
-        inspector.release()
-        await vc.localFileInspectionTaskForTesting?.value
-
-        #expect(findLabel(withText: "15.6.1 (24G90)", in: vc.view) != nil)
-        #expect(findLabel(withText: "Restore.ipsw", in: vc.view) != nil)
-    }
-
     @Test("Linux shows the ISO basename in the Boot section")
     func linuxShowsISO() {
         let vm = VMCreationViewModel()
