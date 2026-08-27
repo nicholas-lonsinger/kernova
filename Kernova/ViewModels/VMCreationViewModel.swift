@@ -224,9 +224,17 @@ final class VMCreationViewModel {
         case .bootConfig:
             switch selectedOS {
             case .macOS:
-                // Reached only when `bootConfigValid` said no, and the conflict
-                // is the one thing that makes it say no for macOS.
-                return "Resolve the file conflict above to continue."
+                if shouldShowOverwriteWarning {
+                    return "Resolve the file conflict above to continue."
+                }
+                if case .localFile(let image) = ipswSelection {
+                    switch image.inspection {
+                    case .pending: return "Checking the selected restore image…"
+                    case .unusable: return "Choose a restore image this Mac can install."
+                    case .usable: return nil
+                    }
+                }
+                return nil
             case .linux:
                 switch selectedBootMode {
                 case .efi: return "Select an installer image to continue."
@@ -266,14 +274,16 @@ final class VMCreationViewModel {
     private var bootConfigValid: Bool {
         switch selectedOS {
         case .macOS:
-            // A pinned pick is inseparable from its source, so the only macOS
-            // blocker left is the download-destination conflict.
-            !shouldShowOverwriteWarning
+            if shouldShowOverwriteWarning { return false }
+            if case .localFile(let image) = ipswSelection {
+                return image.inspection.usable != nil
+            }
+            return true
         case .linux:
             switch selectedBootMode {
-            case .efi: linuxSelection != nil
-            case .linuxKernel: kernelPath != nil
-            case .macOS: false
+            case .efi: return linuxSelection != nil
+            case .linuxKernel: return kernelPath != nil
+            case .macOS: return false
             }
         }
     }
@@ -376,9 +386,12 @@ final class VMCreationViewModel {
     }
 
     /// Commits a panel-picked file together with the grant minted for it, which
-    /// is `nil` when the bookmark could not be created — the card shows the path
-    /// immediately, with no gate on Next — then starts inspecting it for the
-    /// version, build and size a downloaded image already shows.
+    /// is `nil` when the bookmark could not be created, then starts inspecting
+    /// it for the version, build and size a downloaded image already shows.
+    ///
+    /// The selection carries `.pending` until the inspection lands with a
+    /// verdict — ``bootConfigValid`` blocks Next on a local file until that
+    /// verdict is ``LocalRestoreImageInspection/usable(_:)``.
     func selectLocalFile(path: String, bookmark: Data?) {
         localFileInspectionTask?.cancel()
         ipswSelection = .localFile(LocalRestoreImage(path: path, bookmark: bookmark))
@@ -397,25 +410,25 @@ final class VMCreationViewModel {
             let scope = bookmark.flatMap(ScopedAccess.init(bookmark:))
             defer { scope?.release() }
             let url = scope?.url ?? URL(fileURLWithPath: path)
-            let inspected: InspectedRestoreImage
+            let inspection: LocalRestoreImageInspection
             do {
-                inspected = try await inspector.inspect(url)
+                let inspected = try await inspector.inspect(url)
+                inspection = inspected.isSupportedOnThisHost ? .usable(inspected) : .unusable(.unsupported)
             } catch {
-                if !Task.isCancelled {
-                    Self.logger.warning(
-                        "Could not inspect local restore image at '\(url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                    )
-                }
-                return
+                if Task.isCancelled { return }
+                Self.logger.warning(
+                    "Could not inspect local restore image at '\(url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
+                inspection = .unusable((error as? LocalRestoreImageError) ?? .unreadable)
             }
             guard let self, !Task.isCancelled else { return }
             // A newer pick for the same path, or one for a different path
             // entirely, must not be overwritten by a slow, stale inspection.
             guard case .localFile(var image) = self.ipswSelection,
                 image.path == path,
-                image.inspected == nil
+                image.inspection == .pending
             else { return }
-            image.inspected = inspected
+            image.inspection = inspection
             self.ipswSelection = .localFile(image)
         }
         localFileInspectionTask = task
@@ -613,7 +626,8 @@ final class VMCreationViewModel {
     /// to capture — and none is needed, the Downloads location being
     /// entitlement-covered.
     func useExistingDownloadFile(at path: String, inspected: InspectedRestoreImage) {
-        ipswSelection = .localFile(LocalRestoreImage(path: path, bookmark: nil, inspected: inspected))
+        ipswSelection = .localFile(
+            LocalRestoreImage(path: path, bookmark: nil, inspection: .usable(inspected)))
     }
 
     /// The build the wizard is currently promising — a pinned pick's, or the

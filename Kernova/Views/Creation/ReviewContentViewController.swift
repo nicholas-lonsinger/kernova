@@ -179,7 +179,7 @@ final class ReviewContentViewController: NSViewController {
             case .localFile(let image):
                 rows.append(valueRow("Restore Image", "Local File"))
                 rows.append(valueRow("File", URL(fileURLWithPath: image.path).lastPathComponent))
-                if let inspected = image.inspected {
+                if let inspected = image.inspection.usable {
                     rows.append(
                         valueRow("macOS Version", "\(inspected.version) (\(inspected.build))"))
                     if let sizeBytes = inspected.sizeBytes {
