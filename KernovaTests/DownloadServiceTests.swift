@@ -1275,6 +1275,112 @@ struct DownloadServiceTests {
         #expect(requests.value == 0)
     }
 
+    // MARK: - Adopting a File Already on Disk
+
+    @Test("Adoption links the file, moves no bytes and discards the superseded bundle")
+    func adoptExistingFileLinksInPlace() async throws {
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let source = temp.appendingPathComponent("debian-13.6.0-arm64-netinst.iso")
+        let destination = temp.appendingPathComponent("debian-13.6.0-arm64-netinst-a1b2c3d4.iso")
+        let payload = Data(repeating: 0x7E, count: 8192)
+        try payload.write(to: source)
+        // A partial from an earlier attempt at the same destination: superseded
+        // the moment a complete file lands there, and multi-gigabyte in the
+        // case this exists for.
+        let bundleURL = DownloadService.resumeBundleURL(for: destination)
+        try DownloadBundle(url: bundleURL).prepareForFreshDownload(
+            with: DownloadBundleMetadata(
+                originalURL: Self.remoteURL, etag: nil, lastModified: nil, createdAt: Date()))
+
+        let fileSystem = MockFileSystem()
+        let service = Self.makeServiceWithStub(fileSystem: fileSystem)
+        let adopted = await service.adoptExistingFile(at: source, as: destination)
+
+        #expect(adopted)
+        #expect(try Data(contentsOf: destination) == payload)
+        // One file under two names, not two copies: the same inode, and the
+        // user's own entry still where they left it.
+        let sourceNumber =
+            try FileManager.default.attributesOfItem(
+                atPath: source.path(percentEncoded: false))[.systemFileNumber] as? NSNumber
+        let destinationNumber =
+            try FileManager.default.attributesOfItem(
+                atPath: destination.path(percentEncoded: false))[.systemFileNumber] as? NSNumber
+        #expect(sourceNumber != nil)
+        #expect(sourceNumber == destinationNumber)
+        #expect(fileSystem.trashedURLs == [bundleURL])
+    }
+
+    @Test("Adoption is refused when the destination already holds a file")
+    func adoptExistingFileRefusesAnOccupiedDestination() async throws {
+        // The download's own skip-existing path owns this case: it adopts the
+        // file at the destination and the caller's verify step holds it to the
+        // digest. Linking over it is neither possible nor wanted.
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let source = temp.appendingPathComponent("image.iso")
+        let destination = temp.appendingPathComponent("image-a1b2c3d4.iso")
+        try Data(repeating: 0x01, count: 512).write(to: source)
+        let occupant = Data(repeating: 0x02, count: 256)
+        try occupant.write(to: destination)
+
+        let service = Self.makeServiceWithStub()
+        let adopted = await service.adoptExistingFile(at: source, as: destination)
+
+        #expect(!adopted)
+        #expect(try Data(contentsOf: destination) == occupant)
+    }
+
+    @Test("A link that cannot be made leaves the source alone and answers false")
+    func adoptExistingFileRefusesWhenTheLinkFails() async throws {
+        // The candidate is gone by the time the link is attempted — deleted
+        // between the caller's probe and this call.
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let source = temp.appendingPathComponent("vanished.iso")
+        let destination = temp.appendingPathComponent("vanished-a1b2c3d4.iso")
+
+        let service = Self.makeServiceWithStub()
+        let adopted = await service.adoptExistingFile(at: source, as: destination)
+
+        #expect(!adopted)
+        #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
+    }
+
+    @Test("A destination a transfer already owns is downloaded to, not adopted")
+    func adoptExistingFileRefusesADestinationUnderTransfer() async throws {
+        // The claim `download` holds is what makes this safe: an adoption that
+        // waited for the transfer and then linked would race its finalize.
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let source = temp.appendingPathComponent("RestoreImage-source.ipsw")
+        try Data(repeating: 0x33, count: 1024).write(to: source)
+
+        let payload = Data(repeating: 0xAB, count: 2 * 1024 * 1024)
+        // The claim is taken before the request goes out, so a handler that has
+        // run is a destination the transfer already owns.
+        let started = RequestGate()
+        StubURLProtocol.handler = { request in
+            started.signal()
+            return .fullResponse(url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let service = Self.makeServiceWithStub()
+        let download = Task {
+            try await service.download(
+                from: Self.remoteURL, to: destination, progressHandler: { _ in })
+        }
+        await started.wait()
+        let adopted = await service.adoptExistingFile(at: source, as: destination)
+        try await download.value
+
+        #expect(!adopted)
+        #expect(try Data(contentsOf: destination) == payload)
+    }
+
     @Test("A logged URL keeps scheme, host and path but drops credentials")
     func loggableURLDropsQueryAndUserInfo() {
         // A custom restore-image URL can be pre-signed: the signature rides in
@@ -1309,6 +1415,38 @@ final class RequestCounter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return count
+    }
+}
+
+/// A one-shot signal fired from URLSession's own queue, where the stub handler
+/// runs, and awaited from the test.
+///
+/// Event-driven rather than a poll: the awaiting side resumes on the signal,
+/// and a signal that already fired resumes it immediately.
+final class RequestGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func signal() {
+        var pending: [CheckedContinuation<Void, Never>] = []
+        lock.withLock {
+            fired = true
+            pending = waiters
+            waiters.removeAll()
+        }
+        for continuation in pending { continuation.resume() }
+    }
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let alreadyFired = lock.withLock { () -> Bool in
+                if fired { return true }
+                waiters.append(continuation)
+                return false
+            }
+            if alreadyFired { continuation.resume() }
+        }
     }
 }
 
