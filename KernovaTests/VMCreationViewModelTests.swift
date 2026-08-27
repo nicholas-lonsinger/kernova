@@ -1134,6 +1134,36 @@ struct VMCreationViewModelTests {
         #expect(vm.ipswSelection == .catalogVersion(entry))
     }
 
+    @Test("A superseded inspection finishing after a newer one leaves the newer task current")
+    func outOfOrderInspectionsLeaveTheNewerTaskCurrent() async throws {
+        let inspector = OrderedSuspendingMockLocalRestoreImageInspector()
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+
+        vm.selectLocalFile(path: "/tmp/first.ipsw", bookmark: nil)
+        let firstTask = try #require(vm.localFileInspectionTask)
+        try await inspector.waitUntilCallCount(1)
+
+        vm.selectLocalFile(path: "/tmp/second.ipsw", bookmark: nil)
+        let secondTask = try #require(vm.localFileInspectionTask)
+        try await inspector.waitUntilCallCount(2)
+
+        // The superseded first pick's read finishes first — `VZMacOSRestoreImage`
+        // ignores cancellation, so an older read racing to completion after a
+        // re-pick is the ordinary ordering, not adversarial timing.
+        inspector.release(callIndex: 0)
+        await firstTask.value
+
+        // The newer pick's task must still be what the model hands out — a
+        // premature clear here is what leaves a re-entered step awaiting
+        // nothing while the second inspection is still running.
+        #expect(vm.localFileInspectionTask != nil)
+
+        inspector.release(callIndex: 1)
+        await secondTask.value
+
+        #expect(vm.localFileInspectionTask == nil)
+    }
+
     // MARK: - Adopting an Existing File
 
     @Test("An existing file matching the pinned build is adopted")
@@ -1482,6 +1512,47 @@ final class SuspendingMockLocalRestoreImageInspector: LocalRestoreImageInspectin
     /// Lets the in-flight inspection finish.
     func release() {
         lock.withLock { self.isReleased = true }
+        gate.notify()
+    }
+}
+
+/// Inspector whose calls suspend independently and resolve in whatever order
+/// the test releases them by index — models `VZMacOSRestoreImage` ignoring
+/// cancellation, so a superseded pick's read can finish after a newer one's.
+final class OrderedSuspendingMockLocalRestoreImageInspector: LocalRestoreImageInspecting,
+    @unchecked Sendable
+{
+    private final class CallState {
+        let gate = AsyncGate()
+        var released = false
+    }
+    private let lock = NSLock()
+    private var calls: [CallState] = []
+    /// Notified whenever a new call registers, for ``waitUntilCallCount(_:)``.
+    private let callRegisteredGate = AsyncGate()
+
+    func inspect(_ url: URL) async throws -> InspectedRestoreImage {
+        let (index, gate) = lock.withLock { () -> (Int, AsyncGate) in
+            calls.append(CallState())
+            return (calls.count - 1, calls[calls.count - 1].gate)
+        }
+        callRegisteredGate.notify()
+        try? await gate.wait(until: { self.lock.withLock { self.calls[index].released } })
+        return InspectedRestoreImage(
+            version: "15.6.1", build: "24G90", isSupportedOnThisHost: true)
+    }
+
+    /// Suspends until `inspect` has been called at least `count` times.
+    func waitUntilCallCount(_ count: Int) async throws {
+        try await callRegisteredGate.wait(until: { self.lock.withLock { self.calls.count >= count } })
+    }
+
+    /// Lets the `callIndex`th call (0-based, in call order) finish.
+    func release(callIndex: Int) {
+        let gate = lock.withLock { () -> AsyncGate in
+            calls[callIndex].released = true
+            return calls[callIndex].gate
+        }
         gate.notify()
     }
 }

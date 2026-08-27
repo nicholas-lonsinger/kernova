@@ -157,6 +157,18 @@ final class VMCreationViewModel {
     /// after this step is torn down.
     private(set) var localFileInspectionTask: Task<Void, Never>?
 
+    /// Bumped on every ``selectLocalFile(path:bookmark:)`` call; only the task
+    /// started at the current generation clears ``localFileInspectionTask``
+    /// when it finishes.
+    ///
+    /// A re-pick cancels the previous task, but `VZMacOSRestoreImage` does not
+    /// honor cancellation, so the superseded read keeps running and can finish
+    /// *after* the newer one has already started — the ordinary ordering, not
+    /// adversarial timing. An unconditional clear there would nil out the
+    /// newer task's still-in-flight handle, leaving a VC that reads it
+    /// afterward with nothing to await.
+    private var localFileInspectionGeneration = 0
+
     /// The last catalog pick, kept after the source moves off it so the version
     /// picker re-opens on it.
     private(set) var lastCatalogPick: RestoreImageCatalogEntry?
@@ -370,9 +382,18 @@ final class VMCreationViewModel {
     func selectLocalFile(path: String, bookmark: Data?) {
         localFileInspectionTask?.cancel()
         ipswSelection = .localFile(LocalRestoreImage(path: path, bookmark: bookmark))
+        localFileInspectionGeneration += 1
+        let generation = localFileInspectionGeneration
         let inspector = localImageInspector
         let task = Task { [weak self] in
-            defer { self?.localFileInspectionTask = nil }
+            defer {
+                // Only the current generation's finish clears the handle — a
+                // superseded task finishing after it must leave the newer
+                // task's handle in place.
+                if let self, self.localFileInspectionGeneration == generation {
+                    self.localFileInspectionTask = nil
+                }
+            }
             let scope = bookmark.flatMap(ScopedAccess.init(bookmark:))
             defer { scope?.release() }
             let url = scope?.url ?? URL(fileURLWithPath: path)

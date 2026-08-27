@@ -127,6 +127,10 @@ final class IPSWSelectionContentViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         startLatestImageLookup()
+        // The shell mounts a fresh VC on every entry to this step, so a pick
+        // made before navigating away — Next, then Back — has to pick its
+        // in-flight inspection back up here too, the same as the lookup above.
+        startLocalFileInspectionWatch()
     }
 
     override func viewWillDisappear() {
@@ -167,7 +171,9 @@ final class IPSWSelectionContentViewController: NSViewController {
     /// on navigation, or a re-pick starting a new one — drops only this VC's
     /// redraw, never the model's task.
     private func startLocalFileInspectionWatch() {
-        guard let inspection = creationVM.localFileInspectionTask else { return }
+        guard creationVM.ipswSource == .localFile,
+            let inspection = creationVM.localFileInspectionTask
+        else { return }
         localFileInspectionWatchTask?.cancel()
         localFileInspectionWatchTask = Task { [weak self] in
             await inspection.value

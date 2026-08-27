@@ -180,6 +180,31 @@ struct IPSWSelectionContentViewControllerTests {
         #expect(vm.ipswSelection == .downloadLatest)
     }
 
+    @Test("Leaving the step and returning while a pick's inspection is still running redraws when it lands")
+    func reenteringMidInspectionPicksTheWatchBackUp() async throws {
+        let inspector = SuspendingMockLocalRestoreImageInspector()
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
+        try await inspector.waitUntilInspecting()
+
+        // The shell mounts a fresh VC on every entry to this step — Next, then
+        // Back, replaces this one with a new instance mid-inspection.
+        let firstVC = IPSWSelectionContentViewController(creationVM: vm)
+        firstVC.loadViewIfNeeded()
+        firstVC.viewDidAppear()
+        firstVC.viewWillDisappear()
+
+        let secondVC = IPSWSelectionContentViewController(creationVM: vm)
+        secondVC.loadViewIfNeeded()
+        secondVC.viewDidAppear()
+        #expect(findLabel(containing: "macOS 15.6.1", in: secondVC.view) == nil)
+
+        inspector.release()
+        await secondVC.localFileInspectionTaskForTesting?.value
+
+        #expect(findLabel(containing: "macOS 15.6.1  ·  Build 24G90", in: secondVC.view) != nil)
+    }
+
     @Test("Download & Replace confirms the overwrite and dismisses the banner")
     func overwriteConfirm() {
         let path = makeTempIPSW()
