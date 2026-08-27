@@ -390,7 +390,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             vmNetworkingEntitled: EntitlementService.shared.hasVMNetworking)
         Self.logger.notice("Kernova resident app ready — \(provenance, privacy: .public)")
 
-        summonUserInterface()
+        // Presentation only, not `summonUserInterface`: whoever launched the
+        // process (Launch Services, a login-item start, Finder) already
+        // requested activation, so a launch leg requests none of its own —
+        // `requestSummonActivation`'s `!NSApp.isActive` guard doesn't cover
+        // this moment, since the app isn't active yet this early in launch.
+        presentSummonedInterface()
 
         // After the summon, not before: its deferred window show runs while the
         // library read is still doing its off-main-actor file I/O, so a VM
@@ -553,8 +558,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     enum ReopenPresentation: Equatable {
         /// Present the library.
         case library
-        /// Do nothing — a summon already in flight or a window already on
-        /// screen owns the presentation.
+        /// Do nothing — a window already on screen owns the presentation.
         case nothing
     }
 
@@ -562,6 +566,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// `requestSummonActivation` self-open triggers can't drag a surface a
     /// per-VM summon didn't ask for back on screen — matching
     /// `statusItemOpenTarget`'s "opens only the chosen surface" rule.
+    ///
+    /// The self-open's own reopen always sees its target surface as already
+    /// on screen: `summonUserInterface` enqueues the presentation `Task` on
+    /// the main actor before the Launch Services request leaves the process,
+    /// and the reopen Apple Event is only handled on a later main-runloop
+    /// turn.
     nonisolated static func reopenPresentation(hasOnScreenUserWindow: Bool) -> ReopenPresentation {
         hasOnScreenUserWindow ? .nothing : .library
     }
@@ -569,7 +579,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Brings the resident app's GUI forward: morph to `.regular`, request
     /// activation, and show the summoned surface.
     ///
-    /// The sole GUI-summon path, and idempotent.
+    /// The sole path that requests activation for a summon — a launch or
+    /// reopen leg presents through `presentSummonedInterface` directly instead,
+    /// since it already has one. Idempotent.
     private func summonUserInterface(showing target: SummonTarget = .library) {
         // Morph to a regular app so the Dock icon + menu bar appear. The
         // activation request is sent synchronously here — not deferred into the
@@ -619,10 +631,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// Puts the summoned surface on screen, without requesting activation.
     ///
-    /// A reopen never requests activation: whoever opened us (Dock, Finder,
-    /// `open`, or our own Launch Services open from `requestSummonActivation`)
-    /// already asked for it, so a reopen handler that called
-    /// `summonUserInterface` instead would self-open again and loop.
+    /// Neither a launch nor a reopen requests activation here: whoever brought
+    /// the process up — Launch Services on a launch (a Finder double-click, a
+    /// login-item start, `open`), or the same set plus our own Launch Services
+    /// self-open on a reopen — already asked for it. A launch or reopen leg
+    /// that called `summonUserInterface` instead would issue a second,
+    /// redundant activation request — and on the reopen leg, our own self-open
+    /// would loop.
     private func presentSummonedInterface(showing target: SummonTarget = .library) {
         // Idempotent — re-asserted here since a reopen can arrive with the
         // policy already `.regular`.
@@ -685,7 +700,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if onScreen(settingsWindowController?.window) { return true }
         // Untracked AppKit-owned panels are genuine on-screen windows: count them
         // so a reconcile can't strip the Dock icon while one is the last visible.
-        if NSApp.windows.contains(where: Self.isUntrackedUserPanel) { return true }
+        // `isUntrackedUserPanel` itself always admits a miniaturized panel, so
+        // the parameter is honored here by additionally requiring `isVisible`
+        // when miniaturized windows don't count.
+        func isOnScreenUntrackedPanel(_ window: NSWindow) -> Bool {
+            Self.isUntrackedUserPanel(window) && (countingMiniaturized || window.isVisible)
+        }
+        if NSApp.windows.contains(where: isOnScreenUntrackedPanel) { return true }
         return false
     }
 
@@ -1344,10 +1365,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func application(_ application: NSApplication, open urls: [URL]) {
         importVMs(from: urls)
         // A double-click while the app is already resident+headless gets no
-        // activation-driven summon — macOS sends no reopen for a document open —
-        // so surface the window here. The test host manages its own window.
+        // reopen — macOS sends no reopen for a document open — so surface the
+        // window here. Presentation only: a launch document open and a later
+        // one delivered to the running app are both Launch-Services-mediated
+        // and already carry their own activation request, per
+        // `presentSummonedInterface`'s invariant. The test host manages its
+        // own window.
         if !isTestHost {
-            summonUserInterface()
+            presentSummonedInterface()
         }
     }
 
