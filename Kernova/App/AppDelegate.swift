@@ -548,20 +548,85 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         displayPreference != .inline && canUseExternalDisplay ? .displayWindow : .library
     }
 
-    /// Brings the resident app's GUI forward: morph to `.regular`, then activate
-    /// and show the summoned surface.
+    /// What a reopen (Dock click, `open`, our own Launch Services self-open)
+    /// does to the GUI, as decided by `reopenPresentation`.
+    enum ReopenPresentation: Equatable {
+        /// Present the library.
+        case library
+        /// Do nothing — a summon already in flight or a window already on
+        /// screen owns the presentation.
+        case nothing
+    }
+
+    /// Decides the reopen leg's presentation, so a reopen our own
+    /// `requestSummonActivation` self-open triggers can't drag a surface a
+    /// per-VM summon didn't ask for back on screen — matching
+    /// `statusItemOpenTarget`'s "opens only the chosen surface" rule.
+    nonisolated static func reopenPresentation(hasOnScreenUserWindow: Bool) -> ReopenPresentation {
+        hasOnScreenUserWindow ? .nothing : .library
+    }
+
+    /// Brings the resident app's GUI forward: morph to `.regular`, request
+    /// activation, and show the summoned surface.
     ///
     /// The sole GUI-summon path, and idempotent.
     private func summonUserInterface(showing target: SummonTarget = .library) {
-        // Morph to a regular app so the Dock icon + menu bar appear, and request
-        // activation synchronously while the status-item click is still on the
-        // call stack: cooperative activation (macOS 14+) stamps the request
-        // with the click's user-event timestamp only when it's sent from the
-        // action itself — a runloop tick later the stamp has gone stale and
-        // WindowServer rejects it outright.
+        // Morph to a regular app so the Dock icon + menu bar appear. The
+        // activation request is sent synchronously here — not deferred into the
+        // presentation `Task` below — because the summon owns exactly one
+        // activation request per gesture; issuing it anywhere else would risk a
+        // second one racing the reopen it can trigger.
         setAgentActivationPolicy(.regular)
-        Self.logger.debug("Summon: isActive=\(NSApp.isActive, privacy: .public)")
-        NSApp.activate()
+        let event = NSApp.currentEvent
+        let eventAge = event.map { ProcessInfo.processInfo.systemUptime - $0.timestamp }
+        Self.logger.debug(
+            "Summon: isActive=\(NSApp.isActive, privacy: .public) hasCurrentEvent=\(event != nil, privacy: .public) eventAge=\(eventAge.map { String(format: "%.3f", $0) } ?? "n/a", privacy: .public)"
+        )
+        requestSummonActivation()
+        presentSummonedInterface(showing: target)
+    }
+
+    /// Requests activation for a summon via Launch Services, so a menu-bar
+    /// status item or Dock menu selection — delivered as a FrontBoard scene
+    /// action with no `NSEvent` behind it — still lands a request WindowServer
+    /// accepts.
+    ///
+    /// Cooperative activation stamps a request with the sending process's last
+    /// user-event time; a request with no event behind it (or one sent late,
+    /// after the event's stamp has gone stale) is rejected outright
+    /// (`CPS: Rejecting expired request`, observed 2026-08-26 in the WindowServer
+    /// log). Routing the request through Launch Services instead — which
+    /// carries it on the app's behalf — sidesteps the missing/stale stamp
+    /// rather than depending on one.
+    ///
+    /// `createsNewApplicationInstance = false` is load-bearing: without it, a
+    /// resident app requesting its own activation this way can spawn a second
+    /// process managing the same VM bundles.
+    private func requestSummonActivation() {
+        guard !NSApp.isActive else { return }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.createsNewApplicationInstance = false
+        configuration.addsToRecentItems = false
+        NSWorkspace.shared.openApplication(
+            at: Bundle.main.bundleURL, configuration: configuration
+        ) { _, error in
+            guard let error else { return }
+            Self.logger.error(
+                "Launch Services summon activation failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Puts the summoned surface on screen, without requesting activation.
+    ///
+    /// A reopen never requests activation: whoever opened us (Dock, Finder,
+    /// `open`, or our own Launch Services open from `requestSummonActivation`)
+    /// already asked for it, so a reopen handler that called
+    /// `summonUserInterface` instead would self-open again and loop.
+    private func presentSummonedInterface(showing target: SummonTarget = .library) {
+        // Idempotent — re-asserted here since a reopen can arrive with the
+        // policy already `.regular`.
+        setAgentActivationPolicy(.regular)
         // Defer the show to the next runloop tick so the menu bar has refreshed
         // (the .accessory→.regular menu-bar quirk, FB7743313).
         Task { @MainActor in
@@ -581,9 +646,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 self.showClipboardWindow(for: instance)
                 summoned = self.clipboardWindows[instance.instanceID]?.window
             }
-            // The activate above may still be refused; the window has to arrive
-            // either way. `orderFrontRegardless` is the only ordering call that
-            // doesn't depend on the app being active.
+            // The activation request above may still be refused; the window has
+            // to arrive either way. `orderFrontRegardless` is the only ordering
+            // call that doesn't depend on the app being active.
             summoned?.orderFrontRegardless()
             // Summoning from the status-item menu leaves the freshly-appeared menu
             // bar with its first menu highlighted: the status menu's dismissal
@@ -601,18 +666,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         setAgentActivationPolicy(.regular)
     }
 
-    /// Whether any user-facing Kernova window is currently on screen.
+    /// Whether any user-facing Kernova window is currently on screen, optionally
+    /// counting a miniaturized one as present.
     ///
-    /// The Dock icon (`.regular`) must be present iff this is `true`.
-    private var hasVisibleUserWindow: Bool {
-        // Deliberately does NOT special-case `NSApp.isHidden`: plain ⌘H closes no
-        // window, so no reconcile fires and the Dock icon persists. Forcing
-        // `.regular` while hidden strands the agent with a Dock icon and zero
-        // windows when a background close (a VM shutting down empties the last
-        // display window mid-hide) fires the reconcile.
+    /// Deliberately does NOT special-case `NSApp.isHidden`: plain ⌘H closes no
+    /// window, so no reconcile fires and the Dock icon persists. Forcing
+    /// `.regular` while hidden strands the agent with a Dock icon and zero
+    /// windows when a background close (a VM shutting down empties the last
+    /// display window mid-hide) fires the reconcile.
+    private func hasUserWindow(countingMiniaturized: Bool) -> Bool {
         func onScreen(_ window: NSWindow?) -> Bool {
             guard let window else { return false }
-            return window.isVisible || window.isMiniaturized
+            return window.isVisible || (countingMiniaturized && window.isMiniaturized)
         }
         if onScreen(mainWindowController?.window) { return true }
         if displayWindows.values.contains(where: { onScreen($0.window) }) { return true }
@@ -622,6 +687,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // so a reconcile can't strip the Dock icon while one is the last visible.
         if NSApp.windows.contains(where: Self.isUntrackedUserPanel) { return true }
         return false
+    }
+
+    /// Whether any user-facing Kernova window is currently on screen, counting a
+    /// miniaturized one as present.
+    ///
+    /// The Dock icon (`.regular`) must be present iff this is `true`.
+    private var hasVisibleUserWindow: Bool {
+        hasUserWindow(countingMiniaturized: true)
+    }
+
+    /// Whether any user-facing Kernova window is currently on screen, excluding
+    /// a miniaturized one.
+    ///
+    /// Used by the reopen leg: a reopen arriving for an app with only a
+    /// miniaturized window must still present, matching AppKit's own Dock-click
+    /// behavior of deminiaturizing it.
+    private var hasOnScreenUserWindow: Bool {
+        hasUserWindow(countingMiniaturized: false)
     }
 
     /// Whether `window` is a display window closing because the user popped it
@@ -867,11 +950,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         // A Finder reopen (double-click / Dock click / `open` routed to the
-        // existing instance) summons the GUI, morphing `.accessory`→`.regular`
-        // first.
+        // existing instance, including our own Launch Services self-open from
+        // `requestSummonActivation`) already carries its own activation request,
+        // so this leg only ever presents — never re-requests activation, or a
+        // self-open would loop.
         if !isTestHost {
             wasJustActivated = false
-            summonUserInterface()
+            switch Self.reopenPresentation(hasOnScreenUserWindow: hasOnScreenUserWindow) {
+            case .library:
+                presentSummonedInterface()
+            case .nothing:
+                break
+            }
             return true
         }
 
