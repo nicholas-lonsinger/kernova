@@ -5,8 +5,7 @@ import AppKit
 /// Read-only rows plus a "start after create" switch, built from a snapshot of
 /// the shared ``VMCreationViewModel``. The shell rebuilds this VC each time the
 /// review step is entered, so it always reflects current values; the only
-/// intra-step changes are the latest-image lookup and a local file's
-/// inspection landing.
+/// intra-step change is the latest-image lookup.
 @MainActor
 final class ReviewContentViewController: NSViewController {
     private let creationVM: VMCreationViewModel
@@ -15,15 +14,10 @@ final class ReviewContentViewController: NSViewController {
     private let summary = NSStackView()
     /// Redraws the rows once the model's latest-image lookup lands.
     private var latestImageTask: Task<Void, Never>?
-    /// Redraws the rows once the model's local-file inspection lands.
-    private var localFileInspectionTask: Task<Void, Never>?
 
     #if DEBUG
     /// Awaited by tests instead of polling for the rows to be redrawn.
     var latestImageTaskForTesting: Task<Void, Never>? { latestImageTask }
-
-    /// Awaited by tests instead of polling for a local file's rows to upgrade.
-    var localFileInspectionTaskForTesting: Task<Void, Never>? { localFileInspectionTask }
     #endif
     /// Shows the "more content below" cue while this summary doesn't fit the
     /// sheet; a hint only.
@@ -70,7 +64,6 @@ final class ReviewContentViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         startLatestImageLookup()
-        startLocalFileInspectionWatch()
     }
 
     override func viewWillDisappear() {
@@ -79,8 +72,6 @@ final class ReviewContentViewController: NSViewController {
         // model, so it still lands for the step shown next.
         latestImageTask?.cancel()
         latestImageTask = nil
-        localFileInspectionTask?.cancel()
-        localFileInspectionTask = nil
     }
 
     /// Asks the model what "Download Latest" will fetch, and names it in the rows
@@ -103,23 +94,6 @@ final class ReviewContentViewController: NSViewController {
             await lookup.value
             guard let self, !Task.isCancelled else { return }
             self.latestImageTask = nil
-            self.rebuildSummary()
-        }
-    }
-
-    /// Awaits an in-flight local-file inspection, and names it in the rows when
-    /// the answer lands.
-    ///
-    /// A user who reached this step before a slow inspection answered would
-    /// otherwise never see the version and size rows.
-    private func startLocalFileInspectionWatch() {
-        guard creationVM.selectedOS == .macOS, creationVM.ipswSource == .localFile,
-            let inspection = creationVM.localFileInspectionTask
-        else { return }
-        localFileInspectionTask = Task { [weak self] in
-            await inspection.value
-            guard let self, !Task.isCancelled else { return }
-            self.localFileInspectionTask = nil
             self.rebuildSummary()
         }
     }

@@ -1147,6 +1147,7 @@ struct VMCreationViewModelTests {
                     LocalRestoreImage(
                         path: "/tmp/picked.ipsw", bookmark: nil, inspection: .unusable(.unreadable))))
         #expect(vm.canAdvance == false)
+        #expect(vm.validationMessage == "Choose a file this Mac can read as a restore image.")
     }
 
     @Test("A supported pick reaches usable and unblocks advance")

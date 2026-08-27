@@ -153,8 +153,8 @@ final class VMCreationViewModel {
     /// another.
     private var latestImageTask: Task<Void, Never>?
 
-    /// The local-file inspection in flight, so the Review step can await it even
-    /// after this step is torn down.
+    /// The local-file inspection in flight, so a re-entered boot-config step
+    /// can pick its watch back up after the VC that started it was torn down.
     private(set) var localFileInspectionTask: Task<Void, Never>?
 
     /// Bumped on every ``selectLocalFile(path:bookmark:)`` call; only the task
@@ -229,9 +229,14 @@ final class VMCreationViewModel {
                 }
                 if case .localFile(let image) = ipswSelection {
                     switch image.inspection {
-                    case .pending: return "Checking the selected restore image…"
-                    case .unusable: return "Choose a restore image this Mac can install."
-                    case .usable: return nil
+                    case .pending:
+                        return "Checking the selected restore image…"
+                    case .unusable(.unsupported):
+                        return "Choose a restore image this Mac can install."
+                    case .unusable(.unreadable):
+                        return "Choose a file this Mac can read as a restore image."
+                    case .usable:
+                        return nil
                     }
                 }
                 return nil
