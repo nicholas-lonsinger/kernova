@@ -21,6 +21,14 @@ protocol Downloading: Sendable {
         progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
     ) async throws
 
+    /// Places the file at `sourceURL` at `destinationURL` as a hard link,
+    /// moving no bytes, and discards any resume bundle left beside it.
+    ///
+    /// `false` when the destination is occupied, a transfer already owns it,
+    /// or the link could not be made — the caller then downloads as usual.
+    /// The file at `sourceURL` is left exactly as it was, either way.
+    func adoptExistingFile(at sourceURL: URL, as destinationURL: URL) async -> Bool
+
     /// Deletes any persisted resume sidecar for the given destination path.
     ///
     /// Safe when no sidecar exists. `permanently` bypasses the Trash, so a

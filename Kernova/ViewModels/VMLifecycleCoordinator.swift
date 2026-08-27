@@ -489,6 +489,80 @@ final class VMLifecycleCoordinator {
         return downloads.appendingPathComponent(filename)
     }
 
+    /// Adopts a file already in Downloads under the name the source published,
+    /// when its bytes hash to the digest published for it.
+    ///
+    /// A browser — or an app release predating the discriminated destination —
+    /// writes the ISO under the mirror's own name, where nothing later finds
+    /// it and the same gigabytes are fetched again. Nothing here rests on that
+    /// name: it selects a candidate and decides nothing, the file is admitted
+    /// only by its length and its SHA-256 matching what the source states, and
+    /// adoption hard-links it to the discriminated destination rather than
+    /// installing it in place, so the user's own entry stays untouched and
+    /// every later step reads the one file this pipeline names.
+    ///
+    /// `false` whenever the candidate cannot be shown to be the image — the
+    /// ordinary download, and the only outcome when the source publishes no
+    /// digest to check against.
+    private func adoptLocalImage(
+        _ image: ResolvedLinuxImage, as destination: URL
+    ) async throws -> Bool {
+        guard let downloads = downloadsDirectory, let expected = image.sha256?.lowercased() else {
+            return false
+        }
+        // A file already at the destination belongs to the download: it skips
+        // over it and the verify step below holds it to this same digest. An
+        // adoption is refused there in any case — asked before the hash rather
+        // than after it, so a second VM built from one catalog entry does not
+        // read gigabytes to reach a refusal. Read from the filesystem the rest
+        // of this probe reads, not the trash seam.
+        guard !FileManager.default.fileExists(atPath: destination.path(percentEncoded: false))
+        else { return false }
+
+        // Re-admitted at the point it is appended to a directory: this is the
+        // one place a name the source chose reaches the filesystem.
+        guard let candidateName = SafeFilename.sanitized(image.filename, requiring: "iso") else {
+            return false
+        }
+        let candidate = downloads.appendingPathComponent(candidateName)
+        // A source is free to publish a name already shaped like a
+        // discriminated one; a file may not be linked onto itself.
+        guard candidate.standardizedFileURL != destination.standardizedFileURL else { return false }
+
+        // The length the mirror states, checked with a stat before gigabytes
+        // are read: a truncated or unrelated file under the same name costs
+        // nothing to reject, so the hash below essentially only runs on a file
+        // that will match.
+        let values = try? candidate.resourceValues(forKeys: [
+            .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
+        ])
+        guard values?.isRegularFile == true, values?.isSymbolicLink == false,
+            values?.fileSize.map(UInt64.init(clamping:)) == image.sizeBytes
+        else { return false }
+
+        Self.logger.notice(
+            "downloadLinuxImage: hashing '\(candidateName, privacy: .public)', already in Downloads, against the digest published for it"
+        )
+        let digest: String
+        do {
+            digest = try await FileDigest.sha256(of: candidate) { _ in }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            Self.logger.warning(
+                "downloadLinuxImage: could not hash '\(candidateName, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
+        guard digest == expected else {
+            Self.logger.notice(
+                "downloadLinuxImage: '\(candidateName, privacy: .public)' hashes to \(digest, privacy: .public), not the published \(expected, privacy: .public) — downloading"
+            )
+            return false
+        }
+        return await downloadService.adoptExistingFile(at: candidate, as: destination)
+    }
+
     /// Fetches the Linux installer image `context` names, checks it against the
     /// digest published or supplied for it, and attaches it as the VM's boot
     /// media.
@@ -564,36 +638,51 @@ final class VMLifecycleCoordinator {
                         totalBytes: Int64(clamping: image.sizeBytes),
                         bytesPerSecond: 0))
 
-                // Never replaces: the destination is named for this URL, so a
-                // file already there is what a prior attempt at this same image
-                // fetched, and adopting it is right — the verify step below
-                // holds it to the same digest a fresh download would face.
-                try await downloadService.download(
-                    from: image.isoURL,
-                    to: downloadDestination,
-                    discardsExistingDownload: false,
-                    expectedSizeBytes: image.sizeBytes
-                ) { progress in
-                    instance.setupState?.progress = .download(progress)
-                }
-
-                // Runs whether the bytes were just fetched or the download
-                // skipped over a file already sitting complete at the
-                // destination: an image nothing has checked is an image that
-                // could install anything. A pasted URL with no digest behind it
-                // has nothing to check against, and the wizard said so.
-                if let expected = image.sha256?.lowercased() {
-                    instance.setupState?.advance(progress: .fraction(0))
-                    let digest = try await FileDigest.sha256(of: downloadDestination) { fraction in
-                        instance.setupState?.progress = .fraction(fraction)
+                // The Download step reports nothing while the probe runs: it
+                // reads a file the user already has and fetches none of the
+                // bytes the bar counts. The seeded `0 B / <size>` above is what
+                // a transfer opening its connection shows too.
+                if try await adoptLocalImage(image, as: downloadDestination) {
+                    // The digest decided the adoption, so Verify has nothing
+                    // left to check and the step is drawn finished.
+                    if context.hasVerifyStep {
+                        instance.setupState?.advance(progress: .fraction(1))
                     }
-                    guard digest == expected else {
-                        Self.logger.error(
-                            "downloadLinuxImage: '\(image.filename, privacy: .public)' hashes to \(digest, privacy: .public), not the expected \(expected, privacy: .public)"
-                        )
-                        discardUnverifiedImage(at: downloadDestination)
-                        throw DownloadError.checksumMismatch(
-                            filename: image.filename, expected: expected, actual: digest)
+                } else {
+                    // Never replaces: the destination is named for this URL, so
+                    // a file already there is what a prior attempt at this same
+                    // image fetched, and adopting it is right — the verify step
+                    // below holds it to the same digest a fresh download would
+                    // face.
+                    try await downloadService.download(
+                        from: image.isoURL,
+                        to: downloadDestination,
+                        discardsExistingDownload: false,
+                        expectedSizeBytes: image.sizeBytes
+                    ) { progress in
+                        instance.setupState?.progress = .download(progress)
+                    }
+
+                    // Runs whether the bytes were just fetched or the download
+                    // skipped over a file already sitting complete at the
+                    // destination: an image nothing has checked is an image
+                    // that could install anything. A pasted URL with no digest
+                    // behind it has nothing to check against, and the wizard
+                    // said so.
+                    if let expected = image.sha256?.lowercased() {
+                        instance.setupState?.advance(progress: .fraction(0))
+                        let digest = try await FileDigest.sha256(of: downloadDestination) {
+                            fraction in
+                            instance.setupState?.progress = .fraction(fraction)
+                        }
+                        guard digest == expected else {
+                            Self.logger.error(
+                                "downloadLinuxImage: '\(image.filename, privacy: .public)' hashes to \(digest, privacy: .public), not the expected \(expected, privacy: .public)"
+                            )
+                            discardUnverifiedImage(at: downloadDestination)
+                            throw DownloadError.checksumMismatch(
+                                filename: image.filename, expected: expected, actual: digest)
+                        }
                     }
                 }
 

@@ -237,6 +237,76 @@ final class DownloadService: Sendable {
         Self.logger.info("Downloaded to \(destinationURL.lastPathComponent, privacy: .public)")
     }
 
+    // MARK: - Adopting a File Already on Disk
+
+    /// Places the file at `sourceURL` at `destinationURL` as a hard link, so a
+    /// caller that has already established the file is the one it would fetch
+    /// spends no bytes fetching it again.
+    ///
+    /// A link rather than a move or a copy: the entry at `sourceURL` stays the
+    /// user's, no multi-gigabyte second copy lands on the volume, and the
+    /// destination is a path of its own that keeps working when the user later
+    /// disposes of theirs. Both paths must be on one volume, which they are —
+    /// each is inside Downloads.
+    ///
+    /// Runs under the same per-destination claim ``download(from:to:discardsExistingDownload:expectedSizeBytes:progressHandler:)``
+    /// takes, so a transfer already streaming to `destinationURL` is never
+    /// linked over: that case answers `false` at once rather than waiting, and
+    /// the caller downloads. `false` also when the destination is occupied or
+    /// the link is refused. The file at `sourceURL` is never written to.
+    func adoptExistingFile(at sourceURL: URL, as destinationURL: URL) async -> Bool {
+        let key = destinationURL.standardizedFileURL.path(percentEncoded: false)
+        let claim = await Self.claimDownload(forKey: key) { [self] in
+            try performAdoption(of: sourceURL, as: destinationURL)
+        }
+        guard claim.isOwner else {
+            Self.logger.notice(
+                "A download to '\(destinationURL.lastPathComponent, privacy: .public)' is already running — downloading rather than adopting"
+            )
+            return false
+        }
+        do {
+            try await claim.task.value
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Runs one adoption, with this destination already reserved by the caller.
+    ///
+    /// Throwing is how a refusal reaches ``adoptExistingFile(at:as:)``; each
+    /// reason is logged here, where what happened is known.
+    private func performAdoption(of sourceURL: URL, as destinationURL: URL) throws {
+        guard !FileManager.default.fileExists(atPath: destinationURL.path(percentEncoded: false))
+        else {
+            Self.logger.notice(
+                "'\(destinationURL.lastPathComponent, privacy: .public)' is already on disk — downloading rather than adopting"
+            )
+            throw AdoptionRefusal.destinationOccupied
+        }
+        do {
+            try FileManager.default.linkItem(at: sourceURL, to: destinationURL)
+        } catch {
+            Self.logger.warning(
+                "Failed to link '\(sourceURL.lastPathComponent, privacy: .public)' to '\(destinationURL.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            throw error
+        }
+        Self.logger.notice(
+            "Adopted '\(sourceURL.lastPathComponent, privacy: .public)' as '\(destinationURL.lastPathComponent, privacy: .public)' — no bytes moved"
+        )
+        // Whatever a prior attempt left part-way through is superseded by a
+        // complete file, and it can run to gigabytes.
+        discardResumeData(at: destinationURL, permanently: false)
+    }
+
+    /// Why an adoption did not happen. Never reaches a caller — ``adoptExistingFile(at:as:)``
+    /// answers `false` for every refusal, this one included.
+    private enum AdoptionRefusal: Error {
+        case destinationOccupied
+    }
+
     /// Loads bundle resume metadata and decides whether the bundle is usable.
     ///
     /// Returns `nil` when the bundle holds no partial bytes to resume from, and

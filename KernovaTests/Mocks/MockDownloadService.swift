@@ -14,6 +14,9 @@ final class MockDownloadService: Downloading, @unchecked Sendable {
     var lastDownloadDestinationURL: URL?
     var lastDownloadDiscardsExisting: Bool?
     var lastDownloadExpectedSizeBytes: UInt64?
+    var adoptExistingFileCallCount = 0
+    var lastAdoptSourceURL: URL?
+    var lastAdoptDestinationURL: URL?
     var discardResumeDataCallCount = 0
     /// URLs passed to `discardResumeData(at:permanently:)`, in call order.
     var discardedResumeDataURLs: [URL] = []
@@ -24,6 +27,11 @@ final class MockDownloadService: Downloading, @unchecked Sendable {
 
     /// Written to the destination on success.
     var downloadedContents: Data?
+
+    /// What `adoptExistingFile(at:as:)` answers. `true` really links the file,
+    /// so the caller's later steps read a destination that exists; `false`
+    /// models a destination another transfer owns, or a refused link.
+    var adoptExistingFileResult = true
 
     /// Samples handed to the progress handler before the download returns.
     var progressSamples: [DownloadProgress] = []
@@ -48,6 +56,19 @@ final class MockDownloadService: Downloading, @unchecked Sendable {
         try FileManager.default.createDirectory(
             at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try downloadedContents.write(to: destinationURL)
+    }
+
+    func adoptExistingFile(at sourceURL: URL, as destinationURL: URL) async -> Bool {
+        adoptExistingFileCallCount += 1
+        lastAdoptSourceURL = sourceURL
+        lastAdoptDestinationURL = destinationURL
+        guard adoptExistingFileResult else { return false }
+        do {
+            try FileManager.default.linkItem(at: sourceURL, to: destinationURL)
+        } catch {
+            return false
+        }
+        return true
     }
 
     func discardResumeData(at destinationURL: URL, permanently: Bool) {

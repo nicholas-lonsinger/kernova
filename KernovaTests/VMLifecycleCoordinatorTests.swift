@@ -1294,6 +1294,9 @@ struct VMLifecycleCoordinatorTests {
         #expect(
             instance.configuration.storageDisks?.first?.path
                 == written.path(percentEncoded: false))
+        // Its length is not the length the mirror states, so a stat refuses it
+        // and no adoption is attempted — the file is never read.
+        #expect(fixture.downloadService.adoptExistingFileCallCount == 0)
     }
 
     @Test("A digest failure trashes only the file the download wrote")
@@ -1315,6 +1318,175 @@ struct VMLifecycleCoordinatorTests {
         #expect(
             fixture.fileSystem.trashedURLs
                 == [fixture.downloads.appendingPathComponent(resolved.destinationFilename)])
+    }
+
+    // MARK: - Adopting a File Already in Downloads
+
+    @Test("A file in Downloads hashing to the published digest is adopted instead of downloaded")
+    func downloadLinuxImageAdoptsAMatchingLocalFile() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        // What a browser download of the same image leaves behind: the mirror's
+        // own name, the mirror's own bytes.
+        let resolved = fixture.resolveService.resolveResult
+        let usersFile = fixture.downloads.appendingPathComponent(resolved.filename)
+        try fixture.contents.write(to: usersFile)
+        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
+        let instance = makeLinuxInstance(context: context)
+
+        var observedSteps: [Int] = []
+        let persist = instance.onUpdateConfiguration
+        instance.onUpdateConfiguration = { mutate in
+            if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
+            persist?(mutate)
+        }
+
+        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+
+        let destination = fixture.downloads.appendingPathComponent(resolved.destinationFilename)
+        #expect(fixture.downloadService.downloadCallCount == 0)
+        #expect(fixture.downloadService.adoptExistingFileCallCount == 1)
+        #expect(fixture.downloadService.lastAdoptSourceURL == usersFile)
+        #expect(fixture.downloadService.lastAdoptDestinationURL == destination)
+        // The digest decided the adoption, so the pipeline still reaches Verify.
+        #expect(observedSteps == [0, 1])
+
+        // The user's file is theirs: still where they left it, byte for byte,
+        // and the VM boots the destination the pipeline named.
+        #expect(try Data(contentsOf: usersFile) == fixture.contents)
+        #expect(try Data(contentsOf: destination) == fixture.contents)
+        #expect(
+            instance.configuration.storageDisks?.first?.path
+                == destination.path(percentEncoded: false))
+        #expect(fixture.fileSystem.trashedURLs.isEmpty)
+        #expect(instance.configuration.linuxInstallContext == nil)
+        #expect(instance.setupState == nil)
+        #expect(instance.status == .stopped)
+    }
+
+    @Test("A same-named file of the right length but the wrong bytes is downloaded past")
+    func downloadLinuxImageRefusesAMatchingLengthImposter() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        // Everything the cheap checks can see agrees; only the digest does not.
+        let resolved = fixture.resolveService.resolveResult
+        let usersFile = fixture.downloads.appendingPathComponent(resolved.filename)
+        let usersBytes = Data(repeating: 0x41, count: fixture.contents.count)
+        try usersBytes.write(to: usersFile)
+        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
+        let instance = makeLinuxInstance(context: context)
+
+        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+
+        let destination = fixture.downloads.appendingPathComponent(resolved.destinationFilename)
+        #expect(fixture.downloadService.adoptExistingFileCallCount == 0)
+        #expect(fixture.downloadService.downloadCallCount == 1)
+        #expect(fixture.downloadService.lastDownloadDestinationURL == destination)
+        // A file that failed a digest that was never its own is still the
+        // user's, so nothing happens to it.
+        #expect(try Data(contentsOf: usersFile) == usersBytes)
+        #expect(fixture.fileSystem.trashedURLs.isEmpty)
+        #expect(instance.status == .stopped)
+    }
+
+    @Test("A URL pick with no digest never probes Downloads")
+    func downloadLinuxImageSkipsTheProbeWithoutADigest() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        // The very bytes the pipeline is about to fetch are already there under
+        // the source's name — and with no digest published, nothing can say so.
+        fixture.resolveService.resolveResult = makeResolvedLinuxImage(
+            sha256: nil, sizeBytes: UInt64(fixture.contents.count))
+        let resolved = fixture.resolveService.resolveResult
+        try fixture.contents.write(
+            to: fixture.downloads.appendingPathComponent(resolved.filename))
+        let context = makeCustomURLContext(fixture: fixture, verified: false)
+        let instance = makeLinuxInstance(context: context)
+
+        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+
+        #expect(fixture.downloadService.adoptExistingFileCallCount == 0)
+        #expect(fixture.downloadService.downloadCallCount == 1)
+        #expect(instance.status == .stopped)
+    }
+
+    @Test("A destination already on disk is not probed against the candidate")
+    func downloadLinuxImageSkipsTheProbeWhenTheDestinationExists() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        // The state the first adoption leaves behind: both names in Downloads,
+        // holding the same bytes. A second VM from the same catalog entry must
+        // not read the candidate end to end only to be refused the link.
+        let resolved = fixture.resolveService.resolveResult
+        try fixture.contents.write(
+            to: fixture.downloads.appendingPathComponent(resolved.filename))
+        let destination = fixture.downloads.appendingPathComponent(resolved.destinationFilename)
+        try fixture.contents.write(to: destination)
+        fixture.downloadService.downloadedContents = nil
+        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
+        let instance = makeLinuxInstance(context: context)
+
+        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+
+        #expect(fixture.downloadService.adoptExistingFileCallCount == 0)
+        // The ordinary path owns this: the download skips over the file already
+        // at the destination, and Verify holds it to the same digest.
+        #expect(fixture.downloadService.downloadCallCount == 1)
+        #expect(
+            instance.configuration.storageDisks?.first?.path
+                == destination.path(percentEncoded: false))
+        #expect(instance.status == .stopped)
+    }
+
+    @Test("A refused adoption falls through to the download and its verify step")
+    func downloadLinuxImageDownloadsWhenAdoptionIsRefused() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        // What a transfer already streaming to the destination looks like from
+        // here: the file matches, and the adoption is refused anyway.
+        fixture.downloadService.adoptExistingFileResult = false
+        let resolved = fixture.resolveService.resolveResult
+        try fixture.contents.write(
+            to: fixture.downloads.appendingPathComponent(resolved.filename))
+        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
+        let instance = makeLinuxInstance(context: context)
+
+        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+
+        let destination = fixture.downloads.appendingPathComponent(resolved.destinationFilename)
+        #expect(fixture.downloadService.adoptExistingFileCallCount == 1)
+        #expect(fixture.downloadService.downloadCallCount == 1)
+        #expect(
+            instance.configuration.storageDisks?.first?.path
+                == destination.path(percentEncoded: false))
+        #expect(instance.configuration.linuxInstallContext == nil)
+        #expect(instance.status == .stopped)
+    }
+
+    @Test("A source name already shaped like the destination is not adopted onto itself")
+    func downloadLinuxImageDoesNotAdoptTheDestinationItself() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        // Nothing stops a source publishing the discriminated name this app
+        // would derive for it, and a file cannot be linked onto itself.
+        let isoURL = fixture.resolveService.resolveResult.isoURL
+        fixture.resolveService.resolveResult = makeResolvedLinuxImage(
+            filename: LinuxImageFilename.destination(for: isoURL),
+            sha256: fixture.digest,
+            sizeBytes: UInt64(fixture.contents.count))
+        let destination = fixture.downloads.appendingPathComponent(
+            fixture.resolveService.resolveResult.destinationFilename)
+        try fixture.contents.write(to: destination)
+        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
+        let instance = makeLinuxInstance(context: context)
+
+        try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+
+        #expect(fixture.downloadService.adoptExistingFileCallCount == 0)
+        // The ordinary path handles it: the download skips over the file
+        // already sitting complete at the destination, and Verify checks it.
+        #expect(fixture.downloadService.downloadCallCount == 1)
+        #expect(instance.status == .stopped)
     }
 
     @Test("downloadLinuxImage throws CancellationError from the resolve step and keeps the context")
