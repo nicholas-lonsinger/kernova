@@ -620,11 +620,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         configuration.activates = true
         configuration.createsNewApplicationInstance = false
         configuration.addsToRecentItems = false
+        // Captured for the completion closure, which is `@Sendable`.
+        let logger = Self.logger
         NSWorkspace.shared.openApplication(
             at: Bundle.main.bundleURL, configuration: configuration
         ) { _, error in
             guard let error else { return }
-            Self.logger.error(
+            logger.error(
                 "Launch Services summon activation failed: \(error.localizedDescription, privacy: .public)")
         }
     }
