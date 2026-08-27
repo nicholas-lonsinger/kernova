@@ -119,12 +119,52 @@ struct ReviewContentViewControllerTests {
 
     @Test("macOS + local file shows the file basename")
     func macOSLocalFileShowsFile() {
-        let vm = VMCreationViewModel()
+        let vm = VMCreationViewModel(localImageInspector: MockLocalRestoreImageInspector())
         vm.selectLocalFile(path: "/tmp/Restore.ipsw", bookmark: nil)
         let vc = ReviewContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
         #expect(findLabel(withText: "Local File", in: vc.view) != nil)
+        #expect(findLabel(withText: "Restore.ipsw", in: vc.view) != nil)
+        // Not yet inspected, so no version or size row shows.
+        #expect(findLabel(withText: "macOS Version", in: vc.view) == nil)
+        #expect(findLabel(withText: "Size", in: vc.view) == nil)
+    }
+
+    @Test("macOS + local file names the version and size once the inspection lands")
+    func macOSLocalFileShowsVersionAndSize() async {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "15.6.1", build: "24G90", isSupportedOnThisHost: true, sizeBytes: 15_500_000_000)
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.selectLocalFile(path: "/tmp/Restore.ipsw", bookmark: nil)
+        await vm.localFileInspectionTask?.value
+
+        let vc = ReviewContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        #expect(findLabel(withText: "15.6.1 (24G90)", in: vc.view) != nil)
+        #expect(findLabel(withText: "Size", in: vc.view) != nil)
+        #expect(
+            findLabel(withText: DataFormatters.formatBytes(15_500_000_000), in: vc.view) != nil)
+    }
+
+    @Test("A local-file inspection landing after this step appears fills the rows in")
+    func macOSLocalFileFillsInLateInspection() async throws {
+        let inspector = SuspendingMockLocalRestoreImageInspector()
+        let vm = VMCreationViewModel(localImageInspector: inspector)
+        vm.selectLocalFile(path: "/tmp/Restore.ipsw", bookmark: nil)
+        try await inspector.waitUntilInspecting()
+
+        let vc = ReviewContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+        #expect(findLabel(withText: "macOS Version", in: vc.view) == nil)
+
+        vc.viewDidAppear()
+        inspector.release()
+        await vc.localFileInspectionTaskForTesting?.value
+
+        #expect(findLabel(withText: "15.6.1 (24G90)", in: vc.view) != nil)
         #expect(findLabel(withText: "Restore.ipsw", in: vc.view) != nil)
     }
 
