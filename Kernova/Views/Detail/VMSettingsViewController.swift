@@ -26,8 +26,6 @@ final class VMSettingsViewController: NSViewController {
     private var viewModel: VMLibraryViewModel
     private var isReadOnly: Bool
 
-
-
     /// The bindings every panel reads; rebound in one write per `reconfigure`.
     private let panelContext: VMSettingsPanelContext
 
@@ -37,7 +35,6 @@ final class VMSettingsViewController: NSViewController {
     /// signaling there's more below.
     private var scrollMoreIndicator: ScrollMoreIndicator?
     private var modelObservation: ObservationLoop?
-    private var hasDisappeared = false
     // MARK: - Presenters & coordinators
 
     // MARK: - Persistent chrome (rebuilt per instance in `buildForm`)
@@ -57,20 +54,10 @@ final class VMSettingsViewController: NSViewController {
     /// hidden panels stay in the tree so `apply()` keeps them current and a
     /// drill-in shows the right state immediately.
     private var panels: [VMSettingsCategory: NSView] = [:]
-    /// Header pieces a single-section category hands to the panel header.
-    private var panelChrome: [VMSettingsCategory: VMSettingsPanelChrome] = [:]
     /// The per-category panels, each owning its own sections and refresh pass.
     private var panelControllers: [VMSettingsCategory: any VMSettingsPanel] = [:]
     /// The open category, or `nil` for the overview.
     private(set) var selectedCategory: VMSettingsCategory?
-
-    /// "Editable when stopped" hints on lockable section headers; shown only
-    /// while read-only.
-    private var lockHints: [NSView] = []
-    /// Form rows that only a stopped VM can change: their controls go inert and
-    /// the whole row dims while read-only (per-row controls in the dynamic lists
-    /// set their own enabled state when those lists are rebuilt).
-    private var lockableRows: [(row: NSView, controls: [NSControl])] = []
 
     // MARK: - Rendered-list snapshots (early-out keys)
 
@@ -125,7 +112,7 @@ final class VMSettingsViewController: NSViewController {
 
         if instanceChanged {
             buildForm()
-                // Re-arm the model observation on the new instance: it is one-shot and
+            // Re-arm the model observation on the new instance: it is one-shot and
             // re-registers only after it fires, so otherwise the loop stays bound
             // to the previous instance. Only restart when already observing;
             // creating it here early would skip the notification observer.
@@ -201,7 +188,6 @@ final class VMSettingsViewController: NSViewController {
 
     override func viewDidAppear() {
         super.viewDidAppear()
-        hasDisappeared = false
         panelContext.setDismissed(false)
         if modelObservation == nil {
             restartModelObservation()
@@ -240,7 +226,6 @@ final class VMSettingsViewController: NSViewController {
 
     override func viewWillDisappear() {
         super.viewWillDisappear()
-        hasDisappeared = true
         panelContext.setDismissed(true)
         panelControllers.values.forEach { $0.prepareForDisappearance() }
         modelObservation?.cancel()
@@ -267,13 +252,10 @@ extension VMSettingsViewController {
     /// Called on first load and whenever the bound instance changes.
     private func buildForm() {
         formStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        lockHints.removeAll()
-        lockableRows.removeAll()
         // The list stacks and the audio-warning container are recreated below,
         // so invalidate the render snapshots that guard their refreshes.
 
         panels.removeAll()
-        panelChrome.removeAll()
 
         identityHeader = VMIdentityHeaderView()
         overviewVC.rebuild(guestOS: instance.configuration.guestOS)
@@ -387,8 +369,7 @@ extension VMSettingsViewController {
     /// Paints the open panel's header from the model; a no-op on the overview.
     private func refreshPanelHeader() {
         guard let category = selectedCategory else { return }
-        let chrome = panelControllers[category]?.chrome ?? panelChrome[category]
-            ?? VMSettingsPanelChrome()
+        let chrome = panelControllers[category]?.chrome ?? VMSettingsPanelChrome()
         panelHeader.configure(
             vmName: instance.name,
             statusColor: instance.statusDisplayNSColor,
@@ -398,53 +379,6 @@ extension VMSettingsViewController {
             leadingAccessories: chrome.leading,
             trailingAccessories: chrome.trailing)
     }
-
-    /// Section header; any lock hint it creates is registered in ``lockHints``
-    /// and toggled by ``apply()``. A section whose lock is conditional passes
-    /// `lockHintSink` to keep its own reference — by handoff, not by position
-    /// in ``lockHints``.
-    private func makeHeader(
-        _ title: String, lockable: Bool = false, paragraphs: [InfoPopoverParagraph] = [],
-        lockHintSink: ((NSView) -> Void)? = nil
-    ) -> NSView {
-        var views: [NSView] = [makeGroupedFormSectionHeader(title)]
-        if !paragraphs.isEmpty {
-            let info = InfoButtonView()
-            info.configure(label: title, paragraphs: paragraphs)
-            views.append(info)
-        }
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        views.append(spacer)
-        if lockable {
-            views.append(makeLockHint(sink: lockHintSink))
-        }
-
-        let header = NSStackView(views: views)
-        header.orientation = .horizontal
-        header.alignment = .centerY
-        header.spacing = Spacing.small
-        return header
-    }
-
-    /// A lock hint registered in ``lockHints``, for a section header or the
-    /// panel header a single-section category hands its chrome to.
-    private func makeLockHint(sink: ((NSView) -> Void)? = nil) -> NSView {
-        let hint = makeGroupedFormLockHint()
-        hint.isHidden = true
-        lockHints.append(hint)
-        sink?(hint)
-        return hint
-    }
-
-    /// Registers `row` as editable only while the VM is stopped, returning it so
-    /// it can be handed straight to a card.
-    @discardableResult
-    private func lockable(_ row: NSView, _ controls: NSControl...) -> NSView {
-        lockableRows.append((row: row, controls: controls))
-        return row
-    }
 }
 
 // MARK: - apply() and per-section refresh
@@ -453,12 +387,6 @@ extension VMSettingsViewController {
     /// Idempotently refreshes all mutable chrome from the model.
     private func apply() {
         guard isViewLoaded else { return }
-        lockHints.forEach { $0.isHidden = !isReadOnly }
-        for entry in lockableRows {
-            entry.controls.forEach { $0.isEnabled = !isReadOnly }
-            entry.row.alphaValue = isReadOnly ? Alpha.disabled : 1
-        }
-
         identityHeader.configure(with: instance)
         panelControllers.values.forEach { $0.refresh() }
         // Last, so the cards state what the refreshers above just resolved.
@@ -479,13 +407,11 @@ extension VMSettingsViewController {
             instance: instance, isReadOnly: isReadOnly,
             networkIsLiveSwitchable: resolved.networkIsLiveSwitchable, resolved: resolved)
     }
-
 }
 
 // MARK: - Actions
 
 extension VMSettingsViewController {
-
     /// The one write path for the auto-start flag, whichever surface's switch
     /// asked for it.
     private func setAutoStart(_ isOn: Bool) {
@@ -549,13 +475,10 @@ extension VMSettingsViewController {
     func cancelPassthroughEnableForTesting() { passthroughSetting.cancelEnable() }
     #endif
 
-
-
     @objc private func appDidBecomeActive() {
         panelControllers.values.forEach { $0.hostDidBecomeActive() }
         apply()
     }
-
 }
 
 // MARK: - VMSettingsOverviewDelegate

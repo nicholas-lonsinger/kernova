@@ -568,5 +568,4 @@ extension VMSettingsGeneralPanelViewController: NSTextFieldDelegate {
         }
         return false
     }
-
 }

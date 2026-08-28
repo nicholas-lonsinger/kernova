@@ -189,9 +189,12 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
 
     private func buildStorageSection() -> NSView {
         storageListStack = makeGroupedFormListStack()
-        attachStorageButton = makeGroupedFormPushButton("Attach Disk…", target: self, action: #selector(attachStorageTapped))
-        createStorageButton = makeGroupedFormPushButton("Create New Disk…", target: self, action: #selector(createStorageTapped))
-        editBootOrderButton = makeGroupedFormPushButton("Edit Boot Order…", target: self, action: #selector(editBootOrderTapped))
+        attachStorageButton = makeGroupedFormPushButton(
+            "Attach Disk…", target: self, action: #selector(attachStorageTapped))
+        createStorageButton = makeGroupedFormPushButton(
+            "Create New Disk…", target: self, action: #selector(createStorageTapped))
+        editBootOrderButton = makeGroupedFormPushButton(
+            "Edit Boot Order…", target: self, action: #selector(editBootOrderTapped))
 
         let buttonRow = lockRegistry.lockable(
             makeGroupedFormButtonRow([attachStorageButton, createStorageButton, editBootOrderButton]),
@@ -216,7 +219,9 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                     "Installer images (.iso, .dmg) attach as USB Mass Storage entries on this list — still bootable, separate from hot-pluggable Removable Media."
                 ),
             ]
-        return makeGroupedFormSection([lockRegistry.makeHeader("Storage Disks", lockable: true, paragraphs: paragraphs), card])
+        return makeGroupedFormSection([
+            lockRegistry.makeHeader("Storage Disks", lockable: true, paragraphs: paragraphs), card,
+        ])
     }
 
     // MARK: Removable Media
@@ -224,7 +229,8 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     private func buildRemovableMediaSection() -> NSView {
         removableListStack = makeGroupedFormListStack()
         let attach = makeGroupedFormPushButton("Attach Disk…", target: self, action: #selector(attachRemovableTapped))
-        let create = makeGroupedFormPushButton("Create New Disk…", target: self, action: #selector(createRemovableTapped))
+        let create = makeGroupedFormPushButton(
+            "Create New Disk…", target: self, action: #selector(createRemovableTapped))
         createRemovableButton = create
         // Not lockable — removable media is hot-pluggable.
         let buttonRow = makeGroupedFormButtonRow([attach, create])

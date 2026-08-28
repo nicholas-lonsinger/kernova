@@ -119,7 +119,9 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                     "VirtioFS has known framework limitations — files may intermittently appear missing, and host/guest permission mapping can differ."
                 ),
             ]
-        return makeGroupedFormSection([lockRegistry.makeHeader("Shared Directories", lockable: true, paragraphs: paragraphs), card])
+        return makeGroupedFormSection([
+            lockRegistry.makeHeader("Shared Directories", lockable: true, paragraphs: paragraphs), card,
+        ])
     }
 
     // MARK: Guest Agent

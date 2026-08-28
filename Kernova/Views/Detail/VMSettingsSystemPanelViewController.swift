@@ -361,7 +361,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     private func buildSerialRelaySection() -> NSView {
         serialRelaySwitch = makeGroupedFormSwitch(target: self, action: #selector(serialRelayToggled))
         revealSerialLogButton = makeGroupedFormPushButton(
-"Reveal serial.log in Finder", target: self, action: #selector(revealSerialLog))
+            "Reveal serial.log in Finder", target: self, action: #selector(revealSerialLog))
         let socketPath = VMInstance.serialSocketPath(for: instance.id)
         let card = makeGroupedFormCard(rows: [
             makeGroupedFormToggleRowWithInfo(

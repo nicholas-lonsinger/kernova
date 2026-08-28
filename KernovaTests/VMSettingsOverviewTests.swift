@@ -271,13 +271,13 @@ struct VMSettingsOverviewTests {
             let claimsLock =
                 category.containsLockableRows
                 && VMOverviewSummary.toggles(for: category, instance: instance).isEmpty
-            let hints = lockHints(in: try card(category, in: readOnlyVC))
+            let hints = settingsLockHints(in: try card(category, in: readOnlyVC))
             #expect(hints.allSatisfy { $0.isHidden != claimsLock })
         }
 
         let (editableVC, _, _) = makeController(isReadOnly: false)
         for category in VMSettingsCategory.allCases {
-            #expect(lockHints(in: try card(category, in: editableVC)).allSatisfy(\.isHidden))
+            #expect(settingsLockHints(in: try card(category, in: editableVC)).allSatisfy(\.isHidden))
         }
     }
 
@@ -288,11 +288,11 @@ struct VMSettingsOverviewTests {
         // Sharing locks only its Shared Directories section, and its card offers
         // clipboard sharing, passthrough and drag and drop as live switches —
         // so the card cannot claim the category is editable only when stopped.
-        #expect(lockHints(in: try card(.sharing, in: vc)).allSatisfy(\.isHidden))
-        #expect(lockHints(in: try card(.storage, in: vc)).allSatisfy { !$0.isHidden })
+        #expect(settingsLockHints(in: try card(.sharing, in: vc)).allSatisfy(\.isHidden))
+        #expect(settingsLockHints(in: try card(.storage, in: vc)).allSatisfy { !$0.isHidden })
         // The panel's own Shared Directories hint still states the lock.
         let panel = try #require(vc.panelForTesting(.sharing))
-        #expect(lockHints(in: panel).contains { !$0.isHidden })
+        #expect(settingsLockHints(in: panel).contains { !$0.isHidden })
     }
 
     @Test("The pane grows past the column cap instead of pinning its host's width")
@@ -322,9 +322,9 @@ struct VMSettingsOverviewTests {
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
 
-        #expect(lockHints(in: try card(.network, in: vc)).allSatisfy(\.isHidden))
+        #expect(settingsLockHints(in: try card(.network, in: vc)).allSatisfy(\.isHidden))
         // Every other lockable category still states the lock.
-        #expect(lockHints(in: try card(.storage, in: vc)).allSatisfy { !$0.isHidden })
+        #expect(settingsLockHints(in: try card(.storage, in: vc)).allSatisfy { !$0.isHidden })
     }
 
     @Test("A duplicate MAC address raises the Network card's warning glyph")

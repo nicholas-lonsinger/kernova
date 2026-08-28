@@ -803,7 +803,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
 // MARK: - NSMenuDelegate
 
 extension VMSettingsNetworkPanelViewController: NSMenuDelegate {
-
     /// Re-reads the host's bridgeable interfaces each time the Mode picker opens.
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu === networkModePopUp.menu else { return }
@@ -826,7 +825,6 @@ extension VMSettingsNetworkPanelViewController: NSTextFieldDelegate {
 extension VMSettingsNetworkPanelViewController:
     PortForwardingRuleSheetContentViewControllerDelegate
 {
-
     func portForwardingRuleSheet(
         _ vc: PortForwardingRuleSheetContentViewController, didAdd rule: PortForwardingRule
     ) {

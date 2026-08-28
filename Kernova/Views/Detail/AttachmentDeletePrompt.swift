@@ -1,6 +1,5 @@
 import Foundation
 
-
 /// The confirmation a per-row storage/removable delete should present.
 ///
 /// The trailing Cancel button is added by the presenter, not modeled here.
