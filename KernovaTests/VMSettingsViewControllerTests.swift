@@ -1343,6 +1343,10 @@ struct VMSettingsViewControllerTests {
 
         #expect(vmnet.materializeCount == 1)
         #expect(visibleLabel("192.168.64.9", in: vc.view))
+        // The Network card states the same address: nothing else re-renders it
+        // for an idle stopped VM, so the materialization has to paint both.
+        let card = try #require(vc.overviewCardForTesting(.network))
+        #expect(findLabel(withText: "192.168.64.9", in: card) != nil)
     }
 
     @Test("A failed materialization leaves the placeholder without spinning the refresh loop")

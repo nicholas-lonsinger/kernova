@@ -878,6 +878,37 @@ struct ClipboardContentChipTests {
                 == ClipboardContentDescriber.indicatorText(forPlainText: "typed by hand"))
     }
 
+    @Test("with no content type the chip reserves no band above the buffer")
+    func noContentTypeLeavesNoBand() {
+        // A running VM whose guest agent hasn't connected has no clipboard
+        // service, so nothing names a content type — the card must not open with
+        // a strip of blank fill above the editor.
+        let instance = makeClipboardInstance()
+        let vc = ClipboardContentViewController(
+            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 360),
+            styleMask: [.titled], backing: .buffered, defer: true)
+        window.contentViewController = vc
+        vc.view.layoutSubtreeIfNeeded()
+
+        #expect(vc.contentChipTextForTesting.isEmpty)
+        #expect(vc.contentChipBandHeightForTesting == 0)
+    }
+
+    @Test("a named content type reserves the chip's band")
+    func namedContentTypeReservesTheBand() {
+        let (vc, _) = makeController(content: ClipboardContent(text: "buffer text"))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 360),
+            styleMask: [.titled], backing: .buffered, defer: true)
+        window.contentViewController = vc
+        vc.view.layoutSubtreeIfNeeded()
+
+        #expect(!vc.contentChipTextForTesting.isEmpty)
+        #expect(vc.contentChipBandHeightForTesting > 0)
+    }
+
     @Test("a transient message lands in the status slot and leaves the chip alone")
     func transientLeavesTheChipAlone() {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))

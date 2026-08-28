@@ -396,6 +396,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// The buffer card's content-type chip.
     var contentChipTextForTesting: String { bufferCard.chipTextForTesting }
 
+    /// The band the chip reserves above the buffer's content.
+    var contentChipBandHeightForTesting: CGFloat { bufferCard.chipBandHeightForTesting }
+
     var isPassthroughSwitchOnForTesting: Bool { passthroughSwitch.state == .on }
 
     /// Whether the manual command actions are offered right now.

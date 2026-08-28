@@ -648,7 +648,6 @@ extension VMSettingsViewController {
         displayResolutionIsCustom = false
         panels.removeAll()
         panelChrome.removeAll()
-        selectedCategory = nil
 
         identityHeader = VMIdentityHeaderView()
         overviewVC.rebuild(guestOS: instance.configuration.guestOS)
@@ -682,7 +681,11 @@ extension VMSettingsViewController {
             addPanelContent(panel)
             panels[category] = panel
         }
-        refreshHeader()
+        // Through `show`, not by setting `selectedCategory`: the overview's own
+        // visibility is written there and nowhere else, so a rebuild that only
+        // cleared the category would leave the overview hidden from the previous
+        // VM's drill-in — a blank pane with nothing to click.
+        show(nil)
     }
 
     /// Stacks one category's sections into the panel shown for it.
@@ -727,6 +730,16 @@ extension VMSettingsViewController {
     }
 
     private func show(_ category: VMSettingsCategory?) {
+        // Settle an open field editor before its panel goes: AppKit doesn't
+        // resign first responder on hide, so a half-typed MAC address, display
+        // dimension or inline row title would keep focus inside a hidden panel,
+        // swallowing keystrokes and committing later out of context. Resigning
+        // commits it through the normal end-editing path.
+        if let window = view.window, let responder = window.firstResponder as? NSView,
+            responder.isDescendant(of: view)
+        {
+            window.makeFirstResponder(nil)
+        }
         selectedCategory = category
         overviewVC.view.isHidden = category != nil
         for (key, panel) in panels {
@@ -1434,6 +1447,16 @@ extension VMSettingsViewController {
         }
     }
 
+    /// Renders a newly-resolved address on both surfaces that state it.
+    ///
+    /// The panel row alone is not enough: the Network card reads the resolved
+    /// address too, and `apply()` — which paints the cards — may never run again
+    /// for an idle stopped VM, leaving the card without the row for good.
+    private func refreshResolvedIPAddress() {
+        refreshIPAddressRow()
+        refreshOverview()
+    }
+
     /// Materializes `kind`'s network off-main so the pending IP address row
     /// can fill in; re-renders on success. Single-flight — every refresh of a
     /// still-pending row lands here, and one materialization serves them all.
@@ -1446,7 +1469,7 @@ extension VMSettingsViewController {
             // materialized network can't serve (subnet capacity, pending
             // reservation) leaves the address underivable, and re-arming from
             // that refresh would spin materialize→refresh forever.
-            if materialized { self?.refreshIPAddressRow() }
+            if materialized { self?.refreshResolvedIPAddress() }
             self?.ipAddressMaterializeTask = nil
         }
     }

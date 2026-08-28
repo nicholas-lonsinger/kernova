@@ -66,13 +66,20 @@ final class VMSettingsOverviewViewController: NSViewController {
     ) {
         rebuild(guestOS: instance.configuration.guestOS)
         for (category, card) in cards {
+            let toggles = VMOverviewSummary.toggles(for: category, instance: instance)
+            // A card states the lock only when nothing on it contradicts the
+            // claim: a card carrying live switches (Sharing, whose clipboard and
+            // drag-and-drop toggles edit while the VM runs, even though its
+            // Shared Directories section locks) would otherwise say "Editable
+            // when stopped" above controls that are editable right now — the
+            // same false-claim rule the live-switchable Network picker gets.
             let locked =
-                category.containsLockableRows && isReadOnly
+                category.containsLockableRows && isReadOnly && toggles.isEmpty
                 && !(category == .network && networkIsLiveSwitchable)
             card.configure(
                 rows: VMOverviewSummary.rows(
                     for: category, instance: instance, resolved: resolved),
-                toggles: VMOverviewSummary.toggles(for: category, instance: instance),
+                toggles: toggles,
                 showsLockHint: locked,
                 warning: resolved.warnings[category])
         }

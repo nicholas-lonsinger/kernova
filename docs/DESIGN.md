@@ -64,7 +64,7 @@ Set `NSStackView.spacing` from the `Spacing` token scale (`Utilities/DesignToken
 
 - Grouped cards: `GroupedFormStyle.cardFill` at `CornerRadius.card`, borderless, with hairlines inset to the label edge and bleeding to the card's trailing edge.
 - The detail pane is an overview of one card per `VMSettingsCategory`, each drilling into that category's panel. A card states the facts answering "what is this VM right now" — never the panel's full row list — so a new setting decides its card representation, or states that it has none.
-- A boolean on a card renders as its live switch where the current state allows editing it, and as a dimmed value row otherwise.
+- A boolean on a card renders as its own live switch, dimmed through `applyGroupedFormRowEnabled` while the current state doesn't allow editing it. A card carrying live switches states no "Editable when stopped" hint — the hint would contradict the controls beside it.
 - A content well — a buffer or preview surface — is an inset card at `CornerRadius.card` filled `.textBackgroundColor`, borderless and clipping, with a capsule chip naming what it holds in its top-trailing corner (`ClipboardBufferCardView`).
 - A pane with no natural width of its own caps its form content at `GroupedFormStyle.columnWidth`, centered.
 - Code blocks: `CalloutStyle.makeCalloutCode` — monospaced, selectable `NSTextField` for copy-worthy snippets.

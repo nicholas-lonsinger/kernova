@@ -107,13 +107,19 @@ func makeGroupedFormScrollView(
 ///
 /// The one place the column rule is expressed, so a pinned header and the
 /// scrolling form it sits above line up by construction.
+///
+/// The preferred width is the cap as a **constant**, never `container.width`
+/// less the insets: a container-relative equality is bidirectional, so at any
+/// priority it also pulls the container in to the column's width wherever the
+/// container's own width is negotiable — which is what a split-view divider and
+/// a window edge are. The inset inequalities alone make a narrow container
+/// squeeze the column, so the fill behavior survives the change.
 @MainActor
 func applyCappedColumn(_ content: NSView, in container: NSView, maxWidth: CGFloat) {
     content.translatesAutoresizingMaskIntoConstraints = false
     let inset = GroupedFormStyle.contentSideInset
-    let fills = content.widthAnchor.constraint(
-        equalTo: container.widthAnchor, constant: -2 * inset)
-    fills.priority = .defaultHigh
+    let prefersFullColumn = content.widthAnchor.constraint(equalToConstant: maxWidth)
+    prefersFullColumn.priority = .defaultHigh
     NSLayoutConstraint.activate([
         content.centerXAnchor.constraint(equalTo: container.centerXAnchor),
         content.widthAnchor.constraint(lessThanOrEqualToConstant: maxWidth),
@@ -121,7 +127,7 @@ func applyCappedColumn(_ content: NSView, in container: NSView, maxWidth: CGFloa
             greaterThanOrEqualTo: container.leadingAnchor, constant: inset),
         content.trailingAnchor.constraint(
             lessThanOrEqualTo: container.trailingAnchor, constant: -inset),
-        fills,
+        prefersFullColumn,
     ])
 }
 

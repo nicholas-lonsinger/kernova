@@ -124,7 +124,7 @@ struct VMSettingsOverviewTests {
     }
 
     @Test("The open category survives a read-only flip and resets on a VM switch")
-    func selectionOutlivesAReadOnlyFlipOnly() {
+    func selectionOutlivesAReadOnlyFlipOnly() throws {
         let (vc, instance, viewModel) = makeController()
         vc.showCategory(.network)
 
@@ -133,7 +133,41 @@ struct VMSettingsOverviewTests {
 
         vc.reconfigure(
             instance: makeInstance(guestOS: .macOS), viewModel: viewModel, isReadOnly: false)
+
         #expect(vc.selectedCategory == nil)
+        // The overview is actually back on screen: a rebuild that only cleared
+        // the category would leave it hidden from the previous VM's drill-in,
+        // and the pane would come up blank with nothing to click.
+        let card = try #require(vc.overviewCardForTesting(.network))
+        #expect(isVisible(card, within: vc.view))
+        for category in VMSettingsCategory.allCases {
+            let panel = try #require(vc.panelForTesting(category))
+            #expect(!isVisible(panel, within: vc.view))
+        }
+    }
+
+    @Test("Opening a panel commits an edit in flight instead of hiding its editor")
+    func drillInSettlesAnOpenFieldEditor() throws {
+        let viewModel = makeViewModel()
+        let instance = makeInstance(guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
+        let vc = VMSettingsViewController(
+            instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        vc.showCategory(.network)
+        let panel = try #require(vc.panelForTesting(.network))
+        let field = try #require(findEditableField(in: panel))
+        #expect(window.makeFirstResponder(field))
+        field.stringValue = "aa:bb:cc:dd:ee:01"
+
+        vc.showOverview()
+
+        // Nothing is left focused inside the hidden panel, so no later keystroke
+        // lands in a control the user can't see.
+        #expect(field.currentEditor() == nil)
+        #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:01")
     }
 
     @Test("The panel header names the VM and repeats its facts line")
@@ -230,16 +264,52 @@ struct VMSettingsOverviewTests {
 
     @Test("Card lock hints show for lockable categories only while read-only")
     func cardLockHintsTrackReadOnly() throws {
-        let (readOnlyVC, _, _) = makeController(isReadOnly: true)
+        let (readOnlyVC, instance, _) = makeController(isReadOnly: true)
         for category in VMSettingsCategory.allCases {
+            // A card carrying live switches makes no lock claim, whatever its
+            // panel holds — covered on its own in `cardWithLiveSwitchesMakesNoLockClaim`.
+            let claimsLock =
+                category.containsLockableRows
+                && VMOverviewSummary.toggles(for: category, instance: instance).isEmpty
             let hints = lockHints(in: try card(category, in: readOnlyVC))
-            #expect(hints.allSatisfy { $0.isHidden != category.containsLockableRows })
+            #expect(hints.allSatisfy { $0.isHidden != claimsLock })
         }
 
         let (editableVC, _, _) = makeController(isReadOnly: false)
         for category in VMSettingsCategory.allCases {
             #expect(lockHints(in: try card(category, in: editableVC)).allSatisfy(\.isHidden))
         }
+    }
+
+    @Test("A card carrying live switches states no lock hint")
+    func cardWithLiveSwitchesMakesNoLockClaim() throws {
+        let (vc, _, _) = makeController(isReadOnly: true)
+
+        // Sharing locks only its Shared Directories section, and its card offers
+        // clipboard sharing, passthrough and drag and drop as live switches —
+        // so the card cannot claim the category is editable only when stopped.
+        #expect(lockHints(in: try card(.sharing, in: vc)).allSatisfy(\.isHidden))
+        #expect(lockHints(in: try card(.storage, in: vc)).allSatisfy { !$0.isHidden })
+        // The panel's own Shared Directories hint still states the lock.
+        let panel = try #require(vc.panelForTesting(.sharing))
+        #expect(lockHints(in: panel).contains { !$0.isHidden })
+    }
+
+    @Test("The pane grows past the column cap instead of pinning its host's width")
+    func paneGrowsPastTheColumnCap() throws {
+        let (vc, _, _) = makeController()
+        let window = makeTestWindow(styleMask: [.titled, .resizable])
+        window.contentViewController = vc
+        window.setContentSize(NSSize(width: 1600, height: 900))
+        vc.view.layoutSubtreeIfNeeded()
+
+        // The column stays capped and centered, but the pane itself takes every
+        // point offered — a column preference that pulled its container in
+        // instead would freeze the window's width and the split-view divider.
+        #expect(vc.view.frame.width == 1600)
+        let scrollView = try #require(firstSubview(NSScrollView.self, in: vc.view))
+        let form = try #require(scrollView.documentView?.subviews.first)
+        #expect(form.frame.width == GroupedFormStyle.columnWidth)
     }
 
     @Test("The Network card drops its lock hint while the picker hot-swaps")
