@@ -59,6 +59,12 @@ struct VMSettingsOverviewTests {
         firstSubview(NSSwitch.self, in: card) { $0.identifier?.rawValue == toggle.rawValue }
     }
 
+    /// The Sharing card's closing line, which opens on the passthrough state.
+    private func summaryLine(in card: NSView) -> String? {
+        firstSubview(NSTextField.self, in: card) { $0.stringValue.hasPrefix("Passthrough ") }?
+            .stringValue
+    }
+
     private func showButton(_ category: VMSettingsCategory, in card: NSView) -> NSButton? {
         firstSubview(NSButton.self, in: card) { $0.toolTip == "Show \(category.title)" }
     }
@@ -91,7 +97,7 @@ struct VMSettingsOverviewTests {
         #expect(cardSwitch(.dropFiles, in: try card(.sharing, in: vc)) != nil)
     }
 
-    @Test("A Linux card set drops the macOS-only rows and keeps the clipboard toggles")
+    @Test("A Linux card set drops the macOS-only rows and keeps the clipboard switch")
     func linuxCardsDropMacOSOnlyRows() throws {
         let (vc, _, _) = makeController(guestOS: .linux)
         let sharing = try card(.sharing, in: vc)
@@ -99,7 +105,7 @@ struct VMSettingsOverviewTests {
         #expect(findLabel(withText: "Input devices", in: try card(.system, in: vc)) == nil)
         #expect(cardSwitch(.dropFiles, in: sharing) == nil)
         #expect(cardSwitch(.clipboardSharing, in: sharing) != nil)
-        #expect(cardSwitch(.clipboardPassthrough, in: sharing) != nil)
+        #expect(summaryLine(in: sharing) != nil)
     }
 
     // MARK: - Drill-in
@@ -261,40 +267,43 @@ struct VMSettingsOverviewTests {
         #expect(panelSwitch.state == .on)
     }
 
-    @Test("Cancelling the card's passthrough confirmation puts both switches back")
+    @Test("Cancelling the passthrough confirmation puts the panel's switch back")
     func cancelledPassthroughRevertsEverySurface() throws {
         let (vc, instance, viewModel) = makeController()
         instance.configuration.clipboardSharingEnabled = true
         reapply(vc, (instance, viewModel))
-        let cardToggle = try #require(
-            cardSwitch(.clipboardPassthrough, in: try card(.sharing, in: vc)))
         let panelToggle = try #require(
             firstSubview(NSSwitch.self, in: vc.view) {
                 $0.action.map(NSStringFromSelector) == "clipboardPassthroughToggled"
             })
 
-        // The user flipped the card's switch; the confirmation sheet is up.
-        cardToggle.state = .on
+        // The user flipped the panel's switch; the confirmation sheet is up.
+        panelToggle.state = .on
         vc.cancelPassthroughEnableForTesting()
 
         #expect(instance.configuration.clipboardPassthroughEnabled == false)
-        #expect(cardToggle.state == .off)
         #expect(panelToggle.state == .off)
+        // The card reads the model, so its line never claimed otherwise.
+        #expect(
+            summaryLine(in: try card(.sharing, in: vc))
+                == "Passthrough off \u{00B7} No shared folders")
     }
 
-    @Test("A card's passthrough switch is dimmed while clipboard sharing is off")
-    func cardPassthroughDimsWithoutSharing() throws {
+    @Test("The Sharing card states passthrough in its line, not as a switch")
+    func sharingCardLineFollowsPassthrough() throws {
         let (vc, instance, viewModel) = makeController()
-        let toggle = try #require(
-            cardSwitch(.clipboardPassthrough, in: try card(.sharing, in: vc)))
-        #expect(toggle.isEnabled == false)
-        #expect(toggle.alphaValue == Alpha.disabled)
+        let sharing = try card(.sharing, in: vc)
+        #expect(cardSwitch(.clipboardPassthrough, in: sharing) == nil)
+        #expect(summaryLine(in: sharing) == "Passthrough off \u{00B7} No shared folders")
 
+        // Turned on where the toggle still lives — the panel, or the clipboard
+        // window — and shared a folder with the guest.
         instance.configuration.clipboardSharingEnabled = true
+        instance.configuration.clipboardPassthroughEnabled = true
+        instance.configuration.sharedDirectories = [SharedDirectory(path: "/tmp/share")]
         reapply(vc, (instance, viewModel))
 
-        #expect(toggle.isEnabled == true)
-        #expect(toggle.alphaValue == 1)
+        #expect(summaryLine(in: sharing) == "Passthrough on \u{00B7} 1 shared folder")
     }
 
     // MARK: - Lock hints and warnings
@@ -323,8 +332,8 @@ struct VMSettingsOverviewTests {
         let (vc, _, _) = makeController(isReadOnly: true)
 
         // Sharing locks only its Shared Directories section, and its card offers
-        // clipboard sharing, passthrough and drag and drop as live switches —
-        // so the card cannot claim the category is editable only when stopped.
+        // clipboard sharing and drag and drop as live switches — so the card
+        // cannot claim the category is editable only when stopped.
         #expect(settingsLockHints(in: try card(.sharing, in: vc)).allSatisfy(\.isHidden))
         #expect(settingsLockHints(in: try card(.storage, in: vc)).allSatisfy { !$0.isHidden })
         // The panel's own Shared Directories hint still states the lock.

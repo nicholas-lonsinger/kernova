@@ -30,17 +30,17 @@ final class VMSettingsOverviewViewController: NSViewController {
         view = stack
     }
 
-    /// (Re)builds the cards for `guestOS`, which decides the switches they hold.
-    func rebuild(guestOS: VMGuestOS) {
+    /// (Re)builds the cards for `instance`, whose guest OS decides the switches
+    /// they hold — the one thing about a VM that changes a card's structure.
+    func rebuild(instance: VMInstance) {
         loadViewIfNeeded()
+        let guestOS = instance.configuration.guestOS
         guard builtGuestOS != guestOS else { return }
         builtGuestOS = guestOS
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         cards.removeAll()
         for category in VMSettingsCategory.allCases {
-            let toggles = VMOverviewToggle.allCases.filter {
-                $0.category == category && ($0 != .dropFiles || guestOS == .macOS)
-            }
+            let toggles = VMOverviewSummary.toggles(for: category, instance: instance).map(\.toggle)
             let card = VMOverviewCardView(category: category, toggles: toggles)
             card.onShow = { [weak self] in
                 guard let self else { return }
@@ -63,7 +63,7 @@ final class VMSettingsOverviewViewController: NSViewController {
     /// false claim.
     func configure(instance: VMInstance, isReadOnly: Bool, resolved: VMOverviewResolved) {
         let networkIsLiveSwitchable = resolved.networkIsLiveSwitchable
-        rebuild(guestOS: instance.configuration.guestOS)
+        rebuild(instance: instance)
         for (category, card) in cards {
             let toggles = VMOverviewSummary.toggles(for: category, instance: instance)
             // A card states the lock only when nothing on it contradicts the
@@ -79,6 +79,7 @@ final class VMSettingsOverviewViewController: NSViewController {
                 rows: VMOverviewSummary.rows(
                     for: category, instance: instance, resolved: resolved),
                 toggles: toggles,
+                note: VMOverviewSummary.note(for: category, instance: instance),
                 showsLockHint: locked,
                 warning: resolved.warnings[category])
         }

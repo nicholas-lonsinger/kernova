@@ -346,7 +346,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     // MARK: - Mirrored toggles
 
     // Each hands the intended value to the shell, which owns the one write path
-    // this setting's overview card shares.
+    // every surface showing the setting shares.
 
     @objc private func clipboardToggled() {
         setToggle(.clipboardSharing, to: clipboardSwitch.state == .on)
