@@ -57,7 +57,7 @@ struct VMSettingsViewControllerTests {
 
     @Test("Internal disk delete offers Move-to-Trash only (no keep-file)")
     func deletePromptInternalDisk() {
-        let prompt = VMSettingsViewController.attachmentDeletePrompt(
+        let prompt = VMSettingsStoragePanelViewController.attachmentDeletePrompt(
             label: "Extra Disk", isInternal: true, isMainDisk: false,
             isGuestAgent: false, sharedVMNames: [])
         #expect(prompt.actions == [.moveToTrash])
@@ -66,7 +66,7 @@ struct VMSettingsViewControllerTests {
 
     @Test("Main disk delete warns it's the startup disk")
     func deletePromptMainDisk() {
-        let prompt = VMSettingsViewController.attachmentDeletePrompt(
+        let prompt = VMSettingsStoragePanelViewController.attachmentDeletePrompt(
             label: "Main Disk", isInternal: true, isMainDisk: true,
             isGuestAgent: false, sharedVMNames: [])
         #expect(prompt.actions == [.moveToTrash])
@@ -75,7 +75,7 @@ struct VMSettingsViewControllerTests {
 
     @Test("Private external delete offers both Move-to-Trash and Remove-from-VM")
     func deletePromptPrivateExternal() {
-        let prompt = VMSettingsViewController.attachmentDeletePrompt(
+        let prompt = VMSettingsStoragePanelViewController.attachmentDeletePrompt(
             label: "Scratch", isInternal: false, isMainDisk: false,
             isGuestAgent: false, sharedVMNames: [])
         #expect(prompt.actions == [.moveToTrash, .removeFromVM])
@@ -83,7 +83,7 @@ struct VMSettingsViewControllerTests {
 
     @Test("Shared external delete hard-blocks trashing (Remove-from-VM only) and names the VMs")
     func deletePromptSharedExternal() {
-        let prompt = VMSettingsViewController.attachmentDeletePrompt(
+        let prompt = VMSettingsStoragePanelViewController.attachmentDeletePrompt(
             label: "Installer", isInternal: false, isMainDisk: false,
             isGuestAgent: false, sharedVMNames: ["macOS Copy", "Linux"])
         #expect(prompt.actions == [.removeFromVM])
@@ -93,7 +93,7 @@ struct VMSettingsViewControllerTests {
 
     @Test("Guest Agent delete only detaches and says the installer isn't deleted")
     func deletePromptGuestAgent() {
-        let prompt = VMSettingsViewController.attachmentDeletePrompt(
+        let prompt = VMSettingsStoragePanelViewController.attachmentDeletePrompt(
             label: "Kernova Guest Agent", isInternal: false, isMainDisk: false,
             isGuestAgent: true, sharedVMNames: [])
         #expect(prompt.actions == [.removeFromVM])
