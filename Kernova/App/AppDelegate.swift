@@ -1523,6 +1523,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         instance.detailPaneMode = instance.detailPaneMode == .settings ? .display : .settings
     }
 
+    /// Returns the detail pane's settings form to its category overview.
+    ///
+    /// The pane owns which category is open; this clears the fact both it and
+    /// the toolbar's back item read.
+    @objc func showSettingsOverview(_ sender: Any?) {
+        activeInstance?.detailPaneShowsSettingsCategory = false
+    }
+
     @objc func renameVM(_ sender: Any?) {
         guard let instance = activeInstance else { return }
         // Reveal the sidebar first so the inline rename always lands on a visible

@@ -1,17 +1,17 @@
 import AppKit
 
-/// The pinned header shown while a settings category is open: a back
-/// affordance carrying the VM name, a compact status line, and the panel title.
+/// The pinned header shown while a settings category is open: the panel title
+/// and a compact status line.
+///
+/// The way back is the window toolbar's back button, and the VM's name is in the
+/// window title, so the header states neither — only what the title bar does not
+/// carry, which is the VM's status.
 ///
 /// A single-section category folds that section's own header into this one, so
 /// the category name is stated once — the info affordance and any readout it
 /// carries are handed over as accessories.
 @MainActor
 final class VMSettingsPanelHeaderView: NSView {
-    /// Fires when the back affordance is activated.
-    var onBack: (() -> Void)?
-
-    private let backButton = NSButton()
     private let statusDot = NSImageView()
     private let factsLabel = NSTextField(labelWithString: "")
     private let titleLabel = NSTextField(labelWithString: "")
@@ -33,11 +33,9 @@ final class VMSettingsPanelHeaderView: NSView {
     /// Paints the header for `title`, hosting `leadingAccessories` beside the
     /// title and `trailingAccessories` at the row's far edge.
     func configure(
-        vmName: String, statusColor: NSColor, statusText: String, facts: String, title: String,
+        statusColor: NSColor, statusText: String, facts: String, title: String,
         leadingAccessories: [NSView] = [], trailingAccessories: [NSView] = []
     ) {
-        backButton.title = vmName
-        backButton.toolTip = "Back to \(vmName)"
         statusDot.contentTintColor = statusColor
         statusDot.setAccessibilityLabel(statusText)
         factsLabel.stringValue = facts
@@ -55,17 +53,6 @@ final class VMSettingsPanelHeaderView: NSView {
     private func buildLayout() {
         translatesAutoresizingMaskIntoConstraints = false
 
-        backButton.image = .systemSymbol("chevron.left", accessibilityDescription: "")
-        backButton.imagePosition = .imageLeading
-        backButton.isBordered = false
-        backButton.bezelStyle = .badge
-        backButton.font = Typography.body
-        backButton.contentTintColor = .controlAccentColor
-        backButton.target = self
-        backButton.action = #selector(backTapped)
-        backButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        backButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
         statusDot.image = .systemSymbol("circle.fill", accessibilityDescription: "")
         statusDot.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 8, weight: .regular)
         statusDot.setContentHuggingPriority(.required, for: .horizontal)
@@ -77,13 +64,13 @@ final class VMSettingsPanelHeaderView: NSView {
         factsLabel.isSelectable = false
         factsLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let navSpacer = NSView()
-        navSpacer.translatesAutoresizingMaskIntoConstraints = false
-        navSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let navRow = NSStackView(views: [backButton, navSpacer, statusDot, factsLabel])
-        navRow.orientation = .horizontal
-        navRow.alignment = .centerY
-        navRow.spacing = Spacing.small
+        let statusSpacer = NSView()
+        statusSpacer.translatesAutoresizingMaskIntoConstraints = false
+        statusSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let statusRow = NSStackView(views: [statusDot, factsLabel, statusSpacer])
+        statusRow.orientation = .horizontal
+        statusRow.alignment = .centerY
+        statusRow.spacing = Spacing.small
 
         titleLabel.font = Typography.title
         titleLabel.lineBreakMode = .byTruncatingTail
@@ -98,18 +85,14 @@ final class VMSettingsPanelHeaderView: NSView {
         titleRow.spacing = Spacing.small
         titleRow.addArrangedSubview(titleLabel)
 
-        let column = NSStackView(views: [navRow, titleRow])
+        let column = NSStackView(views: [statusRow, titleRow])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = Spacing.small
         column.translatesAutoresizingMaskIntoConstraints = false
         addFullSizeSubview(column)
-        for row in [navRow, titleRow] {
+        for row in [statusRow, titleRow] {
             row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
         }
-    }
-
-    @objc private func backTapped() {
-        onBack?()
     }
 }

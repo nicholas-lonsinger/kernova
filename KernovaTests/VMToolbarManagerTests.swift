@@ -27,7 +27,8 @@ struct VMToolbarManagerTests {
         instance: VMInstance? = nil,
         checksPreparing: Bool = true,
         gatesDisplayOnCapability: Bool = true,
-        includeSettingsToggle: Bool = true
+        includeSettingsToggle: Bool = true,
+        includeSettingsBack: Bool = true
     ) -> VMToolbarManager {
         VMToolbarManager(
             configuration: .init(
@@ -38,6 +39,8 @@ struct VMToolbarManagerTests {
                 popOutID: NSToolbarItem.Identifier("testPopOut"),
                 fullscreenID: NSToolbarItem.Identifier("testFullscreen"),
                 settingsToggleID: includeSettingsToggle ? NSToolbarItem.Identifier("testSettingsToggle") : nil,
+                settingsBackID: includeSettingsBack
+                    ? NSToolbarItem.Identifier("testSettingsBack") : nil,
                 checksPreparing: checksPreparing,
                 gatesDisplayOnCapability: gatesDisplayOnCapability
             ),
@@ -148,6 +151,35 @@ struct VMToolbarManagerTests {
         let manager = makeManager()
         let item = manager.makeToolbarItem(for: NSToolbarItem.Identifier("unknown"))
         #expect(item == nil)
+    }
+
+    @Test("makeToolbarItem returns the settings back button as a navigational item")
+    func settingsBackItemStructure() {
+        let manager = makeManager()
+        let item = manager.makeToolbarItem(for: NSToolbarItem.Identifier("testSettingsBack"))
+        #expect(item != nil)
+        #expect(item?.isBordered == true)
+        #expect(item?.isNavigational == true)
+        #expect(item?.label == "Back")
+        #expect(item?.action == #selector(AppDelegate.showSettingsOverview(_:)))
+        #expect(item?.autovalidates == false)
+    }
+
+    @Test("makeToolbarItem returns nil for the back button where it isn't configured")
+    func settingsBackItemAbsentWhenUnconfigured() {
+        let manager = makeManager(includeSettingsBack: false)
+        #expect(manager.makeToolbarItem(for: NSToolbarItem.Identifier("testSettingsBack")) == nil)
+    }
+
+    /// The back item is inserted and removed with the pane's drill-in state, so
+    /// it must stay out of the identifier lists a saved layout is built from —
+    /// otherwise it would sit in the toolbar with nothing to go back from.
+    @Test("The settings back button is in no layout list")
+    func settingsBackItemIsNotPartOfAnyLayout() {
+        let manager = makeManager()
+        let back = NSToolbarItem.Identifier("testSettingsBack")
+        #expect(!manager.sharedItemIdentifiers.contains(back))
+        #expect(!manager.defaultItemIdentifiers.contains(back))
     }
 
     @Test("sharedItemIdentifiers contains all configured identifiers")

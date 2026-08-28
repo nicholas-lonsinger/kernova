@@ -110,6 +110,14 @@ final class VMInstance {
 
     var detailPaneMode: DetailPaneMode = .display
 
+    /// Whether the detail pane has drilled into one settings category rather
+    /// than showing the overview.
+    ///
+    /// The settings pane is the writer; the window toolbar reads it to offer
+    /// the way back, which is why it lives here rather than in the pane — the
+    /// two have no other channel, as with ``detailPaneMode``.
+    var detailPaneShowsSettingsCategory = false
+
     // MARK: - Clipboard Sharing
 
     /// Bidirectional pipes for the SPICE clipboard console port (Linux guests only).
@@ -669,6 +677,7 @@ final class VMInstance {
         // Reset so the next start lands on the display rather than inheriting
         // a stuck settings mode from the previous session.
         detailPaneMode = .display
+        detailPaneShowsSettingsCategory = false
         onPoweredOff?()
     }
 

@@ -26,6 +26,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     private static let logger = Logger(subsystem: "app.kernova", category: "MainWindowController")
     private static let toolbarNewVM = NSToolbarItem.Identifier("newVM")
+    /// The settings back button, inserted and removed with the drill-in state
+    /// rather than living in the user's layout.
+    private static let toolbarSettingsBack = NSToolbarItem.Identifier("settingsBack")
 
     // Palette-only items (offered in the customize sheet, not in the default
     // set). VM-scoped verbs only — app-global commands like "Open VMs Folder"
@@ -48,6 +51,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 popOutID: NSToolbarItem.Identifier("popOut"),
                 fullscreenID: NSToolbarItem.Identifier("fullscreen"),
                 settingsToggleID: NSToolbarItem.Identifier("settingsToggle"),
+                settingsBackID: Self.toolbarSettingsBack,
                 checksPreparing: true,
                 gatesDisplayOnCapability: true
             ),
@@ -116,6 +120,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         updateToolbarItems()
         updateWindowTitle()
         observeWindowState()
+        syncSettingsBackVisibility()
         adoptPersistedNewVMRemoval()
         observeSidebarCollapse()
         Self.logger.notice("Main window controller initialized")
@@ -150,11 +155,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 _ = self.viewModel.selectedInstance?.hasLiveVirtualMachine
                 _ = self.viewModel.selectedInstance?.configuration.clipboardSharingEnabled
                 _ = self.viewModel.selectedInstance?.detailPaneMode
+                _ = self.viewModel.selectedInstance?.detailPaneShowsSettingsCategory
                 _ = self.viewModel.selectedInstance?.hasLiveEphemeralSession
             },
             apply: { [weak self] in
                 self?.updateToolbarItems()
                 self?.updateWindowTitle()
+                self?.syncSettingsBackVisibility()
             }
         )
     }
@@ -244,6 +251,33 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         newVMCollapseRemovalIndex = index
     }
 
+    // MARK: - Settings Back Item
+
+    /// Shows the back button only while the detail pane has drilled into a
+    /// settings category, and takes it away otherwise.
+    ///
+    /// Insert/remove rather than enable/disable: a category the user is not in
+    /// has nothing to go back from, and a permanently-present ghost button
+    /// would claim otherwise. Both directions run with autosave suspended — the
+    /// item is a state-driven presentation, never part of the user's layout,
+    /// which is also why it is allowed but not default.
+    private func syncSettingsBackVisibility() {
+        guard let toolbar = window?.toolbar, !toolbar.customizationPaletteIsRunning else { return }
+        let wanted = viewModel.selectedInstance?.detailPaneShowsSettingsCategory ?? false
+        let index = toolbar.items.firstIndex { $0.itemIdentifier == Self.toolbarSettingsBack }
+        if wanted, index == nil {
+            // Immediately after the tracking separator: the leading edge of the
+            // detail side, where a navigation control belongs.
+            let separator = toolbar.items.firstIndex { $0.itemIdentifier == .sidebarTrackingSeparator }
+            let insertion = separator.map { $0 + 1 } ?? toolbar.items.count
+            withAutosaveSuspended(toolbar) {
+                toolbar.insertItem(withItemIdentifier: Self.toolbarSettingsBack, at: insertion)
+            }
+        } else if !wanted, let index {
+            withAutosaveSuspended(toolbar) { toolbar.removeItem(at: index) }
+        }
+    }
+
     /// Runs a programmatic toolbar mutation without contaminating the
     /// autosaved configuration.
     private func withAutosaveSuspended(_ toolbar: NSToolbar, _ mutate: () -> Void) {
@@ -287,9 +321,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         ] + toolbarManager.defaultItemIdentifiers
     }
 
+    /// Allowed but never default: the back item is inserted and removed with
+    /// the pane's drill-in state, so it stays out of every saved layout — which
+    /// is also what lets it reach users whose autosaved layout predates it.
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
             Self.toolbarNewVM,
+            Self.toolbarSettingsBack,
             .toggleSidebar,
             .sidebarTrackingSeparator,
             .space,
@@ -325,6 +363,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         guard sheetIsCustomizationPalette, let toolbar = window?.toolbar else { return }
         if let index = newVMCollapseRemovalIndex {
             restoreNewVMItem(in: toolbar, at: index)
+        }
+        // The back item is a state-driven presentation, so the layout the user
+        // arranges must not show it; `windowDidEndSheet` puts it back.
+        if let index = toolbar.items.firstIndex(where: { $0.itemIdentifier == Self.toolbarSettingsBack }) {
+            withAutosaveSuspended(toolbar) { toolbar.removeItem(at: index) }
         }
     }
 
@@ -365,8 +408,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         }
         updateToolbarItems()
         // Re-apply the collapse-driven New VM removal that `windowWillBeginSheet`
-        // undid for the palette.
+        // undid for the palette, and the back item it took away.
         applyNewVMVisibility(in: toolbar)
+        syncSettingsBackVisibility()
     }
 
     func toolbar(

@@ -23,6 +23,9 @@ final class VMToolbarManager: NSObject {
         /// When non-nil, a gear-icon button that toggles the detail pane between the live
         /// display and the (read-only) settings form.
         let settingsToggleID: NSToolbarItem.Identifier?
+        /// When non-nil, the leading-edge back button shown only while the
+        /// settings form has drilled into a category.
+        let settingsBackID: NSToolbarItem.Identifier?
 
         /// When `true`, checks `instance.isPreparing` and disables all items while preparing.
         let checksPreparing: Bool
@@ -99,6 +102,7 @@ final class VMToolbarManager: NSObject {
     private static let fullscreenToolTip = "Enter fullscreen display"
     private static let exitFullscreenToolTip = "Exit fullscreen display"
     private static let showSettingsToolTip = "Show settings (read-only while the VM is running)"
+    private static let settingsBackToolTip = "Show all settings"
     private static let showDisplayToolTip = "Return to the VM display"
 
     private enum LifecycleSegment: Int {
@@ -203,6 +207,19 @@ final class VMToolbarManager: NSObject {
                 action: #selector(AppDelegate.toggleFullscreen(_:)),
                 toolTip: Self.fullscreenToolTip
             )
+
+        case configuration.settingsBackID:
+            let item = makeBorderedItem(
+                identifier: identifier,
+                label: "Back",
+                symbol: "chevron.left",
+                action: #selector(AppDelegate.showSettingsOverview(_:)),
+                toolTip: Self.settingsBackToolTip
+            )
+            // Pinned to the leading edge, ahead of the tracking separator's
+            // trailing side, the way a navigation control reads.
+            item.isNavigational = true
+            return item
 
         case configuration.settingsToggleID:
             let item = makeBorderedItem(

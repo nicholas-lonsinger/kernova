@@ -1,4 +1,5 @@
 import AppKit
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
@@ -101,7 +102,7 @@ struct VMSettingsOverviewTests {
 
     @Test("The card affordance opens its panel and hides the overview; back returns")
     func drillInAndBack() throws {
-        let (vc, _, _) = makeController()
+        let (vc, instance, viewModel) = makeController()
         let storageCard = try card(.storage, in: vc)
         let panel = try #require(vc.panelForTesting(.storage))
         #expect(isVisible(storageCard, within: vc.view))
@@ -114,9 +115,11 @@ struct VMSettingsOverviewTests {
         #expect(isVisible(panel, within: vc.view))
         #expect(!isVisible(storageCard, within: vc.view))
 
-        let header = try #require(firstSubview(VMSettingsPanelHeaderView.self, in: vc.view))
-        let back = try #require(findButton(titled: "Test VM", in: header))
-        back.performClick(nil)
+        // What the toolbar's back button does: clear the fact, and let the
+        // pane follow it back on the next pass.
+        #expect(instance.detailPaneShowsSettingsCategory)
+        instance.detailPaneShowsSettingsCategory = false
+        reapply(vc, (instance, viewModel))
 
         #expect(vc.selectedCategory == nil)
         #expect(isVisible(storageCard, within: vc.view))
@@ -144,6 +147,49 @@ struct VMSettingsOverviewTests {
             let panel = try #require(vc.panelForTesting(category))
             #expect(!isVisible(panel, within: vc.view))
         }
+    }
+
+    @Test("The drill-in state the toolbar reads follows the open category")
+    func drillInStateIsPublishedForTheToolbar() throws {
+        let (vc, instance, viewModel) = makeController()
+        #expect(instance.detailPaneShowsSettingsCategory == false)
+
+        vc.showCategory(.storage)
+        #expect(instance.detailPaneShowsSettingsCategory)
+
+        vc.showOverview()
+        #expect(instance.detailPaneShowsSettingsCategory == false)
+
+        // Leaving the pane takes the affordance with it — the display route has
+        // nothing to go back from.
+        vc.showCategory(.storage)
+        vc.viewWillDisappear()
+        #expect(instance.detailPaneShowsSettingsCategory == false)
+
+        // Returning to a pane still on its panel offers it again.
+        vc.viewDidAppear()
+        #expect(instance.detailPaneShowsSettingsCategory)
+
+        // Switching VMs leaves nothing set on the one being left behind.
+        vc.reconfigure(
+            instance: makeInstance(guestOS: .macOS), viewModel: viewModel, isReadOnly: false)
+        #expect(instance.detailPaneShowsSettingsCategory == false)
+    }
+
+    @Test("The toolbar's back button returns the pane through the observation loop")
+    func clearingTheDrillInFactReturnsToTheOverview() async throws {
+        let (vc, instance, _) = makeController()
+        vc.showCategory(.network)
+
+        // Exactly what `AppDelegate.showSettingsOverview` writes, landing through
+        // the production `ObservationLoop` rather than a hand-called pass.
+        //
+        // RATIONALE: genuine no-signal predicate (docs/TESTING.md "Async waits
+        // in tests") — the observed effect is the pane's own `selectedCategory`,
+        // with no Observable or `AsyncGate` signal to arm against.
+        instance.detailPaneShowsSettingsCategory = false
+
+        try await waitUntil { vc.selectedCategory == nil }
     }
 
     @Test("Opening a panel commits an edit in flight instead of hiding its editor")
@@ -180,9 +226,12 @@ struct VMSettingsOverviewTests {
         vc.showCategory(.system)
 
         let header = try #require(firstSubview(VMSettingsPanelHeaderView.self, in: vc.view))
-        #expect(findButton(titled: instance.name, in: header) != nil)
         #expect(findLabel(withText: "System", in: header) != nil)
         #expect(findLabel(withText: facts, in: header) != nil)
+        // The window title carries the VM's name, so the header doesn't repeat
+        // it — and the way back is the toolbar's button, not an in-pane link.
+        #expect(findLabel(withText: instance.name, in: header) == nil)
+        #expect(findButton(titled: instance.name, in: header) == nil)
     }
 
     @Test("A single-section panel states its name once, keeping the section's affordances")
