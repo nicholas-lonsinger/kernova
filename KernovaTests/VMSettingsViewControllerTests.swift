@@ -1068,7 +1068,7 @@ struct VMSettingsViewControllerTests {
         }
         width.integerValue = 640
         height.integerValue = 401
-        vc.controlTextDidEndEditing(Notification(name: .init("test"), object: width))
+        commitEdit(width, on: vc)
 
         #expect(instance.configuration.displayWidth == 800)
         #expect(instance.configuration.displayHeight == 600)
