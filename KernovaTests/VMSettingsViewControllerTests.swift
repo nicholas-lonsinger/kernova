@@ -181,7 +181,7 @@ struct VMSettingsViewControllerTests {
 
     @Test("Agent-dependency caption appears for macOS but not Linux")
     func agentDependencyCaptionMacOSOnly() {
-        let caption = VMSettingsViewController.agentDependencyCaption
+        let caption = VMSettingsSharingPanelViewController.agentDependencyCaption
 
         let (macVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
         #expect(containsLabel(caption, in: macVC.view))
@@ -915,7 +915,7 @@ struct VMSettingsViewControllerTests {
 
         let toggle = try #require(firstSwitch(action: "installReminderToggled", in: vc.view))
         #expect(toggle.isEnabled)
-        #expect(!visibleLabel(VMSettingsViewController.installPromptDisabledCaption, in: vc.view))
+        #expect(!visibleLabel(VMSettingsSharingPanelViewController.installPromptDisabledCaption, in: vc.view))
 
         toggle.state = .off
         toggle.sendAction(toggle.action, to: toggle.target)
@@ -936,7 +936,7 @@ struct VMSettingsViewControllerTests {
 
         let toggle = try #require(firstSwitch(action: "installReminderToggled", in: vc.view))
         #expect(!toggle.isEnabled)
-        #expect(visibleLabel(VMSettingsViewController.installPromptDisabledCaption, in: vc.view))
+        #expect(visibleLabel(VMSettingsSharingPanelViewController.installPromptDisabledCaption, in: vc.view))
         // Overridden, not rewritten: the row still shows this VM's own choice.
         #expect(instance.configuration.agentInstallNudgeDismissed == false)
         #expect(toggle.state == .on)
@@ -945,7 +945,7 @@ struct VMSettingsViewControllerTests {
         vc.viewDidAppear()
 
         #expect(toggle.isEnabled)
-        #expect(!visibleLabel(VMSettingsViewController.installPromptDisabledCaption, in: vc.view))
+        #expect(!visibleLabel(VMSettingsSharingPanelViewController.installPromptDisabledCaption, in: vc.view))
     }
 
     // MARK: - Display section

@@ -224,3 +224,24 @@ struct VMSettingsLockRegistry {
         }
     }
 }
+
+/// Value snapshot of one attachment, share or media row's rendered appearance,
+/// used to skip rebuilding a list when nothing it displays has changed.
+struct VMSettingsRenderedRow: Equatable {
+    let id: UUID
+    let iconSystemName: String
+    let title: String
+    let notes: String
+    let subtitle: String
+    let isMissing: Bool
+    let missingPath: String?
+    let readOnly: Bool
+    let controlsEnabled: Bool
+}
+
+/// The item id a row control carries in its `identifier`.
+@MainActor
+func attachmentUUID(from sender: Any?) -> UUID? {
+    guard let raw = (sender as? NSView)?.identifier?.rawValue else { return nil }
+    return UUID(uuidString: raw)
+}
