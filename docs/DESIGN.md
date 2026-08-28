@@ -48,6 +48,7 @@ Set `NSStackView.spacing` from the `Spacing` token scale (`Utilities/DesignToken
 - Grouped settings forms: build with the `GroupedFormStyle` factories (`makeGroupedFormCard`, `makeGroupedFormCardRow`, …).
 - Row and toggle labels take sentence case; section headers, push-button titles, Apple UI names, and Kernova proper nouns keep Title Case.
 - A section whose rows only a stopped VM can change carries the `makeGroupedFormLockHint()` header hint and dims those rows to `Alpha.disabled`; there is no page-level lock banner.
+- A setting rendered on more than one surface keeps one write path: every surface reads its value from the model, every action calls the one shared handler, and a refused or cancelled write is undone by re-rendering all of them — never by poking the control that fired.
 - Navigation list: source-list `NSOutlineView` (`SidebarViewController`).
 - Borderless `NSButton` in lists; `.rounded` bezel for dialog actions.
 - `AlertButtonRole.destructive` for delete/stop confirmations (`SheetAlert`).
@@ -62,5 +63,7 @@ Set `NSStackView.spacing` from the `Spacing` token scale (`Utilities/DesignToken
 ### Cards and Containers
 
 - Grouped cards: `GroupedFormStyle.cardFill` at `CornerRadius.card`, borderless, with hairlines inset to the label edge and bleeding to the card's trailing edge.
+- The detail pane is an overview of one card per `VMSettingsCategory`, each drilling into that category's panel. A card states the facts answering "what is this VM right now" — never the panel's full row list — so a new setting decides its card representation, or states that it has none.
+- A boolean on a card renders as its live switch where the current state allows editing it, and as a dimmed value row otherwise.
 - A pane with no natural width of its own caps its form content at `GroupedFormStyle.columnWidth`, centered.
 - Code blocks: `CalloutStyle.makeCalloutCode` — monospaced, selectable `NSTextField` for copy-worthy snippets.

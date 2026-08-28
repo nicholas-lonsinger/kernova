@@ -37,15 +37,19 @@ struct VMSettingsViewControllerTests {
 
     /// Builds the controller and runs its appearance lifecycle so `apply()` has
     /// populated control values and enabled state.
-    private func makeController(guestOS: VMGuestOS, isReadOnly: Bool) -> (
-        VMSettingsViewController, VMInstance, VMLibraryViewModel
-    ) {
+    ///
+    /// `category` opens that panel, which is what puts its rows on screen — the
+    /// pane starts on the overview, where every panel is hidden.
+    private func makeController(
+        guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = nil
+    ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
         let viewModel = makeViewModel()
         let instance = makeInstance(guestOS: guestOS)
         let vc = VMSettingsViewController(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
+        if let category { vc.showCategory(category) }
         return (vc, instance, viewModel)
     }
 
@@ -202,6 +206,7 @@ struct VMSettingsViewControllerTests {
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
+        vc.showCategory(.general)
         return (vc, instance, viewModel)
     }
 
@@ -272,12 +277,19 @@ struct VMSettingsViewControllerTests {
 
     /// The General card's visible run of rows and hairlines, `true` for a
     /// hairline — collapsible rows expanded, hidden views dropped.
-    private func generalCardLayout(in view: NSView) -> [Bool] {
+    ///
+    /// Scoped to the General panel: the overview's General card states some of
+    /// the same rows and would match first.
+    private func generalCardLayout(in vc: VMSettingsViewController) -> [Bool] {
         // The card's content stack is the one holding hairlines directly, which
         // no section or form stack does.
+        guard let panel = vc.panelForTesting(.general) else {
+            Issue.record("Expected a General panel")
+            return []
+        }
         guard
             let content = firstSubview(
-                NSStackView.self, in: view,
+                NSStackView.self, in: panel,
                 where: { stack in
                     stack.arrangedSubviews.contains { $0 is NSBox }
                         && findLabel(withText: "Boot mode", in: stack) != nil
@@ -303,23 +315,23 @@ struct VMSettingsViewControllerTests {
     func osRowsLeaveNoStrandedSeparator() {
         // Every combination, since each leaves a different run of rows behind.
         let noRows = makeOSRowsController(guestOS: .macOS).0
-        #expect(separatesEveryRow(generalCardLayout(in: noRows.view)))
+        #expect(separatesEveryRow(generalCardLayout(in: noRows)))
 
         let installOnly = makeOSRowsController(
             guestOS: .macOS, installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84")
         ).0
-        #expect(separatesEveryRow(generalCardLayout(in: installOnly.view)))
+        #expect(separatesEveryRow(generalCardLayout(in: installOnly)))
 
         let agentOnly = makeOSRowsController(guestOS: .macOS, lastSeenGuestOSVersion: "26.6").0
-        #expect(separatesEveryRow(generalCardLayout(in: agentOnly.view)))
+        #expect(separatesEveryRow(generalCardLayout(in: agentOnly)))
 
         let bothRows = makeOSRowsController(
             guestOS: .macOS, installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84"),
             lastSeenGuestOSVersion: "26.6"
         ).0
-        #expect(separatesEveryRow(generalCardLayout(in: bothRows.view)))
+        #expect(separatesEveryRow(generalCardLayout(in: bothRows)))
         // Both OS rows really are in the run the check passed on.
-        #expect(generalCardLayout(in: bothRows.view).count == generalCardLayout(in: noRows.view).count + 4)
+        #expect(generalCardLayout(in: bothRows).count == generalCardLayout(in: noRows).count + 4)
     }
 
     @Test("A first agent report reveals the OS Version row without rebuilding the form")
@@ -339,12 +351,15 @@ struct VMSettingsViewControllerTests {
     @Test("A wide detail pane holds the form at the capped column width")
     func formTakesTheCappedColumn() throws {
         let (vc, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
-        let scrollView = try #require(vc.view as? NSScrollView)
-        scrollView.frame = NSRect(x: 0, y: 0, width: 1200, height: 800)
-        scrollView.layoutSubtreeIfNeeded()
+        vc.view.frame = NSRect(x: 0, y: 0, width: 1200, height: 800)
+        vc.view.layoutSubtreeIfNeeded()
 
+        let scrollView = try #require(firstSubview(NSScrollView.self, in: vc.view))
         let form = try #require(scrollView.documentView?.subviews.first)
         #expect(form.frame.width == GroupedFormStyle.columnWidth)
+        // The pinned header takes its own height and the form scrolls under it.
+        #expect(scrollView.frame.height > 0)
+        #expect(scrollView.frame.height < vc.view.frame.height)
     }
 
     @Test("The identity header leads the form, naming the VM")
@@ -376,14 +391,16 @@ struct VMSettingsViewControllerTests {
     }
 
     @Test("Section lock hints are visible only while read-only")
-    func lockHintVisibilityTracksReadOnly() {
-        let (readOnlyVC, _, _) = makeController(guestOS: .macOS, isReadOnly: true)
-        let shown = lockHints(in: readOnlyVC.view)
+    func lockHintVisibilityTracksReadOnly() throws {
+        let (readOnlyVC, _, _) = makeController(guestOS: .macOS, isReadOnly: true, category: .system)
+        let readOnlyPanel = try #require(readOnlyVC.panelForTesting(.system))
+        let shown = lockHints(in: readOnlyPanel)
         #expect(!shown.isEmpty)
         #expect(shown.allSatisfy { !$0.isHidden })
 
-        let (editableVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
-        let hidden = lockHints(in: editableVC.view)
+        let (editableVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false, category: .system)
+        let editablePanel = try #require(editableVC.panelForTesting(.system))
+        let hidden = lockHints(in: editablePanel)
         #expect(!hidden.isEmpty)
         #expect(hidden.allSatisfy { $0.isHidden })
     }
@@ -400,21 +417,24 @@ struct VMSettingsViewControllerTests {
 
     @Test("A locked row dims while read-only and is undimmed when editable")
     func lockedRowDimsWhileReadOnly() throws {
-        let (readOnlyVC, _, _) = makeController(guestOS: .macOS, isReadOnly: true)
-        let locked = try #require(row(labeled: "CPU cores", in: readOnlyVC.view))
+        let (readOnlyVC, _, _) = makeController(guestOS: .macOS, isReadOnly: true, category: .system)
+        let readOnlyPanel = try #require(readOnlyVC.panelForTesting(.system))
+        let locked = try #require(row(labeled: "CPU cores", in: readOnlyPanel))
         #expect(locked.alphaValue == Alpha.disabled)
 
-        let (editableVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
-        let editable = try #require(row(labeled: "CPU cores", in: editableVC.view))
+        let (editableVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false, category: .system)
+        let editablePanel = try #require(editableVC.panelForTesting(.system))
+        let editable = try #require(row(labeled: "CPU cores", in: editablePanel))
         #expect(editable.alphaValue == 1)
     }
 
     @Test("The auto-resize row stays undimmed inside a locked Display card")
     func hotToggleableRowStaysUndimmed() throws {
         for isReadOnly in [true, false] {
-            let (vc, _, _) = makeController(guestOS: .macOS, isReadOnly: isReadOnly)
+            let (vc, _, _) = makeController(guestOS: .macOS, isReadOnly: isReadOnly, category: .system)
+            let panel = try #require(vc.panelForTesting(.system))
             let autoResize = try #require(
-                row(labeled: "Automatically resize with window", in: vc.view))
+                row(labeled: "Automatically resize with window", in: panel))
             #expect(autoResize.alphaValue == 1)
         }
     }
@@ -422,21 +442,18 @@ struct VMSettingsViewControllerTests {
     @Test("A live-switchable Network section hides its hint and leaves the Mode row undimmed")
     func liveSwitchableNetworkRowStaysUndimmed() throws {
         let (vc, _) = makeNetworkController(isReadOnly: true, status: .running)
-        let modeRow = try #require(row(labeled: "Mode", in: vc.view))
+        let panel = try #require(vc.panelForTesting(.network))
+        let modeRow = try #require(row(labeled: "Mode", in: panel))
         #expect(modeRow.alphaValue == 1)
         #expect(networkModePopUp(in: vc.view)?.isEnabled == true)
-
-        let header = try #require(
-            firstSubview(NSStackView.self, in: vc.view) { stack in
-                stack.arrangedSubviews.contains { ($0 as? NSTextField)?.stringValue == "Network" }
-            })
-        #expect(lockHints(in: header).allSatisfy { $0.isHidden })
+        #expect(panelHeaderLockHints(in: vc).allSatisfy { $0.isHidden })
     }
 
     @Test("A stopped VM's Network Mode row dims with the rest of its section")
     func stoppedNetworkModeRowFollowsTheLock() throws {
         let (vc, _) = makeNetworkController(isReadOnly: true, status: .stopped)
-        let modeRow = try #require(row(labeled: "Mode", in: vc.view))
+        let panel = try #require(vc.panelForTesting(.network))
+        let modeRow = try #require(row(labeled: "Mode", in: panel))
         #expect(modeRow.alphaValue == Alpha.disabled)
     }
 
@@ -498,7 +515,7 @@ struct VMSettingsViewControllerTests {
 
     @Test("The Startup section says which order the marked VMs start in")
     func startupSectionStatesTheStartOrder() {
-        let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: false)
+        let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: false, category: .general)
         #expect(visibleLabel(VMSettingsViewController.autoStartOrderCaption, in: vc.view))
     }
 
@@ -525,6 +542,7 @@ struct VMSettingsViewControllerTests {
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
+        vc.showCategory(.general)
         return (vc, instance)
     }
 
@@ -676,6 +694,7 @@ struct VMSettingsViewControllerTests {
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
+        vc.showCategory(.general)
         return (vc, instance)
     }
 
@@ -908,7 +927,8 @@ struct VMSettingsViewControllerTests {
     /// disabled state reads as broken.
     @Test("The app-wide preference disables the install-reminder switch and says why")
     func installReminderDisabledByAppWidePreference() throws {
-        let (vc, instance, viewModel) = makeController(guestOS: .macOS, isReadOnly: false)
+        let (vc, instance, viewModel) = makeController(
+            guestOS: .macOS, isReadOnly: false, category: .sharing)
 
         viewModel.agentInstallPromptDisabled = true
         // Stands in for the observation pass a Settings-window toggle triggers.
@@ -957,6 +977,7 @@ struct VMSettingsViewControllerTests {
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
+        vc.showCategory(.system)
         return (vc, instance)
     }
 
@@ -1281,6 +1302,7 @@ struct VMSettingsViewControllerTests {
             vmnetNetworks: vmnetNetworks)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
+        vc.showCategory(.network)
         return (vc, instance)
     }
 
@@ -1900,17 +1922,18 @@ struct VMSettingsViewControllerTests {
 
     @Test("The Network lock hint hides while the picker is live, and only then")
     func networkLockHintHidesWhileThePickerIsLive() {
+        // The Network panel's hint lives on its panel header, the category being
+        // a single section.
         let (liveVC, _) = makeNetworkController(
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"),
             isReadOnly: true, status: .running)
-        // Every other lockable section still shows its hint; only the live
-        // picker's section drops the claim.
-        #expect(lockHints(in: liveVC.view).filter(\.isHidden).count == 1)
+        #expect(panelHeaderLockHints(in: liveVC).allSatisfy { $0.isHidden })
 
         let (savingVC, _) = makeNetworkController(
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]),
             isReadOnly: true, status: .saving)
-        #expect(lockHints(in: savingVC.view).allSatisfy { !$0.isHidden })
+        #expect(panelHeaderLockHints(in: savingVC).allSatisfy { !$0.isHidden })
+        #expect(!panelHeaderLockHints(in: savingVC).isEmpty)
     }
 
     @Test("A live mode switch writes the config from the running picker")
@@ -2133,6 +2156,15 @@ struct VMSettingsViewControllerTests {
 
     private func lockHints(in view: NSView) -> [NSView] {
         allSubviews(NSStackView.self, in: view) { $0.toolTip == groupedFormLockHintText }
+    }
+
+    /// The lock hints on the open panel's header, which is where a
+    /// single-section category's hint lives.
+    private func panelHeaderLockHints(in vc: VMSettingsViewController) -> [NSView] {
+        guard let header = firstSubview(VMSettingsPanelHeaderView.self, in: vc.view) else {
+            return []
+        }
+        return lockHints(in: header)
     }
 
     /// The grouped-form row whose leading label reads `label`.

@@ -614,6 +614,18 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         }
     }
 
+    /// Whether the stored resolution — what the VM boots at — reads as HiDPI.
+    var displayResolutionIsHiDPI: Bool {
+        guestOS.supportsDisplayDensity && DisplayBootSizing.isHiDPI(ppi: displayPPI)
+    }
+
+    /// The "looks like" size the UI states — half the stored pixel count while
+    /// the stored resolution is HiDPI.
+    var displayBaseSize: (width: Int, height: Int) {
+        guard displayResolutionIsHiDPI else { return (displayWidth, displayHeight) }
+        return (displayWidth / 2, displayHeight / 2)
+    }
+
     // MARK: - Removable Media
 
     static func removableMediaChanged(old: VMConfiguration, new: VMConfiguration) -> Bool {

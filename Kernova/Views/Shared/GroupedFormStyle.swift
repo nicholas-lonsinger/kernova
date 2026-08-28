@@ -98,21 +98,31 @@ func makeGroupedFormScrollView(
         ])
         return scrollView
     }
+    applyCappedColumn(content, in: docView, maxWidth: maxContentWidth)
+    return scrollView
+}
 
-    // Fill the inset viewport, up to the cap, centered on what's left over.
+/// Pins `content` as a centered column inside `container`: inset from both
+/// edges, capped at `maxWidth`, and filling whatever is narrower than the cap.
+///
+/// The one place the column rule is expressed, so a pinned header and the
+/// scrolling form it sits above line up by construction.
+@MainActor
+func applyCappedColumn(_ content: NSView, in container: NSView, maxWidth: CGFloat) {
+    content.translatesAutoresizingMaskIntoConstraints = false
+    let inset = GroupedFormStyle.contentSideInset
     let fills = content.widthAnchor.constraint(
-        equalTo: docView.widthAnchor, constant: -2 * inset)
+        equalTo: container.widthAnchor, constant: -2 * inset)
     fills.priority = .defaultHigh
     NSLayoutConstraint.activate([
-        content.centerXAnchor.constraint(equalTo: docView.centerXAnchor),
-        content.widthAnchor.constraint(lessThanOrEqualToConstant: maxContentWidth),
+        content.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+        content.widthAnchor.constraint(lessThanOrEqualToConstant: maxWidth),
         content.leadingAnchor.constraint(
-            greaterThanOrEqualTo: docView.leadingAnchor, constant: inset),
+            greaterThanOrEqualTo: container.leadingAnchor, constant: inset),
         content.trailingAnchor.constraint(
-            lessThanOrEqualTo: docView.trailingAnchor, constant: -inset),
+            lessThanOrEqualTo: container.trailingAnchor, constant: -inset),
         fills,
     ])
-    return scrollView
 }
 
 // MARK: - Grouped cards (System Settings style)

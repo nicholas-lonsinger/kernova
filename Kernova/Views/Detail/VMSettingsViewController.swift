@@ -79,8 +79,35 @@ final class VMSettingsViewController: NSViewController {
     // MARK: - Persistent chrome (rebuilt per instance in `buildForm`)
 
     private let formStack = NSStackView()
-    /// The VM's identity block above the form.
+    /// The scrolling form below the pinned header.
+    private var scrollView = NSScrollView()
+    /// Hosts the identity header, or the panel header while a category is open.
+    private let headerContent = NSStackView()
+    /// The VM's identity block, shown above the overview.
     private var identityHeader = VMIdentityHeaderView()
+    private let panelHeader = VMSettingsPanelHeaderView()
+
+    /// The overview of category cards, shown when no category is open.
+    private let overviewVC = VMSettingsOverviewViewController()
+    /// One panel per category, all built up-front and shown one at a time —
+    /// hidden panels stay in the tree so `apply()` keeps them current and a
+    /// drill-in shows the right state immediately.
+    private var panels: [VMSettingsCategory: NSView] = [:]
+    /// Header pieces a single-section category hands to the panel header.
+    private var panelChrome: [VMSettingsCategory: PanelChrome] = [:]
+    /// The open category, or `nil` for the overview.
+    private(set) var selectedCategory: VMSettingsCategory?
+    /// What the IP address row currently shows, `nil` while it shows nothing —
+    /// the Network card states the same value without a second resolution.
+    private var resolvedIPAddress: String?
+    /// Whether port forwarding applies, as `refreshNetwork()` decided it.
+    private var networkForwardsPorts = false
+
+    /// What a panel header shows in place of a single section's own header.
+    private struct PanelChrome {
+        var leading: [NSView] = []
+        var trailing: [NSView] = []
+    }
 
     /// "Editable when stopped" hints on lockable section headers; shown only
     /// while read-only.
@@ -393,12 +420,46 @@ final class VMSettingsViewController: NSViewController {
         // The detail pane has no width of its own, so the form takes the capped
         // column rather than stretching a row's control away from its label.
         let scrollView = makeGroupedFormScrollView(
-            documentView: formStack, topInset: Spacing.large, bottomInset: 16,
+            documentView: formStack, bottomInset: 16,
             maxContentWidth: GroupedFormStyle.columnWidth)
         scrollView.setContentHuggingPriority(.defaultLow, for: .vertical)
         scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView, cues: .flash)
+        self.scrollView = scrollView
 
-        view = scrollView
+        // The identity — or, inside a panel, the back affordance and panel title
+        // — stays put while the form below it scrolls, on the same column.
+        headerContent.orientation = .vertical
+        headerContent.alignment = .leading
+        headerContent.spacing = Spacing.none
+        let headerContainer = NSView()
+        headerContainer.translatesAutoresizingMaskIntoConstraints = false
+        headerContainer.addSubview(headerContent)
+        applyCappedColumn(
+            headerContent, in: headerContainer, maxWidth: GroupedFormStyle.columnWidth)
+
+        let root = NSView()
+        root.addSubview(headerContainer)
+        root.addSubview(scrollView)
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            headerContent.topAnchor.constraint(
+                equalTo: headerContainer.topAnchor, constant: Spacing.large),
+            headerContent.bottomAnchor.constraint(
+                equalTo: headerContainer.bottomAnchor, constant: -Spacing.medium),
+            headerContainer.topAnchor.constraint(equalTo: root.topAnchor),
+            headerContainer.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            headerContainer.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: headerContainer.bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+        ])
+
+        overviewVC.delegate = self
+        addChild(overviewVC)
+        panelHeader.onBack = { [weak self] in self?.showOverview() }
+
+        view = root
         buildForm()
     }
 
@@ -585,37 +646,125 @@ extension VMSettingsViewController {
         renderedPortForwardingRows = nil
 
         displayResolutionIsCustom = false
+        panels.removeAll()
+        panelChrome.removeAll()
+        selectedCategory = nil
 
         identityHeader = VMIdentityHeaderView()
-        addSection(identityHeader)
-        formStack.setCustomSpacing(Spacing.major, after: identityHeader)
-        addSection(buildGeneralSection())
-        addSection(buildStartupSection())
-        addSection(buildResourcesSection())
-        addSection(buildDisplaySection())
-        addSection(buildStorageSection())
-        addSection(buildRemovableMediaSection())
-        addSection(buildSharedDirectoriesSection())
-        addSection(buildSnapshotsSection())
-        addSection(buildNetworkSection())
-        addSection(buildAudioSection())
-        if instance.configuration.guestOS == .macOS {
-            addSection(buildInputDevicesSection())
+        overviewVC.rebuild(guestOS: instance.configuration.guestOS)
+        addPanelContent(overviewVC.view)
+
+        let guestOS = instance.configuration.guestOS
+        var sections: [VMSettingsCategory: [NSView]] = [
+            .general: [buildGeneralSection(), buildStartupSection()],
+            .storage: [buildStorageSection(), buildRemovableMediaSection()],
+            .network: [buildNetworkSection()],
+            .snapshots: [buildSnapshotsSection()],
+        ]
+        var system = [buildResourcesSection(), buildDisplaySection(), buildAudioSection()]
+        if guestOS == .macOS {
+            system.append(buildInputDevicesSection())
         }
-        if isGuestAgentSectionVisible(guestOS: instance.configuration.guestOS) {
+        system.append(buildSerialRelaySection())
+        sections[.system] = system
+        sections[.sharing] = [
+            buildSharedDirectoriesSection(),
             // macOS: clipboard rides the agent's vsock channel, so it nests in
-            // the agent group rather than forming a sibling section.
-            addSection(buildGuestAgentSection())
-        } else {
-            // Linux: clipboard is SPICE-based, so it stands alone.
-            addSection(buildClipboardSection())
+            // the agent group rather than forming a sibling section. Linux:
+            // clipboard is SPICE-based, so it stands alone.
+            isGuestAgentSectionVisible(guestOS: guestOS)
+                ? buildGuestAgentSection() : buildClipboardSection(),
+        ]
+
+        for category in VMSettingsCategory.allCases {
+            let panel = makePanel(sections[category] ?? [])
+            panel.isHidden = true
+            addPanelContent(panel)
+            panels[category] = panel
         }
-        addSection(buildSerialRelaySection())
+        refreshHeader()
     }
 
-    private func addSection(_ section: NSView) {
-        formStack.addArrangedSubview(section)
-        section.widthAnchor.constraint(equalTo: formStack.widthAnchor).isActive = true
+    /// Stacks one category's sections into the panel shown for it.
+    private func makePanel(_ sections: [NSView]) -> NSView {
+        let stack = NSStackView(views: sections)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = Spacing.section
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        for section in sections {
+            section.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        return stack
+    }
+
+    #if DEBUG
+    /// The panel view for `category`, so a test can scope its search to one
+    /// category rather than the whole pane.
+    func panelForTesting(_ category: VMSettingsCategory) -> NSView? { panels[category] }
+
+    /// The overview's card for `category`.
+    func overviewCardForTesting(_ category: VMSettingsCategory) -> VMOverviewCardView? {
+        overviewVC.cardForTesting(category)
+    }
+    #endif
+
+    private func addPanelContent(_ content: NSView) {
+        formStack.addArrangedSubview(content)
+        content.widthAnchor.constraint(equalTo: formStack.widthAnchor).isActive = true
+    }
+
+    // MARK: - Navigation
+
+    /// Opens `category`'s panel in place of the overview.
+    func showCategory(_ category: VMSettingsCategory) {
+        show(category)
+    }
+
+    /// Returns to the overview.
+    func showOverview() {
+        show(nil)
+    }
+
+    private func show(_ category: VMSettingsCategory?) {
+        selectedCategory = category
+        overviewVC.view.isHidden = category != nil
+        for (key, panel) in panels {
+            panel.isHidden = key != category
+        }
+        refreshHeader()
+        view.layoutSubtreeIfNeeded()
+        // A panel opens at its own top, not wherever the previous one was
+        // scrolled to.
+        scrollView.contentView.scroll(to: .zero)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        scrollMoreIndicator?.rearmFlash()
+    }
+
+    /// Puts the identity header or the open panel's header into the pinned
+    /// header container.
+    private func refreshHeader() {
+        let header: NSView = selectedCategory == nil ? identityHeader : panelHeader
+        if headerContent.arrangedSubviews.first !== header {
+            headerContent.arrangedSubviews.forEach { $0.removeFromSuperview() }
+            headerContent.addArrangedSubview(header)
+            header.widthAnchor.constraint(equalTo: headerContent.widthAnchor).isActive = true
+        }
+        refreshPanelHeader()
+    }
+
+    /// Paints the open panel's header from the model; a no-op on the overview.
+    private func refreshPanelHeader() {
+        guard let category = selectedCategory else { return }
+        let chrome = panelChrome[category] ?? PanelChrome()
+        panelHeader.configure(
+            vmName: instance.name,
+            statusColor: instance.statusDisplayNSColor,
+            statusText: instance.statusDisplayName,
+            facts: identityHeader.renderedFactsLine,
+            title: category.title,
+            leadingAccessories: chrome.leading,
+            trailingAccessories: chrome.trailing)
     }
 
     private func makeSection(_ subviews: [NSView]) -> NSStackView {
@@ -649,11 +798,7 @@ extension VMSettingsViewController {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         views.append(spacer)
         if lockable {
-            let hint = makeGroupedFormLockHint()
-            hint.isHidden = true
-            lockHints.append(hint)
-            lockHintSink?(hint)
-            views.append(hint)
+            views.append(makeLockHint(sink: lockHintSink))
         }
 
         let header = NSStackView(views: views)
@@ -661,6 +806,23 @@ extension VMSettingsViewController {
         header.alignment = .centerY
         header.spacing = Spacing.small
         return header
+    }
+
+    /// A lock hint registered in ``lockHints``, for a section header or the
+    /// panel header a single-section category hands its chrome to.
+    private func makeLockHint(sink: ((NSView) -> Void)? = nil) -> NSView {
+        let hint = makeGroupedFormLockHint()
+        hint.isHidden = true
+        lockHints.append(hint)
+        sink?(hint)
+        return hint
+    }
+
+    /// An info affordance for a category whose panel header states its name.
+    private func makeInfoButton(label: String, paragraphs: [InfoPopoverParagraph]) -> NSView {
+        let info = InfoButtonView()
+        info.configure(label: label, paragraphs: paragraphs)
+        return info
     }
 
     /// Registers `row` as editable only while the VM is stopped, returning it so
@@ -1107,10 +1269,15 @@ extension VMSettingsViewController {
 
     // MARK: Snapshots
 
+    /// The Snapshots panel's only section, so its header moves to the panel
+    /// header — which hosts the info affordance and the size readout the
+    /// section would otherwise draw itself.
     private func buildSnapshotsSection() -> NSView {
-        let section = SnapshotSectionView()
+        let section = SnapshotSectionView(showsHeader: false)
         section.delegate = self
         snapshotSection = section
+        panelChrome[.snapshots] = PanelChrome(
+            leading: [section.infoButton], trailing: [section.sizeReadout])
         // A fresh section has no sizes yet, so the read must be re-issued.
         snapshotSizeIDs = nil
         return section
@@ -1181,11 +1348,14 @@ extension VMSettingsViewController {
                     "The interface usually appears as `enp0s1`. If networking doesn't come up, make sure your distro's DHCP client or NetworkManager is running."
                 ))
         }
-        let header = makeHeader("Network", lockable: true, paragraphs: paragraphs) {
-            self.networkLockHint = $0
-        }
+        // The Network panel's only section, so its header moves to the panel
+        // header: the info affordance and the lock hint go there rather than
+        // repeating the category name inside the form.
+        let hint = makeLockHint { self.networkLockHint = $0 }
+        panelChrome[.network] = PanelChrome(
+            leading: [makeInfoButton(label: "Network", paragraphs: paragraphs)],
+            trailing: [hint])
         return makeSection([
-            header,
             makeGroupedFormCard(rows: rows),
             networkWarningContainer,
             networkNoDeviceCaption,
@@ -1225,6 +1395,7 @@ extension VMSettingsViewController {
     /// is meant to be shown even while the VM is stopped.
     private func refreshIPAddressRow() {
         let config = instance.configuration
+        resolvedIPAddress = nil
         guard config.networkEnabled else {
             ipAddressRow?.isHidden = true
             return
@@ -1237,6 +1408,7 @@ extension VMSettingsViewController {
             ipAddressRow?.isHidden = false
             ipAddressCopyButton?.isHidden = true
             ipAddressValueLabel?.stringValue = "Assigned by your network"
+            resolvedIPAddress = "Assigned by your network"
         case .shared, .hostOnly:
             guard entitlements.hasVMNetworking, let mac = config.macAddress,
                 let kind = VmnetNetworkKind(mode: mode)
@@ -1253,6 +1425,7 @@ extension VMSettingsViewController {
                 ipAddressCopyValue = address
                 ipAddressCopyButton?.isHidden = false
                 ipAddressValueLabel?.stringValue = address
+                resolvedIPAddress = address
             } else {
                 ipAddressCopyButton?.isHidden = true
                 ipAddressValueLabel?.stringValue = "—"
@@ -2012,9 +2185,33 @@ extension VMSettingsViewController {
         refreshRemovableList()
         refreshSharedList()
         refreshSnapshots()
+        // Last, so the cards state what the refreshers above just resolved.
+        refreshOverview()
+        refreshPanelHeader()
 
         let refs = externalAttachmentRefs(for: instance.configuration)
         Task { await fileMonitor.setPaths(refs) }
+    }
+
+    /// Paints the overview cards from the same pass that refreshed the panels.
+    private func refreshOverview() {
+        var warnings: [VMSettingsCategory: String] = [:]
+        warnings[.general] = renderedAutoStartWarning
+        warnings[.network] = renderedNetworkMACWarning
+        if renderedAudioWarning == .denied {
+            warnings[.system] = Self.micPermissionDeniedWarning
+        }
+        let resolved = VMOverviewResolved(
+            networkModeTitle: networkModePopUp.titleOfSelectedItem,
+            ipAddress: resolvedIPAddress,
+            portForwardingRuleCount: networkForwardsPorts
+                ? instance.configuration.portForwardingRules.count : nil,
+            inputDevicesTitle: instance.configuration.guestOS == .macOS
+                ? inputDevicesPopUp.titleOfSelectedItem : nil,
+            warnings: warnings)
+        overviewVC.configure(
+            instance: instance, isReadOnly: isReadOnly,
+            networkIsLiveSwitchable: networkModeIsLiveSwitchable, resolved: resolved)
     }
 
     private func refreshGeneral() {
@@ -2177,21 +2374,16 @@ extension VMSettingsViewController {
             && instance.configuration.displayHiDPI
     }
 
-    /// Whether the stored resolution — what the VM boots at — reads as HiDPI.
-    ///
-    /// The materialized counterpart to `displayHiDPIIntent`; the two diverge
-    /// only in match mode, where the trio is the previous boot's artifact.
+    /// Whether the stored resolution reads as HiDPI — the materialized
+    /// counterpart to `displayHiDPIIntent`; the two diverge only in match mode,
+    /// where the trio is the previous boot's artifact.
     private var displayResolutionIsHiDPI: Bool {
-        instance.configuration.guestOS.supportsDisplayDensity
-            && DisplayBootSizing.isHiDPI(ppi: instance.configuration.displayPPI)
+        instance.configuration.displayResolutionIsHiDPI
     }
 
-    /// The "looks like" size shown in the Width/Height fields — half the stored
-    /// pixel count while the stored resolution is HiDPI.
+    /// The "looks like" size shown in the Width/Height fields.
     private var displayBaseSize: (width: Int, height: Int) {
-        let config = instance.configuration
-        guard displayResolutionIsHiDPI else { return (config.displayWidth, config.displayHeight) }
-        return (config.displayWidth / 2, config.displayHeight / 2)
+        instance.configuration.displayBaseSize
     }
 
     private func refreshDisplay() {
@@ -2277,6 +2469,7 @@ extension VMSettingsViewController {
         let forwards =
             hasDevice && instance.configuration.networkMode == .shared
             && entitlements.hasVMNetworking && instance.configuration.macAddress != nil
+        networkForwardsPorts = forwards
         portForwardingRow?.isHidden = !forwards
         if forwards { refreshPortForwardingRows() }
     }
@@ -2309,6 +2502,11 @@ extension VMSettingsViewController {
         addFullWidth(banner, to: networkWarningContainer)
     }
 
+    /// What the Audio banner — and the System card's warning glyph — say about a
+    /// refused microphone.
+    static let micPermissionDeniedWarning =
+        "Microphone permission is denied. Enable it in System Settings for Kernova to pass your microphone to VMs."
+
     private func refreshAudio() {
         audioInputSwitch.state = instance.configuration.audioInputEnabled ? .on : .off
         audioOutputSwitch.state = instance.configuration.audioOutputEnabled ? .on : .off
@@ -2337,8 +2535,7 @@ extension VMSettingsViewController {
             let banner = makeGroupedFormBanner(
                 symbolName: "exclamationmark.triangle.fill",
                 tint: .systemRed,
-                message:
-                    "Microphone permission is denied. Enable it in System Settings for Kernova to pass your microphone to VMs.",
+                message: Self.micPermissionDeniedWarning,
                 trailingButtons: [openSettings, info])
             addFullWidth(banner, to: audioWarningContainer)
         }
@@ -3003,12 +3200,31 @@ extension VMSettingsViewController: NSMenuItemValidation {
     }
 
     @objc private func autoStartToggled() {
-        writeConfig { $0.startsAutomaticallyOnLaunch = autoStartSwitch.state == .on }
+        setAutoStart(autoStartSwitch.state == .on)
+    }
+
+    /// The one write path for the auto-start flag, whichever surface's switch
+    /// asked for it.
+    private func setAutoStart(_ isOn: Bool) {
+        writeMirrored { $0.startsAutomaticallyOnLaunch = isOn }
     }
 
     @objc private func ephemeralModeToggled() {
-        let enabled = ephemeralSwitch.state == .on
-        writeConfig { $0.applyEphemeralMode(enabled: enabled, baseline: defaultEphemeralBaseline()) }
+        setEphemeralMode(ephemeralSwitch.state == .on)
+    }
+
+    private func setEphemeralMode(_ isOn: Bool) {
+        writeMirrored { $0.applyEphemeralMode(enabled: isOn, baseline: defaultEphemeralBaseline()) }
+    }
+
+    /// Writes a setting that renders on more than one surface, re-rendering all
+    /// of them when the view model refuses so no control is left showing a value
+    /// the model does not hold.
+    private func writeMirrored(_ mutate: (inout VMConfiguration) -> Void) {
+        guard writeConfig(mutate) else {
+            apply()
+            return
+        }
     }
 
     @objc private func ephemeralBaselineChanged() {
@@ -3044,23 +3260,38 @@ extension VMSettingsViewController: NSMenuItemValidation {
     }
 
     @objc private func clipboardToggled() {
-        writeConfig { $0.clipboardSharingEnabled = clipboardSwitch.state == .on }
+        setClipboardSharing(clipboardSwitch.state == .on)
+    }
+
+    private func setClipboardSharing(_ isOn: Bool) {
+        writeMirrored { $0.clipboardSharingEnabled = isOn }
     }
 
     @objc private func dropFilesToggled() {
-        writeConfig { $0.dropFilesEnabled = dropFilesSwitch.state == .on }
+        setDropFiles(dropFilesSwitch.state == .on)
+    }
+
+    private func setDropFiles(_ isOn: Bool) {
+        writeMirrored { $0.dropFilesEnabled = isOn }
     }
 
     @objc private func clipboardPassthroughToggled() {
-        // Turning off is immediate; turning on grants the guest continuous read of
-        // the host clipboard, so confirm first and revert the switch on cancel.
-        guard clipboardPassthroughSwitch.state == .on else {
-            writeConfig { $0.clipboardPassthroughEnabled = false }
+        setClipboardPassthrough(clipboardPassthroughSwitch.state == .on)
+    }
+
+    /// The one write path for passthrough, whichever surface's switch asked for
+    /// it: turning off is immediate, turning on grants the guest continuous read
+    /// of the host clipboard and so confirms first.
+    private func setClipboardPassthrough(_ isOn: Bool) {
+        guard isOn else {
+            writeMirrored { $0.clipboardPassthroughEnabled = false }
             return
         }
         guard let window = view.window else {
-            // No window to host a sheet — don't silently enable; revert.
-            clipboardPassthroughSwitch.state = .off
+            // No window to host a sheet — don't silently enable; put every
+            // surface back on what the model holds.
+            Self.logger.warning("No window to confirm clipboard passthrough in; leaving it off")
+            revertPassthroughToggle()
             return
         }
         presentSheetAlert(
@@ -3071,11 +3302,13 @@ extension VMSettingsViewController: NSMenuItemValidation {
     }
 
     private func enablePassthroughConfirmed() {
-        writeConfig { $0.clipboardPassthroughEnabled = true }
+        writeMirrored { $0.clipboardPassthroughEnabled = true }
     }
 
+    /// Undoes a passthrough enable that never happened by re-rendering from the
+    /// model, so every switch showing it goes back — not just the one flipped.
     private func revertPassthroughToggle() {
-        clipboardPassthroughSwitch.state = .off
+        apply()
     }
 
     #if DEBUG
@@ -3719,6 +3952,30 @@ struct AttachmentDeletePrompt: Equatable {
     let message: String
     /// Offered actions in display order; the first is the default button.
     let actions: [Action]
+}
+
+// MARK: - VMSettingsOverviewDelegate
+
+extension VMSettingsViewController: VMSettingsOverviewDelegate {
+    func overview(
+        _ vc: VMSettingsOverviewViewController, didSelect category: VMSettingsCategory
+    ) {
+        showCategory(category)
+    }
+
+    /// Routes a card switch into the same write path the panel's own switch
+    /// takes, so a setting shown twice is still written once.
+    func overview(
+        _ vc: VMSettingsOverviewViewController, didSet toggle: VMOverviewToggle, to isOn: Bool
+    ) {
+        switch toggle {
+        case .autoStart: setAutoStart(isOn)
+        case .ephemeralMode: setEphemeralMode(isOn)
+        case .clipboardSharing: setClipboardSharing(isOn)
+        case .clipboardPassthrough: setClipboardPassthrough(isOn)
+        case .dropFiles: setDropFiles(isOn)
+        }
+    }
 }
 
 // MARK: - SnapshotSectionViewDelegate

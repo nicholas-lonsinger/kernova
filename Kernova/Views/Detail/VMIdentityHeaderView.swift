@@ -16,6 +16,10 @@ final class VMIdentityHeaderView: NSView {
     private let statusDot = NSImageView()
     private let factsLabel = NSTextField(labelWithString: "")
 
+    /// The facts line as currently rendered, for a surface stating the same
+    /// summary — the disk figure is read here and nowhere else.
+    private(set) var renderedFactsLine = ""
+
     private var instance: VMInstance?
     /// Boot-disk capacity, once the off-main read lands.
     private var diskBytes: UInt64?
@@ -79,12 +83,13 @@ final class VMIdentityHeaderView: NSView {
         nameLabel.stringValue = instance.name
         statusDot.contentTintColor = instance.statusDisplayNSColor
         statusDot.setAccessibilityLabel(instance.statusDisplayName)
-        factsLabel.stringValue = Self.factsLine(
+        renderedFactsLine = Self.factsLine(
             status: instance.statusDisplayName,
             osVersion: instance.guestOSVersionDisplay,
             cores: config.cpuCount,
             memoryGB: config.memorySizeInGB,
             diskBytes: diskBytes)
+        factsLabel.stringValue = renderedFactsLine
     }
 
     /// Reads the boot disk's capacity off the main thread, re-rendering when it
