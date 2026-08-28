@@ -58,12 +58,11 @@ final class VMSettingsOverviewViewController: NSViewController {
 
     /// Paints every card from the model.
     ///
-    /// `networkIsLiveSwitchable` mirrors the Network panel's rule: a picker that
-    /// hot-swaps while the VM runs makes the section's lock hint a false claim.
-    func configure(
-        instance: VMInstance, isReadOnly: Bool, networkIsLiveSwitchable: Bool,
-        resolved: VMOverviewResolved
-    ) {
+    /// `resolved.networkIsLiveSwitchable` mirrors the Network panel's rule: a
+    /// picker that hot-swaps while the VM runs makes the section's lock hint a
+    /// false claim.
+    func configure(instance: VMInstance, isReadOnly: Bool, resolved: VMOverviewResolved) {
+        let networkIsLiveSwitchable = resolved.networkIsLiveSwitchable
         rebuild(guestOS: instance.configuration.guestOS)
         for (category, card) in cards {
             let toggles = VMOverviewSummary.toggles(for: category, instance: instance)

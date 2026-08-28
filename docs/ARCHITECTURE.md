@@ -253,7 +253,9 @@ Constraints the file layout does not show:
 
 - **No shared callout, form container, or base class.** Consistency comes from shared token sets
   (`CalloutStyle`, `GroupedFormStyle`, `Spacing`, `Typography`), not inheritance; genuinely
-  shareable controllers are reused by init parameterization.
+  shareable controllers are reused by init parameterization. The settings panels follow the same
+  rule: `VMSettingsPanel` is a protocol with default hook bodies, and what they share beyond it is
+  a context object and the form atoms.
 - **Popover anchors target a wrapper `NSView`, never an inner control**, so
   `NSPopover.preferredEdge` is interpreted in an unflipped coordinate system.
 - **The clipboard window renders inline RTF only, never HTML.**
@@ -267,8 +269,10 @@ NSSplitViewController (MainWindowController)
 └── Detail:  DetailContainerViewController  (owns DetailAlertsPresenter)
     ├── VMDisplayBackingView (layered on top; VZVirtualMachineView + overlays)
     └── DetailEmptyStateView ⇆ VMDetailRouterViewController  (routes via DetailRoute.resolve)
-            ├── VMSettingsViewController                    (stopped / running-settings)
-            │       └── VMSettingsOverviewViewController    (category cards ⇆ VMSettingsOverviewDelegate)
+            ├── VMSettingsViewController                    (stopped / running-settings; shell)
+            │       ├── VMSettingsOverviewViewController    (category cards ⇆ VMSettingsOverviewDelegate)
+            │       └── VMSettings{General,System,Storage,Network,Sharing,Snapshots}PanelViewController
+            │               (one per VMSettingsCategory; VMSettingsPanel ⇆ VMSettingsPanelHost)
             ├── DetailBannerView + VMSettingsViewController (initial boot / error)
             ├── DetailStatusPlaceholderViewController       (preparing / transition)
             ├── GuestSetupProgressViewController            (setup)

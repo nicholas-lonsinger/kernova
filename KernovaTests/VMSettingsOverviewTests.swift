@@ -67,6 +67,11 @@ struct VMSettingsOverviewTests {
         allSubviews(NSStackView.self, in: view) { $0.toolTip == groupedFormLockHintText }
     }
 
+    /// The panel header's bezeled back button, which carries no title.
+    private func backButton(in header: NSView) -> NSButton? {
+        firstSubview(NSButton.self, in: header) { $0.toolTip == "Show all settings" }
+    }
+
     // MARK: - Cards
 
     @Test("The overview carries one card per category")
@@ -114,9 +119,8 @@ struct VMSettingsOverviewTests {
         #expect(isVisible(panel, within: vc.view))
         #expect(!isVisible(storageCard, within: vc.view))
 
-        let header = try #require(firstSubview(VMSettingsPanelHeaderView.self, in: vc.view))
-        let back = try #require(findButton(titled: "Test VM", in: header))
-        back.performClick(nil)
+        let header = try #require(firstSubview(VMIdentityHeaderView.self, in: vc.view))
+        try #require(backButton(in: header)).performClick(nil)
 
         #expect(vc.selectedCategory == nil)
         #expect(isVisible(storageCard, within: vc.view))
@@ -170,19 +174,52 @@ struct VMSettingsOverviewTests {
         #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:01")
     }
 
-    @Test("The panel header names the VM and repeats its facts line")
-    func panelHeaderCarriesIdentity() throws {
+    @Test("A drilled-in header keeps the overview's anatomy, tile and facts line included")
+    func panelHeaderMatchesTheIdentityLayout() throws {
         let (vc, instance, _) = makeController()
-        let identity = try #require(firstSubview(VMIdentityHeaderView.self, in: vc.view))
-        let facts = identity.renderedFactsLine
+        let header = try #require(firstSubview(VMIdentityHeaderView.self, in: vc.view))
+        vc.view.layoutSubtreeIfNeeded()
+        let facts = header.renderedFactsLine
         #expect(!facts.isEmpty)
+        // The overview states the VM's name over the same facts line.
+        #expect(findLabel(withText: instance.name, in: header) != nil)
+        let nameSlot = try #require(findLabel(withText: instance.name, in: header)).frame
 
         vc.showCategory(.system)
+        vc.view.layoutSubtreeIfNeeded()
 
-        let header = try #require(firstSubview(VMSettingsPanelHeaderView.self, in: vc.view))
-        #expect(findButton(titled: instance.name, in: header) != nil)
-        #expect(findLabel(withText: "System", in: header) != nil)
-        #expect(findLabel(withText: facts, in: header) != nil)
+        // The same header, reconfigured — not a second view swapped in.
+        #expect(firstSubview(VMIdentityHeaderView.self, in: vc.view) === header)
+        let back = try #require(backButton(in: header))
+        let title = try #require(findLabel(withText: "System", in: header))
+        let factsLabel = try #require(findLabel(withText: facts, in: header))
+        #expect(back.accessibilityLabel() == "Back")
+        // Borderless: the tile behind it is the bezel, and it is never tinted
+        // with the accent color.
+        #expect(back.isBordered == false)
+        #expect(back.contentTintColor == .secondaryLabelColor)
+        // The tile is unchanged — same size, same fill — and the chevron sits
+        // centered on it, where the guest-OS glyph sits on the overview.
+        let tile = try #require(firstSubview(NSBox.self, in: header))
+        #expect(tile.frame.size == NSSize(width: 44, height: 44))
+        #expect(tile.fillColor == GroupedFormStyle.cardFill)
+        let backCenter = back.convert(NSPoint(x: back.bounds.midX, y: back.bounds.midY), to: header)
+        let tileCenter = tile.convert(NSPoint(x: tile.bounds.midX, y: tile.bounds.midY), to: header)
+        // Within a point: the button's own height is odd, so its center lands on
+        // the backing grid a half-point off the tile's.
+        #expect(abs(backCenter.x - tileCenter.x) < 1)
+        #expect(abs(backCenter.y - tileCenter.y) < 1)
+        // The category name takes the VM name's slot, at the same font — same
+        // origin, the width following the text.
+        #expect(title.font == Typography.title)
+        #expect(title.frame.origin == nameSlot.origin)
+        #expect(title.frame.height == nameSlot.height)
+        #expect(findLabel(withText: instance.name, in: header) == nil)
+        // The facts line stays on its own line below the title, as on the
+        // overview — never trailing it on the title's row.
+        let titleFrame = title.convert(title.bounds, to: header)
+        let factsFrame = factsLabel.convert(factsLabel.bounds, to: header)
+        #expect(factsFrame.maxY <= titleFrame.minY)
     }
 
     @Test("A single-section panel states its name once, keeping the section's affordances")
@@ -191,7 +228,7 @@ struct VMSettingsOverviewTests {
         for category in [VMSettingsCategory.network, .snapshots] {
             vc.showCategory(category)
             let panel = try #require(vc.panelForTesting(category))
-            let header = try #require(firstSubview(VMSettingsPanelHeaderView.self, in: vc.view))
+            let header = try #require(firstSubview(VMIdentityHeaderView.self, in: vc.view))
 
             #expect(findLabel(withText: category.title, in: panel) == nil)
             #expect(findLabel(withText: category.title, in: header) != nil)
@@ -200,7 +237,7 @@ struct VMSettingsOverviewTests {
         // The Snapshots readout follows its info affordance into the header
         // rather than being orphaned with the section header.
         let snapshots = try #require(firstSubview(SnapshotSectionView.self, in: vc.view))
-        let header = try #require(firstSubview(VMSettingsPanelHeaderView.self, in: vc.view))
+        let header = try #require(firstSubview(VMIdentityHeaderView.self, in: vc.view))
         #expect(snapshots.sizeReadout.isDescendant(of: header))
     }
 
@@ -271,13 +308,13 @@ struct VMSettingsOverviewTests {
             let claimsLock =
                 category.containsLockableRows
                 && VMOverviewSummary.toggles(for: category, instance: instance).isEmpty
-            let hints = lockHints(in: try card(category, in: readOnlyVC))
+            let hints = settingsLockHints(in: try card(category, in: readOnlyVC))
             #expect(hints.allSatisfy { $0.isHidden != claimsLock })
         }
 
         let (editableVC, _, _) = makeController(isReadOnly: false)
         for category in VMSettingsCategory.allCases {
-            #expect(lockHints(in: try card(category, in: editableVC)).allSatisfy(\.isHidden))
+            #expect(settingsLockHints(in: try card(category, in: editableVC)).allSatisfy(\.isHidden))
         }
     }
 
@@ -288,11 +325,11 @@ struct VMSettingsOverviewTests {
         // Sharing locks only its Shared Directories section, and its card offers
         // clipboard sharing, passthrough and drag and drop as live switches —
         // so the card cannot claim the category is editable only when stopped.
-        #expect(lockHints(in: try card(.sharing, in: vc)).allSatisfy(\.isHidden))
-        #expect(lockHints(in: try card(.storage, in: vc)).allSatisfy { !$0.isHidden })
+        #expect(settingsLockHints(in: try card(.sharing, in: vc)).allSatisfy(\.isHidden))
+        #expect(settingsLockHints(in: try card(.storage, in: vc)).allSatisfy { !$0.isHidden })
         // The panel's own Shared Directories hint still states the lock.
         let panel = try #require(vc.panelForTesting(.sharing))
-        #expect(lockHints(in: panel).contains { !$0.isHidden })
+        #expect(settingsLockHints(in: panel).contains { !$0.isHidden })
     }
 
     @Test("The pane grows past the column cap instead of pinning its host's width")
@@ -322,9 +359,9 @@ struct VMSettingsOverviewTests {
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
 
-        #expect(lockHints(in: try card(.network, in: vc)).allSatisfy(\.isHidden))
+        #expect(settingsLockHints(in: try card(.network, in: vc)).allSatisfy(\.isHidden))
         // Every other lockable category still states the lock.
-        #expect(lockHints(in: try card(.storage, in: vc)).allSatisfy { !$0.isHidden })
+        #expect(settingsLockHints(in: try card(.storage, in: vc)).allSatisfy { !$0.isHidden })
     }
 
     @Test("A duplicate MAC address raises the Network card's warning glyph")
