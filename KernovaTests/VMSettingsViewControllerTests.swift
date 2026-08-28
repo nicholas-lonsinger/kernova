@@ -516,7 +516,7 @@ struct VMSettingsViewControllerTests {
     @Test("The Startup section says which order the marked VMs start in")
     func startupSectionStatesTheStartOrder() {
         let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: false, category: .general)
-        #expect(visibleLabel(VMSettingsViewController.autoStartOrderCaption, in: vc.view))
+        #expect(visibleLabel(VMSettingsGeneralPanelViewController.autoStartOrderCaption, in: vc.view))
     }
 
     // MARK: - Ephemeral Mode
@@ -702,7 +702,7 @@ struct VMSettingsViewControllerTests {
     func startupWarnsOverTheMacOSLimit() throws {
         let (vc, _) = makeStartupController(guestOS: .macOS, markedMacOSVMs: 3)
         let warning = try #require(
-            VMSettingsViewController.autoStartCapacityWarning(
+            VMSettingsGeneralPanelViewController.autoStartCapacityWarning(
                 isMacOSGuest: true, markedMacOSVMCount: 3))
 
         #expect(visibleLabel(warning, in: vc.view))
@@ -766,7 +766,7 @@ struct VMSettingsViewControllerTests {
             CapacityCase(false, 7, false),
         ])
     func autoStartCapacityWarningMatrix(testCase: CapacityCase) {
-        let warning = VMSettingsViewController.autoStartCapacityWarning(
+        let warning = VMSettingsGeneralPanelViewController.autoStartCapacityWarning(
             isMacOSGuest: testCase.isMacOSGuest, markedMacOSVMCount: testCase.marked)
 
         #expect((warning != nil) == testCase.warns)
