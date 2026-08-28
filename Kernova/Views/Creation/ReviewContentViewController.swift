@@ -109,16 +109,16 @@ final class ReviewContentViewController: NSViewController {
             "General",
             rows: [
                 valueRow("Name", creationVM.vmName),
-                valueRow("Operating System", creationVM.selectedOS.displayName),
-                valueRow("Boot Mode", creationVM.effectiveBootMode.displayName),
+                valueRow("Operating system", creationVM.selectedOS.displayName),
+                valueRow("Boot mode", creationVM.effectiveBootMode.displayName),
             ], to: summary)
 
         addSection(
             "Resources",
             rows: [
-                valueRow("CPU Cores", "\(creationVM.cpuCount)"),
+                valueRow("CPU cores", "\(creationVM.cpuCount)"),
                 valueRow("Memory", "\(creationVM.memoryInGB) GB"),
-                valueRow("Disk Size", DataFormatters.formatDiskSize(creationVM.diskSizeInGB)),
+                valueRow("Disk size", DataFormatters.formatDiskSize(creationVM.diskSizeInGB)),
             ], to: summary)
 
         addSection(
@@ -129,33 +129,33 @@ final class ReviewContentViewController: NSViewController {
             var rows: [NSView] = []
             switch creationVM.ipswSelection {
             case .downloadLatest:
-                rows.append(valueRow("Restore Image", "Download Latest"))
+                rows.append(valueRow("Restore image", "Download Latest"))
                 // Only once the lookup has answered — this source names no
                 // particular image on its own.
                 if let latest = creationVM.latestImage {
                     rows.append(
-                        valueRow("macOS Version", "\(latest.version) (\(latest.build))"))
+                        valueRow("macOS version", "\(latest.version) (\(latest.build))"))
                     if let sizeBytes = creationVM.latestImageSizeBytes {
                         rows.append(
-                            valueRow("Download Size", DataFormatters.formatBytes(sizeBytes)))
+                            valueRow("Download size", DataFormatters.formatBytes(sizeBytes)))
                     }
                 }
             case .catalogVersion(let entry):
-                rows.append(valueRow("Restore Image", "Chosen Version"))
-                rows.append(valueRow("macOS Version", "\(entry.version) (\(entry.build))"))
+                rows.append(valueRow("Restore image", "Chosen Version"))
+                rows.append(valueRow("macOS version", "\(entry.version) (\(entry.build))"))
                 rows.append(
-                    valueRow("Download Size", DataFormatters.formatBytes(entry.sizeBytes)))
+                    valueRow("Download size", DataFormatters.formatBytes(entry.sizeBytes)))
             case .customURL(let image):
-                rows.append(valueRow("Restore Image", "From URL"))
-                rows.append(valueRow("macOS Version", image.versionSummary))
+                rows.append(valueRow("Restore image", "From URL"))
+                rows.append(valueRow("macOS version", image.versionSummary))
                 rows.append(
-                    valueRow("Download Size", DataFormatters.formatBytes(image.sizeBytes)))
+                    valueRow("Download size", DataFormatters.formatBytes(image.sizeBytes)))
             case .localFile(let image):
-                rows.append(valueRow("Restore Image", "Local File"))
+                rows.append(valueRow("Restore image", "Local File"))
                 rows.append(valueRow("File", URL(fileURLWithPath: image.path).lastPathComponent))
                 if let inspected = image.inspection.usable {
                     rows.append(
-                        valueRow("macOS Version", "\(inspected.version) (\(inspected.build))"))
+                        valueRow("macOS version", "\(inspected.version) (\(inspected.build))"))
                     if let sizeBytes = inspected.sizeBytes {
                         rows.append(valueRow("Size", DataFormatters.formatBytes(sizeBytes)))
                     }
@@ -188,10 +188,10 @@ final class ReviewContentViewController: NSViewController {
                             wizardAbbreviateWithTilde(
                                 VMCreationViewModel.downloadsDirectory.path(percentEncoded: false))))
                 case .customURL(let image, let sizeBytes):
-                    rows.append(valueRow("Installer Image", "From URL"))
+                    rows.append(valueRow("Installer image", "From URL"))
                     rows.append(valueRow("File", image.displayName))
                     rows.append(
-                        valueRow("Download Size", DataFormatters.formatBytes(sizeBytes)))
+                        valueRow("Download size", DataFormatters.formatBytes(sizeBytes)))
                     rows.append(
                         valueRow(
                             "Verification", wizardVerificationSummary(sha256: image.sha256)))

@@ -79,13 +79,16 @@ final class VMSettingsViewController: NSViewController {
     // MARK: - Persistent chrome (rebuilt per instance in `buildForm`)
 
     private let formStack = NSStackView()
-    private var bannerContainer = NSView()
+    /// The VM's identity block above the form.
+    private var identityHeader = VMIdentityHeaderView()
 
-    /// Lock icons on lockable section headers; shown only while read-only.
-    private var lockIcons: [NSImageView] = []
-    /// Persistent controls disabled while read-only (per-row controls set their
-    /// own enabled state when the dynamic lists are rebuilt).
-    private var persistentLockableControls: [NSControl] = []
+    /// "Editable when stopped" hints on lockable section headers; shown only
+    /// while read-only.
+    private var lockHints: [NSView] = []
+    /// Form rows that only a stopped VM can change: their controls go inert and
+    /// the whole row dims while read-only (per-row controls in the dynamic lists
+    /// set their own enabled state when those lists are rebuilt).
+    private var lockableRows: [(row: NSView, controls: [NSControl])] = []
 
     // General
     private var nameButton = NSButton()
@@ -94,7 +97,7 @@ final class VMSettingsViewController: NSViewController {
     /// carries no record of the image it was set up from.
     private var installedImageRow: GroupedFormCollapsibleRow?
     private var installedImageValueLabel: NSTextField?
-    /// The OS Version row and its value label, hidden until an agent reports
+    /// The OS version row and its value label, hidden until an agent reports
     /// one; both `nil` for Linux guests, which have no agent to report one.
     private var guestOSVersionRow: GroupedFormCollapsibleRow?
     private var guestOSVersionValueLabel: NSTextField?
@@ -134,12 +137,12 @@ final class VMSettingsViewController: NSViewController {
     /// gray it in step with a switch a VM without snapshots can't use.
     private var ephemeralLabel = NSTextField()
     private var ephemeralBaselinePopUp = NSPopUpButton()
-    /// The Ephemeral Mode row and its Baseline Snapshot sub-option, retained so
+    /// The Ephemeral Mode row and its Baseline snapshot sub-option, retained so
     /// the sub-option shows only while the mode is on.
     private var ephemeralGroup: GroupedFormSubOptionGroup?
     /// Explains that a baseline needs a snapshot first; hidden once the VM has one.
     private var ephemeralNoSnapshotsCaption = NSView()
-    /// One entry of the Baseline Snapshot menu, as rendered.
+    /// One entry of the Baseline snapshot menu, as rendered.
     private struct BaselineMenuItem: Equatable {
         let id: UUID
         let name: String
@@ -205,10 +208,12 @@ final class VMSettingsViewController: NSViewController {
 
     // Network
     private var networkModePopUp = NSPopUpButton()
-    /// The Network header's lock icon, hidden — unlike its `lockIcons` peers —
+    /// The Network Mode row, dimmed on the same terms its header hint is shown.
+    private var networkModeRow: NSView?
+    /// The Network header's lock hint, hidden — unlike its `lockHints` peers —
     /// while the picker is the live-switch surface.
-    private var networkLockIcon: NSImageView?
-    /// The MAC Address row, hidden while the VM has no network device or has
+    private var networkLockHint: NSView?
+    /// The MAC address row, hidden while the VM has no network device or has
     /// yet to be given an address.
     private var macAddressRow: GroupedFormCollapsibleRow?
     private var macAddressField = NSTextField()
@@ -219,7 +224,7 @@ final class VMSettingsViewController: NSViewController {
     /// row shows anything else.
     private var ipAddressCopyValue: String?
     private var ipAddressMaterializeTask: Task<Void, Never>?
-    /// The Port Forwarding block — the rule rows and the Add Rule row — hidden
+    /// The Port forwarding block — the rule rows and the Add Rule row — hidden
     /// wherever forwarding cannot apply.
     private var portForwardingRow: GroupedFormCollapsibleRow?
     /// Holds the rule rows and the trailing Add Rule row, rebuilt on change.
@@ -277,7 +282,7 @@ final class VMSettingsViewController: NSViewController {
         let readOnly: Bool
         let controlsEnabled: Bool
     }
-    /// Value snapshot of the Port Forwarding rows' rendered appearance.
+    /// Value snapshot of the Port forwarding rows' rendered appearance.
     private struct RenderedPortForwardingRows: Equatable {
         let rules: [PortForwardingRule]
         let controlsEnabled: Bool
@@ -295,7 +300,7 @@ final class VMSettingsViewController: NSViewController {
     /// nothing about networking skips a rebuild — which enumerates the host's
     /// bridgeable interfaces and queries the process signature.
     private var renderedNetworkChoice: NetworkModeChoice?
-    /// The rules (and lock state) the Port Forwarding rows were last built for,
+    /// The rules (and lock state) the Port forwarding rows were last built for,
     /// so a rebuild happens exactly when one of them changed.
     private var renderedPortForwardingRows: RenderedPortForwardingRows?
     /// The live-switch state the Mode menu was last built for; a change rebuilds
@@ -385,27 +390,15 @@ final class VMSettingsViewController: NSViewController {
         formStack.spacing = Spacing.section
         formStack.translatesAutoresizingMaskIntoConstraints = false
 
-        // Margin only at the bottom; the top sits flush under the toolbar.
-        let scrollView = makeGroupedFormScrollView(documentView: formStack, bottomInset: 16)
+        // The detail pane has no width of its own, so the form takes the capped
+        // column rather than stretching a row's control away from its label.
+        let scrollView = makeGroupedFormScrollView(
+            documentView: formStack, topInset: Spacing.large, bottomInset: 16,
+            maxContentWidth: GroupedFormStyle.columnWidth)
         scrollView.setContentHuggingPriority(.defaultLow, for: .vertical)
-
-        // Flash-only (no chevron/fade overlays): the root is an `NSStackView`,
-        // which shouldn't host unmanaged overlay subviews.
         scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView, cues: .flash)
 
-        bannerContainer = makeBannerContainer()
-
-        let root = NSStackView(views: [bannerContainer, scrollView])
-        root.orientation = .vertical
-        root.alignment = .leading
-        root.spacing = Spacing.none
-        root.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            bannerContainer.widthAnchor.constraint(equalTo: root.widthAnchor),
-            scrollView.widthAnchor.constraint(equalTo: root.widthAnchor),
-        ])
-
-        view = root
+        view = scrollView
         buildForm()
     }
 
@@ -519,18 +512,14 @@ final class VMSettingsViewController: NSViewController {
         attachmentStorageDisks(for: instance)
     }
 
-    /// The storage disks list to render for `instance`, materializing the
-    /// default main disk when its configuration carries none.
+    /// The storage disks list to render for `instance`.
     ///
     /// Takes the instance explicitly (rather than reading `self.instance`) so a
     /// caller holding a pinned instance — a rename/notes commit deferred across
     /// a runloop turn, which can land after `reconfigure` rebinds `self.instance`
     /// to a different VM — resolves against the VM it actually started with.
     private func attachmentStorageDisks(for instance: VMInstance) -> [StorageDisk] {
-        if let disks = instance.configuration.storageDisks, !disks.isEmpty {
-            return disks
-        }
-        return VMLibraryViewModel.defaultStorageDisks(for: instance)
+        instance.displayedStorageDisks
     }
 
     private var currentRemovableMedia: [RemovableMediaItem] {
@@ -577,8 +566,8 @@ extension VMSettingsViewController {
     /// Called on first load and whenever the bound instance changes.
     private func buildForm() {
         formStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        lockIcons.removeAll()
-        persistentLockableControls.removeAll()
+        lockHints.removeAll()
+        lockableRows.removeAll()
         nameRowIsEditing = false
         activeStorageEdit = nil
         activeRemovableEdit = nil
@@ -597,6 +586,9 @@ extension VMSettingsViewController {
 
         displayResolutionIsCustom = false
 
+        identityHeader = VMIdentityHeaderView()
+        addSection(identityHeader)
+        formStack.setCustomSpacing(Spacing.major, after: identityHeader)
         addSection(buildGeneralSection())
         addSection(buildStartupSection())
         addSection(buildResourcesSection())
@@ -638,28 +630,15 @@ extension VMSettingsViewController {
         return stack
     }
 
-    /// Section header; any lock icon it creates is registered in ``lockIcons``
+    /// Section header; any lock hint it creates is registered in ``lockHints``
     /// and toggled by ``apply()``. A section whose lock is conditional passes
-    /// `lockIconSink` to keep its own reference — by handoff, not by position
-    /// in ``lockIcons``.
+    /// `lockHintSink` to keep its own reference — by handoff, not by position
+    /// in ``lockHints``.
     private func makeHeader(
         _ title: String, lockable: Bool = false, paragraphs: [InfoPopoverParagraph] = [],
-        lockIconSink: ((NSImageView) -> Void)? = nil
+        lockHintSink: ((NSView) -> Void)? = nil
     ) -> NSView {
-        var views: [NSView] = []
-        if lockable {
-            let lock = NSImageView(
-                image: .systemSymbol("lock.fill", accessibilityDescription: "Locked while the VM is running"))
-            lock.symbolConfiguration = NSImage.SymbolConfiguration(scale: .small)
-            lock.contentTintColor = .systemOrange
-            lock.toolTip = "Locked while the VM is running"
-            lock.setContentHuggingPriority(.required, for: .horizontal)
-            lock.isHidden = true
-            lockIcons.append(lock)
-            lockIconSink?(lock)
-            views.append(lock)
-        }
-        views.append(makeGroupedFormSectionHeader(title))
+        var views: [NSView] = [makeGroupedFormSectionHeader(title)]
         if !paragraphs.isEmpty {
             let info = InfoButtonView()
             info.configure(label: title, paragraphs: paragraphs)
@@ -669,6 +648,13 @@ extension VMSettingsViewController {
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         views.append(spacer)
+        if lockable {
+            let hint = makeGroupedFormLockHint()
+            hint.isHidden = true
+            lockHints.append(hint)
+            lockHintSink?(hint)
+            views.append(hint)
+        }
 
         let header = NSStackView(views: views)
         header.orientation = .horizontal
@@ -677,25 +663,12 @@ extension VMSettingsViewController {
         return header
     }
 
-    private func makeBannerContainer() -> NSView {
-        let banner = makeGroupedFormBanner(
-            symbolName: "lock.fill",
-            tint: .systemOrange,
-            message:
-                "Sections marked with a lock are locked while the VM is running. Stop the VM to change them. Other sections can be edited live."
-        )
-        let container = NSView()
-        container.addSubview(banner)
-        banner.translatesAutoresizingMaskIntoConstraints = false
-        let inset = GroupedFormStyle.contentSideInset
-        NSLayoutConstraint.activate([
-            banner.topAnchor.constraint(equalTo: container.topAnchor, constant: inset),
-            // Buffer below the banner so it doesn't crowd the first section title.
-            banner.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -Spacing.section),
-            banner.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: inset),
-            banner.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -inset),
-        ])
-        return container
+    /// Registers `row` as editable only while the VM is stopped, returning it so
+    /// it can be handed straight to a card.
+    @discardableResult
+    private func lockable(_ row: NSView, _ controls: NSControl...) -> NSView {
+        lockableRows.append((row: row, controls: controls))
+        return row
     }
 
     // MARK: General
@@ -703,13 +676,13 @@ extension VMSettingsViewController {
     /// What the install-record row is called for `guestOS`.
     ///
     /// A macOS install ran to completion under Kernova, so its row names the
-    /// version the VM started life at, sitting beside the "OS Version" row that
+    /// version the VM started life at, sitting beside the "OS version" row that
     /// names what the guest reports today. A Linux ISO is only attached for the
     /// distribution's own installer to use — which can install something else,
     /// or nothing — so that row names the media and claims nothing about the
     /// outcome.
     static func installedImageRowLabel(guestOS: VMGuestOS) -> String {
-        guestOS == .macOS ? "Installed Version" : "Installer Image"
+        guestOS == .macOS ? "Installed version" : "Installer image"
     }
 
     private func buildGeneralSection() -> NSView {
@@ -776,7 +749,7 @@ extension VMSettingsViewController {
             let versionLabel = makeGroupedFormValueLabel(reported ?? "")
             guestOSVersionValueLabel = versionLabel
             let versionRow = GroupedFormCollapsibleRow(
-                row: makeGroupedFormCardRow("OS Version", control: versionLabel))
+                row: makeGroupedFormCardRow("OS version", control: versionLabel))
             versionRow.isHidden = reported == nil
             guestOSVersionRow = versionRow
             rows.append(versionRow)
@@ -786,7 +759,7 @@ extension VMSettingsViewController {
         }
         rows += [
             makeGroupedFormCardRow(
-                "Boot Mode", control: makeGroupedFormValueLabel(instance.configuration.bootMode.displayName)),
+                "Boot mode", control: makeGroupedFormValueLabel(instance.configuration.bootMode.displayName)),
             makeGroupedFormCardRow(
                 "Created",
                 control: makeGroupedFormValueLabel(
@@ -841,12 +814,12 @@ extension VMSettingsViewController {
                 paragraphs: EphemeralModeCopy.popoverParagraphs,
                 titleLabel: { [weak self] in self?.ephemeralLabel = $0 }),
             subOption: makeGroupedFormCardRow(
-                "Baseline Snapshot", control: ephemeralBaselinePopUp))
+                "Baseline snapshot", control: ephemeralBaselinePopUp))
         self.ephemeralGroup = ephemeralGroup
 
         let card = makeGroupedFormCard(rows: [
             makeToggleRowWithInfo(
-                "Start When Kernova Opens", control: autoStartSwitch,
+                "Start when Kernova opens", control: autoStartSwitch,
                 paragraphs: [
                     .body(
                         "Starts this virtual machine each time Kernova opens. A suspended VM resumes from its saved state; one that has not finished its initial setup is left alone."
@@ -899,11 +872,15 @@ extension VMSettingsViewController {
         configureNumeric(
             field: memoryField, stepper: memoryStepper, min: os.minMemoryInGB, max: os.maxMemoryInGB,
             value: instance.configuration.memorySizeInGB, stepperAction: #selector(memoryStepperChanged))
-        persistentLockableControls += [cpuField, cpuStepper, memoryField, memoryStepper]
-
         let card = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("CPU Cores", control: steppedControl(cpuField, cpuStepper, unit: "")),
-            makeGroupedFormCardRow("Memory", control: steppedControl(memoryField, memoryStepper, unit: "GB")),
+            lockable(
+                makeGroupedFormCardRow(
+                    "CPU cores", control: steppedControl(cpuField, cpuStepper, unit: "")),
+                cpuField, cpuStepper),
+            lockable(
+                makeGroupedFormCardRow(
+                    "Memory", control: steppedControl(memoryField, memoryStepper, unit: "GB")),
+                memoryField, memoryStepper),
         ])
         return makeSection([
             makeHeader(
@@ -944,43 +921,43 @@ extension VMSettingsViewController {
         displayHeightField = makeDisplaySizeField()
         displayHiDPISwitch = makeSwitch(action: #selector(displayHiDPIToggled))
         displayAutoResizeSwitch = makeSwitch(action: #selector(displayAutoResizeToggled))
-        persistentLockableControls += [
-            displayMatchWindowSwitch, displayResolutionPopUp, displayWidthField, displayHeightField,
-        ]
 
         var rows: [NSView] = [
-            // Deliberately outside `persistentLockableControls`: the flag lives on
-            // the display view, so it is legal to flip while the VM runs.
+            // Deliberately not `lockable`: the flag lives on the display view, so
+            // it is legal to flip while the VM runs.
             makeToggleRowWithInfo(
                 "Automatically resize with window", control: displayAutoResizeSwitch,
                 paragraphs: Self.displayAutoResizeInfo(isMacOS: isMacOS)),
-            makeToggleRowWithInfo(
-                "Size display to fit window at startup", control: displayMatchWindowSwitch,
-                paragraphs: [
-                    .body(
-                        "Each cold start sizes the guest display to the window or screen it opens in, so the picture fills it without scaling."
-                    ),
-                    .body(
-                        "A VM resumed from saved state keeps the resolution it was saved with — VZ restores only into the configuration it was suspended from."
-                    ),
-                ]),
-            makeGroupedFormCardRow("Resolution", control: displayResolutionPopUp),
-            makeGroupedFormCardRow("Width", control: displayWidthField),
-            makeGroupedFormCardRow("Height", control: displayHeightField),
-        ]
-        if supportsDensity {
-            persistentLockableControls.append(displayHiDPISwitch)
-            rows.append(
+            lockable(
                 makeToggleRowWithInfo(
-                    "HiDPI (Retina)", control: displayHiDPISwitch,
+                    "Size display to fit window at startup", control: displayMatchWindowSwitch,
                     paragraphs: [
                         .body(
-                            "Doubles the pixel count and raises the reported pixel density, so the guest renders Retina-sharp at the size above."
+                            "Each cold start sizes the guest display to the window or screen it opens in, so the picture fills it without scaling."
                         ),
                         .body(
-                            "While the display is sized to fit the window, it fills the window at your screen's Retina scale instead of 1×."
+                            "A VM resumed from saved state keeps the resolution it was saved with — VZ restores only into the configuration it was suspended from."
                         ),
-                    ]))
+                    ]), displayMatchWindowSwitch),
+            lockable(
+                makeGroupedFormCardRow("Resolution", control: displayResolutionPopUp),
+                displayResolutionPopUp),
+            lockable(makeGroupedFormCardRow("Width", control: displayWidthField), displayWidthField),
+            lockable(makeGroupedFormCardRow("Height", control: displayHeightField), displayHeightField),
+        ]
+        if supportsDensity {
+            rows.append(
+                lockable(
+                    makeToggleRowWithInfo(
+                        "HiDPI (Retina)", control: displayHiDPISwitch,
+                        paragraphs: [
+                            .body(
+                                "Doubles the pixel count and raises the reported pixel density, so the guest renders Retina-sharp at the size above."
+                            ),
+                            .body(
+                                "While the display is sized to fit the window, it fills the window at your screen's Retina scale instead of 1×."
+                            ),
+                        ]), displayHiDPISwitch))
         }
         displayResolutionCaption = makeGroupedFormCaption("")
         let restart = makeGroupedFormCaption("Takes effect on next start.")
@@ -1043,9 +1020,10 @@ extension VMSettingsViewController {
         attachStorageButton = makePushButton("Attach Disk…", action: #selector(attachStorageTapped))
         createStorageButton = makePushButton("Create New Disk…", action: #selector(createStorageTapped))
         editBootOrderButton = makePushButton("Edit Boot Order…", action: #selector(editBootOrderTapped))
-        persistentLockableControls += [attachStorageButton, createStorageButton, editBootOrderButton]
 
-        let buttonRow = makeButtonRow([attachStorageButton, createStorageButton, editBootOrderButton])
+        let buttonRow = lockable(
+            makeButtonRow([attachStorageButton, createStorageButton, editBootOrderButton]),
+            attachStorageButton, createStorageButton, editBootOrderButton)
         let card = makeGroupedFormCard(rows: [storageListStack, buttonRow])
 
         let paragraphs: [InfoPopoverParagraph] =
@@ -1103,8 +1081,9 @@ extension VMSettingsViewController {
     private func buildSharedDirectoriesSection() -> NSView {
         sharedListStack = makeListStack()
         let add = makePushButton("Add Shared Directory…", action: #selector(addSharedTapped))
-        persistentLockableControls.append(add)
-        let card = makeGroupedFormCard(rows: [sharedListStack, makeButtonRow([add])])
+        let card = makeGroupedFormCard(rows: [
+            sharedListStack, lockable(makeButtonRow([add]), add),
+        ])
 
         let paragraphs: [InfoPopoverParagraph] =
             instance.configuration.guestOS == .linux
@@ -1150,12 +1129,14 @@ extension VMSettingsViewController {
     }
 
     private func buildNetworkSection() -> NSView {
-        // Deliberately outside `persistentLockableControls`: the picker is the
-        // live-switch surface while the VM runs, so `refreshNetwork()` owns its
-        // enablement (and the section lock icon it makes moot).
+        // Deliberately outside `lockableRows`: the picker is the live-switch
+        // surface while the VM runs, so `refreshNetwork()` owns its enablement
+        // and its row's dimming (and the section lock hint it makes moot).
         networkModePopUp = makeNetworkModePopUp()
+        let modeRow = makeGroupedFormCardRow("Mode", control: networkModePopUp)
+        networkModeRow = modeRow
 
-        var rows: [NSView] = [makeGroupedFormCardRow("Mode", control: networkModePopUp)]
+        var rows: [NSView] = [modeRow]
         rows.append(makeIPAddressRow())
         rows.append(makeMACAddressRow())
         rows.append(makePortForwardingRow())
@@ -1167,12 +1148,12 @@ extension VMSettingsViewController {
         networkWarningContainer.translatesAutoresizingMaskIntoConstraints = false
 
         // With the entitlement, Shared and Host Only assign each guest a
-        // deterministic address the IP Address row shows, and Shared can forward
+        // deterministic address the IP address row shows, and Shared can forward
         // host ports to it; without it there is neither, so the copy concedes
         // the gap instead.
         let sharedReachClause =
             entitlements.hasVMNetworking
-            ? "other machines on your network reach it only on the ports you forward, and this Mac reaches it at the address in the IP Address row"
+            ? "other machines on your network reach it only on the ports you forward, and this Mac reaches it at the address in the IP address row"
             : "there is no port forwarding from host to guest — incoming connections require knowing the guest's IP"
         var paragraphs: [InfoPopoverParagraph] = [
             .body(
@@ -1201,7 +1182,7 @@ extension VMSettingsViewController {
                 ))
         }
         let header = makeHeader("Network", lockable: true, paragraphs: paragraphs) {
-            self.networkLockIcon = $0
+            self.networkLockHint = $0
         }
         return makeSection([
             header,
@@ -1211,7 +1192,7 @@ extension VMSettingsViewController {
         ])
     }
 
-    /// The IP Address row: the reserved address with a copy affordance for
+    /// The IP address row: the reserved address with a copy affordance for
     /// the modes the app assigns addressing in, "Assigned by your network"
     /// for Bridged (external DHCP — nothing deterministic to show).
     /// `refreshIPAddressRow()` owns its content and visibility.
@@ -1233,12 +1214,12 @@ extension VMSettingsViewController {
         control.orientation = .horizontal
         control.spacing = Spacing.tight
         let row = GroupedFormCollapsibleRow(
-            row: makeGroupedFormCardRow("IP Address", control: control))
+            row: makeGroupedFormCardRow("IP address", control: control))
         ipAddressRow = row
         return row
     }
 
-    /// Renders the IP Address row for the current mode, kicking a
+    /// Renders the IP address row for the current mode, kicking a
     /// materialization when the address is not yet derivable — the network's
     /// addressing is only known once it has materialized, and the reservation
     /// is meant to be shown even while the VM is stopped.
@@ -1280,7 +1261,7 @@ extension VMSettingsViewController {
         }
     }
 
-    /// Materializes `kind`'s network off-main so the pending IP Address row
+    /// Materializes `kind`'s network off-main so the pending IP address row
     /// can fill in; re-renders on success. Single-flight — every refresh of a
     /// still-pending row lands here, and one materialization serves them all.
     private func materializeForIPAddressDisplay(_ kind: VmnetNetworkKind) {
@@ -1309,7 +1290,7 @@ extension VMSettingsViewController {
 
     // MARK: MAC Address
 
-    /// The MAC Address row: an editable, VZ-validated field and a Generate
+    /// The MAC address row: an editable, VZ-validated field and a Generate
     /// button. `refreshMACAddressRow()` owns its content and visibility.
     private func makeMACAddressRow() -> GroupedFormCollapsibleRow {
         macAddressField = NSTextField()
@@ -1321,16 +1302,17 @@ extension VMSettingsViewController {
 
         let generate = makePushButton("Generate", action: #selector(generateMACAddressTapped))
         generate.controlSize = .small
-        // Unlike the Mode picker above it, the address is read once at start and
-        // fixed for the session, so both controls lock with the section.
-        persistentLockableControls += [macAddressField, generate]
 
         let control = NSStackView(views: [macAddressField, generate])
         control.orientation = .horizontal
         control.alignment = .centerY
         control.spacing = Spacing.tight
+        // Unlike the Mode picker above it, the address is read once at start and
+        // fixed for the session, so this row locks with the section.
         let row = GroupedFormCollapsibleRow(
-            row: makeGroupedFormCardRow("MAC Address", control: control))
+            row: lockable(
+                makeGroupedFormCardRow("MAC address", control: control),
+                macAddressField, generate))
         macAddressRow = row
         return row
     }
@@ -1355,11 +1337,11 @@ extension VMSettingsViewController {
 
     // MARK: Port Forwarding
 
-    /// The Port Forwarding block: a title, one row per rule, and the trailing
+    /// The Port forwarding block: a title, one row per rule, and the trailing
     /// Add Rule row. `refreshPortForwardingRows()` owns its contents;
     /// `refreshNetwork()` owns its visibility.
     private func makePortForwardingRow() -> GroupedFormCollapsibleRow {
-        let title = NSTextField(labelWithString: "Port Forwarding")
+        let title = NSTextField(labelWithString: "Port forwarding")
         title.font = Typography.body
         title.isSelectable = false
 
@@ -1623,8 +1605,6 @@ extension VMSettingsViewController {
     private func buildAudioSection() -> NSView {
         audioInputSwitch = makeSwitch(action: #selector(audioInputToggled))
         audioOutputSwitch = makeSwitch(action: #selector(audioOutputToggled))
-        persistentLockableControls.append(audioInputSwitch)
-        persistentLockableControls.append(audioOutputSwitch)
 
         audioWarningContainer = NSStackView()
         audioWarningContainer.orientation = .vertical
@@ -1643,8 +1623,12 @@ extension VMSettingsViewController {
         return makeSection([
             makeHeader("Audio", lockable: true, paragraphs: paragraphs),
             makeGroupedFormCard(rows: [
-                makeGroupedFormCardRow("Audio Input", control: audioInputSwitch),
-                makeGroupedFormCardRow("Audio Output", control: audioOutputSwitch),
+                lockable(
+                    makeGroupedFormCardRow("Audio input", control: audioInputSwitch),
+                    audioInputSwitch),
+                lockable(
+                    makeGroupedFormCardRow("Audio output", control: audioOutputSwitch),
+                    audioOutputSwitch),
             ]),
             audioWarningContainer,
         ])
@@ -1671,11 +1655,11 @@ extension VMSettingsViewController {
 
     private func buildInputDevicesSection() -> NSView {
         inputDevicesPopUp = makeInputDevicesPopUp()
-        persistentLockableControls.append(inputDevicesPopUp)
         return makeSection([
             makeHeader("Input", lockable: true, paragraphs: Self.inputDevicesInfoParagraphs),
             makeGroupedFormCard(rows: [
-                makeGroupedFormCardRow("Devices", control: inputDevicesPopUp)
+                lockable(
+                    makeGroupedFormCardRow("Devices", control: inputDevicesPopUp), inputDevicesPopUp)
             ]),
         ])
     }
@@ -1703,7 +1687,7 @@ extension VMSettingsViewController {
     static let installPromptDisabledCaption =
         "The install reminder is turned off for all virtual machines in Settings → Reminders."
 
-    /// Info-popover copy for the "Automatic Clipboard Passthrough" toggle, shared
+    /// Info-popover copy for the "Automatic clipboard passthrough" toggle, shared
     /// by the macOS and Linux clipboard sections.
     static let passthroughInfoParagraphs: [InfoPopoverParagraph] = [
         .body(
@@ -1715,7 +1699,7 @@ extension VMSettingsViewController {
     ]
 
     /// Guest Agent group for **macOS** guests, holding the agent-management
-    /// toggles plus Clipboard Sharing, which rides the agent's vsock channel.
+    /// toggles plus Clipboard sharing, which rides the agent's vsock channel.
     private func buildGuestAgentSection() -> NSView {
         logForwardingSwitch = makeSwitch(action: #selector(logForwardingToggled))
         installReminderSwitch = makeSwitch(action: #selector(installReminderToggled))
@@ -1735,16 +1719,16 @@ extension VMSettingsViewController {
             // so it nests as a sub-option rather than an equal sibling toggle.
             makeGroupedFormSubOptionGroup(
                 primary: makeToggleRowWithInfo(
-                    "Clipboard Sharing", control: clipboardSwitch,
+                    "Clipboard sharing", control: clipboardSwitch,
                     paragraphs: [
                         .body("Exchanges clipboard text between host and guest.")
                     ]),
                 subOption: makeToggleRowWithInfo(
-                    "Automatic Clipboard Passthrough", control: clipboardPassthroughSwitch,
+                    "Automatic clipboard passthrough", control: clipboardPassthroughSwitch,
                     paragraphs: Self.passthroughInfoParagraphs,
                     titleLabel: { [weak self] in self?.clipboardPassthroughLabel = $0 })),
             makeToggleRowWithInfo(
-                "Drag and Drop Files", control: dropFilesSwitch,
+                "Drag and drop files", control: dropFilesSwitch,
                 paragraphs: [
                     .body(
                         "Lets you drag files and folders from this Mac onto the VM display; the guest agent saves them to the guest's Downloads folder. Independent of clipboard sharing, and can be toggled while the VM is running."
@@ -1790,9 +1774,9 @@ extension VMSettingsViewController {
             makeHeader("Clipboard", paragraphs: [body]),
             makeGroupedFormCard(rows: [
                 makeGroupedFormSubOptionGroup(
-                    primary: makeGroupedFormCardRow("Clipboard Sharing", control: clipboardSwitch),
+                    primary: makeGroupedFormCardRow("Clipboard sharing", control: clipboardSwitch),
                     subOption: makeToggleRowWithInfo(
-                        "Automatic Clipboard Passthrough", control: clipboardPassthroughSwitch,
+                        "Automatic clipboard passthrough", control: clipboardPassthroughSwitch,
                         paragraphs: Self.passthroughInfoParagraphs,
                         titleLabel: { [weak self] in self?.clipboardPassthroughLabel = $0 }))
             ]),
@@ -1809,7 +1793,7 @@ extension VMSettingsViewController {
         let socketPath = VMInstance.serialSocketPath(for: instance.id)
         let card = makeGroupedFormCard(rows: [
             makeToggleRowWithInfo(
-                "Expose Serial Socket", control: serialRelaySwitch,
+                "Expose serial socket", control: serialRelaySwitch,
                 paragraphs: [
                     .body(
                         "Exposes the running VM's serial port over a local UNIX socket so an external terminal can attach. Output is always captured to `serial.log` regardless of this setting; when it grows large it rolls to `serial.log.1` alongside."
@@ -2007,10 +1991,13 @@ extension VMSettingsViewController {
     /// Idempotently refreshes all mutable chrome from the model.
     private func apply() {
         guard isViewLoaded else { return }
-        bannerContainer.isHidden = !isReadOnly
-        lockIcons.forEach { $0.isHidden = !isReadOnly }
-        persistentLockableControls.forEach { $0.isEnabled = !isReadOnly }
+        lockHints.forEach { $0.isHidden = !isReadOnly }
+        for entry in lockableRows {
+            entry.controls.forEach { $0.isEnabled = !isReadOnly }
+            entry.row.alphaValue = isReadOnly ? Alpha.disabled : 1
+        }
 
+        identityHeader.configure(with: instance)
         refreshGeneral()
         refreshStartup()
         refreshResources()
@@ -2265,10 +2252,12 @@ extension VMSettingsViewController {
 
     private func refreshNetwork() {
         let liveSwitchable = networkModeIsLiveSwitchable
-        networkModePopUp.isEnabled = !isReadOnly || liveSwitchable
-        // `apply()` just showed every lock icon for the read-only pane; a live
-        // picker makes this section's lock a false claim, so re-hide it.
-        networkLockIcon?.isHidden = !isReadOnly || liveSwitchable
+        let modeEditable = !isReadOnly || liveSwitchable
+        networkModePopUp.isEnabled = modeEditable
+        networkModeRow?.alphaValue = modeEditable ? 1 : Alpha.disabled
+        // `apply()` just showed every lock hint for the read-only pane; a live
+        // picker makes this section's hint a false claim, so re-hide it.
+        networkLockHint?.isHidden = modeEditable
         if currentNetworkChoice != renderedNetworkChoice
             || liveSwitchable != renderedNetworkLiveSwitchable
         {

@@ -21,7 +21,7 @@ principles are in [AGENTS.md](../AGENTS.md#principles).
 
 Use `NSFont.preferredFont(forTextStyle:)` so type scales with the system setting.
 
-- `.title2` at `.semibold` — section/page headings (`WizardStyle.titleFont`)
+- `.title2` at `.semibold` — section/page headings (`Typography.title`)
 - `.headline` — important labels and step indicators (`CalloutStyle.headlineFont`)
 - `.body` — primary form content (`Typography.body`)
 - `.caption1` / `.caption2` — secondary text, metadata, step numbers
@@ -46,6 +46,8 @@ Set `NSStackView.spacing` from the `Spacing` token scale (`Utilities/DesignToken
 ### Controls
 
 - Grouped settings forms: build with the `GroupedFormStyle` factories (`makeGroupedFormCard`, `makeGroupedFormCardRow`, …).
+- Row and toggle labels take sentence case; section headers, push-button titles, Apple UI names, and Kernova proper nouns keep Title Case.
+- A section whose rows only a stopped VM can change carries the `makeGroupedFormLockHint()` header hint and dims those rows to `Alpha.disabled`; there is no page-level lock banner.
 - Navigation list: source-list `NSOutlineView` (`SidebarViewController`).
 - Borderless `NSButton` in lists; `.rounded` bezel for dialog actions.
 - `AlertButtonRole.destructive` for delete/stop confirmations (`SheetAlert`).
@@ -59,4 +61,6 @@ Set `NSStackView.spacing` from the `Spacing` token scale (`Utilities/DesignToken
 
 ### Cards and Containers
 
+- Grouped cards: `GroupedFormStyle.cardFill` at `CornerRadius.card`, borderless, with hairlines inset to the label edge and bleeding to the card's trailing edge.
+- A pane with no natural width of its own caps its form content at `GroupedFormStyle.columnWidth`, centered.
 - Code blocks: `CalloutStyle.makeCalloutCode` — monospaced, selectable `NSTextField` for copy-worthy snippets.

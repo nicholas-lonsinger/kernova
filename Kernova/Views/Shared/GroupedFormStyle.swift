@@ -11,6 +11,22 @@ enum GroupedFormStyle {
     /// both sides so content stays horizontally centered — and the clearance
     /// between content and a trailing overlay scroller.
     static let contentSideInset: CGFloat = 16
+
+    /// Width a form's content is capped at in a pane with no natural width, so a
+    /// row's control stays beside its label however wide the window gets.
+    static let columnWidth: CGFloat = 620
+
+    /// Inset from a card's edges to its rows.
+    static let cardPadding: CGFloat = 12
+
+    /// Fill for a grouped card, standing off the window background it sits on:
+    /// the control background (white in Aqua) in light, a lightening overlay in
+    /// dark, where a card lighter than the window is what reads as raised.
+    static let cardFill = NSColor(name: "groupedFormCardFill") { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? .secondaryLabelColor.withAlphaComponent(0.08)
+            : .controlBackgroundColor
+    }
 }
 
 // MARK: - Scrolling
@@ -34,11 +50,16 @@ final class FlippedClipView: NSClipView {
 /// *narrower* than the clip makes `NSClipView` offset its bounds origin to align
 /// the under-sized document, which scrolls the content sideways and defeats the
 /// inset. Callers add their own per-subview width constraints against `content`.
+///
+/// `maxContentWidth` caps the content and centers it, for a pane with no natural
+/// width of its own; a viewport narrower than the cap still fills, minus the
+/// insets.
 @MainActor
 func makeGroupedFormScrollView(
     documentView content: NSView,
     topInset: CGFloat = 0,
-    bottomInset: CGFloat = 0
+    bottomInset: CGFloat = 0,
+    maxContentWidth: CGFloat? = nil
 ) -> NSScrollView {
     let scrollView = NSScrollView()
     scrollView.contentView = FlippedClipView()
@@ -68,13 +89,39 @@ func makeGroupedFormScrollView(
         docView.widthAnchor.constraint(equalTo: clip.widthAnchor),
         content.topAnchor.constraint(equalTo: docView.topAnchor, constant: topInset),
         content.bottomAnchor.constraint(equalTo: docView.bottomAnchor, constant: -bottomInset),
-        content.leadingAnchor.constraint(equalTo: docView.leadingAnchor, constant: inset),
-        content.trailingAnchor.constraint(equalTo: docView.trailingAnchor, constant: -inset),
+    ])
+
+    guard let maxContentWidth else {
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: docView.leadingAnchor, constant: inset),
+            content.trailingAnchor.constraint(equalTo: docView.trailingAnchor, constant: -inset),
+        ])
+        return scrollView
+    }
+
+    // Fill the inset viewport, up to the cap, centered on what's left over.
+    let fills = content.widthAnchor.constraint(
+        equalTo: docView.widthAnchor, constant: -2 * inset)
+    fills.priority = .defaultHigh
+    NSLayoutConstraint.activate([
+        content.centerXAnchor.constraint(equalTo: docView.centerXAnchor),
+        content.widthAnchor.constraint(lessThanOrEqualToConstant: maxContentWidth),
+        content.leadingAnchor.constraint(
+            greaterThanOrEqualTo: docView.leadingAnchor, constant: inset),
+        content.trailingAnchor.constraint(
+            lessThanOrEqualTo: docView.trailingAnchor, constant: -inset),
+        fills,
     ])
     return scrollView
 }
 
 // MARK: - Grouped cards (System Settings style)
+
+/// A card row that spans the card's full width and insets its own content,
+/// because it carries hairlines of its own that bleed to the card's trailing
+/// edge the way the card's do.
+@MainActor
+protocol GroupedFormFullBleedRow: NSView {}
 
 @MainActor
 func makeGroupedFormHairline() -> NSView {
@@ -135,16 +182,20 @@ func makeGroupedFormCardRow(
 /// separator. This carries that hairline instead, so `isHidden` takes both.
 /// Never a card's first row — the hairline would have nothing above it.
 @MainActor
-final class GroupedFormCollapsibleRow: NSStackView {
+final class GroupedFormCollapsibleRow: NSStackView, GroupedFormFullBleedRow {
     init(row: NSView) {
         super.init(frame: .zero)
         orientation = .vertical
         alignment = .leading
         spacing = Spacing.relaxed
         translatesAutoresizingMaskIntoConstraints = false
-        for view in [makeGroupedFormHairline(), row] {
+        let hairline = makeGroupedFormHairline()
+        for view in [hairline, row] {
             addArrangedSubview(view)
-            view.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
+            view.widthAnchor.constraint(
+                equalTo: widthAnchor,
+                constant: view === hairline ? 0 : -GroupedFormStyle.cardPadding
+            ).isActive = true
         }
     }
 
@@ -154,6 +205,11 @@ final class GroupedFormCollapsibleRow: NSStackView {
     }
 }
 
+/// Builds a card: hairline-separated rows on a rounded, filled background.
+///
+/// Separators run from the label edge to the card's trailing edge — the
+/// asymmetry System Settings draws — so the content stack spans to that edge
+/// and every non-hairline row is inset back by ``GroupedFormStyle/cardPadding``.
 @MainActor
 func makeGroupedFormCard(rows: [NSView]) -> NSView {
     let content = NSStackView()
@@ -162,35 +218,39 @@ func makeGroupedFormCard(rows: [NSView]) -> NSView {
     content.spacing = Spacing.relaxed
     content.translatesAutoresizingMaskIntoConstraints = false
 
+    var arranged: [(view: NSView, bleeds: Bool)] = []
     for (index, row) in rows.enumerated() {
         // A collapsible row carries its own hairline, so that hiding it takes
         // the separator with it.
         if index > 0, !(row is GroupedFormCollapsibleRow) {
-            content.addArrangedSubview(makeGroupedFormHairline())
+            arranged.append((makeGroupedFormHairline(), true))
         }
-        content.addArrangedSubview(row)
+        arranged.append((row, row is GroupedFormFullBleedRow))
     }
+    arranged.forEach { content.addArrangedSubview($0.view) }
 
     let box = NSBox()
     box.boxType = .custom
     box.titlePosition = .noTitle
-    box.cornerRadius = 8
-    box.borderWidth = 1
-    box.fillColor = .secondaryLabelColor.withAlphaComponent(0.06)
-    box.borderColor = .separatorColor
+    box.cornerRadius = CornerRadius.card
+    box.borderWidth = 0
+    box.fillColor = GroupedFormStyle.cardFill
+    box.borderColor = .clear
 
     let container = NSView()
     container.addFullSizeSubview(box)
     container.addSubview(content)
-    let pad: CGFloat = 12
+    let pad = GroupedFormStyle.cardPadding
     NSLayoutConstraint.activate([
         content.topAnchor.constraint(equalTo: container.topAnchor, constant: pad),
         content.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -pad),
         content.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: pad),
-        content.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -pad),
+        content.trailingAnchor.constraint(equalTo: container.trailingAnchor),
     ])
-    for view in content.arrangedSubviews {
-        view.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+    for entry in arranged {
+        entry.view.widthAnchor.constraint(
+            equalTo: content.widthAnchor, constant: entry.bleeds ? 0 : -pad
+        ).isActive = true
     }
     return container
 }
@@ -207,7 +267,7 @@ let groupedFormSubOptionIndent: CGFloat = 20
 /// ``isSubOptionHidden`` collapses the sub-option and its hairline together,
 /// for a child that is meaningless until the parent is on.
 @MainActor
-final class GroupedFormSubOptionGroup: NSStackView {
+final class GroupedFormSubOptionGroup: NSStackView, GroupedFormFullBleedRow {
     private let hairlineRow: NSView
     private let subOptionRow: NSView
 
@@ -222,7 +282,10 @@ final class GroupedFormSubOptionGroup: NSStackView {
         for view in [primary, hairlineRow, subOptionRow] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addArrangedSubview(view)
-            view.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
+            view.widthAnchor.constraint(
+                equalTo: widthAnchor,
+                constant: view === hairlineRow ? 0 : -GroupedFormStyle.cardPadding
+            ).isActive = true
         }
     }
 
@@ -281,7 +344,7 @@ func applyGroupedFormRowEnabled(
     _ isEnabled: Bool, control: NSControl, label: NSTextField?
 ) {
     control.isEnabled = isEnabled
-    control.alphaValue = isEnabled ? 1 : 0.5
+    control.alphaValue = isEnabled ? 1 : Alpha.disabled
     label?.textColor = isEnabled ? .labelColor : .disabledControlTextColor
 }
 
@@ -295,6 +358,32 @@ func makeGroupedFormValueLabel(_ text: String) -> NSTextField {
     label.lineBreakMode = .byTruncatingMiddle
     label.isSelectable = false
     return label
+}
+
+/// What a section header says about rows only a stopped VM can change.
+let groupedFormLockHintText = "Editable when stopped"
+
+/// A section-header hint marking the rows below as locked while the VM runs.
+@MainActor
+func makeGroupedFormLockHint() -> NSView {
+    let icon = NSImageView(
+        image: .systemSymbol("lock.fill", accessibilityDescription: groupedFormLockHintText))
+    icon.symbolConfiguration = NSImage.SymbolConfiguration(scale: .small)
+    icon.contentTintColor = .secondaryLabelColor
+
+    let label = NSTextField(labelWithString: groupedFormLockHintText)
+    label.font = .preferredFont(forTextStyle: .caption1)
+    label.textColor = .secondaryLabelColor
+    label.isSelectable = false
+
+    let hint = NSStackView(views: [icon, label])
+    hint.orientation = .horizontal
+    hint.alignment = .centerY
+    hint.spacing = Spacing.tight
+    hint.toolTip = groupedFormLockHintText
+    hint.setContentHuggingPriority(.required, for: .horizontal)
+    hint.setContentCompressionResistancePriority(.required, for: .horizontal)
+    return hint
 }
 
 @MainActor

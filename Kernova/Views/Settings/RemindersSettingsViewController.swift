@@ -81,7 +81,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         // One card per reminder, each with its own caption, so no description has
         // to name the switch it belongs to.
         let menuBarCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Menu Bar Quit Reminder", control: menuBarQuitSwitch)
+            makeGroupedFormCardRow("Menu bar quit reminder", control: menuBarQuitSwitch)
         ])
         let menuBarCaption = makeGroupedFormCaption(
             "Appears when you quit (⌘Q) and Kernova keeps running in the menu bar, reminding you "
@@ -90,7 +90,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         // The governing control of the Virtual Machine Reminders section, so it
         // heads that section rather than sitting with the app reminder above.
         let agentInstallCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Guest Agent Install Reminder", control: agentInstallSwitch)
+            makeGroupedFormCardRow("Guest agent install reminder", control: agentInstallSwitch)
         ])
         let agentInstallCaption = makeGroupedFormCaption(
             "The sidebar prompt to install the Kernova guest agent on a running macOS virtual "

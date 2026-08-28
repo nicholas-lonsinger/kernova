@@ -166,12 +166,12 @@ struct VMSettingsViewControllerTests {
         // macOS: the row is nested in the Guest Agent group, with no standalone
         // "Clipboard" section header (guards against re-adding the sibling section).
         let (macVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
-        #expect(containsLabel("Clipboard Sharing", in: macVC.view))
+        #expect(containsLabel("Clipboard sharing", in: macVC.view))
         #expect(!containsLabel("Clipboard", in: macVC.view))
 
         // Linux: SPICE clipboard keeps its own standalone section header.
         let (linuxVC, _, _) = makeController(guestOS: .linux, isReadOnly: false)
-        #expect(containsLabel("Clipboard Sharing", in: linuxVC.view))
+        #expect(containsLabel("Clipboard sharing", in: linuxVC.view))
         #expect(containsLabel("Clipboard", in: linuxVC.view))
     }
 
@@ -212,9 +212,9 @@ struct VMSettingsViewControllerTests {
             installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84"),
             lastSeenGuestOSVersion: "Version 26.6 (Build 25G12)")
 
-        #expect(visibleLabel("Installed Version", in: vc.view))
+        #expect(visibleLabel("Installed version", in: vc.view))
         #expect(visibleLabel("macOS 26.5.2 (25F84)", in: vc.view))
-        #expect(visibleLabel("OS Version", in: vc.view))
+        #expect(visibleLabel("OS version", in: vc.view))
         #expect(visibleLabel("26.6", in: vc.view))
     }
 
@@ -224,8 +224,8 @@ struct VMSettingsViewControllerTests {
             guestOS: .macOS,
             installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84"))
 
-        #expect(visibleLabel("Installed Version", in: vc.view))
-        #expect(!visibleLabel("OS Version", in: vc.view))
+        #expect(visibleLabel("Installed version", in: vc.view))
+        #expect(!visibleLabel("OS version", in: vc.view))
     }
 
     @Test("A macOS VM Kernova did not install shows only what the agent reports")
@@ -233,16 +233,16 @@ struct VMSettingsViewControllerTests {
         let (vc, _, _) = makeOSRowsController(
             guestOS: .macOS, lastSeenGuestOSVersion: "26.6")
 
-        #expect(!visibleLabel("Installed Version", in: vc.view))
-        #expect(visibleLabel("OS Version", in: vc.view))
+        #expect(!visibleLabel("Installed version", in: vc.view))
+        #expect(visibleLabel("OS version", in: vc.view))
     }
 
     @Test("A macOS VM that knows neither shows neither row")
     func osRowsNeitherKnown() {
         let (vc, _, _) = makeOSRowsController(guestOS: .macOS)
 
-        #expect(!visibleLabel("Installed Version", in: vc.view))
-        #expect(!visibleLabel("OS Version", in: vc.view))
+        #expect(!visibleLabel("Installed version", in: vc.view))
+        #expect(!visibleLabel("OS version", in: vc.view))
     }
 
     @Test("A Linux VM names the attached media and never an OS Version row")
@@ -252,22 +252,22 @@ struct VMSettingsViewControllerTests {
             installedImage: .linuxCatalogImage(
                 distribution: "Ubuntu Desktop", version: "26.04 LTS"))
 
-        #expect(visibleLabel("Installer Image", in: vc.view))
+        #expect(visibleLabel("Installer image", in: vc.view))
         #expect(visibleLabel("Ubuntu Desktop 26.04 LTS", in: vc.view))
         // Booting that ISO is not installing from it — the guest's own
         // installer can write another distribution, or nothing at all — so the
         // row must never claim the install happened.
-        #expect(!containsLabel("Installed Version", in: vc.view))
+        #expect(!containsLabel("Installed version", in: vc.view))
         // Linux guests have no Kernova agent, so the row is never even built.
-        #expect(!containsLabel("OS Version", in: vc.view))
+        #expect(!containsLabel("OS version", in: vc.view))
     }
 
     @Test("A Linux VM set up from a URL shows no OS rows at all")
     func osRowsLinuxWithoutRecord() {
         let (vc, _, _) = makeOSRowsController(guestOS: .linux)
 
-        #expect(!visibleLabel("Installer Image", in: vc.view))
-        #expect(!containsLabel("OS Version", in: vc.view))
+        #expect(!visibleLabel("Installer image", in: vc.view))
+        #expect(!containsLabel("OS version", in: vc.view))
     }
 
     /// The General card's visible run of rows and hairlines, `true` for a
@@ -280,7 +280,7 @@ struct VMSettingsViewControllerTests {
                 NSStackView.self, in: view,
                 where: { stack in
                     stack.arrangedSubviews.contains { $0 is NSBox }
-                        && findLabel(withText: "Boot Mode", in: stack) != nil
+                        && findLabel(withText: "Boot mode", in: stack) != nil
                 })
         else {
             Issue.record("Expected a General card content stack")
@@ -325,13 +325,34 @@ struct VMSettingsViewControllerTests {
     @Test("A first agent report reveals the OS Version row without rebuilding the form")
     func osVersionRowAppearsOnFirstReport() {
         let (vc, instance, viewModel) = makeOSRowsController(guestOS: .macOS)
-        #expect(!visibleLabel("OS Version", in: vc.view))
+        #expect(!visibleLabel("OS version", in: vc.view))
 
         instance.configuration.lastSeenGuestOSVersion = "26.6"
         vc.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: false)
 
-        #expect(visibleLabel("OS Version", in: vc.view))
+        #expect(visibleLabel("OS version", in: vc.view))
         #expect(visibleLabel("26.6", in: vc.view))
+    }
+
+    // MARK: - Column and identity header
+
+    @Test("A wide detail pane holds the form at the capped column width")
+    func formTakesTheCappedColumn() throws {
+        let (vc, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
+        let scrollView = try #require(vc.view as? NSScrollView)
+        scrollView.frame = NSRect(x: 0, y: 0, width: 1200, height: 800)
+        scrollView.layoutSubtreeIfNeeded()
+
+        let form = try #require(scrollView.documentView?.subviews.first)
+        #expect(form.frame.width == GroupedFormStyle.columnWidth)
+    }
+
+    @Test("The identity header leads the form, naming the VM")
+    func identityHeaderLeadsTheForm() throws {
+        let (vc, instance, _) = makeController(guestOS: .macOS, isReadOnly: false)
+
+        let header = try #require(firstSubview(VMIdentityHeaderView.self, in: vc.view))
+        #expect(findLabel(withText: instance.name, in: header) != nil)
     }
 
     // MARK: - Read-only lock behavior
@@ -354,17 +375,69 @@ struct VMSettingsViewControllerTests {
         #expect(networkModePopUp(in: vc.view)?.isEnabled == true)
     }
 
-    @Test("Lock icons are visible only while read-only")
-    func lockIconsVisibilityTracksReadOnly() {
+    @Test("Section lock hints are visible only while read-only")
+    func lockHintVisibilityTracksReadOnly() {
         let (readOnlyVC, _, _) = makeController(guestOS: .macOS, isReadOnly: true)
-        let shownIcons = lockIcons(in: readOnlyVC.view)
-        #expect(!shownIcons.isEmpty)
-        #expect(shownIcons.allSatisfy { !$0.isHidden })
+        let shown = lockHints(in: readOnlyVC.view)
+        #expect(!shown.isEmpty)
+        #expect(shown.allSatisfy { !$0.isHidden })
 
         let (editableVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
-        let hiddenIcons = lockIcons(in: editableVC.view)
-        #expect(!hiddenIcons.isEmpty)
-        #expect(hiddenIcons.allSatisfy { $0.isHidden })
+        let hidden = lockHints(in: editableVC.view)
+        #expect(!hidden.isEmpty)
+        #expect(hidden.allSatisfy { $0.isHidden })
+    }
+
+    @Test("No page-level lock banner in either state")
+    func noLockBannerInEitherState() {
+        for isReadOnly in [true, false] {
+            let (vc, _, _) = makeController(guestOS: .macOS, isReadOnly: isReadOnly)
+            #expect(
+                findLabel(
+                    containing: "locked while the VM is running", in: vc.view) == nil)
+        }
+    }
+
+    @Test("A locked row dims while read-only and is undimmed when editable")
+    func lockedRowDimsWhileReadOnly() throws {
+        let (readOnlyVC, _, _) = makeController(guestOS: .macOS, isReadOnly: true)
+        let locked = try #require(row(labeled: "CPU cores", in: readOnlyVC.view))
+        #expect(locked.alphaValue == Alpha.disabled)
+
+        let (editableVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
+        let editable = try #require(row(labeled: "CPU cores", in: editableVC.view))
+        #expect(editable.alphaValue == 1)
+    }
+
+    @Test("The auto-resize row stays undimmed inside a locked Display card")
+    func hotToggleableRowStaysUndimmed() throws {
+        for isReadOnly in [true, false] {
+            let (vc, _, _) = makeController(guestOS: .macOS, isReadOnly: isReadOnly)
+            let autoResize = try #require(
+                row(labeled: "Automatically resize with window", in: vc.view))
+            #expect(autoResize.alphaValue == 1)
+        }
+    }
+
+    @Test("A live-switchable Network section hides its hint and leaves the Mode row undimmed")
+    func liveSwitchableNetworkRowStaysUndimmed() throws {
+        let (vc, _) = makeNetworkController(isReadOnly: true, status: .running)
+        let modeRow = try #require(row(labeled: "Mode", in: vc.view))
+        #expect(modeRow.alphaValue == 1)
+        #expect(networkModePopUp(in: vc.view)?.isEnabled == true)
+
+        let header = try #require(
+            firstSubview(NSStackView.self, in: vc.view) { stack in
+                stack.arrangedSubviews.contains { ($0 as? NSTextField)?.stringValue == "Network" }
+            })
+        #expect(lockHints(in: header).allSatisfy { $0.isHidden })
+    }
+
+    @Test("A stopped VM's Network Mode row dims with the rest of its section")
+    func stoppedNetworkModeRowFollowsTheLock() throws {
+        let (vc, _) = makeNetworkController(isReadOnly: true, status: .stopped)
+        let modeRow = try #require(row(labeled: "Mode", in: vc.view))
+        #expect(modeRow.alphaValue == Alpha.disabled)
     }
 
     // MARK: - Config write-back
@@ -532,7 +605,7 @@ struct VMSettingsViewControllerTests {
     func ephemeralBaselineMenuListsSnapshots() {
         let (vc, instance) = makeEphemeralController(snapshotCount: 3, ephemeral: true)
         guard let popUp = firstPopUp(action: "ephemeralBaselineChanged", in: vc.view) else {
-            Issue.record("Expected a Baseline Snapshot popup")
+            Issue.record("Expected a Baseline snapshot popup")
             return
         }
 
@@ -546,7 +619,7 @@ struct VMSettingsViewControllerTests {
     func ephemeralBaselineSelectionWritesConfig() {
         let (vc, instance) = makeEphemeralController(snapshotCount: 3, ephemeral: true)
         guard let popUp = firstPopUp(action: "ephemeralBaselineChanged", in: vc.view) else {
-            Issue.record("Expected a Baseline Snapshot popup")
+            Issue.record("Expected a Baseline snapshot popup")
             return
         }
         // Rows render newest first, so the first item is not the Current one.
@@ -709,11 +782,11 @@ struct VMSettingsViewControllerTests {
     @Test("The passthrough toggle appears for both guest OSes")
     func passthroughTogglePresentByGuestOS() {
         let (macVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
-        #expect(containsLabel("Automatic Clipboard Passthrough", in: macVC.view))
+        #expect(containsLabel("Automatic clipboard passthrough", in: macVC.view))
         #expect(firstSwitch(action: "clipboardPassthroughToggled", in: macVC.view) != nil)
 
         let (linuxVC, _, _) = makeController(guestOS: .linux, isReadOnly: false)
-        #expect(containsLabel("Automatic Clipboard Passthrough", in: linuxVC.view))
+        #expect(containsLabel("Automatic clipboard passthrough", in: linuxVC.view))
         #expect(firstSwitch(action: "clipboardPassthroughToggled", in: linuxVC.view) != nil)
     }
 
@@ -1219,7 +1292,7 @@ struct VMSettingsViewControllerTests {
         vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:ff": "192.168.64.10"]
         let (vc, _) = makeNetworkController(vmnetNetworks: vmnet)
 
-        #expect(visibleLabel("IP Address", in: vc.view))
+        #expect(visibleLabel("IP address", in: vc.view))
         #expect(visibleLabel("192.168.64.10", in: vc.view))
         #expect(vmnet.reservedMACs.map(\.mac) == ["aa:bb:cc:dd:ee:ff"])
         #expect(vmnet.reservedMACs.map(\.kind) == [.shared])
@@ -1275,14 +1348,14 @@ struct VMSettingsViewControllerTests {
     func unentitledBuildHidesTheIPAddressRow() throws {
         let (vc, _) = makeNetworkController(entitled: false)
 
-        #expect(!visibleLabel("IP Address", in: vc.view))
+        #expect(!visibleLabel("IP address", in: vc.view))
     }
 
     @Test("Mode None hides the IP Address row with the rest of the card")
     func noneModeHidesTheIPAddressRow() throws {
         let (vc, _) = makeNetworkController(networkEnabled: false)
 
-        #expect(!visibleLabel("IP Address", in: vc.view))
+        #expect(!visibleLabel("IP address", in: vc.view))
     }
 
     @Test("The Mode picker replaces the networking switch and offers Shared Network and None")
@@ -1390,20 +1463,20 @@ struct VMSettingsViewControllerTests {
     func selectingNoneWritesConfigAndEmptiesTheCard() throws {
         let (vc, instance) = makeNetworkController()
         let popUp = try #require(networkModePopUp(in: vc.view))
-        #expect(visibleLabel("MAC Address", in: vc.view))
+        #expect(visibleLabel("MAC address", in: vc.view))
 
         popUp.selectItem(withTitle: "None")
         popUp.sendAction(popUp.action, to: popUp.target)
 
         #expect(instance.configuration.networkEnabled == false)
-        #expect(!visibleLabel("MAC Address", in: vc.view))
+        #expect(!visibleLabel("MAC address", in: vc.view))
         #expect(visibleLabel("This virtual machine has no network device.", in: vc.view))
     }
 
     @Test("A VM with no network device builds with the caption already showing")
     func noneModeBuildsWithTheCaptionShowing() throws {
         let (vc, _) = makeNetworkController(networkEnabled: false)
-        #expect(!visibleLabel("MAC Address", in: vc.view))
+        #expect(!visibleLabel("MAC address", in: vc.view))
         #expect(visibleLabel("This virtual machine has no network device.", in: vc.view))
         #expect(networkModePopUp(in: vc.view)?.titleOfSelectedItem == "None")
     }
@@ -1535,7 +1608,7 @@ struct VMSettingsViewControllerTests {
     func macAddressRowIsEditable() throws {
         let (vc, _) = makeNetworkController()
 
-        let field = try #require(editableField("MAC Address", in: vc.view))
+        let field = try #require(editableField("MAC address", in: vc.view))
         #expect(field.stringValue == "aa:bb:cc:dd:ee:ff")
         #expect(findButton(titled: "Generate", in: vc.view) != nil)
     }
@@ -1543,7 +1616,7 @@ struct VMSettingsViewControllerTests {
     @Test("A typed MAC address is persisted in canonical form")
     func typedMACAddressIsPersistedCanonically() throws {
         let (vc, instance) = makeNetworkController()
-        let field = try #require(editableField("MAC Address", in: vc.view))
+        let field = try #require(editableField("MAC address", in: vc.view))
 
         field.stringValue = " AA:BB:CC:DD:EE:0F "
         commitEdit(field, on: vc)
@@ -1562,7 +1635,7 @@ struct VMSettingsViewControllerTests {
         ]
         for text in refused {
             let (vc, instance) = makeNetworkController()
-            let field = try #require(editableField("MAC Address", in: vc.view))
+            let field = try #require(editableField("MAC address", in: vc.view))
 
             field.stringValue = text
             commitEdit(field, on: vc)
@@ -1592,7 +1665,7 @@ struct VMSettingsViewControllerTests {
         let presenter = MockVMLibraryPresenting()
         let viewModel = makeLibraryHolding("aa:bb:cc:dd:ee:0f", presenter: presenter)
         let (vc, instance) = makeNetworkController(viewModel: viewModel)
-        let field = try #require(editableField("MAC Address", in: vc.view))
+        let field = try #require(editableField("MAC address", in: vc.view))
 
         field.stringValue = "AA:BB:CC:DD:EE:0F"
         commitEdit(field, on: vc)
@@ -1657,7 +1730,7 @@ struct VMSettingsViewControllerTests {
         let (vc, instance) = makeNetworkController(viewModel: viewModel)
         let window = makeTestWindow(styleMask: [.titled])
         window.contentView = vc.view
-        let field = try #require(editableField("MAC Address", in: vc.view))
+        let field = try #require(editableField("MAC address", in: vc.view))
         #expect(window.makeFirstResponder(field))
         try #require(field.currentEditor()).string = "aa:bb:cc:dd:ee:0f"
         let generate = try #require(findButton(titled: "Generate", in: vc.view))
@@ -1677,7 +1750,7 @@ struct VMSettingsViewControllerTests {
         let (vc, instance) = makeNetworkController()
         let window = makeTestWindow(styleMask: [.titled])
         window.contentView = vc.view
-        let field = try #require(editableField("MAC Address", in: vc.view))
+        let field = try #require(editableField("MAC address", in: vc.view))
         #expect(window.makeFirstResponder(field))
         try #require(field.currentEditor()).string = "nonsense"
 
@@ -1692,7 +1765,7 @@ struct VMSettingsViewControllerTests {
         let (vc, instance) = makeNetworkController()
         let window = makeTestWindow(styleMask: [.titled])
         window.contentView = vc.view
-        let field = try #require(editableField("MAC Address", in: vc.view))
+        let field = try #require(editableField("MAC address", in: vc.view))
         #expect(window.makeFirstResponder(field))
         try #require(field.currentEditor()).string = "AA:BB:CC:DD:EE:0F"
 
@@ -1707,7 +1780,7 @@ struct VMSettingsViewControllerTests {
         let (vc, instance) = makeNetworkController()
         let window = makeTestWindow(styleMask: [.titled])
         window.contentView = vc.view
-        let field = try #require(editableField("MAC Address", in: vc.view))
+        let field = try #require(editableField("MAC address", in: vc.view))
         #expect(window.makeFirstResponder(field))
         try #require(field.currentEditor()).string = "aa:bb:cc:dd:ee:01"
         let popUp = try #require(networkModePopUp(in: vc.view))
@@ -1716,7 +1789,7 @@ struct VMSettingsViewControllerTests {
         popUp.sendAction(popUp.action, to: popUp.target)
 
         #expect(instance.configuration.networkEnabled == false)
-        #expect(!visibleLabel("MAC Address", in: vc.view))
+        #expect(!visibleLabel("MAC address", in: vc.view))
         #expect(field.currentEditor() == nil)
     }
 
@@ -1725,7 +1798,7 @@ struct VMSettingsViewControllerTests {
         let (vc, instance) = makeNetworkController()
         let window = makeTestWindow(styleMask: [.titled])
         window.contentView = vc.view
-        let field = try #require(editableField("MAC Address", in: vc.view))
+        let field = try #require(editableField("MAC address", in: vc.view))
         #expect(window.makeFirstResponder(field))
         try #require(field.currentEditor()).string = "aa:bb:cc:dd:ee:01"
         let generate = try #require(findButton(titled: "Generate", in: vc.view))
@@ -1753,7 +1826,7 @@ struct VMSettingsViewControllerTests {
         let address = try #require(VZMACAddress(string: mac))
         #expect(address.isUnicastAddress)
         #expect(address.isLocallyAdministeredAddress)
-        #expect(editableField("MAC Address", in: vc.view)?.stringValue == mac)
+        #expect(editableField("MAC address", in: vc.view)?.stringValue == mac)
     }
 
     @Test("A running VM locks the MAC controls while the picker stays live")
@@ -1762,7 +1835,7 @@ struct VMSettingsViewControllerTests {
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"),
             isReadOnly: true, status: .running)
 
-        #expect(editableField("MAC Address", in: vc.view)?.isEnabled == false)
+        #expect(editableField("MAC address", in: vc.view)?.isEnabled == false)
         #expect(findButton(titled: "Generate", in: vc.view)?.isEnabled == false)
         #expect(networkModePopUp(in: vc.view)?.isEnabled == true)
     }
@@ -1772,7 +1845,7 @@ struct VMSettingsViewControllerTests {
         let (vc, _) = makeNetworkController()
         let window = makeTestWindow(styleMask: [.titled])
         window.contentView = vc.view
-        let field = try #require(editableField("MAC Address", in: vc.view))
+        let field = try #require(editableField("MAC address", in: vc.view))
         #expect(window.makeFirstResponder(field))
         let editor = try #require(field.currentEditor())
         editor.string = "aa:bb:cc:dd:ee:0"
@@ -1787,15 +1860,15 @@ struct VMSettingsViewControllerTests {
     @Test("A VM given its first MAC address shows it in the row straight away")
     func mintedMACAddressAppearsInTheRow() throws {
         let (vc, instance) = makeNetworkController(networkEnabled: false, macAddress: nil)
-        #expect(!visibleLabel("MAC Address", in: vc.view))
+        #expect(!visibleLabel("MAC address", in: vc.view))
         let popUp = try #require(networkModePopUp(in: vc.view))
 
         popUp.selectItem(withTitle: "Shared Network")
         popUp.sendAction(popUp.action, to: popUp.target)
 
-        #expect(visibleLabel("MAC Address", in: vc.view))
+        #expect(visibleLabel("MAC address", in: vc.view))
         #expect(
-            editableField("MAC Address", in: vc.view)?.stringValue
+            editableField("MAC address", in: vc.view)?.stringValue
                 == instance.configuration.macAddress)
     }
 
@@ -1825,19 +1898,19 @@ struct VMSettingsViewControllerTests {
         #expect(popUp.menu?.items.first { $0.title == "Wi-Fi (en0)" }?.isEnabled == true)
     }
 
-    @Test("The Network lock icon hides while the picker is live, and only then")
-    func networkLockIconHidesWhileThePickerIsLive() {
+    @Test("The Network lock hint hides while the picker is live, and only then")
+    func networkLockHintHidesWhileThePickerIsLive() {
         let (liveVC, _) = makeNetworkController(
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"),
             isReadOnly: true, status: .running)
-        // Every other lockable section still shows its lock; only the live
+        // Every other lockable section still shows its hint; only the live
         // picker's section drops the claim.
-        #expect(lockIcons(in: liveVC.view).filter(\.isHidden).count == 1)
+        #expect(lockHints(in: liveVC.view).filter(\.isHidden).count == 1)
 
         let (savingVC, _) = makeNetworkController(
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]),
             isReadOnly: true, status: .saving)
-        #expect(lockIcons(in: savingVC.view).allSatisfy { !$0.isHidden })
+        #expect(lockHints(in: savingVC.view).allSatisfy { !$0.isHidden })
     }
 
     @Test("A live mode switch writes the config from the running picker")
@@ -1894,7 +1967,7 @@ struct VMSettingsViewControllerTests {
     func sharedVMListsForwardingRules() {
         let (vc, _) = makeNetworkController(portForwardingRules: [Self.webRule, Self.sshRule])
 
-        #expect(visibleLabel("Port Forwarding", in: vc.view))
+        #expect(visibleLabel("Port forwarding", in: vc.view))
         #expect(visibleLabel("TCP", in: vc.view))
         #expect(visibleLabel("Host 8080 → Guest 80", in: vc.view))
         #expect(visibleLabel("Host 2222 → Guest 22", in: vc.view))
@@ -1905,7 +1978,7 @@ struct VMSettingsViewControllerTests {
     func sharedVMWithoutRulesOffersAddRule() {
         let (vc, _) = makeNetworkController()
 
-        #expect(visibleLabel("Port Forwarding", in: vc.view))
+        #expect(visibleLabel("Port forwarding", in: vc.view))
         #expect(findButton(titled: "Add Rule…", in: vc.view)?.isEnabled == true)
     }
 
@@ -1915,15 +1988,15 @@ struct VMSettingsViewControllerTests {
         // unentitled build attaches system NAT — none of them forwards.
         let (hostOnly, _) = makeNetworkController(
             mode: .hostOnly, portForwardingRules: [Self.webRule])
-        #expect(!visibleLabel("Port Forwarding", in: hostOnly.view))
+        #expect(!visibleLabel("Port forwarding", in: hostOnly.view))
 
         let (none, _) = makeNetworkController(
             networkEnabled: false, portForwardingRules: [Self.webRule])
-        #expect(!visibleLabel("Port Forwarding", in: none.view))
+        #expect(!visibleLabel("Port forwarding", in: none.view))
 
         let (unentitled, _) = makeNetworkController(
             portForwardingRules: [Self.webRule], entitled: false)
-        #expect(!visibleLabel("Port Forwarding", in: unentitled.view))
+        #expect(!visibleLabel("Port forwarding", in: unentitled.view))
     }
 
     @Test("Removing a rule writes the configuration without it")
@@ -2058,8 +2131,15 @@ struct VMSettingsViewControllerTests {
         firstSubview(NSSwitch.self, in: view) { $0.action.map(NSStringFromSelector) == name }
     }
 
-    private func lockIcons(in view: NSView) -> [NSImageView] {
-        allSubviews(NSImageView.self, in: view) { $0.toolTip == "Locked while the VM is running" }
+    private func lockHints(in view: NSView) -> [NSView] {
+        allSubviews(NSStackView.self, in: view) { $0.toolTip == groupedFormLockHintText }
+    }
+
+    /// The grouped-form row whose leading label reads `label`.
+    private func row(labeled label: String, in view: NSView) -> NSView? {
+        firstSubview(NSStackView.self, in: view) { stack in
+            stack.arrangedSubviews.contains { ($0 as? NSTextField)?.stringValue == label }
+        }
     }
 
     private func containsLabel(_ text: String, in view: NSView) -> Bool {
