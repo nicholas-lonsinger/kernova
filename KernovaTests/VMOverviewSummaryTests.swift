@@ -26,6 +26,10 @@ struct VMOverviewSummaryTests {
             .first { $0.label == label }?.value
     }
 
+    private func sharingNote(_ instance: VMInstance) -> String? {
+        VMOverviewSummary.note(for: .sharing, instance: instance)
+    }
+
     // MARK: - General
 
     @Test("General names the guest type and how it boots")
@@ -134,23 +138,38 @@ struct VMOverviewSummaryTests {
 
     @Test("Sharing's line names the passthrough state and counts the folders")
     func sharingNoteStatesPassthroughAndFolders() {
-        func note(_ instance: VMInstance) -> String? {
-            VMOverviewSummary.note(for: .sharing, instance: instance)
-        }
-        #expect(note(makeInstance()) == "Passthrough off \u{00B7} No shared folders")
+        #expect(sharingNote(makeInstance()) == "Passthrough off \u{00B7} No shared folders")
 
         let one = makeInstance {
+            $0.clipboardSharingEnabled = true
             $0.clipboardPassthroughEnabled = true
             $0.sharedDirectories = [SharedDirectory(path: "/tmp/share")]
         }
-        #expect(note(one) == "Passthrough on \u{00B7} 1 shared folder")
+        #expect(sharingNote(one) == "Passthrough on \u{00B7} 1 shared folder")
 
         let two = makeInstance {
             $0.sharedDirectories = [
                 SharedDirectory(path: "/tmp/share"), SharedDirectory(path: "/tmp/other"),
             ]
         }
-        #expect(note(two) == "Passthrough off \u{00B7} 2 shared folders")
+        #expect(sharingNote(two) == "Passthrough off \u{00B7} 2 shared folders")
+    }
+
+    @Test("Passthrough reads off while clipboard sharing isn't carrying it")
+    func sharingNoteStatesTheRunningPassthrough() {
+        // Sharing turned off leaves the stored flag set, and nothing passes
+        // through — the line states what is running, not what is stored.
+        let stranded = makeInstance {
+            $0.clipboardSharingEnabled = false
+            $0.clipboardPassthroughEnabled = true
+        }
+        #expect(sharingNote(stranded) == "Passthrough off \u{00B7} No shared folders")
+
+        let running = makeInstance {
+            $0.clipboardSharingEnabled = true
+            $0.clipboardPassthroughEnabled = true
+        }
+        #expect(sharingNote(running) == "Passthrough on \u{00B7} No shared folders")
     }
 
     @Test("Sharing is the only card closing with a line")
