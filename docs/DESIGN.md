@@ -63,7 +63,8 @@ Set `NSStackView.spacing` from the `Spacing` token scale (`Utilities/DesignToken
 ### Cards and Containers
 
 - Grouped cards: `GroupedFormStyle.cardFill` at `CornerRadius.card`, borderless, with hairlines inset to the label edge and bleeding to the card's trailing edge.
-- The detail pane is an overview of one card per `VMSettingsCategory`, each drilling into that category's panel. A card states the facts answering "what is this VM right now" — never the panel's full row list — so a new setting decides its card representation, or states that it has none. The way back out of a panel is a leading-edge toolbar button, present only while a panel is open, as in System Settings — not an in-pane link.
+- The detail pane is an overview of one card per `VMSettingsCategory`, each drilling into that category's panel. A card states the facts answering "what is this VM right now" — never the panel's full row list — so a new setting decides its card representation, or states that it has none.
+- A panel's pinned header is one row: a bezeled image-only back button leading the category title, the VM's status facts trailing. The way back is a standard bordered control beside what it leaves — not a tinted in-pane link, and not window chrome.
 - A boolean on a card renders as its own live switch, dimmed through `applyGroupedFormRowEnabled` while the current state doesn't allow editing it. A card carrying live switches states no "Editable when stopped" hint — the hint would contradict the controls beside it.
 - A content well — a buffer or preview surface — is an inset card at `CornerRadius.card` filled `.textBackgroundColor`, borderless and clipping, with a capsule chip naming what it holds in its top-trailing corner (`ClipboardBufferCardView`).
 - A pane with no natural width of its own caps its form content at `GroupedFormStyle.columnWidth`, centered.

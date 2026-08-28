@@ -54,7 +54,6 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 popOutID: NSToolbarItem.Identifier("displayPopOut"),
                 fullscreenID: NSToolbarItem.Identifier("displayFullscreen"),
                 settingsToggleID: nil,
-                settingsBackID: nil,
                 checksPreparing: false,
                 gatesDisplayOnCapability: false
             ),

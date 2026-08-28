@@ -106,9 +106,6 @@ final class VMSettingsViewController: NSViewController {
         // rename there would commit a half-typed name.
         if instanceChanged {
             panelControllers.values.forEach { $0.willRebind() }
-            // The outgoing VM keeps no drill-in state; the incoming one starts
-            // on its overview.
-            self.instance.detailPaneShowsSettingsCategory = false
         }
         self.instance = instance
         self.viewModel = viewModel
@@ -187,6 +184,7 @@ final class VMSettingsViewController: NSViewController {
         overviewVC.delegate = self
         addChild(overviewVC)
         installPanels()
+        panelHeader.setBackAction(target: self, action: #selector(backToOverview))
 
         view = root
         buildForm()
@@ -195,7 +193,6 @@ final class VMSettingsViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         panelContext.setDismissed(false)
-        instance.detailPaneShowsSettingsCategory = selectedCategory != nil
         panelControllers.values.forEach { $0.hostDidAppear() }
         if modelObservation == nil {
             restartModelObservation()
@@ -217,9 +214,6 @@ final class VMSettingsViewController: NSViewController {
                 _ = self.instance.status
                 _ = self.instance.snapshotManifest
                 _ = self.viewModel.activeRename
-                // The toolbar's back item clears this; the pane follows it back
-                // to the overview.
-                _ = self.instance.detailPaneShowsSettingsCategory
                 _ = self.viewModel.agentInstallPromptDisabled
                 // Registers every instance's configuration, so the
                 // duplicate-MAC banner follows a change made on the *other*
@@ -238,9 +232,6 @@ final class VMSettingsViewController: NSViewController {
     override func viewWillDisappear() {
         super.viewWillDisappear()
         panelContext.setDismissed(true)
-        // The back affordance belongs to a visible pane; the display route and a
-        // deselected VM offer nothing to go back from.
-        instance.detailPaneShowsSettingsCategory = false
         panelControllers.values.forEach { $0.prepareForDisappearance() }
         modelObservation?.cancel()
         modelObservation = nil
@@ -341,6 +332,11 @@ extension VMSettingsViewController {
         show(nil)
     }
 
+    /// The panel header's back button.
+    @objc private func backToOverview(_ sender: Any?) {
+        showOverview()
+    }
+
     private func show(_ category: VMSettingsCategory?) {
         // Settle an open field editor before its panel goes: AppKit doesn't
         // resign first responder on hide, so a half-typed MAC address, display
@@ -353,7 +349,6 @@ extension VMSettingsViewController {
             window.makeFirstResponder(nil)
         }
         selectedCategory = category
-        instance.detailPaneShowsSettingsCategory = category != nil
         overviewVC.view.isHidden = category != nil
         for (key, panel) in panels {
             panel.isHidden = key != category
@@ -399,11 +394,6 @@ extension VMSettingsViewController {
     /// Idempotently refreshes all mutable chrome from the model.
     private func apply() {
         guard isViewLoaded else { return }
-        // The toolbar's back button writes the model, so the pane returns to the
-        // overview from the same pass that notices.
-        if selectedCategory != nil, !instance.detailPaneShowsSettingsCategory {
-            showOverview()
-        }
         identityHeader.configure(with: instance)
         panelControllers.values.forEach { $0.refresh() }
         // Last, so the cards state what the refreshers above just resolved.

@@ -1,21 +1,21 @@
 import AppKit
 
-/// The pinned header shown while a settings category is open: the panel title
-/// and a compact status line.
+/// The pinned header shown while a settings category is open — one row: the way
+/// back, the panel title, and a compact status line at the trailing edge.
 ///
-/// The way back is the window toolbar's back button, and the VM's name is in the
-/// window title, so the header states neither — only what the title bar does not
-/// carry, which is the VM's status.
+/// The VM's name is in the window title, so the header states only what the
+/// title bar does not carry, which is the VM's status.
 ///
 /// A single-section category folds that section's own header into this one, so
 /// the category name is stated once — the info affordance and any readout it
 /// carries are handed over as accessories.
 @MainActor
 final class VMSettingsPanelHeaderView: NSView {
+    private let backButton = NSButton()
     private let statusDot = NSImageView()
     private let factsLabel = NSTextField(labelWithString: "")
     private let titleLabel = NSTextField(labelWithString: "")
-    private let titleRow = NSStackView()
+    private let row = NSStackView()
     private let trailingSpacer = NSView()
     /// Views handed over by the open panel, removed when another one opens.
     private var accessories: [NSView] = []
@@ -30,8 +30,14 @@ final class VMSettingsPanelHeaderView: NSView {
         fatalError("VMSettingsPanelHeaderView does not support NSCoder")
     }
 
+    /// Routes the back button to the host that owns the way out of a panel.
+    func setBackAction(target: AnyObject?, action: Selector) {
+        backButton.target = target
+        backButton.action = action
+    }
+
     /// Paints the header for `title`, hosting `leadingAccessories` beside the
-    /// title and `trailingAccessories` at the row's far edge.
+    /// title and `trailingAccessories` ahead of the status cluster.
     func configure(
         statusColor: NSColor, statusText: String, facts: String, title: String,
         leadingAccessories: [NSView] = [], trailingAccessories: [NSView] = []
@@ -47,11 +53,32 @@ final class VMSettingsPanelHeaderView: NSView {
         }
         accessories.forEach { $0.removeFromSuperview() }
         accessories = wanted
-        wanted.forEach { titleRow.addArrangedSubview($0) }
+        // Ahead of the status cluster, which stays pinned to the trailing edge.
+        var index = row.arrangedSubviews.firstIndex(of: statusDot) ?? row.arrangedSubviews.count
+        for view in wanted {
+            row.insertArrangedSubview(view, at: index)
+            index += 1
+        }
     }
 
     private func buildLayout() {
         translatesAutoresizingMaskIntoConstraints = false
+
+        backButton.image = .systemSymbol("chevron.left", accessibilityDescription: "")
+        backButton.imagePosition = .imageOnly
+        backButton.isBordered = true
+        backButton.bezelStyle = .toolbar
+        backButton.controlSize = .small
+        backButton.toolTip = "Show all settings"
+        backButton.setAccessibilityLabel("Back")
+        backButton.setContentHuggingPriority(.required, for: .horizontal)
+        backButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        titleLabel.font = Typography.title
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.maximumNumberOfLines = 1
+        titleLabel.isSelectable = false
+        titleLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 
         statusDot.image = .systemSymbol("circle.fill", accessibilityDescription: "")
         statusDot.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 8, weight: .regular)
@@ -62,37 +89,22 @@ final class VMSettingsPanelHeaderView: NSView {
         factsLabel.lineBreakMode = .byTruncatingTail
         factsLabel.maximumNumberOfLines = 1
         factsLabel.isSelectable = false
+        factsLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        // The title wins the row: on a narrow pane the facts give their width up
+        // first and truncate, rather than squeezing the category name.
         factsLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        let statusSpacer = NSView()
-        statusSpacer.translatesAutoresizingMaskIntoConstraints = false
-        statusSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let statusRow = NSStackView(views: [statusDot, factsLabel, statusSpacer])
-        statusRow.orientation = .horizontal
-        statusRow.alignment = .centerY
-        statusRow.spacing = Spacing.small
-
-        titleLabel.font = Typography.title
-        titleLabel.lineBreakMode = .byTruncatingTail
-        titleLabel.maximumNumberOfLines = 1
-        titleLabel.isSelectable = false
 
         trailingSpacer.translatesAutoresizingMaskIntoConstraints = false
         trailingSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        titleRow.orientation = .horizontal
-        titleRow.alignment = .centerY
-        titleRow.spacing = Spacing.small
-        titleRow.addArrangedSubview(titleLabel)
-
-        let column = NSStackView(views: [statusRow, titleRow])
-        column.orientation = .vertical
-        column.alignment = .leading
-        column.spacing = Spacing.small
-        column.translatesAutoresizingMaskIntoConstraints = false
-        addFullSizeSubview(column)
-        for row in [statusRow, titleRow] {
-            row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
-        }
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = Spacing.small
+        row.addArrangedSubview(backButton)
+        row.addArrangedSubview(titleLabel)
+        row.addArrangedSubview(statusDot)
+        row.addArrangedSubview(factsLabel)
+        row.setCustomSpacing(Spacing.standard, after: backButton)
+        addFullSizeSubview(row)
     }
 }
