@@ -1339,7 +1339,7 @@ struct VMSettingsViewControllerTests {
         // The address becomes derivable once the network materializes — which
         // the row kicked off itself.
         vmnet.scriptedAddresses = ["aa:bb:cc:dd:ee:ff": "192.168.64.9"]
-        await vc.ipAddressMaterializeTaskForTesting?.value
+        await networkPanel(in: vc)?.ipAddressMaterializeTaskForTesting?.value
 
         #expect(vmnet.materializeCount == 1)
         #expect(visibleLabel("192.168.64.9", in: vc.view))
@@ -1355,7 +1355,7 @@ struct VMSettingsViewControllerTests {
         vmnet.materializeFails = true
         let (vc, _) = makeNetworkController(vmnetNetworks: vmnet)
 
-        await vc.ipAddressMaterializeTaskForTesting?.value
+        await networkPanel(in: vc)?.ipAddressMaterializeTaskForTesting?.value
 
         #expect(visibleLabel("—", in: vc.view))
         #expect(vmnet.materializeCount == 1)
@@ -1480,7 +1480,8 @@ struct VMSettingsViewControllerTests {
         #expect(!popUp.itemTitles.contains("Ethernet (en1)"))
 
         provider.available = [Self.wiFi, Self.ethernet]
-        vc.menuNeedsUpdate(try #require(popUp.menu))
+        let menu = try #require(popUp.menu)
+        menu.delegate?.menuNeedsUpdate?(menu)
 
         #expect(popUp.itemTitles.contains("Ethernet (en1)"))
     }
@@ -1626,8 +1627,11 @@ struct VMSettingsViewControllerTests {
     // MARK: - MAC Address row
 
     /// Ends editing the way a click outside the field does.
+    /// Ends editing through the field's own delegate, so the assertion covers
+    /// the wiring as well as the commit.
     private func commitEdit(_ field: NSTextField, on vc: VMSettingsViewController) {
-        vc.controlTextDidEndEditing(Notification(name: .init("test"), object: field))
+        field.delegate?.controlTextDidEndEditing?(
+            Notification(name: .init("test"), object: field))
     }
 
     @Test("The MAC Address row offers the persisted address in an editable field")
@@ -1900,13 +1904,13 @@ struct VMSettingsViewControllerTests {
 
     @Test("Only a usable MAC address normalizes")
     func normalizedMACAddressAcceptsOnlyUsableAddresses() {
-        #expect(VMSettingsViewController.normalizedMACAddress("AA:BB:CC:DD:EE:FF") == "aa:bb:cc:dd:ee:ff")
-        #expect(VMSettingsViewController.normalizedMACAddress(" aa:bb:cc:dd:ee:ff\n") == "aa:bb:cc:dd:ee:ff")
+        #expect(VMSettingsNetworkPanelViewController.normalizedMACAddress("AA:BB:CC:DD:EE:FF") == "aa:bb:cc:dd:ee:ff")
+        #expect(VMSettingsNetworkPanelViewController.normalizedMACAddress(" aa:bb:cc:dd:ee:ff\n") == "aa:bb:cc:dd:ee:ff")
         for text in [
             "aa-bb-cc-dd-ee-ff", "aabbccddeeff", "a:b:c:d:e:f", "aa:bb:cc:dd:ee:fg", "",
             "00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff", "01:00:5e:00:00:01",
         ] {
-            #expect(VMSettingsViewController.normalizedMACAddress(text) == nil)
+            #expect(VMSettingsNetworkPanelViewController.normalizedMACAddress(text) == nil)
         }
     }
 
@@ -2079,7 +2083,7 @@ struct VMSettingsViewControllerTests {
             portForwardingRules: [Self.webRule], viewModel: viewModel)
 
         #expect(
-            vc.takenHostPortClaimsForTesting == [
+            networkPanel(in: vc)?.takenHostPortClaimsForTesting == [
                 Self.webRule.hostClaim, Self.sshRule.hostClaim,
                 PortForwardingHostClaim(transport: .udp, hostPort: 5353),
             ])
@@ -2147,6 +2151,13 @@ struct VMSettingsViewControllerTests {
     }
 
     // MARK: - Helpers (view-tree introspection)
+
+    /// The Network panel, for the seams it owns rather than the shell.
+    private func networkPanel(in vc: VMSettingsViewController)
+        -> VMSettingsNetworkPanelViewController?
+    {
+        vc.settingsPanelForTesting(.network) as? VMSettingsNetworkPanelViewController
+    }
 
     private func networkModePopUp(in view: NSView) -> NSPopUpButton? {
         firstSubview(NSPopUpButton.self, in: view) {

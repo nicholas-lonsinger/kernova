@@ -137,6 +137,14 @@ extension VMSettingsPanel {
     }
 }
 
+/// Puts `string` on the host pasteboard, for a panel's copy affordance.
+@MainActor
+func copyToPasteboard(_ string: String) {
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(string, forType: .string)
+}
+
 /// What a panel header shows in place of a single section's own header.
 struct VMSettingsPanelChrome {
     var leading: [NSView] = []

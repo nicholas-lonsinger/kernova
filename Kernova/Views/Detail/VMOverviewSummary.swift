@@ -38,6 +38,9 @@ struct VMOverviewResolved: Sendable {
     var portForwardingRuleCount: Int?
     /// The Input Devices picker's current title, `nil` for a Linux guest.
     var inputDevicesTitle: String?
+    /// Whether the Mode picker hot-swaps while the VM runs, which makes the
+    /// Network card's lock hint a false claim.
+    var networkIsLiveSwitchable = false
     /// The banner message a category's panel currently shows, by category.
     var warnings: [VMSettingsCategory: String] = [:]
 }
