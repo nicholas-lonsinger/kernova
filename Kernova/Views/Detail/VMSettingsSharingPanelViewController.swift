@@ -30,7 +30,6 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         panelStack.spacing = Spacing.section
         panelStack.translatesAutoresizingMaskIntoConstraints = false
         view = panelStack
-        rebuild()
     }
 
     // MARK: - Panel

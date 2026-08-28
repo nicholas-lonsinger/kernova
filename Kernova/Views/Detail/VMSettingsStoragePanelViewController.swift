@@ -34,7 +34,6 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         panelStack.spacing = Spacing.section
         panelStack.translatesAutoresizingMaskIntoConstraints = false
         view = panelStack
-        rebuild()
     }
 
     // MARK: - Panel
@@ -56,6 +55,18 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         }
         // The monitored paths are this instance's, so a rebuild re-seeds them.
         startInstanceSideEffects()
+        armFileMonitorObservation()
+    }
+
+    /// The observation chain is one-shot and its callback stops re-arming once
+    /// the pane goes away, so re-appearing has to start a fresh one — otherwise
+    /// a single change while hidden freezes the missing-file badges for good.
+    func hostDidAppear() {
+        armFileMonitorObservation()
+    }
+
+    /// Starts a fresh observation cycle, retiring any earlier one by token.
+    private func armFileMonitorObservation() {
         let token = UUID()
         fileMonitorObservationToken = token
         observeFileMonitor(token: token)
@@ -80,9 +91,9 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     private let fileMonitor = AttachmentFileMonitor()
     /// Identifies the current file-monitor observation cycle.
     ///
-    /// A new token is minted each `viewDidAppear`; a re-arming callback from an
-    /// older cycle (which `hasDisappeared` alone can't cancel —
-    /// `withObservationTracking` has no unregister) bails when its token no
+    /// A new token is minted whenever the pane appears or rebuilds; a re-arming
+    /// callback from an older cycle (which the dismissed flag alone can't cancel
+    /// — `withObservationTracking` has no unregister) bails when its token no
     /// longer matches, so stale chains can't accumulate.
     private var fileMonitorObservationToken: UUID?
 
@@ -168,8 +179,9 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     /// Re-arming `withObservationTracking` on `fileMonitor.existsByPath`, so the
     /// missing-file affordance on attachment rows updates live.
     ///
-    /// The `hasDisappeared` guard breaks the chain on dismissal, and the `token`
-    /// makes a callback from a prior appear cycle bail.
+    /// The dismissed guard breaks the chain when the pane goes away —
+    /// ``hostDidAppear()`` starts the next one — and the `token` makes a
+    /// callback from a prior cycle bail.
     private func observeFileMonitor(token: UUID) {
         if context.isDismissed || fileMonitorObservationToken != token { return }
         withObservationTracking { [fileMonitor] in
@@ -712,12 +724,6 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
 
     private func attachmentRef(from sender: NSMenuItem) -> AttachmentRef? {
         sender.representedObject as? AttachmentRef
-    }
-
-    private func copyToPasteboard(_ string: String) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(string, forType: .string)
     }
 
     @objc private func menuAttachmentRename(_ sender: NSMenuItem) {

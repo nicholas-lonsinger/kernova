@@ -101,6 +101,9 @@ protocol VMSettingsPanel: NSViewController {
     func willRebind()
     /// Adds what this panel resolved to the values the overview cards state.
     func contribute(to resolved: inout VMOverviewResolved)
+    /// The pane is on screen again: re-arm anything ``prepareForDisappearance()``
+    /// let go of. Runs after the context is un-dismissed and before `refresh()`.
+    func hostDidAppear()
     /// The pane is going away: cancel work and drop in-flight edit state.
     func prepareForDisappearance()
     /// The app came forward; re-read anything the system may have changed.
@@ -110,6 +113,7 @@ protocol VMSettingsPanel: NSViewController {
 extension VMSettingsPanel {
     func willRebind() {}
     func contribute(to resolved: inout VMOverviewResolved) {}
+    func hostDidAppear() {}
     func prepareForDisappearance() {}
     func hostDidBecomeActive() {}
 

@@ -30,6 +30,31 @@ struct VMSettingsGeneralPanelTests {
             preferences: preferences)
     }
 
+    // MARK: - Rename session across a rebind
+
+    @Test("A read-only flip on the same VM leaves an open rename alone")
+    func readOnlyFlipDoesNotCommitAnOpenRename() throws {
+        let (vc, instance, viewModel) = makeController(
+            guestOS: .linux, isReadOnly: false, category: .general)
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        viewModel.renameVMInDetail(instance)
+        vc.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: false)
+        // The panel's only editable field is the name box the rename opened.
+        let panel = try #require(vc.panelForTesting(.general))
+        let field = try #require(findEditableField(in: panel))
+        field.currentEditor()?.string = "Half-typed"
+        field.stringValue = "Half-typed"
+
+        // The VM starting flips the pane read-only, which re-enters
+        // `reconfigure` with the same instance — not an outgoing one, so the
+        // half-typed name must not commit.
+        vc.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: true)
+
+        #expect(instance.name == "Test VM")
+        #expect(viewModel.activeRename == .detail(instance.id))
+    }
+
     // MARK: - General card OS rows
 
     private func makeOSRowsController(

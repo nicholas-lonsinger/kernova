@@ -101,8 +101,12 @@ final class VMSettingsViewController: NSViewController {
     func reconfigure(instance: VMInstance, viewModel: VMLibraryViewModel, isReadOnly: Bool) {
         let instanceChanged = instance.id != self.instance.id
         // Panels settle anything bound to the outgoing instance before the
-        // context moves under them.
-        panelControllers.values.forEach { $0.willRebind() }
+        // context moves under them — only when there IS an outgoing one: a
+        // read-only flip re-enters `reconfigure` with the same VM, and ending a
+        // rename there would commit a half-typed name.
+        if instanceChanged {
+            panelControllers.values.forEach { $0.willRebind() }
+        }
         self.instance = instance
         self.viewModel = viewModel
         self.isReadOnly = isReadOnly
@@ -189,6 +193,7 @@ final class VMSettingsViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         panelContext.setDismissed(false)
+        panelControllers.values.forEach { $0.hostDidAppear() }
         if modelObservation == nil {
             restartModelObservation()
             NotificationCenter.default.addObserver(
@@ -252,8 +257,6 @@ extension VMSettingsViewController {
     /// Called on first load and whenever the bound instance changes.
     private func buildForm() {
         formStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        // The list stacks and the audio-warning container are recreated below,
-        // so invalidate the render snapshots that guard their refreshes.
 
         panels.removeAll()
 
@@ -403,9 +406,7 @@ extension VMSettingsViewController {
         for panel in panelControllers.values {
             panel.contribute(to: &resolved)
         }
-        overviewVC.configure(
-            instance: instance, isReadOnly: isReadOnly,
-            networkIsLiveSwitchable: resolved.networkIsLiveSwitchable, resolved: resolved)
+        overviewVC.configure(instance: instance, isReadOnly: isReadOnly, resolved: resolved)
     }
 }
 

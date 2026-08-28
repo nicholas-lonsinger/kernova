@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import KernovaTestSupport
 import Testing
 import Virtualization
 
@@ -28,6 +29,60 @@ struct VMSettingsStoragePanelTests {
         makeSettingsController(
             guestOS: guestOS, isReadOnly: isReadOnly, category: category,
             preferences: preferences)
+    }
+
+    // MARK: - Live missing-file badge
+
+    /// Builds a pane over a VM carrying one external disk at `path`, drilled
+    /// into Storage.
+    private func makeStorageController(externalDiskAt path: String) -> (
+        VMSettingsViewController, VMInstance
+    ) {
+        let viewModel = makeViewModel()
+        let instance = makeInstance(guestOS: .linux)
+        instance.configuration.storageDisks = [StorageDisk(path: path, label: "Scratch")]
+        let vc = VMSettingsViewController(
+            instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        vc.showCategory(.storage)
+        return (vc, instance)
+    }
+
+    private func showsMissingBadge(in vc: VMSettingsViewController) -> Bool {
+        guard let panel = vc.panelForTesting(.storage) else { return false }
+        return findLabel(containing: "Missing", in: panel) != nil
+    }
+
+    @Test("A file change while the pane is hidden leaves the badge live afterwards")
+    func missingBadgeStaysLiveAcrossReappearance() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kernova-settings-storage-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("scratch.img")
+        let path = url.path(percentEncoded: false)
+        FileManager.default.createFile(atPath: path, contents: Data([0]))
+
+        let (vc, _) = makeStorageController(externalDiskAt: path)
+        // RATIONALE: genuine no-signal predicate (docs/TESTING.md "Async waits in
+        // tests") — the observed effect is an `NSTextField`'s rendered text at
+        // the end of a debounced file-system watch, with no Observable or
+        // `AsyncGate` signal to arm against.
+        try await waitUntil { !self.showsMissingBadge(in: vc) }
+
+        // A change landing while the pane is away ends that observation cycle.
+        vc.viewWillDisappear()
+        try FileManager.default.removeItem(at: url)
+        try await Task.sleep(for: .milliseconds(200))
+
+        // Re-appearing has to start a fresh cycle, so a *later* change still
+        // reaches the row — with no `apply()` pass of its own to carry it.
+        vc.viewDidAppear()
+        try await waitUntil { self.showsMissingBadge(in: vc) }
+
+        FileManager.default.createFile(atPath: path, contents: Data([0]))
+        try await waitUntil { !self.showsMissingBadge(in: vc) }
     }
 
     // MARK: - Per-row delete confirmation prompt

@@ -31,7 +31,6 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         panelStack.spacing = Spacing.section
         panelStack.translatesAutoresizingMaskIntoConstraints = false
         view = panelStack
-        rebuild()
     }
 
     // MARK: - Panel
@@ -504,9 +503,6 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         }
         writeConfig { $0.applyEphemeralMode(enabled: true, baseline: id) }
     }
-
-    /// The baseline a freshly-enabled mode takes: the VM's own choice while it
-    /// still names a listed snapshot, then the Current one, then the newest.
 
     // MARK: - Mirrored toggles
 

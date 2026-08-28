@@ -37,7 +37,6 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
         panelStack.spacing = Spacing.section
         panelStack.translatesAutoresizingMaskIntoConstraints = false
         view = panelStack
-        rebuild()
     }
 
     func rebuild() {
