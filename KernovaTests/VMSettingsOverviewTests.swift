@@ -184,17 +184,27 @@ struct VMSettingsOverviewTests {
         vc.showCategory(.system)
 
         let header = try #require(firstSubview(VMSettingsPanelHeaderView.self, in: vc.view))
+        vc.view.layoutSubtreeIfNeeded()
         let back = try #require(backButton(in: header))
         let title = try #require(findLabel(withText: "System", in: header))
         let factsLabel = try #require(findLabel(withText: facts, in: header))
-        #expect(back.isBordered)
         #expect(back.accessibilityLabel() == "Back")
-        // One row: the title and the facts share the back button's stack rather
-        // than the facts sitting on a line of their own above it.
-        let row = try #require(back.superview as? NSStackView)
+        // The well is drawn, not bezeled: no stock bezel stays visible at rest,
+        // so an AppKit bezel here would be the hover-only one the design rejects.
+        #expect(back.isBordered == false)
+        // Never accent-tinted — the chevron reads as the overview cards' do.
+        #expect(back.contentTintColor == .secondaryLabelColor)
+        // One row: the back affordance, the title and the facts share a stack,
+        // rather than the facts sitting on a line of their own above it.
+        let row = try #require(title.superview as? NSStackView)
+        // The well is the fixed-size view the button is centered on, and it is
+        // what the row lays out — the button's own height is AppKit's minimum.
+        let well = try #require(back.superview)
+        #expect(well.frame.size == NSSize(width: 28, height: 24))
+        #expect(row.arrangedSubviews.contains(well))
         #expect(row.orientation == .horizontal)
-        #expect(title.superview === row)
         #expect(factsLabel.superview === row)
+        #expect(back.isDescendant(of: row))
         // The window title carries the VM's name, so the header doesn't repeat it.
         #expect(findLabel(withText: instance.name, in: header) == nil)
         #expect(findButton(titled: instance.name, in: header) == nil)

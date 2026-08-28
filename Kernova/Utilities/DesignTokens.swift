@@ -36,6 +36,8 @@ enum Spacing {
 enum CornerRadius {
     /// Grouped-form cards and the tiles that echo them (`10`).
     static let card: CGFloat = 10
+    /// Small custom-drawn control wells (`6`).
+    static let control: CGFloat = 6
 }
 
 /// Opacities applied to whole controls or rows.

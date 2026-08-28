@@ -11,7 +11,7 @@ import AppKit
 /// carries are handed over as accessories.
 @MainActor
 final class VMSettingsPanelHeaderView: NSView {
-    private let backButton = NSButton()
+    private let back = SettingsBackButtonView()
     private let statusDot = NSImageView()
     private let factsLabel = NSTextField(labelWithString: "")
     private let titleLabel = NSTextField(labelWithString: "")
@@ -32,8 +32,8 @@ final class VMSettingsPanelHeaderView: NSView {
 
     /// Routes the back button to the host that owns the way out of a panel.
     func setBackAction(target: AnyObject?, action: Selector) {
-        backButton.target = target
-        backButton.action = action
+        back.button.target = target
+        back.button.action = action
     }
 
     /// Paints the header for `title`, hosting `leadingAccessories` beside the
@@ -64,15 +64,8 @@ final class VMSettingsPanelHeaderView: NSView {
     private func buildLayout() {
         translatesAutoresizingMaskIntoConstraints = false
 
-        backButton.image = .systemSymbol("chevron.left", accessibilityDescription: "")
-        backButton.imagePosition = .imageOnly
-        backButton.isBordered = true
-        backButton.bezelStyle = .toolbar
-        backButton.controlSize = .small
-        backButton.toolTip = "Show all settings"
-        backButton.setAccessibilityLabel("Back")
-        backButton.setContentHuggingPriority(.required, for: .horizontal)
-        backButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        back.button.toolTip = "Show all settings"
+        back.button.setAccessibilityLabel("Back")
 
         titleLabel.font = Typography.title
         titleLabel.lineBreakMode = .byTruncatingTail
@@ -100,11 +93,87 @@ final class VMSettingsPanelHeaderView: NSView {
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = Spacing.small
-        row.addArrangedSubview(backButton)
+        row.addArrangedSubview(back)
         row.addArrangedSubview(titleLabel)
         row.addArrangedSubview(statusDot)
         row.addArrangedSubview(factsLabel)
-        row.setCustomSpacing(Spacing.standard, after: backButton)
+        row.setCustomSpacing(Spacing.standard, after: back)
         addFullSizeSubview(row)
+    }
+}
+
+/// The header's way back: a `chevron.left` in an always-visible rounded well.
+///
+/// The well's metrics are the wrapper's, the ``InfoButtonView`` pattern: it is
+/// the wrapper that occupies the header row at exactly the approved size.
+///
+/// The button is centered on it rather than pinned to its edges, because AppKit
+/// holds an `NSButton` to a minimum height of its own — one that outranks edge
+/// pins, explicit size constraints and an `intrinsicContentSize` override alike.
+/// Letting the button keep that height and drawing the well at ``wellSize``
+/// leaves the well exact; only the hit area is a few points taller.
+@MainActor
+private final class SettingsBackButtonView: NSView {
+    /// The approved well metrics, shared with the fill the button draws.
+    static let wellSize = NSSize(width: 28, height: 24)
+
+    let button = SettingsBackButton()
+
+    init() {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        button.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(button)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: Self.wellSize.width),
+            heightAnchor.constraint(equalToConstant: Self.wellSize.height),
+            button.centerXAnchor.constraint(equalTo: centerXAnchor),
+            button.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("SettingsBackButtonView does not support NSCoder")
+    }
+}
+
+/// Draws the well behind the chevron.
+///
+/// No stock `NSBezelStyle` draws a persistent bezel at this size — `.toolbar`,
+/// the closest, draws its bezel only under the pointer — so the well is filled
+/// in `draw(_:)`, where the dynamic fills resolve against the current
+/// appearance on every redraw and the pressed state reads from `isHighlighted`.
+///
+/// The glyph carries no symbol configuration, matching the overview cards'
+/// `chevron.right` affordance so the two arrows read as one family.
+@MainActor
+private final class SettingsBackButton: NSButton {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        image = .systemSymbol("chevron.left", accessibilityDescription: "")
+        imagePosition = .imageOnly
+        // AppKit draws no bezel of its own; the well below is the whole bezel.
+        isBordered = false
+        setButtonType(.momentaryPushIn)
+        contentTintColor = .secondaryLabelColor
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("SettingsBackButton does not support NSCoder")
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let size = SettingsBackButtonView.wellSize
+        let well = NSRect(
+            x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2,
+            width: size.width, height: size.height)
+        let fill: NSColor = isHighlighted ? .tertiarySystemFill : .quaternarySystemFill
+        fill.setFill()
+        NSBezierPath(
+            roundedRect: well, xRadius: CornerRadius.control, yRadius: CornerRadius.control
+        ).fill()
+        super.draw(dirtyRect)
     }
 }
