@@ -535,3 +535,244 @@ func makeGroupedFormBanner(
         padding: 10
     )
 }
+
+// MARK: - Form atoms shared by the settings panels
+
+/// Stacks a section's header, card and captions.
+@MainActor
+func makeGroupedFormSection(_ subviews: [NSView]) -> NSStackView {
+    let stack = NSStackView(views: subviews)
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.spacing = Spacing.small
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    for view in subviews {
+        view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+    }
+    return stack
+}
+
+/// An info affordance for a section header, or for a panel header that states a
+/// single-section category's name in its place.
+@MainActor
+func makeGroupedFormInfoButton(label: String, paragraphs: [InfoPopoverParagraph]) -> NSView {
+    let info = InfoButtonView()
+    info.configure(label: label, paragraphs: paragraphs)
+    return info
+}
+
+/// A vertical stack for a card's dynamic list of rows.
+@MainActor
+func makeGroupedFormListStack() -> NSStackView {
+    let stack = NSStackView()
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.spacing = Spacing.standard
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    return stack
+}
+
+@MainActor
+func makeGroupedFormPushButton(_ title: String, target: AnyObject, action: Selector) -> NSButton {
+    let button = NSButton(title: title, target: target, action: action)
+    button.bezelStyle = .push
+    button.setContentHuggingPriority(.required, for: .horizontal)
+    return button
+}
+
+/// A card row of push buttons, left-aligned.
+@MainActor
+func makeGroupedFormButtonRow(_ buttons: [NSButton]) -> NSView {
+    let spacer = NSView()
+    spacer.translatesAutoresizingMaskIntoConstraints = false
+    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    let row = NSStackView(views: buttons + [spacer])
+    row.orientation = .horizontal
+    row.alignment = .centerY
+    row.spacing = Spacing.standard
+    return row
+}
+
+@MainActor
+func makeGroupedFormSwitch(target: AnyObject, action: Selector) -> NSSwitch {
+    let toggle = NSSwitch()
+    toggle.controlSize = .small
+    toggle.target = target
+    toggle.action = action
+    return toggle
+}
+
+/// Builds a toggle row: title, info button, and a trailing control.
+///
+/// `titleLabel` hands the freshly-built label back to the caller, for rows whose
+/// text has to be restyled later.
+@MainActor
+func makeGroupedFormToggleRowWithInfo(
+    _ title: String, control: NSControl, paragraphs: [InfoPopoverParagraph],
+    titleLabel: ((NSTextField) -> Void)? = nil
+) -> NSView {
+    let label = NSTextField(labelWithString: title)
+    label.font = Typography.body
+    label.isSelectable = false
+    label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+    titleLabel?(label)
+
+    let info = InfoButtonView()
+    info.configure(label: title, paragraphs: paragraphs)
+
+    let spacer = NSView()
+    spacer.translatesAutoresizingMaskIntoConstraints = false
+    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+    let row = NSStackView(views: [label, info, spacer, control])
+    row.orientation = .horizontal
+    row.alignment = .centerY
+    row.spacing = Spacing.small
+    return row
+}
+
+/// A numeric field, its stepper, and the unit that follows them.
+@MainActor
+func makeGroupedFormSteppedControl(
+    _ field: NSTextField, _ stepper: NSStepper, unit: String
+) -> NSStackView {
+    let unitLabel = NSTextField(labelWithString: unit)
+    unitLabel.font = Typography.body
+    unitLabel.textColor = .secondaryLabelColor
+    unitLabel.isSelectable = false
+    unitLabel.widthAnchor.constraint(equalToConstant: 22).isActive = true
+
+    let control = NSStackView(views: [field, stepper, unitLabel])
+    control.orientation = .horizontal
+    control.alignment = .centerY
+    control.spacing = Spacing.tight
+    return control
+}
+
+@MainActor
+func configureGroupedFormNumeric(
+    field: NSTextField, stepper: NSStepper, min: Int, max: Int, value: Int,
+    delegate: any NSTextFieldDelegate, target: AnyObject, stepperAction: Selector
+) {
+    let clamped = Swift.min(Swift.max(value, min), max)
+    field.alignment = .right
+    field.delegate = delegate
+    field.integerValue = clamped
+    field.widthAnchor.constraint(equalToConstant: 44).isActive = true
+
+    stepper.controlSize = .small
+    stepper.minValue = Double(min)
+    stepper.maxValue = Double(max)
+    stepper.increment = 1
+    stepper.valueWraps = false
+    stepper.integerValue = clamped
+    stepper.target = target
+    stepper.action = stepperAction
+}
+
+/// The read-only switch on an attachment row, tagged with the item's id.
+@MainActor
+func makeGroupedFormReadOnlySwitch(
+    id: UUID, isOn: Bool, enabled: Bool, target: AnyObject, action: Selector
+) -> NSSwitch {
+    let toggle = NSSwitch()
+    toggle.controlSize = .small
+    toggle.state = isOn ? .on : .off
+    toggle.isEnabled = enabled
+    toggle.identifier = NSUserInterfaceItemIdentifier(id.uuidString)
+    toggle.target = target
+    toggle.action = action
+    return toggle
+}
+
+@MainActor
+func makeGroupedFormReadOnlyCaption() -> NSTextField {
+    let caption = NSTextField(labelWithString: "Read Only")
+    caption.font = .preferredFont(forTextStyle: .caption1)
+    caption.textColor = .secondaryLabelColor
+    caption.isSelectable = false
+    caption.setContentHuggingPriority(.required, for: .horizontal)
+    return caption
+}
+
+/// An inline trailing "eject" button for an attachment/share row.
+///
+/// Detaches only — the backing file is untouched — so it is neutral-tinted
+/// rather than destructive red.
+@MainActor
+func makeGroupedFormEjectButton(
+    id: UUID, enabled: Bool, target: AnyObject, action: Selector
+) -> NSButton {
+    let button = NSButton()
+    button.image = .systemSymbol("eject.circle.fill", accessibilityDescription: "Eject")
+    button.imagePosition = .imageOnly
+    button.isBordered = false
+    button.contentTintColor = .secondaryLabelColor
+    button.isEnabled = enabled
+    button.identifier = NSUserInterfaceItemIdentifier(id.uuidString)
+    button.target = target
+    button.action = action
+    return button
+}
+
+/// One attachment/share row: icon, title over subtitle, the read-only switch and
+/// the eject button.
+@MainActor
+func makeGroupedFormListRow(
+    icon: NSView, title: String, subtitle: NSTextField, id: UUID, readOnly: Bool,
+    controlsEnabled: Bool, target: AnyObject, readOnlySelector: Selector,
+    deleteSelector: Selector
+) -> NSView {
+    let titleLabel = NSTextField(labelWithString: title)
+    titleLabel.font = Typography.body
+    titleLabel.lineBreakMode = .byTruncatingTail
+    titleLabel.maximumNumberOfLines = 1
+    titleLabel.isSelectable = false
+
+    let textStack = NSStackView(views: [titleLabel, subtitle])
+    textStack.orientation = .vertical
+    textStack.alignment = .leading
+    textStack.spacing = Spacing.hairline
+
+    let readOnlyToggle = makeGroupedFormReadOnlySwitch(
+        id: id, isOn: readOnly, enabled: controlsEnabled, target: target,
+        action: readOnlySelector)
+    let readOnlyCaption = makeGroupedFormReadOnlyCaption()
+
+    let eject = makeGroupedFormEjectButton(
+        id: id, enabled: controlsEnabled, target: target, action: deleteSelector)
+
+    let spacer = NSView()
+    spacer.translatesAutoresizingMaskIntoConstraints = false
+    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+    let row = NSStackView(views: [icon, textStack, spacer, readOnlyToggle, readOnlyCaption, eject])
+    row.orientation = .horizontal
+    row.alignment = .centerY
+    row.spacing = Spacing.standard
+    return row
+}
+
+@MainActor
+func makeGroupedFormSecondaryLabel(_ text: String) -> NSTextField {
+    let label = NSTextField(labelWithString: text)
+    label.textColor = .secondaryLabelColor
+    label.isSelectable = false
+    return label
+}
+
+/// Empties a stack of its arranged subviews.
+@MainActor
+func clearGroupedFormStack(_ stack: NSStackView) {
+    stack.arrangedSubviews.forEach {
+        stack.removeArrangedSubview($0)
+        $0.removeFromSuperview()
+    }
+}
+
+/// Appends `view` to `stack`, pinned to its full width.
+@MainActor
+func addGroupedFormFullWidth(_ view: NSView, to stack: NSStackView) {
+    stack.addArrangedSubview(view)
+    view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+}

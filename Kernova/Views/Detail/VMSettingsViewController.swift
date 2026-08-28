@@ -780,18 +780,6 @@ extension VMSettingsViewController {
             trailingAccessories: chrome.trailing)
     }
 
-    private func makeSection(_ subviews: [NSView]) -> NSStackView {
-        let stack = NSStackView(views: subviews)
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = Spacing.small
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        for view in subviews {
-            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
-        return stack
-    }
-
     /// Section header; any lock hint it creates is registered in ``lockHints``
     /// and toggled by ``apply()``. A section whose lock is conditional passes
     /// `lockHintSink` to keep its own reference — by handoff, not by position
@@ -829,13 +817,6 @@ extension VMSettingsViewController {
         lockHints.append(hint)
         sink?(hint)
         return hint
-    }
-
-    /// An info affordance for a category whose panel header states its name.
-    private func makeInfoButton(label: String, paragraphs: [InfoPopoverParagraph]) -> NSView {
-        let info = InfoButtonView()
-        info.configure(label: label, paragraphs: paragraphs)
-        return info
     }
 
     /// Registers `row` as editable only while the VM is stopped, returning it so
@@ -940,7 +921,7 @@ extension VMSettingsViewController {
                 control: makeGroupedFormValueLabel(
                     instance.configuration.createdAt.formatted(date: .abbreviated, time: .shortened))),
         ]
-        return makeSection([makeHeader("General"), makeGroupedFormCard(rows: rows)])
+        return makeGroupedFormSection([makeHeader("General"), makeGroupedFormCard(rows: rows)])
     }
 
     // MARK: Startup
@@ -979,12 +960,12 @@ extension VMSettingsViewController {
     /// power-off, and neither reaches a `VZVirtualMachineConfiguration` — so
     /// both edit while the VM runs.
     private func buildStartupSection() -> NSView {
-        autoStartSwitch = makeSwitch(action: #selector(autoStartToggled))
-        ephemeralSwitch = makeSwitch(action: #selector(ephemeralModeToggled))
+        autoStartSwitch = makeGroupedFormSwitch(target: self, action: #selector(autoStartToggled))
+        ephemeralSwitch = makeGroupedFormSwitch(target: self, action: #selector(ephemeralModeToggled))
         ephemeralBaselinePopUp = makeEphemeralBaselinePopUp()
         renderedEphemeralBaselines = nil
         let ephemeralGroup = makeGroupedFormSubOptionGroup(
-            primary: makeToggleRowWithInfo(
+            primary: makeGroupedFormToggleRowWithInfo(
                 "Ephemeral Mode", control: ephemeralSwitch,
                 paragraphs: EphemeralModeCopy.popoverParagraphs,
                 titleLabel: { [weak self] in self?.ephemeralLabel = $0 }),
@@ -993,7 +974,7 @@ extension VMSettingsViewController {
         self.ephemeralGroup = ephemeralGroup
 
         let card = makeGroupedFormCard(rows: [
-            makeToggleRowWithInfo(
+            makeGroupedFormToggleRowWithInfo(
                 "Start when Kernova opens", control: autoStartSwitch,
                 paragraphs: [
                     .body(
@@ -1016,7 +997,7 @@ extension VMSettingsViewController {
         noSnapshots.isHidden = true
         ephemeralNoSnapshotsCaption = noSnapshots
 
-        return makeSection([
+        return makeGroupedFormSection([
             makeHeader("Startup"), card,
             makeGroupedFormCaption(Self.autoStartOrderCaption),
             makeGroupedFormCaption(EphemeralModeCopy.settingsCaption),
@@ -1041,23 +1022,25 @@ extension VMSettingsViewController {
         cpuStepper = NSStepper()
         memoryField = NSTextField()
         memoryStepper = NSStepper()
-        configureNumeric(
+        configureGroupedFormNumeric(
             field: cpuField, stepper: cpuStepper, min: os.minCPUCount, max: os.maxCPUCount,
-            value: instance.configuration.cpuCount, stepperAction: #selector(cpuStepperChanged))
-        configureNumeric(
+            value: instance.configuration.cpuCount, delegate: self, target: self,
+            stepperAction: #selector(cpuStepperChanged))
+        configureGroupedFormNumeric(
             field: memoryField, stepper: memoryStepper, min: os.minMemoryInGB, max: os.maxMemoryInGB,
-            value: instance.configuration.memorySizeInGB, stepperAction: #selector(memoryStepperChanged))
+            value: instance.configuration.memorySizeInGB, delegate: self, target: self,
+            stepperAction: #selector(memoryStepperChanged))
         let card = makeGroupedFormCard(rows: [
             lockable(
                 makeGroupedFormCardRow(
-                    "CPU cores", control: steppedControl(cpuField, cpuStepper, unit: "")),
+                    "CPU cores", control: makeGroupedFormSteppedControl(cpuField, cpuStepper, unit: "")),
                 cpuField, cpuStepper),
             lockable(
                 makeGroupedFormCardRow(
-                    "Memory", control: steppedControl(memoryField, memoryStepper, unit: "GB")),
+                    "Memory", control: makeGroupedFormSteppedControl(memoryField, memoryStepper, unit: "GB")),
                 memoryField, memoryStepper),
         ])
-        return makeSection([
+        return makeGroupedFormSection([
             makeHeader(
                 "Resources", lockable: true,
                 paragraphs: [
@@ -1090,21 +1073,21 @@ extension VMSettingsViewController {
     private func buildDisplaySection() -> NSView {
         let isMacOS = instance.configuration.guestOS == .macOS
         let supportsDensity = instance.configuration.guestOS.supportsDisplayDensity
-        displayMatchWindowSwitch = makeSwitch(action: #selector(displayMatchWindowToggled))
+        displayMatchWindowSwitch = makeGroupedFormSwitch(target: self, action: #selector(displayMatchWindowToggled))
         displayResolutionPopUp = makeDisplayResolutionPopUp()
         displayWidthField = makeDisplaySizeField()
         displayHeightField = makeDisplaySizeField()
-        displayHiDPISwitch = makeSwitch(action: #selector(displayHiDPIToggled))
-        displayAutoResizeSwitch = makeSwitch(action: #selector(displayAutoResizeToggled))
+        displayHiDPISwitch = makeGroupedFormSwitch(target: self, action: #selector(displayHiDPIToggled))
+        displayAutoResizeSwitch = makeGroupedFormSwitch(target: self, action: #selector(displayAutoResizeToggled))
 
         var rows: [NSView] = [
             // Deliberately not `lockable`: the flag lives on the display view, so
             // it is legal to flip while the VM runs.
-            makeToggleRowWithInfo(
+            makeGroupedFormToggleRowWithInfo(
                 "Automatically resize with window", control: displayAutoResizeSwitch,
                 paragraphs: Self.displayAutoResizeInfo(isMacOS: isMacOS)),
             lockable(
-                makeToggleRowWithInfo(
+                makeGroupedFormToggleRowWithInfo(
                     "Size display to fit window at startup", control: displayMatchWindowSwitch,
                     paragraphs: [
                         .body(
@@ -1123,7 +1106,7 @@ extension VMSettingsViewController {
         if supportsDensity {
             rows.append(
                 lockable(
-                    makeToggleRowWithInfo(
+                    makeGroupedFormToggleRowWithInfo(
                         "HiDPI (Retina)", control: displayHiDPISwitch,
                         paragraphs: [
                             .body(
@@ -1140,7 +1123,7 @@ extension VMSettingsViewController {
         restart.isHidden = true
         displayRestartCaption = restart
 
-        return makeSection([
+        return makeGroupedFormSection([
             makeHeader("Display", lockable: true),
             makeGroupedFormCard(rows: rows),
             displayResolutionCaption,
@@ -1191,13 +1174,13 @@ extension VMSettingsViewController {
     // MARK: Storage Disks
 
     private func buildStorageSection() -> NSView {
-        storageListStack = makeListStack()
-        attachStorageButton = makePushButton("Attach Disk…", action: #selector(attachStorageTapped))
-        createStorageButton = makePushButton("Create New Disk…", action: #selector(createStorageTapped))
-        editBootOrderButton = makePushButton("Edit Boot Order…", action: #selector(editBootOrderTapped))
+        storageListStack = makeGroupedFormListStack()
+        attachStorageButton = makeGroupedFormPushButton("Attach Disk…", target: self, action: #selector(attachStorageTapped))
+        createStorageButton = makeGroupedFormPushButton("Create New Disk…", target: self, action: #selector(createStorageTapped))
+        editBootOrderButton = makeGroupedFormPushButton("Edit Boot Order…", target: self, action: #selector(editBootOrderTapped))
 
         let buttonRow = lockable(
-            makeButtonRow([attachStorageButton, createStorageButton, editBootOrderButton]),
+            makeGroupedFormButtonRow([attachStorageButton, createStorageButton, editBootOrderButton]),
             attachStorageButton, createStorageButton, editBootOrderButton)
         let card = makeGroupedFormCard(rows: [storageListStack, buttonRow])
 
@@ -1219,18 +1202,18 @@ extension VMSettingsViewController {
                     "Installer images (.iso, .dmg) attach as USB Mass Storage entries on this list — still bootable, separate from hot-pluggable Removable Media."
                 ),
             ]
-        return makeSection([makeHeader("Storage Disks", lockable: true, paragraphs: paragraphs), card])
+        return makeGroupedFormSection([makeHeader("Storage Disks", lockable: true, paragraphs: paragraphs), card])
     }
 
     // MARK: Removable Media
 
     private func buildRemovableMediaSection() -> NSView {
-        removableListStack = makeListStack()
-        let attach = makePushButton("Attach Disk…", action: #selector(attachRemovableTapped))
-        let create = makePushButton("Create New Disk…", action: #selector(createRemovableTapped))
+        removableListStack = makeGroupedFormListStack()
+        let attach = makeGroupedFormPushButton("Attach Disk…", target: self, action: #selector(attachRemovableTapped))
+        let create = makeGroupedFormPushButton("Create New Disk…", target: self, action: #selector(createRemovableTapped))
         createRemovableButton = create
         // Not lockable — removable media is hot-pluggable.
-        let buttonRow = makeButtonRow([attach, create])
+        let buttonRow = makeGroupedFormButtonRow([attach, create])
         let card = makeGroupedFormCard(rows: [removableListStack, buttonRow])
 
         let firstParagraph: InfoPopoverParagraph =
@@ -1239,7 +1222,7 @@ extension VMSettingsViewController {
                 "Appears as a USB Mass Storage device (typically `/dev/sda` or similar). Most desktop distros auto-mount; headless installs need an explicit `mount`."
             )
             : .body("Appears as a removable USB drive in Finder; auto-mounts.")
-        return makeSection([
+        return makeGroupedFormSection([
             makeHeader(
                 "Removable Media",
                 paragraphs: [
@@ -1254,10 +1237,10 @@ extension VMSettingsViewController {
     // MARK: Shared Directories
 
     private func buildSharedDirectoriesSection() -> NSView {
-        sharedListStack = makeListStack()
-        let add = makePushButton("Add Shared Directory…", action: #selector(addSharedTapped))
+        sharedListStack = makeGroupedFormListStack()
+        let add = makeGroupedFormPushButton("Add Shared Directory…", target: self, action: #selector(addSharedTapped))
         let card = makeGroupedFormCard(rows: [
-            sharedListStack, lockable(makeButtonRow([add]), add),
+            sharedListStack, lockable(makeGroupedFormButtonRow([add]), add),
         ])
 
         let paragraphs: [InfoPopoverParagraph] =
@@ -1277,7 +1260,7 @@ extension VMSettingsViewController {
                     "VirtioFS has known framework limitations — files may intermittently appear missing, and host/guest permission mapping can differ."
                 ),
             ]
-        return makeSection([makeHeader("Shared Directories", lockable: true, paragraphs: paragraphs), card])
+        return makeGroupedFormSection([makeHeader("Shared Directories", lockable: true, paragraphs: paragraphs), card])
     }
 
     // MARK: Snapshots
@@ -1366,9 +1349,9 @@ extension VMSettingsViewController {
         // repeating the category name inside the form.
         let hint = makeLockHint { self.networkLockHint = $0 }
         panelChrome[.network] = PanelChrome(
-            leading: [makeInfoButton(label: "Network", paragraphs: paragraphs)],
+            leading: [makeGroupedFormInfoButton(label: "Network", paragraphs: paragraphs)],
             trailing: [hint])
-        return makeSection([
+        return makeGroupedFormSection([
             makeGroupedFormCard(rows: rows),
             networkWarningContainer,
             networkNoDeviceCaption,
@@ -1496,7 +1479,7 @@ extension VMSettingsViewController {
             "Six pairs of hexadecimal digits separated by colons, for example 3a:5f:20:11:88:c4."
         macAddressField.widthAnchor.constraint(equalToConstant: 140).isActive = true
 
-        let generate = makePushButton("Generate", action: #selector(generateMACAddressTapped))
+        let generate = makeGroupedFormPushButton("Generate", target: self, action: #selector(generateMACAddressTapped))
         generate.controlSize = .small
 
         let control = NSStackView(views: [macAddressField, generate])
@@ -1541,7 +1524,7 @@ extension VMSettingsViewController {
         title.font = Typography.body
         title.isSelectable = false
 
-        portForwardingListStack = makeListStack()
+        portForwardingListStack = makeGroupedFormListStack()
         portForwardingListStack.spacing = Spacing.small
 
         let content = NSStackView(views: [title, portForwardingListStack])
@@ -1563,13 +1546,13 @@ extension VMSettingsViewController {
             rules: instance.configuration.portForwardingRules, controlsEnabled: !isReadOnly)
         guard rendered != renderedPortForwardingRows else { return }
         renderedPortForwardingRows = rendered
-        clear(portForwardingListStack)
+        clearGroupedFormStack(portForwardingListStack)
         for (index, rule) in rendered.rules.enumerated() {
-            addFullWidth(
+            addGroupedFormFullWidth(
                 makePortForwardingRuleRow(rule, index: index, enabled: rendered.controlsEnabled),
                 to: portForwardingListStack)
         }
-        addFullWidth(
+        addGroupedFormFullWidth(
             makeAddPortForwardingRuleRow(enabled: rendered.controlsEnabled),
             to: portForwardingListStack)
     }
@@ -1799,8 +1782,8 @@ extension VMSettingsViewController {
     // MARK: Audio
 
     private func buildAudioSection() -> NSView {
-        audioInputSwitch = makeSwitch(action: #selector(audioInputToggled))
-        audioOutputSwitch = makeSwitch(action: #selector(audioOutputToggled))
+        audioInputSwitch = makeGroupedFormSwitch(target: self, action: #selector(audioInputToggled))
+        audioOutputSwitch = makeGroupedFormSwitch(target: self, action: #selector(audioOutputToggled))
 
         audioWarningContainer = NSStackView()
         audioWarningContainer.orientation = .vertical
@@ -1816,7 +1799,7 @@ extension VMSettingsViewController {
         if instance.configuration.guestOS == .linux {
             paragraphs.append(.body("Requires Linux kernel 5.14 or newer to detect the VirtioSound device."))
         }
-        return makeSection([
+        return makeGroupedFormSection([
             makeHeader("Audio", lockable: true, paragraphs: paragraphs),
             makeGroupedFormCard(rows: [
                 lockable(
@@ -1851,7 +1834,7 @@ extension VMSettingsViewController {
 
     private func buildInputDevicesSection() -> NSView {
         inputDevicesPopUp = makeInputDevicesPopUp()
-        return makeSection([
+        return makeGroupedFormSection([
             makeHeader("Input", lockable: true, paragraphs: Self.inputDevicesInfoParagraphs),
             makeGroupedFormCard(rows: [
                 lockable(
@@ -1897,14 +1880,14 @@ extension VMSettingsViewController {
     /// Guest Agent group for **macOS** guests, holding the agent-management
     /// toggles plus Clipboard sharing, which rides the agent's vsock channel.
     private func buildGuestAgentSection() -> NSView {
-        logForwardingSwitch = makeSwitch(action: #selector(logForwardingToggled))
-        installReminderSwitch = makeSwitch(action: #selector(installReminderToggled))
-        clipboardSwitch = makeSwitch(action: #selector(clipboardToggled))
-        clipboardPassthroughSwitch = makeSwitch(action: #selector(clipboardPassthroughToggled))
-        dropFilesSwitch = makeSwitch(action: #selector(dropFilesToggled))
+        logForwardingSwitch = makeGroupedFormSwitch(target: self, action: #selector(logForwardingToggled))
+        installReminderSwitch = makeGroupedFormSwitch(target: self, action: #selector(installReminderToggled))
+        clipboardSwitch = makeGroupedFormSwitch(target: self, action: #selector(clipboardToggled))
+        clipboardPassthroughSwitch = makeGroupedFormSwitch(target: self, action: #selector(clipboardPassthroughToggled))
+        dropFilesSwitch = makeGroupedFormSwitch(target: self, action: #selector(dropFilesToggled))
         // Not lockable — every toggle here takes effect live.
         let card = makeGroupedFormCard(rows: [
-            makeToggleRowWithInfo(
+            makeGroupedFormToggleRowWithInfo(
                 "Forward guest logs", control: logForwardingSwitch,
                 paragraphs: [
                     .body(
@@ -1914,23 +1897,23 @@ extension VMSettingsViewController {
             // Passthrough rides on sharing — it goes inert when sharing is off —
             // so it nests as a sub-option rather than an equal sibling toggle.
             makeGroupedFormSubOptionGroup(
-                primary: makeToggleRowWithInfo(
+                primary: makeGroupedFormToggleRowWithInfo(
                     "Clipboard sharing", control: clipboardSwitch,
                     paragraphs: [
                         .body("Exchanges clipboard text between host and guest.")
                     ]),
-                subOption: makeToggleRowWithInfo(
+                subOption: makeGroupedFormToggleRowWithInfo(
                     "Automatic clipboard passthrough", control: clipboardPassthroughSwitch,
                     paragraphs: Self.passthroughInfoParagraphs,
                     titleLabel: { [weak self] in self?.clipboardPassthroughLabel = $0 })),
-            makeToggleRowWithInfo(
+            makeGroupedFormToggleRowWithInfo(
                 "Drag and drop files", control: dropFilesSwitch,
                 paragraphs: [
                     .body(
                         "Lets you drag files and folders from this Mac onto the VM display; the guest agent saves them to the guest's Downloads folder. Independent of clipboard sharing, and can be toggled while the VM is running."
                     )
                 ]),
-            makeToggleRowWithInfo(
+            makeGroupedFormToggleRowWithInfo(
                 "Show install reminder", control: installReminderSwitch,
                 paragraphs: [
                     .body(
@@ -1942,7 +1925,7 @@ extension VMSettingsViewController {
         let overrideCaption = makeGroupedFormCaption(Self.installPromptDisabledCaption)
         overrideCaption.isHidden = true
         installReminderOverrideCaption = overrideCaption
-        return makeSection([
+        return makeGroupedFormSection([
             makeHeader("Guest Agent"), card, makeGroupedFormCaption(Self.agentDependencyCaption),
             overrideCaption,
         ])
@@ -1953,8 +1936,8 @@ extension VMSettingsViewController {
     /// Standalone Clipboard section for **Linux** guests, whose clipboard rides
     /// SPICE (`spice-vdagent`) and is independent of the Kernova guest agent.
     private func buildClipboardSection() -> NSView {
-        clipboardSwitch = makeSwitch(action: #selector(clipboardToggled))
-        clipboardPassthroughSwitch = makeSwitch(action: #selector(clipboardPassthroughToggled))
+        clipboardSwitch = makeGroupedFormSwitch(target: self, action: #selector(clipboardToggled))
+        clipboardPassthroughSwitch = makeGroupedFormSwitch(target: self, action: #selector(clipboardPassthroughToggled))
         let caption = makeGroupedFormCaption(
             "Takes effect on next start — Linux guests configure SPICE at VM start time.")
         caption.textColor = .systemOrange
@@ -1966,12 +1949,12 @@ extension VMSettingsViewController {
         )
         // Passthrough is host-side (it polls/writes the host pasteboard), so unlike
         // sharing it takes effect live for Linux guests too.
-        return makeSection([
+        return makeGroupedFormSection([
             makeHeader("Clipboard", paragraphs: [body]),
             makeGroupedFormCard(rows: [
                 makeGroupedFormSubOptionGroup(
                     primary: makeGroupedFormCardRow("Clipboard sharing", control: clipboardSwitch),
-                    subOption: makeToggleRowWithInfo(
+                    subOption: makeGroupedFormToggleRowWithInfo(
                         "Automatic clipboard passthrough", control: clipboardPassthroughSwitch,
                         paragraphs: Self.passthroughInfoParagraphs,
                         titleLabel: { [weak self] in self?.clipboardPassthroughLabel = $0 }))
@@ -1983,12 +1966,12 @@ extension VMSettingsViewController {
     // MARK: Serial Console
 
     private func buildSerialRelaySection() -> NSView {
-        serialRelaySwitch = makeSwitch(action: #selector(serialRelayToggled))
-        revealSerialLogButton = makePushButton(
-            "Reveal serial.log in Finder", action: #selector(revealSerialLog))
+        serialRelaySwitch = makeGroupedFormSwitch(target: self, action: #selector(serialRelayToggled))
+        revealSerialLogButton = makeGroupedFormPushButton(
+"Reveal serial.log in Finder", target: self, action: #selector(revealSerialLog))
         let socketPath = VMInstance.serialSocketPath(for: instance.id)
         let card = makeGroupedFormCard(rows: [
-            makeToggleRowWithInfo(
+            makeGroupedFormToggleRowWithInfo(
                 "Expose serial socket", control: serialRelaySwitch,
                 paragraphs: [
                     .body(
@@ -2001,180 +1984,15 @@ extension VMSettingsViewController {
                     .body("…or the built-in `nc` (line mode):"),
                     .code("nc -U \(socketPath)"),
                 ]),
-            makeButtonRow([revealSerialLogButton]),
+            makeGroupedFormButtonRow([revealSerialLogButton]),
         ])
-        return makeSection([makeHeader("Serial Console"), card])
+        return makeGroupedFormSection([makeHeader("Serial Console"), card])
     }
 }
 
-// MARK: - Small control/layout factories
+// MARK: - Attachment helpers
 
 extension VMSettingsViewController {
-    private func makeListStack() -> NSStackView {
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = Spacing.standard
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        return stack
-    }
-
-    private func makePushButton(_ title: String, action: Selector) -> NSButton {
-        let button = NSButton(title: title, target: self, action: action)
-        button.bezelStyle = .push
-        button.setContentHuggingPriority(.required, for: .horizontal)
-        return button
-    }
-
-    private func makeButtonRow(_ buttons: [NSButton]) -> NSView {
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let row = NSStackView(views: buttons + [spacer])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = Spacing.standard
-        return row
-    }
-
-    private func makeSwitch(action: Selector) -> NSSwitch {
-        let toggle = NSSwitch()
-        toggle.controlSize = .small
-        toggle.target = self
-        toggle.action = action
-        return toggle
-    }
-
-    /// Builds a toggle row: title, info button, and a trailing control.
-    ///
-    /// `titleLabel` hands the freshly-built label back to the caller, for rows
-    /// whose text has to be restyled later.
-    private func makeToggleRowWithInfo(
-        _ title: String, control: NSControl, paragraphs: [InfoPopoverParagraph],
-        titleLabel: ((NSTextField) -> Void)? = nil
-    ) -> NSView {
-        let label = NSTextField(labelWithString: title)
-        label.font = Typography.body
-        label.isSelectable = false
-        label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        titleLabel?(label)
-
-        let info = InfoButtonView()
-        info.configure(label: title, paragraphs: paragraphs)
-
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        let row = NSStackView(views: [label, info, spacer, control])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = Spacing.small
-        return row
-    }
-
-    private func steppedControl(_ field: NSTextField, _ stepper: NSStepper, unit: String) -> NSStackView {
-        let unitLabel = NSTextField(labelWithString: unit)
-        unitLabel.font = Typography.body
-        unitLabel.textColor = .secondaryLabelColor
-        unitLabel.isSelectable = false
-        unitLabel.widthAnchor.constraint(equalToConstant: 22).isActive = true
-
-        let control = NSStackView(views: [field, stepper, unitLabel])
-        control.orientation = .horizontal
-        control.alignment = .centerY
-        control.spacing = Spacing.tight
-        return control
-    }
-
-    private func configureNumeric(
-        field: NSTextField, stepper: NSStepper, min: Int, max: Int, value: Int, stepperAction: Selector
-    ) {
-        let clamped = Swift.min(Swift.max(value, min), max)
-        field.alignment = .right
-        field.delegate = self
-        field.integerValue = clamped
-        field.widthAnchor.constraint(equalToConstant: 44).isActive = true
-
-        stepper.controlSize = .small
-        stepper.minValue = Double(min)
-        stepper.maxValue = Double(max)
-        stepper.increment = 1
-        stepper.valueWraps = false
-        stepper.integerValue = clamped
-        stepper.target = self
-        stepper.action = stepperAction
-    }
-
-    private func makeReadOnlySwitch(id: UUID, isOn: Bool, enabled: Bool, action: Selector) -> NSSwitch {
-        let toggle = NSSwitch()
-        toggle.controlSize = .small
-        toggle.state = isOn ? .on : .off
-        toggle.isEnabled = enabled
-        toggle.identifier = NSUserInterfaceItemIdentifier(id.uuidString)
-        toggle.target = self
-        toggle.action = action
-        return toggle
-    }
-
-    private func makeReadOnlyCaption() -> NSTextField {
-        let caption = NSTextField(labelWithString: "Read Only")
-        caption.font = .preferredFont(forTextStyle: .caption1)
-        caption.textColor = .secondaryLabelColor
-        caption.isSelectable = false
-        caption.setContentHuggingPriority(.required, for: .horizontal)
-        return caption
-    }
-
-    /// An inline trailing "eject" button for an attachment/share row.
-    ///
-    /// Detaches only — the backing file is untouched — so it is neutral-tinted
-    /// rather than destructive red.
-    private func makeEjectButton(id: UUID, enabled: Bool, action: Selector) -> NSButton {
-        let button = NSButton()
-        button.image = .systemSymbol("eject.circle.fill", accessibilityDescription: "Eject")
-        button.imagePosition = .imageOnly
-        button.isBordered = false
-        button.contentTintColor = .secondaryLabelColor
-        button.isEnabled = enabled
-        button.identifier = NSUserInterfaceItemIdentifier(id.uuidString)
-        button.target = self
-        button.action = action
-        return button
-    }
-
-    private func makeListRow(
-        icon: NSView, title: String, subtitle: NSTextField, id: UUID, readOnly: Bool,
-        controlsEnabled: Bool, readOnlySelector: Selector, deleteSelector: Selector
-    ) -> NSView {
-        let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = Typography.body
-        titleLabel.lineBreakMode = .byTruncatingTail
-        titleLabel.maximumNumberOfLines = 1
-        titleLabel.isSelectable = false
-
-        let textStack = NSStackView(views: [titleLabel, subtitle])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = Spacing.hairline
-
-        let readOnlyToggle = makeReadOnlySwitch(
-            id: id, isOn: readOnly, enabled: controlsEnabled, action: readOnlySelector)
-        let readOnlyCaption = makeReadOnlyCaption()
-
-        let eject = makeEjectButton(id: id, enabled: controlsEnabled, action: deleteSelector)
-
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        let row = NSStackView(views: [icon, textStack, spacer, readOnlyToggle, readOnlyCaption, eject])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = Spacing.standard
-        return row
-    }
-
     private func uuid(from sender: Any?) -> UUID? {
         guard let raw = (sender as? NSView)?.identifier?.rawValue else { return nil }
         return UUID(uuidString: raw)
@@ -2341,7 +2159,7 @@ extension VMSettingsViewController {
         guard let message else { return }
         let banner = makeGroupedFormBanner(
             symbolName: "exclamationmark.triangle.fill", tint: .systemYellow, message: message)
-        addFullWidth(banner, to: autoStartWarningContainer)
+        addGroupedFormFullWidth(banner, to: autoStartWarningContainer)
     }
 
     /// Renders the Ephemeral Mode toggle, its baseline menu, and the captions
@@ -2522,7 +2340,7 @@ extension VMSettingsViewController {
         guard let message else { return }
         let banner = makeGroupedFormBanner(
             symbolName: "exclamationmark.triangle.fill", tint: .systemYellow, message: message)
-        addFullWidth(banner, to: networkWarningContainer)
+        addGroupedFormFullWidth(banner, to: networkWarningContainer)
     }
 
     /// What the Audio banner — and the System card's warning glyph — say about a
@@ -2545,7 +2363,7 @@ extension VMSettingsViewController {
         case .willPrompt:
             let caption = makeGroupedFormCaption(
                 "macOS will ask for microphone permission the first time a VM uses it.")
-            addFullWidth(caption, to: audioWarningContainer)
+            addGroupedFormFullWidth(caption, to: audioWarningContainer)
         case .denied:
             let info = NSButton(
                 image: .systemSymbol("info.circle", accessibilityDescription: "Microphone permission help"),
@@ -2560,7 +2378,7 @@ extension VMSettingsViewController {
                 tint: .systemRed,
                 message: Self.micPermissionDeniedWarning,
                 trailingButtons: [openSettings, info])
-            addFullWidth(banner, to: audioWarningContainer)
+            addGroupedFormFullWidth(banner, to: audioWarningContainer)
         }
     }
 
@@ -2713,11 +2531,11 @@ extension VMSettingsViewController {
             // until the edit ends (the cancel/commit handler re-runs the refresh).
             if self[keyPath: activeKP] != nil { return }
             self[keyPath: renderedKP] = models
-            clear(listStack)
+            clearGroupedFormStack(listStack)
             self[keyPath: rowsKP].removeAll(keepingCapacity: true)
             guard !models.isEmpty else {
                 if let emptyMessage {
-                    addFullWidth(makeSecondaryLabel(emptyMessage), to: listStack)
+                    addGroupedFormFullWidth(makeGroupedFormSecondaryLabel(emptyMessage), to: listStack)
                 }
                 return
             }
@@ -2726,7 +2544,7 @@ extension VMSettingsViewController {
                     model: model, kind: kind, readOnlySelector: readOnlySelector,
                     activeEdit: activeKP)
                 self[keyPath: rowsKP][model.id] = row
-                addFullWidth(row, to: listStack)
+                addGroupedFormFullWidth(row, to: listStack)
                 // Freshly built rows start with an empty subtitle — read once.
                 populate(row.subtitleField, model)
             }
@@ -2769,8 +2587,8 @@ extension VMSettingsViewController {
         // disks detach through the context menu alone.
         let ejectButton: NSButton? =
             kind == .removable
-            ? makeEjectButton(
-                id: model.id, enabled: model.controlsEnabled,
+            ? makeGroupedFormEjectButton(
+                id: model.id, enabled: model.controlsEnabled, target: self,
                 action: #selector(removableEjectTapped))
             : nil
         let row = AttachmentRowView(
@@ -2780,10 +2598,10 @@ extension VMSettingsViewController {
             controlsEnabled: model.controlsEnabled,
             icon: icon,
             subtitle: makeAttachmentSubtitleLabel(path: "", isMissing: false),
-            readOnlyToggle: makeReadOnlySwitch(
+            readOnlyToggle: makeGroupedFormReadOnlySwitch(
                 id: model.id, isOn: model.readOnly, enabled: model.controlsEnabled,
-                action: readOnlySelector),
-            readOnlyCaption: makeReadOnlyCaption(),
+                target: self, action: readOnlySelector),
+            readOnlyCaption: makeGroupedFormReadOnlyCaption(),
             ejectButton: ejectButton)
         row.onEditBegan = { [weak self] id in self?[keyPath: activeKP] = id }
         row.onRenameCommitted = { [weak self] _, newLabel in
@@ -2898,25 +2716,26 @@ extension VMSettingsViewController {
         }
         guard models != renderedSharedRows else { return }
         renderedSharedRows = models
-        clear(sharedListStack)
+        clearGroupedFormStack(sharedListStack)
         if models.isEmpty {
-            addFullWidth(makeSecondaryLabel("No shared directories"), to: sharedListStack)
+            addGroupedFormFullWidth(makeGroupedFormSecondaryLabel("No shared directories"), to: sharedListStack)
             return
         }
         for model in models {
             let icon = NSImageView(image: .systemSymbol("folder", accessibilityDescription: ""))
             icon.contentTintColor = .secondaryLabelColor
             icon.setContentHuggingPriority(.required, for: .horizontal)
-            let row = makeListRow(
+            let row = makeGroupedFormListRow(
                 icon: icon,
                 title: model.title,
                 subtitle: makeAttachmentSubtitleLabel(path: model.subtitle, isMissing: false),
                 id: model.id,
                 readOnly: model.readOnly,
                 controlsEnabled: model.controlsEnabled,
+                target: self,
                 readOnlySelector: #selector(sharedReadOnlyToggled),
                 deleteSelector: #selector(sharedDeleteTapped))
-            addFullWidth(row, to: sharedListStack)
+            addGroupedFormFullWidth(row, to: sharedListStack)
         }
     }
 
@@ -2983,24 +2802,6 @@ extension VMSettingsViewController {
         micPermission = micPermissionStatus()
     }
 
-    private func makeSecondaryLabel(_ text: String) -> NSTextField {
-        let label = NSTextField(labelWithString: text)
-        label.textColor = .secondaryLabelColor
-        label.isSelectable = false
-        return label
-    }
-
-    private func clear(_ stack: NSStackView) {
-        stack.arrangedSubviews.forEach {
-            stack.removeArrangedSubview($0)
-            $0.removeFromSuperview()
-        }
-    }
-
-    private func addFullWidth(_ view: NSView, to stack: NSStackView) {
-        stack.addArrangedSubview(view)
-        view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-    }
 }
 
 // MARK: - Actions
